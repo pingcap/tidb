@@ -115,8 +115,10 @@ func (*testSysVarSuite) TestRegistrationOfNewSysVar(c *C) {
 	// Boolean oN or 1 converts to canonical ON or OFF
 	normalizedVal, err := sysVar.Validate(vars, "oN", ScopeSession)
 	c.Assert(normalizedVal, Equals, "ON")
+	c.Assert(err, IsNil)
 	normalizedVal, err = sysVar.Validate(vars, "0", ScopeSession)
 	c.Assert(normalizedVal, Equals, "OFF")
+	c.Assert(err, IsNil)
 
 	err = sysVar.SetSessionFromHook(vars, "OFF") // default is on
 	c.Assert(err.Error(), Matches, "set should fail")
@@ -464,6 +466,7 @@ func (*testSysVarSuite) TestIsNoop(c *C) {
 }
 
 func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
+	c.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
 	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
 	// Eventually these should be changed to use getters so that the switch
 	// statement in GetSessionOnlySysVars can be removed.

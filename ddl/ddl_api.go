@@ -18,7 +18,6 @@
 package ddl
 
 import (
-	"encoding/hex"
 	"fmt"
 	"math"
 	"strconv"
@@ -28,7 +27,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/cznic/mathutil"
-	"github.com/go-yaml/yaml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -40,7 +38,6 @@ import (
 	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -49,14 +46,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -1395,8 +1389,7 @@ func buildTableInfo(
 		// Check clustered on non-primary key.
 		if constr.Option != nil && constr.Option.PrimaryKeyTp != model.PrimaryKeyTypeDefault &&
 			constr.Tp != ast.ConstraintPrimaryKey {
-			msg := mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil)
-			return nil, dbterror.ClassDDL.NewStdErr(errno.ErrUnsupportedDDLOperation, msg)
+			return nil, errUnsupportedClusteredSecondaryKey
 		}
 		if constr.Tp == ast.ConstraintForeignKey {
 			for _, fk := range tbInfo.ForeignKeys {
@@ -1597,15 +1590,17 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 	if err := checkGeneratedColumn(s.Cols); err != nil {
 		return errors.Trace(err)
 	}
-	if tbInfo.Partition != nil && s.Partition != nil {
+	if tbInfo.Partition != nil {
 		if err := checkPartitionDefinitionConstraints(ctx, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
-		if err := checkPartitionFuncType(ctx, s.Partition.Expr, tbInfo); err != nil {
-			return errors.Trace(err)
-		}
-		if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
-			return errors.Trace(err)
+		if s.Partition != nil {
+			if err := checkPartitionFuncType(ctx, s.Partition.Expr, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
+			if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -1643,12 +1638,15 @@ func checkTableInfoValid(tblInfo *model.TableInfo) error {
 	return checkInvisibleIndexOnPK(tblInfo)
 }
 
-func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *ast.CreateTableStmt) (*model.TableInfo, error) {
+func buildTableInfoWithLike(ctx sessionctx.Context, ident ast.Ident, referTblInfo *model.TableInfo, s *ast.CreateTableStmt) (*model.TableInfo, error) {
 	// Check the referred table is a real table object.
 	if referTblInfo.IsSequence() || referTblInfo.IsView() {
 		return nil, ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "BASE TABLE")
 	}
 	tblInfo := *referTblInfo
+	if err := setTemporaryType(ctx, &tblInfo, s); err != nil {
+		return nil, errors.Trace(err)
+	}
 	// Check non-public column and adjust column offset.
 	newColumns := referTblInfo.Cols()
 	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
@@ -1684,12 +1682,12 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionID are left as uninitialized value.
 func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
-	return buildTableInfoWithCheck(mock.NewContext(), s, mysql.DefaultCharset, "")
+	return BuildTableInfoWithCheck(mock.NewContext(), s, mysql.DefaultCharset, "")
 }
 
-// buildTableInfoWithCheck builds model.TableInfo from a SQL statement.
+// BuildTableInfoWithCheck builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionIDs are left as uninitialized value.
-func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
+func BuildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
 	tbInfo, err := buildTableInfoWithStmt(ctx, s, dbCharset, dbCollate)
 	if err != nil {
 		return nil, err
@@ -1736,22 +1734,8 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	switch s.TemporaryKeyword {
-	case ast.TemporaryGlobal:
-		tbInfo.TempTableType = model.TempTableGlobal
-		if !ctx.GetSessionVars().EnableGlobalTemporaryTable {
-			return nil, errors.New("global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table")
-		}
-		// "create global temporary table ... on commit preserve rows"
-		if !s.OnCommitDelete {
-			return nil, errors.Trace(errUnsupportedOnCommitPreserve)
-		}
-	case ast.TemporaryLocal:
-		// TODO: set "tbInfo.TempTableType = model.TempTableLocal" after local temporary table is supported.
-		tbInfo.TempTableType = model.TempTableNone
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
-	case ast.TemporaryNone:
-		tbInfo.TempTableType = model.TempTableNone
+	if err = setTemporaryType(ctx, tbInfo, s); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if err = setTableAutoRandomBits(ctx, tbInfo, colDefs); err != nil {
@@ -1813,7 +1797,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	// build tableInfo
 	var tbInfo *model.TableInfo
 	if s.ReferTable != nil {
-		tbInfo, err = buildTableInfoWithLike(ident, referTbl.Meta(), s)
+		tbInfo, err = buildTableInfoWithLike(ctx, ident, referTbl.Meta(), s)
 	} else {
 		tbInfo, err = buildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate)
 	}
@@ -1831,6 +1815,25 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 
 	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, onExist, false /*tryRetainID*/)
+}
+
+func setTemporaryType(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
+	switch s.TemporaryKeyword {
+	case ast.TemporaryGlobal:
+		tbInfo.TempTableType = model.TempTableGlobal
+		if !ctx.GetSessionVars().EnableGlobalTemporaryTable {
+			return errors.New("global temporary table is experimental and it is switched off by tidb_enable_global_temporary_table")
+		}
+		// "create global temporary table ... on commit preserve rows"
+		if !s.OnCommitDelete {
+			return errors.Trace(errUnsupportedOnCommitPreserve)
+		}
+	case ast.TemporaryLocal:
+		tbInfo.TempTableType = model.TempTableLocal
+	default:
+		tbInfo.TempTableType = model.TempTableNone
+	}
+	return nil
 }
 
 func (d *ddl) CreateTableWithInfo(
@@ -2529,7 +2532,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					}
 					err = d.ShardRowID(ctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
-					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue), autoid.RowIDAllocType)
+					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue), autoid.RowIDAllocType, opt.BoolValue)
 				case ast.TableOptionAutoIdCache:
 					if opt.UintValue > uint64(math.MaxInt64) {
 						// TODO: Refine this error.
@@ -2537,7 +2540,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					}
 					err = d.AlterTableAutoIDCache(ctx, ident, int64(opt.UintValue))
 				case ast.TableOptionAutoRandomBase:
-					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue), autoid.AutoRandomType)
+					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue), autoid.AutoRandomType, opt.BoolValue)
 				case ast.TableOptionComment:
 					spec.Comment = opt.StrValue
 					err = d.AlterTableComment(ctx, ident, spec)
@@ -2593,7 +2596,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	return nil
 }
 
-func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64, tp autoid.AllocatorType) error {
+func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64, tp autoid.AllocatorType, force bool) error {
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -2622,17 +2625,11 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		actionType = model.ActionRebaseAutoID
 	}
 
-	if alloc := t.Allocators(ctx).Get(tp); alloc != nil {
-		autoID, err := alloc.NextGlobalAutoID(t.Meta().ID)
+	if !force {
+		newBase, err = adjustNewBaseToNextGlobalID(ctx, t, tp, newBase)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
-		// If newBase < autoID, we need to do a rebase before returning.
-		// Assume there are 2 TiDB servers: TiDB-A with allocator range of 0 ~ 30000; TiDB-B with allocator range of 30001 ~ 60000.
-		// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
-		// and TiDB-B finds 100 < 30001 but returns without any handling,
-		// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
-		newBase = int64(mathutil.MaxUint64(uint64(newBase), uint64(autoID)))
 	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -2640,11 +2637,28 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		SchemaName: schema.Name.L,
 		Type:       actionType,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newBase},
+		Args:       []interface{}{newBase, force},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func adjustNewBaseToNextGlobalID(ctx sessionctx.Context, t table.Table, tp autoid.AllocatorType, newBase int64) (int64, error) {
+	alloc := t.Allocators(ctx).Get(tp)
+	if alloc == nil {
+		return newBase, nil
+	}
+	autoID, err := alloc.NextGlobalAutoID(t.Meta().ID)
+	if err != nil {
+		return newBase, errors.Trace(err)
+	}
+	// If newBase < autoID, we need to do a rebase before returning.
+	// Assume there are 2 TiDB servers: TiDB-A with allocator range of 0 ~ 30000; TiDB-B with allocator range of 30001 ~ 60000.
+	// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
+	// and TiDB-B finds 100 < 30001 but returns without any handling,
+	// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
+	return int64(mathutil.MaxUint64(uint64(newBase), uint64(autoID))), nil
 }
 
 // ShardRowID shards the implicit row ID by adding shard value to the row ID's first few bits.
@@ -3912,7 +3926,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	// We support modifying the type definitions of 'null' to 'not null' now.
 	var modifyColumnTp byte
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		if err = checkForNullValue(ctx, col.Tp != newCol.Tp, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
+		if err = checkForNullValue(ctx, true, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// `modifyColumnTp` indicates that there is a type modification.
@@ -5720,7 +5734,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	}
 
 	// It is necessary to specify the table.ID and partition.ID manually.
-	newTableInfo, err := buildTableInfoWithCheck(ctx, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
+	newTableInfo, err := BuildTableInfoWithCheck(ctx, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5917,150 +5931,6 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	return errors.Trace(err)
 }
 
-func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*placement.Rule, error) {
-	rules := []*placement.Rule{}
-
-	cnstbytes := []byte(cnstr)
-
-	constraints1 := []string{}
-	err1 := yaml.UnmarshalStrict(cnstbytes, &constraints1)
-	if err1 == nil {
-		// can not emit REPLICAS with an array label
-		if replicas == 0 {
-			return rules, errors.Errorf("array CONSTRAINTS should be with a positive REPLICAS")
-		}
-
-		labelConstraints, err := placement.NewConstraints(constraints1)
-		if err != nil {
-			return rules, err
-		}
-
-		rules = append(rules, &placement.Rule{
-			Count:       int(replicas),
-			Constraints: labelConstraints,
-		})
-
-		return rules, nil
-	}
-
-	constraints2 := map[string]int{}
-	err2 := yaml.UnmarshalStrict(cnstbytes, &constraints2)
-	if err2 == nil {
-		ruleCnt := int(replicas)
-
-		for labels, cnt := range constraints2 {
-			if cnt <= 0 {
-				return rules, errors.Errorf("count should be positive, but got %d", cnt)
-			}
-
-			if replicas != 0 {
-				ruleCnt -= cnt
-				if ruleCnt < 0 {
-					return rules, errors.Errorf("REPLICAS should be larger or equal to the number of total replicas, but got %d", replicas)
-				}
-			}
-
-			labelConstraints, err := placement.NewConstraints(strings.Split(strings.TrimSpace(labels), ","))
-			if err != nil {
-				return rules, err
-			}
-
-			rules = append(rules, &placement.Rule{
-				Count:       cnt,
-				Constraints: labelConstraints,
-			})
-		}
-
-		if ruleCnt > 0 {
-			rules = append(rules, &placement.Rule{
-				Count: ruleCnt,
-			})
-		}
-
-		return rules, nil
-	}
-
-	return nil, errors.Errorf("constraint is neither an array of string, nor a string-to-number map, due to:\n%s\n%s", err1, err2)
-}
-
-func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (*placement.Bundle, error) {
-	var err error
-	var spec *ast.PlacementSpec
-
-	for _, rspec := range specs {
-		spec = rspec
-
-		var role placement.PeerRoleType
-		switch spec.Role {
-		case ast.PlacementRoleFollower:
-			role = placement.Follower
-		case ast.PlacementRoleLeader:
-			if spec.Replicas == 0 {
-				spec.Replicas = 1
-			}
-			if spec.Replicas > 1 {
-				err = errors.Errorf("replicas can only be 1 when the role is leader")
-			}
-			role = placement.Leader
-		case ast.PlacementRoleLearner:
-			role = placement.Learner
-		case ast.PlacementRoleVoter:
-			role = placement.Voter
-		default:
-			err = errors.Errorf("ROLE is not specified")
-		}
-		if err != nil {
-			break
-		}
-
-		if spec.Tp == ast.PlacementAlter || spec.Tp == ast.PlacementDrop {
-			origLen := len(bundle.Rules)
-			newRules := bundle.Rules[:0]
-			for _, r := range bundle.Rules {
-				if r.Role != role {
-					newRules = append(newRules, r)
-				}
-			}
-			bundle.Rules = newRules
-
-			// alter == drop + add new rules
-			if spec.Tp == ast.PlacementDrop {
-				// error if no rules will be dropped
-				if len(bundle.Rules) == origLen {
-					err = errors.Errorf("no rule of role '%s' to drop", role)
-					break
-				}
-				continue
-			}
-		}
-
-		var newRules []*placement.Rule
-		newRules, err = buildPlacementSpecReplicasAndConstraint(spec.Replicas, spec.Constraints)
-		if err != nil {
-			break
-		}
-		for _, r := range newRules {
-			r.Role = role
-			bundle.Rules = append(bundle.Rules, r)
-		}
-	}
-
-	if err != nil {
-		var sb strings.Builder
-		sb.Reset()
-
-		restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreKeyWordLowercase|format.RestoreNameBackQuotes, &sb)
-
-		if e := spec.Restore(restoreCtx); e != nil {
-			return nil, ErrInvalidPlacementSpec.GenWithStackByArgs("", err)
-		}
-
-		return nil, ErrInvalidPlacementSpec.GenWithStackByArgs(sb.String(), err)
-	}
-
-	return bundle, nil
-}
-
 func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
 	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
@@ -6077,61 +5947,29 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		return errors.Trace(err)
 	}
 
-	oldBundle := infoschema.GetBundle(d.infoCache.GetLatest(), []int64{partitionID, meta.ID, schema.ID})
+	bundle := infoschema.GetBundle(d.infoCache.GetLatest(), []int64{partitionID, meta.ID, schema.ID})
 
-	oldBundle.ID = placement.GroupID(partitionID)
+	bundle.ID = placement.GroupID(partitionID)
 
-	bundle, err := buildPlacementSpecs(oldBundle, spec.PlacementSpecs)
+	err = bundle.ApplyPlacementSpec(spec.PlacementSpecs)
+	if err != nil {
+		var sb strings.Builder
+		sb.Reset()
+
+		restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreKeyWordLowercase|format.RestoreNameBackQuotes, &sb)
+
+		if e := spec.Restore(restoreCtx); e != nil {
+			return ErrInvalidPlacementSpec.GenWithStackByArgs("", err)
+		}
+		return ErrInvalidPlacementSpec.GenWithStackByArgs(sb.String(), err)
+	}
+
+	err = bundle.Tidy()
 	if err != nil {
 		return errors.Trace(err)
 	}
+	bundle.Reset(partitionID)
 
-	extraCnt := map[placement.PeerRoleType]int{}
-	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(partitionID)))
-	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(partitionID+1)))
-	newRules := bundle.Rules[:0]
-	for i, rule := range bundle.Rules {
-		// merge all empty constraints
-		if len(rule.Constraints) == 0 {
-			extraCnt[rule.Role] += rule.Count
-			continue
-		}
-		// refer to tidb#22065.
-		// add -engine=tiflash to every rule to avoid schedules to tiflash instances.
-		// placement rules in SQL is not compatible with `set tiflash replica` yet
-		if err := rule.Constraints.Add(placement.Constraint{
-			Op:     placement.NotIn,
-			Key:    placement.EngineLabelKey,
-			Values: []string{placement.EngineLabelTiFlash},
-		}); err != nil {
-			return errors.Trace(err)
-		}
-		rule.GroupID = bundle.ID
-		rule.ID = strconv.Itoa(i)
-		rule.StartKeyHex = startKey
-		rule.EndKeyHex = endKey
-		newRules = append(newRules, rule)
-	}
-	for role, cnt := range extraCnt {
-		if cnt <= 0 {
-			continue
-		}
-		// refer to tidb#22065.
-		newRules = append(newRules, &placement.Rule{
-			GroupID:     bundle.ID,
-			ID:          string(role),
-			Role:        role,
-			Count:       cnt,
-			StartKeyHex: startKey,
-			EndKeyHex:   endKey,
-			Constraints: []placement.Constraint{{
-				Op:     placement.NotIn,
-				Key:    placement.EngineLabelKey,
-				Values: []string{placement.EngineLabelTiFlash},
-			}},
-		})
-	}
-	bundle.Rules = newRules
 	if len(bundle.Rules) == 0 {
 		bundle.Index = 0
 		bundle.Override = false

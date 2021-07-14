@@ -323,7 +323,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
-	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
+	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
 			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
 				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
@@ -352,6 +352,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 				if err != nil {
 					logutil.BgLogger().Info("update record cast value failed", zap.Any("col", col), zap.Uint64("txnStartTS", txn.StartTS()),
 						zap.String("handle", h.String()), zap.Any("val", oldData[col.DependencyColumnOffset]), zap.Error(err))
+					return err
 				}
 				oldData = append(oldData, value)
 				touched = append(touched, touched[col.DependencyColumnOffset])
@@ -622,7 +623,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		fn.ApplyOn(&opt)
 	}
 
-	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
+	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
 			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
 				return nil, table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
@@ -769,7 +770,10 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	var setPresume bool
 	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
 	if (t.meta.IsCommonHandle || t.meta.PKIsHandle) && !skipCheck && !opt.SkipHandleCheck {
-		if sctx.GetSessionVars().LazyCheckKeyNotExists() {
+		if t.meta.TempTableType != model.TempTableNone {
+			// Always check key for temporary table because it does not write to TiKV
+			_, err = sctx.GetSessionVars().GetTemporaryTableTxnValue(ctx, txn, key)
+		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
 			var v []byte
 			v, err = txn.GetMemBuffer().Get(ctx, key)
 			if err != nil {
@@ -1033,7 +1037,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	if err != nil {
 		return err
 	}
-	if m := t.Meta(); m.TempTableType == model.TempTableGlobal {
+	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(ctx, m); tmpTable != nil {
 			if tmpTable.GetSize() > ctx.GetSessionVars().TMPTableSize {
 				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
@@ -1044,7 +1048,16 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 
 	// The table has non-public column and this column is doing the operation of "modify/change column".
 	if len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
-		r = append(r, r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset])
+		// The changing column datum derived from related column should be casted here.
+		// Otherwise, the existed changing indexes will not be deleted.
+		relatedColDatum := r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset]
+		value, err := table.CastValue(ctx, relatedColDatum, t.Columns[len(r)].ColumnInfo, false, false)
+		if err != nil {
+			logutil.BgLogger().Info("remove record cast value failed", zap.Any("col", t.Columns[len(r)]),
+				zap.String("handle", h.String()), zap.Any("val", relatedColDatum), zap.Error(err))
+			return err
+		}
+		r = append(r, value)
 	}
 	err = t.removeRowIndices(ctx, h, r)
 	if err != nil {
@@ -1817,6 +1830,8 @@ type TemporaryTable struct {
 	autoIDAllocator autoid.Allocator
 	// Table size.
 	size int64
+
+	meta *model.TableInfo
 }
 
 // TempTableFromMeta builds a TempTable from model.TableInfo.
@@ -1825,6 +1840,7 @@ func TempTableFromMeta(tblInfo *model.TableInfo) tableutil.TempTable {
 		modified:        false,
 		stats:           statistics.PseudoTable(tblInfo),
 		autoIDAllocator: autoid.NewAllocatorFromTempTblInfo(tblInfo),
+		meta:            tblInfo,
 	}
 }
 
@@ -1856,4 +1872,9 @@ func (t *TemporaryTable) GetSize() int64 {
 // SetSize sets the table size.
 func (t *TemporaryTable) SetSize(v int64) {
 	t.size = v
+}
+
+// GetMeta gets the table meta.
+func (t *TemporaryTable) GetMeta() *model.TableInfo {
+	return t.meta
 }

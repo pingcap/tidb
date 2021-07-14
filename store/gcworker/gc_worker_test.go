@@ -38,24 +38,23 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
-	"github.com/pingcap/tidb/store/tikv/retry"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/oracle/oracles"
+	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	pd "github.com/tikv/pd/client"
 )
 
 func TestT(t *testing.T) {
+	tikv.EnableFailpoints()
 	TestingT(t)
 }
 
 type testGCWorkerSuite struct {
 	store      kv.Storage
 	tikvStore  tikv.Storage
-	cluster    cluster.Cluster
+	cluster    testutils.Cluster
 	oracle     *oracles.MockOracle
 	gcWorker   *GCWorker
 	dom        *domain.Domain
@@ -81,7 +80,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 
 	store, err := mockstore.NewMockStore(
 		mockstore.WithStoreType(mockstore.MockTiKV),
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			s.initRegion.storeIDs, s.initRegion.peerIDs, s.initRegion.regionID, _ = mockstore.BootstrapWithMultiStores(c, 3)
 			s.cluster = c
 		}),
@@ -424,23 +423,23 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	c.Assert(err, IsNil)
 	s.checkCollected(c, p)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")`), IsNil)
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/tikvStoreSendReqResult"), IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("GCNotLeader")`), IsNil)
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr.GetNotLeader(), NotNil)
 	c.Assert(err, IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/tikvStoreSendReqResult"), IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("GCServerIsBusy")`), IsNil)
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/tikvStoreSendReqResult"), IsNil)
 }
 
 func (s *testGCWorkerSuite) TestGetGCConcurrency(c *C) {
@@ -870,10 +869,10 @@ func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestResolveLockRangeInfine(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry", "return(true)"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/invalidCacheAndRetry", "return(true)"), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff", "return(1)"), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/invalidCacheAndRetry"), IsNil)
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff"), IsNil)
 	}()
 	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte{0}, []byte{1})
@@ -940,11 +939,11 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 		if regionID.GetID() == s.initRegion.regionID && *firstAccessRef {
 			*firstAccessRef = false
 			// merge region2 into region1 and return EpochNotMatch error.
-			mCluster := s.cluster.(*mocktikv.Cluster)
+			mCluster := s.cluster.(*testutils.MockCluster)
 			mCluster.Merge(s.initRegion.regionID, region2)
 			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
 			_, err := s.tikvStore.GetRegionCache().OnRegionEpochNotMatch(
-				retry.NewNoopBackoff(context.Background()),
+				tikv.NewNoopBackoff(context.Background()),
 				&tikv.RPCContext{Region: regionID, Store: &tikv.Store{}},
 				[]*metapb.Region{regionMeta})
 			c.Assert(err, IsNil)

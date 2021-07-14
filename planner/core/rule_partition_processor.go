@@ -14,11 +14,12 @@ package core
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	gomath "math"
 	"sort"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -183,10 +184,10 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 				if r.HighExclude {
 					posHigh--
 				}
-				rangeScalar := posHigh - posLow
+				rangeScalar := float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
 
 				// if range is less than the number of partitions, there will be unused partitions we can prune out.
-				if rangeScalar < int64(numPartitions) && !highIsNull && !lowIsNull {
+				if rangeScalar < float64(numPartitions) && !highIsNull && !lowIsNull {
 					for i := posLow; i <= posHigh; i++ {
 						idx := math.Abs(i % int64(pi.Num))
 						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
@@ -200,7 +201,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 				// issue:#22619
 				if col.RetType.Tp == mysql.TypeBit {
 					// maximum number of partitions is 8192
-					if col.RetType.Flen > 0 && col.RetType.Flen < int(math.Log2(ddl.PartitionCountLimit)) {
+					if col.RetType.Flen > 0 && col.RetType.Flen < int(gomath.Log2(ddl.PartitionCountLimit)) {
 						// all possible hash values
 						maxUsedPartitions := 1 << col.RetType.Flen
 						if maxUsedPartitions < numPartitions {
@@ -289,6 +290,15 @@ func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.
 			})
 			continue
 		}
+		if colExpr.ID == model.ExtraPidColID {
+			names = append(names, &types.FieldName{
+				DBName:      ds.DBName,
+				TblName:     ds.tableInfo.Name,
+				ColName:     model.ExtraPartitionIdName,
+				OrigColName: model.ExtraPartitionIdName,
+			})
+			continue
+		}
 		if colInfo, found := colsInfoMap[colExpr.ID]; found {
 			names = append(names, &types.FieldName{
 				DBName:      ds.DBName,
@@ -300,7 +310,7 @@ func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.
 			})
 			continue
 		}
-		return nil, fmt.Errorf("information of column %v is not found", colExpr.String())
+		return nil, errors.Trace(fmt.Errorf("information of column %v is not found", colExpr.String()))
 	}
 	return names, nil
 }
