@@ -53,8 +53,7 @@ const (
 	// WindowSize determines how long some data is aggregated by.
 	WindowSize = 1 * time.Hour
 	// SubWindowSize determines how often data is rotated.
-	// SubWindowSize = 1 * time.Minute
-	SubWindowSize = 10 * time.Second
+	SubWindowSize = 1 * time.Minute
 
 	maxSubWindowLength         = int(ReportInterval / SubWindowSize) // TODO: Ceiling?
 	maxSubWindowLengthInWindow = int(WindowSize / SubWindowSize)     // TODO: Ceiling?
