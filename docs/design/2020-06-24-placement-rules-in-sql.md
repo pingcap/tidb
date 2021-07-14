@@ -614,7 +614,7 @@ In such a way, the most granular rule always works.
 
 ## Investigation & Alternatives
 
-For investigation, we looked at the implementation of placement rules in various datases (CockroachDB, Yugabyte, OceanBase).
+For investigation, we looked at the implementation of placement rules in various databases (CockroachDB, Yugabyte, OceanBase).
 
 The idea of using a `PLACEMENT POLICY` was inspired by how OceanBase has Placement Groups, which are then applied to tables. But the usage as proposed here is optional, which allows for more flexibility for casual cases. The idea of using a Placement Group can also be seen as similar to using a "tablespace" in a traditional database, but it's not completely the same since the choice is less binary (constraints allow the placement of roles for leaders, followers, learners etc.)
 
