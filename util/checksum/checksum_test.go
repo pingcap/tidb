@@ -20,52 +20,78 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/check"
 	encrypt2 "github.com/pingcap/tidb/util/encrypt"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	check.TestingT(t)
+func createTestFileWithoutClose(t *testing.T, path string) (f *os.File, clean func()) {
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	clean = func() {
+		err := os.Remove(path)
+		assert.NoError(t, err)
+	}
+	return f, clean
 }
 
-var _ = check.Suite(&testChecksumSuite{})
-
-type testChecksumSuite struct{}
-
-func (s *testChecksumSuite) TestChecksumReadAt(c *check.C) {
-	path := "checksum"
+func createTestFile(t *testing.T, path string) (f *os.File, clean func()) {
 	f, err := os.Create(path)
-	c.Assert(err, check.IsNil)
-	defer func() {
-		err = f.Close()
-		c.Assert(err, check.IsNil)
+	require.NoError(t, err)
+	clean = func() {
+		err := f.Close()
+		assert.NoError(t, err)
 		err = os.Remove(path)
-		c.Assert(err, check.IsNil)
-	}()
-
-	writeString := "0123456789"
-	csw := NewWriter(NewWriter(NewWriter(NewWriter(f))))
-	w := bytes.NewBuffer(nil)
-	for i := 0; i < 510; i++ {
-		w.WriteString(writeString)
+		assert.NoError(t, err)
 	}
+	return f, clean
+}
+
+func openTestFile(t *testing.T, path string) (f *os.File, clean func()) {
+	f, err := os.Open(path)
+	require.NoError(t, err)
+	clean = func() {
+		err := f.Close()
+		assert.NoError(t, err)
+	}
+	return f, clean
+}
+
+func newTestBuff(str string, n int) *bytes.Buffer {
+	buf := bytes.NewBuffer(nil)
+	testData := str
+	for i := 0; i < n; i++ {
+		buf.WriteString(testData)
+	}
+	return buf
+}
+
+func TestChecksumReadAt(t *testing.T) {
+	t.Parallel()
+	path := "checksum"
+	f, clean := createTestFileWithoutClose(t, path)
+	defer clean()
+
+	w := newTestBuff("0123456789", 510)
+
+	csw := NewWriter(NewWriter(NewWriter(NewWriter(f))))
 	n1, err := csw.Write(w.Bytes())
-	c.Assert(err, check.IsNil)
+	assert.NoError(t, err)
 	n2, err := csw.Write(w.Bytes())
-	c.Assert(err, check.IsNil)
+	assert.NoError(t, err)
 	err = csw.Close()
-	c.Assert(err, check.IsNil)
+	assert.NoError(t, err)
 
-	f, err = os.Open(path)
-	c.Assert(err, check.IsNil)
+	f, clean = openTestFile(t, path)
+	defer clean()
 
-	assertReadAt := func(off int64, assertErr interface{}, assertN int, assertString string) {
+	assertReadAt := func(off int64, assertErr error, assertN int, assertString string) {
 		cs := NewReader(NewReader(NewReader(NewReader(f))))
 		r := make([]byte, 10)
 		n, err := cs.ReadAt(r, off)
-		c.Assert(err, check.Equals, assertErr)
-		c.Assert(n, check.Equals, assertN)
-		c.Assert(string(r), check.Equals, assertString)
+		assert.ErrorIs(t, err, assertErr)
+		assert.Equal(t, assertN, n)
+		assert.Equal(t, assertString, string(r))
 	}
 
 	assertReadAt(0, nil, 10, "0123456789")
@@ -105,26 +131,56 @@ func (w *mockWriter) Close() (err error) {
 	return w.w.Close()
 }
 
+func assertUnderlyingWrite(t *testing.T, encrypt bool, f *os.File, fc func(b []byte, offset int) []byte, err error) (*encrypt2.CtrCipher, bool) {
+	var underlying io.WriteCloser = newMockWriter(f, fc)
+	var ctrCipher *encrypt2.CtrCipher
+	if encrypt {
+		ctrCipher, err = encrypt2.NewCtrCipher()
+		if err != nil {
+			return nil, true
+		}
+		underlying = encrypt2.NewWriter(underlying, ctrCipher)
+	}
+	underlying = NewWriter(underlying)
+
+	w := newTestBuff("0123456789", 510)
+	_, err = underlying.Write(w.Bytes())
+	assert.NoError(t, err)
+	_, err = underlying.Write(w.Bytes())
+	assert.NoError(t, err)
+	err = underlying.Close()
+	assert.NoError(t, err)
+	return ctrCipher, false
+}
+
+func underlyingReadAt(f *os.File, encrypt bool, ctrCipher *encrypt2.CtrCipher, n, off int) error {
+	var underlying io.ReaderAt = f
+	if encrypt {
+		underlying = encrypt2.NewReader(underlying, ctrCipher)
+	}
+	underlying = NewReader(underlying)
+
+	r := make([]byte, n)
+	_, err := underlying.ReadAt(r, int64(off))
+	return err
+}
+
 /*
 	CaseID : TICASE-3644
 	Summary : Add a byte randomly
 	Expected outcome: Whether encrypted or not, when reading data, both the current block and the following block have errors.
 */
-func (s *testChecksumSuite) TestTiCase3644(c *check.C) {
-	s.testTiCase3644(c, false)
-	s.testTiCase3644(c, true)
+func TestAddOneByte(t *testing.T) {
+	t.Parallel()
+	testAddOneByte(t, false)
+	testAddOneByte(t, true)
 }
 
-func (s *testChecksumSuite) testTiCase3644(c *check.C, encrypt bool) {
+func testAddOneByte(t *testing.T, encrypt bool) {
 	path := "TiCase3644"
-	f, err := os.Create(path)
-	c.Assert(err, check.IsNil)
-	defer func() {
-		err = f.Close()
-		c.Assert(err, check.IsNil)
-		err = os.Remove(path)
-		c.Assert(err, check.IsNil)
-	}()
+	f, clean := createTestFileWithoutClose(t, path)
+	defer clean()
+	var err error
 
 	insertPos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -135,48 +191,22 @@ func (s *testChecksumSuite) testTiCase3644(c *check.C, encrypt bool) {
 		return b
 	}
 
-	var underlying io.WriteCloser = newMockWriter(f, fc)
-	var ctrCipher *encrypt2.CtrCipher
-	if encrypt {
-		ctrCipher, err = encrypt2.NewCtrCipher()
-		if err != nil {
-			return
-		}
-		underlying = encrypt2.NewWriter(underlying, ctrCipher)
+	ctrCipher, done := assertUnderlyingWrite(t, encrypt, f, fc, err)
+	if done {
+		return
 	}
-	underlying = NewWriter(underlying)
-
-	writeString := "0123456789"
-	w := bytes.NewBuffer(nil)
-	for i := 0; i < 510; i++ {
-		w.WriteString(writeString)
-	}
-	_, err = underlying.Write(w.Bytes())
-	c.Assert(err, check.IsNil)
-	_, err = underlying.Write(w.Bytes())
-	c.Assert(err, check.IsNil)
-	err = underlying.Close()
-	c.Assert(err, check.IsNil)
-
-	f, err = os.Open(path)
-	c.Assert(err, check.IsNil)
+	f, clean = openTestFile(t, path)
+	defer clean()
 
 	for i := 0; ; i++ {
-		var underlying io.ReaderAt = f
-		if encrypt {
-			underlying = encrypt2.NewReader(underlying, ctrCipher)
-		}
-		underlying = NewReader(underlying)
-
-		r := make([]byte, 10)
-		_, err := underlying.ReadAt(r, int64(i*1000))
+		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
 		if err == io.EOF {
 			break
 		}
 		if i < 5 {
-			c.Assert(err, check.Equals, nil)
+			assert.NoError(t, err)
 		} else {
-			c.Assert(err, check.Equals, errChecksumFail)
+			assert.ErrorIs(t, err, errChecksumFail)
 		}
 	}
 }
@@ -186,21 +216,17 @@ func (s *testChecksumSuite) testTiCase3644(c *check.C, encrypt bool) {
 	Summary : Delete a byte randomly
 	Expected outcome: Whether encrypted or not, when reading data, both the current block and the following block have errors.
 */
-func (s *testChecksumSuite) TestTiCase3645(c *check.C) {
-	s.testTiCase3645(c, false)
-	s.testTiCase3645(c, true)
+func TestDeleteOneByte(t *testing.T) {
+	t.Parallel()
+	testDeleteOneByte(t, false)
+	testDeleteOneByte(t, true)
 }
 
-func (s *testChecksumSuite) testTiCase3645(c *check.C, encrypt bool) {
+func testDeleteOneByte(t *testing.T, encrypt bool) {
 	path := "TiCase3645"
-	f, err := os.Create(path)
-	c.Assert(err, check.IsNil)
-	defer func() {
-		err = f.Close()
-		c.Assert(err, check.IsNil)
-		err = os.Remove(path)
-		c.Assert(err, check.IsNil)
-	}()
+	f, clean := createTestFileWithoutClose(t, path)
+	defer clean()
+	var err error
 
 	deletePos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -211,48 +237,22 @@ func (s *testChecksumSuite) testTiCase3645(c *check.C, encrypt bool) {
 		return b
 	}
 
-	var underlying io.WriteCloser = newMockWriter(f, fc)
-	var ctrCipher *encrypt2.CtrCipher
-	if encrypt {
-		ctrCipher, err = encrypt2.NewCtrCipher()
-		if err != nil {
-			return
-		}
-		underlying = encrypt2.NewWriter(underlying, ctrCipher)
+	ctrCipher, done := assertUnderlyingWrite(t, encrypt, f, fc, err)
+	if done {
+		return
 	}
-	underlying = NewWriter(underlying)
-
-	writeString := "0123456789"
-	w := bytes.NewBuffer(nil)
-	for i := 0; i < 510; i++ {
-		w.WriteString(writeString)
-	}
-	_, err = underlying.Write(w.Bytes())
-	c.Assert(err, check.IsNil)
-	_, err = underlying.Write(w.Bytes())
-	c.Assert(err, check.IsNil)
-	err = underlying.Close()
-	c.Assert(err, check.IsNil)
-
-	f, err = os.Open(path)
-	c.Assert(err, check.IsNil)
+	f, clean = openTestFile(t, path)
+	defer clean()
 
 	for i := 0; ; i++ {
-		var underlying io.ReaderAt = f
-		if encrypt {
-			underlying = encrypt2.NewReader(underlying, ctrCipher)
-		}
-		underlying = NewReader(underlying)
-
-		r := make([]byte, 10)
-		_, err := underlying.ReadAt(r, int64(i*1000))
+		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
 		if err == io.EOF {
 			break
 		}
 		if i < 5 {
-			c.Assert(err, check.Equals, nil)
+			assert.NoError(t, err)
 		} else {
-			c.Assert(err, check.Equals, errChecksumFail)
+			assert.ErrorIs(t, err, errChecksumFail)
 		}
 	}
 }
@@ -262,21 +262,17 @@ func (s *testChecksumSuite) testTiCase3645(c *check.C, encrypt bool) {
 	Summary : Modify a byte randomly
 	Expected outcome: Whether encrypted or not, when reading data, only the current block has error.
 */
-func (s *testChecksumSuite) TestTiCase3646(c *check.C) {
-	s.testTiCase3646(c, false)
-	s.testTiCase3646(c, true)
+func TestModifyOneByte(t *testing.T) {
+	t.Parallel()
+	testModifyOneByte(t, false)
+	testModifyOneByte(t, true)
 }
 
-func (s *testChecksumSuite) testTiCase3646(c *check.C, encrypt bool) {
+func testModifyOneByte(t *testing.T, encrypt bool) {
 	path := "TiCase3646"
-	f, err := os.Create(path)
-	c.Assert(err, check.IsNil)
-	defer func() {
-		err = f.Close()
-		c.Assert(err, check.IsNil)
-		err = os.Remove(path)
-		c.Assert(err, check.IsNil)
-	}()
+	f, clean := createTestFileWithoutClose(t, path)
+	defer clean()
+	var err error
 
 	modifyPos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -287,48 +283,22 @@ func (s *testChecksumSuite) testTiCase3646(c *check.C, encrypt bool) {
 		return b
 	}
 
-	var underlying io.WriteCloser = newMockWriter(f, fc)
-	var ctrCipher *encrypt2.CtrCipher
-	if encrypt {
-		ctrCipher, err = encrypt2.NewCtrCipher()
-		if err != nil {
-			return
-		}
-		underlying = encrypt2.NewWriter(underlying, ctrCipher)
+	ctrCipher, done := assertUnderlyingWrite(t, encrypt, f, fc, err)
+	if done {
+		return
 	}
-	underlying = NewWriter(underlying)
-
-	writeString := "0123456789"
-	w := bytes.NewBuffer(nil)
-	for i := 0; i < 510; i++ {
-		w.WriteString(writeString)
-	}
-	_, err = underlying.Write(w.Bytes())
-	c.Assert(err, check.IsNil)
-	_, err = underlying.Write(w.Bytes())
-	c.Assert(err, check.IsNil)
-	err = underlying.Close()
-	c.Assert(err, check.IsNil)
-
-	f, err = os.Open(path)
-	c.Assert(err, check.IsNil)
+	f, clean = openTestFile(t, path)
+	defer clean()
 
 	for i := 0; ; i++ {
-		var underlying io.ReaderAt = f
-		if encrypt {
-			underlying = encrypt2.NewReader(underlying, ctrCipher)
-		}
-		underlying = NewReader(underlying)
-
-		r := make([]byte, 10)
-		_, err := underlying.ReadAt(r, int64(i*1000))
+		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
 		if err == io.EOF {
 			break
 		}
 		if i != 5 {
-			c.Assert(err, check.Equals, nil)
+			assert.NoError(t, err)
 		} else {
-			c.Assert(err, check.Equals, errChecksumFail)
+			assert.ErrorIs(t, err, errChecksumFail)
 		}
 	}
 }
@@ -338,21 +308,17 @@ func (s *testChecksumSuite) testTiCase3646(c *check.C, encrypt bool) {
 	Summary : Read an empty file.
 	Expected outcome: Whether encrypted or not, no error will occur.
 */
-func (s *testChecksumSuite) TestTiCase3647(c *check.C) {
-	s.testTiCase3647(c, false)
-	s.testTiCase3647(c, true)
+func TestReadEmptyFile(t *testing.T) {
+	t.Parallel()
+	testReadEmptyFile(t, false)
+	testReadEmptyFile(t, true)
 }
 
-func (s *testChecksumSuite) testTiCase3647(c *check.C, encrypt bool) {
+func testReadEmptyFile(t *testing.T, encrypt bool) {
 	path := "TiCase3647"
-	f, err := os.Create(path)
-	c.Assert(err, check.IsNil)
-	defer func() {
-		err = f.Close()
-		c.Assert(err, check.IsNil)
-		err = os.Remove(path)
-		c.Assert(err, check.IsNil)
-	}()
+	f, clean := createTestFile(t, path)
+	defer clean()
+	var err error
 
 	var ctrCipher *encrypt2.CtrCipher
 	if encrypt {
@@ -370,7 +336,7 @@ func (s *testChecksumSuite) testTiCase3647(c *check.C, encrypt bool) {
 		underlying = NewReader(underlying)
 		r := make([]byte, 10)
 		_, err := underlying.ReadAt(r, int64(i*1020))
-		c.Assert(err, check.Equals, io.EOF)
+		assert.ErrorIs(t, err, io.EOF)
 	}
 }
 
@@ -379,21 +345,17 @@ func (s *testChecksumSuite) testTiCase3647(c *check.C, encrypt bool) {
 	Summary : Modify some bytes in one block.
 	Expected outcome: Whether encrypted or not, when reading data, only the current block has error.
 */
-func (s *testChecksumSuite) TestTiCase3648(c *check.C) {
-	s.testTiCase3648(c, false)
-	s.testTiCase3648(c, true)
+func TestModifyThreeBytes(t *testing.T) {
+	t.Parallel()
+	testModifyThreeBytes(t, false)
+	testModifyThreeBytes(t, true)
 }
 
-func (s *testChecksumSuite) testTiCase3648(c *check.C, encrypt bool) {
+func testModifyThreeBytes(t *testing.T, encrypt bool) {
 	path := "TiCase3648"
-	f, err := os.Create(path)
-	c.Assert(err, check.IsNil)
-	defer func() {
-		err = f.Close()
-		c.Assert(err, check.IsNil)
-		err = os.Remove(path)
-		c.Assert(err, check.IsNil)
-	}()
+	f, clean := createTestFileWithoutClose(t, path)
+	defer clean()
+	var err error
 
 	modifyPos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -408,48 +370,22 @@ func (s *testChecksumSuite) testTiCase3648(c *check.C, encrypt bool) {
 		return b
 	}
 
-	var underlying io.WriteCloser = newMockWriter(f, fc)
-	var ctrCipher *encrypt2.CtrCipher
-	if encrypt {
-		ctrCipher, err = encrypt2.NewCtrCipher()
-		if err != nil {
-			return
-		}
-		underlying = encrypt2.NewWriter(underlying, ctrCipher)
+	ctrCipher, done := assertUnderlyingWrite(t, encrypt, f, fc, err)
+	if done {
+		return
 	}
-	underlying = NewWriter(underlying)
-
-	writeString := "0123456789"
-	w := bytes.NewBuffer(nil)
-	for i := 0; i < 510; i++ {
-		w.WriteString(writeString)
-	}
-	_, err = underlying.Write(w.Bytes())
-	c.Assert(err, check.IsNil)
-	_, err = underlying.Write(w.Bytes())
-	c.Assert(err, check.IsNil)
-	err = underlying.Close()
-	c.Assert(err, check.IsNil)
-
-	f, err = os.Open(path)
-	c.Assert(err, check.IsNil)
+	f, clean = openTestFile(t, path)
+	defer clean()
 
 	for i := 0; ; i++ {
-		var underlying io.ReaderAt = f
-		if encrypt {
-			underlying = encrypt2.NewReader(underlying, ctrCipher)
-		}
-		underlying = NewReader(underlying)
-
-		r := make([]byte, 10)
-		_, err := underlying.ReadAt(r, int64(i*1000))
+		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
 		if err == io.EOF {
 			break
 		}
 		if i != 5 {
-			c.Assert(err, check.Equals, nil)
+			assert.NoError(t, err)
 		} else {
-			c.Assert(err, check.Equals, errChecksumFail)
+			assert.ErrorIs(t, err, errChecksumFail)
 		}
 	}
 }
@@ -464,21 +400,17 @@ func (s *testChecksumSuite) testTiCase3648(c *check.C, encrypt bool) {
 	Summary : Read all data at once.
 	Expected outcome: Whether encrypted or not, the result is right.
 */
-func (s *testChecksumSuite) TestTiCase3649and3650(c *check.C) {
-	s.testTiCase3649and3650(c, false)
-	s.testTiCase3649and3650(c, true)
+func TestReadDifferentBlockSize(t *testing.T) {
+	t.Parallel()
+	testReadDifferentBlockSize(t, false)
+	testReadDifferentBlockSize(t, true)
 }
 
-func (s *testChecksumSuite) testTiCase3649and3650(c *check.C, encrypt bool) {
+func testReadDifferentBlockSize(t *testing.T, encrypt bool) {
 	path := "TiCase3649and3650"
-	f, err := os.Create(path)
-	c.Assert(err, check.IsNil)
-	defer func() {
-		err = f.Close()
-		c.Assert(err, check.IsNil)
-		err = os.Remove(path)
-		c.Assert(err, check.IsNil)
-	}()
+	f, clean := createTestFileWithoutClose(t, path)
+	defer clean()
+	var err error
 
 	var underlying io.WriteCloser = f
 	var ctrCipher *encrypt2.CtrCipher
@@ -491,49 +423,50 @@ func (s *testChecksumSuite) testTiCase3649and3650(c *check.C, encrypt bool) {
 	}
 	underlying = NewWriter(underlying)
 
-	writeString := "0123456789"
-	w := bytes.NewBuffer(nil)
-	for i := 0; i < 510; i++ {
-		w.WriteString(writeString)
-	}
+	w := newTestBuff("0123456789", 510)
 	_, err = underlying.Write(w.Bytes())
-	c.Assert(err, check.IsNil)
+	assert.NoError(t, err)
 	_, err = underlying.Write(w.Bytes())
-	c.Assert(err, check.IsNil)
+	assert.NoError(t, err)
 	err = underlying.Close()
-	c.Assert(err, check.IsNil)
+	assert.NoError(t, err)
 
-	f, err = os.Open(path)
-	c.Assert(err, check.IsNil)
+	f, clean = openTestFile(t, path)
+	defer clean()
 
-	assertReadAt := func(off int64, r []byte, assertErr interface{}, assertN int, assertString string) {
+	assertReadAt := assertReadAtFunc(t, encrypt, ctrCipher)
+
+	// 2000-3000, across 2 blocks
+	assertReadAt(2000, make([]byte, 1000), nil, 1000, strings.Repeat("0123456789", 100), f)
+	// 3005-6005, across 4 blocks
+	assertReadAt(3005, make([]byte, 3000), nil, 3000, strings.Repeat("5678901234", 300), f)
+	// 10000-10200, not eof
+	assertReadAt(10000, make([]byte, 200), nil, 200, strings.Repeat("0123456789", 20), f)
+	// 10000-10200, eof
+	assertReadAt(10000, make([]byte, 201), io.EOF, 200, strings.Join([]string{strings.Repeat("0123456789", 20), "\x00"}, ""), f)
+	// 5000-10200, not eof
+	assertReadAt(5000, make([]byte, 5200), nil, 5200, strings.Repeat("0123456789", 520), f)
+	// 5000-10200, eof
+	assertReadAt(5000, make([]byte, 6000), io.EOF, 5200, strings.Join([]string{strings.Repeat("0123456789", 520), strings.Repeat("\x00", 800)}, ""), f)
+	// 0-10200, not eof
+	assertReadAt(0, make([]byte, 10200), nil, 10200, strings.Repeat("0123456789", 1020), f)
+	// 0-10200, eof
+	assertReadAt(0, make([]byte, 11000), io.EOF, 10200, strings.Join([]string{strings.Repeat("0123456789", 1020), strings.Repeat("\x00", 800)}, ""), f)
+}
+
+func assertReadAtFunc(t *testing.T, encrypt bool, ctrCipher *encrypt2.CtrCipher) func(off int64, r []byte, assertErr error, assertN int, assertString string, f *os.File) {
+	return func(off int64, r []byte, assertErr error, assertN int, assertString string, f *os.File) {
 		var underlying io.ReaderAt = f
 		if encrypt {
 			underlying = encrypt2.NewReader(underlying, ctrCipher)
 		}
+
 		underlying = NewReader(underlying)
 		n, err := underlying.ReadAt(r, off)
-		c.Assert(err, check.Equals, assertErr)
-		c.Assert(n, check.Equals, assertN)
-		c.Assert(string(r), check.Equals, assertString)
+		assert.ErrorIs(t, err, assertErr)
+		assert.Equal(t, assertN, n)
+		assert.Equal(t, assertString, string(r))
 	}
-
-	// 2000-3000, across 2 blocks
-	assertReadAt(2000, make([]byte, 1000), nil, 1000, strings.Repeat("0123456789", 100))
-	// 3005-6005, across 4 blocks
-	assertReadAt(3005, make([]byte, 3000), nil, 3000, strings.Repeat("5678901234", 300))
-	// 10000-10200, not eof
-	assertReadAt(10000, make([]byte, 200), nil, 200, strings.Repeat("0123456789", 20))
-	// 10000-10200, eof
-	assertReadAt(10000, make([]byte, 201), io.EOF, 200, strings.Join([]string{strings.Repeat("0123456789", 20), "\x00"}, ""))
-	// 5000-10200, not eof
-	assertReadAt(5000, make([]byte, 5200), nil, 5200, strings.Repeat("0123456789", 520))
-	// 5000-10200, eof
-	assertReadAt(5000, make([]byte, 6000), io.EOF, 5200, strings.Join([]string{strings.Repeat("0123456789", 520), strings.Repeat("\x00", 800)}, ""))
-	// 0-10200, not eof
-	assertReadAt(0, make([]byte, 10200), nil, 10200, strings.Repeat("0123456789", 1020))
-	// 0-10200, eof
-	assertReadAt(0, make([]byte, 11000), io.EOF, 10200, strings.Join([]string{strings.Repeat("0123456789", 1020), strings.Repeat("\x00", 800)}, ""))
 }
 
 /*
@@ -546,36 +479,26 @@ func (s *testChecksumSuite) testTiCase3649and3650(c *check.C, encrypt bool) {
 	Summary : Write some block and append some block.
 	Expected outcome: Whether encrypted or not, after writing data, it can read data correctly.
 */
-func (s *testChecksumSuite) TestTiCase3651and3652(c *check.C) {
-	s.testTiCase3651and3652(c, false)
-	s.testTiCase3651and3652(c, true)
+func TestWriteDifferentBlockSize(t *testing.T) {
+	t.Parallel()
+	testWriteDifferentBlockSize(t, false)
+	testWriteDifferentBlockSize(t, true)
 }
 
-func (s *testChecksumSuite) testTiCase3651and3652(c *check.C, encrypt bool) {
+func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 	path1 := "TiCase3652file1"
-	f1, err := os.Create(path1)
-	c.Assert(err, check.IsNil)
+	f1, clean1 := createTestFileWithoutClose(t, path1)
 	defer func() {
-		err = f1.Close()
-		c.Assert(err, check.IsNil)
-		err = os.Remove(path1)
-		c.Assert(err, check.IsNil)
+		clean1()
 	}()
 	path2 := "TiCase3652file2"
-	f2, err := os.Create(path2)
-	c.Assert(err, check.IsNil)
+	f2, clean2 := createTestFileWithoutClose(t, path2)
 	defer func() {
-		err = f2.Close()
-		c.Assert(err, check.IsNil)
-		err = os.Remove(path2)
-		c.Assert(err, check.IsNil)
+		clean2()
 	}()
+	var err error
 
-	writeString := "0123456789"
-	w := bytes.NewBuffer(nil)
-	for i := 0; i < 510; i++ {
-		w.WriteString(writeString)
-	}
+	w := newTestBuff("0123456789", 510)
 	w.Write(w.Bytes())
 
 	var ctrCipher *encrypt2.CtrCipher
@@ -596,130 +519,100 @@ func (s *testChecksumSuite) testTiCase3651and3652(c *check.C, encrypt bool) {
 
 	// Write all data.
 	_, err = underlying1.Write(w.Bytes())
-	c.Assert(err, check.IsNil)
+	assert.NoError(t, err)
 	err = underlying1.Close()
-	c.Assert(err, check.IsNil)
-	f1, err = os.Open(path1)
-	c.Assert(err, check.IsNil)
+	assert.NoError(t, err)
+
+	f1, clean := openTestFile(t, path1)
+	defer clean()
 
 	// Write data by 100 bytes one batch.
 	lastPos := 0
 	for i := 100; ; i += 100 {
 		if i < len(w.Bytes()) {
 			_, err = underlying2.Write(w.Bytes()[lastPos:i])
-			c.Assert(err, check.IsNil)
+			assert.NoError(t, err)
 			lastPos = i
 		} else {
 			_, err = underlying2.Write(w.Bytes()[lastPos:])
-			c.Assert(err, check.IsNil)
+			assert.NoError(t, err)
 			break
 		}
 	}
 	err = underlying2.Close()
-	c.Assert(err, check.IsNil)
-	f2, err = os.Open(path2)
-	c.Assert(err, check.IsNil)
+	assert.NoError(t, err)
+	f2, clean = openTestFile(t, path2)
+	defer clean()
 
 	// check two files is same
 	s1, err := f1.Stat()
-	c.Assert(err, check.IsNil)
+	assert.NoError(t, err)
 	s2, err := f2.Stat()
-	c.Assert(err, check.IsNil)
-	c.Assert(s1.Size(), check.Equals, s2.Size())
+	assert.NoError(t, err)
+	assert.Equal(t, s1.Size(), s2.Size())
 	buffer1 := make([]byte, s1.Size())
 	buffer2 := make([]byte, s2.Size())
 	n1, err := f1.ReadAt(buffer1, 0)
-	c.Assert(err, check.IsNil)
+	assert.NoError(t, err)
 	n2, err := f2.ReadAt(buffer2, 0)
-	c.Assert(err, check.IsNil)
-	c.Assert(n1, check.Equals, n2)
-	c.Assert(buffer1, check.DeepEquals, buffer2)
+	assert.NoError(t, err)
+	assert.Equal(t, n1, n2)
+	assert.EqualValues(t, buffer1, buffer2)
 
 	// check data
-	assertReadAt := func(off int64, r []byte, assertErr interface{}, assertN int, assertString string, f *os.File) {
-		var underlying io.ReaderAt = f
-		if encrypt {
-			underlying = encrypt2.NewReader(underlying, ctrCipher)
-		}
-		underlying = NewReader(underlying)
-
-		n, err := underlying.ReadAt(r, off)
-		c.Assert(err, check.Equals, assertErr)
-		c.Assert(n, check.Equals, assertN)
-		c.Assert(string(r), check.Equals, assertString)
-	}
+	assertReadAt := assertReadAtFunc(t, encrypt, ctrCipher)
 	assertReadAt(0, make([]byte, 10200), nil, 10200, strings.Repeat("0123456789", 1020), f1)
 	assertReadAt(0, make([]byte, 10200), nil, 10200, strings.Repeat("0123456789", 1020), f2)
 }
 
-var checkFlushedData = func(c *check.C, f io.ReaderAt, off int64, readBufLen int, assertN int, assertErr interface{}, assertRes []byte) {
+var checkFlushedData = func(t *testing.T, f io.ReaderAt, off int64, readBufLen int, assertN int, assertErr error, assertRes []byte) {
 	readBuf := make([]byte, readBufLen)
 	r := NewReader(f)
 	n, err := r.ReadAt(readBuf, off)
-	c.Assert(err, check.Equals, assertErr)
-	c.Assert(n, check.Equals, assertN)
-	c.Assert(bytes.Compare(readBuf, assertRes), check.Equals, 0)
+	assert.ErrorIs(t, err, assertErr)
+	assert.Equal(t, assertN, n)
+	assert.Equal(t, 0, bytes.Compare(readBuf, assertRes))
 }
 
-func (s *testChecksumSuite) TestChecksumWriter(c *check.C) {
+func TestChecksumWriter(t *testing.T) {
+	t.Parallel()
 	path := "checksum_TestChecksumWriter"
-	f, err := os.Create(path)
-	c.Assert(err, check.IsNil)
-	defer func() {
-		err = f.Close()
-		c.Assert(err, check.IsNil)
-		err = os.Remove(path)
-		c.Assert(err, check.IsNil)
-	}()
+	f, clean := createTestFile(t, path)
+	defer clean()
 
-	buf := bytes.NewBuffer(nil)
-	testData := "0123456789"
-	for i := 0; i < 100; i++ {
-		buf.WriteString(testData)
-	}
-
+	buf := newTestBuff("0123456789", 100)
 	// Write 1000 bytes and flush.
 	w := NewWriter(f)
 	n, err := w.Write(buf.Bytes())
-	c.Assert(err, check.IsNil)
-	c.Assert(n, check.Equals, 1000)
+	assert.NoError(t, err)
+	assert.Equal(t, 1000, n)
 
 	err = w.Flush()
-	c.Assert(err, check.IsNil)
-	checkFlushedData(c, f, 0, 1000, 1000, nil, buf.Bytes())
+	assert.NoError(t, err)
+	checkFlushedData(t, f, 0, 1000, 1000, nil, buf.Bytes())
 
 	// All data flushed, so no data in cache.
 	cacheOff := w.GetCacheDataOffset()
-	c.Assert(cacheOff, check.Equals, int64(1000))
+	assert.Equal(t, int64(1000), cacheOff)
 }
 
-func (s *testChecksumSuite) TestChecksumWriterAutoFlush(c *check.C) {
+func TestChecksumWriterAutoFlush(t *testing.T) {
+	t.Parallel()
 	path := "checksum_TestChecksumWriterAutoFlush"
-	f, err := os.Create(path)
-	c.Assert(err, check.IsNil)
-	defer func() {
-		err = f.Close()
-		c.Assert(err, check.IsNil)
-		err = os.Remove(path)
-		c.Assert(err, check.IsNil)
-	}()
+	f, clean := createTestFile(t, path)
+	defer clean()
 
+	buf := newTestBuff("0123456789", 102)
 	w := NewWriter(f)
-
-	buf := bytes.NewBuffer(nil)
-	testData := "0123456789"
-	for i := 0; i < 102; i++ {
-		buf.WriteString(testData)
-	}
 	n, err := w.Write(buf.Bytes())
-	c.Assert(err, check.IsNil)
-	c.Assert(n, check.Equals, len(buf.Bytes()))
+	assert.NoError(t, err)
+	assert.Equal(t, len(buf.Bytes()), n)
 
 	// This write will trigger flush.
 	n, err = w.Write([]byte("0"))
-	c.Assert(err, check.IsNil)
-	c.Assert(n, check.Equals, 1)
-	checkFlushedData(c, f, 0, 1020, 1020, nil, buf.Bytes())
+	assert.NoError(t, err)
+	assert.Equal(t, 1, n)
+	checkFlushedData(t, f, 0, 1020, 1020, nil, buf.Bytes())
 	cacheOff := w.GetCacheDataOffset()
-	c.Assert(cacheOff, check.Equals, int64(len(buf.Bytes())))
+	assert.Equal(t, int64(len(buf.Bytes())), cacheOff)
 }
