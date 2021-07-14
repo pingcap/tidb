@@ -37,18 +37,18 @@ type localColumnPool struct {
 	sync.Pool
 }
 
-func newLocalColumnPool(_ int) *localColumnPool {
+func newLocalColumnPool() *localColumnPool {
 	return &localColumnPool{
 		sync.Pool{
 			New: func() interface{} {
 				// Use default arguments
-				return chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
+				return chunk.NewDefaultColumn()
 			},
 		},
 	}
 }
 
-var globalColumnAllocator = newLocalColumnPool(1024)
+var globalColumnAllocator = newLocalColumnPool()
 
 func newBuffer(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 	switch evalType {

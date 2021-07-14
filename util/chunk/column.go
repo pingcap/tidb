@@ -71,6 +71,11 @@ func NewColumn(ft *types.FieldType, cap int) *Column {
 	return newColumn(getFixedLen(ft), cap)
 }
 
+// NewDefaultColumn creates a new default column with the 8 length and InitialCapacity.
+func NewDefaultColumn() *Column {
+	return newFixedLenColumn(sizeInt64, InitialCapacity)
+}
+
 func newColumn(typeSize, cap int) *Column {
 	var col *Column
 	if typeSize == varElemLen {
