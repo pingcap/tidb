@@ -22,16 +22,16 @@ const (
 
 // DecodedKey is a struct contains detailed information about a key, its json form should be used to fill KEY_INFO field in `DEADLOCKS` and `DATA_LOCK_WAITS`
 type DecodedKey struct {
-	DbID            int64      `json:"db_id"`
-	DbName          string     `json:"db_name"`
-	TableID         int64      `json:"table_id"`
-	TableName       string     `json:"table_name"`
-	HandleType      HandleType `json:"handle_type"`
-	PartitionHandle bool       `json:"partition_handle"`
-	HandleValue     string     `json:"handle_value,omitempty"`
-	IndexID         int64      `json:"index_id,omitempty"`
-	IndexName       string     `json:"index_name,omitempty"`
-	IndexValues     []string   `json:"index_values,omitempty"`
+	DbID              int64      `json:"db_id"`
+	DbName            string     `json:"db_name"`
+	TableID           int64      `json:"table_id"`
+	TableName         string     `json:"table_name"`
+	HandleType        HandleType `json:"handle_type"`
+	IsPartitionHandle bool       `json:"partition_handle"`
+	HandleValue       string     `json:"handle_value,omitempty"`
+	IndexID           int64      `json:"index_id,omitempty"`
+	IndexName         string     `json:"index_name,omitempty"`
+	IndexValues       []string   `json:"index_values,omitempty"`
 }
 
 func handleType(handle kv.Handle) HandleType {
@@ -45,7 +45,9 @@ func handleType(handle kv.Handle) HandleType {
 		return handleType(h.Handle)
 	} else {
 		logutil.BgLogger().Warn("Unexpected kv.Handle type",
-			zap.String("handle", fmt.Sprintf("%T", handle)))
+			zap.Any("handle", handle),
+			zap.String("handle Type", fmt.Sprintf("%T", handle)),
+		)
 	}
 	return ""
 }
@@ -77,7 +79,7 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 			return result, errors.Errorf("cannot decode record key of table %d", tableID)
 		}
 		result.HandleType = handleType(handle)
-		_, result.PartitionHandle = handle.(kv.PartitionHandle)
+		_, result.IsPartitionHandle = handle.(kv.PartitionHandle)
 		result.HandleValue = handle.String()
 	} else {
 		// is index key
