@@ -302,7 +302,7 @@ func (s *testEnforceMPPSuite) TestEnforceMPPWarning3(c *C) {
 func (s *testEnforceMPPSuite) TestEnforceMPPWarning4(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	// test query
+	// test table
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t(a int primary key)")
