@@ -250,7 +250,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_rollback_on_timeout", "0"},
 	{ScopeGlobal | ScopeSession, "query_alloc_block_size", "8192"},
 	{ScopeGlobal, SlaveCompressedProtocol, "0"},
-	{ScopeGlobal | ScopeSession, InitConnect, ""},
+	{ScopeGlobal, InitConnect, ""},
 	{ScopeGlobal, "rpl_semi_sync_slave_trace_level", ""},
 	{ScopeNone, "have_compress", "YES"},
 	{ScopeNone, "thread_concurrency", "10"},
