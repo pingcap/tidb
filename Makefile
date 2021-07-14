@@ -110,7 +110,7 @@ test: test_part_1 test_part_2
 
 test_part_1: checklist explaintest
 
-test_part_2: checkdep gotest gogenerate
+test_part_2: gotest gogenerate
 
 explaintest: server_check
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
@@ -151,10 +151,6 @@ race: failpoint-enable
 leak: failpoint-enable
 	@export log_level=debug; \
 	$(GOTEST) -tags leak $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
-	@$(FAILPOINT_DISABLE)
-
-tikv_integration_test: failpoint-enable
-	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 
 server:
@@ -208,9 +204,6 @@ failpoint-disable: tools/bin/failpoint-ctl
 # Restoring gofail failpoints...
 	@$(FAILPOINT_DISABLE)
 
-checkdep:
-	$(GO) list -f '{{ join .Imports "\n" }}' github.com/pingcap/tidb/store/tikv | grep ^github.com/pingcap/parser$$ || exit 0; exit 1
-
 tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck
@@ -248,7 +241,7 @@ tools/bin/errdoc-gen: tools/check/go.mod
 	$(GO) build -o ../bin/errdoc-gen github.com/pingcap/errors/errdoc-gen
 
 tools/bin/golangci-lint:
-	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.29.0
+	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.41.1
 
 # Usage:
 #
@@ -269,3 +262,10 @@ else
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
+
+# Collect the daily benchmark data.
+# Usage:
+#	make bench-daily TO=/path/to/file.json
+bench-daily:
+	cd ./session && \
+	go test -run TestBenchDaily --date `git log -n1 --date=unix --pretty=format:%cd` --commit `git log -n1 --pretty=format:%h` --outfile $(TO)
