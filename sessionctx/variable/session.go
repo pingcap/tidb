@@ -863,6 +863,18 @@ type SessionVars struct {
 
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData kv.MemBuffer
+
+	// cached is used to optimze the object allocation.
+	cached struct {
+		curr int8
+		data [2]stmtctx.StatementContext
+	}
+}
+
+func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
+	s.cached.curr = (s.cached.curr + 1) % 2
+	s.cached.data[s.cached.curr] = stmtctx.StatementContext{}
+	return &s.cached.data[s.cached.curr]
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's

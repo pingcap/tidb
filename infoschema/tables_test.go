@@ -543,7 +543,6 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		Command: byte(1),
 		Digest:  "abc1",
 		State:   1,
-		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
 	}
 	sm.processInfoMap[2] = &util.ProcessInfo{
 		ID:            2,
@@ -553,7 +552,6 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		Digest:        "abc2",
 		State:         2,
 		Info:          strings.Repeat("x", 101),
-		StmtCtx:       tk.Se.GetSessionVars().StmtCtx,
 		CurTxnStartTS: 410090409861578752,
 	}
 	tk.Se.SetSessionManager(sm)
