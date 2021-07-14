@@ -185,10 +185,10 @@ The semantics of a `PLACEMENT POLICY` on a database/schema should be similar to 
 
 ```sql
 CREATE DATABASE mydb [DEFAULT] PLACEMENT POLICY=`companystandardpolicy`;
-CREATE TABLE t1 (a INT);
+CREATE TABLE mydb.t1 (a INT);
 ALTER DATABASE mydb [DEFAULT] PLACEMENT POLICY=`companynewpolicy`;
-CREATE TABLE t2 (a INT);
-CREATE TABLE t3 (a INT) PLACEMENT POLICY=`companystandardpolicy`;
+CREATE TABLE mydb.t2 (a INT);
+CREATE TABLE mydb.t3 (a INT) PLACEMENT POLICY=`companystandardpolicy`;
 ```
 
 * The tables t1 and t3 are created with the policy `companystandardpolicy` and the table t2 is created with `companynewpolicy`.
