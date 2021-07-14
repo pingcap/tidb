@@ -1020,7 +1020,7 @@ func (s *testStaleTxnSuite) TestStmtCtxStaleFlag(c *C) {
 		},
 		// assert select statement
 		{
-			sql:          fmt.Sprintf("select * from t"),
+			sql:          "select * from t",
 			hasStaleFlag: false,
 		},
 		// assert select statement in stale transaction
@@ -1029,7 +1029,7 @@ func (s *testStaleTxnSuite) TestStmtCtxStaleFlag(c *C) {
 			hasStaleFlag: false,
 		},
 		{
-			sql:          fmt.Sprintf("select * from t"),
+			sql:          "select * from t",
 			hasStaleFlag: true,
 		},
 		{
@@ -1042,12 +1042,12 @@ func (s *testStaleTxnSuite) TestStmtCtxStaleFlag(c *C) {
 			hasStaleFlag: false,
 		},
 		{
-			sql:          fmt.Sprintf("select * from t"),
+			sql:          "select * from t",
 			hasStaleFlag: true,
 		},
 		// assert select statement after consumed set transaction
 		{
-			sql:          fmt.Sprintf("select * from t"),
+			sql:          "select * from t",
 			hasStaleFlag: false,
 		},
 		// assert prepare statement with select as of statement
