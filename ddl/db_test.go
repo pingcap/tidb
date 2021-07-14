@@ -320,6 +320,49 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
+func (s *testSerialDBSuite) TestWriteReorgForColumnTypeChangeOnAmendTxn(c *C) {
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test_db")
+	tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = ON;")
+	defer func() {
+		tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = OFF;")
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, unique key(c1))")
+	tk.MustExec("insert into t1 values (20, 20, 20);")
+
+	var checkErr error
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test_db")
+	tk1.MustExec("begin pessimistic;")
+	tk1.MustExec("insert into t1 values(101, 102, 103)")
+
+	tk.MustQuery("show session variables where variable_name = 'tidb_enable_amend_pessimistic_txn';").Check(testkit.Rows("tidb_enable_amend_pessimistic_txn ON"))
+	tk1.MustQuery("show session variables where variable_name = 'tidb_enable_amend_pessimistic_txn';").Check(testkit.Rows("tidb_enable_amend_pessimistic_txn ON"))
+
+	d := s.dom.DDL()
+	hook := &ddl.TestDDLCallback{Do: s.dom}
+	times := 0
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteReorganization {
+			return
+		}
+		if checkErr == nil && job.SchemaState == model.StateWriteReorganization && times == 1 {
+			_, checkErr = tk1.Exec("commit;")
+		}
+		times++
+	}
+	d.(ddl.DDLForTest).SetHook(hook)
+
+	tk.MustExec("alter table t1 change column c2 cc smallint;")
+	c.Assert(checkErr, IsNil)
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("20 20 20", "101 102 103"))
+
+	tk.MustExec("admin check table t1")
+}
+
 func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
