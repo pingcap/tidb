@@ -53,7 +53,8 @@ const (
 	// WindowSize determines how long some data is aggregated by.
 	WindowSize = 1 * time.Hour
 	// SubWindowSize determines how often data is rotated.
-	SubWindowSize = 1 * time.Minute
+	// SubWindowSize = 1 * time.Minute
+	SubWindowSize = 10 * time.Second
 
 	maxSubWindowLength         = int(ReportInterval / SubWindowSize) // TODO: Ceiling?
 	maxSubWindowLengthInWindow = int(WindowSize / SubWindowSize)     // TODO: Ceiling?
@@ -122,7 +123,7 @@ type BuiltinFunctionsUsage map[string]uint32
 func (b BuiltinFunctionsUsage) Inc(scalarFuncSigName string) {
 	v, ok := b[scalarFuncSigName]
 	if !ok {
-		b[scalarFuncSigName] = 0
+		b[scalarFuncSigName] = 1
 	} else {
 		b[scalarFuncSigName] = v + 1
 	}
@@ -140,7 +141,7 @@ func (b BuiltinFunctionsUsage) Merge(usageData BuiltinFunctionsUsage) {
 	}
 }
 
-var GlobalBuiltinFunctionsUsage = &BuiltinFunctionsUsageCollector{}
+var GlobalBuiltinFunctionsUsage = &BuiltinFunctionsUsageCollector{usageData: make(BuiltinFunctionsUsage)}
 
 var (
 	rotatedSubWindows []*windowData

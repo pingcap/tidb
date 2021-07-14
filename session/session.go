@@ -2696,10 +2696,11 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 // a lock context, which cause we can't call createSession directly.
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
-		store:       store,
-		sessionVars: variable.NewSessionVars(),
-		client:      store.GetClient(),
-		mppClient:   store.GetMPPClient(),
+		store:                store,
+		sessionVars:          variable.NewSessionVars(),
+		client:               store.GetClient(),
+		mppClient:            store.GetMPPClient(),
+		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
