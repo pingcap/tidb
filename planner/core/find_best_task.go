@@ -488,31 +488,42 @@ func compareCandidates(lhs, rhs *candidatePath) int {
 	return 0
 }
 
-func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
-	candidate := &candidatePath{path: path}
+func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.PhysicalProperty) bool {
+	var isMatchProp bool
 	if path.IsIntHandlePath {
 		pkCol := ds.getPKIsHandleCol()
 		if len(prop.SortItems) == 1 && pkCol != nil {
-			candidate.isMatchProp = prop.SortItems[0].Col.Equal(nil, pkCol)
+			isMatchProp = prop.SortItems[0].Col.Equal(nil, pkCol)
 			if path.StoreType == kv.TiFlash {
-				candidate.isMatchProp = candidate.isMatchProp && !prop.SortItems[0].Desc
+				isMatchProp = isMatchProp && !prop.SortItems[0].Desc
 			}
 		}
-	} else {
-		all, _ := prop.AllSameOrder()
-		// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
-		// it needs not to keep order for index scan.
-		if !prop.IsEmpty() && all {
-			for i, col := range path.IdxCols {
-				if col.Equal(nil, prop.SortItems[0].Col) {
-					candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.SortItems)
-					break
-				} else if i >= path.EqCondCount {
-					break
-				}
+		return isMatchProp
+	}
+	// TODO: do we need to consider TiFlash here?
+	all, _ := prop.AllSameOrder()
+	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
+	// it needs not to keep order for index scan.
+	if !prop.IsEmpty() && all {
+		for _, sortItem := range prop.SortItems {
+			var i, j int
+			if i < len(path.EqualCols) && sortItem.Col.Equal(nil, path.EqualCols[i]) {
+				i++
+				j++
+			} else if j < len(path.IdxCols) && path.IdxColLens[j] == types.UnspecifiedLength && sortItem.Col.Equal(nil, path.IdxCols[j]) {
+				j++
+			} else {
+				isMatchProp = false
+				break
 			}
 		}
 	}
+	return isMatchProp
+}
+
+func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
+	candidate := &candidatePath{path: path}
+	candidate.isMatchProp = ds.isMatchProp(path, prop)
 	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
 	candidate.isSingleScan = true
 	return candidate
@@ -520,19 +531,7 @@ func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.Ph
 
 func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.PhysicalProperty, isSingleScan bool) *candidatePath {
 	candidate := &candidatePath{path: path}
-	all, _ := prop.AllSameOrder()
-	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
-	// it needs not to keep order for index scan.
-	if !prop.IsEmpty() && all {
-		for i, col := range path.IdxCols {
-			if col.Equal(nil, prop.SortItems[0].Col) {
-				candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.SortItems)
-				break
-			} else if i >= path.EqCondCount {
-				break
-			}
-		}
-	}
+	candidate.isMatchProp = ds.isMatchProp(path, prop)
 	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
 	candidate.indexFiltersColSet = expression.ExtractColumnSet(path.IndexFilters)
 	candidate.isSingleScan = isSingleScan

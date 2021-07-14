@@ -43,6 +43,8 @@ type AccessPath struct {
 	EqOrInCondCount int
 	IndexFilters    []expression.Expression
 	TableFilters    []expression.Expression
+	// EqualCols is the columns evaluated as constant under the given conditions.
+	EqualCols []*expression.Column
 	// PartialIndexPaths store all index access paths.
 	// If there are extra filters, store them in TableFilters.
 	PartialIndexPaths []*AccessPath

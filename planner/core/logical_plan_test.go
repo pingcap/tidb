@@ -1708,6 +1708,14 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 			sql:    "select * from t where f > 3 and g = 5",
 			result: "PRIMARY_KEY,g,f_g",
 		},
+		{
+			sql:    "select * from t where d = 3 order by c, e",
+			result: "PRIMARY_KEY,c_d_e",
+		},
+		{
+			sql:    "select * from t where c > 1 and d = 1 and e > 1 and e_str = 'hi' order by c, e",
+			result: "PRIMARY_KEY,c_d_e,c_d_e_str,c_d_e_str_prefix",
+		},
 	}
 	ctx := context.TODO()
 	for i, tt := range tests {
