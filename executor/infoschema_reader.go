@@ -2075,6 +2075,9 @@ func (e *memtableRetriever) setDataForTiDBTrx(ctx sessionctx.Context) {
 }
 
 func (e *memtableRetriever) setDataForClusterTiDBTrx(ctx sessionctx.Context) error {
+	if !hasPriv(ctx, mysql.ProcessPriv) {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("Process")
+	}
 	e.setDataForTiDBTrx(ctx)
 	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
 	if err != nil {

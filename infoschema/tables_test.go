@@ -889,6 +889,34 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 	}
 }
 
+func (s *testClusterTableSuite) TestClusterTablePrivileges(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	// More tests about the Cluster_TiDB_Trx's privileges.
+	tk.MustExec("create user 'testuser'@'localhost'")
+	tk.MustExec("create user 'testuser2'@'localhost'")
+	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
+	tk.MustExec("flush privileges")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser",
+		Hostname: "localhost",
+	}, nil, nil), Equals, true)
+
+	err := tk.QueryToErr("select * from information_schema.CLUSTER_TIDB_TRX")
+	c.Assert(err, NotNil)
+	// This error is come from cop(TiDB) fetch from rpc server.
+	c.Assert(err.Error(), Equals, "other error: [planner:1227]Access denied; you need (at least one of) the Process privilege(s) for this operation")
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser",
+		Hostname: "localhost",
+	}, nil, nil), Equals, true)
+
+	err = tk.QueryToErr("select * from information_schema.CLUSTER_TIDB_TRX")
+	c.Assert(err, NotNil)
+	// This error is come from cop(TiDB) fetch from rpc server.
+	c.Assert(err.Error(), Equals, "other error: [planner:1227]Access denied; you need (at least one of) the Process privilege(s) for this operation")
+}
+
 func (s *testClusterTableSuite) TestSelectClusterTablePrivelege(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	slowLogFileName := "tidb-slow.log"
