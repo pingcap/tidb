@@ -485,17 +485,14 @@ func compareBool(l, r bool) int {
 	return 1
 }
 
-
-func compareScan(lhs, rhs *candidatePath) int {
+// TODO: add comment
+func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 	result := compareBool(lhs.isSingleScan, rhs.isSingleScan)
 	if result == 0 && !lhs.isSingleScan {
-		// if both lhs and rhs need TableScan after IndexScan, we compare their IndexFilters.
-		setsResult, comparable := compareColumnSet(lhs.indexFiltersColSet, rhs.indexFiltersColSet)
-		if comparable {
-			result = setsResult
-		}
+		// if both lhs and rhs need TableScan after IndexScan, we compare IndexFilters.
+		return compareColumnSet(lhs.indexFiltersColSet, rhs.indexFiltersColSet)
 	}
-	return result
+	return result, true
 }
 
 // compareCandidates is the core of skyline pruning. It compares the two candidate paths on three dimensions:
@@ -509,7 +506,10 @@ func compareCandidates(lhs, rhs *candidatePath) int {
 	if !comparable {
 		return 0
 	}
-	scanResult := compareScan(lhs, rhs)
+	scanResult, comparable := compareIndexBack(lhs, rhs)
+	if !comparable {
+		return 0
+	}
 	matchResult := compareBool(lhs.isMatchProp, rhs.isMatchProp)
 	sum := setsResult + scanResult + matchResult
 	if setsResult >= 0 && scanResult >= 0 && matchResult >= 0 && sum > 0 {
@@ -537,13 +537,13 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
 	// it needs not to keep order for index scan.
 	if !prop.IsEmpty() && all {
-		for i, sortItem := range prop.SortItems {
-			var j, k int
-			if sortItem.Col.Equal(nil, path.EqualCols[j]) {
+		for _, sortItem := range prop.SortItems {
+			var i, j int
+			if i < len(path.EqualCols) && sortItem.Col.Equal(nil, path.EqualCols[i]) {
+				i++
 				j++
-				k++
-			} else if path.IdxColLens[i] == types.UnspecifiedLength && sortItem.Col.Equal(nil, path.IdxCols[i]) {
-				k++
+			} else if j < len(path.IdxCols) && path.IdxColLens[j] == types.UnspecifiedLength && sortItem.Col.Equal(nil, path.IdxCols[j]) {
+				j++
 			} else {
 				isMatchProp = false
 				break
@@ -666,11 +666,11 @@ func (ds *DataSource) skylinePruning(candidates []*candidatePath) []*candidatePa
 	newCandidates := make([]*candidatePath, 0, len(candidates))
 	for i, cand := range candidates {
 		// TODO: do we need to compare between TiFlash candidates?
-		if cand.path.PartialIndexPaths != nil || cand.path.StoreType == kv.TiFlash {
+		if cand.path.PartialIndexPaths != nil || cand.path.StoreType == kv.TiFlash || pruned[i] {
 			continue
 		}
 		for j := i + 1; j < len(candidates); j++ {
-			if candidates[j].path.PartialIndexPaths != nil || candidates[j].path.StoreType == kv.TiFlash {
+			if candidates[j].path.PartialIndexPaths != nil || candidates[j].path.StoreType == kv.TiFlash || pruned[j] {
 				continue
 			}
 			result := compareCandidates(cand, candidates[j])
