@@ -38,11 +38,11 @@ type localColumnPool struct {
 }
 
 func newLocalColumnPool() *localColumnPool {
+	newColumn := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity)
 	return &localColumnPool{
 		sync.Pool{
 			New: func() interface{} {
-				// Use default arguments
-				return chunk.NewDefaultColumn()
+				return newColumn.CopyConstruct(nil)
 			},
 		},
 	}
