@@ -298,7 +298,7 @@ func (s *testEnforceMPPSuite) TestEnforceMPPWarning3(c *C) {
 	}
 }
 
-// joins
+// Test enforce mpp warning for joins
 func (s *testEnforceMPPSuite) TestEnforceMPPWarning4(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
