@@ -39,6 +39,9 @@ const (
 	ListData TypeFlag = 'l'
 )
 
+// Make linter happy, since encodeHashMetaKey is unused in this repo.
+var _ = (&TxStructure{}).encodeHashMetaKey
+
 func (t *TxStructure) encodeStringDataKey(key []byte) kv.Key {
 	// for codec Encode, we may add extra bytes data, so here and following encode
 	// we will use extra length like 4 for a little optimization.
@@ -48,6 +51,7 @@ func (t *TxStructure) encodeStringDataKey(key []byte) kv.Key {
 	return codec.EncodeUint(ek, uint64(StringData))
 }
 
+// nolint:unused
 func (t *TxStructure) encodeHashMetaKey(key []byte) kv.Key {
 	ek := make([]byte, 0, len(t.prefix)+codec.EncodedBytesLength(len(key))+8)
 	ek = append(ek, t.prefix...)

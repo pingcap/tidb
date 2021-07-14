@@ -388,6 +388,7 @@ func (ts *testSuite) TestIterRecords(c *C) {
 }
 
 func (ts *testSuite) TestTableFromMeta(c *C) {
+	c.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE meta (a int primary key auto_increment, b varchar(255) unique)")

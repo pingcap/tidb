@@ -30,6 +30,7 @@ var (
 	ErrBatchInsertFail      = dbterror.ClassExecutor.NewStd(mysql.ErrBatchInsertFail)
 	ErrUnsupportedPs        = dbterror.ClassExecutor.NewStd(mysql.ErrUnsupportedPs)
 	ErrSubqueryMoreThan1Row = dbterror.ClassExecutor.NewStd(mysql.ErrSubqueryNo1Row)
+	ErrIllegalGrantForTable = dbterror.ClassExecutor.NewStd(mysql.ErrIllegalGrantForTable)
 
 	ErrCantCreateUserWithGrant       = dbterror.ClassExecutor.NewStd(mysql.ErrCantCreateUserWithGrant)
 	ErrPasswordNoMatch               = dbterror.ClassExecutor.NewStd(mysql.ErrPasswordNoMatch)
@@ -50,6 +51,7 @@ var (
 	ErrDynamicPrivilegeNotRegistered = dbterror.ClassExecutor.NewStd(mysql.ErrDynamicPrivilegeNotRegistered)
 	ErrIllegalPrivilegeLevel         = dbterror.ClassExecutor.NewStd(mysql.ErrIllegalPrivilegeLevel)
 	ErrInvalidSplitRegionRanges      = dbterror.ClassExecutor.NewStd(mysql.ErrInvalidSplitRegionRanges)
+	ErrViewInvalid                   = dbterror.ClassExecutor.NewStd(mysql.ErrViewInvalid)
 
 	ErrBRIEBackupFailed              = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
 	ErrBRIERestoreFailed             = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)
