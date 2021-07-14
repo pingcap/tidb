@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/tikv"
 	tikverr "github.com/pingcap/tidb/store/tikv/error"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/table/tables"
@@ -161,6 +162,14 @@ func newWriteConflictError(conflict *kvrpcpb.WriteConflict) error {
 	buf.WriteString(" primary=")
 	prettyWriteKey(&buf, conflict.Primary)
 	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs, buf.String())
+}
+
+func init() {
+	tikv.PrettyKeyPrint = func(k []byte) string {
+		var b bytes.Buffer
+		prettyWriteKey(&b, k)
+		return b.String()
+	}
 }
 
 func prettyWriteKey(buf *bytes.Buffer, key []byte) {

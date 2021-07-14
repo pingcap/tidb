@@ -47,6 +47,8 @@ import (
 // If the duration of a single request exceeds the slowRequestThreshold, a warning log will be logged.
 const slowRequestThreshold = time.Minute
 
+var PrettyKeyPrint func([]byte) string
+
 type twoPhaseCommitAction interface {
 	handleSingleBatch(*twoPhaseCommitter, *Backoffer, batchMutations) error
 	tiKVTxnRegionsNumHistogram() prometheus.Observer
@@ -432,6 +434,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		if flags.HasLocked() {
 			isPessimistic = c.isPessimistic
 		}
+		logutil.BgLogger().Error("----->", zap.Stringer("op", op), zap.String("key", PrettyKeyPrint(key)), zap.ByteString("value", value))
 		c.mutations.Push(op, isPessimistic, flags.HasAssertExist(), flags.HasAssertNotExist(), it.Handle())
 		size += len(key) + len(value)
 
