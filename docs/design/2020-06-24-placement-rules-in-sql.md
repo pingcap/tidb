@@ -20,6 +20,7 @@
     * [DDL procedures](#ddl-procedures)
     * [Building placement rules](#building-placement-rules)
     * [Rule priorities](#rule-priorities)
+* [Examples](#examples)
 * [Impacts & Risks](#impacts--risks)
 * [Investigation & Alternatives](#investigation--alternatives)
 * [Unresolved Questions](#unresolved-questions)
@@ -79,11 +80,11 @@ CREATE TABLE t1 (
 Adding `PLACEMENT` to an existing table:
 
 ```sql
-CREATE TABLE t1 (
+CREATE TABLE t2 (
 	id INT NOT NULL PRIMARY KEY,
 	b VARCHAR(100)
 );
-ALTER TABLE t1 PLACEMENT CONSTRAINTS="[+zone=sh]" ROLE=leader REPLICAS=1, CONSTRAINTS="[+zone=sh]" ROLE=follower REPLICAS=1, CONSTRAINTS="[+zone=gz]" ROLE=follower REPLICAS=1;
+ALTER TABLE t2 PLACEMENT CONSTRAINTS="[+zone=sh]" ROLE=leader REPLICAS=1, CONSTRAINTS="[+zone=sh]" ROLE=follower REPLICAS=1, CONSTRAINTS="[+zone=gz]" ROLE=follower REPLICAS=1;
 ```
 
 #### Placement Policy
@@ -106,11 +107,11 @@ CREATE TABLE t1 (
 Adding `PLACEMENT POLICY` to an existing table:
 
 ```sql
-CREATE TABLE t1 (
+CREATE TABLE t2 (
 	id INT NOT NULL PRIMARY KEY,
 	b VARCHAR(100)
 );
-ALTER TABLE t1 PLACEMENT POLICY=`companystandardpolicy`;
+ALTER TABLE t2 PLACEMENT POLICY=`companystandardpolicy`;
 ```
 
 Expected Behaviors:
@@ -119,7 +120,7 @@ Expected Behaviors:
 - Placement Policy names are case insensitive, and follow the same rules as tables/other identifiers for length (64 chars) and special characters.
 - The full placement policy can be seen with `SHOW CREATE PLACEMENT POLICY x`. This is useful for shorthand usage by DBAs, and consistent with other database objects.
 - It is possible to update the definition of a placement policy with `ALTER PLACEMENT POLICY x CONSTRAINTS ..;` This is modeled on the statement `ALTER VIEW` (where the view needs to be redefined)
-- The statement `DROP PLACEMENT POLICY` should return an error if the policy is in use by any objects (TBD: see "unresolved questions")
+- The statement `DROP PLACEMENT POLICY` should execute without error. If any partitions currently use this policy, they will be converted to the policy used by the table they belong to. If any tables use this policy, they will be converted to the policy used by the database they belong to. If any databases use this policy, they will be converted to the default placement policy. This is modeled on the behavior of dropping a `ROLE` that might be assigned to users.
 
 #### Metadata commands
 
@@ -274,7 +275,9 @@ Field `location_labels` in PD placement rule configuration is used to isolate re
 
 ```sql
 ALTER TABLE table_name
-	PLACEMENT CONSTRAINTS="[+engine=tiflash]" ROLE=learner REPLICAS=1;
+	PLACEMENT CONSTRAINTS="[+engine=tiflash]" ROLE=learner REPLICAS=1,
+	ROLE=leader REPLICAS=1,
+	ROLE=follower REPLICAS=2;
 ```
 
 The only way to judge whether it’s adding a TiFlash replica is to check the label. If it contains `engine=tiflash`, then it’s adding or removing a TiFlash replica. This logic is conventional in PD for now.
@@ -333,10 +336,10 @@ CREATE TABLE t1 (
 	id INT NOT NULL PRIMARY KEY,
 	b VARCHAR(100)
 ) PLACEMENT POLICY CONSTRAINTS="[+zone=sh]" ROLE=leader REPLICAS=1, CONSTRAINTS="[+zone=sh]" ROLE=follower REPLICAS=1, CONSTRAINTS="[+zone=gz]" ROLE=follower REPLICAS=1;
-ALTER TABLE t1 PLACEMENT CONSTRAINTS="[+zone=sh]" ROLE=leader REPLICAS=1, CONSTRAINTS="[+zone=sh]" ROLE=follower REPLICAS=1, CONSTRAINTS="[+zone=gz]" ROLE=follower REPLICAS=1;
+ALTER TABLE t2 PLACEMENT CONSTRAINTS="[+zone=sh]" ROLE=leader REPLICAS=1, CONSTRAINTS="[+zone=sh]" ROLE=follower REPLICAS=1, CONSTRAINTS="[+zone=gz]" ROLE=follower REPLICAS=1;
 # Only rule #3 applies for these examples
-CREATE TABLE t1 (a int) PLACEMENT POLICY `mycompanypolicy`;
-ALTER TABLE t1 PLACEMENT POLICY `mycompanypolicy`;
+CREATE TABLE t3 (a int) PLACEMENT POLICY `mycompanypolicy`;
+ALTER TABLE t3 PLACEMENT POLICY `mycompanypolicy`;
 ```
 
 1. An impossible policy such as violating raft constraints (2 leaders) should result in an error:
@@ -347,6 +350,19 @@ ALTER TABLE test
 ```
 2. A policy that has an incorrect number of instances for a raft group (i.e. 1 leader and 1 follower, or just 1 leader and no followers) should be a warning. This allows for some transitional topologies and developer environments.
 3. A policy that is impossible based on the current topology (zone=sh and replicas=3, but there is only 1 store in sh) should be a warning. This allows for some transitional topologies.
+
+#### Skipping Policy Validation
+
+It shoudl be possible to skip policy validation. This can be seen as similar to skipping foreign key checks, which is often used by logical dumpers:
+
+```sql
+SET FOREIGN_KEY_CHECKS=0;
+SET PLACEMENT_CHECKS=0;
+
+CREATE TABLE t3 (a int) PLACEMENT POLICY `mycompanypolicy`;
+```
+
+If a table is imported when `PLACEMENT_CHECKS` is off, and the placement policy does not validate, then the same rules of fallback apply as in the case `DROP PLACEMENT POLICY` (where policy is still in use).
 
 #### Ambiguous and edge cases
 
@@ -397,7 +413,7 @@ CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
   PARTITION p1 VALUES LESS THAN (2005),
   PARTITION p2 VALUES LESS THAN (2010),
   PARTITION p3 VALUES LESS THAN (2015),
-  PARTITION p4 VALUES LESS THAN MAXVLUE PLACEMENT POLICY='storeonfastssd'
+  PARTITION p4 VALUES LESS THAN MAXVALUE PLACEMENT POLICY='storeonfastssd'
  )
 PLACEMENT POLICY='companystandardpolicy';
 ```
@@ -599,7 +615,124 @@ Specifically, `index` is in such a format:
 
 In such a way, the most granular rule always works.
 
-## Impact & Risks
+## Examples
+
+### Optimization: Follower read in every region
+
+This optimization is straight forward:
+```sql
+CREATE PLACEMENT POLICY local_stale_reads
+ CONSTRAINTS="[+zone=us-east]" ROLE=leader REPLICAS=1,
+ CONSTRAINTS="[+zone=us-west]" ROLE=follower REPLICAS=1,
+ CONSTRAINTS="[+zone=eu-west]" ROLE=follower REPLICAS=1,
+ CONSTRAINTS="[+zone=ap-east]" ROLE=follower REPLICAS=1;
+
+CREATE TABLE t (a int, b int) PLACEMENT POLICY=`local_stale_reads`;
+```
+
+### Optimization: Latest data on SSD
+
+This optimization uses labels to define the storage type:
+
+```sql
+CREATE PLACEMENT POLICY storeonfastssd
+ CONSTRAINTS="[+storage=ssd]" ROLE=leader REPLICAS=1,
+ CONSTRAINTS="[+storage=ssd]" ROLE=follower REPLICAS=2;
+
+CREATE PLACEMENT POLICY storeonhdd
+ CONSTRAINTS="[+storage=hdd]" ROLE=leader REPLICAS=1,
+ CONSTRAINTS="[+storage=hdd]" ROLE=follower REPLICAS=2;
+
+CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
+ PARTITION BY RANGE( YEAR(purchased) ) (
+  PARTITION p0 VALUES LESS THAN (2000) PLACEMENT POLICY='storeonhdd',
+  PARTITION p1 VALUES LESS THAN (2005),
+  PARTITION p2 VALUES LESS THAN (2010),
+  PARTITION p3 VALUES LESS THAN (2015),
+  PARTITION p4 VALUES LESS THAN MAXVALUE PLACEMENT POLICY='storeonfastssd'
+ )
+PLACEMENT POLICY='companystandardpolicy';
+```
+
+### Optimization: Multi-tenancy / control of shared resources
+
+This example is similar to latest data on SSD. The customer has a large TiDB Cluster with several workloads that are running on it. They might want to reduce the blast radius of individual users impacting eac-hother, and potentially improve QoS.
+
+They use a `schema` per tenant, and create a set of "resource pools". Each pool is a label, which contains a set of tikv-servers (with sufficient capacity, and nodes to provide high availability still):
+
+```sql
+CREATE PLACEMENT POLICY poola CONSTRAINTS="[+pool=poola]" ROLE=leader REPLICAS=1, CONSTRAINTS="[+pool=poola]" ROLE=follower REPLICAS=2;
+CREATE PLACEMENT POLICY poolb CONSTRAINTS="[+pool=poolb]" ROLE=leader REPLICAS=1, CONSTRAINTS="[+pool=poolb]" ROLE=follower REPLICAS=2;
+CREATE PLACEMENT POLICY poolc CONSTRAINTS="[+pool=poolc]" ROLE=leader REPLICAS=1, CONSTRAINTS="[+pool=poolc]" ROLE=follower REPLICAS=2;
+
+ALTER DATABASE workload1 PLACEMENT POLICY=`poola`;
+/* for each existing table (new ones will not require this) */
+ALTER TABLE workload1.t1 PLACEMENT POLICY=`poola`;
+
+CREATE DATABASE workload2 PLACEMENT POLICY=`poolb`;
+CREATE DATABASE workload3 PLACEMENT POLICY=`poolb`;
+CREATE DATABASE workload4 PLACEMENT POLICY=`poolb`;
+CREATE DATABASE workload5 PLACEMENT POLICY=`poolb`;
+CREATE DATABASE workload6 PLACEMENT POLICY=`poolc`;
+```
+
+### Compliance: User data needs geographic split
+
+This example has limitations based on the current implementation. Consider the following `users` table:
+
+```sql
+CREATE TABLE users (
+	id INT NOT NULL auto_increment,
+	username VARCHAR(64) NOT NULL,
+	email VARCHAR(64) NOT NULL,
+	dateofbirth DATE NOT NULL,
+	country VARCHAR(10) NOT NULL,
+	PRIMARY KEY (id),
+	UNIQUE (username)
+);
+```
+
+We may want to ensure that users that have users in the EU store their data in a specific location. On the surface this looks straight forward:
+
+```sql
+CREATE TABLE users (
+	id INT NOT NULL auto_increment,
+	username VARCHAR(64) NOT NULL,
+	email VARCHAR(64) NOT NULL,
+	dateofbirth DATE NOT NULL,
+	country VARCHAR(10) NOT NULL,
+	PRIMARY KEY (id),
+	UNIQUE (username)
+) PARTITION BY LIST COLUMNS (country) (
+	PARTITION pEurope VALUES IN ('DE', 'FR', 'GB') PLACEMENT POLICY='europe',
+	PARTITION pOther VALUES IN ('US', 'CA', 'MX')
+);
+```
+
+However, the definition is not valid. The unique index on `username` can not be enforced, because there are no global indexes for partitioned tables.
+
+In the future we will need to be able to define the index for `username` as a global index, and allow it to have different placement rules where it can be read from all regions.
+
+This example also demonstrates that this specification only provides partition level placement (and not row-level or column level security). The workaround for the user will require splitting the table:
+
+```sql
+CREATE TABLE users (
+	id INT NOT NULL auto_increment PRIMARY KEY,
+	/* public details */
+);
+
+CREATE TABLE user_details (
+	user_id INT NOT NULL,
+	/* private columns */
+	/* partition this table */
+);
+```
+
+Assuming that global indexes can be added to the TiDB server, this use-case can be improved. But for correct execution the server will also require the following functionality:
+- The ability to mark global indexes as invisible at run-time if the `PLACEMENT POLICY` does not permit them to be read.
+- The ability to mark the clustered index as invisible. i.e. in the case that there is a global unique index on `username` it may be permitted to be read, but a read of the `username` from the clustered index might need to be disabled.
+
+## Impacts & Risks
 
 1. The largest risk is designing a set of SQL statements that are sufficiently flexible to handle major use cases, but not too flexible that misconfiguration is likely when the user has compliance requirements. The following design decisions have been made to mitigate this risk:
   - The DDL statement to `ALTER TABLE t1 ADD PLACEMENT` has been removed from the proposal.
@@ -616,7 +749,7 @@ In such a way, the most granular rule always works.
 
 For investigation, we looked at the implementation of placement rules in various databases (CockroachDB, Yugabyte, OceanBase).
 
-The idea of using a `PLACEMENT POLICY` was inspired by how OceanBase has Placement Groups, which are then applied to tables. But the usage as proposed here is optional, which allows for more flexibility for casual cases. The idea of using a Placement Group can also be seen as similar to using a "tablespace" in a traditional database, but it's not completely the same since the choice is less binary (constraints allow the placement of roles for leaders, followers, learners etc.)
+The idea of using a `PLACEMENT POLICY` was inspired by how OceanBase has Placement Groups, which are then applied to tables. But the usage as proposed here is optional, which allows for more flexibility for casual cases. The idea of using a Placement Group can also be seen as similar to using a "tablespace" in a traditional database, but it's not completely the same since the choice is less binary (constraints allow the placement of roles for leaders, followers, voters, learners).
 
 CockroachDB does not look to have something directly comparable to `PLACEMENT POLICY`, but it does have the ability to specify "replication zones" for "system ranges" such as default, meta, liveness, system, timeseries. Before dropping `ALTER TABLE t1 ADD PLACEMENT` from this proposal, it was investigated the CockroachDB does not support this syntax, presumably for simplification and minimising similar risks of misconfiguration.
 
@@ -631,11 +764,19 @@ For compliance use-cases, it is clear that data at rest should reside within a g
 * **DDL**: The current implementation of DDL uses a centralized DDL owner which reads data from relevant tables and performs operations such as building indexes. The _read_ operation may violate compliance rules.
 * **Internal SQL**: Similar to DDL, several centralized background tasks, such as updating histograms/statistics need to be able to _read_ the data.
 * **DML**: It is not yet known which restrictions need to be placed on user queries. For example, if a poorly written user-query does not clearly target the `USA` partition when reading user data, should it generate an error because the `EUROPE` partition needs to be read in order for the semantics of the query to be correct? This may cause problems in development and integration environments if the restrictions can not be distilled into environments with smaller topologies.
+* **Routing**: When there is a data center for Europe, and a Data center for the USA, and the data is partitioned with requirements that DML from the USA can not read data in Europe, how is that enforced? Is it configured in such a way that the tidb-servers in the USA can not route to the tikv-servers in Europe? If this is the case, then it means the European servers can not hold non-user compliance data that the USA might need to read. If it is not the case, then there might be some sort of key management/crypto scheme to control access to sensitive data.
 
 ### Behaviors
 
-* The proposal says that `DROP PLACEMENT POLICY` should error if the policy is in use by any objects. This should be discussed, because it is not a common behavior in MySQL and may create some annoying debugging scenarios?
-* Are there risks to logical restore if creating a table with a non-existent `PLACEMENT POLICY` fails? This is the current proposal, but it can be changed to warning if it is an issue. If it can't be applied when creating the table, is the placement policy meta data dropped (and won't be picked up if that policy is created later?). This is regrettable, but seems like the most clear behavior because showing a non-defined `PLACEMENT POLICY` in `SHOW CREATE TABLE` is problematic.
+#### Async vs. sync apply of Placement Rules
+
+The current behavior says that placement rules should be applied synchronously. This is the easiest for users to understand, but since rules can be grouped together in placement rules it might mean `ALTER PLACEMENT POLICY` and `DROP PLACEMENT POLICY` statements take considerable amount of time to execute if they are associated with a lot of tables. It might also not be expected that `DROP PLACEMENT POLICY` could block for long periods of time while the user waits for affected tables to change to the default placement.
+
+Maybe this is a good behavior, because it will intuitively let users know they dropped a policy that was in use? We should discuss if we would like to make changes since it will be strange to update it later.
+
+####  Validation of Placement Rules in CREATE TABLE
+
+* Are there risks to logical restore if creating a table with a non-existent `PLACEMENT POLICY` fails? This is the current proposal, but a workaround has been added with `PLACEMENT_CHECKS=0`. This will need support to be added to dumpers to work correctly, but is likely a helpful safety feature to prevent non-compliance when reimporting data.
 
 ## Changelog
 
