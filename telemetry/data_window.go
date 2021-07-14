@@ -101,7 +101,7 @@ type BuiltinFunctionsUsageCollector struct {
 
 // Merge BuiltinFunctionsUsage data
 func (b *BuiltinFunctionsUsageCollector) Collect(usageData BuiltinFunctionsUsage) {
-	// TODO: use multi-worker to collect
+	// TODO(leiysky): use multi-worker to collect the usage information so we can make this asynchronous
 	b.Lock()
 	defer b.Unlock()
 	b.usageData.Merge(usageData)
