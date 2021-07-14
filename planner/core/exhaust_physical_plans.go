@@ -2052,9 +2052,10 @@ func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPl
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64}
 		topN := PhysicalTopN{
-			ByItems: lt.ByItems,
-			Count:   lt.Count,
-			Offset:  lt.Offset,
+			ByItems:       lt.ByItems,
+			Count:         lt.Count,
+			Offset:        lt.Offset,
+			CalcFoundRows: lt.CalcFoundRows,
 		}.Init(lt.ctx, lt.stats, lt.blockOffset, resultProp)
 		ret = append(ret, topN)
 	}

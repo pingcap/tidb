@@ -299,8 +299,9 @@ func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
 type TopNExec struct {
 	SortExec
-	limit      *plannercore.PhysicalLimit
-	totalLimit uint64
+	limit         *plannercore.PhysicalLimit
+	totalLimit    uint64
+	calcFoundRows bool
 
 	// rowChunks is the chunks to store row values.
 	rowChunks *chunk.List
@@ -424,8 +425,10 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
 		srcChk := newFirstChunk(e.children[0])
-		// adjust required rows by total limit
-		srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())), e.maxChunkSize)
+		if !e.calcFoundRows {
+			// adjust required rows by total limit
+			srcChk.SetRequiredRows(int(e.totalLimit-uint64(e.rowChunks.Len())), e.maxChunkSize)
+		}
 		err := Next(ctx, e.children[0], srcChk)
 		if err != nil {
 			return err
@@ -448,6 +451,9 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 	for uint64(len(e.rowPtrs)) > e.totalLimit {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
 		heap.Pop(e.chkHeap)
+		if e.calcFoundRows {
+			e.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
+		}
 	}
 	childRowChk := newFirstChunk(e.children[0])
 	for {
@@ -483,6 +489,9 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 			// Evict heap max, keep the next row.
 			e.rowPtrs[0] = e.rowChunks.AppendRow(childRowChk.GetRow(i))
 			heap.Fix(e.chkHeap, 0)
+		}
+		if e.calcFoundRows {
+			e.ctx.GetSessionVars().StmtCtx.AddFoundRows(1)
 		}
 	}
 	return nil

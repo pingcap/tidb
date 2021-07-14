@@ -997,10 +997,11 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 type LogicalTopN struct {
 	baseLogicalPlan
 
-	ByItems    []*util.ByItems
-	Offset     uint64
-	Count      uint64
-	limitHints limitHintInfo
+	ByItems       []*util.ByItems
+	Offset        uint64
+	Count         uint64
+	CalcFoundRows bool
+	limitHints    limitHintInfo
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

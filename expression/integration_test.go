@@ -3377,6 +3377,15 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	tk.MustQuery("select * from t where a = 1 LIMIT 999999,1").Check(testkit.Rows())
 	tk.MustQuery("select found_rows()").Check(testkit.Rows("0"))
 
+	// for topN executor
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int, b int);")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2);")
+	tk.MustQuery("select SQL_CALC_FOUND_ROWS b,count(*) as c from t2 group by b order by c limit 1;")
+	tk.MustQuery("select found_rows();").Check(testkit.Rows("2"))
+	tk.MustQuery("select b,count(*) as c from t2 group by b order by c limit 1;")
+	tk.MustQuery("select found_rows();").Check(testkit.Rows("1"))
+
 	tk.MustQuery("select * from t where a like '2'") // Test SelectionExec
 	result = tk.MustQuery("select found_rows()")
 	result.Check(testkit.Rows("2"))

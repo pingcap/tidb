@@ -631,9 +631,10 @@ func (p *PhysicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedCol
 type PhysicalTopN struct {
 	basePhysicalPlan
 
-	ByItems []*util.ByItems
-	Offset  uint64
-	Count   uint64
+	ByItems       []*util.ByItems
+	Offset        uint64
+	Count         uint64
+	CalcFoundRows bool
 }
 
 // Clone implements PhysicalPlan interface.

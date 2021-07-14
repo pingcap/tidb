@@ -1255,8 +1255,9 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 	// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 	stats := deriveLimitStats(childProfile, float64(newCount))
 	topN := PhysicalTopN{
-		ByItems: newByItems,
-		Count:   newCount,
+		ByItems:       newByItems,
+		Count:         newCount,
+		CalcFoundRows: p.CalcFoundRows,
 	}.Init(p.ctx, stats, p.blockOffset, p.GetChildReqProps(0))
 	topN.SetChildren(childPlan)
 	return topN
