@@ -871,6 +871,7 @@ type SessionVars struct {
 	}
 }
 
+// InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
 func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 	s.cached.curr = (s.cached.curr + 1) % 2
 	s.cached.data[s.cached.curr] = stmtctx.StatementContext{}
