@@ -434,16 +434,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	handles := make([]kv.Handle, 0, len(values))
 	var existKeys []kv.Key
-	e.values = make([][]byte, 0, len(values))
 	if e.lock && rc {
 		existKeys = make([]kv.Key, 0, 2*len(values))
-		if len(indexKeys) > 0 {
-			if !e.txn.Valid() {
-				return kv.ErrInvalidTxn
-			}
-		}
 	}
 	changeLockToPutIdxKeys := make([]kv.Key, 0, len(indexKeys))
+	e.values = make([][]byte, 0, len(values))
 	for i, key := range keys {
 		val := values[string(key)]
 		if len(val) == 0 {
@@ -472,15 +467,20 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		for _, idxKey := range changeLockToPutIdxKeys {
-			membuf := e.txn.GetMemBuffer()
-			handleVal := handleVals[string(idxKey)]
-			if len(handleVal) == 0 {
-				return kv.ErrNotExist
+		if len(changeLockToPutIdxKeys) > 0 {
+			if !e.txn.Valid() {
+				return kv.ErrInvalidTxn
 			}
-			err = membuf.Set(idxKey, handleVal)
-			if err != nil {
-				return err
+			for _, idxKey := range changeLockToPutIdxKeys {
+				membuf := e.txn.GetMemBuffer()
+				handleVal := handleVals[string(idxKey)]
+				if len(handleVal) == 0 {
+					return kv.ErrNotExist
+				}
+				err = membuf.Set(idxKey, handleVal)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
