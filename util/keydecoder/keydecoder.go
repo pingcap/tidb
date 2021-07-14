@@ -14,8 +14,8 @@ import (
 type HandleType string
 
 const (
-	IntHandle    = "int"
-	CommonHandle = "common"
+	IntHandle    HandleType = "int"
+	CommonHandle HandleType = "common"
 )
 
 type DecodedKey struct {
@@ -71,7 +71,7 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 			return result, errors.Errorf("cannot decode record key of table %d", tableId)
 		}
 		result.HandleType = handleType(handle)
-		_, result.PartitionHandle = handle.(*kv.PartitionHandle)
+		_, result.PartitionHandle = handle.(kv.PartitionHandle)
 		result.HandleValue = handle.String()
 	} else {
 		// is index key
