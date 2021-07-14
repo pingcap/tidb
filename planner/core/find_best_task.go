@@ -422,39 +422,6 @@ type candidatePath struct {
 	isMatchProp        bool
 }
 
-// onlyPointQuery checks whether there's only point query
-func (c *candidatePath) onlyPointQuery(sc *stmtctx.StatementContext) bool {
-	noIntervalRange := true
-	if c.path.IsIntHandlePath {
-		for _, ran := range c.path.Ranges {
-			if !ran.IsPoint(sc) {
-				noIntervalRange = false
-				break
-			}
-		}
-		return noIntervalRange
-	}
-	haveNullVal := false
-	for _, ran := range c.path.Ranges {
-		// Not point or the not full matched.
-		if !ran.IsPoint(sc) || len(ran.HighVal) != len(c.path.Index.Columns) {
-			noIntervalRange = false
-			break
-		}
-		// Check whether there's null value.
-		for i := 0; i < len(c.path.Index.Columns); i++ {
-			if ran.HighVal[i].IsNull() {
-				haveNullVal = true
-				break
-			}
-		}
-		if haveNullVal {
-			break
-		}
-	}
-	return noIntervalRange && !haveNullVal
-}
-
 // compareColumnSet will compares the two set. The last return value is used to indicate
 // if they are comparable, it is false when both two sets have columns that do not occur in the other.
 // When the second return value is true, the value of first:
@@ -626,8 +593,12 @@ func (ds *DataSource) tryHeuristics(candidates []*candidatePath) *candidatePath 
 			// TODO: do we need to handle TiFlash case?
 			continue
 		}
-		if cand.onlyPointQuery(ds.ctx.GetSessionVars().StmtCtx) {
-			if (cand.path.Index != nil && cand.path.Index.Unique) || cand.path.IsIntHandlePath {
+		if len(cand.path.Ranges) == 0 {
+			// TODO: is this case already checked before?
+			return cand
+		}
+		if cand.path.OnlyPointQuery(ds.SCtx().GetSessionVars().StmtCtx) {
+			if cand.path.IsTablePath() || cand.path.Index.Unique {
 				if cand.isSingleScan {
 					// TODO: what if multiple candidates satisfy the above conditions?
 					return cand

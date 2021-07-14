@@ -281,26 +281,12 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds, ds.possibleAccessPaths)
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath() {
-			noIntervalRanges, err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
+			err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
 			if err != nil {
 				return nil, err
 			}
-			// If we have point or empty range, just remove other possible paths.
-			if noIntervalRanges || len(path.Ranges) == 0 {
-				ds.possibleAccessPaths[0] = path
-				ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
-				ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
-				break
-			}
-			continue
-		}
-		noIntervalRanges := ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
-		// If we have empty range, or point range on unique index, just remove other possible paths.
-		if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
-			ds.possibleAccessPaths[0] = path
-			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
-			ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
-			break
+		} else {
+			ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
 		}
 	}
 
@@ -511,7 +497,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			} else {
 				path.IsIntHandlePath = true
 			}
-			noIntervalRanges, err := ds.deriveTablePathStats(path, conditions, true)
+			err := ds.deriveTablePathStats(path, conditions, true)
 			if err != nil {
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
@@ -520,8 +506,9 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			if ranger.HasFullRange(path.Ranges) {
 				continue
 			}
-			// If we have point or empty range, just remove other possible paths.
-			if noIntervalRanges || len(path.Ranges) == 0 {
+			// If we have empty or point range, just remove other possible paths.
+			// TODO: Since IndexMergePath chooses each partial index path on DeriveStats stage, we cannot move the heuristic check to findBestTask stage.
+			if len(path.Ranges) == 0 || path.OnlyPointQuery(ds.SCtx().GetSessionVars().StmtCtx) {
 				if len(results) == 0 {
 					results = append(results, path)
 				} else {
@@ -541,13 +528,14 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
-			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
+			ds.deriveIndexPathStats(path, conditions, true)
 			// If the path contains a full range, ignore it.
 			if ranger.HasFullRange(path.Ranges) {
 				continue
 			}
 			// If we have empty range, or point range on unique index, just remove other possible paths.
-			if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
+			// TODO: Since IndexMergePath chooses each partial index path on DeriveStats stage, we cannot move the heuristic check to findBestTask stage.
+			if (path.OnlyPointQuery(ds.SCtx().GetSessionVars().StmtCtx) && path.Index.Unique) || len(path.Ranges) == 0 {
 				if len(results) == 0 {
 					results = append(results, path)
 				} else {
