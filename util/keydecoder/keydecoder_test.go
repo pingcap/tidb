@@ -26,9 +26,9 @@ func TestDecodeKey(t *testing.T) {
 		0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 	}, stubInfoschema)
 	assert.Nil(t, err)
-	assert.Equal(t, decodedKey.DbId, int64(0))
+	assert.Equal(t, decodedKey.DbID, int64(0))
 	assert.Equal(t, decodedKey.DbName, "test")
-	assert.Equal(t, decodedKey.TableId, int64(1))
+	assert.Equal(t, decodedKey.TableID, int64(1))
 	assert.Equal(t, decodedKey.TableName, "table1")
 	assert.Equal(t, decodedKey.HandleType, IntHandle)
 	assert.Equal(t, decodedKey.PartitionHandle, false)

@@ -11,22 +11,25 @@ import (
 	"go.uber.org/zap"
 )
 
+// HandleType is the type of a Handle, could be `int`(ie. kv.IntHandle) or `common`(ie. *kv.CommonHandle)
 type HandleType string
 
+// HandleType instances
 const (
 	IntHandle    HandleType = "int"
 	CommonHandle HandleType = "common"
 )
 
+// DecodedKey is a struct contains detailed information about a key, its json form should be used to fill KEY_INFO field in `DEADLOCKS` and `DATA_LOCK_WAITS`
 type DecodedKey struct {
-	DbId            int64      `json:"db_id"`
+	DbID            int64      `json:"db_id"`
 	DbName          string     `json:"db_name"`
-	TableId         int64      `json:"table_id"`
+	TableID         int64      `json:"table_id"`
 	TableName       string     `json:"table_name"`
 	HandleType      HandleType `json:"handle_type"`
 	PartitionHandle bool       `json:"partition_handle"`
 	HandleValue     string     `json:"handle_value,omitempty"`
-	IndexId         int64      `json:"index_id,omitempty"`
+	IndexID         int64      `json:"index_id,omitempty"`
 	IndexName       string     `json:"index_name,omitempty"`
 	IndexValues     []string   `json:"index_values,omitempty"`
 }
@@ -38,6 +41,8 @@ func handleType(handle kv.Handle) HandleType {
 		return CommonHandle
 	} else if h, ok := handle.(kv.PartitionHandle); ok {
 		return handleType(h.Handle)
+	} else if h, ok := handle.(*kv.PartitionHandle); ok {
+		return handleType(h.Handle)
 	} else {
 		logutil.BgLogger().Warn("Unexpected kv.Handle type",
 			zap.String("handle", fmt.Sprintf("%T", handle)))
@@ -45,30 +50,31 @@ func handleType(handle kv.Handle) HandleType {
 	return ""
 }
 
+// DecodeKey decodes `key` into `DecodedKey`, which is used to fill KEY_INFO field in `DEADLOCKS` and `DATA_LOCK_WAITS`
 func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error) {
 	var result DecodedKey
-	tableId, indexId, isRecordKey, err := tablecodec.DecodeKeyHead(key)
+	tableID, indexID, isRecordKey, err := tablecodec.DecodeKeyHead(key)
 	if err != nil {
 		return result, err
 	}
-	table, ok := infoschema.TableByID(tableId)
+	table, ok := infoschema.TableByID(tableID)
 	if !ok {
-		return result, errors.Errorf("no table associated which id=%d found", tableId)
+		return result, errors.Errorf("no table associated which id=%d found", tableID)
 	}
 	schema, ok := infoschema.SchemaByTable(table.Meta())
 	if !ok {
-		return result, errors.Errorf("no schema associated with table which tableId=%d found", tableId)
+		return result, errors.Errorf("no schema associated with table which tableID=%d found", tableID)
 	}
 
-	result.TableId = tableId
-	result.DbId = schema.ID
+	result.TableID = tableID
+	result.DbID = schema.ID
 	result.DbName = schema.Name.O
 	result.TableName = table.Meta().Name.O
 
 	if isRecordKey {
 		_, handle, err := tablecodec.DecodeRecordKey(key)
 		if err != nil {
-			return result, errors.Errorf("cannot decode record key of table %d", tableId)
+			return result, errors.Errorf("cannot decode record key of table %d", tableID)
 		}
 		result.HandleType = handleType(handle)
 		_, result.PartitionHandle = handle.(kv.PartitionHandle)
@@ -77,11 +83,11 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 		// is index key
 		_, _, indexValues, err := tablecodec.DecodeIndexKey(key)
 		if err != nil {
-			return result, errors.Errorf("cannot decode index key of table %d", tableId)
+			return result, errors.Errorf("cannot decode index key of table %d", tableID)
 		}
-		result.IndexId = indexId
+		result.IndexID = indexID
 		for _, index := range table.Indices() {
-			if index.Meta().ID == indexId {
+			if index.Meta().ID == indexID {
 				result.IndexName = index.Meta().Name.O
 				result.IndexValues = indexValues
 				break

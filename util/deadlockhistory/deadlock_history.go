@@ -176,11 +176,11 @@ func (d *DeadlockHistory) GetAllDatum(infoschema infoschema.InfoSchema) [][]type
 				row[5] = strings.ToUpper(hex.EncodeToString(item.Key))
 				decodedKey, err := keydecoder.DecodeKey(item.Key, infoschema)
 				if err == nil {
-					decodedKeyJson, err := json.Marshal(decodedKey)
+					decodedKeyJSON, err := json.Marshal(decodedKey)
 					if err != nil {
 						log.Warn("marshal decoded key info to JSON failed", zap.Error(err))
 					} else {
-						row[6] = string(decodedKeyJson)
+						row[6] = string(decodedKeyJSON)
 					}
 				}
 			}
