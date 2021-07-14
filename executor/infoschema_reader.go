@@ -2085,8 +2085,8 @@ func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context)
 			digestStr = hex.EncodeToString(digest)
 		}
 		infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
+		var decodedKeyStr interface{}
 		decodedKey, err := keydecoder.DecodeKey(wait.Key, infoSchema)
-		var decodedKeyStr string
 		if err == nil {
 			decodedKeyBytes, err := json.Marshal(decodedKey)
 			if err != nil {
@@ -2094,9 +2094,9 @@ func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context)
 			} else {
 				decodedKeyStr = string(decodedKeyBytes)
 			}
-		}
-		if err != nil {
-			return err
+		} else {
+			// failed to decoded key
+			decodedKeyStr = nil
 		}
 		e.rows = append(e.rows, types.MakeDatums(
 			hex.EncodeToString(wait.Key),
