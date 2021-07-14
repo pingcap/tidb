@@ -204,8 +204,6 @@ type session struct {
 
 	store kv.Storage
 
-	parserPool *sync.Pool
-
 	preparedPlanCache *kvcache.SimpleLRUCache
 
 	sessionVars    *variable.SessionVars
@@ -225,6 +223,8 @@ type session struct {
 	// indexUsageCollector collects index usage information.
 	idxUsageCollector *handle.SessionIndexUsageCollector
 }
+
+var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
 
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
@@ -1240,8 +1240,8 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	}
 	defer trace.StartRegion(ctx, "ParseSQL").End()
 
-	p := s.parserPool.Get().(*parser.Parser)
-	defer s.parserPool.Put(p)
+	p := parserPool.Get().(*parser.Parser)
+	defer parserPool.Put(p)
 	p.SetSQLMode(s.sessionVars.SQLMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
 	return p.Parse(sql, charset, collation)
@@ -1852,7 +1852,7 @@ func (s *session) preparedStmtExec(ctx context.Context,
 		}
 	}
 	sessionExecuteCompileDurationGeneral.Observe(time.Since(s.sessionVars.StartTime).Seconds())
-	logQuery(st.OriginText(), s)
+	logGeneralQuery(st, s, true)
 	return runStmt(ctx, s, st)
 }
 
@@ -1892,7 +1892,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	stmtCtx.OriginalSQL = stmt.Text
 	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 	stmtCtx.SetPlanDigest(prepareStmt.NormalizedPlan, prepareStmt.PlanDigest)
-	logQuery(stmt.GetTextToLog(), s)
+	logGeneralQuery(stmt, s, false)
 
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
 		telemetry.CurrentExecuteCount.Inc()
@@ -2628,7 +2628,6 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	}
 	s := &session{
 		store:           store,
-		parserPool:      &sync.Pool{New: func() interface{} { return parser.New() }},
 		sessionVars:     variable.NewSessionVars(),
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
 		client:          store.GetClient(),
@@ -2662,7 +2661,6 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
 		store:       store,
-		parserPool:  &sync.Pool{New: func() interface{} { return parser.New() }},
 		sessionVars: variable.NewSessionVars(),
 		client:      store.GetClient(),
 		mppClient:   store.GetMPPClient(),
@@ -2885,13 +2883,20 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 				zap.Stringer("user", user))
 		}
 	default:
-		logQuery(execStmt.GetTextToLog(), s)
+		logGeneralQuery(execStmt, s, false)
 	}
 }
 
-func logQuery(query string, s *session) {
+func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 	vars := s.GetSessionVars()
 	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
+		var query string
+		if isPrepared {
+			query = execStmt.OriginText()
+		} else {
+			query = execStmt.GetTextToLog()
+		}
+
 		query = executor.QueryReplacer.Replace(query)
 		if !vars.EnableRedactLog {
 			query += vars.PreparedParams.String()
