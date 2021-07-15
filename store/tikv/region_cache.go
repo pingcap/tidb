@@ -1624,7 +1624,7 @@ func (c *RegionCache) GetTiFlashStores() []*Store {
 			stores = append(stores, s)
 		}
 	}
-	return stores 
+	return stores
 }
 
 // btreeItem is BTree's Item that uses []byte to compare.
