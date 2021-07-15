@@ -452,7 +452,7 @@ Placement policy can be removed from an object via the following syntax:
 ```sql
 ALTER DATABASE test [DEFAULT] PLACEMENT SET DEFAULT;
 ALTER TABLE t1 PLACEMENT=default;
-ALTER TABLE t1 ALTER PARTITION partition_name PLACEMENT=default;
+ALTER TABLE t1 PARTITION partition_name PLACEMENT=default;
 ```
 
 In this case the default rules will apply to placement, and the output from `SHOW CREATE TABLE t1` should show no placement information.
@@ -460,7 +460,7 @@ In this case the default rules will apply to placement, and the output from `SHO
 For a more complex rule using partitions, consider the following example:
 
 ```sql
-ALTER TABLE t1 ALTER PARTITION p0 PLACEMENT="acdc";
+ALTER TABLE t1 PARTITION p0 PLACEMENT="acdc";
 --> 
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
  PARTITION BY RANGE( YEAR(purchased) ) (
@@ -476,7 +476,7 @@ CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
   PARTITION p1 VALUES LESS THAN (2005)
  ) PLACEMENT="xyz";
 
-ALTER TABLE t1 ALTER PARTITION p0 PLACEMENT=DEFAULT;
+ALTER TABLE t1 PARTITION p0 PLACEMENT=DEFAULT;
 --> 
 CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
  PARTITION BY RANGE( YEAR(purchased) ) (
@@ -486,7 +486,7 @@ CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
  
 ```
 
-The behavior above is described as `ALTER PARTITION p0 PLACEMENT=DEFAULT` resets the placement of the partition `p0` to be inherited from the table `t1`.
+The behavior above is described as `ALTER TABLE t1 PARTITION p0 PLACEMENT=DEFAULT` resets the placement of the partition `p0` to be inherited from the table `t1`.
 
 #### Sequences
 
@@ -823,7 +823,7 @@ Maybe this is a good behavior, because it will intuitively let users know they d
 
 ####  Validation of Placement Rules in CREATE TABLE
 
-* Are there risks to logical restore if creating a table with a non-existent `PLACEMENT POLICY` fails? This is the current proposal, but a workaround has been added with `PLACEMENT_CHECKS=0`. This will need support to be added to dumpers to work correctly, but is likely a helpful safety feature to prevent non-compliance when reimporting data.
+* Are there risks to logical restore if creating a table with a non-existent `PLACEMENT POLICY` fails? This is the current proposal, but a workaround has been added with `SET PLACEMENT_CHECKS=0`. This will need support to be added to dumpers to work correctly, but is likely a helpful safety feature to prevent non-compliance when reimporting data.
 
 ## Changelog
 
@@ -834,3 +834,4 @@ Maybe this is a good behavior, because it will intuitively let users know they d
   - Renamed `ALTER TABLE t1 ALTER PLACEMENT POLICY` to `ALTER TABLE t1 PLACEMENT` to bring syntax inline with other atomic changes, such as `ALTER TABLE t1 CHARACTER SET x`. The usage of `PLACEMENT POLICY` now refers to a placement policy defined from `CREATE PLACEMENT POLICY` (other commands like `SHOW PLACEMENT POLICY` are also updated to `SHOW PLACEMENT`).
   - Remove index as a placement option (we can add it again once global indexes for temporary tables exist, but it is not strictly required for an MVP).
   - Made implementation in `CREATE TABLE` and `SHOW CREATE TABLE` required, to support the compliance use-case.
+  - Changed `ALTER TABLE ALTER PARTITION p0` to `ALTER TABLE PARTITION p0`
