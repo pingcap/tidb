@@ -83,7 +83,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "performance_schema_max_statement_classes", Value: "168"},
 	{Scope: ScopeGlobal, Name: "server_id", Value: "0"},
 	{Scope: ScopeGlobal, Name: "innodb_flushing_avg_loops", Value: "30"},
-	{Scope: ScopeGlobal | ScopeSession, Name: TmpTableSize, Value: "16777216", Type: TypeUnsigned, MinValue: 1024, MaxValue: math.MaxUint64, AutoConvertOutOfRange: true, IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "innodb_max_purge_lag", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "preload_buffer_size", Value: "32768"},
 	{Scope: ScopeGlobal, Name: CheckProxyUsers, Value: Off, Type: TypeBool},
