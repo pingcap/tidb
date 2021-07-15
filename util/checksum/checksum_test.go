@@ -28,12 +28,12 @@ import (
 func TestChecksumReadAt(t *testing.T) {
 	t.Parallel()
 	path := "checksum"
-	f, clean := createTestFileWithoutClose(t, path)
+	f, clean := createTestFile(t, path)
 	defer clean()
 
 	w := newTestBuff("0123456789", 510)
 
-	csw := NewWriter(NewWriter(NewWriter(NewWriter(f))))
+	csw := NewWriter(NewWriter(NewWriter(NewWriter(fakeCloseFile(f)))))
 	n1, err := csw.Write(w.Bytes())
 	assert.NoError(t, err)
 	n2, err := csw.Write(w.Bytes())
@@ -71,7 +71,7 @@ func TestAddOneByte(t *testing.T) {
 
 func testAddOneByte(t *testing.T, encrypt bool) {
 	path := "TiCase3644"
-	f, clean := createTestFileWithoutClose(t, path)
+	f, clean := createTestFile(t, path)
 	defer clean()
 
 	insertPos := 5000
@@ -116,7 +116,7 @@ func TestDeleteOneByte(t *testing.T) {
 
 func testDeleteOneByte(t *testing.T, encrypt bool) {
 	path := "TiCase3645"
-	f, clean := createTestFileWithoutClose(t, path)
+	f, clean := createTestFile(t, path)
 	defer clean()
 
 	deletePos := 5000
@@ -161,7 +161,7 @@ func TestModifyOneByte(t *testing.T) {
 
 func testModifyOneByte(t *testing.T, encrypt bool) {
 	path := "TiCase3646"
-	f, clean := createTestFileWithoutClose(t, path)
+	f, clean := createTestFile(t, path)
 	defer clean()
 
 	modifyPos := 5000
@@ -243,7 +243,7 @@ func TestModifyThreeBytes(t *testing.T) {
 
 func testModifyThreeBytes(t *testing.T, encrypt bool) {
 	path := "TiCase3648"
-	f, clean := createTestFileWithoutClose(t, path)
+	f, clean := createTestFile(t, path)
 	defer clean()
 
 	modifyPos := 5000
@@ -297,11 +297,11 @@ func TestReadDifferentBlockSize(t *testing.T) {
 
 func testReadDifferentBlockSize(t *testing.T, encrypt bool) {
 	path := "TiCase3649and3650"
-	f, clean := createTestFileWithoutClose(t, path)
+	f, clean := createTestFile(t, path)
 	defer clean()
 	var err error
 
-	var underlying io.WriteCloser = f
+	var underlying = fakeCloseFile(f)
 	var ctrCipher *encrypt2.CtrCipher
 	if encrypt {
 		ctrCipher, err = encrypt2.NewCtrCipher()
@@ -361,12 +361,12 @@ func TestWriteDifferentBlockSize(t *testing.T) {
 
 func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 	path1 := "TiCase3652file1"
-	f1, clean1 := createTestFileWithoutClose(t, path1)
+	f1, clean1 := createTestFile(t, path1)
 	defer func() {
 		clean1()
 	}()
 	path2 := "TiCase3652file2"
-	f2, clean2 := createTestFileWithoutClose(t, path2)
+	f2, clean2 := createTestFile(t, path2)
 	defer func() {
 		clean2()
 	}()
@@ -382,8 +382,8 @@ func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 			return
 		}
 	}
-	var underlying1 io.WriteCloser = f1
-	var underlying2 io.WriteCloser = f2
+	var underlying1 = fakeCloseFile(f1)
+	var underlying2 = fakeCloseFile(f2)
 	if encrypt {
 		underlying1 = encrypt2.NewWriter(underlying1, ctrCipher)
 		underlying2 = encrypt2.NewWriter(underlying2, ctrCipher)
@@ -482,16 +482,6 @@ func TestChecksumWriterAutoFlush(t *testing.T) {
 	assert.Equal(t, int64(len(buf.Bytes())), cacheOff)
 }
 
-func createTestFileWithoutClose(t *testing.T, path string) (f *os.File, clean func()) {
-	f, err := os.Create(path)
-	require.NoError(t, err)
-	clean = func() {
-		err := os.Remove(path)
-		assert.NoError(t, err)
-	}
-	return f, clean
-}
-
 func createTestFile(t *testing.T, path string) (f *os.File, clean func()) {
 	f, err := os.Create(path)
 	require.NoError(t, err)
@@ -556,7 +546,7 @@ func (w *mockWriter) Close() (err error) {
 }
 
 func assertUnderlyingWrite(t *testing.T, encrypt bool, f *os.File, fc func(b []byte, offset int) []byte) (*encrypt2.CtrCipher, bool) {
-	var underlying io.WriteCloser = newMockWriter(f, fc)
+	var underlying io.WriteCloser = newMockWriter(fakeCloseFile(f), fc)
 	var ctrCipher *encrypt2.CtrCipher
 	var err error
 	if encrypt {
@@ -578,7 +568,7 @@ func assertUnderlyingWrite(t *testing.T, encrypt bool, f *os.File, fc func(b []b
 	return ctrCipher, false
 }
 
-func underlyingReadAt(f *os.File, encrypt bool, ctrCipher *encrypt2.CtrCipher, n, off int) error {
+func underlyingReadAt(f io.ReaderAt, encrypt bool, ctrCipher *encrypt2.CtrCipher, n, off int) error {
 	var underlying io.ReaderAt = f
 	if encrypt {
 		underlying = encrypt2.NewReader(underlying, ctrCipher)
@@ -590,8 +580,8 @@ func underlyingReadAt(f *os.File, encrypt bool, ctrCipher *encrypt2.CtrCipher, n
 	return err
 }
 
-func assertReadAtFunc(t *testing.T, encrypt bool, ctrCipher *encrypt2.CtrCipher) func(off int64, r []byte, assertErr error, assertN int, assertString string, f *os.File) {
-	return func(off int64, r []byte, assertErr error, assertN int, assertString string, f *os.File) {
+func assertReadAtFunc(t *testing.T, encrypt bool, ctrCipher *encrypt2.CtrCipher) func(off int64, r []byte, assertErr error, assertN int, assertString string, f io.ReaderAt) {
+	return func(off int64, r []byte, assertErr error, assertN int, assertString string, f io.ReaderAt) {
 		var underlying io.ReaderAt = f
 		if encrypt {
 			underlying = encrypt2.NewReader(underlying, ctrCipher)
@@ -612,4 +602,16 @@ var checkFlushedData = func(t *testing.T, f io.ReaderAt, off int64, readBufLen i
 	assert.ErrorIs(t, err, assertErr)
 	assert.Equal(t, assertN, n)
 	assert.Equal(t, 0, bytes.Compare(readBuf, assertRes))
+}
+
+type fileWithFakeClose struct {
+	*os.File
+}
+
+func (f *fileWithFakeClose) Close() error {
+	return nil
+}
+
+func fakeCloseFile(file *os.File) io.WriteCloser {
+	return &fileWithFakeClose{file}
 }
