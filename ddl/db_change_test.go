@@ -1785,7 +1785,11 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int default 0, b int default 0)")
+	defer func() {
+		tk.MustExec("drop table t")
+	}()
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
 
 	tk1 := testkit.NewTestKit(c, s.store)
