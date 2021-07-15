@@ -627,6 +627,16 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		tblID2Handle:     v.TblID2Handle,
 		partitionedTable: v.PartitionedTable,
 	}
+
+	// filter out temporary tables because they do not store any record in tikv and should not write any lock
+	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	for tblID := range e.tblID2Handle {
+		tblInfo, _ := is.TableByID(tblID)
+		if tblInfo.Meta().TempTableType != model.TempTableNone {
+			delete(e.tblID2Handle, tblID)
+		}
+	}
+
 	if len(e.partitionedTable) > 0 {
 		schema := v.Schema()
 		e.tblID2PIDColumnIndex = make(map[int64]int)
