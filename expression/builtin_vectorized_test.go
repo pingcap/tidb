@@ -145,8 +145,7 @@ func BenchmarkColumnPoolGet(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < numColumnPoolOp; j++ {
-			col, _ := allocator.get(types.ETInt, chunk.InitialCapacity)
-			_ = col
+			_, _ = allocator.get()
 		}
 	}
 }
@@ -157,8 +156,7 @@ func BenchmarkColumnPoolGetParallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			for i := 0; i < numColumnPoolOp; i++ {
-				col, _ := allocator.get(types.ETInt, chunk.InitialCapacity)
-				_ = col
+				_, _ = allocator.get()
 			}
 		}
 	})
@@ -169,7 +167,7 @@ func BenchmarkColumnPoolGetPut(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < numColumnPoolOp; j++ {
-			col, _ := allocator.get(types.ETInt, chunk.InitialCapacity)
+			col, _ := allocator.get()
 			allocator.put(col)
 		}
 	}
@@ -181,7 +179,7 @@ func BenchmarkColumnPoolGetPutParallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			for i := 0; i < numColumnPoolOp; i++ {
-				col, _ := allocator.get(types.ETInt, chunk.InitialCapacity)
+				col, _ := allocator.get()
 				allocator.put(col)
 			}
 		}
