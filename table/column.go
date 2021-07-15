@@ -253,7 +253,6 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	if returnErr && err != nil {
 		return casted, err
 	}
-	ignoreTruncate := false
 	if err != nil && types.ErrTruncated.Equal(err) && col.Tp != mysql.TypeSet && col.Tp != mysql.TypeEnum {
 		str, err1 := val.ToString()
 		if err1 != nil {
@@ -268,12 +267,9 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		}
 	} else if (sc.InInsertStmt || sc.InUpdateStmt) && types.ErrInvalidYear.Equal(err) {
 		casted.SetInt64(0)
-		ignoreTruncate = true
 	}
 
-	if !ignoreTruncate {
-		err = sc.HandleTruncate(err)
-	}
+	err = sc.HandleTruncate(err)
 
 	if forceIgnoreTruncate {
 		err = nil

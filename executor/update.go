@@ -321,7 +321,7 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName.O, rowIdx+1)
 	}
 
-	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
+	if e.ctx.GetSessionVars().StmtCtx.TruncateAsWarning {
 		sc := e.ctx.GetSessionVars().StmtCtx
 		sc.AppendWarning(err)
 		err = nil

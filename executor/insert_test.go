@@ -494,10 +494,10 @@ func (s *testSuite3) TestInsertInvalidYear(c *C) {
 	_, err = tk.Exec(`insert ignore into t1 values(1900), (2156), ("1900"), ("2156");`)
 	c.Assert(err, IsNil)
 	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|",
-		"Warning|1264|Out of range value for column 'y' at row 1",
-		"Warning|1264|Out of range value for column 'y' at row 2",
-		"Warning|1264|Out of range value for column 'y' at row 3",
-		"Warning|1264|Out of range value for column 'y' at row 4",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
 	))
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`0`, `0`, `0`, `0`))
 
@@ -505,10 +505,10 @@ func (s *testSuite3) TestInsertInvalidYear(c *C) {
 	_, err = tk.Exec(`insert into t1 values(1900), (2156), ("1900"), ("2156");`)
 	c.Assert(err, IsNil)
 	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|",
-		"Warning|1264|Out of range value for column 'y' at row 1",
-		"Warning|1264|Out of range value for column 'y' at row 2",
-		"Warning|1264|Out of range value for column 'y' at row 3",
-		"Warning|1264|Out of range value for column 'y' at row 4",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
 	))
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`0`, `0`, `0`, `0`, `0`, `0`, `0`, `0`))
 }

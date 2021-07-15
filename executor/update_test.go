@@ -546,8 +546,8 @@ func (s *testSuite3) TestUpdateInvalidYear(c *C) {
 	_, err = tk.Exec(`update ignore t1 set y=1900;`)
 	c.Assert(err, IsNil)
 	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|",
-		"Warning|1264|Out of range value for column 'y' at row 1",
-		"Warning|1264|Out of range value for column 'y' at row 1",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
 	))
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`0`, `0`))
 
@@ -555,8 +555,8 @@ func (s *testSuite3) TestUpdateInvalidYear(c *C) {
 	_, err = tk.Exec(`update ignore t1 set y=1900;`)
 	c.Assert(err, IsNil)
 	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|",
-		"Warning|1264|Out of range value for column 'y' at row 1",
-		"Warning|1264|Out of range value for column 'y' at row 1",
+		"Warning|8033|invalid year",
+		"Warning|8033|invalid year",
 	))
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`0`, `0`))
 }
