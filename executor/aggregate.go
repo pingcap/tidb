@@ -199,13 +199,18 @@ type HashAggExec struct {
 	stats *HashAggRuntimeStats
 
 	// listInDisk is the chunks to store row values for spilling data.
+	// The HashAggExec may enter `spill mode` multiple times, and all spill data will append to ListInDisk.
 	listInDisk *chunk.ListInDisk
-	// numOfSpilledChks indicates the num of spilling chunk.
+	// numOfSpilledChks indicates the num of spilling chunk after the last round of processing is over.
+	// After one round of processing is over, no data spilling again means that all data has been processed.
 	numOfSpilledChks int
 	// offsetOfSpillChks indicates the num of processed chunk in disk.
+	// In the one round of processing, we need process all data spilled in the last round.
 	offsetOfSpillChks int
-	// isSpillModeSet means that no new groups are added to hash table.
-	isSpillModeSet uint32
+
+	// inSpillMode indicates whether HashAgg is in `spill mode`.
+	// When HashAgg is in `spill mode`, keep the tuple in partialResultMap no longer growing.
+	inSpillMode uint32
 	// tmpChkForSpill is the temp chunk for spilling.
 	tmpChkForSpill *chunk.Chunk
 	// spillAction save the Action for spilling.
@@ -940,7 +945,7 @@ func (e *HashAggExec) resetSpillMode() {
 	e.executed = e.numOfSpilledChks == e.listInDisk.NumChunks() // No data is spilling again, all data have been processed.
 	e.numOfSpilledChks = e.listInDisk.NumChunks()
 	e.memTracker.ReplaceBytesUsed(setSize)
-	atomic.StoreUint32(&e.isSpillModeSet, 0)
+	atomic.StoreUint32(&e.inSpillMode, 0)
 }
 
 // execute fetches Chunks from src and update each aggregate function for each row in Chunk.
@@ -982,7 +987,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
-				if atomic.LoadUint32(&e.isSpillModeSet) == 1 && e.groupSet.Count() > 0 {
+				if atomic.LoadUint32(&e.inSpillMode) == 1 && e.groupSet.Count() > 0 {
 					sel = append(sel, j)
 					continue
 				}
@@ -1001,7 +1006,8 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 
 		// spill unprocessed data when exceeded.
 		if len(sel) > 0 {
-			err = e.spillUnprocessedData(sel)
+			e.childResult.SetSel(sel)
+			err = e.spillUnprocessedData()
 			if err != nil {
 				return err
 			}
@@ -1012,22 +1018,15 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	}
 }
 
-func (e *HashAggExec) spillUnprocessedData(sel []int) (err error) {
-	if len(sel) == e.childResult.NumRows() {
-		err = e.listInDisk.Add(e.childResult)
-		if err != nil {
-			return err
-		}
-	} else {
-		for _, j := range sel {
-			e.tmpChkForSpill.Append(e.childResult, j, j+1)
-			if e.tmpChkForSpill.IsFull() {
-				err = e.listInDisk.Add(e.tmpChkForSpill)
-				if err != nil {
-					return err
-				}
-				e.tmpChkForSpill.Reset()
+func (e *HashAggExec) spillUnprocessedData() (err error) {
+	for i := 0; i < e.childResult.NumRows(); i++ {
+		e.tmpChkForSpill.AppendRow(e.childResult.GetRow(i))
+		if e.tmpChkForSpill.IsFull() {
+			err = e.listInDisk.Add(e.tmpChkForSpill)
+			if err != nil {
+				return err
 			}
+			e.tmpChkForSpill.Reset()
 		}
 	}
 	return nil
@@ -1885,11 +1884,11 @@ type AggSpillDiskAction struct {
 
 // Action set HashAggExec spill mode.
 func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
-	if atomic.LoadUint32(&a.e.isSpillModeSet) == 0 && a.spillTimes < maxSpillTimes {
+	if atomic.LoadUint32(&a.e.inSpillMode) == 0 && a.spillTimes < maxSpillTimes {
 		a.spillTimes++
 		logutil.BgLogger().Info("memory exceeds quota, set aggregate mode to spill-mode",
 			zap.Uint32("spillTimes", a.spillTimes))
-		atomic.StoreUint32(&a.e.isSpillModeSet, 1)
+		atomic.StoreUint32(&a.e.inSpillMode, 1)
 		return
 	}
 	if fallback := a.GetFallback(); fallback != nil {
