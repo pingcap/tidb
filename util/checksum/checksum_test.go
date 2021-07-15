@@ -27,9 +27,9 @@ import (
 
 func TestChecksumReadAt(t *testing.T) {
 	t.Parallel()
-	path := "checksum"
-	f, clean := createTestFileWithoutClose(t, path)
-	defer clean()
+
+	f, err := os.CreateTemp("", "TestChecksumReadAt")
+	require.NoError(t, err)
 
 	w := newTestBuff("0123456789", 510)
 
@@ -41,8 +41,8 @@ func TestChecksumReadAt(t *testing.T) {
 	err = csw.Close()
 	assert.NoError(t, err)
 
-	f, clean = openTestFile(t, path)
-	defer clean()
+	f, err = os.Open(f.Name())
+	require.NoError(t, err)
 
 	assertReadAt := func(off int64, assertErr error, assertN int, assertString string) {
 		cs := NewReader(NewReader(NewReader(NewReader(f))))
@@ -70,9 +70,8 @@ func TestAddOneByte(t *testing.T) {
 }
 
 func testAddOneByte(t *testing.T, encrypt bool) {
-	path := "TiCase3644"
-	f, clean := createTestFileWithoutClose(t, path)
-	defer clean()
+	f, err := os.CreateTemp("", "testAddOneByte")
+	require.NoError(t, err)
 
 	insertPos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -87,8 +86,9 @@ func testAddOneByte(t *testing.T, encrypt bool) {
 	if done {
 		return
 	}
-	f, clean = openTestFile(t, path)
-	defer clean()
+
+	f, err = os.Open(f.Name())
+	require.NoError(t, err)
 
 	for i := 0; ; i++ {
 		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
@@ -115,9 +115,8 @@ func TestDeleteOneByte(t *testing.T) {
 }
 
 func testDeleteOneByte(t *testing.T, encrypt bool) {
-	path := "TiCase3645"
-	f, clean := createTestFileWithoutClose(t, path)
-	defer clean()
+	f, err := os.CreateTemp("", "testDeleteOneByte")
+	require.NoError(t, err)
 
 	deletePos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -132,8 +131,9 @@ func testDeleteOneByte(t *testing.T, encrypt bool) {
 	if done {
 		return
 	}
-	f, clean = openTestFile(t, path)
-	defer clean()
+
+	f, err = os.Open(f.Name())
+	require.NoError(t, err)
 
 	for i := 0; ; i++ {
 		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
@@ -160,9 +160,8 @@ func TestModifyOneByte(t *testing.T) {
 }
 
 func testModifyOneByte(t *testing.T, encrypt bool) {
-	path := "TiCase3646"
-	f, clean := createTestFileWithoutClose(t, path)
-	defer clean()
+	f, err := os.CreateTemp("", "testModifyOneByte")
+	require.NoError(t, err)
 
 	modifyPos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -177,8 +176,9 @@ func testModifyOneByte(t *testing.T, encrypt bool) {
 	if done {
 		return
 	}
-	f, clean = openTestFile(t, path)
-	defer clean()
+
+	f, err = os.Open(f.Name())
+	require.NoError(t, err)
 
 	for i := 0; ; i++ {
 		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
@@ -205,10 +205,8 @@ func TestReadEmptyFile(t *testing.T) {
 }
 
 func testReadEmptyFile(t *testing.T, encrypt bool) {
-	path := "TiCase3647"
-	f, clean := createTestFile(t, path)
-	defer clean()
-	var err error
+	f, err := os.CreateTemp("", "testReadEmptyFile")
+	require.NoError(t, err)
 
 	var ctrCipher *encrypt2.CtrCipher
 	if encrypt {
@@ -242,9 +240,8 @@ func TestModifyThreeBytes(t *testing.T) {
 }
 
 func testModifyThreeBytes(t *testing.T, encrypt bool) {
-	path := "TiCase3648"
-	f, clean := createTestFileWithoutClose(t, path)
-	defer clean()
+	f, err := os.CreateTemp("", "testModifyThreeBytes")
+	require.NoError(t, err)
 
 	modifyPos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -263,8 +260,9 @@ func testModifyThreeBytes(t *testing.T, encrypt bool) {
 	if done {
 		return
 	}
-	f, clean = openTestFile(t, path)
-	defer clean()
+
+	f, err = os.Open(f.Name())
+	require.NoError(t, err)
 
 	for i := 0; ; i++ {
 		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
@@ -296,10 +294,8 @@ func TestReadDifferentBlockSize(t *testing.T) {
 }
 
 func testReadDifferentBlockSize(t *testing.T, encrypt bool) {
-	path := "TiCase3649and3650"
-	f, clean := createTestFileWithoutClose(t, path)
-	defer clean()
-	var err error
+	f, err := os.CreateTemp("", "testReadDifferentBlockSize")
+	require.NoError(t, err)
 
 	var underlying io.WriteCloser = f
 	var ctrCipher *encrypt2.CtrCipher
@@ -320,8 +316,8 @@ func testReadDifferentBlockSize(t *testing.T, encrypt bool) {
 	err = underlying.Close()
 	assert.NoError(t, err)
 
-	f, clean = openTestFile(t, path)
-	defer clean()
+	f, err = os.Open(f.Name())
+	require.NoError(t, err)
 
 	assertReadAt := assertReadAtFunc(t, encrypt, ctrCipher)
 
@@ -360,17 +356,10 @@ func TestWriteDifferentBlockSize(t *testing.T) {
 }
 
 func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
-	path1 := "TiCase3652file1"
-	f1, clean1 := createTestFileWithoutClose(t, path1)
-	defer func() {
-		clean1()
-	}()
-	path2 := "TiCase3652file2"
-	f2, clean2 := createTestFileWithoutClose(t, path2)
-	defer func() {
-		clean2()
-	}()
-	var err error
+	f1, err := os.CreateTemp("", "testWriteDifferentBlockSizeFile1")
+	require.NoError(t, err)
+	f2, err := os.CreateTemp("", "testWriteDifferentBlockSizeFile2")
+	require.NoError(t, err)
 
 	w := newTestBuff("0123456789", 510)
 	w.Write(w.Bytes())
@@ -397,8 +386,8 @@ func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 	err = underlying1.Close()
 	assert.NoError(t, err)
 
-	f1, clean := openTestFile(t, path1)
-	defer clean()
+	f1, err = os.Open(f1.Name())
+	require.NoError(t, err)
 
 	// Write data by 100 bytes one batch.
 	lastPos := 0
@@ -415,8 +404,8 @@ func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 	}
 	err = underlying2.Close()
 	assert.NoError(t, err)
-	f2, clean = openTestFile(t, path2)
-	defer clean()
+	f2, err = os.Open(f2.Name())
+	require.NoError(t, err)
 
 	// check two files is same
 	s1, err := f1.Stat()
@@ -441,9 +430,9 @@ func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 
 func TestChecksumWriter(t *testing.T) {
 	t.Parallel()
-	path := "checksum_TestChecksumWriter"
-	f, clean := createTestFile(t, path)
-	defer clean()
+
+	f, err := os.CreateTemp("", "TestChecksumWriter")
+	require.NoError(t, err)
 
 	buf := newTestBuff("0123456789", 100)
 	// Write 1000 bytes and flush.
@@ -463,9 +452,8 @@ func TestChecksumWriter(t *testing.T) {
 
 func TestChecksumWriterAutoFlush(t *testing.T) {
 	t.Parallel()
-	path := "checksum_TestChecksumWriterAutoFlush"
-	f, clean := createTestFile(t, path)
-	defer clean()
+	f, err := os.CreateTemp("", "TestChecksumWriterAutoFlush")
+	require.NoError(t, err)
 
 	buf := newTestBuff("0123456789", 102)
 	w := NewWriter(f)
@@ -480,38 +468,6 @@ func TestChecksumWriterAutoFlush(t *testing.T) {
 	checkFlushedData(t, f, 0, 1020, 1020, nil, buf.Bytes())
 	cacheOff := w.GetCacheDataOffset()
 	assert.Equal(t, int64(len(buf.Bytes())), cacheOff)
-}
-
-func createTestFileWithoutClose(t *testing.T, path string) (f *os.File, clean func()) {
-	f, err := os.Create(path)
-	require.NoError(t, err)
-	clean = func() {
-		err := os.Remove(path)
-		assert.NoError(t, err)
-	}
-	return f, clean
-}
-
-func createTestFile(t *testing.T, path string) (f *os.File, clean func()) {
-	f, err := os.Create(path)
-	require.NoError(t, err)
-	clean = func() {
-		err := f.Close()
-		assert.NoError(t, err)
-		err = os.Remove(path)
-		assert.NoError(t, err)
-	}
-	return f, clean
-}
-
-func openTestFile(t *testing.T, path string) (f *os.File, clean func()) {
-	f, err := os.Open(path)
-	require.NoError(t, err)
-	clean = func() {
-		err := f.Close()
-		assert.NoError(t, err)
-	}
-	return f, clean
 }
 
 func newTestBuff(str string, n int) *bytes.Buffer {
