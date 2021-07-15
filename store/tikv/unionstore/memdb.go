@@ -771,7 +771,7 @@ type memdbNode struct {
 	right memdbArenaAddr
 	vptr  memdbArenaAddr
 	klen  uint16
-	flags uint8
+	flags uint16
 }
 
 func (n *memdbNode) isRed() bool {
@@ -793,7 +793,7 @@ func (n *memdbNode) setBlack() {
 func (n *memdbNode) getKey() []byte {
 	var ret []byte
 	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&ret))
-	hdr.Data = uintptr(unsafe.Pointer(&n.flags)) + 1
+	hdr.Data = uintptr(unsafe.Pointer(&n.flags)) + 2
 	hdr.Len = int(n.klen)
 	hdr.Cap = int(n.klen)
 	return ret
@@ -801,8 +801,8 @@ func (n *memdbNode) getKey() []byte {
 
 const (
 	// bit 1 => red, bit 0 => black
-	nodeColorBit  uint8 = 0x80
-	nodeFlagsMask       = ^nodeColorBit
+	nodeColorBit  uint16 = 1 << 15
+	nodeFlagsMask        = ^nodeColorBit
 )
 
 func (n *memdbNode) getKeyFlags() kv.KeyFlags {
@@ -810,5 +810,5 @@ func (n *memdbNode) getKeyFlags() kv.KeyFlags {
 }
 
 func (n *memdbNode) setKeyFlags(f kv.KeyFlags) {
-	n.flags = (^nodeFlagsMask & n.flags) | uint8(f)
+	n.flags = (^nodeFlagsMask & n.flags) | uint16(f)
 }

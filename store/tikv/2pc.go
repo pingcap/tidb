@@ -47,6 +47,7 @@ import (
 // If the duration of a single request exceeds the slowRequestThreshold, a warning log will be logged.
 const slowRequestThreshold = time.Minute
 
+// PrettyKeyPrint debug use...TODO: delete me
 var PrettyKeyPrint func([]byte) string
 
 type twoPhaseCommitAction interface {
