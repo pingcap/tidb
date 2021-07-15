@@ -1343,7 +1343,7 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	return resultTp
 }
 
-func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnionAll) {
+func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnionAll) error {
 	unionCols := make([]*expression.Column, 0, u.children[0].Schema().Len())
 	names := make([]*types.FieldName, 0, u.children[0].Schema().Len())
 
@@ -1356,6 +1356,9 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			tmpExprs = append(tmpExprs, u.children[j].Schema().Columns[i])
 			childTp := u.children[j].Schema().Columns[i].RetType
 			resultTp = unionJoinFieldType(resultTp, childTp)
+		}
+		if err := expression.CheckIllegalMixCollation("UNION", tmpExprs, types.ETInt); err != nil {
+			return err
 		}
 		resultTp.Charset, resultTp.Collate = expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
 		names = append(names, &types.FieldName{ColName: u.children[0].OutputNames()[i].ColName})
@@ -1389,6 +1392,7 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 		proj.SetChildren(child)
 		u.children[childID] = proj
 	}
+	return nil
 }
 
 func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (LogicalPlan, error) {
@@ -1598,7 +1602,10 @@ func (b *PlanBuilder) buildUnion(ctx context.Context, selects []LogicalPlan, aft
 		return nil, err
 	}
 
-	unionDistinctPlan := b.buildUnionAll(ctx, distinctSelectPlans)
+	unionDistinctPlan, err := b.buildUnionAll(ctx, distinctSelectPlans)
+	if err != nil {
+		return nil, err
+	}
 	if unionDistinctPlan != nil {
 		unionDistinctPlan, err = b.buildDistinct(unionDistinctPlan, unionDistinctPlan.Schema().Len())
 		if err != nil {
@@ -1610,7 +1617,10 @@ func (b *PlanBuilder) buildUnion(ctx context.Context, selects []LogicalPlan, aft
 		}
 	}
 
-	unionAllPlan := b.buildUnionAll(ctx, allSelectPlans)
+	unionAllPlan, err := b.buildUnionAll(ctx, allSelectPlans)
+	if err != nil {
+		return nil, err
+	}
 	unionPlan := unionDistinctPlan
 	if unionAllPlan != nil {
 		unionPlan = unionAllPlan
@@ -1638,14 +1648,14 @@ func (b *PlanBuilder) divideUnionSelectPlans(ctx context.Context, selects []Logi
 	return selects[:firstUnionAllIdx], selects[firstUnionAllIdx:], nil
 }
 
-func (b *PlanBuilder) buildUnionAll(ctx context.Context, subPlan []LogicalPlan) LogicalPlan {
+func (b *PlanBuilder) buildUnionAll(ctx context.Context, subPlan []LogicalPlan) (LogicalPlan, error) {
 	if len(subPlan) == 0 {
-		return nil
+		return nil, nil
 	}
 	u := LogicalUnionAll{}.Init(b.ctx, b.getSelectOffset())
 	u.children = subPlan
-	b.buildProjection4Union(ctx, u)
-	return u
+	err := b.buildProjection4Union(ctx, u)
+	return u, err
 }
 
 // itemTransformer transforms ParamMarkerExpr to PositionExpr in the context of ByItem
@@ -3135,6 +3145,21 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 	return resultList
 }
 
+func (b *PlanBuilder) addAliasName(selectFields []*ast.SelectField, p LogicalPlan) (resultList []*ast.SelectField, err error) {
+	if len(selectFields) != len(p.OutputNames()) {
+		return nil, errors.Errorf("lengths of selectFields and OutputNames are not equal(%d, %d)",
+			len(selectFields), len(p.OutputNames()))
+	}
+	for i, field := range selectFields {
+		newField := *field
+		if newField.AsName.L == "" {
+			newField.AsName = p.OutputNames()[i].ColName
+		}
+		resultList = append(resultList, &newField)
+	}
+	return resultList, nil
+}
+
 func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) {
 	var sb strings.Builder
 	ctx := format.NewRestoreCtx(0, &sb)
@@ -3530,6 +3555,17 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		return nil, err
 	}
 
+	if b.capFlag&canExpandAST != 0 {
+		// To be compabitle with MySQL, we add alias name for each select field when creating view.
+		// This function assumes one to one mapping between sel.Fields.Fields and p.OutputNames().
+		// So we do this step right after Projection is built.
+		sel.Fields.Fields, err = b.addAliasName(sel.Fields.Fields, p)
+		if err != nil {
+			return nil, err
+		}
+		originalFields = sel.Fields.Fields
+	}
+
 	if sel.Having != nil {
 		b.curClause = havingClause
 		p, err = b.buildSelection(ctx, p, sel.Having.Expr, havingMap)
@@ -3777,12 +3813,26 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		dbName = model.NewCIStr(sessionVars.CurrentDB)
 	}
 
-	tbl, err := b.is.TableByName(dbName, tn.Name)
+	is := b.is
+	if len(b.buildingViewStack) > 0 {
+		if tempIs, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
+			// For tables in view, always ignore local temporary table, considering the below case:
+			// If a user created a normal table `t1` and a view `v1` referring `t1`, and then a local temporary table with a same name `t1` is created.
+			// At this time, executing 'select * from v1' should still return all records from normal table `t1` instead of temporary table `t1`.
+			is = tempIs.InfoSchema
+		}
+	}
+
+	tbl, err := is.TableByName(dbName, tn.Name)
 	if err != nil {
 		return nil, err
 	}
 
 	tableInfo := tbl.Meta()
+	if b.isCreateView && tableInfo.TempTableType == model.TempTableLocal {
+		return nil, ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
+	}
+
 	var authErr error
 	if sessionVars.User != nil {
 		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tableInfo.Name.L)
@@ -4110,9 +4160,13 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 	p := LogicalMemTable{
 		DBName:    dbName,
 		TableInfo: tableInfo,
+		Columns:   make([]*model.ColumnInfo, len(tableInfo.Columns)),
 	}.Init(b.ctx, b.getSelectOffset())
 	p.SetSchema(schema)
 	p.names = names
+	for i, col := range tableInfo.Columns {
+		p.Columns[i] = col
+	}
 
 	// Some memory tables can receive some predicates
 	switch dbName.L {

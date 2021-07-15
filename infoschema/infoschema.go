@@ -414,8 +414,8 @@ type LocalTemporaryTables struct {
 	idx2table map[int64]table.Table
 }
 
-// NewLocalTemporaryTableInfoSchema creates a new LocalTemporaryTableInfoSchema object
-func NewLocalTemporaryTableInfoSchema() *LocalTemporaryTables {
+// NewLocalTemporaryTables creates a new NewLocalTemporaryTables object
+func NewLocalTemporaryTables() *LocalTemporaryTables {
 	return &LocalTemporaryTables{
 		schemaMap: make(map[string]*schemaLocalTempSchemaTables),
 		idx2table: make(map[int64]table.Table),

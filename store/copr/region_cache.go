@@ -18,7 +18,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/tikv/client-go/v2/logutil"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 )
