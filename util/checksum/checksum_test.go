@@ -555,7 +555,6 @@ func (f *fakeFile) ReadAt(p []byte, off int64) (n int, err error) {
 	lc := copy(p, w[off:])
 	if int64(lc) == lw-off {
 		return lc, io.EOF
-	} else {
-		return lc, nil
 	}
+	return lc, nil
 }
