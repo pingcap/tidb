@@ -4196,7 +4196,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		isStaleness:  b.isStaleness,
 		keepOrder:    plan.KeepOrder,
 		desc:         plan.Desc,
-		lock:         plan.Lock && plan.TblInfo.TempTableType == model.TempTableNone,
+		lock:         plan.Lock,
 		waitTime:     plan.LockWaitTime,
 		partExpr:     plan.PartitionExpr,
 		partPos:      plan.PartitionColPos,
@@ -4204,6 +4204,13 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		partTblID:    plan.PartTblID,
 		columns:      plan.Columns,
 	}
+
+	if plan.TblInfo.TempTableType != model.TempTableNone {
+		// Temporary table should not do any lock operations
+		e.lock = false
+		e.waitTime = 0
+	}
+
 	if e.lock {
 		b.hasLock = true
 	}
