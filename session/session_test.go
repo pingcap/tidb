@@ -2151,7 +2151,7 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
 	defer tk.MustExec(`drop table if exists normal_table`)
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec(`drop table if exists temp_table`)
-	tk.MustExec(`create global temporary table temp_table (id int, c int) on commit delete rows;`)
+	tk.MustExec(`create global temporary table temp_table (id int primary key, c int) on commit delete rows;`)
 	defer tk.MustExec(`drop table if exists temp_table`)
 
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
@@ -2162,8 +2162,24 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
 
 	// It's fine to change the schema of temporary tables.
 	tk.MustExec(`begin;`)
-	tk1.MustExec(`alter table temp_table modify column c bigint;`)
+	tk1.MustExec(`alter table temp_table modify column c tinyint;`)
 	tk.MustExec(`insert into temp_table values(3, 3);`)
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table temp_table modify column c smallint;`)
+	tk.MustExec(`insert into temp_table values(3, 3);`)
+	tk.MustExec(`select * from temp_table for update;`)
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table temp_table modify column c bigint;`)
+	tk.MustExec(`select * from temp_table where id=1 for update;`)
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table temp_table modify column c double;`)
+	tk.MustExec(`select * from temp_table where id in (1, 2, 3) for update;`)
 	tk.MustExec(`commit;`)
 
 	// Truncate will modify table ID.

@@ -4196,7 +4196,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		isStaleness:  b.isStaleness,
 		keepOrder:    plan.KeepOrder,
 		desc:         plan.Desc,
-		lock:         plan.Lock,
+		lock:         plan.Lock && plan.TblInfo.TempTableType == model.TempTableNone,
 		waitTime:     plan.LockWaitTime,
 		partExpr:     plan.PartitionExpr,
 		partPos:      plan.PartitionColPos,

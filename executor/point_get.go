@@ -107,7 +107,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
 	e.idxVals = p.IndexValues
 	e.startTS = startTs
 	e.done = false
-	e.lock = p.Lock
+	e.lock = p.Lock && e.tblInfo.TempTableType == model.TempTableNone
 	e.lockWaitTime = p.LockWaitTime
 	e.rowDecoder = decoder
 	e.partInfo = p.PartitionInfo

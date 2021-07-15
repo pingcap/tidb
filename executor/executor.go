@@ -905,7 +905,21 @@ type SelectLockExec struct {
 
 // Open implements the Executor Open interface.
 func (e *SelectLockExec) Open(ctx context.Context) error {
-	return e.baseExecutor.Open(ctx)
+	err := e.baseExecutor.Open(ctx)
+	if err != nil {
+		return err
+	}
+
+	// filter out temporary tables because they do not store any record in tikv and should not write any lock
+	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	for tblID := range e.tblID2Handle {
+		tblInfo, _ := is.TableByID(tblID)
+		if tblInfo.Meta().TempTableType != model.TempTableNone {
+			delete(e.tblID2Handle, tblID)
+		}
+	}
+
+	return nil
 }
 
 // Next implements the Executor Next interface.
