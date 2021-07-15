@@ -536,47 +536,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 				p: dual,
 			}, nil
 		}
-<<<<<<< HEAD
 		if ds.canConvertToPointGet(candidate) {
 			var pointGetTask task
 			if len(path.Ranges) == 1 {
 				pointGetTask = ds.convertToPointGet(prop, candidate)
 			} else {
 				pointGetTask = ds.convertToBatchPointGet(prop, candidate)
-=======
-		var hashPartColName *ast.ColumnName
-		if tblInfo := ds.table.Meta(); canConvertPointGet && tblInfo.GetPartitionInfo() != nil {
-			// We do not build [batch] point get for dynamic table partitions now. This can be optimized.
-			if ds.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-				canConvertPointGet = false
-			} else if len(path.Ranges) > 1 {
-				// We can only build batch point get for hash partitions on a simple column now. This is
-				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
-				// the `getPhysID()` function. Once we optimize that part, we can come back and enable
-				// BatchPointGet plan for more cases.
-				hashPartColName = getHashPartitionColumnName(ds.ctx, tblInfo)
-				if hashPartColName == nil {
-					canConvertPointGet = false
-				}
-			} else {
-				// If the schema contains ExtraPidColID, do not convert to point get.
-				// Because the point get executor can not handle the extra partition ID column now.
-				for _, col := range ds.schema.Columns {
-					if col.ID == model.ExtraPidColID {
-						canConvertPointGet = false
-						break
-					}
-				}
-			}
-		}
-		if canConvertPointGet {
-			allRangeIsPoint := true
-			for _, ran := range path.Ranges {
-				if !ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
-					allRangeIsPoint = false
-					break
-				}
->>>>>>> 5645edeec... planner,executor: fix point get for update read panic on partition table (#25537)
 			}
 			if pointGetTask.cost() < t.cost() {
 				t = pointGetTask
@@ -616,6 +581,14 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 }
 
 func (ds *DataSource) canConvertToPointGet(candidate *candidatePath) bool {
+	// If the schema contains ExtraPidColID, do not convert to point get.
+	// Because the point get executor can not handle the extra partition ID column now.
+	for _, col := range ds.schema.Columns {
+		if col.ID == modelExtraPidColID {
+			return false
+		}
+	}
+
 	path := candidate.path
 
 	canConvertPointGet := (!ds.isPartition && len(path.Ranges) > 0) || (ds.isPartition && len(path.Ranges) == 1)
