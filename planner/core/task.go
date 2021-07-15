@@ -1970,7 +1970,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		newMpp := mpp.enforceExchangerImpl(prop)
 		attachPlan2Task(finalAgg, newMpp)
 		if proj == nil {
-			proj := PhysicalProjection{
+			proj = PhysicalProjection{
 				Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)),
 			}.Init(p.ctx, p.statsInfo(), p.SelectBlockOffset())
 			for _, col := range p.Schema().Columns {
