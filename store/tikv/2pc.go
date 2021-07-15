@@ -152,7 +152,7 @@ func (m *memBufferMutations) GetValue(i int) []byte {
 }
 
 func (m *memBufferMutations) GetOp(i int) pb.Op {
-	return pb.Op(m.handles[i].UserData >> 1)
+	return pb.Op(m.handles[i].UserData >> 3)
 }
 
 func (m *memBufferMutations) IsPessimisticLock(i int) bool {
@@ -175,7 +175,7 @@ func (m *memBufferMutations) Slice(from, to int) CommitterMutations {
 }
 
 func (m *memBufferMutations) Push(op pb.Op, isPessimisticLock bool, assertExist bool, assertNotExist bool, handle unionstore.MemKeyHandle) {
-	aux := uint16(op) << 1
+	aux := uint16(op) << 3
 	if isPessimisticLock {
 		aux |= 1
 	}
@@ -435,7 +435,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		if flags.HasLocked() {
 			isPessimistic = c.isPessimistic
 		}
-		logutil.BgLogger().Error("----->", zap.Stringer("op", op), zap.String("key", PrettyKeyPrint(key)), zap.ByteString("value", value))
+
+		logutil.BgLogger().Error("----->",
+			zap.Stringer("op", op),
+			zap.String("key", PrettyKeyPrint(key)),
+			zap.ByteString("value", value),
+			zap.Bool("assertExist", flags.HasAssertExist()),
+			zap.Bool("assertNotExist", flags.HasAssertNotExist()))
 		c.mutations.Push(op, isPessimistic, flags.HasAssertExist(), flags.HasAssertNotExist(), it.Handle())
 		size += len(key) + len(value)
 
