@@ -247,6 +247,17 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				if err != nil {
 					return err
 				}
+				// Change the unique index LOCK into PUT record.
+				if e.lock && len(e.handleVal) > 0 {
+					if !e.txn.Valid() {
+						return kv.ErrInvalidTxn
+					}
+					memBuffer := e.txn.GetMemBuffer()
+					err = memBuffer.Set(e.idxKey, e.handleVal)
+					if err != nil {
+						return err
+					}
+				}
 			}
 			if len(e.handleVal) == 0 {
 				return nil
@@ -390,6 +401,12 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	if e.tblInfo.TempTableType == model.TempTableGlobal {
 		return nil, nil
 	}
+
+	// Local temporary table always get snapshot value from session
+	if e.tblInfo.TempTableType == model.TempTableLocal {
+		return e.ctx.GetSessionVars().GetTemporaryTableSnapshotValue(ctx, key)
+	}
+
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
 		if e.ctx.GetSessionVars().EnablePointGetCache {
