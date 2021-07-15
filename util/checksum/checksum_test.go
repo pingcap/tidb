@@ -235,7 +235,7 @@ func testReadEmptyFile(t *testing.T, encrypt bool) {
 	}
 }
 
-// TestModifyThreeBytes Whether encrypted or not, when reading data,
+// TestModifyThreeBytes ensures whether encrypted or not, when reading data,
 // only the current block has error.
 func TestModifyThreeBytes(t *testing.T) {
 	t.Run("unencrypted", func(t *testing.T) {
