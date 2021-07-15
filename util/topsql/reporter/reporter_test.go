@@ -48,7 +48,7 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 	for i := begin; i < end; i++ {
 		key := []byte("sqlDigest" + strconv.Itoa(i+1))
 		value := "sqlNormalized" + strconv.Itoa(i+1)
-		tsr.RegisterSQL(key, value)
+		tsr.RegisterSQL(key, value, false)
 	}
 	// register normalized plan
 	for i := begin; i < end; i++ {
@@ -177,7 +177,7 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 func (s *testTopSQLReporter) newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) tracecpu.SQLCPUTimeRecord {
 	key := []byte("sqlDigest" + strconv.Itoa(sqlID))
 	value := "sqlNormalized" + strconv.Itoa(sqlID)
-	tsr.RegisterSQL(key, value)
+	tsr.RegisterSQL(key, value, sqlID%2 == 0)
 
 	key = []byte("planDigest" + strconv.Itoa(sqlID))
 	value = "planNormalized" + strconv.Itoa(sqlID)
@@ -268,7 +268,7 @@ func (s *testTopSQLReporter) TestCollectCapacity(c *C) {
 		for i := 0; i < n; i++ {
 			key := []byte("sqlDigest" + strconv.Itoa(i))
 			value := "sqlNormalized" + strconv.Itoa(i)
-			tsr.RegisterSQL(key, value)
+			tsr.RegisterSQL(key, value, false)
 		}
 	}
 	registerPlan := func(n int) {
@@ -395,6 +395,43 @@ func (s *testTopSQLReporter) TestDataPoints(c *C) {
 	c.Assert(d.isInvalid(), Equals, false)
 	c.Assert(d.CPUTimeMsList, IsNil)
 	c.Assert(d.TimestampList, IsNil)
+}
+
+func (s *testTopSQLReporter) TestCollectInternal(c *C) {
+	agentServer, err := mock.StartMockAgentServer()
+	c.Assert(err, IsNil)
+	defer agentServer.Stop()
+
+	tsr := setupRemoteTopSQLReporter(3000, 1, agentServer.Address())
+	defer tsr.Close()
+
+	records := []tracecpu.SQLCPUTimeRecord{
+		s.newSQLCPUTimeRecord(tsr, 1, 1),
+		s.newSQLCPUTimeRecord(tsr, 2, 2),
+	}
+	s.collectAndWait(tsr, 1, records)
+
+	// Wait agent server collect finish.
+	agentServer.WaitCollectCnt(1, time.Second*10)
+
+	// check for equality of server received batch and the original data
+	results := agentServer.GetLatestRecords()
+	c.Assert(results, HasLen, 2)
+	for _, req := range results {
+		id := 0
+		prefix := "sqlDigest"
+		if strings.HasPrefix(string(req.SqlDigest), prefix) {
+			n, err := strconv.Atoi(string(req.SqlDigest)[len(prefix):])
+			c.Assert(err, IsNil)
+			id = n
+		}
+		if id == 0 {
+			c.Fatalf("the id should not be 0")
+		}
+		sqlMeta, exist := agentServer.GetSQLMetaByDigest(req.SqlDigest)
+		c.Assert(exist, IsTrue)
+		c.Assert(sqlMeta.IsInternalSql, Equals, id%2 == 0)
+	}
 }
 
 func BenchmarkTopSQL_CollectAndIncrementFrequency(b *testing.B) {
