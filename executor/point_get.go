@@ -59,10 +59,10 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
-	if p.Lock {
+	e.Init(p, startTS)
+	if e.lock {
 		b.hasLock = true
 	}
-	e.Init(p, startTS)
 	return e
 }
 
@@ -107,8 +107,14 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
 	e.idxVals = p.IndexValues
 	e.startTS = startTs
 	e.done = false
-	e.lock = p.Lock
-	e.lockWaitTime = p.LockWaitTime
+	if e.tblInfo.TempTableType == model.TempTableNone {
+		e.lock = p.Lock
+		e.lockWaitTime = p.LockWaitTime
+	} else {
+		// Temporary table should not do any lock operations
+		e.lock = false
+		e.lockWaitTime = 0
+	}
 	e.rowDecoder = decoder
 	e.partInfo = p.PartitionInfo
 	e.columns = p.Columns
