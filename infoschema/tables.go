@@ -175,6 +175,8 @@ const (
 	TableDataLockWaits = "DATA_LOCK_WAITS"
 	// ViewTiDBTrx is the string constant of current running transaction status table.
 	ViewTiDBTrx = "TIDB_TRX"
+	// ViewClusterTiDBTrx  is the string constant of cluster transaction running status table.
+	ViewClusterTiDBTrx = "CLUSTER_TIDB_TRX"
 )
 
 var tableIDMap = map[string]int64{
@@ -255,6 +257,7 @@ var tableIDMap = map[string]int64{
 	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 75,
 	ClusterTableStatementsSummaryEvicted:    autoid.InformationSchemaDBID + 76,
 	ViewTiDBTrx:                             autoid.InformationSchemaDBID + 77,
+	ViewClusterTiDBTrx:                      autoid.InformationSchemaDBID + 78,
 }
 
 type columnInfo struct {
@@ -348,6 +351,7 @@ func setViewMeta(tableInfo *model.TableInfo, viewInfo *infoSchemaViewInfo) {
 			AuthHostname: "",
 		},
 		Security:    model.SecurityInvoker,
+		// TODO: The statement is better to be parsed and restored to clean the format.
 		SelectStmt:  viewInfo.selectStmt,
 		CheckOption: model.CheckOptionCascaded,
 		Cols:        nil, // TODO: Is this field useful?
@@ -1410,7 +1414,7 @@ var tableTiDBTrxImplCols = []columnInfo{
 	{name: "ALL_SQL_DIGESTS", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
 }
 
-var viewTidbTrxInfo = infoSchemaViewInfo{
+var viewTiDBTrxInfo = infoSchemaViewInfo{
 	columnInfo: flattenColumnInfoSlices(
 		tableTiDBTrxImplCols[:3],
 		[]columnInfo{{name: "CURRENT_SQL_DIGEST_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Normalized SQL text that the transaction are currently running"}},
@@ -1419,6 +1423,17 @@ var viewTidbTrxInfo = infoSchemaViewInfo{
 	selectStmt: "SELECT t.ID, t.START_TIME, t.CURRENT_SQL_DIGEST, s.DIGEST_TEXT AS CURRENT_SQL_DIGEST_TEXT, t.STATE, t.WAITING_START_TIME, t.MEM_BUFFER_KEYS, t.MEM_BUFFER_BYTES, t.SESSION_ID, t.USER, t.DB, t.ALL_SQL_DIGESTS " +
 		"FROM INFORMATION_SCHEMA.TIDB_TRX_IMPL AS t LEFT JOIN " +
 		"(SELECT DIGEST, DIGEST_TEXT FROM INFORMATION_SCHEMA.STATEMENTS_SUMMARY UNION DISTINCT SELECT DIGEST, DIGEST_TEXT FROM INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY) AS s " +
+		"ON t.CURRENT_SQL_DIGEST = s.DIGEST;",
+}
+
+var viewClusterTiDBTrxInfo = infoSchemaViewInfo{
+	columnInfo: flattenColumnInfoSlices(
+		[]columnInfo{{name: util.ClusterTableInstanceColumnName, tp: mysql.TypeVarchar, size: 64}},
+		viewTiDBTrxInfo.columnInfo,
+	),
+	selectStmt: "SELECT t.INSTANCE, t.ID, t.START_TIME, t.CURRENT_SQL_DIGEST, s.DIGEST_TEXT AS CURRENT_SQL_DIGEST_TEXT, t.STATE, t.WAITING_START_TIME, t.MEM_BUFFER_KEYS, t.MEM_BUFFER_BYTES, t.SESSION_ID, t.USER, t.DB, t.ALL_SQL_DIGESTS " +
+		"FROM INFORMATION_SCHEMA.CLUSTER_TIDB_TRX_IMPL AS t LEFT JOIN " +
+		"(SELECT DIGEST, DIGEST_TEXT FROM INFORMATION_SCHEMA.CLUSTER_STATEMENTS_SUMMARY UNION DISTINCT SELECT DIGEST, DIGEST_TEXT FROM INFORMATION_SCHEMA.CLUSTER_STATEMENTS_SUMMARY_HISTORY) AS s " +
 		"ON t.CURRENT_SQL_DIGEST = s.DIGEST;",
 }
 
@@ -1832,11 +1847,14 @@ var tableNameToColumns = map[string][]columnInfo{
 }
 
 var viewNameToViewInfo = map[string]*infoSchemaViewInfo{
-	ViewTiDBTrx: &viewTidbTrxInfo,
+	ViewTiDBTrx: &viewTiDBTrxInfo,
+	ViewClusterTiDBTrx: &viewClusterTiDBTrxInfo,
 }
 
+// Tables that should not be shown in SHOW TABLES statement. Cluster tables are also included here.
 var invisibleTables = map[string]interface{}{
 	TableTiDBTrxImpl: nil,
+	ClusterTableTiDBTrxImpl: nil,
 }
 
 // IsInformationSchemaHiddenTable checks if a table is a hidden table in information_schema.

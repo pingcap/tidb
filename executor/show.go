@@ -394,12 +394,12 @@ func (e *ShowExec) fetchShowTables() error {
 			continue
 		}
 		tableNames = append(tableNames, v.Meta().Name.O)
-		if v.Meta().IsView() {
+		if util.IsSystemView(e.DBName.L) {
+			tableTypes[v.Meta().Name.O] = "SYSTEM VIEW"
+		} else if v.Meta().IsView() {
 			tableTypes[v.Meta().Name.O] = "VIEW"
 		} else if v.Meta().IsSequence() {
 			tableTypes[v.Meta().Name.O] = "SEQUENCE"
-		} else if util.IsSystemView(e.DBName.L) {
-			tableTypes[v.Meta().Name.O] = "SYSTEM VIEW"
 		} else {
 			tableTypes[v.Meta().Name.O] = "BASE TABLE"
 		}

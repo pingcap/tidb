@@ -538,11 +538,15 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				)
 				rows = append(rows, record)
 			} else {
+				tableType := "VIEW"
+				if util.IsSystemView(schema.Name.L) {
+					tableType = "SYSTEM VIEW"
+				}
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.Name.O,         // TABLE_SCHEMA
 					table.Name.O,          // TABLE_NAME
-					"VIEW",                // TABLE_TYPE
+					tableType,             // TABLE_TYPE
 					nil,                   // ENGINE
 					nil,                   // VERSION
 					nil,                   // ROW_FORMAT

@@ -302,6 +302,9 @@ func (*testSuite) TestInfoTables(c *C) {
 		"COLLATION_CHARACTER_SET_APPLICABILITY",
 		"PROCESSLIST",
 		"TIDB_TRX_IMPL",
+		"TIDB_TRX",
+		"CLUSTER_TIDB_TRX_IMPL",
+		"CLUSTER_TIDB_TRX",
 		"DEADLOCKS",
 	}
 	for _, t := range infoTables {

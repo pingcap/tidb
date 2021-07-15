@@ -39,7 +39,7 @@ const (
 	ClusterTableStatementsSummaryHistory = "CLUSTER_STATEMENTS_SUMMARY_HISTORY"
 	// ClusterTableStatementsSummaryEvicted is the string constant of cluster statement summary evict table.
 	ClusterTableStatementsSummaryEvicted = "CLUSTER_STATEMENTS_SUMMARY_EVICTED"
-	// ClusterTableTiDBTrxImpl is the string constant of cluster transaction running table.
+	// ClusterTableTiDBTrxImpl is the string constant of the hidden table on which ViewClusterTiDBTrx is built.
 	ClusterTableTiDBTrxImpl = "CLUSTER_TIDB_TRX_IMPL"
 	// ClusterTableDeadlocks is the string constant of cluster dead lock table.
 	ClusterTableDeadlocks = "CLUSTER_DEADLOCKS"
