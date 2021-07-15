@@ -58,15 +58,17 @@ func TestChecksumReadAt(t *testing.T) {
 	assertReadAt(int64(n1+n2)-5, io.EOF, 5, "56789\x00\x00\x00\x00\x00")
 }
 
-/*
-	CaseID : TICASE-3644
-	Summary : Add a byte randomly
-	Expected outcome: Whether encrypted or not, when reading data, both the current block and the following block have errors.
-*/
+// TestAddOneByte ensures that whether encrypted or not, when reading data,
+// both the current block and the following block have errors.
 func TestAddOneByte(t *testing.T) {
-	t.Parallel()
-	testAddOneByte(t, false)
-	testAddOneByte(t, true)
+	t.Run("unencrypted", func(t *testing.T) {
+		t.Parallel()
+		testAddOneByte(t, false)
+	})
+	t.Run("encrypted", func(t *testing.T) {
+		t.Parallel()
+		testAddOneByte(t, true)
+	})
 }
 
 func testAddOneByte(t *testing.T, encrypt bool) {
@@ -103,15 +105,17 @@ func testAddOneByte(t *testing.T, encrypt bool) {
 	}
 }
 
-/*
-	CaseID : TICASE-3645
-	Summary : Delete a byte randomly
-	Expected outcome: Whether encrypted or not, when reading data, both the current block and the following block have errors.
-*/
+// TestDeleteOneByte ensures that whether encrypted or not, when reading data,
+// both the current block and the following block have errors.
 func TestDeleteOneByte(t *testing.T) {
-	t.Parallel()
-	testDeleteOneByte(t, false)
-	testDeleteOneByte(t, true)
+	t.Run("unencrypted", func(t *testing.T) {
+		t.Parallel()
+		testDeleteOneByte(t, false)
+	})
+	t.Run("encrypted", func(t *testing.T) {
+		t.Parallel()
+		testDeleteOneByte(t, true)
+	})
 }
 
 func testDeleteOneByte(t *testing.T, encrypt bool) {
@@ -148,15 +152,17 @@ func testDeleteOneByte(t *testing.T, encrypt bool) {
 	}
 }
 
-/*
-	CaseID : TICASE-3646
-	Summary : Modify a byte randomly
-	Expected outcome: Whether encrypted or not, when reading data, only the current block has error.
-*/
+// TestModifyOneByte ensures that whether encrypted or not, when reading data,
+// only the current block has error.
 func TestModifyOneByte(t *testing.T) {
-	t.Parallel()
-	testModifyOneByte(t, false)
-	testModifyOneByte(t, true)
+	t.Run("unencrypted", func(t *testing.T) {
+		t.Parallel()
+		testModifyOneByte(t, false)
+	})
+	t.Run("encrypted", func(t *testing.T) {
+		t.Parallel()
+		testModifyOneByte(t, true)
+	})
 }
 
 func testModifyOneByte(t *testing.T, encrypt bool) {
@@ -193,15 +199,16 @@ func testModifyOneByte(t *testing.T, encrypt bool) {
 	}
 }
 
-/*
-	CaseID : TICASE-3647
-	Summary : Read an empty file.
-	Expected outcome: Whether encrypted or not, no error will occur.
-*/
+// TestReadEmptyFile ensures that whether encrypted or not, no error will occur.
 func TestReadEmptyFile(t *testing.T) {
-	t.Parallel()
-	testReadEmptyFile(t, false)
-	testReadEmptyFile(t, true)
+	t.Run("unencrypted", func(t *testing.T) {
+		t.Parallel()
+		testReadEmptyFile(t, false)
+	})
+	t.Run("encrypted", func(t *testing.T) {
+		t.Parallel()
+		testReadEmptyFile(t, true)
+	})
 }
 
 func testReadEmptyFile(t *testing.T, encrypt bool) {
@@ -228,15 +235,17 @@ func testReadEmptyFile(t *testing.T, encrypt bool) {
 	}
 }
 
-/*
-	CaseID : TICASE-3648
-	Summary : Modify some bytes in one block.
-	Expected outcome: Whether encrypted or not, when reading data, only the current block has error.
-*/
+// TestModifyThreeBytes Whether encrypted or not, when reading data,
+// only the current block has error.
 func TestModifyThreeBytes(t *testing.T) {
-	t.Parallel()
-	testModifyThreeBytes(t, false)
-	testModifyThreeBytes(t, true)
+	t.Run("unencrypted", func(t *testing.T) {
+		t.Parallel()
+		testModifyThreeBytes(t, false)
+	})
+	t.Run("encrypted", func(t *testing.T) {
+		t.Parallel()
+		testModifyThreeBytes(t, true)
+	})
 }
 
 func testModifyThreeBytes(t *testing.T, encrypt bool) {
@@ -277,20 +286,19 @@ func testModifyThreeBytes(t *testing.T, encrypt bool) {
 	}
 }
 
-/*
-	CaseID : TICASE-3649
-	Summary : Read some blocks using offset at once.
-	Expected outcome: Whether encrypted or not, the result is right.
-*/
-/*
-	CaseID : TICASE-3650
-	Summary : Read all data at once.
-	Expected outcome: Whether encrypted or not, the result is right.
-*/
+// TestReadDifferentBlockSize ensures whether encrypted or not,
+// the result is right for cases:
+// 1. Read blocks using offset at once
+// 2. Read all data at once.
 func TestReadDifferentBlockSize(t *testing.T) {
-	t.Parallel()
-	testReadDifferentBlockSize(t, false)
-	testReadDifferentBlockSize(t, true)
+	t.Run("unencrypted", func(t *testing.T) {
+		t.Parallel()
+		testReadDifferentBlockSize(t, false)
+	})
+	t.Run("encrypted", func(t *testing.T) {
+		t.Parallel()
+		testReadDifferentBlockSize(t, true)
+	})
 }
 
 func testReadDifferentBlockSize(t *testing.T, encrypt bool) {
@@ -339,20 +347,19 @@ func testReadDifferentBlockSize(t *testing.T, encrypt bool) {
 	assertReadAt(0, make([]byte, 11000), io.EOF, 10200, strings.Join([]string{strings.Repeat("0123456789", 1020), strings.Repeat("\x00", 800)}, ""), f)
 }
 
-/*
-	CaseID : TICASE-3651
-	Summary : Write some block at once.
-	Expected outcome: Whether encrypted or not, after writing data, it can read data correctly.
-*/
-/*
-	CaseID : TICASE-3652
-	Summary : Write some block and append some block.
-	Expected outcome: Whether encrypted or not, after writing data, it can read data correctly.
-*/
+// TestWriteDifferentBlockSize ensures whether encrypted or not, after writing data,
+// it can read data correctly for cases:
+// 1. Write some block at once.
+// 2. Write some block and append some block.
 func TestWriteDifferentBlockSize(t *testing.T) {
-	t.Parallel()
-	testWriteDifferentBlockSize(t, false)
-	testWriteDifferentBlockSize(t, true)
+	t.Run("unencrypted", func(t *testing.T) {
+		t.Parallel()
+		testWriteDifferentBlockSize(t, false)
+	})
+	t.Run("encrypted", func(t *testing.T) {
+		t.Parallel()
+		testWriteDifferentBlockSize(t, true)
+	})
 }
 
 func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
