@@ -1096,3 +1096,50 @@ func (p *LogicalWindow) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 	}
 	return extracted
 }
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+	if p.stats != nil {
+		return p.stats, nil
+	}
+
+	resStat, err := p.cte.seedPartLogicalPlan.recursiveDeriveStats(colGroups)
+	if err != nil {
+		return nil, err
+	}
+	p.stats = &property.StatsInfo{
+		RowCount:    resStat.RowCount,
+		Cardinality: make(map[int64]float64, selfSchema.Len()),
+	}
+	for i, col := range selfSchema.Columns {
+		p.stats.Cardinality[col.UniqueID] += resStat.Cardinality[p.cte.seedPartLogicalPlan.Schema().Columns[i].UniqueID]
+	}
+	if p.cte.recursivePartLogicalPlan != nil {
+		recurStat, err := p.cte.recursivePartLogicalPlan.recursiveDeriveStats(colGroups)
+		if err != nil {
+			return nil, err
+		}
+		for i, col := range selfSchema.Columns {
+			p.stats.Cardinality[col.UniqueID] += recurStat.Cardinality[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
+		}
+		if p.cte.IsDistinct {
+			p.stats.RowCount = getCardinality(p.schema.Columns, p.schema, p.stats)
+		} else {
+			p.stats.RowCount += recurStat.RowCount
+		}
+	}
+	return p.stats, nil
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalCTETable) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+	if p.stats != nil {
+		return p.stats, nil
+	}
+	var err error
+	p.stats, err = p.seedPlan.recursiveDeriveStats(colGroups)
+	if err != nil {
+		return nil, err
+	}
+	return p.stats, nil
+}
