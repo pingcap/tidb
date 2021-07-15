@@ -167,13 +167,14 @@ const (
 	TableClientErrorsSummaryByUser = "CLIENT_ERRORS_SUMMARY_BY_USER"
 	// TableClientErrorsSummaryByHost is the string constant of client errors table.
 	TableClientErrorsSummaryByHost = "CLIENT_ERRORS_SUMMARY_BY_HOST"
-	// TableTiDBTrxImpl is current running transaction status table.
+	// TableTiDBTrxImpl is the string constant of the hidden table on which ViewTiDBTrx is built.
 	TableTiDBTrxImpl = "TIDB_TRX_IMPL"
-	// TableDeadlocks is the string constatnt of deadlock table.
+	// TableDeadlocks is the string constant of deadlock table.
 	TableDeadlocks = "DEADLOCKS"
-	// TableDataLockWaits is current lock waiting status table.
+	// TableDataLockWaits is the string constant of current lock waiting status table.
 	TableDataLockWaits = "DATA_LOCK_WAITS"
-	ViewTiDBTrx        = "TIDB_TRX"
+	// ViewTiDBTrx is the string constant of current running transaction status table.
+	ViewTiDBTrx = "TIDB_TRX"
 )
 
 var tableIDMap = map[string]int64{
@@ -1838,6 +1839,7 @@ var invisibleTables = map[string]interface{}{
 	TableTiDBTrxImpl: nil,
 }
 
+// IsInformationSchemaHiddenTable checks if a table is a hidden table in information_schema.
 func IsInformationSchemaHiddenTable(dbName, tableName string) bool {
 	if strings.ToLower(dbName) != util.InformationSchemaName.L {
 		return false
