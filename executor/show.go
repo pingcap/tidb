@@ -389,6 +389,10 @@ func (e *ShowExec) fetchShowTables() error {
 		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Meta().Name.O, "", mysql.AllPrivMask) {
 			continue
 		}
+		// Filter out some special hidden tables in information_schema
+		if infoschema.IsInformationSchemaHiddenTable(e.DBName.L, v.Meta().Name.O) {
+			continue
+		}
 		tableNames = append(tableNames, v.Meta().Name.O)
 		if v.Meta().IsView() {
 			tableTypes[v.Meta().Name.O] = "VIEW"

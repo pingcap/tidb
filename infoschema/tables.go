@@ -1834,6 +1834,18 @@ var viewNameToViewInfo = map[string]*infoSchemaViewInfo{
 	ViewTiDBTrx: &viewTidbTrxInfo,
 }
 
+var invisibleTables = map[string]interface{}{
+	TableTiDBTrxImpl: nil,
+}
+
+func IsInformationSchemaHiddenTable(dbName, tableName string) bool {
+	if strings.ToLower(dbName) != util.InformationSchemaName.L {
+		return false
+	}
+	_, ok := invisibleTables[strings.ToUpper(tableName)]
+	return ok
+}
+
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
 	columns := make([]*table.Column, len(meta.Columns))
 	for i, col := range meta.Columns {
