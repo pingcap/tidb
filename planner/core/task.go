@@ -1896,9 +1896,17 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.AnyType}
 		newMpp := mpp.enforceExchangerImpl(prop)
 		attachPlan2Task(finalAgg, newMpp)
-		if proj != nil {
-			attachPlan2Task(proj, newMpp)
+		if proj == nil {
+			proj = PhysicalProjection{
+				Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)),
+			}.Init(p.ctx, p.statsInfo(), p.SelectBlockOffset())
+			for _, col := range p.Schema().Columns {
+				proj.Exprs = append(proj.Exprs, col)
+			}
+			proj.SetSchema(p.schema)
 		}
+		attachPlan2Task(proj, newMpp)
+		newMpp.addCost(p.GetCost(inputRows, false, true))
 		return newMpp
 	default:
 		return invalidTask
