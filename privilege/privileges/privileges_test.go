@@ -1458,7 +1458,9 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
 
 	// Even though we have super, we still can't read protected information from tidb_servers_info, cluster_* tables
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NOT NULL`).Check(testkit.Rows("0"))
-	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NOT NULL`).Check(testkit.Rows("0"))
+	err := tk.QueryToErr(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NOT NULL`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the Process privilege(s) for this operation")
 	// 36 = a UUID. Normally it is an IP address.
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.CLUSTER_STATEMENTS_SUMMARY WHERE length(instance) != 36`).Check(testkit.Rows("0"))
 
