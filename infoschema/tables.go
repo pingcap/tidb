@@ -350,7 +350,7 @@ func setViewMeta(tableInfo *model.TableInfo, viewInfo *infoSchemaViewInfo) {
 			AuthUsername: "",
 			AuthHostname: "",
 		},
-		Security:    model.SecurityInvoker,
+		Security: model.SecurityInvoker,
 		// TODO: The statement is better to be parsed and restored to clean the format.
 		SelectStmt:  viewInfo.selectStmt,
 		CheckOption: model.CheckOptionCascaded,
@@ -1847,13 +1847,13 @@ var tableNameToColumns = map[string][]columnInfo{
 }
 
 var viewNameToViewInfo = map[string]*infoSchemaViewInfo{
-	ViewTiDBTrx: &viewTiDBTrxInfo,
+	ViewTiDBTrx:        &viewTiDBTrxInfo,
 	ViewClusterTiDBTrx: &viewClusterTiDBTrxInfo,
 }
 
 // Tables that should not be shown in SHOW TABLES statement. Cluster tables are also included here.
 var invisibleTables = map[string]interface{}{
-	TableTiDBTrxImpl: nil,
+	TableTiDBTrxImpl:        nil,
 	ClusterTableTiDBTrxImpl: nil,
 }
 
