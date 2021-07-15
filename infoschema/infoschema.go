@@ -313,8 +313,9 @@ func (is *infoSchema) SequenceByName(schema, sequence model.CIStr) (util.Sequenc
 func init() {
 	// Initialize the information shema database and register the driver to `drivers`
 	dbID := autoid.InformationSchemaDBID
-	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
-	for name, cols := range tableNameToColumns {
+	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns)+len(viewNameToViewInfo))
+
+	build := func(name string, cols []columnInfo) *model.TableInfo {
 		tableInfo := buildTableMeta(name, cols)
 		infoSchemaTables = append(infoSchemaTables, tableInfo)
 		var ok bool
@@ -325,7 +326,18 @@ func init() {
 		for i, c := range tableInfo.Columns {
 			c.ID = int64(i) + 1
 		}
+		return tableInfo
 	}
+
+	for name, cols := range tableNameToColumns {
+		build(name, cols)
+	}
+
+	for name, viewInfo := range viewNameToViewInfo {
+		tableInfo := build(name, viewInfo.columnInfo)
+		setViewMeta(tableInfo, viewInfo)
+	}
+
 	infoSchemaDB := &model.DBInfo{
 		ID:      dbID,
 		Name:    util.InformationSchemaName,

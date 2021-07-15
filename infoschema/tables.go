@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/parser/auth"
 	"io"
 	"net"
 	"net/http"
@@ -166,12 +167,13 @@ const (
 	TableClientErrorsSummaryByUser = "CLIENT_ERRORS_SUMMARY_BY_USER"
 	// TableClientErrorsSummaryByHost is the string constant of client errors table.
 	TableClientErrorsSummaryByHost = "CLIENT_ERRORS_SUMMARY_BY_HOST"
-	// TableTiDBTrx is current running transaction status table.
-	TableTiDBTrx = "TIDB_TRX"
+	// TableTiDBTrxImpl is current running transaction status table.
+	TableTiDBTrxImpl = "TIDB_TRX_IMPL"
 	// TableDeadlocks is the string constatnt of deadlock table.
 	TableDeadlocks = "DEADLOCKS"
 	// TableDataLockWaits is current lock waiting status table.
 	TableDataLockWaits = "DATA_LOCK_WAITS"
+	ViewTiDBTrx        = "TIDB_TRX"
 )
 
 var tableIDMap = map[string]int64{
@@ -244,13 +246,14 @@ var tableIDMap = map[string]int64{
 	TableClientErrorsSummaryGlobal:          autoid.InformationSchemaDBID + 67,
 	TableClientErrorsSummaryByUser:          autoid.InformationSchemaDBID + 68,
 	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
-	TableTiDBTrx:                            autoid.InformationSchemaDBID + 70,
-	ClusterTableTiDBTrx:                     autoid.InformationSchemaDBID + 71,
+	TableTiDBTrxImpl:                        autoid.InformationSchemaDBID + 70,
+	ClusterTableTiDBTrxImpl:                 autoid.InformationSchemaDBID + 71,
 	TableDeadlocks:                          autoid.InformationSchemaDBID + 72,
 	ClusterTableDeadlocks:                   autoid.InformationSchemaDBID + 73,
 	TableDataLockWaits:                      autoid.InformationSchemaDBID + 74,
 	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 75,
 	ClusterTableStatementsSummaryEvicted:    autoid.InformationSchemaDBID + 76,
+	ViewTiDBTrx:                             autoid.InformationSchemaDBID + 77,
 }
 
 type columnInfo struct {
@@ -262,6 +265,11 @@ type columnInfo struct {
 	deflt     interface{}
 	comment   string
 	enumElems []string
+}
+
+type infoSchemaViewInfo struct {
+	columnInfo []columnInfo
+	selectStmt string
 }
 
 func buildColumnInfo(col columnInfo) *model.ColumnInfo {
@@ -326,6 +334,35 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 	}
 	tblInfo.Columns = cols
 	return tblInfo
+}
+
+func setViewMeta(tableInfo *model.TableInfo, viewInfo *infoSchemaViewInfo) {
+	tableInfo.View = &model.ViewInfo{
+		Algorithm: model.AlgorithmUndefined,
+		Definer: &auth.UserIdentity{
+			Username:     "root",
+			Hostname:     "127.0.0.1",
+			CurrentUser:  false,
+			AuthUsername: "",
+			AuthHostname: "",
+		},
+		Security:    model.SecurityInvoker,
+		SelectStmt:  viewInfo.selectStmt,
+		CheckOption: model.CheckOptionCascaded,
+		Cols:        nil, // TODO: Is this field useful?
+	}
+}
+
+func flattenColumnInfoSlices(cols ...[]columnInfo) []columnInfo {
+	totalCount := 0
+	for _, c := range cols {
+		totalCount += len(c)
+	}
+	res := make([]columnInfo, 0, totalCount)
+	for _, c := range cols {
+		res = append(res, c...)
+	}
+	return res
 }
 
 var schemataCols = []columnInfo{
@@ -1358,7 +1395,7 @@ var tableClientErrorsSummaryByHostCols = []columnInfo{
 	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26},
 }
 
-var tableTiDBTrxCols = []columnInfo{
+var tableTiDBTrxImplCols = []columnInfo{
 	{name: "ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.PriKeyFlag | mysql.NotNullFlag | mysql.UnsignedFlag},
 	{name: "START_TIME", tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "Start time of the transaction"},
 	{name: "CURRENT_SQL_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of the sql the transaction are currently running"},
@@ -1370,6 +1407,18 @@ var tableTiDBTrxCols = []columnInfo{
 	{name: "USER", tp: mysql.TypeVarchar, size: 16, comment: "The user who open this session"},
 	{name: "DB", tp: mysql.TypeVarchar, size: 64, comment: "The schema this transaction works on"},
 	{name: "ALL_SQL_DIGESTS", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
+}
+
+var viewTidbTrxInfo = infoSchemaViewInfo{
+	columnInfo: flattenColumnInfoSlices(
+		tableTiDBTrxImplCols[:3],
+		[]columnInfo{{name: "CURRENT_SQL_DIGEST_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Normalized SQL text that the transaction are currently running"}},
+		tableTiDBTrxImplCols[3:],
+	),
+	selectStmt: "SELECT t.ID, t.START_TIME, t.CURRENT_SQL_DIGEST, s.DIGEST_TEXT AS CURRENT_SQL_DIGEST_TEXT, t.STATE, t.WAITING_START_TIME, t.MEM_BUFFER_KEYS, t.MEM_BUFFER_BYTES, t.SESSION_ID, t.USER, t.DB, t.ALL_SQL_DIGESTS " +
+		"FROM TIDB_TRX_IMPL AS t LEFT JOIN " +
+		"(SELECT DIGEST, DIGEST_TEXT FROM INFORMATION_SCHEMA.STATEMENTS_SUMMARY UNION DISTINCT SELECT DIGEST, DIGEST_TEXT FROM INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY) AS s " +
+		"ON t.CURRENT_SQL_DIGEST = s.DIGEST;",
 }
 
 var tableDeadlocksCols = []columnInfo{
@@ -1776,9 +1825,13 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableClientErrorsSummaryGlobal:          tableClientErrorsSummaryGlobalCols,
 	TableClientErrorsSummaryByUser:          tableClientErrorsSummaryByUserCols,
 	TableClientErrorsSummaryByHost:          tableClientErrorsSummaryByHostCols,
-	TableTiDBTrx:                            tableTiDBTrxCols,
+	TableTiDBTrxImpl:                        tableTiDBTrxImplCols,
 	TableDeadlocks:                          tableDeadlocksCols,
 	TableDataLockWaits:                      tableDataLockWaitsCols,
+}
+
+var viewNameToViewInfo = map[string]*infoSchemaViewInfo{
+	ViewTiDBTrx: &viewTidbTrxInfo,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -1787,7 +1840,9 @@ func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Ta
 		columns[i] = table.ToColumn(col)
 	}
 	tp := table.VirtualTable
-	if isClusterTableByName(util.InformationSchemaName.O, meta.Name.O) {
+	if meta.IsView() {
+		tp = table.NormalTable
+	} else if isClusterTableByName(util.InformationSchemaName.O, meta.Name.O) {
 		tp = table.ClusterTable
 	}
 	return &infoschemaTable{meta: meta, cols: columns, tp: tp}, nil

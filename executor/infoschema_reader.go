@@ -152,9 +152,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByUser,
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
-		case infoschema.TableTiDBTrx:
+		case infoschema.TableTiDBTrxImpl:
 			e.setDataForTiDBTrx(sctx)
-		case infoschema.ClusterTableTiDBTrx:
+		case infoschema.ClusterTableTiDBTrxImpl:
 			err = e.setDataForClusterTiDBTrx(sctx)
 		case infoschema.TableDeadlocks:
 			err = e.setDataForDeadlock(sctx)
