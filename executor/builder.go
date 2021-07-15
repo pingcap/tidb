@@ -631,7 +631,11 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 	// filter out temporary tables because they do not store any record in tikv and should not write any lock
 	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	for tblID := range e.tblID2Handle {
-		tblInfo, _ := is.TableByID(tblID)
+		tblInfo, ok := is.TableByID(tblID)
+		if !ok {
+			b.err = errors.Errorf("Can not get table %d", tblID)
+		}
+
 		if tblInfo.Meta().TempTableType != model.TempTableNone {
 			delete(e.tblID2Handle, tblID)
 		}
