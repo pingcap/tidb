@@ -946,7 +946,7 @@ func (s *testStaleTxnSuite) TestStaleReadTemporaryTable(c *C) {
 	for _, query := range queries {
 		tk.MustExec(query.sql)
 	}
-  
+
 	// test prepared stale select with schema change
 	tk.MustExec("alter table t add column c int")
 	tk.MustExec("insert into t values (4, 5)")
