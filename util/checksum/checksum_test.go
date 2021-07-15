@@ -383,15 +383,7 @@ func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 	assert.NoError(t, err)
 
 	// check two files is same
-	assert.Equal(t, f1.Size(), f2.Size())
-	buffer1 := make([]byte, f1.Size())
-	buffer2 := make([]byte, f2.Size())
-	n1, err := f1.ReadAt(buffer1, 0)
-	assert.NoError(t, err)
-	n2, err := f2.ReadAt(buffer2, 0)
-	assert.NoError(t, err)
-	assert.Equal(t, n1, n2)
-	assert.EqualValues(t, buffer1, buffer2)
+	assert.EqualValues(t, f1.buf.Bytes(), f2.buf.Bytes())
 
 	// check data
 	assertReadAt := assertReadAtFunc(t, encrypt, ctrCipher)
@@ -556,19 +548,14 @@ func (f *fakeFile) Close() error {
 
 func (f *fakeFile) ReadAt(p []byte, off int64) (n int, err error) {
 	w := f.buf.Bytes()
-	lp := int64(len(p))
 	lw := int64(len(w))
 	if off > lw {
 		return 0, io.EOF
 	}
-	if off+lp > lw {
-		copy(p[:lw-off], w[off:])
-		return int(lw - off), io.EOF
+	lc := copy(p, w[off:])
+	if int64(lc) == lw-off {
+		return lc, io.EOF
+	} else {
+		return lc, nil
 	}
-	copy(p, w[off:off+lp])
-	return len(p), nil
-}
-
-func (f *fakeFile) Size() int {
-	return f.buf.Len()
 }
