@@ -232,6 +232,8 @@ CREATE TABLE `t3` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement]  PLACEMENT POLICY=`acdc` */;
 ```
 
+
+
 This helps ensure the highest level of compatibility between both TiDB versions and MySQL.
 
 ### Placement Rules Syntax
@@ -400,7 +402,9 @@ ALTER TABLE test
 
 #### Partitioned Tables
 
-Defining placement rules of partitions is expected to be a common use case. This can be useful for both reducing multi-region latency and compliance scenarios.
+The key format of a partitioned table is `t_{partition_id}_r_{pk_value}`. As `partition_id` is part of the key prefix, the key range of a partition is successive. The key range is `t_{partition_id}_` to `t_{partition_id+1}_`.
+
+Defining placement rules of partitions is expected to be a common use case and is useful for both reducing multi-region latency and compliance scenarios. Because there are multiple key ranges for the table, multiple rules will be generated and sent to PD.
 
 In Geo-Partitioning, the table must be splitted into partitions, and each partition is placed in specific zones. There are some kinds of partition placement:
 
@@ -444,6 +448,7 @@ This behavior is inspired by how a `CHARACTER SET` or `COLLATE` attribute applie
 #### Removing placement from a database, table or partition
 
 Placement policy can be removed from an object via the following syntax:
+
 ```sql
 ALTER DATABASE test [DEFAULT] PLACEMENT SET DEFAULT;
 ALTER TABLE t1 PLACEMENT=default;
@@ -452,9 +457,36 @@ ALTER TABLE t1 ALTER PARTITION partition_name PLACEMENT=default;
 
 In this case the default rules will apply to placement, and the output from `SHOW CREATE TABLE t1` should show no placement information.
 
-The key format of a partitioned table is `t_{partition_id}_r_{pk_value}`. As `partition_id` is part of the key prefix, the key range of a partition is successive. The key range is `t_{partition_id}_` to `t_{partition_id+1}_`.
+For a more complex rule using partitions, consider the following example:
 
-Placement rules can also be defined on a partitioned table. Because there are multiple key ranges for the table, multiple rules will be generated and sent to PD. When placement rules are defined both on the table and its partitions, the rule priorities described later should be applied.
+```sql
+ALTER TABLE t1 ALTER PARTITION p0 PLACEMENT="acdc";
+--> 
+CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
+ PARTITION BY RANGE( YEAR(purchased) ) (
+  PARTITION p0 VALUES LESS THAN (2000) PLACEMENT="acdc",
+  PARTITION p1 VALUES LESS THAN (2005)
+ );
+
+ALTER TABLE t1 PLACEMENT="xyz";
+--> 
+CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
+ PARTITION BY RANGE( YEAR(purchased) ) (
+  PARTITION p0 VALUES LESS THAN (2000) PLACEMENT="acdc",
+  PARTITION p1 VALUES LESS THAN (2005)
+ ) PLACEMENT="xyz";
+
+ALTER TABLE t1 ALTER PARTITION p0 PLACEMENT=DEFAULT;
+--> 
+CREATE TABLE t1 (id INT, name VARCHAR(50), purchased DATE)
+ PARTITION BY RANGE( YEAR(purchased) ) (
+  PARTITION p0 VALUES LESS THAN (2000),
+  PARTITION p1 VALUES LESS THAN (2005)
+ ) PLACEMENT="xyz";
+ 
+```
+
+The behavior above is described as `ALTER PARTITION p0 PLACEMENT=DEFAULT` resets the placement of the partition `p0` to be inherited from the table `t1`.
 
 #### Sequences
 
