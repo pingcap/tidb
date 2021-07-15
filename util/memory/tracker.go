@@ -43,7 +43,7 @@ import (
 // We have two limits for the memory quota: soft limit and hard limit.
 // If the soft limit is exceeded, we will trigger the action that alleviates the
 // speed of memory growth. The soft limit is hard-coded as `0.8*hard limit`.
-// The actions that could be triggered are: None.
+// The actions that could be triggered are: AggSpillDiskAction.
 //
 // If the hard limit is exceeded, we will trigger the action that immediately
 // reduces memory usage. The hard limit is set by the config item `mem-quota-query`
