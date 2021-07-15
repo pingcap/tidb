@@ -58,7 +58,7 @@ var builtinStringVecTpl = template.Must(template.New("").Parse(`
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
 func (b *builtinField{{ .TypeName }}Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -66,7 +66,7 @@ func (b *builtinField{{ .TypeName }}Sig) vecEvalInt(input *chunk.Chunk, result *
 	if err := b.args[0].VecEval{{ .TypeName }}(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}

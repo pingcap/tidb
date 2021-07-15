@@ -24,9 +24,8 @@ import (
 
 // columnBufferAllocator is used to allocate and release column buffer in vectorized evaluation.
 type columnBufferAllocator interface {
-	// get allocates a column buffer with the specific eval type and capacity.
-	// the allocator is not responsible for initializing the column, so please initialize it before using.
-	get(evalType types.EvalType, capacity int) (*chunk.Column, error)
+	// get allocates a column. The allocator is not responsible for initializing the column, so please initialize it before using.
+	get() (*chunk.Column, error)
 	// put releases a column buffer.
 	put(buf *chunk.Column)
 }
@@ -70,10 +69,9 @@ func newBuffer(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 	return nil, errors.Errorf("get column buffer for unsupported EvalType=%v", evalType)
 }
 
-// GetColumn allocates a column buffer with the specific eval type and capacity.
-// the allocator is not responsible for initializing the column, so please initialize it before using.
-func GetColumn(evalType types.EvalType, capacity int) (*chunk.Column, error) {
-	return globalColumnAllocator.get(evalType, capacity)
+// GetColumn allocates a column. The allocator is not responsible for initializing the column, so please initialize it before using.
+func GetColumn(_ types.EvalType, _ int) (*chunk.Column, error) {
+	return globalColumnAllocator.get()
 }
 
 // PutColumn releases a column buffer.
@@ -81,9 +79,11 @@ func PutColumn(buf *chunk.Column) {
 	globalColumnAllocator.put(buf)
 }
 
-// get will ignore evalType and capacity
-func (r *localColumnPool) get(_ types.EvalType, _ int) (*chunk.Column, error) {
-	col, _ := r.Pool.Get().(*chunk.Column)
+func (r *localColumnPool) get() (*chunk.Column, error) {
+	col, ok := r.Pool.Get().(*chunk.Column)
+	if !ok {
+		return nil, errors.New("unexpected object in localColumnPool")
+	}
 	return col, nil
 }
 
