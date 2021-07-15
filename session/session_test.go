@@ -2167,6 +2167,11 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
 	tk.MustExec(`commit;`)
 
 	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table temp_table modify column c int;`)
+	tk.MustQuery(`select * from temp_table for update;`).Check(testkit.Rows())
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
 	tk1.MustExec(`alter table temp_table modify column c smallint;`)
 	tk.MustExec(`insert into temp_table values(3, 4);`)
 	tk.MustQuery(`select * from temp_table for update;`).Check(testkit.Rows("3 4"))
@@ -2178,8 +2183,25 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
 	tk.MustExec(`commit;`)
 
 	tk.MustExec("begin pessimistic")
-	tk1.MustExec(`alter table temp_table modify column c double;`)
+	tk1.MustExec(`alter table temp_table modify column c smallint;`)
+	tk.MustExec("insert into temp_table values (1, 2), (2, 3), (4, 5)")
+	tk.MustQuery(`select * from temp_table where id=1 for update;`).Check(testkit.Rows("1 2"))
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table temp_table modify column c int;`)
+	tk.MustQuery(`select * from temp_table where id=1 for update;`).Check(testkit.Rows())
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table temp_table modify column c bigint;`)
 	tk.MustQuery(`select * from temp_table where id in (1, 2, 3) for update;`).Check(testkit.Rows())
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table temp_table modify column c int;`)
+	tk.MustExec("insert into temp_table values (1, 2), (2, 3), (4, 5)")
+	tk.MustQuery(`select * from temp_table where id in (1, 2, 3) for update;`).Check(testkit.Rows("1 2", "2 3"))
 	tk.MustExec(`commit;`)
 
 	tk.MustExec("insert into normal_table values(1, 2)")
@@ -2187,6 +2209,11 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
 	tk1.MustExec(`alter table temp_table modify column c int;`)
 	tk.MustExec(`insert into temp_table values(1, 5);`)
 	tk.MustQuery(`select * from temp_table, normal_table where temp_table.id = normal_table.id for update;`).Check(testkit.Rows("1 5 1 2"))
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table normal_table modify column c bigint;`)
+	tk.MustQuery(`select * from temp_table, normal_table where temp_table.id = normal_table.id for update;`).Check(testkit.Rows())
 	tk.MustExec(`commit;`)
 
 	// Truncate will modify table ID.
@@ -2203,7 +2230,6 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
 	_, err := tk.Exec(`commit;`)
 	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
 
-	// It reports error when select for update temp and normal table.
 	tk.MustExec("begin pessimistic")
 	tk1.MustExec(`alter table normal_table modify column c int;`)
 	tk.MustExec(`insert into temp_table values(1, 6);`)
