@@ -143,36 +143,91 @@ func RestoreCharset(w io.StringWriter) {
 }
 
 // ListAllDatabasesTables lists all the databases and tables from the database
-func ListAllDatabasesTables(db *sql.Conn, databaseNames []string, tableType TableType) (DatabaseTables, error) {
-	var tableTypeStr string
-	switch tableType {
-	case TableTypeBase:
-		tableTypeStr = "BASE TABLE"
-	case TableTypeView:
-		tableTypeStr = "VIEW"
-	default:
-		return nil, errors.Errorf("unknown table type %v", tableType)
-	}
-
-	query := fmt.Sprintf("SELECT table_schema,table_name FROM information_schema.tables WHERE table_type = '%s'", tableTypeStr)
+// if asap is true, will use information_schema to get table info in one query
+// if asap is false, will use show table status for each database because it has better performance according to our tests
+func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames []string, asap bool, tableTypes ...TableType) (DatabaseTables, error) { // revive:disable-line:flag-parameter
 	dbTables := DatabaseTables{}
-	for _, schema := range databaseNames {
-		dbTables[schema] = make([]*TableInfo, 0)
-	}
-
-	if err := simpleQueryWithArgs(db, func(rows *sql.Rows) error {
-		var schema, table string
-		if err := rows.Scan(&schema, &table); err != nil {
-			return errors.Trace(err)
+	var (
+		schema, table, tableTypeStr string
+		tableType                   TableType
+		avgRowLength                uint64
+		err                         error
+	)
+	if asap {
+		tableTypeConditions := make([]string, len(tableTypes))
+		for i, tableType := range tableTypes {
+			tableTypeConditions[i] = fmt.Sprintf("TABLE_TYPE='%s'", tableType)
 		}
-
-		// only append tables to schemas in databaseNames
-		if _, ok := dbTables[schema]; ok {
-			dbTables[schema] = append(dbTables[schema], &TableInfo{table, tableType})
+		query := fmt.Sprintf("SELECT TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE %s", strings.Join(tableTypeConditions, " OR "))
+		for _, schema := range databaseNames {
+			dbTables[schema] = make([]*TableInfo, 0)
 		}
-		return nil
-	}, query); err != nil {
-		return nil, errors.Annotatef(err, "sql: %s", query)
+		if err = simpleQueryWithArgs(db, func(rows *sql.Rows) error {
+			var (
+				sqlAvgRowLength sql.NullInt64
+				err2            error
+			)
+			if err2 = rows.Scan(&schema, &table, &tableTypeStr, &sqlAvgRowLength); err != nil {
+				return errors.Trace(err2)
+			}
+			tableType, err2 = ParseTableType(tableTypeStr)
+			if err2 != nil {
+				return errors.Trace(err2)
+			}
+
+			if sqlAvgRowLength.Valid {
+				avgRowLength = uint64(sqlAvgRowLength.Int64)
+			} else {
+				avgRowLength = 0
+			}
+			// only append tables to schemas in databaseNames
+			if _, ok := dbTables[schema]; ok {
+				dbTables[schema] = append(dbTables[schema], &TableInfo{table, avgRowLength, tableType})
+			}
+			return nil
+		}, query); err != nil {
+			return nil, errors.Annotatef(err, "sql: %s", query)
+		}
+	} else {
+		queryTemplate := "SHOW TABLE STATUS FROM `%s`"
+		selectedTableType := make(map[TableType]struct{})
+		for _, tableType = range tableTypes {
+			selectedTableType[tableType] = struct{}{}
+		}
+		for _, schema = range databaseNames {
+			dbTables[schema] = make([]*TableInfo, 0)
+			query := fmt.Sprintf(queryTemplate, escapeString(schema))
+			rows, err := db.QueryContext(tctx, query)
+			if err != nil {
+				return nil, errors.Annotatef(err, "sql: %s", query)
+			}
+			results, err := GetSpecifiedColumnValuesAndClose(rows, "NAME", "ENGINE", "AVG_ROW_LENGTH", "COMMENT")
+			if err != nil {
+				return nil, errors.Annotatef(err, "sql: %s", query)
+			}
+			for _, oneRow := range results {
+				table, engine, avgRowLengthStr, comment := oneRow[0], oneRow[1], oneRow[2], oneRow[3]
+				if avgRowLengthStr != "" {
+					avgRowLength, err = strconv.ParseUint(avgRowLengthStr, 10, 64)
+					if err != nil {
+						return nil, errors.Annotatef(err, "sql: %s", query)
+					}
+				} else {
+					avgRowLength = 0
+				}
+				tableType = TableTypeBase
+				if engine == "" && (comment == "" || comment == TableTypeViewStr) {
+					tableType = TableTypeView
+				} else if engine == "" {
+					tctx.L().Warn("Invalid table without engine found", zap.String("database", schema), zap.String("table", table))
+					continue
+				}
+				if _, ok := selectedTableType[tableType]; !ok {
+					continue
+				}
+				dbTables[schema] = append(dbTables[schema], &TableInfo{table, avgRowLength, tableType})
+			}
+		}
 	}
 	return dbTables, nil
 }
@@ -190,23 +245,15 @@ func SelectVersion(db *sql.DB) (string, error) {
 }
 
 // SelectAllFromTable dumps data serialized from a specified table
-func SelectAllFromTable(conf *Config, db *sql.Conn, meta TableMeta, partition string) (TableDataIR, error) {
+func SelectAllFromTable(conf *Config, meta TableMeta, partition, orderByClause string) TableDataIR {
 	database, table := meta.DatabaseName(), meta.TableName()
-	selectedField, selectLen, err := buildSelectField(db, database, table, conf.CompleteInsert)
-	if err != nil {
-		return nil, err
-	}
-
-	orderByClause, err := buildOrderByClause(conf, db, database, table)
-	if err != nil {
-		return nil, err
-	}
+	selectedField, selectLen := meta.SelectedField(), meta.SelectedLen()
 	query := buildSelectQuery(database, table, selectedField, partition, buildWhereCondition(conf, ""), orderByClause)
 
 	return &tableData{
 		query:  query,
 		colLen: selectLen,
-	}, nil
+	}
 }
 
 func buildSelectQuery(database, table, fields, partition, where, orderByClause string) string {
@@ -242,18 +289,12 @@ func buildSelectQuery(database, table, fields, partition, where, orderByClause s
 	return query.String()
 }
 
-func buildOrderByClause(conf *Config, db *sql.Conn, database, table string) (string, error) {
+func buildOrderByClause(conf *Config, db *sql.Conn, database, table string, hasImplicitRowID bool) (string, error) { // revive:disable-line:flag-parameter
 	if !conf.SortByPk {
 		return "", nil
 	}
-	if conf.ServerInfo.ServerType == ServerTypeTiDB {
-		ok, err := SelectTiDBRowID(db, database, table)
-		if err != nil {
-			return "", errors.Trace(err)
-		}
-		if ok {
-			return orderByTiDBRowID, nil
-		}
+	if hasImplicitRowID {
+		return orderByTiDBRowID, nil
 	}
 	cols, err := GetPrimaryKeyColumns(db, database, table)
 	if err != nil {
@@ -278,15 +319,13 @@ func SelectTiDBRowID(db *sql.Conn, database, table string) (bool, error) {
 }
 
 // GetSuitableRows gets suitable rows for each table
-func GetSuitableRows(tctx *tcontext.Context, db *sql.Conn, database, table string) uint64 {
+func GetSuitableRows(avgRowLength uint64) uint64 {
 	const (
 		defaultRows  = 200000
 		maxRows      = 1000000
 		bytesPerFile = 128 * 1024 * 1024 // 128MB per file by default
 	)
-	avgRowLength, err := GetAVGRowLength(tctx, db, database, table)
-	if err != nil || avgRowLength == 0 {
-		tctx.L().Debug("fail to get average row length", zap.Uint64("averageRowLength", avgRowLength), zap.Error(err))
+	if avgRowLength == 0 {
 		return defaultRows
 	}
 	estimateRows := bytesPerFile / avgRowLength
@@ -294,18 +333,6 @@ func GetSuitableRows(tctx *tcontext.Context, db *sql.Conn, database, table strin
 		return maxRows
 	}
 	return estimateRows
-}
-
-// GetAVGRowLength gets whether this table's average row length
-func GetAVGRowLength(tctx *tcontext.Context, db *sql.Conn, database, table string) (uint64, error) {
-	const query = "select AVG_ROW_LENGTH from INFORMATION_SCHEMA.TABLES where table_schema=? and table_name=?;"
-	var avgRowLength uint64
-	row := db.QueryRowContext(tctx, query, database, table)
-	err := row.Scan(&avgRowLength)
-	if err != nil {
-		return 0, errors.Annotatef(err, "sql: %s", query)
-	}
-	return avgRowLength, nil
 }
 
 // GetColumnTypes gets *sql.ColumnTypes from a specified table
@@ -323,78 +350,68 @@ func GetColumnTypes(db *sql.Conn, fields, database, table string) ([]*sql.Column
 }
 
 // GetPrimaryKeyAndColumnTypes gets all primary columns and their types in ordinal order
-func GetPrimaryKeyAndColumnTypes(conn *sql.Conn, database, table string) ([]string, []string, error) {
-	query :=
-		`SELECT c.COLUMN_NAME, DATA_TYPE FROM
-INFORMATION_SCHEMA.COLUMNS c INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE k ON
-c.column_name = k.column_name and
-c.table_schema = k.table_schema and
-c.table_name = k.table_name and
-c.table_schema = ? and
-c.table_name = ?
-WHERE COLUMN_KEY = 'PRI'
-ORDER BY k.ORDINAL_POSITION;`
-	var colNames, colTypes []string
-	if err := simpleQueryWithArgs(conn, func(rows *sql.Rows) error {
-		var colName, colType string
-		if err := rows.Scan(&colName, &colType); err != nil {
-			return errors.Trace(err)
-		}
-		colNames = append(colNames, colName)
-		colTypes = append(colTypes, strings.ToUpper(colType))
-		return nil
-	}, query, database, table); err != nil {
-		return nil, nil, errors.Annotatef(err, "sql: %s", query)
+func GetPrimaryKeyAndColumnTypes(conn *sql.Conn, meta TableMeta) ([]string, []string, error) {
+	var (
+		colNames, colTypes []string
+		err                error
+	)
+	colNames, err = GetPrimaryKeyColumns(conn, meta.DatabaseName(), meta.TableName())
+	if err != nil {
+		return nil, nil, err
+	}
+	colName2Type := string2Map(meta.ColumnNames(), meta.ColumnTypes())
+	colTypes = make([]string, len(colNames))
+	for i, colName := range colNames {
+		colTypes[i] = colName2Type[colName]
 	}
 	return colNames, colTypes, nil
 }
 
 // GetPrimaryKeyColumns gets all primary columns in ordinal order
 func GetPrimaryKeyColumns(db *sql.Conn, database, table string) ([]string, error) {
-	priKeyColsQuery := "SELECT column_name FROM information_schema.KEY_COLUMN_USAGE " +
-		"WHERE table_schema = ? AND table_name = ? AND CONSTRAINT_NAME = 'PRIMARY' order by ORDINAL_POSITION;"
-	rows, err := db.QueryContext(context.Background(), priKeyColsQuery, database, table)
+	priKeyColsQuery := fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", escapeString(database), escapeString(table))
+	rows, err := db.QueryContext(context.Background(), priKeyColsQuery)
 	if err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", priKeyColsQuery)
 	}
-	defer rows.Close()
-	var cols []string
-	var col string
-	for rows.Next() {
-		err = rows.Scan(&col)
-		if err != nil {
-			return nil, errors.Annotatef(err, "sql: %s", priKeyColsQuery)
-		}
-		cols = append(cols, col)
-	}
-	if err = rows.Err(); err != nil {
+	results, err := GetSpecifiedColumnValuesAndClose(rows, "KEY_NAME", "COLUMN_NAME")
+	if err != nil {
 		return nil, errors.Annotatef(err, "sql: %s", priKeyColsQuery)
+	}
+	cols := make([]string, 0, len(results))
+	for _, oneRow := range results {
+		keyName, columnName := oneRow[0], oneRow[1]
+		if keyName == "PRIMARY" {
+			cols = append(cols, columnName)
+		}
 	}
 	return cols, nil
 }
 
-// GetPrimaryKeyName try to get a numeric primary index
-func GetPrimaryKeyName(db *sql.Conn, database, table string) (string, error) {
-	return getNumericIndex(db, database, table, "PRI")
-}
-
-// GetUniqueIndexName try to get a numeric unique index
-func GetUniqueIndexName(db *sql.Conn, database, table string) (string, error) {
-	return getNumericIndex(db, database, table, "UNI")
-}
-
-func getNumericIndex(db *sql.Conn, database, table, indexType string) (string, error) {
-	keyQuery := "SELECT column_name FROM information_schema.columns " +
-		"WHERE table_schema = ? AND table_name = ? AND column_key = ? AND data_type IN ('int', 'bigint');"
-	var colName string
-	row := db.QueryRowContext(context.Background(), keyQuery, database, table, indexType)
-	err := row.Scan(&colName)
-	if errors.Cause(err) == sql.ErrNoRows {
-		return "", nil
-	} else if err != nil {
-		return "", errors.Annotatef(err, "sql: %s, indexType: %s", keyQuery, indexType)
+func getNumericIndex(db *sql.Conn, meta TableMeta) (string, error) {
+	database, table := meta.DatabaseName(), meta.TableName()
+	colName2Type := string2Map(meta.ColumnNames(), meta.ColumnTypes())
+	keyQuery := fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", escapeString(database), escapeString(table))
+	rows, err := db.QueryContext(context.Background(), keyQuery)
+	if err != nil {
+		return "", errors.Annotatef(err, "sql: %s", keyQuery)
 	}
-	return colName, nil
+	results, err := GetSpecifiedColumnValuesAndClose(rows, "NON_UNIQUE", "KEY_NAME", "COLUMN_NAME")
+	if err != nil {
+		return "", errors.Annotatef(err, "sql: %s", keyQuery)
+	}
+	uniqueColumnName := ""
+	// check primary key first, then unique key
+	for _, oneRow := range results {
+		var ok bool
+		if _, ok = dataTypeNum[colName2Type[oneRow[2]]]; ok && oneRow[1] == "PRIMARY" {
+			return oneRow[2], nil
+		}
+		if uniqueColumnName != "" && oneRow[0] == "0" && ok {
+			uniqueColumnName = oneRow[2]
+		}
+	}
+	return uniqueColumnName, nil
 }
 
 // FlushTableWithReadLock flush tables with read lock
@@ -633,8 +650,8 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB) (*sql.Conn, erro
 // buildSelectField returns the selecting fields' string(joined by comma(`,`)),
 // and the number of writable fields.
 func buildSelectField(db *sql.Conn, dbName, tableName string, completeInsert bool) (string, int, error) { // revive:disable-line:flag-parameter
-	query := `SELECT COLUMN_NAME,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION;`
-	rows, err := db.QueryContext(context.Background(), query, dbName, tableName)
+	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", escapeString(dbName), escapeString(tableName))
+	rows, err := db.QueryContext(context.Background(), query)
 	if err != nil {
 		return "", 0, errors.Annotatef(err, "sql: %s", query)
 	}
@@ -642,22 +659,18 @@ func buildSelectField(db *sql.Conn, dbName, tableName string, completeInsert boo
 	availableFields := make([]string, 0)
 
 	hasGenerateColumn := false
-	var fieldName string
-	var extra string
-	for rows.Next() {
-		err = rows.Scan(&fieldName, &extra)
-		if err != nil {
-			return "", 0, errors.Annotatef(err, "sql: %s", query)
-		}
+	results, err := GetSpecifiedColumnValuesAndClose(rows, "FIELD", "EXTRA")
+	if err != nil {
+		return "", 0, errors.Annotatef(err, "sql: %s", query)
+	}
+	for _, oneRow := range results {
+		fieldName, extra := oneRow[0], oneRow[1]
 		switch extra {
 		case "STORED GENERATED", "VIRTUAL GENERATED":
 			hasGenerateColumn = true
 			continue
 		}
 		availableFields = append(availableFields, wrapBackTicks(escapeString(fieldName)))
-	}
-	if err = rows.Err(); err != nil {
-		return "", 0, errors.Annotatef(err, "sql: %s", query)
 	}
 	if completeInsert || hasGenerateColumn {
 		return strings.Join(availableFields, ","), len(availableFields), nil
@@ -871,28 +884,15 @@ func simpleQueryWithArgs(conn *sql.Conn, handleOneRow func(*sql.Rows) error, sql
 	return errors.Annotatef(rows.Err(), "sql: %s, args: %s", sql, args)
 }
 
-func pickupPossibleField(dbName, tableName string, db *sql.Conn, conf *Config) (string, error) {
-	// If detected server is TiDB, try using _tidb_rowid
-	if conf.ServerInfo.ServerType == ServerTypeTiDB {
-		ok, err := SelectTiDBRowID(db, dbName, tableName)
-		if err != nil {
-			return "", nil
-		}
-		if ok {
-			return "_tidb_rowid", nil
-		}
+func pickupPossibleField(meta TableMeta, db *sql.Conn) (string, error) {
+	// try using _tidb_rowid first
+	if meta.HasImplicitRowID() {
+		return "_tidb_rowid", nil
 	}
 	// try to use pk
-	fieldName, err := GetPrimaryKeyName(db, dbName, tableName)
+	fieldName, err := getNumericIndex(db, meta)
 	if err != nil {
 		return "", err
-	}
-	// try to use first uniqueIndex
-	if fieldName == "" {
-		fieldName, err = GetUniqueIndexName(db, dbName, tableName)
-		if err != nil {
-			return "", err
-		}
 	}
 
 	// if fieldName == "", there is no proper index

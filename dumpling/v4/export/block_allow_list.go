@@ -9,13 +9,17 @@ import (
 )
 
 func filterTables(tctx *tcontext.Context, conf *Config) {
+	filterTablesFunc(tctx, conf, conf.TableFilter.MatchTable)
+}
+
+func filterTablesFunc(tctx *tcontext.Context, conf *Config, matchTable func(string, string) bool) {
 	tctx.L().Debug("start to filter tables")
 	dbTables := DatabaseTables{}
 	ignoredDBTable := DatabaseTables{}
 
 	for dbName, tables := range conf.Tables {
 		for _, table := range tables {
-			if conf.TableFilter.MatchTable(dbName, table.Name) {
+			if matchTable(dbName, table.Name) {
 				dbTables.AppendTable(dbName, table)
 			} else {
 				ignoredDBTable.AppendTable(dbName, table)

@@ -96,14 +96,6 @@ func prepareDumpingDatabases(conf *Config, db *sql.Conn) ([]string, error) {
 	return conf.Databases, nil
 }
 
-func listAllTables(db *sql.Conn, databaseNames []string) (DatabaseTables, error) {
-	return ListAllDatabasesTables(db, databaseNames, TableTypeBase)
-}
-
-func listAllViews(db *sql.Conn, databaseNames []string) (DatabaseTables, error) {
-	return ListAllDatabasesTables(db, databaseNames, TableTypeView)
-}
-
 type databaseName = string
 
 // TableType represents the type of table
@@ -116,10 +108,41 @@ const (
 	TableTypeView
 )
 
+const (
+	// TableTypeBaseStr represents the basic table string
+	TableTypeBaseStr = "BASE TABLE"
+	// TableTypeViewStr represents the view table string
+	TableTypeViewStr = "VIEW"
+)
+
+func (t TableType) String() string {
+	switch t {
+	case TableTypeBase:
+		return TableTypeBaseStr
+	case TableTypeView:
+		return TableTypeViewStr
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// ParseTableType parses table type string to TableType
+func ParseTableType(s string) (TableType, error) {
+	switch s {
+	case TableTypeBaseStr:
+		return TableTypeBase, nil
+	case TableTypeViewStr:
+		return TableTypeView, nil
+	default:
+		return TableTypeBase, errors.Errorf("unknown table type %s", s)
+	}
+}
+
 // TableInfo is the table info for a table in database
 type TableInfo struct {
-	Name string
-	Type TableType
+	Name         string
+	AvgRowLength uint64
+	Type         TableType
 }
 
 // Equals returns true the table info is the same with another one
@@ -142,9 +165,9 @@ func (d DatabaseTables) AppendTable(dbName string, table *TableInfo) DatabaseTab
 }
 
 // AppendTables appends several basic tables to DatabaseTables
-func (d DatabaseTables) AppendTables(dbName string, tableNames ...string) DatabaseTables {
-	for _, t := range tableNames {
-		d[dbName] = append(d[dbName], &TableInfo{t, TableTypeBase})
+func (d DatabaseTables) AppendTables(dbName string, tableNames []string, avgRowLengths []uint64) DatabaseTables {
+	for i, t := range tableNames {
+		d[dbName] = append(d[dbName], &TableInfo{t, avgRowLengths[i], TableTypeBase})
 	}
 	return d
 }
@@ -152,7 +175,7 @@ func (d DatabaseTables) AppendTables(dbName string, tableNames ...string) Databa
 // AppendViews appends several views to DatabaseTables
 func (d DatabaseTables) AppendViews(dbName string, viewNames ...string) DatabaseTables {
 	for _, v := range viewNames {
-		d[dbName] = append(d[dbName], &TableInfo{v, TableTypeView})
+		d[dbName] = append(d[dbName], &TableInfo{v, 0, TableTypeView})
 	}
 	return d
 }

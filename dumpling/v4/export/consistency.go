@@ -34,8 +34,8 @@ func NewConsistencyController(ctx context.Context, conf *Config, session *sql.DB
 		}, nil
 	case consistencyTypeLock:
 		return &ConsistencyLockDumpingTables{
-			conn:      conn,
-			allTables: conf.Tables,
+			conn: conn,
+			conf: conf,
 		}, nil
 	case consistencyTypeSnapshot:
 		if conf.ServerInfo.ServerType != ServerTypeTiDB {
@@ -110,16 +110,28 @@ func (c *ConsistencyFlushTableWithReadLock) PingContext(ctx context.Context) err
 
 // ConsistencyLockDumpingTables execute lock tables read on all tables before dump
 type ConsistencyLockDumpingTables struct {
-	conn      *sql.Conn
-	allTables DatabaseTables
+	conn *sql.Conn
+	conf *Config
 }
 
 // Setup implements ConsistencyController.Setup
 func (c *ConsistencyLockDumpingTables) Setup(tctx *tcontext.Context) error {
 	blockList := make(map[string]map[string]interface{})
 	return utils.WithRetry(tctx, func() error {
-		lockTablesSQL := buildLockTablesSQL(c.allTables, blockList)
+		lockTablesSQL := buildLockTablesSQL(c.conf.Tables, blockList)
 		_, err := c.conn.ExecContext(tctx, lockTablesSQL)
+		if err == nil {
+			if len(blockList) > 0 {
+				filterTablesFunc(tctx, c.conf, func(db string, tbl string) bool {
+					if blockTable, ok := blockList[db]; ok {
+						if _, ok := blockTable[tbl]; ok {
+							return false
+						}
+					}
+					return true
+				})
+			}
+		}
 		return errors.Trace(err)
 	}, newLockTablesBackoffer(tctx, blockList))
 }

@@ -29,9 +29,12 @@ type TableMeta interface {
 	ColumnTypes() []string
 	ColumnNames() []string
 	SelectedField() string
+	SelectedLen() int
 	SpecialComments() StringIter
 	ShowCreateTable() string
 	ShowCreateView() string
+	AvgRowLength() uint64
+	HasImplicitRowID() bool
 }
 
 // SQLRowIter is the iterator on a collection of sql.Row.
@@ -98,6 +101,7 @@ func setTableMetaFromRows(rows *sql.Rows) (TableMeta, error) {
 	return &tableMeta{
 		colTypes:      tps,
 		selectedField: strings.Join(nms, ","),
+		selectedLen:   len(nms),
 		specCmts:      []string{"/*!40101 SET NAMES binary*/;"},
 	}, nil
 }

@@ -4,8 +4,6 @@
 
 # To avoid permission denied error, please run `chmod +x tests/_utils/*`.
 
-set -e
-
 DUMPLING_TEST_DIR=${DUMPLING_TEST_DIR:-"/tmp/dumpling_test_result"}
 DUMPLING_TEST_USER=${DUMPLING_TEST_USER:-"root"}
 
