@@ -136,10 +136,10 @@ func (b *builtinArithmeticModIntUnsignedUnsignedSig) vecEvalInt(input *chunk.Chu
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
-		if rh.IsNull(i) {
-			continue
-		}
 		if rhi64s[i] == 0 {
+			if rh.IsNull(i) {
+				continue
+			}
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
@@ -181,10 +181,10 @@ func (b *builtinArithmeticModIntUnsignedSignedSig) vecEvalInt(input *chunk.Chunk
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
-		if rh.IsNull(i) {
-			continue
-		}
 		if rhi64s[i] == 0 {
+			if rh.IsNull(i) {
+				continue
+			}
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
@@ -230,10 +230,10 @@ func (b *builtinArithmeticModIntSignedUnsignedSig) vecEvalInt(input *chunk.Chunk
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
-		if rh.IsNull(i) {
-			continue
-		}
 		if rhi64s[i] == 0 {
+			if rh.IsNull(i) {
+				continue
+			}
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
@@ -279,10 +279,10 @@ func (b *builtinArithmeticModIntSignedSignedSig) vecEvalInt(input *chunk.Chunk, 
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
-		if rh.IsNull(i) {
-			continue
-		}
 		if rhi64s[i] == 0 {
+			if rh.IsNull(i) {
+				continue
+			}
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
 			}
