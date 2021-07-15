@@ -137,26 +137,50 @@ func (s *testVectorizeSuite2) TestMockVecPlusIntParallel(c *C) {
 }
 
 const (
-	numTestGet = 4096
+	numColumnPoolOp = 4096
 )
 
-func BenchmarkColumnBufferAllocate(b *testing.B) {
+func BenchmarkColumnPoolGet(b *testing.B) {
 	allocator := newLocalColumnPool()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for j := 0; j < numTestGet; j++ {
+		for j := 0; j < numColumnPoolOp; j++ {
+			col, _ := allocator.get(types.ETInt, chunk.InitialCapacity)
+			_ = col
+		}
+	}
+}
+
+func BenchmarkColumnPoolGetParallel(b *testing.B) {
+	allocator := newLocalColumnPool()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			for i := 0; i < numColumnPoolOp; i++ {
+				col, _ := allocator.get(types.ETInt, chunk.InitialCapacity)
+				_ = col
+			}
+		}
+	})
+}
+
+func BenchmarkColumnPoolGetPut(b *testing.B) {
+	allocator := newLocalColumnPool()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < numColumnPoolOp; j++ {
 			col, _ := allocator.get(types.ETInt, chunk.InitialCapacity)
 			allocator.put(col)
 		}
 	}
 }
 
-func BenchmarkColumnBufferAllocateParallel(b *testing.B) {
+func BenchmarkColumnPoolGetPutParallel(b *testing.B) {
 	allocator := newLocalColumnPool()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			for i := 0; i < numTestGet; i++ {
+			for i := 0; i < numColumnPoolOp; i++ {
 				col, _ := allocator.get(types.ETInt, chunk.InitialCapacity)
 				allocator.put(col)
 			}
