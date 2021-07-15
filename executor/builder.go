@@ -2674,6 +2674,10 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 	ts := v.GetTableScan()
+	if err = b.validCanReadTemporaryTable(ts.Table); err != nil {
+		return nil, err
+	}
+
 	tbl, _ := b.is.TableByID(ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()
 	if isPartition {
@@ -2786,6 +2790,11 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 
 	ts := v.GetTableScan()
+	if err = b.validCanReadTemporaryTable(ts.Table); err != nil {
+		b.err = err
+		return nil
+	}
+
 	ret.ranges = ts.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
@@ -3003,13 +3012,18 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 }
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) Executor {
+	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	if err := b.validCanReadTemporaryTable(is.Table); err != nil {
+		b.err = err
+		return nil
+	}
+
 	ret, err := buildNoRangeIndexReader(b, v)
 	if err != nil {
 		b.err = err
 		return nil
 	}
 
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	ret.ranges = is.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
@@ -3157,13 +3171,18 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 }
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) Executor {
+	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	if err := b.validCanReadTemporaryTable(is.Table); err != nil {
+		b.err = err
+		return nil
+	}
+
 	ret, err := buildNoRangeIndexLookUpReader(b, v)
 	if err != nil {
 		b.err = err
 		return nil
 	}
 
-	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 
 	ret.ranges = is.Ranges
@@ -3267,6 +3286,12 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 }
 
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) Executor {
+	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	if err := b.validCanReadTemporaryTable(ts.Table); err != nil {
+		b.err = err
+		return nil
+	}
+
 	ret, err := buildNoRangeIndexMergeReader(b, v)
 	if err != nil {
 		b.err = err
@@ -3286,7 +3311,6 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 			}
 		}
 	}
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	executorCounterIndexMergeReaderExecutor.Inc()
 
@@ -4060,6 +4084,11 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
+	if err := b.validCanReadTemporaryTable(plan.TblInfo); err != nil {
+		b.err = err
+		return nil
+	}
+
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -4193,6 +4222,16 @@ func fullRangePartition(idxArr []int) bool {
 	return len(idxArr) == 1 && idxArr[0] == plannercore.FullRange
 }
 
+type emptySampler struct{}
+
+func (s *emptySampler) writeChunk(_ *chunk.Chunk) error {
+	return nil
+}
+
+func (s *emptySampler) finished() bool {
+	return true
+}
+
 func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
@@ -4204,11 +4243,15 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 		table:        v.TableInfo,
 		startTS:      startTS,
 	}
-	if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
+
+	if v.TableInfo.Meta().TempTableType != model.TempTableNone {
+		e.sampler = &emptySampler{}
+	} else if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
 		e.sampler = newTableRegionSampler(
 			b.ctx, v.TableInfo, startTS, v.TableSampleInfo.Partitions, v.Schema(),
 			v.TableSampleInfo.FullSchema, e.retFieldTypes, v.Desc)
 	}
+
 	return e
 }
 
@@ -4306,4 +4349,21 @@ func (b *executorBuilder) buildCTETableReader(v *plannercore.PhysicalCTETable) E
 		iterInTbl:    storages.IterInTbl,
 		chkIdx:       0,
 	}
+}
+
+func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error {
+	if tbl.TempTableType == model.TempTableNone {
+		return nil
+	}
+
+	// Some tools like dumpling use history read to dump all table's records and will be fail if we return an error.
+	// So we do not check SnapshotTS here
+
+	sessionVars := b.ctx.GetSessionVars()
+
+	if sessionVars.TxnCtx.IsStaleness || b.explicitStaleness {
+		return errors.New("can not stale read temporary table")
+	}
+
+	return nil
 }

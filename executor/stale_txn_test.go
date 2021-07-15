@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -861,51 +862,91 @@ func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer3)
 }
 
-func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
+func (s *testStaleTxnSuite) TestStaleReadTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	tk.MustExec("set @@tidb_enable_global_temporary_table=1")
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	defer tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int)")
+	tk.MustExec("drop table if exists tmp1")
+	tk.MustExec("create global temporary table tmp1 " +
+		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
+		"on commit delete rows")
+	time.Sleep(time.Second)
+	tk.MustGetErrMsg("select * from tmp1 as of timestamp NOW() where id=1", "can not stale read temporary table")
 
-	tolerance := 50 * time.Millisecond
+	queries := []struct {
+		sql string
+	}{
+		{
+			sql: "select * from tmp1 where id=1",
+		},
+		{
+			sql: "select * from tmp1 where code=1",
+		},
+		{
+			sql: "select * from tmp1 where id in (1, 2, 3)",
+		},
+		{
+			sql: "select * from tmp1 where code in (1, 2, 3)",
+		},
+		{
+			sql: "select * from tmp1 where id > 1",
+		},
+		{
+			sql: "select /*+use_index(tmp1, code)*/ * from tmp1 where code > 1",
+		},
+		{
+			sql: "select /*+use_index(tmp1, code)*/ code from tmp1 where code > 1",
+		},
+		{
+			sql: "select /*+ use_index_merge(tmp1, primary, code) */ * from tmp1 where id > 1 or code > 2",
+		},
+	}
 
-	tk.MustExec("insert into t values (1)")
-	time.Sleep(tolerance)
-	time1 := time.Now()
+	addStaleReadToSQL := func(sql string) string {
+		idx := strings.Index(sql, " where ")
+		if idx < 0 {
+			return ""
+		}
+		return sql[0:idx] + " as of timestamp NOW()" + sql[idx:]
+	}
 
-	tk.MustExec("insert into t values (2)")
-	time.Sleep(tolerance)
-	time2 := time.Now()
+	for _, query := range queries {
+		sql := addStaleReadToSQL(query.sql)
+		if sql != "" {
+			tk.MustGetErrMsg(sql, "can not stale read temporary table")
+		}
+	}
 
-	tk.MustExec("insert into t values (3)")
-	time.Sleep(tolerance)
-
-	staleRows := testkit.Rows("1")
-	staleSQL := fmt.Sprintf(`select * from t as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000"))
-
-	// test normal stale select
-	tk.MustQuery(staleSQL).Check(staleRows)
-
-	// test stale select in txn
-	tk.MustExec("begin")
-	c.Assert(tk.ExecToErr(staleSQL), NotNil)
+	tk.MustExec("start transaction read only as of timestamp NOW()")
+	for _, query := range queries {
+		tk.MustGetErrMsg(query.sql, "can not stale read temporary table")
+	}
 	tk.MustExec("commit")
 
-	// test prepared stale select
-	tk.MustExec(fmt.Sprintf(`prepare s from "%s"`, staleSQL))
-	tk.MustQuery("execute s")
+	for _, query := range queries {
+		tk.MustExec(query.sql)
+	}
 
-	// test prepared stale select in txn
-	tk.MustExec("begin")
-	c.Assert(tk.ExecToErr(staleSQL), NotNil)
+	tk.MustExec("set transaction read only as of timestamp NOW()")
+	tk.MustExec("start transaction")
+	for _, query := range queries {
+		tk.MustGetErrMsg(query.sql, "can not stale read temporary table")
+	}
 	tk.MustExec("commit")
 
-	// test stale select in stale txn
-	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time2.Format("2006-1-2 15:04:05.000")))
-	c.Assert(tk.ExecToErr(staleSQL), NotNil)
-	tk.MustExec("commit")
-
+	for _, query := range queries {
+		tk.MustExec(query.sql)
+	}
+  
 	// test prepared stale select with schema change
 	tk.MustExec("alter table t add column c int")
 	tk.MustExec("insert into t values (4, 5)")
