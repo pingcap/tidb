@@ -27,7 +27,7 @@ import (
 	. "github.com/pingcap/tidb/expression/generator/helper"
 )
 
-const header = `// Copyright 2019 PingCAP, Inc.
+const header = `// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -48,7 +48,6 @@ package expression
 const newLine = "\n"
 
 const builtinStringImports = `import (
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 `
