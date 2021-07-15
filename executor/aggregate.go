@@ -198,13 +198,20 @@ type HashAggExec struct {
 
 	stats *HashAggRuntimeStats
 
-	listInDisk   *chunk.ListInDisk   // listInDisk is the chunks to store row values for spilling data.
-	lastChunkNum int                 // lastChunkNum indicates the num of spilling chunk.
-	processIdx   int                 // processIdx indicates the num of processed chunk in disk.
-	spillMode    uint32              // spillMode means that no new groups are added to hash table.
-	spillChunk   *chunk.Chunk        // spillChunk is the temp chunk for spilling.
-	spillAction  *AggSpillDiskAction // spillAction save the Action for spilling.
-	childDrained bool                // childDrained indicates whether the all data from child has been taken out.
+	// listInDisk is the chunks to store row values for spilling data.
+	listInDisk *chunk.ListInDisk
+	// numOfSpilledChks indicates the num of spilling chunk.
+	numOfSpilledChks int
+	// offsetOfSpillChks indicates the num of processed chunk in disk.
+	offsetOfSpillChks int
+	// isSpillModeSet means that no new groups are added to hash table.
+	isSpillModeSet uint32
+	// tmpChkForSpill is the temp chunk for spilling.
+	tmpChkForSpill *chunk.Chunk
+	// spillAction save the Action for spilling.
+	spillAction *AggSpillDiskAction
+	// isChildDrained indicates whether the all data from child has been taken out.
+	isChildDrained bool
 }
 
 // HashAggInput indicates the input of hash agg exec.
@@ -248,7 +255,7 @@ func (e *HashAggExec) Close() error {
 		if e.listInDisk != nil {
 			firstErr = e.listInDisk.Close()
 		}
-		e.spillAction, e.spillChunk = nil, nil
+		e.spillAction, e.tmpChkForSpill = nil, nil
 		if err := e.baseExecutor.Close(); firstErr == nil {
 			firstErr = err
 		}
@@ -321,10 +328,10 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.childResult = newFirstChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 
-	e.processIdx, e.lastChunkNum = 0, 0
-	e.executed, e.childDrained = false, false
+	e.offsetOfSpillChks, e.numOfSpilledChks = 0, 0
+	e.executed, e.isChildDrained = false, false
 	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
-	e.spillChunk = newFirstChunk(e.children[0])
+	e.tmpChkForSpill = newFirstChunk(e.children[0])
 	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage && config.GetGlobalConfig().OOMUseTmpStorage {
 		e.diskTracker = disk.NewTracker(e.id, -1)
 		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
@@ -930,18 +937,18 @@ func (e *HashAggExec) resetSpillMode() {
 	e.partialResultMap = make(aggPartialResultMapper)
 	e.bInMap = 0
 	e.prepared = false
-	e.executed = e.lastChunkNum == e.listInDisk.NumChunks() // No data is spilling again, all data have been processed.
-	e.lastChunkNum = e.listInDisk.NumChunks()
+	e.executed = e.numOfSpilledChks == e.listInDisk.NumChunks() // No data is spilling again, all data have been processed.
+	e.numOfSpilledChks = e.listInDisk.NumChunks()
 	e.memTracker.ReplaceBytesUsed(setSize)
-	atomic.StoreUint32(&e.spillMode, 0)
+	atomic.StoreUint32(&e.isSpillModeSet, 0)
 }
 
 // execute fetches Chunks from src and update each aggregate function for each row in Chunk.
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	defer func() {
-		if e.spillChunk.NumRows() > 0 && err == nil {
-			err = e.listInDisk.Add(e.spillChunk)
-			e.spillChunk.Reset()
+		if e.tmpChkForSpill.NumRows() > 0 && err == nil {
+			err = e.listInDisk.Add(e.tmpChkForSpill)
+			e.tmpChkForSpill.Reset()
 		}
 	}()
 	for {
@@ -975,7 +982,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
-				if atomic.LoadUint32(&e.spillMode) == 1 && e.groupSet.Count() > 0 {
+				if atomic.LoadUint32(&e.isSpillModeSet) == 1 && e.groupSet.Count() > 0 {
 					sel = append(sel, j)
 					continue
 				}
@@ -1013,13 +1020,13 @@ func (e *HashAggExec) spillUnprocessedData(sel []int) (err error) {
 		}
 	} else {
 		for _, j := range sel {
-			e.spillChunk.Append(e.childResult, j, j+1)
-			if e.spillChunk.IsFull() {
-				err = e.listInDisk.Add(e.spillChunk)
+			e.tmpChkForSpill.Append(e.childResult, j, j+1)
+			if e.tmpChkForSpill.IsFull() {
+				err = e.listInDisk.Add(e.tmpChkForSpill)
 				if err != nil {
 					return err
 				}
-				e.spillChunk.Reset()
+				e.tmpChkForSpill.Reset()
 			}
 		}
 	}
@@ -1028,22 +1035,22 @@ func (e *HashAggExec) spillUnprocessedData(sel []int) (err error) {
 
 func (e *HashAggExec) getNextChunk(ctx context.Context) (err error) {
 	e.childResult.Reset()
-	if !e.childDrained {
+	if !e.isChildDrained {
 		if err := Next(ctx, e.children[0], e.childResult); err != nil {
 			return err
 		}
 		if e.childResult.NumRows() == 0 {
-			e.childDrained = true
+			e.isChildDrained = true
 		} else {
 			return nil
 		}
 	}
-	if e.processIdx < e.lastChunkNum {
-		e.childResult, err = e.listInDisk.GetChunk(e.processIdx)
+	if e.offsetOfSpillChks < e.numOfSpilledChks {
+		e.childResult, err = e.listInDisk.GetChunk(e.offsetOfSpillChks)
 		if err != nil {
 			return err
 		}
-		e.processIdx++
+		e.offsetOfSpillChks++
 	}
 	return nil
 }
@@ -1878,11 +1885,11 @@ type AggSpillDiskAction struct {
 
 // Action set HashAggExec spill mode.
 func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
-	if atomic.LoadUint32(&a.e.spillMode) == 0 && a.spillTimes < maxSpillTimes {
+	if atomic.LoadUint32(&a.e.isSpillModeSet) == 0 && a.spillTimes < maxSpillTimes {
 		a.spillTimes++
 		logutil.BgLogger().Info("memory exceeds quota, set aggregate mode to spill-mode",
 			zap.Uint32("spillTimes", a.spillTimes))
-		atomic.StoreUint32(&a.e.spillMode, 1)
+		atomic.StoreUint32(&a.e.isSpillModeSet, 1)
 		return
 	}
 	if fallback := a.GetFallback(); fallback != nil {
@@ -1896,4 +1903,4 @@ func (a *AggSpillDiskAction) GetPriority() int64 {
 }
 
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (a *AggSpillDiskAction) SetLogHook(hook func(uint642 uint64)) {}
+func (a *AggSpillDiskAction) SetLogHook(hook func(uint64)) {}
