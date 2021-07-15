@@ -206,7 +206,6 @@ type HashAggExec struct {
 	// offsetOfSpilledChks indicates the offset of the chunk be read from the disk.
 	// In each round of processing, we need to re-fetch all the chunks spilled in the last one.
 	offsetOfSpilledChks int
-
 	// inSpillMode indicates whether HashAgg is in `spill mode`.
 	// When HashAgg is in `spill mode`, the size of `partialResultMap` is no longer growing and all the data fetched
 	// from the child executor is spilled to the disk.
