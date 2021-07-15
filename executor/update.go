@@ -314,11 +314,17 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 	}
 
 	if types.ErrDataTooLong.Equal(err) {
-		return resetErrDataTooLong(colName.O, rowIdx+1, err)
+		err = resetErrDataTooLong(colName.O, rowIdx+1, err)
 	}
 
-	if types.ErrOverflow.Equal(err) {
-		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName.O, rowIdx+1)
+	if types.ErrOverflow.Equal(err) || types.ErrInvalidYear.Equal(err) {
+		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName.O, rowIdx+1)
+	}
+
+	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
+		sc := e.ctx.GetSessionVars().StmtCtx
+		sc.AppendWarning(err)
+		err = nil
 	}
 
 	return err

@@ -301,6 +301,16 @@ func (t *testTableSuite) TestCastValue(c *C) {
 	colInfoS.Charset = charset.CharsetASCII
 	_, err = CastValue(ctx, types.NewDatum([]byte{0x32, 0xf0}), &colInfoS, false, true)
 	c.Assert(err, IsNil)
+
+	colInfoY := model.ColumnInfo{
+		FieldType: *types.NewFieldType(mysql.TypeYear),
+		State:     model.StatePublic,
+	}
+	_, err = CastValue(ctx, types.NewDatum("2156"), &colInfoY, false, false)
+	c.Assert(err, NotNil)
+
+	_, err = CastValue(ctx, types.NewDatum("2155"), &colInfoY, false, false)
+	c.Assert(err, IsNil)
 }
 
 func (t *testTableSuite) TestGetDefaultValue(c *C) {
