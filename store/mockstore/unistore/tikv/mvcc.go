@@ -855,10 +855,12 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 	if item == nil {
 		if m.Assertion == kvrpcpb.Assertion_Exist {
 			log.Error("ASSERTION FAIL!!! non-exist for must exist key", zap.Stringer("mutation", m))
+			return nil, errors.New("assertion fail, non-exist for must exist key - " + m.String())
 		}
 	} else {
 		if m.Assertion == kvrpcpb.Assertion_NotExist {
 			log.Error("ASSERTION FAIL!!! exist for must non-exist key", zap.Stringer("mutation", m))
+			return nil, errors.New("assertion fail, exist for must non-exist key - " + m.String())
 		}
 	}
 
