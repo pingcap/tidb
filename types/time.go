@@ -889,7 +889,7 @@ func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-// splitDateTime splits the string literal into 3 parts, date & time, FSP and time zone.
+// splitDateTime splits the string literal into 3 parts, date & time, FSP(Fractional Seconds Precision) and time zone.
 // For FSP, The only delimiter recognized between a date & time part and a fractional seconds part is the decimal point,
 // therefore we could look from backwards at the literal to find the index of the decimal point.
 // For time zone, the possible delimiter could be +/- (w.r.t. MySQL 8.0, see
@@ -900,15 +900,20 @@ func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tz
 	if tzIndex > 0 {
 		hasTZ = true
 		for ; tzIndex > 0 && isPunctuation(format[tzIndex-1]); tzIndex-- {
-			// in case of multiple separators, e.g. 2020-10--10
+			// In case of multiple separators, e.g. 2020-10--10
 		}
 		format = format[:tzIndex]
 	}
 	fracIndex := GetFracIndex(format)
 	if fracIndex > 0 {
-		fracStr = format[fracIndex+1:]
+		// Only contain digits
+		fracEnd := fracIndex + 1
+		for fracEnd < len(format) && isDigit(format[fracEnd]) {
+			fracEnd++
+		}
+		fracStr = format[fracIndex+1 : fracEnd]
 		for ; fracIndex > 0 && isPunctuation(format[fracIndex-1]); fracIndex-- {
-			// in case of multiple separators, e.g. 2020-10..10
+			// In case of multiple separators, e.g. 2020-10..10
 		}
 		format = format[:fracIndex]
 	}
@@ -1127,7 +1132,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 	// If str is sepereated by delimiters, the first one is year, and if the year is 2 digit,
 	// we should adjust it.
 	// TODO: adjust year is very complex, now we only consider the simplest way.
-	if len(seps[0]) == 2 {
+	if len(seps[0]) <= 2 {
 		if year == 0 && month == 0 && day == 0 && hour == 0 && minute == 0 && second == 0 && fracStr == "" {
 			// Skip a special case "00-00-00".
 		} else {
