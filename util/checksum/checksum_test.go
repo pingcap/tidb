@@ -16,20 +16,16 @@ package checksum
 import (
 	"bytes"
 	"io"
-	"os"
 	"strings"
 	"testing"
 
 	encrypt2 "github.com/pingcap/tidb/util/encrypt"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestChecksumReadAt(t *testing.T) {
 	t.Parallel()
-
-	f, err := os.CreateTemp("", "TestChecksumReadAt")
-	require.NoError(t, err)
+	f := newFakeFile()
 
 	w := newTestBuff("0123456789", 510)
 
@@ -40,9 +36,6 @@ func TestChecksumReadAt(t *testing.T) {
 	assert.NoError(t, err)
 	err = csw.Close()
 	assert.NoError(t, err)
-
-	f, err = os.Open(f.Name())
-	require.NoError(t, err)
 
 	assertReadAt := func(off int64, assertErr error, assertN int, assertString string) {
 		cs := NewReader(NewReader(NewReader(NewReader(f))))
@@ -72,8 +65,7 @@ func TestAddOneByte(t *testing.T) {
 }
 
 func testAddOneByte(t *testing.T, encrypt bool) {
-	f, err := os.CreateTemp("", "testAddOneByte")
-	require.NoError(t, err)
+	f := newFakeFile()
 
 	insertPos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -88,9 +80,6 @@ func testAddOneByte(t *testing.T, encrypt bool) {
 	if done {
 		return
 	}
-
-	f, err = os.Open(f.Name())
-	require.NoError(t, err)
 
 	for i := 0; ; i++ {
 		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
@@ -119,8 +108,7 @@ func TestDeleteOneByte(t *testing.T) {
 }
 
 func testDeleteOneByte(t *testing.T, encrypt bool) {
-	f, err := os.CreateTemp("", "testDeleteOneByte")
-	require.NoError(t, err)
+	f := newFakeFile()
 
 	deletePos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -135,9 +123,6 @@ func testDeleteOneByte(t *testing.T, encrypt bool) {
 	if done {
 		return
 	}
-
-	f, err = os.Open(f.Name())
-	require.NoError(t, err)
 
 	for i := 0; ; i++ {
 		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
@@ -166,8 +151,7 @@ func TestModifyOneByte(t *testing.T) {
 }
 
 func testModifyOneByte(t *testing.T, encrypt bool) {
-	f, err := os.CreateTemp("", "testModifyOneByte")
-	require.NoError(t, err)
+	f := newFakeFile()
 
 	modifyPos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -182,9 +166,6 @@ func testModifyOneByte(t *testing.T, encrypt bool) {
 	if done {
 		return
 	}
-
-	f, err = os.Open(f.Name())
-	require.NoError(t, err)
 
 	for i := 0; ; i++ {
 		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
@@ -212,8 +193,8 @@ func TestReadEmptyFile(t *testing.T) {
 }
 
 func testReadEmptyFile(t *testing.T, encrypt bool) {
-	f, err := os.CreateTemp("", "testReadEmptyFile")
-	require.NoError(t, err)
+	f := newFakeFile()
+	var err error
 
 	var ctrCipher *encrypt2.CtrCipher
 	if encrypt {
@@ -249,8 +230,7 @@ func TestModifyThreeBytes(t *testing.T) {
 }
 
 func testModifyThreeBytes(t *testing.T, encrypt bool) {
-	f, err := os.CreateTemp("", "testModifyThreeBytes")
-	require.NoError(t, err)
+	f := newFakeFile()
 
 	modifyPos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -269,9 +249,6 @@ func testModifyThreeBytes(t *testing.T, encrypt bool) {
 	if done {
 		return
 	}
-
-	f, err = os.Open(f.Name())
-	require.NoError(t, err)
 
 	for i := 0; ; i++ {
 		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
@@ -302,8 +279,8 @@ func TestReadDifferentBlockSize(t *testing.T) {
 }
 
 func testReadDifferentBlockSize(t *testing.T, encrypt bool) {
-	f, err := os.CreateTemp("", "testReadDifferentBlockSize")
-	require.NoError(t, err)
+	f := newFakeFile()
+	var err error
 
 	var underlying io.WriteCloser = f
 	var ctrCipher *encrypt2.CtrCipher
@@ -323,9 +300,6 @@ func testReadDifferentBlockSize(t *testing.T, encrypt bool) {
 	assert.NoError(t, err)
 	err = underlying.Close()
 	assert.NoError(t, err)
-
-	f, err = os.Open(f.Name())
-	require.NoError(t, err)
 
 	assertReadAt := assertReadAtFunc(t, encrypt, ctrCipher)
 
@@ -363,10 +337,9 @@ func TestWriteDifferentBlockSize(t *testing.T) {
 }
 
 func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
-	f1, err := os.CreateTemp("", "testWriteDifferentBlockSizeFile1")
-	require.NoError(t, err)
-	f2, err := os.CreateTemp("", "testWriteDifferentBlockSizeFile2")
-	require.NoError(t, err)
+	f1 := newFakeFile()
+	f2 := newFakeFile()
+	var err error
 
 	w := newTestBuff("0123456789", 510)
 	w.Write(w.Bytes())
@@ -393,9 +366,6 @@ func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 	err = underlying1.Close()
 	assert.NoError(t, err)
 
-	f1, err = os.Open(f1.Name())
-	require.NoError(t, err)
-
 	// Write data by 100 bytes one batch.
 	lastPos := 0
 	for i := 100; ; i += 100 {
@@ -411,17 +381,11 @@ func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 	}
 	err = underlying2.Close()
 	assert.NoError(t, err)
-	f2, err = os.Open(f2.Name())
-	require.NoError(t, err)
 
 	// check two files is same
-	s1, err := f1.Stat()
-	assert.NoError(t, err)
-	s2, err := f2.Stat()
-	assert.NoError(t, err)
-	assert.Equal(t, s1.Size(), s2.Size())
-	buffer1 := make([]byte, s1.Size())
-	buffer2 := make([]byte, s2.Size())
+	assert.Equal(t, f1.Size(), f2.Size())
+	buffer1 := make([]byte, f1.Size())
+	buffer2 := make([]byte, f2.Size())
 	n1, err := f1.ReadAt(buffer1, 0)
 	assert.NoError(t, err)
 	n2, err := f2.ReadAt(buffer2, 0)
@@ -437,9 +401,7 @@ func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 
 func TestChecksumWriter(t *testing.T) {
 	t.Parallel()
-
-	f, err := os.CreateTemp("", "TestChecksumWriter")
-	require.NoError(t, err)
+	f := newFakeFile()
 
 	buf := newTestBuff("0123456789", 100)
 	// Write 1000 bytes and flush.
@@ -459,8 +421,7 @@ func TestChecksumWriter(t *testing.T) {
 
 func TestChecksumWriterAutoFlush(t *testing.T) {
 	t.Parallel()
-	f, err := os.CreateTemp("", "TestChecksumWriterAutoFlush")
-	require.NoError(t, err)
+	f := newFakeFile()
 
 	buf := newTestBuff("0123456789", 102)
 	w := NewWriter(f)
@@ -518,7 +479,7 @@ func (w *mockWriter) Close() (err error) {
 	return w.w.Close()
 }
 
-func assertUnderlyingWrite(t *testing.T, encrypt bool, f *os.File, fc func(b []byte, offset int) []byte) (*encrypt2.CtrCipher, bool) {
+func assertUnderlyingWrite(t *testing.T, encrypt bool, f io.WriteCloser, fc func(b []byte, offset int) []byte) (*encrypt2.CtrCipher, bool) {
 	var underlying io.WriteCloser = newMockWriter(f, fc)
 	var ctrCipher *encrypt2.CtrCipher
 	var err error
@@ -541,7 +502,7 @@ func assertUnderlyingWrite(t *testing.T, encrypt bool, f *os.File, fc func(b []b
 	return ctrCipher, false
 }
 
-func underlyingReadAt(f *os.File, encrypt bool, ctrCipher *encrypt2.CtrCipher, n, off int) error {
+func underlyingReadAt(f io.ReaderAt, encrypt bool, ctrCipher *encrypt2.CtrCipher, n, off int) error {
 	var underlying io.ReaderAt = f
 	if encrypt {
 		underlying = encrypt2.NewReader(underlying, ctrCipher)
@@ -553,8 +514,8 @@ func underlyingReadAt(f *os.File, encrypt bool, ctrCipher *encrypt2.CtrCipher, n
 	return err
 }
 
-func assertReadAtFunc(t *testing.T, encrypt bool, ctrCipher *encrypt2.CtrCipher) func(off int64, r []byte, assertErr error, assertN int, assertString string, f *os.File) {
-	return func(off int64, r []byte, assertErr error, assertN int, assertString string, f *os.File) {
+func assertReadAtFunc(t *testing.T, encrypt bool, ctrCipher *encrypt2.CtrCipher) func(off int64, r []byte, assertErr error, assertN int, assertString string, f io.ReaderAt) {
+	return func(off int64, r []byte, assertErr error, assertN int, assertString string, f io.ReaderAt) {
 		var underlying io.ReaderAt = f
 		if encrypt {
 			underlying = encrypt2.NewReader(underlying, ctrCipher)
@@ -575,4 +536,39 @@ var checkFlushedData = func(t *testing.T, f io.ReaderAt, off int64, readBufLen i
 	assert.ErrorIs(t, err, assertErr)
 	assert.Equal(t, assertN, n)
 	assert.Equal(t, 0, bytes.Compare(readBuf, assertRes))
+}
+
+func newFakeFile() *fakeFile {
+	return &fakeFile{buf: bytes.NewBuffer(nil)}
+}
+
+type fakeFile struct {
+	buf *bytes.Buffer
+}
+
+func (f *fakeFile) Write(p []byte) (n int, err error) {
+	return f.buf.Write(p)
+}
+
+func (f *fakeFile) Close() error {
+	return nil
+}
+
+func (f *fakeFile) ReadAt(p []byte, off int64) (n int, err error) {
+	w := f.buf.Bytes()
+	lp := int64(len(p))
+	lw := int64(len(w))
+	if off > lw {
+		return 0, io.EOF
+	}
+	if off+lp > lw {
+		copy(p[:lw-off], w[off:])
+		return int(lw - off), io.EOF
+	}
+	copy(p, w[off:off+lp])
+	return len(p), nil
+}
+
+func (f *fakeFile) Size() int {
+	return f.buf.Len()
 }
