@@ -20,11 +20,11 @@ func (s *testBWListSuite) TestFilterTables(c *C) {
 	dbTables := DatabaseTables{}
 	expectedDBTables := DatabaseTables{}
 
-	dbTables.AppendTables(filter.InformationSchemaName, []string{"xxx"}...)
-	dbTables.AppendTables(strings.ToUpper(filter.PerformanceSchemaName), []string{"xxx"}...)
-	dbTables.AppendTables("xxx", []string{"yyy"}...)
-	expectedDBTables.AppendTables("xxx", []string{"yyy"}...)
-	dbTables.AppendTables("yyy", []string{"xxx"}...)
+	dbTables.AppendTables(filter.InformationSchemaName, []string{"xxx"}, []uint64{0})
+	dbTables.AppendTables(strings.ToUpper(filter.PerformanceSchemaName), []string{"xxx"}, []uint64{0})
+	dbTables.AppendTables("xxx", []string{"yyy"}, []uint64{0})
+	expectedDBTables.AppendTables("xxx", []string{"yyy"}, []uint64{0})
+	dbTables.AppendTables("yyy", []string{"xxx"}, []uint64{0})
 
 	tableFilter, err := tf.Parse([]string{"*.*"})
 	c.Assert(err, IsNil)
