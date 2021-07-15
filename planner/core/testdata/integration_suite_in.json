@@ -310,5 +310,12 @@
       "select sum(1) from s1",
       "select count(1) as cnt from s1 union select count(1) as cnt from s2"
     ]
+  },
+  {
+    "name": "TestIsMatchProp",
+    "cases": [
+      "select a, b, c from t where a > 3 and b = 4 order by a, c",
+      "select * from t where d = 1 and b = 2 order by c, a"
+    ]
   }
 ]

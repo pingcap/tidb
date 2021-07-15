@@ -3952,3 +3952,26 @@ func (s *testIntegrationSerialSuite) TestSelectIgnoreTemporaryTableInView(c *C) 
 	tk.MustQuery("select * from v5").Check(testkit.Rows("1 2", "3 4"))
 
 }
+
+// TestIsMatchProp is used to test https://github.com/pingcap/tidb/issues/26017.
+func (s *testIntegrationSuite) TestIsMatchProp(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, d int, index idx_a_b_c(a, b, c), index idx_d_c_b_a(d, c, b, a))")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}

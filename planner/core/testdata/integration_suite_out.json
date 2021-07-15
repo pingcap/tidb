@@ -1636,5 +1636,26 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIsMatchProp",
+    "Cases": [
+      {
+        "SQL": "select a, b, c from t where a > 3 and b = 4 order by a, c",
+        "Plan": [
+          "IndexReader 3.33 root  index:Selection",
+          "└─Selection 3.33 cop[tikv]  eq(test.t.b, 4)",
+          "  └─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx_a_b_c(a, b, c) range:(3,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t where d = 1 and b = 2 order by c, a",
+        "Plan": [
+          "IndexReader 0.01 root  index:Selection",
+          "└─Selection 0.01 cop[tikv]  eq(test.t.b, 2)",
+          "  └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx_d_c_b_a(d, c, b, a) range:[1,1], keep order:true, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]
