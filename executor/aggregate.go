@@ -198,18 +198,18 @@ type HashAggExec struct {
 
 	stats *HashAggRuntimeStats
 
-	// listInDisk is the chunks to store row values for spilling data.
-	// The HashAggExec may enter `spill mode` multiple times, and all spill data will append to ListInDisk.
+	// listInDisk is the chunks to store row values for spilled data.
+	// The HashAggExec may be set to `spill mode` multiple times, and all spilled data will be appended to ListInDisk.
 	listInDisk *chunk.ListInDisk
-	// numOfSpilledChks indicates the num of spilling chunk after the last round of processing is over.
-	// After one round of processing is over, no data spilling again means that all data has been processed.
+	// numOfSpilledChks indicates the number of all the spilled chunks.
 	numOfSpilledChks int
-	// offsetOfSpillChks indicates the num of processed chunk in disk.
-	// In the one round of processing, we need process all data spilled in the last round.
-	offsetOfSpillChks int
+	// offsetOfSpilledChks indicates the offset of the chunk be read from the disk.
+	// In each round of processing, we need to re-fetch all the chunks spilled in the last one.
+	offsetOfSpilledChks int
 
 	// inSpillMode indicates whether HashAgg is in `spill mode`.
-	// When HashAgg is in `spill mode`, keep the tuple in partialResultMap no longer growing.
+	// When HashAgg is in `spill mode`, the size of `partialResultMap` is no longer growing and all the data fetched
+	// from the child executor is spilled to the disk.
 	inSpillMode uint32
 	// tmpChkForSpill is the temp chunk for spilling.
 	tmpChkForSpill *chunk.Chunk
@@ -333,7 +333,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.childResult = newFirstChunk(e.children[0])
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 
-	e.offsetOfSpillChks, e.numOfSpilledChks = 0, 0
+	e.offsetOfSpilledChks, e.numOfSpilledChks = 0, 0
 	e.executed, e.isChildDrained = false, false
 	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
 	e.tmpChkForSpill = newFirstChunk(e.children[0])
@@ -1007,7 +1007,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		// spill unprocessed data when exceeded.
 		if len(sel) > 0 {
 			e.childResult.SetSel(sel)
-			err = e.spillUnprocessedData()
+			err = e.spillUnprocessedData(len(sel) == cap(sel))
 			if err != nil {
 				return err
 			}
@@ -1018,7 +1018,10 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	}
 }
 
-func (e *HashAggExec) spillUnprocessedData() (err error) {
+func (e *HashAggExec) spillUnprocessedData(isFullChk bool) (err error) {
+	if isFullChk {
+		return e.listInDisk.Add(e.childResult)
+	}
 	for i := 0; i < e.childResult.NumRows(); i++ {
 		e.tmpChkForSpill.AppendRow(e.childResult.GetRow(i))
 		if e.tmpChkForSpill.IsFull() {
@@ -1044,12 +1047,12 @@ func (e *HashAggExec) getNextChunk(ctx context.Context) (err error) {
 			return nil
 		}
 	}
-	if e.offsetOfSpillChks < e.numOfSpilledChks {
-		e.childResult, err = e.listInDisk.GetChunk(e.offsetOfSpillChks)
+	if e.offsetOfSpilledChks < e.numOfSpilledChks {
+		e.childResult, err = e.listInDisk.GetChunk(e.offsetOfSpilledChks)
 		if err != nil {
 			return err
 		}
-		e.offsetOfSpillChks++
+		e.offsetOfSpilledChks++
 	}
 	return nil
 }
