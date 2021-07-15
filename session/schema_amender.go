@@ -141,20 +141,9 @@ func needCollectModifyColOps(actionType uint64) bool {
 }
 
 func fieldTypeDeepEquals(ft1 *types.FieldType, ft2 *types.FieldType) bool {
-	flen1 := ft1.Flen
-	flen2 := ft2.Flen
-	if mysql.IsIntegerType(ft1.Tp) && mysql.IsIntegerType(ft2.Tp) {
-		// For integers, we should ignore the potential display length represented by flen, using
-		// the default flen of the type.
-		flen1, _ = mysql.GetDefaultFieldLengthAndDecimal(ft1.Tp)
-		flen2, _ = mysql.GetDefaultFieldLengthAndDecimal(ft2.Tp)
-	}
-	str := fmt.Sprintf("len1:%v, len2:%v, after len1:%v, len2:%v", ft1.Flen, ft2.Flen, flen1, flen2)
-	logutil.BgLogger().Warn("-------------- zzz 00" + str)
-
 	if ft1.Tp == ft2.Tp &&
 		ft1.Flag == ft2.Flag &&
-		flen1 == flen2 &&
+		ft1.Flen == ft2.Flen &&
 		ft1.Decimal == ft2.Decimal &&
 		ft1.Charset == ft2.Charset &&
 		ft1.Collate == ft2.Collate &&
@@ -172,11 +161,8 @@ func fieldTypeDeepEquals(ft1 *types.FieldType, ft2 *types.FieldType) bool {
 // colChangeAmendable checks whether the column change is amendable, now only increasing column field
 // length is allowed for committing concurrent pessimistic transactions.
 func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnInfo) error {
-	str := fmt.Sprintf("start :%v, end: %v", colAtStart.FieldType.String(), colAtCommit.FieldType.String())
-	logutil.BgLogger().Warn("-------------- yyy 00" + str)
 	// Modifying a stored generated column is not allowed by DDL, the generated related fields are not considered.
 	if !fieldTypeDeepEquals(&colAtStart.FieldType, &colAtCommit.FieldType) {
-		logutil.BgLogger().Warn("-------------- yyy 11")
 		if colAtStart.FieldType.Flag != colAtCommit.FieldType.Flag {
 			return errors.Trace(errors.Errorf("flag is not matched for column=%v, from=%v to=%v",
 				colAtCommit.Name.String(), colAtStart.FieldType.Flag, colAtCommit.FieldType.Flag))
@@ -185,8 +171,6 @@ func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnI
 			return errors.Trace(errors.Errorf("charset or collate is not matched for column=%v", colAtCommit.Name.String()))
 		}
 		_, err := ddl.CheckModifyTypeCompatible(&colAtStart.FieldType, &colAtCommit.FieldType)
-		str := fmt.Sprintf("start :%v, end: %v, err: %v", colAtStart.FieldType, colAtCommit.FieldType, err)
-		logutil.BgLogger().Warn("-------------- yyy 11" + str)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -212,8 +196,6 @@ func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnI
 func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
 	for _, colAtCommit := range tblAtCommit.WritableCols() {
 		colAtStart := findColByID(tblAtStart, colAtCommit.ID)
-		str := fmt.Sprintf("at start:%v, commit:%v", colAtStart, colAtCommit)
-		logutil.BgLogger().Warn("-------------- yyy amend modify col, " + str)
 		if colAtStart != nil {
 			err := colChangeAmendable(colAtStart.ColumnInfo, colAtCommit.ColumnInfo)
 			if err != nil {
@@ -224,6 +206,7 @@ func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.
 			// is newly added or modified from an original column.Report error to solve the issue
 			// https://github.com/pingcap/tidb/issues/21470. This change will make amend fail for adding column
 			// and modifying columns at the same time.
+			// In addition, amended operations are not currently supported and it goes to this logic when "modify column" needs reorg data.
 			return nil, errors.Errorf("column=%v id=%v is not found for table=%v checking column modify",
 				colAtCommit.Name, colAtCommit.ID, tblAtCommit.Meta().Name.String())
 		}
@@ -688,8 +671,6 @@ func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.Schem
 		}
 		if actionType&(memBufAmendType) != 0 {
 			needAmendMem = true
-			str := fmt.Sprintf("start info:%v, check info:%v", infoSchemaAtStart.SchemaMetaVersion(), infoSchemaAtCheck.SchemaMetaVersion())
-			logutil.BgLogger().Warn("------------------ yyy" + str)
 			err := amendCollector.collectTblAmendOps(s.sess, tblID, tblInfoAtStart, tblInfoAtCommit, actionType)
 			if err != nil {
 				return nil, err
