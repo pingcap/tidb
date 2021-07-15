@@ -436,8 +436,8 @@ const (
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
 
-	// TiDBEnableStableResultMode indicates if stabilize query results.
-	TiDBEnableStableResultMode = "tidb_enable_stable_result_mode"
+	// TiDBEnableOrderedResultMode indicates if stabilize query results.
+	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
 )
 
 // Default TiDB system variable values.
@@ -541,7 +541,7 @@ const (
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableAmendPessimisticTxn   = false
 	DefTiDBEnableRateLimitAction       = true
-	DefTiDBEnableStableResultMode      = false
+	DefTiDBEnableOrderedResultMode     = false
 )
 
 // Process global variables.
