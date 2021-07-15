@@ -27,13 +27,13 @@ import (
 
 func TestChecksumReadAt(t *testing.T) {
 	t.Parallel()
-	path := "checksum"
-	f, clean := createTestFile(t, path)
-	defer clean()
+
+	f, err := os.CreateTemp("", "TestChecksumReadAt")
+	require.NoError(t, err)
 
 	w := newTestBuff("0123456789", 510)
 
-	csw := NewWriter(NewWriter(NewWriter(NewWriter(fakeCloseFile(f)))))
+	csw := NewWriter(NewWriter(NewWriter(NewWriter(f))))
 	n1, err := csw.Write(w.Bytes())
 	assert.NoError(t, err)
 	n2, err := csw.Write(w.Bytes())
@@ -41,8 +41,8 @@ func TestChecksumReadAt(t *testing.T) {
 	err = csw.Close()
 	assert.NoError(t, err)
 
-	f, clean = openTestFile(t, path)
-	defer clean()
+	f, err = os.Open(f.Name())
+	require.NoError(t, err)
 
 	assertReadAt := func(off int64, assertErr error, assertN int, assertString string) {
 		cs := NewReader(NewReader(NewReader(NewReader(f))))
@@ -58,21 +58,22 @@ func TestChecksumReadAt(t *testing.T) {
 	assertReadAt(int64(n1+n2)-5, io.EOF, 5, "56789\x00\x00\x00\x00\x00")
 }
 
-/*
-	CaseID : TICASE-3644
-	Summary : Add a byte randomly
-	Expected outcome: Whether encrypted or not, when reading data, both the current block and the following block have errors.
-*/
+// TestAddOneByte ensures that whether encrypted or not, when reading data,
+// both the current block and the following block have errors.
 func TestAddOneByte(t *testing.T) {
-	t.Parallel()
-	testAddOneByte(t, false)
-	testAddOneByte(t, true)
+	t.Run("unencrypted", func(t *testing.T) {
+		t.Parallel()
+		testAddOneByte(t, false)
+	})
+	t.Run("encrypted", func(t *testing.T) {
+		t.Parallel()
+		testAddOneByte(t, true)
+	})
 }
 
 func testAddOneByte(t *testing.T, encrypt bool) {
-	path := "TiCase3644"
-	f, clean := createTestFile(t, path)
-	defer clean()
+	f, err := os.CreateTemp("", "testAddOneByte")
+	require.NoError(t, err)
 
 	insertPos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -87,8 +88,9 @@ func testAddOneByte(t *testing.T, encrypt bool) {
 	if done {
 		return
 	}
-	f, clean = openTestFile(t, path)
-	defer clean()
+
+	f, err = os.Open(f.Name())
+	require.NoError(t, err)
 
 	for i := 0; ; i++ {
 		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
@@ -103,21 +105,22 @@ func testAddOneByte(t *testing.T, encrypt bool) {
 	}
 }
 
-/*
-	CaseID : TICASE-3645
-	Summary : Delete a byte randomly
-	Expected outcome: Whether encrypted or not, when reading data, both the current block and the following block have errors.
-*/
+// TestDeleteOneByte ensures that whether encrypted or not, when reading data,
+// both the current block and the following block have errors.
 func TestDeleteOneByte(t *testing.T) {
-	t.Parallel()
-	testDeleteOneByte(t, false)
-	testDeleteOneByte(t, true)
+	t.Run("unencrypted", func(t *testing.T) {
+		t.Parallel()
+		testDeleteOneByte(t, false)
+	})
+	t.Run("encrypted", func(t *testing.T) {
+		t.Parallel()
+		testDeleteOneByte(t, true)
+	})
 }
 
 func testDeleteOneByte(t *testing.T, encrypt bool) {
-	path := "TiCase3645"
-	f, clean := createTestFile(t, path)
-	defer clean()
+	f, err := os.CreateTemp("", "testDeleteOneByte")
+	require.NoError(t, err)
 
 	deletePos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -132,8 +135,9 @@ func testDeleteOneByte(t *testing.T, encrypt bool) {
 	if done {
 		return
 	}
-	f, clean = openTestFile(t, path)
-	defer clean()
+
+	f, err = os.Open(f.Name())
+	require.NoError(t, err)
 
 	for i := 0; ; i++ {
 		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
@@ -148,21 +152,22 @@ func testDeleteOneByte(t *testing.T, encrypt bool) {
 	}
 }
 
-/*
-	CaseID : TICASE-3646
-	Summary : Modify a byte randomly
-	Expected outcome: Whether encrypted or not, when reading data, only the current block has error.
-*/
+// TestModifyOneByte ensures that whether encrypted or not, when reading data,
+// only the current block has error.
 func TestModifyOneByte(t *testing.T) {
-	t.Parallel()
-	testModifyOneByte(t, false)
-	testModifyOneByte(t, true)
+	t.Run("unencrypted", func(t *testing.T) {
+		t.Parallel()
+		testModifyOneByte(t, false)
+	})
+	t.Run("encrypted", func(t *testing.T) {
+		t.Parallel()
+		testModifyOneByte(t, true)
+	})
 }
 
 func testModifyOneByte(t *testing.T, encrypt bool) {
-	path := "TiCase3646"
-	f, clean := createTestFile(t, path)
-	defer clean()
+	f, err := os.CreateTemp("", "testModifyOneByte")
+	require.NoError(t, err)
 
 	modifyPos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -177,8 +182,9 @@ func testModifyOneByte(t *testing.T, encrypt bool) {
 	if done {
 		return
 	}
-	f, clean = openTestFile(t, path)
-	defer clean()
+
+	f, err = os.Open(f.Name())
+	require.NoError(t, err)
 
 	for i := 0; ; i++ {
 		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
@@ -193,22 +199,21 @@ func testModifyOneByte(t *testing.T, encrypt bool) {
 	}
 }
 
-/*
-	CaseID : TICASE-3647
-	Summary : Read an empty file.
-	Expected outcome: Whether encrypted or not, no error will occur.
-*/
+// TestReadEmptyFile ensures that whether encrypted or not, no error will occur.
 func TestReadEmptyFile(t *testing.T) {
-	t.Parallel()
-	testReadEmptyFile(t, false)
-	testReadEmptyFile(t, true)
+	t.Run("unencrypted", func(t *testing.T) {
+		t.Parallel()
+		testReadEmptyFile(t, false)
+	})
+	t.Run("encrypted", func(t *testing.T) {
+		t.Parallel()
+		testReadEmptyFile(t, true)
+	})
 }
 
 func testReadEmptyFile(t *testing.T, encrypt bool) {
-	path := "TiCase3647"
-	f, clean := createTestFile(t, path)
-	defer clean()
-	var err error
+	f, err := os.CreateTemp("", "testReadEmptyFile")
+	require.NoError(t, err)
 
 	var ctrCipher *encrypt2.CtrCipher
 	if encrypt {
@@ -230,21 +235,22 @@ func testReadEmptyFile(t *testing.T, encrypt bool) {
 	}
 }
 
-/*
-	CaseID : TICASE-3648
-	Summary : Modify some bytes in one block.
-	Expected outcome: Whether encrypted or not, when reading data, only the current block has error.
-*/
+// TestModifyThreeBytes ensures whether encrypted or not, when reading data,
+// only the current block has error.
 func TestModifyThreeBytes(t *testing.T) {
-	t.Parallel()
-	testModifyThreeBytes(t, false)
-	testModifyThreeBytes(t, true)
+	t.Run("unencrypted", func(t *testing.T) {
+		t.Parallel()
+		testModifyThreeBytes(t, false)
+	})
+	t.Run("encrypted", func(t *testing.T) {
+		t.Parallel()
+		testModifyThreeBytes(t, true)
+	})
 }
 
 func testModifyThreeBytes(t *testing.T, encrypt bool) {
-	path := "TiCase3648"
-	f, clean := createTestFile(t, path)
-	defer clean()
+	f, err := os.CreateTemp("", "testModifyThreeBytes")
+	require.NoError(t, err)
 
 	modifyPos := 5000
 	fc := func(b []byte, offset int) []byte {
@@ -263,8 +269,9 @@ func testModifyThreeBytes(t *testing.T, encrypt bool) {
 	if done {
 		return
 	}
-	f, clean = openTestFile(t, path)
-	defer clean()
+
+	f, err = os.Open(f.Name())
+	require.NoError(t, err)
 
 	for i := 0; ; i++ {
 		err := underlyingReadAt(f, encrypt, ctrCipher, 10, i*1000)
@@ -279,29 +286,26 @@ func testModifyThreeBytes(t *testing.T, encrypt bool) {
 	}
 }
 
-/*
-	CaseID : TICASE-3649
-	Summary : Read some blocks using offset at once.
-	Expected outcome: Whether encrypted or not, the result is right.
-*/
-/*
-	CaseID : TICASE-3650
-	Summary : Read all data at once.
-	Expected outcome: Whether encrypted or not, the result is right.
-*/
+// TestReadDifferentBlockSize ensures whether encrypted or not,
+// the result is right for cases:
+// 1. Read blocks using offset at once
+// 2. Read all data at once.
 func TestReadDifferentBlockSize(t *testing.T) {
-	t.Parallel()
-	testReadDifferentBlockSize(t, false)
-	testReadDifferentBlockSize(t, true)
+	t.Run("unencrypted", func(t *testing.T) {
+		t.Parallel()
+		testReadDifferentBlockSize(t, false)
+	})
+	t.Run("encrypted", func(t *testing.T) {
+		t.Parallel()
+		testReadDifferentBlockSize(t, true)
+	})
 }
 
 func testReadDifferentBlockSize(t *testing.T, encrypt bool) {
-	path := "TiCase3649and3650"
-	f, clean := createTestFile(t, path)
-	defer clean()
-	var err error
+	f, err := os.CreateTemp("", "testReadDifferentBlockSize")
+	require.NoError(t, err)
 
-	var underlying = fakeCloseFile(f)
+	var underlying io.WriteCloser = f
 	var ctrCipher *encrypt2.CtrCipher
 	if encrypt {
 		ctrCipher, err = encrypt2.NewCtrCipher()
@@ -320,8 +324,8 @@ func testReadDifferentBlockSize(t *testing.T, encrypt bool) {
 	err = underlying.Close()
 	assert.NoError(t, err)
 
-	f, clean = openTestFile(t, path)
-	defer clean()
+	f, err = os.Open(f.Name())
+	require.NoError(t, err)
 
 	assertReadAt := assertReadAtFunc(t, encrypt, ctrCipher)
 
@@ -343,34 +347,26 @@ func testReadDifferentBlockSize(t *testing.T, encrypt bool) {
 	assertReadAt(0, make([]byte, 11000), io.EOF, 10200, strings.Join([]string{strings.Repeat("0123456789", 1020), strings.Repeat("\x00", 800)}, ""), f)
 }
 
-/*
-	CaseID : TICASE-3651
-	Summary : Write some block at once.
-	Expected outcome: Whether encrypted or not, after writing data, it can read data correctly.
-*/
-/*
-	CaseID : TICASE-3652
-	Summary : Write some block and append some block.
-	Expected outcome: Whether encrypted or not, after writing data, it can read data correctly.
-*/
+// TestWriteDifferentBlockSize ensures whether encrypted or not, after writing data,
+// it can read data correctly for cases:
+// 1. Write some block at once.
+// 2. Write some block and append some block.
 func TestWriteDifferentBlockSize(t *testing.T) {
-	t.Parallel()
-	testWriteDifferentBlockSize(t, false)
-	testWriteDifferentBlockSize(t, true)
+	t.Run("unencrypted", func(t *testing.T) {
+		t.Parallel()
+		testWriteDifferentBlockSize(t, false)
+	})
+	t.Run("encrypted", func(t *testing.T) {
+		t.Parallel()
+		testWriteDifferentBlockSize(t, true)
+	})
 }
 
 func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
-	path1 := "TiCase3652file1"
-	f1, clean1 := createTestFile(t, path1)
-	defer func() {
-		clean1()
-	}()
-	path2 := "TiCase3652file2"
-	f2, clean2 := createTestFile(t, path2)
-	defer func() {
-		clean2()
-	}()
-	var err error
+	f1, err := os.CreateTemp("", "testWriteDifferentBlockSizeFile1")
+	require.NoError(t, err)
+	f2, err := os.CreateTemp("", "testWriteDifferentBlockSizeFile2")
+	require.NoError(t, err)
 
 	w := newTestBuff("0123456789", 510)
 	w.Write(w.Bytes())
@@ -382,8 +378,8 @@ func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 			return
 		}
 	}
-	var underlying1 = fakeCloseFile(f1)
-	var underlying2 = fakeCloseFile(f2)
+	var underlying1 io.WriteCloser = f1
+	var underlying2 io.WriteCloser = f2
 	if encrypt {
 		underlying1 = encrypt2.NewWriter(underlying1, ctrCipher)
 		underlying2 = encrypt2.NewWriter(underlying2, ctrCipher)
@@ -397,8 +393,8 @@ func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 	err = underlying1.Close()
 	assert.NoError(t, err)
 
-	f1, clean := openTestFile(t, path1)
-	defer clean()
+	f1, err = os.Open(f1.Name())
+	require.NoError(t, err)
 
 	// Write data by 100 bytes one batch.
 	lastPos := 0
@@ -415,8 +411,8 @@ func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 	}
 	err = underlying2.Close()
 	assert.NoError(t, err)
-	f2, clean = openTestFile(t, path2)
-	defer clean()
+	f2, err = os.Open(f2.Name())
+	require.NoError(t, err)
 
 	// check two files is same
 	s1, err := f1.Stat()
@@ -441,9 +437,9 @@ func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 
 func TestChecksumWriter(t *testing.T) {
 	t.Parallel()
-	path := "checksum_TestChecksumWriter"
-	f, clean := createTestFile(t, path)
-	defer clean()
+
+	f, err := os.CreateTemp("", "TestChecksumWriter")
+	require.NoError(t, err)
 
 	buf := newTestBuff("0123456789", 100)
 	// Write 1000 bytes and flush.
@@ -463,9 +459,8 @@ func TestChecksumWriter(t *testing.T) {
 
 func TestChecksumWriterAutoFlush(t *testing.T) {
 	t.Parallel()
-	path := "checksum_TestChecksumWriterAutoFlush"
-	f, clean := createTestFile(t, path)
-	defer clean()
+	f, err := os.CreateTemp("", "TestChecksumWriterAutoFlush")
+	require.NoError(t, err)
 
 	buf := newTestBuff("0123456789", 102)
 	w := NewWriter(f)
@@ -480,28 +475,6 @@ func TestChecksumWriterAutoFlush(t *testing.T) {
 	checkFlushedData(t, f, 0, 1020, 1020, nil, buf.Bytes())
 	cacheOff := w.GetCacheDataOffset()
 	assert.Equal(t, int64(len(buf.Bytes())), cacheOff)
-}
-
-func createTestFile(t *testing.T, path string) (f *os.File, clean func()) {
-	f, err := os.Create(path)
-	require.NoError(t, err)
-	clean = func() {
-		err := f.Close()
-		assert.NoError(t, err)
-		err = os.Remove(path)
-		assert.NoError(t, err)
-	}
-	return f, clean
-}
-
-func openTestFile(t *testing.T, path string) (f *os.File, clean func()) {
-	f, err := os.Open(path)
-	require.NoError(t, err)
-	clean = func() {
-		err := f.Close()
-		assert.NoError(t, err)
-	}
-	return f, clean
 }
 
 func newTestBuff(str string, n int) *bytes.Buffer {
@@ -546,7 +519,7 @@ func (w *mockWriter) Close() (err error) {
 }
 
 func assertUnderlyingWrite(t *testing.T, encrypt bool, f *os.File, fc func(b []byte, offset int) []byte) (*encrypt2.CtrCipher, bool) {
-	var underlying io.WriteCloser = newMockWriter(fakeCloseFile(f), fc)
+	var underlying io.WriteCloser = newMockWriter(f, fc)
 	var ctrCipher *encrypt2.CtrCipher
 	var err error
 	if encrypt {
@@ -568,7 +541,7 @@ func assertUnderlyingWrite(t *testing.T, encrypt bool, f *os.File, fc func(b []b
 	return ctrCipher, false
 }
 
-func underlyingReadAt(f io.ReaderAt, encrypt bool, ctrCipher *encrypt2.CtrCipher, n, off int) error {
+func underlyingReadAt(f *os.File, encrypt bool, ctrCipher *encrypt2.CtrCipher, n, off int) error {
 	var underlying io.ReaderAt = f
 	if encrypt {
 		underlying = encrypt2.NewReader(underlying, ctrCipher)
@@ -580,8 +553,8 @@ func underlyingReadAt(f io.ReaderAt, encrypt bool, ctrCipher *encrypt2.CtrCipher
 	return err
 }
 
-func assertReadAtFunc(t *testing.T, encrypt bool, ctrCipher *encrypt2.CtrCipher) func(off int64, r []byte, assertErr error, assertN int, assertString string, f io.ReaderAt) {
-	return func(off int64, r []byte, assertErr error, assertN int, assertString string, f io.ReaderAt) {
+func assertReadAtFunc(t *testing.T, encrypt bool, ctrCipher *encrypt2.CtrCipher) func(off int64, r []byte, assertErr error, assertN int, assertString string, f *os.File) {
+	return func(off int64, r []byte, assertErr error, assertN int, assertString string, f *os.File) {
 		var underlying io.ReaderAt = f
 		if encrypt {
 			underlying = encrypt2.NewReader(underlying, ctrCipher)
@@ -602,16 +575,4 @@ var checkFlushedData = func(t *testing.T, f io.ReaderAt, off int64, readBufLen i
 	assert.ErrorIs(t, err, assertErr)
 	assert.Equal(t, assertN, n)
 	assert.Equal(t, 0, bytes.Compare(readBuf, assertRes))
-}
-
-type fileWithFakeClose struct {
-	*os.File
-}
-
-func (f *fileWithFakeClose) Close() error {
-	return nil
-}
-
-func fakeCloseFile(file *os.File) io.WriteCloser {
-	return &fileWithFakeClose{file}
 }
