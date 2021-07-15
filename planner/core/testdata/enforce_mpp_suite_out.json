@@ -395,7 +395,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN SELECT count(*) from t where a=1; -- 12. static partition prune",
+        "SQL": "EXPLAIN SELECT count(*) from t where a=1; -- 1. static partition prune",
         "Plan": [
           "StreamAgg_32 1.00 root  funcs:count(Column#6)->Column#4",
           "└─TableReader_33 1.00 root  data:StreamAgg_13",
@@ -428,7 +428,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN SELECT count(*) from t group by b; -- 13. new collation FIXME",
+        "SQL": "EXPLAIN SELECT count(*) from t group by b; -- 1. new collation FIXME",
         "Plan": [
           "HashAgg_24 8000.00 root  group by:test.t.b, funcs:count(Column#7)->Column#4",
           "└─TableReader_26 8000.00 root  data:ExchangeSender_25",
@@ -443,7 +443,7 @@
         ]
       },
       {
-        "SQL": "EXPLAIN SELECT * from t t1 join t t2 on t1.b=t2.b; -- 13. new collation FIXME",
+        "SQL": "EXPLAIN SELECT * from t t1 join t t2 on t1.b=t2.b; -- 2. new collation FIXME",
         "Plan": [
           "TableReader_34 12487.50 root  data:ExchangeSender_33",
           "└─ExchangeSender_33 12487.50 cop[tiflash]  ExchangeType: PassThrough",
@@ -456,6 +456,194 @@
           "      └─TableFullScan_16 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestEnforceMPPWarning4",
+    "Cases": [
+      {
+        "SQL": "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1; -- test joins",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN SELECT /*+ MERGE_JOIN(t,s) */ * from t join s using(a); -- 1. hint use MERGE_JOIN",
+        "Plan": [
+          "MergeJoin_8 12500.00 root  inner join, left key:test.t.a, right key:test.s.a",
+          "├─TableReader_19(Build) 10000.00 root  data:TableFullScan_18",
+          "│ └─TableFullScan_18 10000.00 cop[tiflash] table:s keep order:true, stats:pseudo",
+          "└─TableReader_15(Probe) 10000.00 root  data:TableFullScan_14",
+          "  └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT /*+ INL_JOIN(t,s) */ * from t, s where t.a=s.a; -- 2. hint use INL_JOIN",
+        "Plan": [
+          "IndexJoin_16 12500.00 root  inner join, inner:TableReader_13, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
+          "├─TableReader_33(Build) 10000.00 root  data:TableFullScan_32",
+          "│ └─TableFullScan_32 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 1.00 root  data:TableRangeScan_12",
+          "  └─TableRangeScan_12 1.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT /*+ INL_HASH_JOIN(t,s) */ * from t join s using(a); -- 3. hint use INL_HASH_JOIN",
+        "Plan": [
+          "IndexHashJoin_17 12500.00 root  inner join, inner:TableReader_12, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
+          "├─TableReader_32(Build) 10000.00 root  data:TableFullScan_31",
+          "│ └─TableFullScan_31 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "└─TableReader_12(Probe) 1.00 root  data:TableRangeScan_11",
+          "  └─TableRangeScan_11 1.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT /*+ HASH_JOIN(t,s) */ * from t join s using(a); -- 4. hint use INL_JOIN",
+        "Plan": [
+          "HashJoin_29 12500.00 root  inner join, equal:[eq(test.t.a, test.s.a)]",
+          "├─TableReader_38(Build) 10000.00 root  data:TableFullScan_37",
+          "│ └─TableFullScan_37 10000.00 cop[tiflash] table:s keep order:false, stats:pseudo",
+          "└─TableReader_34(Probe) 10000.00 root  data:TableFullScan_33",
+          "  └─TableFullScan_33 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_broadcast_cartesian_join = 0",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN SELECT * from t join s; -- 5. cartesian without broadcast join",
+        "Plan": [
+          "HashJoin_8 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
+          "│ └─TableFullScan_16 10000.00 cop[tiflash] table:s keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 10000.00 root  data:TableFullScan_12",
+          "  └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.",
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`."
+        ]
+      },
+      {
+        "SQL": "set @@tidb_broadcast_join_threshold_size = 0; set @@tidb_opt_broadcast_cartesian_join = 1",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN SELECT * from t join s; -- 6. cartesian without broadcast join",
+        "Plan": [
+          "HashJoin_8 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
+          "│ └─TableFullScan_16 10000.00 cop[tiflash] table:s keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 10000.00 root  data:TableFullScan_12",
+          "  └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.",
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`."
+        ]
+      },
+      {
+        "SQL": "set @@tidb_broadcast_join_threshold_size = 104857600; set @@tidb_opt_broadcast_cartesian_join = 1",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN SELECT * from t join s; -- can use mpp",
+        "Plan": [
+          "TableReader_27 100000000.00 root  data:ExchangeSender_26",
+          "└─ExchangeSender_26 100000000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_25 100000000.00 cop[tiflash]  CARTESIAN inner join",
+          "    ├─ExchangeReceiver_13(Build) 10000.00 cop[tiflash]  ",
+          "    │ └─ExchangeSender_12 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─TableFullScan_14(Probe) 10000.00 cop[tiflash] table:s keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "set @@tidb_broadcast_join_threshold_size = 0; set @@tidb_opt_broadcast_cartesian_join = 2",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN SELECT * from t join s; -- can use mpp FIXME: maybe not, see github.com/pingcap/tidb/issues/26243",
+        "Plan": [
+          "HashJoin_8 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
+          "│ └─TableFullScan_16 10000.00 cop[tiflash] table:s keep order:false, stats:pseudo",
+          "└─TableReader_13(Probe) 10000.00 root  data:TableFullScan_12",
+          "  └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.",
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`."
+        ]
+      },
+      {
+        "SQL": "set @@tidb_broadcast_join_threshold_size = 104857600; set @@tidb_opt_broadcast_cartesian_join = 1;",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select a from t where t.a>1 or t.a in (select a from t); -- 7. left outer semi join",
+        "Plan": [
+          "Projection_7 8000.00 root  test.t.a",
+          "└─Selection_9 8000.00 root  or(gt(test.t.a, 1), Column#3)",
+          "  └─MergeJoin_10 10000.00 root  left outer semi join, left key:test.t.a, right key:test.t.a",
+          "    ├─TableReader_30(Build) 10000.00 root  data:TableFullScan_29",
+          "    │ └─TableFullScan_29 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo",
+          "    └─TableReader_26(Probe) 10000.00 root  data:TableFullScan_25",
+          "      └─TableFullScan_25 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because join type `left outer semi join` is not supported now.",
+          "MPP mode may be blocked because join type `left outer semi join` is not supported now."
+        ]
+      },
+      {
+        "SQL": "explain select a from t where t.a>1 or t.a not in (select a from t); -- 8. anti left outer semi join",
+        "Plan": [
+          "Projection_7 8000.00 root  test.t.a",
+          "└─Selection_9 8000.00 root  or(gt(test.t.a, 1), Column#3)",
+          "  └─MergeJoin_10 10000.00 root  anti left outer semi join, left key:test.t.a, right key:test.t.a",
+          "    ├─TableReader_30(Build) 10000.00 root  data:TableFullScan_29",
+          "    │ └─TableFullScan_29 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo",
+          "    └─TableReader_26(Probe) 10000.00 root  data:TableFullScan_25",
+          "      └─TableFullScan_25 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because join type `anti left outer semi join` is not supported now.",
+          "MPP mode may be blocked because join type `anti left outer semi join` is not supported now."
+        ]
+      },
+      {
+        "SQL": "explain select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions",
+        "Plan": [
+          "MergeJoin_10 8000.00 root  anti semi join, left key:test.t.a, right key:test.s.a, left cond:[lt(test.t.a, 1)]",
+          "├─TableReader_30(Build) 10000.00 root  data:TableFullScan_29",
+          "│ └─TableFullScan_29 10000.00 cop[tiflash] table:s keep order:true, stats:pseudo",
+          "└─TableReader_26(Probe) 10000.00 root  data:TableFullScan_25",
+          "  └─TableFullScan_25 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.",
+          "MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information."
+        ]
       }
     ]
   }
