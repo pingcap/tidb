@@ -297,7 +297,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	case diagnosticspb.ServerInfoType_LoadInfo,
 		diagnosticspb.ServerInfoType_SystemInfo:
 		if !hasPriv(sctx, mysql.ProcessPriv) {
-			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("Process")
+			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 		}
 	case diagnosticspb.ServerInfoType_HardwareInfo:
 		if !hasPriv(sctx, mysql.ConfigPriv) {
@@ -497,7 +497,7 @@ func (h *logResponseHeap) Pop() interface{} {
 
 func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
-		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("Process")
+		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {

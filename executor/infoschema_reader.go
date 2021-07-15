@@ -79,7 +79,7 @@ type memtableRetriever struct {
 // retrieve implements the infoschemaRetriever interface
 func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.table.Name.O == infoschema.TableClusterInfo && !hasPriv(sctx, mysql.ProcessPriv) {
-		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("Process")
+		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	if e.retrieved {
 		return nil, nil

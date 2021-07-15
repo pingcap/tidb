@@ -1460,7 +1460,7 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NOT NULL`).Check(testkit.Rows("0"))
 	err := tk.QueryToErr(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NOT NULL`)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the Process privilege(s) for this operation")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 	// 36 = a UUID. Normally it is an IP address.
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.CLUSTER_STATEMENTS_SUMMARY WHERE length(instance) != 36`).Check(testkit.Rows("0"))
 
@@ -1499,19 +1499,19 @@ func (s *testPrivilegeSuite) TestClusterConfigInfoschema(c *C) {
 
 	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_info")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the Process privilege(s) for this operation")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
 	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_load")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the Process privilege(s) for this operation")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
 	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_systeminfo")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the Process privilege(s) for this operation")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
 	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_log WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%'")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the Process privilege(s) for this operation")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
 	// With correct/CONFIG permissions
 	tk.Se.Auth(&auth.UserIdentity{
@@ -1525,16 +1525,16 @@ func (s *testPrivilegeSuite) TestClusterConfigInfoschema(c *C) {
 	// Missing Process privilege
 	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_INFO")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the Process privilege(s) for this operation")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_LOAD")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the Process privilege(s) for this operation")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_SYSTEMINFO")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the Process privilege(s) for this operation")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_LOG WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%'")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the Process privilege(s) for this operation")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
 	// With correct/Process permissions
 	tk.Se.Auth(&auth.UserIdentity{
