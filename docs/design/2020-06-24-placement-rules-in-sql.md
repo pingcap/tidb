@@ -119,8 +119,9 @@ Expected Behaviors:
 - Placement policies are globally unique names. Thus, a policy named `companyplacementpolicy` can apply to the db `test` as well as `userdb`. The namespace does not overlap with other DB objects.
 - Placement Policy names are case insensitive, and follow the same rules as tables/other identifiers for length (64 chars) and special characters.
 - The full placement policy can be seen with `SHOW CREATE PLACEMENT POLICY x`. This is useful for shorthand usage by DBAs, and consistent with other database objects.
-- It is possible to update the definition of a placement policy with `ALTER PLACEMENT POLICY x CONSTRAINTS ..;` This is modeled on the statement `ALTER VIEW` (where the view needs to be redefined)
+- It is possible to update the definition of a placement policy with `ALTER PLACEMENT POLICY x CONSTRAINTS ..;` This is modeled on the statement `ALTER VIEW` (where the view needs to be redefined). When `ALTER PLACEMENT POLICY x` is executed, all tables that use this placement policy will need to be updated in pd.
 - The statement `DROP PLACEMENT POLICY` should execute without error. If any partitions currently use this policy, they will be converted to the policy used by the table they belong to. If any tables use this policy, they will be converted to the policy used by the database they belong to. If any databases use this policy, they will be converted to the default placement policy. This is modeled on the behavior of dropping a `ROLE` that might be assigned to users.
+- The statement `RENAME PLACEMENT POLICY x TO y` renames a placement policy. The `SHOW CREATE TABLE` output of all databases, tables and partitions that used this placement policy should be updated to the new name.
 
 #### Metadata commands
 
@@ -158,14 +159,12 @@ To simplify the procedure, a `SHOW PLACEMENT` statement is provided to summarize
 The statement is in such a format:
 
 ```sql
-SHOW PLACEMENT FOR {DATABASE | SCHEMA} schema_name;
-SHOW PLACEMENT FOR TABLE table_name [PARTITION partition_name];
-SHOW PLACEMENT FOR INDEX index_name FROM table_name [PARTITION partition_name];
+SHOW PLACEMENT FOR [{DATABASE | SCHEMA} schema_name] [TABLE table_name] [PARTITION partition_name];
 ```
 
 TiDB will automatically find the effective rule based on the rule priorities.
 
-This statement outputs at most 1 line. For example, when querying a table, only the placement rule defined on the table itself is shown, and the partitions and indices in it will not be shown.
+This statement outputs at most 1 line. For example, when querying a table, only the placement rule defined on the table itself is shown, and the partitions in it will not be shown.
 
 The output of this statement contains these fields:
 
@@ -173,10 +172,17 @@ The output of this statement contains these fields:
     * For database, it is shown in the format `DATABASE database_name`
     * For table, it is shown in the format `TABLE database_name.table_name`
     * For partition, it is shown in the format `TABLE database_name.table_name PARTITION partition_name`
-    * For index, it is shown in the format `INDEX index_name FROM database_name.table_name`
 * Equivalent placement: A equivalent `ALTER` statement on `target` that defines the placement rule.
 * Existing placement: All the executed `ALTER` statements that affect the placement of `target`, including the statements on its parent.
 * Scheduling state: The scheduling progress from the PD aspect.
+
+For finding the current use of a placement policy, the following syntax can be used:
+
+```sql
+SHOW PLACEMENT LIKE 'standardpol%';
+```
+
+This will match for `PLACEMENT POLICY` names such as `standardpolicy`.
 
 ### Updates to Existing Syntax
 
@@ -424,6 +430,15 @@ In this example, partition `p0` uses the policy `storeonhdd`, partition `p4` use
 ALTER TABLE t1 PLACEMENT POLICY=`companynewpolicy`;
 ```
 
+For the syntax:
+```sql
+ALTER TABLE pt
+    EXCHANGE PARTITION p
+    WITH TABLE nt;
+```	
+
+If `nt` has placement rules associated with it, they will be retained when it becomes a partition of table `pt`. However, if no placement rules have been specified, then the rules of the table `pt` will be used. This helps protect against the case that a partition may need to have "default" placement rules, but default does not mean what the table uses (the output of `SHOW CREATE TABLE` would appear ambiguous). When the partition `p` is converted to table `nt`, it will continue to use the rules it had as a partition (either explicitly listed for the partition or the default for the table).
+
 This behavior is inspired by how a `CHARACTER SET` or `COLLATE` attribute applies to a column of a table, and columns will use the character set defined at the table-level by default.
 
 #### Removing placement from a database, table or partition
@@ -497,7 +512,7 @@ If the placement rules are stored on both TiKV and PD, the approaches to keep at
 
 As a contrast, if the placement rules are stored only on PD, the approaches to keep atomicity are as follows:
 
-- Write all the placement rules in one ETCD transaction.
+- Write all the placement rules in one etcd request.
 - Persist a middle state on TiKV before sending to PD. This middle state acts as undo log.
 
 The comparison shows that both solutions are possible, but storing placement rules only on PD is more practical. To guarantee the transactional characteristics, the easiest way is to write all placement rules in a transaction and define them in serial on the TiDB side.
@@ -549,7 +564,7 @@ There needs a way to map the placement rules in SQL to PD placement rule configu
 
 `ALTER PLACEMENT POLICY` and `DROP PLACEMENT POLICY` need to find the rules of a specified object efficiently. It can be achieved by encoding the object ID in `id`.
 
-However, an object may have multiple rules for a single role. For example:
+However, an object (database, table, partition) may have multiple rules for a single role. For example:
 
 ```sql
 ALTER TABLE t
@@ -584,7 +599,7 @@ It's same for partitioned tables.
 
 Tables only inherit rules from databases when they are created, and the value is saved in the meta data. Thus, the rules of priorities are simplified from an earlier version of this proposal (and are more inline with how character sets are inherited).
 
-The only rules are that indexes and partitions inherit the rules of tables. Partitions can explicitly overwrite the placement policy, but indexes currently can not.
+The only rules are that indexes and partitions inherit the rules of tables. Partitions can explicitly overwrite the placement policy, but indexes currently do not allow placement policy to be defined (this simplification was made intentionally since there is not a clear use case until global secondary indexes are introduced).
 
 Thus the priority is:
 
