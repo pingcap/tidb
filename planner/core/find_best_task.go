@@ -501,18 +501,26 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 		return isMatchProp
 	}
 	// TODO: do we need to consider TiFlash here?
+	// TODO: check is it ok to cache the optimization?
 	all, _ := prop.AllSameOrder()
 	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
 	// it needs not to keep order for index scan.
-	if !prop.IsEmpty() && all {
+	if !prop.IsEmpty() && all && len(path.IdxCols) >= len(prop.SortItems) {
+		isMatchProp = true
+		i := 0
 		for _, sortItem := range prop.SortItems {
-			var i, j int
-			if i < len(path.EqualCols) && sortItem.Col.Equal(nil, path.EqualCols[i]) {
-				i++
-				j++
-			} else if j < len(path.IdxCols) && path.IdxColLens[j] == types.UnspecifiedLength && sortItem.Col.Equal(nil, path.IdxCols[j]) {
-				j++
-			} else {
+			found := false
+			for ; i < len(path.IdxCols); i++ {
+				if path.IdxColLens[i] == types.UnspecifiedLength && sortItem.Col.Equal(nil, path.IdxCols[i]) {
+					found = true
+					i++
+					break
+				}
+				if !path.EqualCols[i] {
+					break
+				}
+			}
+			if !found {
 				isMatchProp = false
 				break
 			}

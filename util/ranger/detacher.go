@@ -466,17 +466,17 @@ func allEqOrIn(expr expression.Expression) bool {
 // filters: filters is the part that some access conditions need to be evaluate again since it's only the prefix part of char column.
 // newConditions: We'll simplify the given conditions if there're multiple in conditions or eq conditions on the same column.
 //   e.g. if there're a in (1, 2, 3) and a in (2, 3, 4). This two will be combined to a in (2, 3) and pushed to newConditions.
-// equalCols: equalCols indicates which columns are evaluated as constant under the given conditions.
+// equalCols: equalCols indicates whether the column is constant under the given conditions for all index columns.
 // bool: indicate whether there's nil range when merging eq and in conditions.
 func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
-	lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, []*expression.Column, bool) {
+	lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, []bool, bool) {
 	var filters []expression.Expression
 	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
 	accesses := make([]expression.Expression, len(cols))
 	points := make([][]*point, len(cols))
 	mergedAccesses := make([]expression.Expression, len(cols))
 	newConditions := make([]expression.Expression, 0, len(conditions))
-	equalCols := make([]*expression.Column, 0, len(cols))
+	equalCols := make([]bool, len(cols))
 	offsets := make([]int, len(conditions))
 	for i, cond := range conditions {
 		offset := getPotentialEqOrInColOffset(cond, cols)
@@ -530,12 +530,12 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			newConditions = append(newConditions, conditions[i])
 		}
 	}
-	for _, cond := range accesses {
+	for i, cond := range accesses {
 		if f, ok := cond.(*expression.ScalarFunction); ok && (f.FuncName.L == ast.EQ || f.FuncName.L == ast.NullEQ) {
-			if col, ok := f.GetArgs()[0].(*expression.Column); ok {
-				equalCols = append(equalCols, col)
-			} else if col, ok := f.GetArgs()[1].(*expression.Column); ok {
-				equalCols = append(equalCols, col)
+			if _, ok := f.GetArgs()[0].(*expression.Column); ok {
+				equalCols[i] = true
+			} else if _, ok := f.GetArgs()[1].(*expression.Column); ok {
+				equalCols[i] = true
 			}
 		}
 	}
@@ -631,8 +631,8 @@ type DetachRangeResult struct {
 	AccessConds []expression.Expression
 	// RemainedConds is the filter conditions which should be kept after access.
 	RemainedConds []expression.Expression
-	// EqualCols is the columns evaluated as constant under the given conditions.
-	EqualCols []*expression.Column
+	// EqualCols indicates whether the column is constant under the given conditions for all index columns.
+	EqualCols []bool
 	// EqCondCount is the number of equal conditions extracted.
 	EqCondCount int
 	// EqOrInCount is the number of equal/in conditions extracted.

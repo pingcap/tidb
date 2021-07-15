@@ -1701,11 +1701,11 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 			result: "PRIMARY_KEY,c_d_e,f,g,f_g,c_d_e_str,e_d_c_str_prefix",
 		},
 		{
-			sql:    "select * from t where e_str = 'hi' order by c",
-			result: "PRIMARY_KEY,c_d_e_str,c_d_e_str_prefix",
+			sql:    "select * from t where f > 3 and g = 5",
+			result: "PRIMARY_KEY,g,f_g",
 		},
 		{
-			sql:    "select * from t where f > 3 and g = 5",
+			sql:    "select * from t where g = 5 order by f",
 			result: "PRIMARY_KEY,g,f_g",
 		},
 		{
@@ -1713,8 +1713,8 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 			result: "PRIMARY_KEY,c_d_e",
 		},
 		{
-			sql:    "select * from t where c > 1 and d = 1 and e > 1 and e_str = 'hi' order by c, e",
-			result: "PRIMARY_KEY,c_d_e,c_d_e_str,c_d_e_str_prefix",
+			sql:    "select * from t where d = 1 and f > 1 and g > 1 order by c, e",
+			result: "PRIMARY_KEY,c_d_e,g,f_g",
 		},
 	}
 	ctx := context.TODO()
