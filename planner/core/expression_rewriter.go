@@ -1188,8 +1188,9 @@ func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldT
 	}
 	if er.tryFoldCounter > 0 {
 		ret, err = expression.NewFunctionTryFold(er.sctx, funcName, retType, args...)
+	} else {
+		ret, err = expression.NewFunction(er.sctx, funcName, retType, args...)
 	}
-	ret, err = expression.NewFunction(er.sctx, funcName, retType, args...)
 	if err != nil {
 		return
 	}
