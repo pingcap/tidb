@@ -127,7 +127,7 @@ func (c *TopSQLCollector) GetPlan(planDigest []byte) string {
 }
 
 // RegisterSQL uses for testing.
-func (c *TopSQLCollector) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
+func (c *TopSQLCollector) RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool) {
 	digestStr := string(hack.String(sqlDigest))
 	c.Lock()
 	_, ok := c.sqlMap[digestStr]
