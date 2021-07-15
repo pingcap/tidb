@@ -933,6 +933,27 @@ func (s *session) varFromTiDBTable(name string) bool {
 	return false
 }
 
+// GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
+func (s *session) GetAllSysVars() (map[string]string, error) {
+	if s.Value(sessionctx.Initing) != nil {
+		return nil, nil
+	}
+	stmt, err := s.ParseWithParams(context.TODO(), `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %n.%n`, mysql.SystemDB, mysql.GlobalVariablesTable)
+	if err != nil {
+		return nil, err
+	}
+	rows, _, err := s.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		return nil, err
+	}
+	ret := make(map[string]string, len(rows))
+	for _, r := range rows {
+		k, v := r.GetString(0), r.GetString(1)
+		ret[k] = v
+	}
+	return ret, nil
+}
+
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(name string) (string, error) {
 	if name == variable.TiDBSlowLogMasking {
