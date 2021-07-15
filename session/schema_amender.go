@@ -196,6 +196,7 @@ func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnI
 func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
 	for _, colAtCommit := range tblAtCommit.WritableCols() {
 		colAtStart := findColByID(tblAtStart, colAtCommit.ID)
+		// It can't find colAtCommit's ID from tblAtStart's public columns when "modify/change column" needs reorg data.
 		if colAtStart != nil {
 			err := colChangeAmendable(colAtStart.ColumnInfo, colAtCommit.ColumnInfo)
 			if err != nil {
@@ -206,7 +207,7 @@ func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.
 			// is newly added or modified from an original column.Report error to solve the issue
 			// https://github.com/pingcap/tidb/issues/21470. This change will make amend fail for adding column
 			// and modifying columns at the same time.
-			// In addition, amended operations are not currently supported and it goes to this logic when "modify column" needs reorg data.
+			// In addition, amended operations are not currently supported and it goes to this logic when "modify/change column" needs reorg data.
 			return nil, errors.Errorf("column=%v id=%v is not found for table=%v checking column modify",
 				colAtCommit.Name, colAtCommit.ID, tblAtCommit.Meta().Name.String())
 		}
