@@ -824,6 +824,21 @@ func (s *testSuiteAgg) TestIssue16279(c *C) {
 	tk.MustQuery("select count(a) , date_format(a, '%Y-%m-%d') as xx from s group by xx")
 }
 
+func (s *testSuiteAgg) TestIssue24676(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`create table t1(
+		id int(11) NOT NULL PRIMARY KEY,
+		c1 int(11) NOT NULL DEFAULT '0'
+		)`)
+	tk.MustQuery("SELECT c1 FROM t1 GROUP BY c1 ORDER BY c1 ASC;")
+	tk.MustQuery("SELECT ((floor(((`c1` - 0.0) / 50000)) * 50000) + 0.0) AS `c1` FROM `t1` GROUP BY ((floor(((`c1` - 0.0) / 50000)) * 50000) + 0.0) ORDER BY ((floor(((`c1` - 0.0) / 50000)) * 50000) + 0.0) ASC;")
+	err := tk.ExecToErr("SELECT ((floor(((`c1` - 10) / 300)) * 50000) + 0.0) AS `c1` FROM `t1` GROUP BY ((floor(((`c1` - 0.0) / 50000)) * 50000) + 0.0) ORDER BY ((floor(((`c1` - 0.0) / 50000)) * 50000) + 0.0) ASC;")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
+}
+
 func (s *testSuiteAgg) TestAggPushDownPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1293,49 +1308,58 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
 	tk.MustExec("set tidb_init_chunk_size=1;")
 	tk.MustExec("set tidb_max_chunk_size=32;")
-	var insertSQL string
+	randSeed := time.Now().UnixNano()
+	r := rand.New(rand.NewSource(randSeed))
+	var insertSQL strings.Builder
 	for i := 0; i < 1000; i++ {
-		if i == 0 {
-			insertSQL += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
-		} else {
-			insertSQL += fmt.Sprintf(",(%d, %d)", rand.Intn(100), rand.Intn(100))
+		insertSQL.WriteString("(")
+		insertSQL.WriteString(strconv.Itoa(r.Intn(10)))
+		insertSQL.WriteString(",")
+		insertSQL.WriteString(strconv.Itoa(r.Intn(10)))
+		insertSQL.WriteString(")")
+		if i < 1000-1 {
+			insertSQL.WriteString(",")
 		}
 	}
-	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL))
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", insertSQL.String()))
 
-	concurrencies := []int{1, 2, 4, 8}
+	mustParseAndSort := func(rows [][]interface{}, cmt CommentInterface) []float64 {
+		ret := make([]float64, len(rows))
+		for i := 0; i < len(rows); i++ {
+			rowStr := rows[i][0].(string)
+			if rowStr == "<nil>" {
+				ret[i] = 0
+				continue
+			}
+			v, err := strconv.ParseFloat(rowStr, 64)
+			c.Assert(err, IsNil, cmt)
+			ret[i] = v
+		}
+		sort.Float64s(ret)
+		return ret
+	}
 	for _, sql := range sqls {
-		var expected [][]interface{}
-		for _, con := range concurrencies {
-			comment := Commentf("sql: %s; concurrency: %d", sql, con)
+		tk.MustExec("set @@tidb_streamagg_concurrency = 1;")
+		exp := tk.MustQuery(sql).Rows()
+		expected := mustParseAndSort(exp, Commentf("sql: %s; seed: %d", sql, randSeed))
+		for _, con := range []int{2, 4, 8} {
+			comment := Commentf("sql: %s; concurrency: %d, seed: %d", sql, con, randSeed)
 			tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%d;", con))
-			if con == 1 {
-				expected = tk.MustQuery(sql).Sort().Rows()
-			} else {
-				er := tk.MustQuery("explain format = 'brief' " + sql).Rows()
-				ok := false
-				for _, l := range er {
-					str := fmt.Sprintf("%v", l)
-					if strings.Contains(str, "Shuffle") {
-						ok = true
-						break
-					}
+			er := tk.MustQuery("explain format = 'brief' " + sql).Rows()
+			ok := false
+			for _, l := range er {
+				str := fmt.Sprintf("%v", l)
+				if strings.Contains(str, "Shuffle") {
+					ok = true
+					break
 				}
-				c.Assert(ok, Equals, true, comment)
-				rows := tk.MustQuery(sql).Sort().Rows()
+			}
+			c.Assert(ok, Equals, true, comment)
+			rows := mustParseAndSort(tk.MustQuery(sql).Rows(), comment)
 
-				c.Assert(len(rows), Equals, len(expected), comment)
-				for i := range rows {
-					rowStr, expStr := rows[i][0].(string), expected[i][0].(string)
-					if rowStr == "<nil>" && expStr == "<nil>" {
-						continue
-					}
-					v1, err := strconv.ParseFloat(rowStr, 64)
-					c.Assert(err, IsNil, comment)
-					v2, err := strconv.ParseFloat(expStr, 64)
-					c.Assert(err, IsNil, comment)
-					c.Assert(math.Abs(v1-v2), Less, 1e-3, comment)
-				}
+			c.Assert(len(rows), Equals, len(expected), comment)
+			for i := range rows {
+				c.Assert(math.Abs(rows[i]-expected[i]), Less, 1e-3, comment)
 			}
 		}
 	}
@@ -1436,4 +1460,32 @@ func (s *testSuiteAgg) TestIssue23314(c *C) {
 	tk.MustExec("insert into t1 values(\"16:40:20.01\")")
 	res := tk.MustQuery("select col1 from t1 group by col1")
 	res.Check(testkit.Rows("16:40:20.01"))
+}
+
+func (s *testSerialSuite) TestAggInDisk(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_hashagg_final_concurrency = 1;")
+	tk.MustExec("set tidb_hashagg_partial_concurrency = 1;")
+	tk.MustExec("set tidb_mem_quota_query = 4194304")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(a int)")
+	sql := "insert into t values (0)"
+	for i := 1; i <= 300; i++ {
+		sql += fmt.Sprintf(",(%v)", i)
+	}
+	sql += ";"
+	tk.MustExec(sql)
+	rows := tk.MustQuery("desc analyze select /*+ HASH_AGG() */ avg(t1.a) from t t1 join t t2 group by t1.a, t2.a;").Rows()
+	for _, row := range rows {
+		length := len(row)
+		line := fmt.Sprintf("%v", row)
+		disk := fmt.Sprintf("%v", row[length-1])
+		if strings.Contains(line, "HashAgg") {
+			c.Assert(strings.Contains(disk, "0 Bytes"), IsFalse)
+			c.Assert(strings.Contains(disk, "MB") ||
+				strings.Contains(disk, "KB") ||
+				strings.Contains(disk, "Bytes"), IsTrue)
+		}
+	}
 }

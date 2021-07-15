@@ -28,13 +28,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -426,7 +425,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 				}
 				c.Assert(err, IsNil)
 			}
-			curVer, err := se.store.CurrentVersion(oracle.GlobalTxnScope)
+			curVer, err := se.store.CurrentVersion(kv.GlobalTxnScope)
 			c.Assert(err, IsNil)
 			se.sessionVars.TxnCtx.SetForUpdateTS(curVer.Ver + 1)
 			mutationVals, err := txn.BatchGet(ctx, checkKeys)

@@ -16,6 +16,8 @@ package kv
 import (
 	"context"
 	"sync"
+
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // InjectionConfig is used for fault injections for KV components.
@@ -64,7 +66,7 @@ func (s *InjectedStore) Begin() (Transaction, error) {
 }
 
 // BeginWithOption creates an injected Transaction with given option.
-func (s *InjectedStore) BeginWithOption(option TransactionOption) (Transaction, error) {
+func (s *InjectedStore) BeginWithOption(option tikv.StartTSOption) (Transaction, error) {
 	txn, err := s.Storage.BeginWithOption(option)
 	return &InjectedTransaction{
 		Transaction: txn,

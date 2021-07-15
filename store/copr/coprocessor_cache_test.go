@@ -19,7 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/config"
+	"github.com/tikv/client-go/v2/config"
 )
 
 type testCoprocessorCacheSuite struct {

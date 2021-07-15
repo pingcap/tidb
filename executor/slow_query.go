@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -553,10 +552,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 				} else {
 					fieldValues := strings.Split(line, " ")
 					for i := 0; i < len(fieldValues)-1; i += 2 {
-						field := fieldValues[i]
-						if strings.HasSuffix(field, ":") {
-							field = field[:len(field)-1]
-						}
+						field := strings.TrimSuffix(fieldValues[i], ":")
 						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], fileLine, e.checker)
 						if err != nil {
 							sctx.GetSessionVars().StmtCtx.AppendWarning(err)
@@ -998,11 +994,11 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		}
 		return nil
 	}
-	files, err := ioutil.ReadDir(logDir)
+	files, err := os.ReadDir(logDir)
 	if err != nil {
 		return nil, err
 	}
-	walkFn := func(path string, info os.FileInfo) error {
+	walkFn := func(path string, info os.DirEntry) error {
 		if info.IsDir() {
 			return nil
 		}

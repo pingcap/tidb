@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
+	txninfo "github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -109,6 +110,7 @@ func (s *inspectionSuite) TearDownSuite(c *C) {
 }
 
 func (s *inspectionSuite) TestInspectionTables(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210624")
 	tk := testkit.NewTestKit(c, s.store)
 	instances := []string{
 		"pd,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash,0",
@@ -205,7 +207,7 @@ func (s *testInfoschemaTableSuite) TestSchemataCharacterSet(c *C) {
 func (s *testInfoschemaTableSuite) TestViews(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE DEFINER='root'@'localhost' VIEW test.v1 AS SELECT 1")
-	tk.MustQuery("SELECT * FROM information_schema.views WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 SELECT 1 CASCADED NO root@localhost DEFINER utf8mb4 utf8mb4_bin"))
+	tk.MustQuery("SELECT * FROM information_schema.views WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 SELECT 1 AS `1` CASCADED NO root@localhost DEFINER utf8mb4 utf8mb4_bin"))
 	tk.MustQuery("SELECT table_catalog, table_schema, table_name, table_type, engine, version, row_format, table_rows, avg_row_length, data_length, max_data_length, index_length, data_free, auto_increment, update_time, check_time, table_collation, checksum, create_options, table_comment FROM information_schema.tables WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 VIEW <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> VIEW"))
 }
 
@@ -228,6 +230,40 @@ func (s *testInfoschemaTableSuite) TestCharacterSetCollations(c *C) {
 
 	tk.MustQuery("select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COLLATION_NAME='utf8mb4_bin';").Check(
 		testkit.Rows("utf8mb4_bin utf8mb4"))
+}
+
+// https://github.com/pingcap/tidb/issues/25467.
+func (s *testInfoschemaTableSuite) TestDataTypesMaxLengthAndOctLength(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_oct_length;")
+	tk.MustExec("create database test_oct_length;")
+	tk.MustExec("use test_oct_length;")
+
+	testCases := []struct {
+		colTp  string
+		maxLen int
+		octLen int
+	}{
+		{"varchar(255) collate ascii_bin", 255, 255},
+		{"varchar(255) collate utf8mb4_bin", 255, 255 * 4},
+		{"varchar(255) collate utf8_bin", 255, 255 * 3},
+		{"char(10) collate ascii_bin", 10, 10},
+		{"char(10) collate utf8mb4_bin", 10, 10 * 4},
+		{"set('a', 'b', 'cccc') collate ascii_bin", 8, 8},
+		{"set('a', 'b', 'cccc') collate utf8mb4_bin", 8, 8 * 4},
+		{"enum('a', 'b', 'cccc') collate ascii_bin", 4, 4},
+		{"enum('a', 'b', 'cccc') collate utf8mb4_bin", 4, 4 * 4},
+	}
+	for _, tc := range testCases {
+		createSQL := fmt.Sprintf("create table t (a %s);", tc.colTp)
+		tk.MustExec(createSQL)
+		result := tk.MustQuery("select character_maximum_length, character_octet_length " +
+			"from information_schema.columns " +
+			"where table_schema=(select database()) and table_name='t';")
+		expectedRows := testkit.Rows(fmt.Sprintf("%d %d", tc.maxLen, tc.octLen))
+		result.Check(expectedRows)
+		tk.MustExec("drop table t;")
+	}
 }
 
 func (s *testInfoschemaTableSuite) TestDDLJobs(c *C) {
@@ -369,7 +405,6 @@ func (s *testInfoschemaTableSuite) TestUserPrivilegesTable(c *C) {
 	tk.MustExec("GRANT SELECT ON *.* to usageuser WITH GRANT OPTION")
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def Select YES"))
 	// test DYNAMIC privs
-	tk.MustExec("SET tidb_enable_dynamic_privileges=1")
 	tk.MustExec("GRANT BACKUP_ADMIN ON *.* to usageuser")
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'" ORDER BY privilege_type`).Check(testkit.Rows("'usageuser'@'%' def BACKUP_ADMIN NO", "'usageuser'@'%' def Select YES"))
 }
@@ -726,6 +761,10 @@ func (s *testInfoschemaClusterTableSuite) TearDownSuite(c *C) {
 type mockSessionManager struct {
 	processInfoMap map[uint64]*util.ProcessInfo
 	serverID       uint64
+}
+
+func (sm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {

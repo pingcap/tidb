@@ -35,6 +35,7 @@ func init() {
 	parser.SpecialCommentsController.Register(string(FeatureIDAutoIDCache))
 	parser.SpecialCommentsController.Register(string(FeatureIDAutoRandomBase))
 	parser.SpecialCommentsController.Register(string(FeatureClusteredIndex))
+	parser.SpecialCommentsController.Register(string(FeatureForceAutoInc))
 }
 
 // SpecialCommentVersionPrefix is the prefix of TiDB executable comments.
@@ -61,6 +62,8 @@ const (
 	FeatureIDAutoRandomBase featureID = "auto_rand_base"
 	// FeatureClusteredIndex is the `clustered_index` feature.
 	FeatureClusteredIndex featureID = "clustered_index"
+	// FeatureForceAutoInc is the `force auto_increment` feature.
+	FeatureForceAutoInc featureID = "force_inc"
 )
 
 // FeatureIDPatterns is used to record special comments patterns.
@@ -69,4 +72,5 @@ var FeatureIDPatterns = map[featureID]*regexp.Regexp{
 	FeatureIDAutoIDCache:    regexp.MustCompile(`(?P<REPLACE>(?i)AUTO_ID_CACHE\s*=?\s*\d+\s*)`),
 	FeatureIDAutoRandomBase: regexp.MustCompile(`(?P<REPLACE>(?i)AUTO_RANDOM_BASE\s*=?\s*\d+\s*)`),
 	FeatureClusteredIndex:   regexp.MustCompile(`(?i)(PRIMARY)?\s+KEY(\s*\(.*\))?\s+(?P<REPLACE>(NON)?CLUSTERED\b)`),
+	FeatureForceAutoInc:     regexp.MustCompile(`(?P<REPLACE>(?i)FORCE)\b\s*AUTO_INCREMENT\s*`),
 }

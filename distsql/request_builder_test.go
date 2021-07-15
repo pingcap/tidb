@@ -19,13 +19,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -37,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 var _ = Suite(&testSuite{})
@@ -324,7 +323,8 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		Streaming:      false,
-		ReplicaRead:    tikvstore.ReplicaReadLeader,
+		ReplicaRead:    kv.ReplicaReadLeader,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -400,7 +400,8 @@ func (s *testSuite) TestRequestBuilder2(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		Streaming:      false,
-		ReplicaRead:    tikvstore.ReplicaReadLeader,
+		ReplicaRead:    kv.ReplicaReadLeader,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -447,7 +448,8 @@ func (s *testSuite) TestRequestBuilder3(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		Streaming:      false,
-		ReplicaRead:    tikvstore.ReplicaReadLeader,
+		ReplicaRead:    kv.ReplicaReadLeader,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -494,7 +496,8 @@ func (s *testSuite) TestRequestBuilder4(c *C) {
 		Streaming:      true,
 		NotFillCache:   false,
 		SyncLog:        false,
-		ReplicaRead:    tikvstore.ReplicaReadLeader,
+		ReplicaRead:    kv.ReplicaReadLeader,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -538,6 +541,7 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 		NotFillCache:   true,
 		SyncLog:        false,
 		Streaming:      false,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -571,16 +575,17 @@ func (s *testSuite) TestRequestBuilder6(c *C) {
 		NotFillCache:   true,
 		SyncLog:        false,
 		Streaming:      false,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 
 	c.Assert(actual, DeepEquals, expect)
 }
 
 func (s *testSuite) TestRequestBuilder7(c *C) {
-	for _, replicaRead := range []tikvstore.ReplicaReadType{
-		tikvstore.ReplicaReadLeader,
-		tikvstore.ReplicaReadFollower,
-		tikvstore.ReplicaReadMixed,
+	for _, replicaRead := range []kv.ReplicaReadType{
+		kv.ReplicaReadLeader,
+		kv.ReplicaReadFollower,
+		kv.ReplicaReadMixed,
 	} {
 		vars := variable.NewSessionVars()
 		vars.SetReplicaRead(replicaRead)
@@ -605,6 +610,7 @@ func (s *testSuite) TestRequestBuilder7(c *C) {
 			SyncLog:        false,
 			Streaming:      false,
 			ReplicaRead:    replicaRead,
+			TxnScope:       oracle.GlobalTxnScope,
 		}
 
 		c.Assert(actual, DeepEquals, expect)
@@ -613,7 +619,6 @@ func (s *testSuite) TestRequestBuilder7(c *C) {
 
 func (s *testSuite) TestRequestBuilder8(c *C) {
 	sv := variable.NewSessionVars()
-	sv.SnapshotInfoschema = infoschema.MockInfoSchemaWithSchemaVer(nil, 10000)
 	actual, err := (&RequestBuilder{}).
 		SetFromSessionVars(sv).
 		Build()
@@ -626,8 +631,8 @@ func (s *testSuite) TestRequestBuilder8(c *C) {
 		IsolationLevel: 0,
 		Priority:       0,
 		MemTracker:     (*memory.Tracker)(nil),
-		ReplicaRead:    0x1,
-		SchemaVar:      10000,
+		SchemaVar:      0,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }

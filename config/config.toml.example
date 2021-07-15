@@ -136,7 +136,7 @@ enable-enum-length-limit = true
 # Log level: debug, info, warn, error, fatal.
 level = "info"
 
-# Log format, one of json, text, console.
+# Log format, one of json or text.
 format = "text"
 
 # Enable automatic timestamps in log output, if not set, it will be defaulted to true.
@@ -201,6 +201,9 @@ cluster-ssl-key = ""
 # Possible values are "plaintext", "aes128-ctr", if not set, it will be "plaintext" by default.
 # "plaintext" means encryption is disabled.
 spilled-file-encryption-method = "plaintext"
+
+# Security Enhanced Mode (SEM) restricts the "SUPER" privilege and requires fine-grained privileges instead.
+enable-sem = false
 
 [status]
 # If enable status report HTTP service.
@@ -440,6 +443,9 @@ strategy = "range"
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
 
+# The max count of deadlock events that will be recorded in the information_schema.deadlocks table.
+deadlock-history-capacity = 10
+
 [stmt-summary]
 # enable statement summary.
 enable = true
@@ -448,7 +454,7 @@ enable = true
 enable-internal-query = false
 
 # max number of statements kept in memory.
-max-stmt-count = 200
+max-stmt-count = 3000
 
 # max length of displayed normalized sql and sample sql.
 max-sql-length = 4096

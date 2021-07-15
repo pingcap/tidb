@@ -97,6 +97,8 @@ var (
 	ErrSequenceHasRunOut = dbterror.ClassTable.NewStd(mysql.ErrSequenceRunOut)
 	// ErrRowDoesNotMatchGivenPartitionSet returns when the destination partition conflict with the partition selection.
 	ErrRowDoesNotMatchGivenPartitionSet = dbterror.ClassTable.NewStd(mysql.ErrRowDoesNotMatchGivenPartitionSet)
+	// ErrTempTableFull returns a table is full error, it's used by temporary table now.
+	ErrTempTableFull = dbterror.ClassTable.NewStd(mysql.ErrRecordFileFull)
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -150,6 +152,10 @@ type columnAPI interface {
 	// WritableCols returns columns of the table in writable states.
 	// Writable states includes Public, WriteOnly, WriteOnlyReorganization.
 	WritableCols() []*Column
+
+	// DeletableCols returns columns of the table in deletable states.
+	// Deletable states includes Public, WriteOnly, WriteOnlyReorganization, DeleteOnly, DeleteReorganization.
+	DeletableCols() []*Column
 
 	// FullHiddenColsAndVisibleCols returns hidden columns in all states and unhidden columns in public states.
 	FullHiddenColsAndVisibleCols() []*Column

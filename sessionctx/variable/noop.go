@@ -38,7 +38,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: SuperReadOnly, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
 	}},
-	{Scope: ScopeGlobal, Name: serverReadOnly, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal, Name: ReadOnly, Value: Off, Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
 	}},
 	{Scope: ScopeGlobal, Name: ConnectTimeout, Value: "10", Type: TypeUnsigned, MinValue: 2, MaxValue: secondsPerYear, AutoConvertOutOfRange: true},
@@ -76,14 +76,12 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "log_backward_compatible_user_definitions", Value: ""},
 	{Scope: ScopeNone, Name: "lc_messages_dir", Value: "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/"},
 	{Scope: ScopeGlobal, Name: "ft_boolean_syntax", Value: "+ -><()~*:\"\"&|"},
-	{Scope: ScopeGlobal, Name: TableDefinitionCache, Value: "-1", Type: TypeUnsigned, MinValue: 400, MaxValue: 524288, AutoConvertOutOfRange: true},
-	{Scope: ScopeNone, Name: SkipNameResolve, Value: Off, Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TableDefinitionCache, Value: "2000", Type: TypeUnsigned, MinValue: 400, MaxValue: 524288, AutoConvertOutOfRange: true},
 	{Scope: ScopeNone, Name: "performance_schema_max_file_handles", Value: "32768"},
 	{Scope: ScopeSession, Name: "transaction_allow_batching", Value: ""},
 	{Scope: ScopeNone, Name: "performance_schema_max_statement_classes", Value: "168"},
 	{Scope: ScopeGlobal, Name: "server_id", Value: "0"},
 	{Scope: ScopeGlobal, Name: "innodb_flushing_avg_loops", Value: "30"},
-	{Scope: ScopeGlobal | ScopeSession, Name: TmpTableSize, Value: "16777216", Type: TypeUnsigned, MinValue: 1024, MaxValue: math.MaxUint64, AutoConvertOutOfRange: true, IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "innodb_max_purge_lag", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "preload_buffer_size", Value: "32768"},
 	{Scope: ScopeGlobal, Name: CheckProxyUsers, Value: Off, Type: TypeBool},
@@ -141,7 +139,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_file_format_max", Value: "Antelope"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "debug", Value: ""},
 	{Scope: ScopeGlobal, Name: "log_warnings", Value: "1"},
-	{Scope: ScopeGlobal | ScopeSession, Name: InnodbStrictMode, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: InnodbStrictMode, Value: On, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "innodb_rollback_segments", Value: "128"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "join_buffer_size", Value: "262144", IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "innodb_mirrored_log_groups", Value: "1"},
@@ -156,7 +154,10 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "myisam_mmap_size", Value: "18446744073709551615"},
 	{Scope: ScopeNone, Name: "innodb_buffer_pool_instances", Value: "8"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_length_for_sort_data", Value: "1024", IsHintUpdatable: true},
-	{Scope: ScopeNone, Name: "character_set_system", Value: "utf8"},
+	{Scope: ScopeNone, Name: CharacterSetSystem, Value: "utf8"},
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetFilesystem, Value: "binary", skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return checkCharacterSet(normalizedValue, CharacterSetFilesystem)
+	}},
 	{Scope: ScopeGlobal, Name: InnodbOptimizeFullTextOnly, Value: "0"},
 	{Scope: ScopeNone, Name: "character_sets_dir", Value: "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/charsets/"},
 	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheType, Value: Off, Type: TypeEnum, PossibleValues: []string{Off, On, "DEMAND"}},
@@ -205,8 +206,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "sort_buffer_size", Value: "262144", IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "innodb_flush_neighbors", Value: "1"},
 	{Scope: ScopeNone, Name: "innodb_use_sys_malloc", Value: "1"},
-	{Scope: ScopeSession, Name: PluginLoad, Value: ""},
-	{Scope: ScopeSession, Name: PluginDir, Value: "/data/deploy/plugin"},
 	{Scope: ScopeNone, Name: "performance_schema_max_socket_classes", Value: "10"},
 	{Scope: ScopeNone, Name: "performance_schema_max_stage_classes", Value: "150"},
 	{Scope: ScopeGlobal, Name: "innodb_purge_batch_size", Value: "300"},
@@ -312,7 +311,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "datetime_format", Value: "%Y-%m-%d %H:%i:%s"},
 	{Scope: ScopeGlobal, Name: "log_syslog", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "transaction_alloc_block_size", Value: "8192"},
-	{Scope: ScopeGlobal, Name: "innodb_large_prefix", Type: TypeBool, Value: Off},
+	{Scope: ScopeGlobal, Name: "innodb_large_prefix", Type: TypeBool, Value: On},
 	{Scope: ScopeNone, Name: "performance_schema_max_cond_classes", Value: "80"},
 	{Scope: ScopeGlobal, Name: "innodb_io_capacity", Value: "200"},
 	{Scope: ScopeGlobal, Name: "max_binlog_cache_size", Value: "18446744073709547520"},
@@ -475,7 +474,7 @@ var noopSysVars = []*SysVar{
 	// for compatibility purpose, we should leave them alone.
 	// TODO: Follow the Terminology Updates of MySQL after their changes arrived.
 	// https://mysqlhighavailability.com/mysql-terminology-updates/
-	{Scope: ScopeSession, Name: PseudoSlaveMode, Value: "", Type: TypeInt},
+	{Scope: ScopeSession, Name: PseudoSlaveMode, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "slave_pending_jobs_size_max", Value: "16777216"},
 	{Scope: ScopeGlobal, Name: "slave_transaction_retries", Value: "10"},
 	{Scope: ScopeGlobal, Name: "slave_checkpoint_period", Value: "300"},
@@ -493,7 +492,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "slave_load_tmpdir", Value: "/var/tmp/"},
 	{Scope: ScopeGlobal, Name: "slave_parallel_type", Value: ""},
 	{Scope: ScopeGlobal, Name: "slave_parallel_workers", Value: "0"},
-	{Scope: ScopeGlobal, Name: "rpl_semi_sync_master_timeout", Value: "10000", Type: TypeInt},
+	{Scope: ScopeGlobal, Name: "rpl_semi_sync_master_timeout", Value: "10000", Type: TypeInt, MaxValue: math.MaxInt64},
 	{Scope: ScopeNone, Name: "slave_skip_errors", Value: Off},
 	{Scope: ScopeGlobal, Name: "sql_slave_skip_counter", Value: "0"},
 	{Scope: ScopeGlobal, Name: "rpl_semi_sync_slave_enabled", Value: Off, Type: TypeBool},
