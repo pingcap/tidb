@@ -2473,6 +2473,8 @@ func (s *testEvaluatorSuite) TestSoundex(c *C) {
 		{[]interface{}{"Hello the World"}, false, false, "H43643"},
 		{[]interface{}{"测试"}, false, false, "测000"},
 		{[]interface{}{"abc测试def"}, false, false, "A1231"},
+		{[]interface{}{"\t \nabc测试def"}, false, false, "A1231"},
+		{[]interface{}{"123 Hello the World"}, false, false, "H43643"},
 	}
 
 	for _, t := range cases {

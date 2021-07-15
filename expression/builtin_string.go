@@ -4051,13 +4051,13 @@ func soundex(str string) string {
 	// Remove numbers and spaces, trasfer str to upper form.
 	re := regexp.MustCompile("[0-9]")
 	str = re.ReplaceAllString(str, "")
-	str = strings.Replace(str, " ", "", -1)
+	str = strings.TrimSpace(str)
 	if str == "" {
 		return ""
 	}
 	str = strings.ToUpper(str)
 
-	// STEP1: Retain the first letter of the name and drop all other occurrences of a, e, i, o, u, y, h, w
+	// STEP1: Retain the first letter of the name
 	var encoded bytes.Buffer
 	encoded.WriteRune([]rune(str)[0])
 	// STEP2: Replace consonants with digits as listed in soundexTable
