@@ -10,8 +10,8 @@ import (
 )
 
 var (
-	finishedSizeCounter            *prometheus.CounterVec
-	finishedRowsCounter            *prometheus.CounterVec
+	finishedSizeGauge              *prometheus.GaugeVec
+	finishedRowsGauge              *prometheus.GaugeVec
 	finishedTablesCounter          *prometheus.CounterVec
 	estimateTotalRowsCounter       *prometheus.CounterVec
 	writeTimeHistogram             *prometheus.HistogramVec
@@ -27,8 +27,8 @@ func InitMetricsVector(labels prometheus.Labels) {
 	for name := range labels {
 		labelNames = append(labelNames, name)
 	}
-	finishedSizeCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
+	finishedSizeGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
 			Namespace: "dumpling",
 			Subsystem: "dump",
 			Name:      "finished_size",
@@ -41,8 +41,8 @@ func InitMetricsVector(labels prometheus.Labels) {
 			Name:      "estimate_total_rows",
 			Help:      "estimate total rows for dumpling tables",
 		}, labelNames)
-	finishedRowsCounter = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
+	finishedRowsGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
 			Namespace: "dumpling",
 			Subsystem: "dump",
 			Name:      "finished_rows",
@@ -89,11 +89,11 @@ func InitMetricsVector(labels prometheus.Labels) {
 
 // RegisterMetrics registers metrics.
 func RegisterMetrics(registry *prometheus.Registry) {
-	if finishedSizeCounter == nil {
+	if finishedSizeGauge == nil {
 		return
 	}
-	registry.MustRegister(finishedSizeCounter)
-	registry.MustRegister(finishedRowsCounter)
+	registry.MustRegister(finishedSizeGauge)
+	registry.MustRegister(finishedRowsGauge)
 	registry.MustRegister(estimateTotalRowsCounter)
 	registry.MustRegister(finishedTablesCounter)
 	registry.MustRegister(writeTimeHistogram)
@@ -104,11 +104,11 @@ func RegisterMetrics(registry *prometheus.Registry) {
 
 // RemoveLabelValuesWithTaskInMetrics removes metrics of specified labels.
 func RemoveLabelValuesWithTaskInMetrics(labels prometheus.Labels) {
-	if finishedSizeCounter == nil {
+	if finishedSizeGauge == nil {
 		return
 	}
-	finishedSizeCounter.Delete(labels)
-	finishedRowsCounter.Delete(labels)
+	finishedSizeGauge.Delete(labels)
+	finishedRowsGauge.Delete(labels)
 	estimateTotalRowsCounter.Delete(labels)
 	finishedTablesCounter.Delete(labels)
 	writeTimeHistogram.Delete(labels)
@@ -154,12 +154,33 @@ func ObserveHistogram(histogramVec *prometheus.HistogramVec, labels prometheus.L
 	histogramVec.With(labels).Observe(v)
 }
 
+// ReadGauge reports the current value of the gauge.
+func ReadGauge(gaugeVec *prometheus.GaugeVec, labels prometheus.Labels) float64 {
+	if gaugeVec == nil {
+		return math.NaN()
+	}
+	gauge := gaugeVec.With(labels)
+	var metric dto.Metric
+	if err := gauge.Write(&metric); err != nil {
+		return math.NaN()
+	}
+	return metric.Gauge.GetValue()
+}
+
 // AddGauge adds a gauge
 func AddGauge(gaugeVec *prometheus.GaugeVec, labels prometheus.Labels, v float64) {
 	if gaugeVec == nil {
 		return
 	}
 	gaugeVec.With(labels).Add(v)
+}
+
+// SubGauge subs a gauge
+func SubGauge(gaugeVec *prometheus.GaugeVec, labels prometheus.Labels, v float64) {
+	if gaugeVec == nil {
+		return
+	}
+	gaugeVec.With(labels).Sub(v)
 }
 
 // IncGauge incs a gauge

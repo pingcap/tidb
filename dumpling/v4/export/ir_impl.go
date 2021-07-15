@@ -4,7 +4,6 @@ package export
 
 import (
 	"database/sql"
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -250,13 +249,16 @@ func (td *tableData) RawRows() *sql.Rows {
 }
 
 type tableMeta struct {
-	database        string
-	table           string
-	colTypes        []*sql.ColumnType
-	selectedField   string
-	specCmts        []string
-	showCreateTable string
-	showCreateView  string
+	database         string
+	table            string
+	colTypes         []*sql.ColumnType
+	selectedField    string
+	selectedLen      int
+	specCmts         []string
+	showCreateTable  string
+	showCreateView   string
+	avgRowLength     uint64
+	hasImplicitRowID bool
 }
 
 func (tm *tableMeta) ColumnTypes() []string {
@@ -288,10 +290,11 @@ func (tm *tableMeta) ColumnCount() uint {
 }
 
 func (tm *tableMeta) SelectedField() string {
-	if tm.selectedField == "*" || tm.selectedField == "" {
-		return tm.selectedField
-	}
-	return fmt.Sprintf("(%s)", tm.selectedField)
+	return tm.selectedField
+}
+
+func (tm *tableMeta) SelectedLen() int {
+	return tm.selectedLen
 }
 
 func (tm *tableMeta) SpecialComments() StringIter {
@@ -304,6 +307,14 @@ func (tm *tableMeta) ShowCreateTable() string {
 
 func (tm *tableMeta) ShowCreateView() string {
 	return tm.showCreateView
+}
+
+func (tm *tableMeta) AvgRowLength() uint64 {
+	return tm.avgRowLength
+}
+
+func (tm *tableMeta) HasImplicitRowID() bool {
+	return tm.hasImplicitRowID
 }
 
 type metaData struct {

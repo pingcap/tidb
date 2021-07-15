@@ -66,3 +66,11 @@ func sameStringArray(a, b []string) bool {
 	}
 	return true
 }
+
+func string2Map(a, b []string) map[string]string {
+	a2b := make(map[string]string, len(a))
+	for i, str := range a {
+		a2b[str] = b[i]
+	}
+	return a2b
+}

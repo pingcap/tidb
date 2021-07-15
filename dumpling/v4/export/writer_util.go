@@ -76,7 +76,7 @@ func (b *writerPipe) Run(tctx *tcontext.Context) {
 			receiveChunkTime = time.Now()
 			err := writeBytes(tctx, b.w, s.Bytes())
 			ObserveHistogram(writeTimeHistogram, b.labels, time.Since(receiveChunkTime).Seconds())
-			AddCounter(finishedSizeCounter, b.labels, float64(s.Len()))
+			AddGauge(finishedSizeGauge, b.labels, float64(s.Len()))
 			b.finishedFileSize += uint64(s.Len())
 			s.Reset()
 			pool.Put(s)
@@ -175,11 +175,32 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 		escapeBackslash       = cfg.EscapeBackslash
 	)
 
+	defer func() {
+		if err != nil {
+			pCtx.L().Warn("fail to dumping table(chunk), will revert some metrics now",
+				zap.Error(err),
+				zap.String("database", meta.DatabaseName()),
+				zap.String("table", meta.TableName()),
+				zap.Uint64("finished rows", lastCounter),
+				zap.Uint64("finished size", wp.finishedFileSize))
+			SubGauge(finishedRowsGauge, cfg.Labels, float64(lastCounter))
+			SubGauge(finishedSizeGauge, cfg.Labels, float64(wp.finishedFileSize))
+		} else {
+			pCtx.L().Debug("finish dumping table(chunk)",
+				zap.String("database", meta.DatabaseName()),
+				zap.String("table", meta.TableName()),
+				zap.Uint64("finished rows", counter),
+				zap.Uint64("finished size", wp.finishedFileSize))
+			summary.CollectSuccessUnit(summary.TotalBytes, 1, wp.finishedFileSize)
+			summary.CollectSuccessUnit("total rows", 1, counter)
+		}
+	}()
+
 	selectedField := meta.SelectedField()
 
 	// if has generated column
 	if selectedField != "" && selectedField != "*" {
-		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s %s VALUES\n",
+		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s (%s) VALUES\n",
 			wrapBackTicks(escapeString(meta.TableName())), selectedField)
 	} else {
 		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n",
@@ -196,7 +217,6 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 			lastBfSize := bf.Len()
 			if selectedField != "" {
 				if err = fileRowIter.Decode(row); err != nil {
-					pCtx.L().Error("fail to scan from sql.Row", zap.Error(err))
 					return counter, errors.Trace(err)
 				}
 				row.WriteToBuffer(bf, escapeBackslash)
@@ -227,7 +247,7 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 					if bfCap := bf.Cap(); bfCap < lengthLimit {
 						bf.Grow(lengthLimit - bfCap)
 					}
-					AddCounter(finishedRowsCounter, cfg.Labels, float64(counter-lastCounter))
+					AddGauge(finishedRowsGauge, cfg.Labels, float64(counter-lastCounter))
 					lastCounter = counter
 				}
 			}
@@ -240,22 +260,13 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 			break
 		}
 	}
-	pCtx.L().Debug("finish dumping table(chunk)",
-		zap.String("database", meta.DatabaseName()),
-		zap.String("table", meta.TableName()),
-		zap.Uint64("total rows", counter))
 	if bf.Len() > 0 {
 		wp.input <- bf
 	}
 	close(wp.input)
 	<-wp.closed
-	AddCounter(finishedRowsCounter, cfg.Labels, float64(counter-lastCounter))
-	defer func() {
-		if err == nil {
-			summary.CollectSuccessUnit(summary.TotalBytes, 1, wp.finishedFileSize)
-			summary.CollectSuccessUnit("total rows", 1, counter)
-		}
-	}()
+	AddGauge(finishedRowsGauge, cfg.Labels, float64(counter-lastCounter))
+	lastCounter = counter
 	if err = fileRowIter.Error(); err != nil {
 		return counter, errors.Trace(err)
 	}
@@ -302,6 +313,27 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 		selectedFields  = meta.SelectedField()
 	)
 
+	defer func() {
+		if err != nil {
+			pCtx.L().Warn("fail to dumping table(chunk), will revert some metrics now",
+				zap.Error(err),
+				zap.String("database", meta.DatabaseName()),
+				zap.String("table", meta.TableName()),
+				zap.Uint64("finished rows", lastCounter),
+				zap.Uint64("finished size", wp.finishedFileSize))
+			SubGauge(finishedRowsGauge, cfg.Labels, float64(lastCounter))
+			SubGauge(finishedSizeGauge, cfg.Labels, float64(wp.finishedFileSize))
+		} else {
+			pCtx.L().Debug("finish dumping table(chunk)",
+				zap.String("database", meta.DatabaseName()),
+				zap.String("table", meta.TableName()),
+				zap.Uint64("finished rows", counter),
+				zap.Uint64("finished size", wp.finishedFileSize))
+			summary.CollectSuccessUnit(summary.TotalBytes, 1, wp.finishedFileSize)
+			summary.CollectSuccessUnit("total rows", 1, counter)
+		}
+	}()
+
 	if !cfg.NoHeader && len(meta.ColumnNames()) != 0 && selectedFields != "" {
 		for i, col := range meta.ColumnNames() {
 			bf.Write(opt.delimiter)
@@ -319,7 +351,6 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 		lastBfSize := bf.Len()
 		if selectedFields != "" {
 			if err = fileRowIter.Decode(row); err != nil {
-				pCtx.L().Error("fail to scan from sql.Row", zap.Error(err))
 				return counter, errors.Trace(err)
 			}
 			row.WriteToBufferInCsv(bf, escapeBackslash, opt)
@@ -339,7 +370,7 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 				if bfCap := bf.Cap(); bfCap < lengthLimit {
 					bf.Grow(lengthLimit - bfCap)
 				}
-				AddCounter(finishedRowsCounter, cfg.Labels, float64(counter-lastCounter))
+				AddGauge(finishedRowsGauge, cfg.Labels, float64(counter-lastCounter))
 				lastCounter = counter
 			}
 		}
@@ -350,22 +381,13 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 		}
 	}
 
-	pCtx.L().Debug("finish dumping table(chunk)",
-		zap.String("database", meta.DatabaseName()),
-		zap.String("table", meta.TableName()),
-		zap.Uint64("total rows", counter))
 	if bf.Len() > 0 {
 		wp.input <- bf
 	}
 	close(wp.input)
 	<-wp.closed
-	defer func() {
-		if err == nil {
-			summary.CollectSuccessUnit(summary.TotalBytes, 1, wp.finishedFileSize)
-			summary.CollectSuccessUnit("total rows", 1, counter)
-		}
-	}()
-	AddCounter(finishedRowsCounter, cfg.Labels, float64(counter-lastCounter))
+	AddGauge(finishedRowsGauge, cfg.Labels, float64(counter-lastCounter))
+	lastCounter = counter
 	if err = fileRowIter.Error(); err != nil {
 		return counter, errors.Trace(err)
 	}

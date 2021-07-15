@@ -65,7 +65,7 @@ func (s *testConsistencySuite) TestConsistencyController(c *C) {
 
 	conf.Consistency = consistencyTypeLock
 	conf.Tables = NewDatabaseTables().
-		AppendTables("db1", "t1", "t2", "t3").
+		AppendTables("db1", []string{"t1", "t2", "t3"}, []uint64{1, 2, 3}).
 		AppendViews("db2", "t4")
 	mock.ExpectExec("LOCK TABLES `db1`.`t1` READ,`db1`.`t2` READ,`db1`.`t3` READ").WillReturnResult(resultOk)
 	mock.ExpectExec("UNLOCK TABLES").WillReturnResult(resultOk)
@@ -73,9 +73,7 @@ func (s *testConsistencySuite) TestConsistencyController(c *C) {
 	_, ok = ctrl.(*ConsistencyLockDumpingTables)
 	c.Assert(ok, IsTrue)
 	s.assertLifetimeErrNil(tctx, ctrl, c)
-	if err = mock.ExpectationsWereMet(); err != nil {
-		c.Fatal(err.Error())
-	}
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
 
 func (s *testConsistencySuite) TestConsistencyLockControllerRetry(c *C) {
@@ -90,7 +88,7 @@ func (s *testConsistencySuite) TestConsistencyLockControllerRetry(c *C) {
 
 	conf.Consistency = consistencyTypeLock
 	conf.Tables = NewDatabaseTables().
-		AppendTables("db1", "t1", "t2", "t3").
+		AppendTables("db1", []string{"t1", "t2", "t3"}, []uint64{1, 2, 3}).
 		AppendViews("db2", "t4")
 	mock.ExpectExec("LOCK TABLES `db1`.`t1` READ,`db1`.`t2` READ,`db1`.`t3` READ").
 		WillReturnError(&mysql.MySQLError{Number: ErrNoSuchTable, Message: "Table 'db1.t3' doesn't exist"})
@@ -100,9 +98,12 @@ func (s *testConsistencySuite) TestConsistencyLockControllerRetry(c *C) {
 	_, ok := ctrl.(*ConsistencyLockDumpingTables)
 	c.Assert(ok, IsTrue)
 	s.assertLifetimeErrNil(tctx, ctrl, c)
-	if err = mock.ExpectationsWereMet(); err != nil {
-		c.Fatal(err.Error())
-	}
+	// should remove table db1.t3 in tables to dump
+	expectedDumpTables := NewDatabaseTables().
+		AppendTables("db1", []string{"t1", "t2"}, []uint64{1, 2}).
+		AppendViews("db2", "t4")
+	c.Assert(conf.Tables, DeepEquals, expectedDumpTables)
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
 
 func (s *testConsistencySuite) TestResolveAutoConsistency(c *C) {
@@ -156,7 +157,7 @@ func (s *testConsistencySuite) TestConsistencyControllerError(c *C) {
 
 	// lock table fail
 	conf.Consistency = consistencyTypeLock
-	conf.Tables = NewDatabaseTables().AppendTables("db", "t")
+	conf.Tables = NewDatabaseTables().AppendTables("db", []string{"t"}, []uint64{1})
 	mock.ExpectExec("LOCK TABLE").WillReturnError(errors.New(""))
 	ctrl, _ = NewConsistencyController(ctx, conf, db)
 	err = ctrl.Setup(tctx)
