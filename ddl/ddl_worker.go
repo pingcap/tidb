@@ -125,7 +125,7 @@ func (w *worker) typeStr() string {
 	case generalWorker:
 		str = "general"
 	case addIdxWorker:
-		str = model.AddIndexStr
+		str = "add index"
 	default:
 		str = "unknown"
 	}
@@ -458,8 +458,8 @@ func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
 	return true, nil
 }
 
-func newMetaWithQueueTp(txn kv.Transaction, tp string) *meta.Meta {
-	if tp == model.AddIndexStr || tp == model.AddPrimaryKeyStr {
+func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
+	if tp == addIdxWorker {
 		return meta.NewMeta(txn, meta.AddIndexJobListKey)
 	}
 	return meta.NewMeta(txn)
@@ -500,7 +500,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			var err error
-			t := newMetaWithQueueTp(txn, w.typeStr())
+			t := newMetaWithQueueTp(txn, w.tp)
 			// We become the owner. Get the first job and run it.
 			job, err = w.getFirstDDLJob(t)
 			if job == nil || err != nil {
