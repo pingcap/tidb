@@ -1528,15 +1528,8 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		if p.err != nil {
 			return
 		}
-<<<<<<< HEAD
-=======
-		if err := sessionctx.ValidateStaleReadTS(context.Background(), p.ctx, ts); err != nil {
-			p.err = errors.Trace(err)
-			return
-		}
 		// It means we meet following case:
 		// select statement with as of timestamp
->>>>>>> 59d835eac... executor: support forbid tiflash for stale read (#25828)
 		if !p.initedLastSnapshotTS {
 			p.SnapshotTSEvaluator = func(ctx sessionctx.Context) (uint64, error) {
 				return calculateTsExpr(ctx, node)
