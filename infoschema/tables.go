@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/parser/auth"
 	"io"
 	"net"
 	"net/http"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -1416,7 +1416,7 @@ var viewTidbTrxInfo = infoSchemaViewInfo{
 		tableTiDBTrxImplCols[3:],
 	),
 	selectStmt: "SELECT t.ID, t.START_TIME, t.CURRENT_SQL_DIGEST, s.DIGEST_TEXT AS CURRENT_SQL_DIGEST_TEXT, t.STATE, t.WAITING_START_TIME, t.MEM_BUFFER_KEYS, t.MEM_BUFFER_BYTES, t.SESSION_ID, t.USER, t.DB, t.ALL_SQL_DIGESTS " +
-		"FROM TIDB_TRX_IMPL AS t LEFT JOIN " +
+		"FROM INFORMATION_SCHEMA.TIDB_TRX_IMPL AS t LEFT JOIN " +
 		"(SELECT DIGEST, DIGEST_TEXT FROM INFORMATION_SCHEMA.STATEMENTS_SUMMARY UNION DISTINCT SELECT DIGEST, DIGEST_TEXT FROM INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY) AS s " +
 		"ON t.CURRENT_SQL_DIGEST = s.DIGEST;",
 }
@@ -1841,6 +1841,8 @@ func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Ta
 	}
 	tp := table.VirtualTable
 	if meta.IsView() {
+		// If it's a view instead of a table, regard it as a normal table so that the planner will not choose the
+		// MemTable directly for it.
 		tp = table.NormalTable
 	} else if isClusterTableByName(util.InformationSchemaName.O, meta.Name.O) {
 		tp = table.ClusterTable
