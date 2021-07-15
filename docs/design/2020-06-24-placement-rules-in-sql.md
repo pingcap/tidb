@@ -589,7 +589,7 @@ The only rules are that indexes and partitions inherit the rules of tables. Part
 Thus the priority is:
 
 ```
-db --> table (on create only; and only when placement not explicitly specified)
+db --> table (Copied from db on create if placement not explicitly specified for the table)
 unpartitioned table --> index
 partitioned table --> partition (can be overwritten) --> index
 ```
