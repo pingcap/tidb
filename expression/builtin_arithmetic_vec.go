@@ -46,11 +46,11 @@ func (b *builtinArithmeticMultiplyRealSig) vecEvalReal(input *chunk.Chunk, resul
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		x[i] = x[i] * y[i]
 		if math.IsInf(x[i], 0) {
+			if result.IsNull(i) {
+				continue
+			}
 			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
 		}
 	}
@@ -321,10 +321,10 @@ func (b *builtinArithmeticMinusRealSig) vecEvalReal(input *chunk.Chunk, result *
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		if !math2.IsFinite(x[i] - y[i]) {
+			if result.IsNull(i) {
+				continue
+			}
 			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
 		}
 		x[i] = x[i] - y[i]
@@ -403,13 +403,13 @@ func (b *builtinArithmeticMinusIntSig) vecEvalInt(input *chunk.Chunk, result *ch
 		errType = "BIGINT"
 	}
 	for i := 0; i < len(lhi64s); i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		overflow := b.overflowCheck(isLHSUnsigned, isRHSUnsigned, signed, lh, rh)
 		if overflow {
+			if result.IsNull(i) {
+				continue
+			}
 			return types.ErrOverflow.GenWithStackByArgs(errType, fmt.Sprintf("(%s - %s)", b.args[0].String(), b.args[1].String()))
 		}
 
@@ -520,10 +520,10 @@ func (b *builtinArithmeticPlusRealSig) vecEvalReal(input *chunk.Chunk, result *c
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 		if !math2.IsFinite(x[i] + y[i]) {
+			if result.IsNull(i) {
+				continue
+			}
 			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
 		x[i] = x[i] + y[i]
@@ -669,12 +669,12 @@ func (b *builtinArithmeticMultiplyIntSig) vecEvalInt(input *chunk.Chunk, result 
 	result.MergeNulls(buf)
 	var tmp int64
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 
 		tmp = x[i] * y[i]
 		if (x[i] != 0 && tmp/x[i] != y[i]) || (tmp == math.MinInt64 && x[i] == -1) {
+			if result.IsNull(i) {
+				continue
+			}
 			result.SetNull(i, true)
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
 		}
@@ -796,7 +796,6 @@ func (b *builtinArithmeticIntDivideIntSig) divideUS(result *chunk.Column, lhsI64
 			continue
 		}
 		lhs, rhs := lhsI64s[i], rhsI64s[i]
-
 		if rhs == 0 {
 			if err := handleDivisionByZeroError(b.ctx); err != nil {
 				return err
@@ -1035,12 +1034,12 @@ func (b *builtinArithmeticMultiplyIntUnsignedSig) vecEvalInt(input *chunk.Chunk,
 	result.MergeNulls(buf)
 	var res uint64
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
-			continue
-		}
 
 		res = x[i] * y[i]
 		if x[i] != 0 && res/x[i] != y[i] {
+			if result.IsNull(i) {
+				continue
+			}
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s * %s)", b.args[0].String(), b.args[1].String()))
 		}
 		x[i] = res
