@@ -410,8 +410,8 @@ github.com/phf/go-queue v0.0.0-20170504031614-9abe38d0371d h1:U+PMnTlV2tu7RuMK5e
 github.com/phf/go-queue v0.0.0-20170504031614-9abe38d0371d/go.mod h1:lXfE4PvvTW5xOjO6Mba8zDPyw8M93B6AQ7frTGnMlA8=
 github.com/pingcap/badger v1.5.1-0.20200908111422-2e78ee155d19 h1:IXpGy7y9HyoShAFmzW2OPF0xCA5EOoSTyZHwsgYk9Ro=
 github.com/pingcap/badger v1.5.1-0.20200908111422-2e78ee155d19/go.mod h1:LyrqUOHZrUDf9oGi1yoz1+qw9ckSIhQb5eMa1acOLNQ=
-github.com/pingcap/br v5.2.0-alpha.0.20210611153635-74f18bcbe19d+incompatible h1:L2W8DPb9rD83X15H1gyiFdKwZmi1pEDO8gULxzeDJrA=
-github.com/pingcap/br v5.2.0-alpha.0.20210611153635-74f18bcbe19d+incompatible/go.mod h1:ymVmo50lQydxib0tmK5hHk4oteB7hZ0IMCArunwy3UQ=
+github.com/pingcap/br v5.2.0-alpha.0.20210714104733-65ae7dd3a2f2+incompatible h1:KIh0fJHRB44kRPccXl7V0f5mtzXmR+0mM8vNciWst8g=
+github.com/pingcap/br v5.2.0-alpha.0.20210714104733-65ae7dd3a2f2+incompatible/go.mod h1:ymVmo50lQydxib0tmK5hHk4oteB7hZ0IMCArunwy3UQ=
 github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8/go.mod h1:B1+S9LNcuMyLH/4HMTViQOJevkGiik3wW2AN9zb2fNQ=
 github.com/pingcap/check v0.0.0-20191107115940-caf2b9e6ccf4/go.mod h1:PYMCGwN0JHjoqGr3HrZoD+b8Tgx8bKnArhSq8YVzUMc=
 github.com/pingcap/check v0.0.0-20191216031241-8a5a85928f12/go.mod h1:PYMCGwN0JHjoqGr3HrZoD+b8Tgx8bKnArhSq8YVzUMc=
@@ -561,8 +561,6 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfK
 github.com/tidwall/gjson v1.3.5/go.mod h1:P256ACg0Mn+j1RXIDXoss50DeIABTYK1PULOJHhxOls=
 github.com/tidwall/match v1.0.1/go.mod h1:LujAq0jyVjBy028G1WhWfIzbpQfMO8bBZ6Tyb0+pL9E=
 github.com/tidwall/pretty v1.0.0/go.mod h1:XNkn88O1ChpSDQmQeStsy+sBenx6DDtFZJxhVysOjyk=
-github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210712082038-2c7970b2b7e8 h1:xMbxiAVbJPzzrITV8yqUBgltm4GNdYebkuwUBB5RX9Y=
-github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210712082038-2c7970b2b7e8/go.mod h1:+bOiuuZZUqIq19EqyhTWQFaB0PeXLOh/il1vnVZx3Tk=
 github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210715021615-05398690243f h1:lNw2kTpDx+mMjyNEouHMVog4GKlw2Z5wjQOmNyigBRM=
 github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210715021615-05398690243f/go.mod h1:+bOiuuZZUqIq19EqyhTWQFaB0PeXLOh/il1vnVZx3Tk=
 github.com/tikv/pd v1.1.0-beta.0.20210323121136-78679e5e209d h1:K0XnvsnT6ofLDuM8Rt3PuFQO4p8bNraeHYstspD316g=

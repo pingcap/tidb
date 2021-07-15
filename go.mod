@@ -37,7 +37,7 @@ require (
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20200908111422-2e78ee155d19
-	github.com/pingcap/br v5.2.0-alpha.0.20210611153635-74f18bcbe19d+incompatible
+	github.com/pingcap/br v5.2.0-alpha.0.20210714104733-65ae7dd3a2f2+incompatible
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20210425183316-da1aaba5fb63
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
@@ -78,7 +78,6 @@ require (
 	golang.org/x/tools v0.1.4
 	google.golang.org/grpc v1.27.1
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
-	honnef.co/go/tools v0.2.0 // indirect
 	modernc.org/mathutil v1.2.2 // indirect
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
