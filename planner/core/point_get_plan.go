@@ -373,7 +373,7 @@ func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
 			buffer.WriteString("handle:?, ")
 		} else {
 			buffer.WriteString("handle:[")
-			for  i, handle := range p.Handles{
+			for i, handle := range p.Handles {
 				if i != 0 {
 					buffer.WriteString(" ")
 				}
