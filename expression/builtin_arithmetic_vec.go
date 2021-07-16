@@ -33,7 +33,7 @@ func (b *builtinArithmeticMultiplyRealSig) vecEvalReal(input *chunk.Chunk, resul
 		return err
 	}
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETReal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -66,7 +66,7 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 		return err
 	}
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -116,8 +116,7 @@ func (b *builtinArithmeticModIntUnsignedUnsignedSig) vectorized() bool {
 }
 
 func (b *builtinArithmeticModIntUnsignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	lh, err := b.bufAllocator.get(types.ETInt, n)
+	lh, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -161,8 +160,7 @@ func (b *builtinArithmeticModIntUnsignedSignedSig) vectorized() bool {
 }
 
 func (b *builtinArithmeticModIntUnsignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	lh, err := b.bufAllocator.get(types.ETInt, n)
+	lh, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -210,8 +208,7 @@ func (b *builtinArithmeticModIntSignedUnsignedSig) vectorized() bool {
 }
 
 func (b *builtinArithmeticModIntSignedUnsignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	lh, err := b.bufAllocator.get(types.ETInt, n)
+	lh, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -259,8 +256,7 @@ func (b *builtinArithmeticModIntSignedSignedSig) vectorized() bool {
 }
 
 func (b *builtinArithmeticModIntSignedSignedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	lh, err := b.bufAllocator.get(types.ETInt, n)
+	lh, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -308,7 +304,7 @@ func (b *builtinArithmeticMinusRealSig) vecEvalReal(input *chunk.Chunk, result *
 		return err
 	}
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETReal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -341,7 +337,7 @@ func (b *builtinArithmeticMinusDecimalSig) vecEvalDecimal(input *chunk.Chunk, re
 		return err
 	}
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -371,8 +367,7 @@ func (b *builtinArithmeticMinusIntSig) vectorized() bool {
 }
 
 func (b *builtinArithmeticMinusIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	lh, err := b.bufAllocator.get(types.ETInt, n)
+	lh, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -425,7 +420,7 @@ func (b *builtinArithmeticModRealSig) vectorized() bool {
 
 func (b *builtinArithmeticModRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETReal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -465,7 +460,7 @@ func (b *builtinArithmeticModDecimalSig) vecEvalDecimal(input *chunk.Chunk, resu
 		return err
 	}
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -507,7 +502,7 @@ func (b *builtinArithmeticPlusRealSig) vecEvalReal(input *chunk.Chunk, result *c
 		return err
 	}
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETReal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -540,7 +535,7 @@ func (b *builtinArithmeticMultiplyDecimalSig) vecEvalDecimal(input *chunk.Chunk,
 		return err
 	}
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -577,7 +572,7 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 	var buf [2]*chunk.Column
 	var num [2][]types.MyDecimal
 	for i, arg := range b.args {
-		if buf[i], err = b.bufAllocator.get(types.ETDecimal, n); err != nil {
+		if buf[i], err = b.bufAllocator.get(); err != nil {
 			return err
 		}
 		defer b.bufAllocator.put(buf[i])
@@ -654,7 +649,7 @@ func (b *builtinArithmeticMultiplyIntSig) vecEvalInt(input *chunk.Chunk, result 
 		return err
 	}
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -694,7 +689,7 @@ func (b *builtinArithmeticDivideRealSig) vecEvalReal(input *chunk.Chunk, result 
 		return err
 	}
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETReal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -731,8 +726,7 @@ func (b *builtinArithmeticIntDivideIntSig) vectorized() bool {
 }
 
 func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	lhsBuf, err := b.bufAllocator.get(types.ETInt, n)
+	lhsBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -863,8 +857,7 @@ func (b *builtinArithmeticPlusIntSig) vectorized() bool {
 }
 
 func (b *builtinArithmeticPlusIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	lh, err := b.bufAllocator.get(types.ETInt, n)
+	lh, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -985,7 +978,7 @@ func (b *builtinArithmeticPlusDecimalSig) vecEvalDecimal(input *chunk.Chunk, res
 		return err
 	}
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1019,7 +1012,7 @@ func (b *builtinArithmeticMultiplyIntUnsignedSig) vecEvalInt(input *chunk.Chunk,
 		return err
 	}
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}

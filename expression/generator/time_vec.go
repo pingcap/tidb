@@ -93,7 +93,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 	}
 	buf0 := result
 {{ else }}
-	buf0, err := b.bufAllocator.get(types.ET{{.TypeA.ETName}}, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -114,7 +114,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 	}
 {{ end }}
 
-	buf1, err := b.bufAllocator.get(types.ET{{.TypeB.ETName}}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -351,14 +351,14 @@ func (b *{{.SigName}}) vectorized() bool {
 
 var timeDiff = template.Must(template.New("").Parse(`
 {{ define "BufAllocator0" }}
-	buf0, err := b.bufAllocator.get(types.ET{{.TypeA.ETName}}, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
 {{ end }}
 {{ define "BufAllocator1" }}
-	buf1, err := b.bufAllocator.get(types.ET{{.TypeB.ETName}}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -540,7 +540,7 @@ func (b *{{.SigName}}) vecEvalTime(input *chunk.Chunk, result *chunk.Column) err
 		return nil
 	}
 
-	intervalBuf, err := b.bufAllocator.get(types.ETString, n)
+	intervalBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
