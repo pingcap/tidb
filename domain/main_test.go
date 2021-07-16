@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,21 +16,15 @@ package domain
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/assert"
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-func TestDomain(t *testing.T) {
-	t.Parallel()
-
-	ctx := mock.NewContext()
-	assert.NotEqual(t, "", domainKey.String())
-
-	BindDomain(ctx, nil)
-	v := GetDomain(ctx)
-	assert.Nil(t, v)
-
-	ctx.ClearValue(domainKey)
-	v = GetDomain(ctx)
-	assert.Nil(t, v)
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	}
+	goleak.VerifyTestMain(m, opts...)
 }
