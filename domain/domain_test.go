@@ -413,7 +413,6 @@ func unixSocketAvailable() bool {
 	return false
 }
 
-
 func mockFactory() (pools.Resource, error) {
 	return nil, errors.New("mock factory should not be called")
 }

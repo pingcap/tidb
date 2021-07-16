@@ -31,7 +31,7 @@ func TestIntegration(t *testing.T) {
 		assert.NoError(t, err)
 	}()
 
-	session.SetSchemaLease(50*time.Millisecond)
+	session.SetSchemaLease(50 * time.Millisecond)
 
 	domain, err := session.BootstrapSession(store)
 	assert.NoError(t, err)
