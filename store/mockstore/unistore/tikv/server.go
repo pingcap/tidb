@@ -636,7 +636,12 @@ func (mrm *MockRegionManager) removeMPPTaskHandler(taskID int64, storeID uint64)
 	return errors.New("cannot find mpp task")
 }
 
-// DispatchMPPTask implements implements the tikvpb.TikvServer interface.
+// IsAlive implements the tikvpb.TikvServer interface.
+func (svr *Server) IsAlive(_ context.Context, _ *mpp.IsAliveRequest) (*mpp.IsAliveResponse, error) {
+	panic("todo")
+}
+
+// DispatchMPPTask implements the tikvpb.TikvServer interface.
 func (svr *Server) DispatchMPPTask(_ context.Context, _ *mpp.DispatchTaskRequest) (*mpp.DispatchTaskResponse, error) {
 	panic("todo")
 }
