@@ -14,6 +14,7 @@
 package structure
 
 import (
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -45,4 +46,8 @@ type TxStructure struct {
 	reader     kv.Retriever
 	readWriter kv.RetrieverMutator
 	prefix     []byte
+}
+
+func (t *TxStructure) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	t.readWriter.SetDiskFullOpt(level)
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -220,6 +221,7 @@ func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 	startTime := time.Now()
 	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		var err1 error
+		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
 		m := meta.NewMeta(txn)
 		autoID, err1 = GetAutoID(m, alloc.dbID, tableID, alloc.allocType)
 		if err1 != nil {

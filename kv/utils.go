@@ -18,10 +18,12 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 // IncInt64 increases the value for key k in kv store by step.
 func IncInt64(rm RetrieverMutator, k Key, step int64) (int64, error) {
+	rm.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
 	val, err := rm.Get(context.TODO(), k)
 	if IsErrNotFound(err) {
 		err = rm.Set(k, []byte(strconv.FormatInt(step, 10)))

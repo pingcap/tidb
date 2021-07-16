@@ -239,6 +239,7 @@ func createSession(store kv.Storage) session.Session {
 		privilege.BindPrivilegeManager(se, nil)
 		se.GetSessionVars().CommonGlobalLoaded = true
 		se.GetSessionVars().InRestrictedSQL = true
+		se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
 		return se
 	}
 }
@@ -363,6 +364,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
+
 	if !enable {
 		logutil.Logger(ctx).Warn("[gc worker] gc status is disabled.")
 		return false, 0, nil
@@ -805,7 +807,7 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 	req := tikvrpc.NewRequest(tikvrpc.CmdUnsafeDestroyRange, &kvrpcpb.UnsafeDestroyRangeRequest{
 		StartKey: startKey,
 		EndKey:   endKey,
-	})
+	}, kvrpcpb.Context{DiskFullOpt: kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull})
 
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(stores))
@@ -1692,7 +1694,6 @@ func (w *GCWorker) checkLeader() (bool, error) {
 		}
 		return true, nil
 	}
-
 	se.RollbackTxn(ctx)
 
 	_, err = se.ExecuteInternal(ctx, "BEGIN")

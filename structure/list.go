@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 )
 
@@ -117,13 +118,16 @@ func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
+	t.readWriter.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
 	if err = t.readWriter.Delete(dataKey); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	if !meta.IsEmpty() {
+		t.readWriter.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
 		err = t.readWriter.Set(metaKey, meta.Value())
 	} else {
+		t.readWriter.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
 		err = t.readWriter.Delete(metaKey)
 	}
 

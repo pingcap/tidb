@@ -18,6 +18,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 )
 
@@ -26,6 +27,7 @@ func (t *TxStructure) Set(key []byte, value []byte) error {
 	if t.readWriter == nil {
 		return ErrWriteOnSnapshot
 	}
+	t.readWriter.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
 	ek := t.encodeStringDataKey(key)
 	return t.readWriter.Set(ek, value)
 }
@@ -54,6 +56,7 @@ func (t *TxStructure) GetInt64(key []byte) (int64, error) {
 // Inc increments the integer value of a key by step, returns
 // the value after the increment.
 func (t *TxStructure) Inc(key []byte, step int64) (int64, error) {
+	t.readWriter.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
 	if t.readWriter == nil {
 		return 0, ErrWriteOnSnapshot
 	}
@@ -68,6 +71,7 @@ func (t *TxStructure) Inc(key []byte, step int64) (int64, error) {
 
 // Clear removes the string value of the key.
 func (t *TxStructure) Clear(key []byte) error {
+	t.readWriter.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
 	if t.readWriter == nil {
 		return ErrWriteOnSnapshot
 	}
