@@ -1227,7 +1227,7 @@ func (b *builtinJSONMergePatchSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 	argBuffers := make([]*chunk.Column, len(b.args))
 	var err error
 	for i, arg := range b.args {
-		if argBuffers[i], err = b.bufAllocator.get(types.ETJson, nr); err != nil {
+		if argBuffers[i], err = b.bufAllocator.get(); err != nil {
 			return err
 		}
 		defer func(buf *chunk.Column) {
