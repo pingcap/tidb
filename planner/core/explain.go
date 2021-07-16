@@ -243,7 +243,7 @@ func (p *PhysicalTableScan) AccessObject(normalized bool) string {
 
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
-	buffer := bytes.NewBufferString("")
+	var buffer strings.Builder
 	for i, pkCol := range p.PkCols {
 		switch i {
 		case 0:
@@ -259,16 +259,28 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		}
 	}
 	if len(p.rangeDecidedBy) > 0 {
-		// TODO: optimize Fprintf
-		fmt.Fprintf(buffer, "range: decided by %v, ", p.rangeDecidedBy)
+		buffer.WriteString("range: decided by [")
+		for i, rangeDecidedBy := range p.rangeDecidedBy {
+			if i != 0 {
+				buffer.WriteString(" ")
+			}
+			buffer.WriteString(rangeDecidedBy.String())
+		}
+		buffer.WriteString("], ")
 	} else if p.haveCorCol() {
 		if normalized {
 			buffer.WriteString("range: decided by ")
 			buffer.Write(expression.SortedExplainNormalizedExpressionList(p.AccessCondition))
 			buffer.WriteString(", ")
 		} else {
-			// TODO: optimize Fprintf
-			fmt.Fprintf(buffer, "range: decided by %v, ", p.AccessCondition)
+			buffer.WriteString("range: decided by [")
+			for i, AccessCondition := range p.AccessCondition {
+				if i != 0 {
+					buffer.WriteString(" ")
+				}
+				buffer.WriteString(AccessCondition.String())
+			}
+			buffer.WriteString("], ")
 		}
 	} else if len(p.Ranges) > 0 {
 		if normalized {
@@ -635,7 +647,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 		sortedExplainExpressionList = expression.SortedExplainNormalizedExpressionList
 	}
 
-	buffer := new(bytes.Buffer)
+	buffer := new(strings.Builder)
 
 	if len(p.EqualConditions) == 0 {
 		buffer.WriteString("CARTESIAN ")
@@ -648,8 +660,14 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 			buffer.WriteString(", equal:")
 			buffer.Write(expression.SortedExplainNormalizedScalarFuncList(p.EqualConditions))
 		} else {
-			// TODO: optimize Fprintf
-			fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
+			buffer.WriteString(", equal:[")
+			for i, EqualConditions := range p.EqualConditions {
+				if i != 0 {
+					buffer.WriteString(" ")
+				}
+				buffer.WriteString(EqualConditions.String())
+			}
+			buffer.WriteString("]")
 		}
 	}
 	if len(p.LeftConditions) > 0 {
@@ -657,8 +675,14 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 			buffer.WriteString(", left cond:")
 			buffer.Write(expression.SortedExplainNormalizedExpressionList(p.LeftConditions))
 		} else {
-			// TODO: optimize Fprintf
-			fmt.Fprintf(buffer, ", left cond:%s", p.LeftConditions)
+			buffer.WriteString(", left cond:[")
+			for i, LeftConditions := range p.LeftConditions {
+				if i != 0 {
+					buffer.WriteString(" ")
+				}
+				buffer.WriteString(LeftConditions.String())
+			}
+			buffer.WriteString("]")
 		}
 	}
 	if len(p.RightConditions) > 0 {
