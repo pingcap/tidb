@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"container/list"
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
@@ -256,10 +256,10 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	// All times are counted in seconds.
 	now := time.Now().Unix()
 
-	failpoint.Inject("mockTimeForStatementsSummary", func(val failpoint.Value){
+	failpoint.Inject("mockTimeForStatementsSummary", func(val failpoint.Value) {
 		// mockTimeForStatementsSummary takes string of Unix timestamp
-		if unixTimeStr, ok := val.(string); ok{
-			unixTime, err := strconv.ParseInt(unixTimeStr,10,64)
+		if unixTimeStr, ok := val.(string); ok {
+			unixTime, err := strconv.ParseInt(unixTimeStr, 10, 64)
 			if err != nil {
 				panic(err.Error())
 			} else {

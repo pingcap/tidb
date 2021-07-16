@@ -1421,7 +1421,7 @@ func (s *testTableSuite) TestSimpleStmtSummaryEvictedCount(c *C) {
 	historySize := 24
 	fpPath := "github.com/pingcap/tidb/util/stmtsummary/mockTimeForStatementsSummary"
 	for i := int64(0); i < 100; i++ {
-		err := failpoint.Enable(fpPath, fmt.Sprintf(`return("%v")`, time.Now().Unix() + interval*i))
+		err := failpoint.Enable(fpPath, fmt.Sprintf(`return("%v")`, time.Now().Unix()+interval*i))
 		if err != nil {
 			panic(err.Error())
 		}
@@ -1452,7 +1452,7 @@ func (s *testTableSuite) TestSimpleStmtSummaryEvictedCount(c *C) {
 	tk.MustQuery("select BEGIN_TIME from information_schema.statements_summary_evicted;").
 		Check(testkit.
 			Rows(time.Unix(beginTimeForCurInterval+2*interval, 0).Format("2006-01-02 15:04:05"),
-				time.Unix(beginTimeForCurInterval,0).Format("2006-01-02 15:04:05")))
+				time.Unix(beginTimeForCurInterval, 0).Format("2006-01-02 15:04:05")))
 	failpoint.Disable(fpPath)
 	// TODO: Add more tests.
 }
@@ -1496,8 +1496,8 @@ func (s *testTableSuite) TestStmtSummaryEvictPointGet(c *C) {
 	tk.MustExec("create database point_get;")
 	tk.MustExec("use point_get;")
 	for i := 0; i < 6; i++ {
-		tk.MustExec(fmt.Sprintf("create table if not exists th%v (" +
-			"p bigint key," +
+		tk.MustExec(fmt.Sprintf("create table if not exists th%v ("+
+			"p bigint key,"+
 			"q int);", i))
 	}
 
@@ -1507,7 +1507,7 @@ func (s *testTableSuite) TestStmtSummaryEvictPointGet(c *C) {
 	// first SQL
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=1;")
 
-	for i := int64(0); i < 1000; i++{
+	for i := int64(0); i < 1000; i++ {
 		// six SQLs
 		tk.MustExec(fmt.Sprintf("select p from th%v where p=2333;", i%6))
 	}
