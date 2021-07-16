@@ -1891,6 +1891,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		mppShuffleJoin:   !useBCJ,
 		// Mpp Join has quite heavy cost. Even limit might not suspend it in time, so we dont scale the count.
 	}.Init(p.ctx, p.stats, p.blockOffset, childrenProps...)
+	join.SetSchema(p.schema)
 	return []PhysicalPlan{join}
 }
 
