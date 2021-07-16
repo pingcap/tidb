@@ -14,13 +14,12 @@
 package bitmap
 
 import (
-	"github.com/stretchr/testify/assert"
 	"sync"
 	"sync/atomic"
 	"testing"
-)
 
-type testBitmap struct{}
+	"github.com/stretchr/testify/assert"
+)
 
 func TestConcurrentBitmapSet(t *testing.T) {
 	t.Parallel()
@@ -41,9 +40,9 @@ func TestConcurrentBitmapSet(t *testing.T) {
 
 	for i := 0; i < loopCount; i++ {
 		if i%interval == 0 {
-			assert.Equal(t,true,bm.UnsafeIsSet(i))
+			assert.Equal(t, true, bm.UnsafeIsSet(i))
 		} else {
-			assert.Equal(t,false,bm.UnsafeIsSet(i))
+			assert.Equal(t, false, bm.UnsafeIsSet(i))
 		}
 	}
 }
@@ -78,6 +77,6 @@ func TestConcurrentBitmapUniqueSetter(t *testing.T) {
 		}
 	}
 	wg.Wait()
-	assert.Equal(t,clearCounter < loopCount,true )
+	assert.Equal(t, clearCounter < loopCount, true)
 	assert.Equal(t, setterCounter, clearCounter+1)
 }
