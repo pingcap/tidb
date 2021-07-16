@@ -1228,3 +1228,145 @@ func (s *testPrivilegeSuite) TestViewDefiner(c *C) {
 	tk.MustExec("select * from test_view")
 	tk.MustExec("select * from test_view2")
 }
+<<<<<<< HEAD
+=======
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedModeRestrictedUsers(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER ruroot1, ruroot2, ruroot3")
+	tk.MustExec("CREATE ROLE notimportant")
+	tk.MustExec("GRANT SUPER, CREATE USER ON *.* to ruroot1 WITH GRANT OPTION")
+	tk.MustExec("GRANT SUPER, RESTRICTED_USER_ADMIN,  CREATE USER  ON *.* to ruroot2 WITH GRANT OPTION")
+	tk.MustExec("GRANT RESTRICTED_USER_ADMIN ON *.* to ruroot3")
+	tk.MustExec("GRANT notimportant TO ruroot2, ruroot3")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	stmts := []string{
+		"SET PASSWORD for ruroot3 = 'newpassword'",
+		"REVOKE notimportant FROM ruroot3",
+		"REVOKE SUPER ON *.* FROM ruroot3",
+		"DROP USER ruroot3",
+	}
+
+	// ruroot1 has SUPER but in SEM will be restricted
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "ruroot1",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	for _, stmt := range stmts {
+		err := tk.ExecToErr(stmt)
+		c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+	}
+
+	// Switch to ruroot2, it should be permitted
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "ruroot2",
+		Hostname:     "localhost",
+		AuthUsername: "uroot",
+		AuthHostname: "%",
+	}, nil, nil)
+
+	for _, stmt := range stmts {
+		err := tk.ExecToErr(stmt)
+		c.Assert(err, IsNil)
+	}
+}
+
+func (s *testPrivilegeSuite) TestDynamicPrivsRegistration(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	pm := privilege.GetPrivilegeManager(se)
+
+	count := len(privileges.GetDynamicPrivileges())
+
+	c.Assert(pm.IsDynamicPrivilege("ACDC_ADMIN"), IsFalse)
+	c.Assert(privileges.RegisterDynamicPrivilege("ACDC_ADMIN"), IsNil)
+	c.Assert(pm.IsDynamicPrivilege("ACDC_ADMIN"), IsTrue)
+	c.Assert(len(privileges.GetDynamicPrivileges()), Equals, count+1)
+
+	c.Assert(pm.IsDynamicPrivilege("iAmdynamIC"), IsFalse)
+	c.Assert(privileges.RegisterDynamicPrivilege("IAMdynamic"), IsNil)
+	c.Assert(pm.IsDynamicPrivilege("IAMdyNAMIC"), IsTrue)
+	c.Assert(len(privileges.GetDynamicPrivileges()), Equals, count+2)
+
+	c.Assert(privileges.RegisterDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS").Error(), Equals, "privilege name is longer than 32 characters")
+	c.Assert(pm.IsDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS"), IsFalse)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER privassigntest")
+
+	// Check that all privileges registered are assignable to users,
+	// including the recently registered ACDC_ADMIN
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		sqlGrant, err := sqlexec.EscapeSQL("GRANT %n ON *.* TO privassigntest", priv)
+		c.Assert(err, IsNil)
+		tk.MustExec(sqlGrant)
+	}
+	// Check that all privileges registered are revokable
+	for _, priv := range privileges.GetDynamicPrivileges() {
+		sqlGrant, err := sqlexec.EscapeSQL("REVOKE %n ON *.* FROM privassigntest", priv)
+		c.Assert(err, IsNil)
+		tk.MustExec(sqlGrant)
+	}
+}
+
+func (s *testPrivilegeSuite) TestInfoschemaUserPrivileges(c *C) {
+	// Being able to read all privileges from information_schema.user_privileges requires a very specific set of permissions.
+	// SUPER user is not sufficient. It was observed in MySQL to require SELECT on mysql.*
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER isnobody, isroot, isselectonmysqluser, isselectonmysql")
+	tk.MustExec("GRANT SUPER ON *.* TO isroot")
+	tk.MustExec("GRANT SELECT ON mysql.user TO isselectonmysqluser")
+	tk.MustExec("GRANT SELECT ON mysql.* TO isselectonmysql")
+
+	// First as Nobody
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "isnobody",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	// I can see myself, but I can not see other users
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows("'isnobody'@'%' def USAGE NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows())
+
+	// Basically the same result as as isselectonmysqluser
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "isselectonmysqluser",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	// Now as isselectonmysqluser
+	// Tests discovered issue that SELECT on mysql.user is not sufficient. It must be on mysql.*
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows("'isselectonmysqluser'@'%' def USAGE NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysql'@'%'"`).Check(testkit.Rows())
+
+	// Now as root
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "isroot",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	// I can see myself, but I can not see other users
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows("'isroot'@'%' def Super NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows())
+
+	// Now as isselectonmysqluser
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "isselectonmysql",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	// Now as isselectonmysqluser
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows("'isnobody'@'%' def USAGE NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows("'isroot'@'%' def Super NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows("'isselectonmysqluser'@'%' def USAGE NO"))
+}
+>>>>>>> 723e2bc6d... executor, privileges: fix infoschema.user_privileges privilege requirements (#26070)

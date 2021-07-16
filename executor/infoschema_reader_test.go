@@ -358,6 +358,31 @@ func (s *testInfoschemaTableSuite) TestUserPrivileges(c *C) {
 	c.Assert(len(result.Rows()), Greater, 0)
 }
 
+<<<<<<< HEAD
+=======
+func (s *testInfoschemaTableSuite) TestUserPrivilegesTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
+
+	// test the privilege of new user for information_schema.user_privileges
+	tk.MustExec("create user usageuser")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "usageuser",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def USAGE NO"))
+	// the usage row disappears when there is a non-dynamic privilege added
+	tk1.MustExec("GRANT SELECT ON *.* to usageuser")
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def Select NO"))
+	// test grant privilege
+	tk1.MustExec("GRANT SELECT ON *.* to usageuser WITH GRANT OPTION")
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def Select YES"))
+	// test DYNAMIC privs
+	tk1.MustExec("GRANT BACKUP_ADMIN ON *.* to usageuser")
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'" ORDER BY privilege_type`).Check(testkit.Rows("'usageuser'@'%' def BACKUP_ADMIN NO", "'usageuser'@'%' def Select YES"))
+}
+
+>>>>>>> 723e2bc6d... executor, privileges: fix infoschema.user_privileges privilege requirements (#26070)
 func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 	s.dom.SetStatsUpdating(true)
 	oldExpiryTime := executor.TableStatsCacheExpiry

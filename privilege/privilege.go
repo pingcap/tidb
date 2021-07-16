@@ -54,8 +54,13 @@ type Manager interface {
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
 
+<<<<<<< HEAD
 	// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGE table.
 	UserPrivilegesTable() [][]types.Datum
+=======
+	// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USER_PRIVILEGES table.
+	UserPrivilegesTable(activeRoles []*auth.RoleIdentity, user, host string) [][]types.Datum
+>>>>>>> 723e2bc6d... executor, privileges: fix infoschema.user_privileges privilege requirements (#26070)
 
 	// ActiveRoles active roles for current session.
 	// The first illegal role will be returned.
