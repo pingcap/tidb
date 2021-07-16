@@ -4751,6 +4751,7 @@ func (s *testParserSuite) TestSessionManage(c *C) {
 		{"show processlist", true, "SHOW PROCESSLIST"},
 		{"show full processlist", true, "SHOW FULL PROCESSLIST"},
 		{"shutdown", true, "SHUTDOWN"},
+		{"restart", true, "RESTART"},
 	}
 	s.RunTest(c, table)
 }
