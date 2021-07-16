@@ -1185,8 +1185,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldType, args ...expression.Expression) (ret expression.Expression, err error) {
 	if er.disableFoldCounter > 0 {
 		ret, err = expression.NewFunctionBase(er.sctx, funcName, retType, args...)
-	}
-	if er.tryFoldCounter > 0 {
+	} else if er.tryFoldCounter > 0 {
 		ret, err = expression.NewFunctionTryFold(er.sctx, funcName, retType, args...)
 	} else {
 		ret, err = expression.NewFunction(er.sctx, funcName, retType, args...)
