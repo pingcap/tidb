@@ -50,6 +50,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -1021,11 +1022,11 @@ func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, con
 		zap.Int("concurrency", concurrency))
 	startTime := time.Now()
 
-	handler := func(ctx context.Context, r tikvstore.KeyRange) (tikv.RangeTaskStat, error) {
+	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 		return w.resolveLocksForRange(ctx, safePoint, r.StartKey, r.EndKey)
 	}
 
-	runner := tikv.NewRangeTaskRunner("resolve-locks-runner", w.tikvStore, concurrency, handler)
+	runner := rangetask.NewRangeTaskRunner("resolve-locks-runner", w.tikvStore, concurrency, handler)
 	// Run resolve lock on the whole TiKV cluster. Empty keys means the range is unbounded.
 	err := runner.RunOnRange(ctx, []byte(""), []byte(""))
 	if err != nil {
@@ -1044,7 +1045,7 @@ func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, con
 	return nil
 }
 
-func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, startKey []byte, endKey []byte) (tikv.RangeTaskStat, error) {
+func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, startKey []byte, endKey []byte) (rangetask.TaskStat, error) {
 	// for scan lock request, we must return all locks even if they are generated
 	// by the same transaction. because gc worker need to make sure all locks have been
 	// cleaned.
@@ -1057,7 +1058,7 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		req.ScanLock().Limit = 3
 	})
 
-	var stat tikv.RangeTaskStat
+	var stat rangetask.TaskStat
 	key := startKey
 	bo := tikv.NewGcResolveLockMaxBackoffer(ctx)
 	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
@@ -1547,8 +1548,8 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 	return nil
 }
 
-func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []byte, safePoint uint64) (tikv.RangeTaskStat, error) {
-	var stat tikv.RangeTaskStat
+func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []byte, safePoint uint64) (rangetask.TaskStat, error) {
+	var stat rangetask.TaskStat
 	defer func() {
 		metrics.GCActionRegionResultCounter.WithLabelValues("success").Add(float64(stat.CompletedRegions))
 		metrics.GCActionRegionResultCounter.WithLabelValues("fail").Add(float64(stat.FailedRegions))
@@ -1631,11 +1632,11 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) 
 		zap.Uint64("safePoint", safePoint))
 	startTime := time.Now()
 
-	runner := tikv.NewRangeTaskRunner(
+	runner := rangetask.NewRangeTaskRunner(
 		"gc-runner",
 		w.tikvStore,
 		concurrency,
-		func(ctx context.Context, r tikvstore.KeyRange) (tikv.RangeTaskStat, error) {
+		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			return w.doGCForRange(ctx, r.StartKey, r.EndKey, safePoint)
 		})
 
