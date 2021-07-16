@@ -16,7 +16,6 @@ package executor_test
 import (
 	"flag"
 	"fmt"
-	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -542,7 +541,7 @@ func (s *testSuite3) TestUpdateInvalidYear(c *C) {
 
 	tk.MustExec(`set sql_mode = 'STRICT_TRANS_TABLES';`)
 	_, err = tk.Exec(`update t1 set y=1900;`)
-	c.Assert(strings.Contains(err.Error(), "Out of range value for column 'y' at row 1"), IsTrue, Commentf("%v", err))
+	c.Assert(err.Error(), Equals, `[types:8033]invalid year`)
 	_, err = tk.Exec(`update ignore t1 set y=1900;`)
 	c.Assert(err, IsNil)
 	tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|",

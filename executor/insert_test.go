@@ -335,7 +335,7 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a year);`)
 	_, err = tk.Exec(`insert into t values(2156);`)
-	c.Assert(err.Error(), Equals, `[types:1264]Out of range value for column 'a' at row 1`)
+	c.Assert(err.Error(), Equals, `[types:8033]invalid year`)
 }
 
 func (s *testSuite3) TestInsertValueForCastDecimalField(c *C) {
@@ -488,8 +488,7 @@ func (s *testSuite3) TestInsertInvalidYear(c *C) {
 
 	tk.MustExec(`set sql_mode = 'STRICT_TRANS_TABLES';`)
 	_, err := tk.Exec(`insert into t1 values(1900), (2156), ("1900"), ("2156");`)
-	c.Assert(err, NotNil)
-	c.Assert(strings.Contains(err.Error(), "Out of range value for column 'y' at row 1"), IsTrue, Commentf("%v", err))
+	c.Assert(err.Error(), Equals, `[types:8033]invalid year`)
 
 	_, err = tk.Exec(`insert ignore into t1 values(1900), (2156), ("1900"), ("2156");`)
 	c.Assert(err, IsNil)

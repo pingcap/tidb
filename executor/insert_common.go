@@ -297,7 +297,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 
 	if types.ErrDataTooLong.Equal(err) {
 		err = resetErrDataTooLong(colName, rowIdx+1, err)
-	} else if types.ErrOverflow.Equal(err) || types.ErrInvalidYear.Equal(err) {
+	} else if types.ErrOverflow.Equal(err) {
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
 	} else if types.ErrTruncated.Equal(err) {
 		err = types.ErrTruncated.GenWithStackByArgs(colName, rowIdx+1)
