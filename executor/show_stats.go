@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -25,8 +24,8 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func (e *ShowExec) fetchShowStatsExtended() error {
@@ -203,7 +202,7 @@ func (e *ShowExec) histogramToRow(dbName, tblName, partitionName, colName string
 }
 
 func (e *ShowExec) versionToTime(version uint64) types.Time {
-	t := time.Unix(0, oracle.ExtractPhysical(version)*int64(time.Millisecond))
+	t := oracle.GetTimeFromTS(version)
 	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, 0)
 }
 

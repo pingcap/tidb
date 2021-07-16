@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
@@ -74,7 +73,7 @@ func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Conte
 		}
 		e.initializeAsyncParsing(ctx, sctx)
 	}
-	rows, retrieved, err := e.dataForSlowLog(ctx)
+	rows, retrieved, err := e.dataForSlowLog(ctx, sctx)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +192,7 @@ func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessi
 	e.parseSlowLog(ctx, sctx, reader, ParseSlowLogBatchSize)
 }
 
-func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, bool, error) {
+func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, bool, error) {
 	var (
 		task slowLogTask
 		ok   bool
@@ -216,7 +215,7 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datu
 			continue
 		}
 		if e.table.Name.L == strings.ToLower(infoschema.ClusterTableSlowLog) {
-			rows, err := infoschema.AppendHostInfoToRows(rows)
+			rows, err := infoschema.AppendHostInfoToRows(sctx, rows)
 			return rows, false, err
 		}
 		return rows, false, nil
@@ -553,10 +552,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 				} else {
 					fieldValues := strings.Split(line, " ")
 					for i := 0; i < len(fieldValues)-1; i += 2 {
-						field := fieldValues[i]
-						if strings.HasSuffix(field, ":") {
-							field = field[:len(field)-1]
-						}
+						field := strings.TrimSuffix(fieldValues[i], ":")
 						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], fileLine, e.checker)
 						if err != nil {
 							sctx.GetSessionVars().StmtCtx.AppendWarning(err)
@@ -998,11 +994,11 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		}
 		return nil
 	}
-	files, err := ioutil.ReadDir(logDir)
+	files, err := os.ReadDir(logDir)
 	if err != nil {
 		return nil, err
 	}
-	walkFn := func(path string, info os.FileInfo) error {
+	walkFn := func(path string, info os.DirEntry) error {
 		if info.IsDir() {
 			return nil
 		}

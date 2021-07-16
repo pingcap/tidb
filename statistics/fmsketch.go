@@ -60,6 +60,9 @@ func (s *FMSketch) Copy() *FMSketch {
 
 // NDV returns the ndv of the sketch.
 func (s *FMSketch) NDV() int64 {
+	if s == nil {
+		return 0
+	}
 	return int64(s.mask+1) * int64(len(s.hashset))
 }
 
@@ -88,6 +91,25 @@ func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) 
 	_, err = s.hashFunc.Write(bytes)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	s.insertHashValue(s.hashFunc.Sum64())
+	return nil
+}
+
+// InsertRowValue inserts multi-column values to the sketch.
+func (s *FMSketch) InsertRowValue(sc *stmtctx.StatementContext, values []types.Datum) error {
+	b := make([]byte, 0, 8)
+	s.hashFunc.Reset()
+	for _, v := range values {
+		b = b[:0]
+		b, err := codec.EncodeValue(sc, b, v)
+		if err != nil {
+			return err
+		}
+		_, err = s.hashFunc.Write(b)
+		if err != nil {
+			return err
+		}
 	}
 	s.insertHashValue(s.hashFunc.Sum64())
 	return nil

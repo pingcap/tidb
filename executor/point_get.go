@@ -30,9 +30,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -41,9 +38,15 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
+	if err := b.validCanReadTemporaryTable(p.TblInfo); err != nil {
+		b.err = err
+		return nil
+	}
+
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -51,13 +54,15 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	}
 	e := &PointGetExecutor{
 		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ID()),
+		txnScope:     b.txnScope,
+		isStaleness:  b.isStaleness,
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
-	if p.Lock {
+	e.Init(p, startTS)
+	if e.lock {
 		b.hasLock = true
 	}
-	e.Init(p, startTS)
 	return e
 }
 
@@ -73,6 +78,8 @@ type PointGetExecutor struct {
 	handleVal    []byte
 	idxVals      []types.Datum
 	startTS      uint64
+	txnScope     string
+	isStaleness  bool
 	txn          kv.Transaction
 	snapshot     kv.Snapshot
 	done         bool
@@ -100,8 +107,14 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
 	e.idxVals = p.IndexValues
 	e.startTS = startTs
 	e.done = false
-	e.lock = p.Lock
-	e.lockWaitTime = p.LockWaitTime
+	if e.tblInfo.TempTableType == model.TempTableNone {
+		e.lock = p.Lock
+		e.lockWaitTime = p.LockWaitTime
+	} else {
+		// Temporary table should not do any lock operations
+		e.lock = false
+		e.lockWaitTime = 0
+	}
 	e.rowDecoder = decoder
 	e.partInfo = p.PartitionInfo
 	e.columns = p.Columns
@@ -131,7 +144,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if err != nil {
 		return err
 	}
-	if e.txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
+	if e.txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
 		e.snapshot = e.txn.GetSnapshot()
 	} else {
 		e.snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
@@ -144,30 +157,39 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.stats = &runtimeStatsWithSnapshot{
 			SnapshotRuntimeStats: snapshotStats,
 		}
-		e.snapshot.SetOption(tikvstore.CollectRuntimeStats, snapshotStats)
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		e.snapshot.SetOption(tikvstore.ReplicaRead, tikvstore.ReplicaReadFollower)
+		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	e.snapshot.SetOption(tikvstore.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
-	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
-	e.snapshot.SetOption(tikvstore.IsStalenessReadOnly, isStaleness)
-	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != oracle.GlobalTxnScope {
-		e.snapshot.SetOption(tikvstore.MatchStoreLabels, []*metapb.StoreLabel{
+	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	e.snapshot.SetOption(kv.TxnScope, e.txnScope)
+	e.snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
+	if e.isStaleness && e.txnScope != kv.GlobalTxnScope {
+		e.snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
-				Value: e.ctx.GetSessionVars().TxnCtx.TxnScope,
+				Value: e.txnScope,
 			},
 		})
 	}
+	failpoint.Inject("assertPointStalenessOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if len(assertScope) > 0 {
+			if e.isStaleness && assertScope != e.txnScope {
+				panic("batch point get staleness option fail")
+			}
+		}
+	})
+	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
 
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
-		e.snapshot.DelOption(tikvstore.CollectRuntimeStats)
+		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
 	if e.idxInfo != nil && e.tblInfo != nil {
 		actRows := int64(0)
@@ -230,6 +252,17 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				err = e.lockKeyIfNeeded(ctx, e.idxKey)
 				if err != nil {
 					return err
+				}
+				// Change the unique index LOCK into PUT record.
+				if e.lock && len(e.handleVal) > 0 {
+					if !e.txn.Valid() {
+						return kv.ErrInvalidTxn
+					}
+					memBuffer := e.txn.GetMemBuffer()
+					err = memBuffer.Set(e.idxKey, e.handleVal)
+					if err != nil {
+						return err
+					}
 				}
 			}
 			if len(e.handleVal) == 0 {
@@ -322,19 +355,14 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 	if e.lock {
 		seVars := e.ctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, e.lockWaitTime)
-		lockCtx.ReturnValues = true
-		lockCtx.Values = map[string]kv.ReturnedValue{}
+		lockCtx.InitReturnValues(1)
 		err := doLockKeys(ctx, e.ctx, lockCtx, key)
 		if err != nil {
 			return err
 		}
-		lockCtx.ValuesLock.Lock()
-		defer lockCtx.ValuesLock.Unlock()
-		for key, val := range lockCtx.Values {
-			if !val.AlreadyLocked {
-				seVars.TxnCtx.SetPessimisticLockCache(kv.Key(key), val.Value)
-			}
-		}
+		lockCtx.IterateValuesNotLocked(func(k, v []byte) {
+			seVars.TxnCtx.SetPessimisticLockCache(kv.Key(k), v)
+		})
 		if len(e.handleVal) > 0 {
 			seVars.TxnCtx.SetPessimisticLockCache(e.idxKey, e.handleVal)
 		}
@@ -375,6 +403,16 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		// fallthrough to snapshot get.
 	}
 
+	// Global temporary table is always empty, so no need to send the request.
+	if e.tblInfo.TempTableType == model.TempTableGlobal {
+		return nil, nil
+	}
+
+	// Local temporary table always get snapshot value from session
+	if e.tblInfo.TempTableType == model.TempTableLocal {
+		return e.ctx.GetSessionVars().GetTemporaryTableSnapshotValue(ctx, key)
+	}
+
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
 		if e.ctx.GetSessionVars().EnablePointGetCache {
@@ -391,14 +429,17 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
-	txnScope := e.txn.GetUnionStore().GetOption(tikvstore.TxnScope).(string)
-	if txnScope == "" || txnScope == oracle.GlobalTxnScope {
+	if e.isStaleness {
+		return nil
+	}
+	txnScope := e.txnScope
+	if txnScope == "" || txnScope == kv.GlobalTxnScope {
 		return nil
 	}
 	var tblID int64
 	var tblName string
 	var partName string
-	is := infoschema.GetInfoSchema(e.ctx)
+	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	if e.partInfo != nil {
 		tblID = e.partInfo.ID
 		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)
@@ -442,6 +483,18 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 			var str string
 			str, err = idxVals[i].ToString()
 			idxVals[i].SetString(str, colInfo.FieldType.Collate)
+		} else if colInfo.Tp == mysql.TypeEnum && (idxVals[i].Kind() == types.KindString || idxVals[i].Kind() == types.KindBytes || idxVals[i].Kind() == types.KindBinaryLiteral) {
+			var str string
+			var e types.Enum
+			str, err = idxVals[i].ToString()
+			if err != nil {
+				return nil, kv.ErrNotExist
+			}
+			e, err = types.ParseEnumName(colInfo.FieldType.Elems, str, colInfo.FieldType.Collate)
+			if err != nil {
+				return nil, kv.ErrNotExist
+			}
+			idxVals[i].SetMysqlEnum(e, colInfo.FieldType.Collate)
 		} else {
 			// If a truncated error or an overflow error is thrown when converting the type of `idxVal[i]` to
 			// the type of `colInfo`, the `idxVal` does not exist in the `idxInfo` for sure.
@@ -531,6 +584,9 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
+	if types.NeedRestoredData(col.RetType) {
+		return false, nil
+	}
 	// Try to decode common handle.
 	if mysql.HasPriKeyFlag(col.RetType.Flag) {
 		for i, hid := range pkCols {
@@ -580,7 +636,7 @@ func (e *runtimeStatsWithSnapshot) Clone() execdetails.RuntimeStats {
 	newRs := &runtimeStatsWithSnapshot{}
 	if e.SnapshotRuntimeStats != nil {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
-		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+		newRs.SnapshotRuntimeStats = snapshotStats
 	}
 	return newRs
 }
@@ -594,7 +650,7 @@ func (e *runtimeStatsWithSnapshot) Merge(other execdetails.RuntimeStats) {
 	if tmp.SnapshotRuntimeStats != nil {
 		if e.SnapshotRuntimeStats == nil {
 			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
-			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+			e.SnapshotRuntimeStats = snapshotStats
 			return
 		}
 		e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)

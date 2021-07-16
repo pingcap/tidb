@@ -21,11 +21,11 @@ import (
 	"math/rand"
 	"net"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -264,6 +264,13 @@ func (g *defaultGener) gen() interface{} {
 	case types.ETDatetime, types.ETTimestamp:
 		gt := getRandomTime(g.randGen.Rand)
 		t := types.NewTime(gt, convertETType(g.eType), 0)
+		// TiDB has DST time problem, and it causes ErrWrongValue.
+		// We should ignore ambiguous Time. See https://timezonedb.com/time-zones/Asia/Shanghai.
+		for _, err := t.GoTime(time.Local); err != nil; {
+			gt = getRandomTime(g.randGen.Rand)
+			t = types.NewTime(gt, convertETType(g.eType), 0)
+			_, err = t.GoTime(time.Local)
+		}
 		return t
 	case types.ETDuration:
 		d := types.Duration{
@@ -287,23 +294,9 @@ func (g *defaultGener) gen() interface{} {
 type charInt64Gener struct{}
 
 func (g *charInt64Gener) gen() interface{} {
-	rand := time.Now().Nanosecond()
-	rand = rand % 1024
-	return int64(rand)
-}
-
-// charsetStringGener is used to generate "ascii" or "gbk"
-type charsetStringGener struct{}
-
-func (g *charsetStringGener) gen() interface{} {
-	rand := time.Now().Nanosecond() % 3
-	if rand == 0 {
-		return "ascii"
-	}
-	if rand == 1 {
-		return "utf8"
-	}
-	return "gbk"
+	nanosecond := time.Now().Nanosecond()
+	nanosecond = nanosecond % 1024
+	return int64(nanosecond)
 }
 
 // selectStringGener select one string randomly from the candidates array
@@ -642,6 +635,27 @@ func (g *ipv4MappedByteGener) gen() interface{} {
 	return string(ip[:net.IPv6len])
 }
 
+// uuidStrGener is used to generate uuid strings.
+type uuidStrGener struct {
+	randGen *defaultRandGen
+}
+
+func (g *uuidStrGener) gen() interface{} {
+	u, _ := uuid.NewUUID()
+	return u.String()
+}
+
+// uuidBinGener is used to generate uuid binarys.
+type uuidBinGener struct {
+	randGen *defaultRandGen
+}
+
+func (g *uuidBinGener) gen() interface{} {
+	u, _ := uuid.NewUUID()
+	bin, _ := u.MarshalBinary()
+	return string(bin)
+}
+
 // randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).
 type randLenStrGener struct {
 	lenBegin int
@@ -864,12 +878,6 @@ func newRandDurDecimal() *randDurDecimal {
 func (g *randDurDecimal) gen() interface{} {
 	d := new(types.MyDecimal)
 	return d.FromFloat64(float64(g.randGen.Intn(types.TimeMaxHour)*10000 + g.randGen.Intn(60)*100 + g.randGen.Intn(60)))
-}
-
-type randDurString struct{}
-
-func (g *randDurString) gen() interface{} {
-	return strconv.Itoa(rand.Intn(types.TimeMaxHour)*10000 + rand.Intn(60)*100 + rand.Intn(60))
 }
 
 // locationGener is used to generate location for the built-in function GetFormat.

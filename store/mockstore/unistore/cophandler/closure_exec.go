@@ -124,9 +124,7 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 			outputFieldTypes = append(outputFieldTypes, originalOutputFieldTypes[idx])
 		}
 	} else {
-		for _, tp := range originalOutputFieldTypes {
-			outputFieldTypes = append(outputFieldTypes, tp)
-		}
+		outputFieldTypes = append(outputFieldTypes, originalOutputFieldTypes...)
 	}
 	if len(executors) == 1 {
 		ce.resultFieldType = outputFieldTypes
@@ -810,12 +808,12 @@ func (e *closureExecutor) processSelection(needCollectDetail bool) (gotRow bool,
 		if d.IsNull() {
 			gotRow = false
 		} else {
-			isBool, err := d.ToBool(e.sc)
-			isBool, err = expression.HandleOverflowOnSelection(e.sc, isBool, err)
+			isTrue, err := d.ToBool(e.sc)
+			isTrue, err = expression.HandleOverflowOnSelection(e.sc, isTrue, err)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			gotRow = isBool != 0
+			gotRow = isTrue != 0
 		}
 		if !gotRow {
 			if e.sc.WarningCount() > wc {

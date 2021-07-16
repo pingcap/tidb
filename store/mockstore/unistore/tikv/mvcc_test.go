@@ -16,7 +16,6 @@ package tikv
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"math"
 	"os"
 	"path/filepath"
@@ -89,11 +88,11 @@ func CreateTestDB(dbPath, LogPath string) (*badger.DB, error) {
 }
 
 func NewTestStore(dbPrefix string, logPrefix string, c *C) (*TestStore, error) {
-	dbPath, err := ioutil.TempDir("", dbPrefix)
+	dbPath, err := os.MkdirTemp("", dbPrefix)
 	if err != nil {
 		return nil, err
 	}
-	LogPath, err := ioutil.TempDir("", logPrefix)
+	LogPath, err := os.MkdirTemp("", logPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -387,12 +386,6 @@ func MustPrewritePessimistic(pk []byte, key []byte, value []byte, startTs uint64
 
 func MustPrewritePessimisticPutErr(pk []byte, key []byte, value []byte, startTs uint64, forUpdateTs uint64, store *TestStore) {
 	err := PrewritePessimistic(pk, key, value, startTs, lockTTL, []bool{true}, forUpdateTs, store)
-	store.c.Assert(err, NotNil)
-}
-
-func MustPrewritePessimisticErr(pk []byte, key []byte, value []byte, startTs uint64, lockTTL uint64,
-	isPessimisticLock []bool, forUpdateTs uint64, store *TestStore) {
-	err := PrewritePessimistic(pk, key, value, startTs, lockTTL, isPessimisticLock, forUpdateTs, store)
 	store.c.Assert(err, NotNil)
 }
 
@@ -1501,8 +1494,8 @@ func (s *testMvccSuite) TestResolveCommit(c *C) {
 }
 
 func MustLoad(startTS, commitTS uint64, store *TestStore, pairs ...string) {
-	var keys [][]byte
-	var vals [][]byte
+	var keys = make([][]byte, 0, len(pairs))
+	var vals = make([][]byte, 0, len(pairs))
 	for _, pair := range pairs {
 		strs := strings.Split(pair, ":")
 		keys = append(keys, []byte(strs[0]))

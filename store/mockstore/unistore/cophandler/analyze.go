@@ -16,6 +16,7 @@ package cophandler
 import (
 	"bytes"
 	"math"
+	"math/rand"
 	"sort"
 	"time"
 
@@ -68,8 +69,10 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 		resp, err = handleAnalyzeCommonHandleReq(dbReader, ranges, analyzeReq, req.StartTs)
 	} else if analyzeReq.Tp == tipb.AnalyzeType_TypeColumn {
 		resp, err = handleAnalyzeColumnsReq(dbReader, ranges, analyzeReq, req.StartTs)
-	} else {
+	} else if analyzeReq.Tp == tipb.AnalyzeType_TypeMixed {
 		resp, err = handleAnalyzeMixedReq(dbReader, ranges, analyzeReq, req.StartTs)
+	} else {
+		resp, err = handleAnalyzeFullSamplingReq(dbReader, ranges, analyzeReq, req.StartTs)
 	}
 	if err != nil {
 		resp = &coprocessor.Response{
@@ -104,7 +107,7 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 			return nil, err
 		}
 	}
-	if statsVer == statistics.Version2 {
+	if statsVer >= statistics.Version2 {
 		if processor.topNCurValuePair.Count != 0 {
 			processor.topNValuePairs = append(processor.topNValuePairs, processor.topNCurValuePair)
 		}
@@ -123,7 +126,7 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 	hg := statistics.HistogramToProto(processor.statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if processor.cms != nil {
-		if statsVer == statistics.Version2 {
+		if statsVer >= statistics.Version2 {
 			for _, valueCnt := range processor.topNValuePairs {
 				h1, h2 := murmur3.Sum128(valueCnt.Encoded)
 				processor.cms.SubValue(h1, h2, valueCnt.Count)
@@ -204,7 +207,7 @@ func (p *analyzeIndexProcessor) Process(key, _ []byte) error {
 		}
 	}
 
-	if p.statsVer == statistics.Version2 {
+	if p.statsVer >= statistics.Version2 {
 		if bytes.Equal(p.topNCurValuePair.Encoded, p.rowBuf) {
 			p.topNCurValuePair.Count++
 		} else {
@@ -364,6 +367,83 @@ func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, an
 	return &coprocessor.Response{Data: data}, nil
 }
 
+func handleAnalyzeFullSamplingReq(
+	dbReader *dbreader.DBReader,
+	rans []kv.KeyRange,
+	analyzeReq *tipb.AnalyzeReq,
+	startTS uint64,
+) (*coprocessor.Response, error) {
+	sc := flagsToStatementContext(analyzeReq.Flags)
+	sc.TimeZone = time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
+	evalCtx := &evalContext{sc: sc}
+	columns := analyzeReq.ColReq.ColumnsInfo
+	evalCtx.setColumnInfo(columns)
+	if len(analyzeReq.ColReq.PrimaryColumnIds) > 0 {
+		evalCtx.primaryCols = analyzeReq.ColReq.PrimaryColumnIds
+	}
+	decoder, err := newRowDecoder(evalCtx.columnInfos, evalCtx.fieldTps, evalCtx.primaryCols, evalCtx.sc.TimeZone)
+	if err != nil {
+		return nil, err
+	}
+	e := &analyzeColumnsExec{
+		reader:  dbReader,
+		seekKey: rans[0].StartKey,
+		endKey:  rans[0].EndKey,
+		ranges:  rans,
+		curRan:  0,
+		startTS: startTS,
+		chk:     chunk.NewChunkWithCapacity(evalCtx.fieldTps, 1),
+		decoder: decoder,
+		evalCtx: evalCtx,
+	}
+	e.fields = make([]*ast.ResultField, len(columns))
+	for i := range e.fields {
+		rf := new(ast.ResultField)
+		rf.Column = new(model.ColumnInfo)
+		rf.Column.FieldType = types.FieldType{Tp: mysql.TypeBlob, Flen: mysql.MaxBlobWidth, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}
+		e.fields[i] = rf
+	}
+
+	numCols := len(columns)
+	collators := make([]collate.Collator, numCols)
+	fts := make([]*types.FieldType, numCols)
+	for i, col := range columns {
+		ft := fieldTypeFromPBColumn(col)
+		fts[i] = ft
+		if ft.EvalType() == types.ETString {
+			collators[i] = collate.GetCollator(ft.Collate)
+		}
+	}
+	colGroups := make([][]int64, 0, len(analyzeReq.ColReq.ColumnGroups))
+	for _, group := range analyzeReq.ColReq.ColumnGroups {
+		colOffsets := make([]int64, len(group.ColumnOffsets))
+		copy(colOffsets, group.ColumnOffsets)
+		colGroups = append(colGroups, colOffsets)
+	}
+	colReq := analyzeReq.ColReq
+	builder := &statistics.RowSampleBuilder{
+		Sc:              sc,
+		RecordSet:       e,
+		ColsFieldType:   fts,
+		Collators:       collators,
+		ColGroups:       colGroups,
+		MaxSampleSize:   int(colReq.SampleSize),
+		MaxFMSketchSize: int(colReq.SketchSize),
+		Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
+	collector, err := builder.Collect()
+	if err != nil {
+		return nil, err
+	}
+	colResp := &tipb.AnalyzeColumnsResp{}
+	colResp.RowCollector = collector.ToProto()
+	data, err := colResp.Marshal()
+	if err != nil {
+		return nil, err
+	}
+	return &coprocessor.Response{Data: data}, nil
+}
+
 // Fields implements the sqlexec.RecordSet Fields interface.
 func (e *analyzeColumnsExec) Fields() []*ast.ResultField {
 	return e.fields
@@ -467,7 +547,7 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 		colResp.Collectors = append(colResp.Collectors, statistics.SampleCollectorToProto(c))
 	}
 	// common handle
-	if statsVer == statistics.Version2 {
+	if statsVer >= statistics.Version2 {
 		if e.topNCurValuePair.Count != 0 {
 			e.topNValuePairs = append(e.topNValuePairs, e.topNCurValuePair)
 		}
@@ -486,7 +566,7 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 	hg := statistics.HistogramToProto(e.statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if e.cms != nil {
-		if statsVer == statistics.Version2 {
+		if statsVer >= statistics.Version2 {
 			for _, valueCnt := range e.topNValuePairs {
 				h1, h2 := murmur3.Sum128(valueCnt.Encoded)
 				e.cms.SubValue(h1, h2, valueCnt.Count)
@@ -543,7 +623,7 @@ func (e *analyzeMixedExec) Process(key, value []byte) error {
 		}
 	}
 
-	if e.statsVer == statistics.Version2 {
+	if e.statsVer >= statistics.Version2 {
 		if bytes.Equal(e.topNCurValuePair.Encoded, e.rowBuf) {
 			e.topNCurValuePair.Count++
 		} else {

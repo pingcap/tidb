@@ -14,7 +14,7 @@ The scenarios of defining placement rules in SQL include:
 
 - Place data across regions to improve access locality
 - Add a TiFlash replica for a table
-- Limit data within its national border to gaurantee data sovereignty
+- Limit data within its national border to guarantee data sovereignty
 - Place latest data to SSD and history data to HDD
 - Place the leader of hot data to a high-performance TiKV instance
 - Increase the replica count of more important data
@@ -233,7 +233,7 @@ For example, `CONSTRAINTS="{+zone=sh:1,-zone=bj:2}"` indicates to place 1 replic
 
 In the list format, `count` is not specified. The number of replicas for each constraint is not limited, but the total number of replicas should still conform to the `REPLICAS` option.
 
-For example, `CONSTRAINTS="[+zone=sh,+zone=bj]" REPLICAS=3` indicates to place 3 repicas on either `sh` or `bj`. There may be 2 replicas on `sh` and 1 in `bj`, or 2 in `bj` and 1 in `sh`. It's up to PD.
+For example, `CONSTRAINTS="[+zone=sh,+zone=bj]" REPLICAS=3` indicates to place 3 replicas on either `sh` or `bj`. There may be 2 replicas on `sh` and 1 in `bj`, or 2 in `bj` and 1 in `sh`. It's up to PD.
 
 Label constraints can be implemented by defining `label_constraints` field in PD placement rule configuration. `+` and `-` correspond to property `op`. Specifically, `+` is equivalent to `in` and `-` is equivalent to `notIn`.
 
@@ -291,9 +291,61 @@ Typically, key format is in such a format: `t_{table_id}_r_{pk_value}`, where `p
 
 Similarly, key range of partitions and indices can also be inferred.
 
+### Region label configuration
+
+Instead of configuring key ranges, you can also configure region labels in placement rules. PD supports label rules, which indicate the key range of a database / table / partition name. TiDB pushes label rules once the schema changes, so that PD maintains the relationship between database / table /partition names and their corresponding key ranges.
+
+This is what a label rule may look like:
+
+```
+{
+    "id": "db1/tb1",
+    "labels": [
+        {
+            "key": "database-name",
+            "value": "db1"
+        },
+        {
+            "key": "table-name",
+            "value": "db1/tb1"
+        }
+    ],
+    "match-type": "key-range",
+    "match": {
+        "start-key": "7480000000000000ff0a00000000000000f8",
+        "end-key": "7480000000000000ff0b00000000000000f8"
+    }
+}
+```
+
+It connects the table name `db1/tb` with the key range.
+
+Now you need to connect the label with the database / table / partition name in the placement rules.
+
+For example:
+
+```
+{
+    "group_id": "group_id",
+    "id": "id",
+    "region_label_key": "schema/table-name",
+    "region_label_value": "db1/tb1",
+    "role": "leader",
+    "label_constraints": [
+        {"key": "zone", "op": "in", "values": ["sh", "bj"]}
+    ]
+}
+```
+
+Combined with the label rule, PD indirectly knows the key range of `db1/tb1` is marked with the label constraint `{"key": "zone", "op": "in", "values": ["sh", "bj"]}`.
+
 ### Database placement
 
-Defining placement rules of databases simplifies the procedures when there are many tables. For example, in a typical multi-tenant scenario, each user has a private database. The dataset in one database is relatively small, and it’s rare to query across databases. In this case, a whole database can be placed in a single region to reduce multi-region latency.
+Defining placement rules of databases simplifies the procedures when there are many tables.
+
+For example, in a typical multi-tenant scenario, each user has a private database. The dataset in one database is relatively small, and it’s rare to query across databases. In this case, a whole database can be placed in a single region to reduce multi-region latency.
+
+For another example, multiple businesses may run on a single TiDB cluster, which can reduce the overhead of maintaining multiple clusters. The resources of multiple businesses need to be isolated to avoid the risk that one business takes too many resources and affects others.
 
 Placement of databases is defined through `ALTER` statements:
 
@@ -313,7 +365,52 @@ Creating or dropping a table also affects the placement rules. If a placement ru
 
 Once the placement rules on a database are changed, the tables should also update their placement rules. Users can overwrite the rules by defining placement rules on the tables. See the section "Rule inheritance" for details.
 
-Since key range is not successive in one database, each table in the database corresponds to at least one placement rule, so there may be many placement rules.
+Since key range is not successive in one database, each table in the database corresponds to at least one placement rule, so there may be many placement rules. In either case above, there may be up to millions of tables in one database, which costs lots of time to update the rules and lots of space to store the rules.
+
+Another option is to take advantage of the region label, which is described earlier.
+
+In the example below, it defines multiple label rules for one database. Each label rule corresponds to one table or partition.
+
+```
+{
+    "id": "db1/tb1",
+    "labels": [
+        {
+            "key": "database-name",
+            "value": "db1"
+        },
+        {
+            "key": "table-name",
+            "value": "db1/tb1"
+        }
+    ],
+    "match-type": "key-range",
+    "match": {
+        "start-key": "7480000000000000ff0a00000000000000f8",
+        "end-key": "7480000000000000ff0b00000000000000f8"
+    }
+},
+{
+    "id": "db1/tb2",
+    "labels": [
+        {
+            "key": "database-name",
+            "value": "db1"
+        },
+        {
+            "key": "table-name",
+            "value": "db1/tb2"
+        }
+    ],
+    "match-type": "key-range",
+    "match": {
+        "start-key": "7480000000000000ff0c00000000000000f8",
+        "end-key": "7480000000000000ff0d00000000000000f8"
+    }
+}
+```
+
+Then you need only one placement rule for the database. When you change the placement of the database, you need to update one placement rule. However, when you drop a database, you need to delete multiple label rules plus one placement rule.
 
 ### Partition placement
 
@@ -553,7 +650,7 @@ However, TiDB also uses placement rules in some cases, as discussed in section "
 
 Before choosing the solution, transactional requirements need to be noticed:
 
-- Defining placement rules may fail, and users will probably retry it. As retrying `ADD PLACEMENT POLICY` will add more replicas than expected, the atomacity of the opertion needs to be gauranteed.
+- Defining placement rules may fail, and users will probably retry it. As retrying `ADD PLACEMENT POLICY` will add more replicas than expected, the atomicity of the opertion needs to be guaranteed.
 - `ADD PLACEMENT POLICY` needs to read the original placement rules, combine the 2 rules and then store them to PD, so linearizability should be gauranteed.
 
 If the placement rules are stored on both TiKV and PD, the approaches to keep atomicity are as follows:
@@ -583,7 +680,7 @@ The comparison shows that both solutions are possible, but storing placement rul
 The scenarios where TiDB queries placement rules are as follows:
 
 1. The optimizer uses placement rules to decide to route cop request to TiKV or TiFlash. It's already implemented and the TiFlash information is written into table information, which is stored on TiKV.
-2. It will be probably used in locality-aware features in the furture, such as follower-read. Follower-read is always used when TiDB wants to read the nearest replica to reduce multi-region latency. In some distributed databases, it’s implemented by labelling data nodes and selecting the nearest replica according to the labels.
+2. It will be probably used in locality-aware features in the future, such as follower-read. Follower-read is always used when TiDB wants to read the nearest replica to reduce multi-region latency. In some distributed databases, it’s implemented by labelling data nodes and selecting the nearest replica according to the labels.
 3. Local transactions need to know the binding relationship between Raft leader and region, which is also defined by placement rules.
 4. Once a rule is defined on a table, all the subsequent partitions added to the table should also inherit the rule. So the `ADD PARTITION` operation should query the rules on the table. The same is true for creating tables and indices.
 5. `SHOW PLACEMENT POLICY` statement should output the placement rules correctly.
@@ -615,7 +712,7 @@ The fact that the DDL procedure in TiDB is mature helps to achieve some features
 - Placement rules are defined in serial as there's only one DDL owner at the same time
 - DDL is capable of disaster recovery as the middle states are persistent in TiKV
 - DDL is rollbackable as the middle states can transform from one to another
-- Updating schema version guarantees all active transactions are based on the same version of placement ruels
+- Updating schema version guarantees all active transactions are based on the same version of placement rules
 
 ### Rule priorities
 
@@ -712,7 +809,7 @@ ALTER TABLE t
 	ALTER PLACEMENT POLICY CONSTRAINTS="{+zone=bj:2,+zone=sh:1}" ROLE=voter;
 ```
 
-It needs 2 placement rules for `voter` in the PD placment rule configuration, because each rule can only specify one `count`. To make `id` unique, a unique identifier must be appended to `id`. DDL job ID plus an index in the job is a good choice.
+It needs 2 placement rules for `voter` in the PD placement rule configuration, because each rule can only specify one `count`. To make `id` unique, a unique identifier must be appended to `id`. DDL job ID plus an index in the job is a good choice.
 
 Take the case above for example, assuming the table ID of `t` is 100, the ID of the DDL job executing this statement is 200, then `id` of the placement rules are `100-200-1` and `100-200-2`.
 

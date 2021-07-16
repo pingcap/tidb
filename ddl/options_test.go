@@ -33,14 +33,14 @@ func (s *ddlOptionsSuite) TestOptions(c *C) {
 	callback := &ddl.BaseCallback{}
 	lease := time.Second * 3
 	store := &mock.Store{}
-	infoHandle := infoschema.NewHandle(store)
+	infoHandle := infoschema.NewCache(16)
 
 	options := []ddl.Option{
 		ddl.WithEtcdClient(client),
 		ddl.WithHook(callback),
 		ddl.WithLease(lease),
 		ddl.WithStore(store),
-		ddl.WithInfoHandle(infoHandle),
+		ddl.WithInfoCache(infoHandle),
 	}
 
 	opt := &ddl.Options{}
@@ -52,5 +52,5 @@ func (s *ddlOptionsSuite) TestOptions(c *C) {
 	c.Assert(opt.Hook, Equals, callback)
 	c.Assert(opt.Lease, Equals, lease)
 	c.Assert(opt.Store, Equals, store)
-	c.Assert(opt.InfoHandle, Equals, infoHandle)
+	c.Assert(opt.InfoCache, Equals, infoHandle)
 }
