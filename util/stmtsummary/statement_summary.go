@@ -17,7 +17,9 @@ import (
 	"bytes"
 	"container/list"
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -253,6 +255,18 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	// All times are counted in seconds.
 	now := time.Now().Unix()
+
+	failpoint.Inject("mockTimeForStatementsSummary", func(val failpoint.Value){
+		// mockTimeForStatementsSummary takes string of Unix timestamp
+		if unixTimeStr, ok := val.(string); ok{
+			unixTime, err := strconv.ParseInt(unixTimeStr,10,64)
+			if err != nil {
+				panic(err.Error())
+			} else {
+				now = unixTime
+			}
+		}
+	})
 
 	intervalSeconds := ssMap.refreshInterval()
 	historySize := ssMap.historySize()
