@@ -902,6 +902,7 @@ import (
 	SetOprStmt2            "Union/Except/Intersect select statement2"
 	UseStmt                "USE statement"
 	ShutdownStmt           "SHUTDOWN statement"
+	RestartStmt            "RESTART statement"
 	CreateViewSelectOpt    "Select/Union/Except/Intersect statement in CREATE VIEW ... AS SELECT"
 	BindableStmt           "Statement that can be created binding on"
 	UpdateStmtNoWith       "Update statement without CTE clause"
@@ -7783,6 +7784,12 @@ ShutdownStmt:
 		$$ = &ast.ShutdownStmt{}
 	}
 
+RestartStmt:
+	"RESTART"
+	{
+		$$ = &ast.RestartStmt{}
+	}
+
 HelpStmt:
 	"HELP" stringLit
 	{
@@ -10586,6 +10593,7 @@ Statement:
 |	UnlockTablesStmt
 |	LockTablesStmt
 |	ShutdownStmt
+|	RestartStmt
 |	HelpStmt
 
 TraceableStmt:

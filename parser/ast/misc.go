@@ -51,6 +51,7 @@ var (
 	_ StmtNode = &CreateBindingStmt{}
 	_ StmtNode = &DropBindingStmt{}
 	_ StmtNode = &ShutdownStmt{}
+	_ StmtNode = &RestartStmt{}
 	_ StmtNode = &RenameUserStmt{}
 	_ StmtNode = &HelpStmt{}
 
@@ -2447,6 +2448,28 @@ func (n *ShutdownStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ShutdownStmt)
+	return v.Leave(n)
+}
+
+// RestartStmt is a statement to restart the TiDB server.
+// See https://dev.mysql.com/doc/refman/8.0/en/restart.html
+type RestartStmt struct {
+	stmtNode
+}
+
+// Restore implements Node interface.
+func (n *RestartStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RESTART")
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *RestartStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RestartStmt)
 	return v.Leave(n)
 }
 
