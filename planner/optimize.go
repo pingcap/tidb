@@ -221,6 +221,46 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return bestPlan, names, nil
 }
 
+func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil {
+		return true, nil
+	}
+	roles := sctx.GetSessionVars().ActiveRoles
+	// allow replication thread
+	// NOTE: it is required, whether SEM is enabled or not, only user with explicit RESTRICTED_REPLICA_WRITER_ADMIN granted can ignore the restriction, so we need to surpass the case that if SEM is not enabled, SUPER will has all privileges
+	if pm.HasExplicitlyGrantedDynamicPrivilege(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
+		return true, nil
+	}
+
+	switch node.(type) {
+	// allow change variables (otherwise can't unset read-only mode)
+	case *ast.SetStmt,
+		// allow analyze table
+		*ast.AnalyzeTableStmt,
+		*ast.UseStmt,
+		*ast.ShowStmt,
+		*ast.CreateBindingStmt,
+		*ast.DropBindingStmt,
+		*ast.PrepareStmt,
+		*ast.BeginStmt,
+		*ast.RollbackStmt:
+		return true, nil
+	case *ast.CommitStmt:
+		txn, err := sctx.Txn(true)
+		if err != nil {
+			return false, err
+		}
+		if !txn.IsReadOnly() {
+			return false, txn.Rollback()
+		}
+		return true, nil
+	}
+
+	vars := sctx.GetSessionVars()
+	return IsReadOnly(node, vars), nil
+}
+
 var planBuilderPool = sync.Pool{
 	New: func() interface{} {
 		return plannercore.NewPlanBuilder()
@@ -273,6 +313,16 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	if err := plannercore.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
 		return nil, nil, 0, err
+	}
+
+	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() {
+		allowed, err := allowInReadOnlyMode(sctx, node)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		if !allowed {
+			return nil, nil, 0, errors.Trace(core.ErrSQLInReadOnlyMode)
+		}
 	}
 
 	// Handle the execute statement.
