@@ -1105,15 +1105,11 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 	}
 
 	var err error
-	// Call logicalOptimize before recursiveDeriveStats seedPart plan or recursivePart plan, otherwise the statInfo maybe wrong.
-	p.cte.seedPartLogicalPlan, err = logicalOptimize(context.Background(), p.cte.optFlag, p.cte.seedPartLogicalPlan)
+	p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
 	if err != nil {
 		return nil, err
 	}
-	resStat, err := p.cte.seedPartLogicalPlan.recursiveDeriveStats(colGroups)
-	if err != nil {
-		return nil, err
-	}
+	resStat := p.cte.seedPartPhysicalPlan.Stats()
 	p.stats = &property.StatsInfo{
 		RowCount:    resStat.RowCount,
 		Cardinality: make(map[int64]float64, selfSchema.Len()),
@@ -1122,14 +1118,11 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 		p.stats.Cardinality[col.UniqueID] += resStat.Cardinality[p.cte.seedPartLogicalPlan.Schema().Columns[i].UniqueID]
 	}
 	if p.cte.recursivePartLogicalPlan != nil {
-		p.cte.recursivePartLogicalPlan, err = logicalOptimize(context.Background(), p.cte.optFlag, p.cte.recursivePartLogicalPlan)
+		p.cte.recursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
 		if err != nil {
 			return nil, err
 		}
-		recurStat, err := p.cte.recursivePartLogicalPlan.recursiveDeriveStats(colGroups)
-		if err != nil {
-			return nil, err
-		}
+		recurStat := p.cte.recursivePartPhysicalPlan.Stats()
 		for i, col := range selfSchema.Columns {
 			p.stats.Cardinality[col.UniqueID] += recurStat.Cardinality[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}
