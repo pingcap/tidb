@@ -63,7 +63,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
-	txninfo "github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -552,13 +552,16 @@ func (s *session) doCommit(ctx context.Context) error {
 }
 
 func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transaction) error {
-	txnTempTables := s.sessionVars.TxnCtx.TemporaryTables
+	sessVars := s.sessionVars
+	txnTempTables := sessVars.TxnCtx.TemporaryTables
 	if len(txnTempTables) == 0 {
 		return txn.Commit(ctx)
 	}
 
-	sessionData := s.sessionVars.TemporaryTableData
+	sessionData := sessVars.TemporaryTableData
 	var stage kv.StagingHandle
+
+	localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
 
 	defer func() {
 		// stage != kv.InvalidStagingHandle means error occurs, we need to cleanup sessionData
@@ -573,6 +576,9 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 		}
 
 		if tbl.GetMeta().TempTableType != model.TempTableLocal {
+			continue
+		}
+		if _, ok := localTempTables.TableByID(tblID); !ok && tbl.GetMeta().TempTableType == model.TempTableLocal {
 			continue
 		}
 

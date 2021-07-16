@@ -136,13 +136,9 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		}
 		// if all tables are local temporary, directly drop those tables.
 		if len(s.Tables) == existsNum {
-			for tbIdx := range s.Tables {
-				table, _ := localTempTables.TableByName(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name)
-				localTempTables.RemoveTable(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name)
-				err := deleteTemporaryTableRecords(sessVars.TemporaryTableData, table.Meta().ID)
-				if err != nil {
-					return err
-				}
+			err := e.dropLocalTemporaryTables(s.Tables)
+			if err != nil {
+				return err
 			}
 			return nil
 		}
@@ -448,10 +444,10 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 		localTemporaryTable = sessVarsTempTable.(*infoschema.LocalTemporaryTables)
 	}
 
-	localTempTableList := make([]*ast.TableName, 0)
+	localTempTables := make([]*ast.TableName, 0)
 	for i, tn := range objects {
 		if obt == tableObject && localTemporaryTable.TableExists(tn.Schema, tn.Name) {
-			localTempTableList = append(localTempTableList, objects[i])
+			localTempTables = append(localTempTables, objects[i])
 			continue
 		}
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
@@ -526,14 +522,32 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 		}
 	}
 
-	if obt == tableObject && len(localTempTableList) > 0 {
-		for tbIdx := range localTempTableList {
-			table, _ := localTemporaryTable.TableByName(localTempTableList[tbIdx].Schema, localTempTableList[tbIdx].Name)
-			localTemporaryTable.RemoveTable(localTempTableList[tbIdx].Schema, localTempTableList[tbIdx].Name)
-			err := deleteTemporaryTableRecords(sessVars.TemporaryTableData, table.Meta().ID)
-			if err != nil {
-				return err
-			}
+	if obt == tableObject && len(localTempTables) > 0 {
+		err := e.dropLocalTemporaryTables(localTempTables)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*ast.TableName) error {
+	var (
+		localTemporaryTable *infoschema.LocalTemporaryTables
+	)
+	sessVars := e.ctx.GetSessionVars()
+	sessVarsTempTable := sessVars.LocalTemporaryTables
+	if sessVarsTempTable == nil {
+		localTemporaryTable = infoschema.NewLocalTemporaryTables()
+	} else {
+		localTemporaryTable = sessVarsTempTable.(*infoschema.LocalTemporaryTables)
+	}
+	for tbIdx := range localTempTables {
+		table, _ := localTemporaryTable.TableByName(localTempTables[tbIdx].Schema, localTempTables[tbIdx].Name)
+		localTemporaryTable.RemoveTable(localTempTables[tbIdx].Schema, localTempTables[tbIdx].Name)
+		err := deleteTemporaryTableRecords(sessVars.TemporaryTableData, table.Meta().ID)
+		if err != nil {
+			return err
 		}
 	}
 	return nil

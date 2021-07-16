@@ -3002,4 +3002,41 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 	tk.MustQuery("select * from a_local_temp_table_3").Check(testkit.Rows())
 	tk.MustQuery("select * from a_local_temp_table_4").Check(testkit.Rows())
 	tk.MustQuery("select * from a_local_temp_table_5").Check(testkit.Rows())
+
+	tk.MustExec("drop table if exists check_data_normal_table_3")
+	tk.MustExec("create table check_data_normal_table_3 (id int)")
+	defer tk.MustExec("drop table if exists check_data_normal_table_3")
+	tk.MustExec("create temporary table a_local_temp_table_6 (id int)")
+	_, err = tk.Exec("drop table check_data_normal_table_3, check_data_normal_table_7, a_local_temp_table_6")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.check_data_normal_table_7'")
+	tk.MustQuery("select * from a_local_temp_table_6").Check(testkit.Rows())
+
+	// Check filter out data from removed local temp tables
+	tk.MustExec("create temporary table a_local_temp_table_7 (id int)")
+	ctx := s.ctx
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	defer func() {
+		err := txn.Rollback()
+		c.Assert(err, IsNil)
+	}()
+	sessionVars := tk.Se.GetSessionVars()
+	sessVarsTempTable := sessionVars.LocalTemporaryTables
+	localTemporaryTable := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
+	tbl, exist := localTemporaryTable.TableByName(model.NewCIStr("test"), model.NewCIStr("a_local_temp_table_7"))
+	c.Assert(exist, IsTrue)
+	tblInfo := tbl.Meta()
+	tablePrefix := tablecodec.EncodeTablePrefix(tblInfo.ID)
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into a_local_temp_table_7 values (1)")
+	tk.MustExec("drop table if exists a_local_temp_table_7")
+	tk.MustExec("commit")
+
+	_, err = tk.Exec("select * from a_local_temp_table_7")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.a_local_temp_table_7' doesn't exist")
+	iter, _ := txn.Iter(tablePrefix, nil)
+	hasData := iter.Key().HasPrefix(tablePrefix)
+	c.Assert(hasData, IsFalse)
 }
