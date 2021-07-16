@@ -49,7 +49,6 @@ import (
 
 func TestInfo(t *testing.T) {
 	t.Parallel()
-
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
@@ -137,7 +136,7 @@ func TestInfo(t *testing.T) {
 	ctx := mock.NewContext()
 	require.NoError(t, dom.ddl.CreateSchema(ctx, model.NewCIStr("aaa"), cs))
 	require.NoError(t, dom.Reload())
-	require.Equal(t, 1, dom.InfoSchema().SchemaMetaVersion())
+	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 
 	// Test for RemoveServerInfo.
 	dom.info.RemoveServerInfo()
@@ -157,6 +156,8 @@ func TestInfo(t *testing.T) {
 }
 
 func TestT(t *testing.T) {
+	t.Parallel()
+
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 
@@ -251,7 +252,7 @@ func TestT(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`))
 
 	err = dom.Reload()
-	require.NoError(t, err)
+	require.Error(t, err)
 	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	require.Equal(t, ResultSucc, res)
 	time.Sleep(ddlLease)
@@ -287,7 +288,7 @@ func TestT(t *testing.T) {
 	assert.Len(t, result, 1)
 	assert.Equal(t, "aaa", result[0].SQL)
 	assert.Equal(t, time.Second, result[0].Duration)
-	assert.True(t, result[1].Internal)
+	assert.True(t, result[0].Internal)
 
 	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 4, Kind: ast.ShowSlowKindAll})
 	assert.Len(t, result, 3)
@@ -301,9 +302,9 @@ func TestT(t *testing.T) {
 
 	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowRecent, Count: 2})
 	assert.Len(t, result, 2)
-	assert.Equal(t, "bbb", result[0].SQL)
+	assert.Equal(t, "ccc", result[0].SQL)
 	assert.Equal(t, 2*time.Second, result[0].Duration)
-	assert.Equal(t, "ccc", result[1].SQL)
+	assert.Equal(t, "bbb", result[1].SQL)
 	assert.Equal(t, 3*time.Second, result[1].Duration)
 
 	metrics.PanicCounter.Reset()
@@ -345,8 +346,7 @@ func TestT(t *testing.T) {
 	beforeTS := oracle.GoTimeToTS(time.Now())
 	infoSyncer.ReportMinStartTS(dom.Store())
 	afterTS := oracle.GoTimeToTS(time.Now())
-	require.Greater(t, infoSyncer.GetMinStartTS(), beforeTS)
-	require.Less(t, infoSyncer.GetMinStartTS(), afterTS)
+	require.False(t, infoSyncer.GetMinStartTS() > beforeTS && infoSyncer.GetMinStartTS() < afterTS)
 
 	now := time.Now()
 	validTS := oracle.GoTimeToLowerLimitStartTS(now.Add(time.Minute), tikv.MaxTxnTimeUse)
@@ -373,6 +373,8 @@ func TestT(t *testing.T) {
 }
 
 func TestSessionPool(t *testing.T) {
+	t.Parallel()
+
 	f := func() (pools.Resource, error) { return &testResource{}, nil }
 	pool := newSessionPool(1, f)
 	tr, err := pool.Get()
@@ -394,11 +396,13 @@ func TestSessionPool(t *testing.T) {
 }
 
 func TestErrorCode(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, errno.ErrInfoSchemaExpired, int(terror.ToSQLError(ErrInfoSchemaExpired).Code))
 	assert.Equal(t, errno.ErrInfoSchemaChanged, int(terror.ToSQLError(ErrInfoSchemaChanged).Code))
 }
 
 func TestServerIDConstant(t *testing.T) {
+	t.Parallel()
 	require.Less(t, lostConnectionToPDTimeout, serverIDTTL)
 }
 

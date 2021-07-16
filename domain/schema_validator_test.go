@@ -27,7 +27,6 @@ import (
 
 func TestSchemaValidator(t *testing.T) {
 	t.Parallel()
-
 	lease := 10 * time.Millisecond
 	leaseGrantCh := make(chan leaseGrantItem)
 	oracleCh := make(chan uint64)
@@ -168,7 +167,6 @@ func TestEnqueue(t *testing.T) {
 
 func TestEnqueueActionType(t *testing.T) {
 	t.Parallel()
-
 	lease := 10 * time.Millisecond
 	originalCnt := variable.GetMaxDeltaSchemaCount()
 	defer variable.SetMaxDeltaSchemaCount(originalCnt)
