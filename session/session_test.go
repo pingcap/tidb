@@ -5020,6 +5020,7 @@ func (s *testSessionSuite) TestLocalTemporaryTableBatchPointGet(c *C) {
 	tk.MustExec("insert into tmp1 values(1, 11, 101)")
 	tk.MustExec("insert into tmp1 values(2, 12, 102)")
 	tk.MustExec("insert into tmp1 values(3, 13, 103)")
+	tk.MustExec("insert into tmp1 values(4, 14, 104)")
 
 	// check point get out transaction
 	tk.MustQuery("select * from tmp1 where id in (1, 3)").Check(testkit.Rows("1 11 101", "3 13 103"))
@@ -5039,9 +5040,14 @@ func (s *testSessionSuite) TestLocalTemporaryTableBatchPointGet(c *C) {
 	tk.MustExec("update tmp1 set v=999 where id=3")
 	tk.MustQuery("select * from tmp1 where id in (1, 3)").Check(testkit.Rows("1 11 101", "3 13 999"))
 	tk.MustQuery("select * from tmp1 where u in (11, 13)").Check(testkit.Rows("1 11 101", "3 13 999"))
+	tk.MustExec("delete from tmp1 where id=4")
+	tk.MustQuery("select * from tmp1 where id in (1, 4)").Check(testkit.Rows("1 11 101"))
+	tk.MustQuery("select * from tmp1 where u in (11, 14)").Check(testkit.Rows("1 11 101"))
 	tk.MustExec("commit")
 
 	// check point get after transaction
 	tk.MustQuery("select * from tmp1 where id in (1, 3, 6)").Check(testkit.Rows("1 11 101", "3 13 999", "6 16 106"))
 	tk.MustQuery("select * from tmp1 where u in (11, 13, 16)").Check(testkit.Rows("1 11 101", "3 13 999", "6 16 106"))
+	tk.MustQuery("select * from tmp1 where id in (1, 4)").Check(testkit.Rows("1 11 101"))
+	tk.MustQuery("select * from tmp1 where u in (11, 14)").Check(testkit.Rows("1 11 101"))
 }
