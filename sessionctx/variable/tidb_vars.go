@@ -135,7 +135,7 @@ const (
 	// tidb_disable_txn_auto_retry disables transaction auto retry.
 	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
 
-	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
+	// Deprecated: tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
 
 	// tidb_enable_chunk_rpc enables TiDB to use Chunk format for coprocessor requests.
@@ -504,6 +504,9 @@ const (
 	// TiDBRedactLog indicates that whether redact log.
 	TiDBRedactLog = "tidb_redact_log"
 
+	// TiDBRestrictedReadOnly is meant for the cloud admin to toggle the cluster read only
+	TiDBRestrictedReadOnly = "tidb_restricted_read_only"
+
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
@@ -698,6 +701,7 @@ const (
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = ClusteredIndexDefModeIntOnly
 	DefTiDBRedactLog                   = false
+	DefTiDBRestrictedReadOnly          = false
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableParallelApply         = false
@@ -754,7 +758,8 @@ var (
 		MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
 		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 	}
-	EnableLocalTxn = atomic.NewBool(DefTiDBEnableLocalTxn)
+	EnableLocalTxn     = atomic.NewBool(DefTiDBEnableLocalTxn)
+	RestrictedReadOnly = atomic.NewBool(DefTiDBRestrictedReadOnly)
 )
 
 // TopSQL is the variable for control top sql feature.
