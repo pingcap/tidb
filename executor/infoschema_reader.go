@@ -1616,8 +1616,8 @@ type tableStorageStatsRetriever struct {
 }
 
 func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if !hasPriv(sctx, mysql.ProcessPriv) {
-		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	if !hasPriv(sctx, mysql.SuperPriv) {
+		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
 	}
 	if e.retrieved {
 		return nil, nil

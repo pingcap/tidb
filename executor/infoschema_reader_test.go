@@ -917,7 +917,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	defer tk1.MustExec("drop user 'testuser'@'localhost'")
 	defer tk1.MustExec("drop user 'testuser2'@'localhost'")
 
-	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
+	tk.MustExec("grant super on *.* to 'testuser2'@'localhost'")
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
@@ -926,7 +926,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	err = tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema'")
 	c.Assert(err, NotNil)
 	// This error is come from cop(TiDB) fetch from rpc server.
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SUPER privilege(s) for this operation")
 
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
 		Username: "testuser2",
