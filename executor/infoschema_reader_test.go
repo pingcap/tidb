@@ -909,6 +909,32 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 		"test 2",
 	))
 	c.Assert(len(tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()), Equals, 24)
+
+	// More tests about the privileges.
+	tk.MustExec("create user 'testuser'@'localhost'")
+	tk.MustExec("create user 'testuser2'@'localhost'")
+	tk1 := testkit.NewTestKit(c, store)
+	defer tk1.MustExec("drop user 'testuser'@'localhost'")
+	defer tk1.MustExec("drop user 'testuser2'@'localhost'")
+
+	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser",
+		Hostname: "localhost",
+	}, nil, nil), Equals, true)
+
+	err = tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema'")
+	c.Assert(err, NotNil)
+	// This error is come from cop(TiDB) fetch from rpc server.
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser2",
+		Hostname: "localhost",
+	}, nil, nil), Equals, true)
+
+	err = tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema'")
+	c.Assert(err, IsNil)
 }
 
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {
