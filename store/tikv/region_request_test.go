@@ -863,6 +863,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 
 	region.lastAccess = time.Now().Unix()
 	replicaSelector, err = newReplicaSelector(cache, regionLoc.Region)
+	c.Assert(err, IsNil)
 	c.Assert(replicaSelector, NotNil)
 	cache.testingKnobs.mockRequestLiveness = func(s *Store, bo *Backoffer) livenessState {
 		return reachable
@@ -944,6 +945,7 @@ func (s *testRegionRequestToThreeStoresSuite) TestReplicaSelector(c *C) {
 	replicaSelector, _ = newReplicaSelector(cache, regionLoc.Region)
 	replicaSelector.next(s.bo)
 	rpcCtx, err = replicaSelector.next(s.bo)
+	c.Assert(err, IsNil)
 	replicaSelector.OnSendSuccess()
 	// Verify the regionStore is updated and the workTiKVIdx points to the leader.
 	leaderStore, leaderPeer, _, _ = region.WorkStorePeer(region.getStore())

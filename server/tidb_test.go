@@ -1500,7 +1500,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	agentServer.HangFromNow(time.Second * 6)
 	// run another set of SQL queries
 	cancel()
-	cancel = runWorkload(11, 20)
+	_ = runWorkload(11, 20)
 	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
 
@@ -1517,7 +1517,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	// run another set of SQL queries
 	cancel()
 
-	cancel = runWorkload(11, 20)
+	_ = runWorkload(11, 20)
 	// agent server shutdown
 	agentServer.Stop()
 	// agent server restart
