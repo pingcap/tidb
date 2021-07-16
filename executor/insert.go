@@ -376,12 +376,13 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 	// Update old row when the key is duplicated.
 	e.evalBuffer4Dup.SetDatums(e.row4Update...)
 	for _, col := range cols {
-		val, err1 := col.Expr.Eval(e.evalBuffer4Dup.ToRow())
-		if err1 != nil {
+		row := e.evalBuffer4Dup.ToRow()
+		val, err1 := col.Expr.Eval(row)
+		if err1 = e.handleErr(e.Table.WritableCols()[col.Col.Index], &val, row.Idx(), err1); err1 != nil {
 			return err1
 		}
 		e.row4Update[col.Col.Index], err1 = table.CastValue(e.ctx, val, col.Col.ToInfo(), false, false)
-		if err1 != nil {
+		if err1 = e.handleErr(e.Table.WritableCols()[col.Col.Index], &val, row.Idx(), err1); err1 != nil {
 			return err1
 		}
 		e.evalBuffer4Dup.SetDatum(col.Col.Index, e.row4Update[col.Col.Index])

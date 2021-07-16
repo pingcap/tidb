@@ -1537,6 +1537,18 @@ func (s *testSerialSuite) TestIssue20768(c *C) {
 	tk.MustQuery("select /*+ merge_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
 }
 
+func (s *testSerialSuite) TestIssue24044(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE `t1` (`id` int NOT NULL, `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL, PRIMARY KEY (`id`) USING BTREE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ROW_FORMAT=COMPACT;")
+	tk.MustExec("insert into t1 values(1,\"a\")")
+	tk.MustExec("insert into t1 values(2,\"b\")")
+
+	err := tk.ExecToErr("insert into t1 select * from t1 on duplicate key update id = \"\"")
+	c.Assert(err.Error(), Equals, "[table:1366]Incorrect int value: '' for column 'id' at row 1")
+}
+
 func (s *testSuite9) TestIssue10402(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
