@@ -395,6 +395,7 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 }
 
 func (s *testFastAnalyze) TestFastAnalyze(c *C) {
+	c.Skip("Skip this unstable test(#25782) and bring it back before 2021-07-29.")
 	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
