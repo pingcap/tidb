@@ -24,7 +24,6 @@ import (
 )
 
 func TestIntegration(t *testing.T) {
-	t.Parallel()
 	store, err := mockstore.NewMockStore()
 	assert.NoError(t, err)
 	defer func() {

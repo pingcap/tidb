@@ -48,7 +48,6 @@ import (
 )
 
 func TestInfo(t *testing.T) {
-	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
@@ -156,7 +155,6 @@ func TestInfo(t *testing.T) {
 }
 
 func TestT(t *testing.T) {
-	t.Parallel()
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -373,7 +371,6 @@ func TestT(t *testing.T) {
 }
 
 func TestSessionPool(t *testing.T) {
-	t.Parallel()
 
 	f := func() (pools.Resource, error) { return &testResource{}, nil }
 	pool := newSessionPool(1, f)
@@ -396,13 +393,11 @@ func TestSessionPool(t *testing.T) {
 }
 
 func TestErrorCode(t *testing.T) {
-	t.Parallel()
 	assert.Equal(t, errno.ErrInfoSchemaExpired, int(terror.ToSQLError(ErrInfoSchemaExpired).Code))
 	assert.Equal(t, errno.ErrInfoSchemaChanged, int(terror.ToSQLError(ErrInfoSchemaChanged).Code))
 }
 
 func TestServerIDConstant(t *testing.T) {
-	t.Parallel()
 	require.Less(t, lostConnectionToPDTimeout, serverIDTTL)
 }
 

@@ -21,7 +21,6 @@ import (
 )
 
 func TestDomain(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	assert.NotEqual(t, "", domainKey.String())
 
