@@ -93,7 +93,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.AlterDatabaseStmt:
 		err = e.executeAlterDatabase(x)
 	case *ast.AlterTableStmt:
-		err = e.executeAlterTable(x)
+		err = e.executeAlterTable(ctx, x)
 	case *ast.CreateIndexStmt:
 		err = e.executeCreateIndex(x)
 	case *ast.CreateDatabaseStmt:
@@ -280,8 +280,16 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
-	err := domain.GetDomain(e.ctx).DDL().CreateView(e.ctx, s)
-	return err
+	ret := &core.PreprocessorReturn{}
+	err := core.Preprocess(e.ctx, s.Select, core.WithPreprocessorReturn(ret))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ret.IsStaleness {
+		return ErrViewInvalid.GenWithStackByArgs(s.ViewName.Schema.L, s.ViewName.Name.L)
+	}
+
+	return domain.GetDomain(e.ctx).DDL().CreateView(e.ctx, s)
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
@@ -448,9 +456,9 @@ func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 	return err
 }
 
-func (e *DDLExec) executeAlterTable(s *ast.AlterTableStmt) error {
+func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	err := domain.GetDomain(e.ctx).DDL().AlterTable(e.ctx, ti, s.Specs)
+	err := domain.GetDomain(e.ctx).DDL().AlterTable(ctx, e.ctx, ti, s.Specs)
 	return err
 }
 

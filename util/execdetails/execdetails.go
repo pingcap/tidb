@@ -555,9 +555,23 @@ type RuntimeStatsColl struct {
 }
 
 // NewRuntimeStatsColl creates new executor collector.
-func NewRuntimeStatsColl() *RuntimeStatsColl {
-	return &RuntimeStatsColl{rootStats: make(map[int]*RootRuntimeStats),
-		copStats: make(map[int]*CopRuntimeStats)}
+// Reuse the object to reduce allocation when *RuntimeStatsColl is not nil.
+func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
+	if reuse != nil {
+		// Reuse map is cheaper than create a new map object.
+		// Go compiler optimize this cleanup code pattern to a clearmap() function.
+		for k := range reuse.rootStats {
+			delete(reuse.rootStats, k)
+		}
+		for k := range reuse.copStats {
+			delete(reuse.copStats, k)
+		}
+		return reuse
+	}
+	return &RuntimeStatsColl{
+		rootStats: make(map[int]*RootRuntimeStats),
+		copStats:  make(map[int]*CopRuntimeStats),
+	}
 }
 
 // RegisterStats register execStat for a executor.
