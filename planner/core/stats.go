@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"math"
 	"sort"
 
@@ -1103,6 +1104,12 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 		return p.stats, nil
 	}
 
+	var err error
+	// Call logicalOptimize before recursiveDeriveStats seedPart plan or recursivePart plan, otherwise the statInfo maybe wrong.
+	p.cte.seedPartLogicalPlan, err = logicalOptimize(context.Background(), p.cte.optFlag, p.cte.seedPartLogicalPlan)
+	if err != nil {
+		return nil, err
+	}
 	resStat, err := p.cte.seedPartLogicalPlan.recursiveDeriveStats(colGroups)
 	if err != nil {
 		return nil, err
@@ -1115,6 +1122,10 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 		p.stats.Cardinality[col.UniqueID] += resStat.Cardinality[p.cte.seedPartLogicalPlan.Schema().Columns[i].UniqueID]
 	}
 	if p.cte.recursivePartLogicalPlan != nil {
+		p.cte.recursivePartLogicalPlan, err = logicalOptimize(context.Background(), p.cte.optFlag, p.cte.recursivePartLogicalPlan)
+		if err != nil {
+			return nil, err
+		}
 		recurStat, err := p.cte.recursivePartLogicalPlan.recursiveDeriveStats(colGroups)
 		if err != nil {
 			return nil, err
