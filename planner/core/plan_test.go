@@ -16,7 +16,6 @@ package core_test
 import (
 	"bytes"
 	"fmt"
-	_ "net/http/pprof"
 	"strings"
 
 	. "github.com/pingcap/check"

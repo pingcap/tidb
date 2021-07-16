@@ -439,10 +439,10 @@ func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string
 		return ""
 	}
 
-	var buffer strings.Builder
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	tmp, ok := is.TableByID(ts.Table.ID)
 	if !ok {
+		var buffer strings.Builder
 		buffer.WriteString("partition table not found: ")
 		buffer.WriteString(strconv.FormatInt(ts.Table.ID, 10))
 		return buffer.String()

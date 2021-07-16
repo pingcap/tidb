@@ -135,7 +135,8 @@ func (p *PointGetPlan) ExplainNormalizedInfo() string {
 func (p *PointGetPlan) AccessObject(normalized bool) string {
 	var buffer strings.Builder
 	tblName := p.TblInfo.Name.O
-	buffer.WriteString("table:" + tblName)
+	buffer.WriteString("table:")
+	buffer.WriteString(tblName)
 	if p.PartitionInfo != nil {
 		if normalized {
 			buffer.WriteString(", partition:?")
