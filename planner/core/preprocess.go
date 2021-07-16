@@ -129,7 +129,7 @@ const (
 
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
-	initedLastSnapshotTS bool
+	initedLastSnapshotTS bool //nolint
 	ExplicitStaleness    bool
 	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
