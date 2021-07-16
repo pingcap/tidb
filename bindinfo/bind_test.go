@@ -2114,3 +2114,25 @@ func (s *testSuite) TestTemporaryTable(c *C) {
 	tk.MustGetErrCode("create binding for update t set a = 1 where b = 1 and c > 1 using update /*+ use_index(t, c) */ t set a = 1 where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("create binding for delete from t where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
 }
+
+func (s *testSuite) TestBindingLastUpdateTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("create table t0(a int, key(a));")
+
+	tk.MustQuery(`show status like 'last_plan_binding_update_time';`).Check(testkit.Rows("last_plan_binding_update_time 0000-00-00 00:00:00"))
+	tk.MustExec("create global binding for select * from t0 using select * from t0 use index(a);")
+	tk.MustExec("admin reload bindings;")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	update_time := rows[0][5]
+	rows1 := tk.MustQuery("show status like 'last_plan_binding_update_time';").Rows()
+	update_time1 := rows1[0][1]
+	c.Assert(update_time1, Equals, update_time)
+	rows2 := tk.MustQuery("show session status like 'last_plan_binding_update_time';").Rows()
+	update_time2 := rows2[0][1]
+	c.Assert(update_time2, Equals, update_time)
+	tk.MustQuery(`show global status like 'last_plan_binding_update_time';`).Check(testkit.Rows())
+}

@@ -114,6 +114,7 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 		// BindSQL has already been validated when coming here, so we use nil sctx parameter.
 		return handle.AddBindRecord(nil, record)
 	}
+	variable.RegisterStatistics(handle)
 	return handle
 }
 
