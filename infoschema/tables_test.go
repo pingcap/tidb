@@ -798,28 +798,6 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 		c.Assert(gotAddrs, DeepEquals, cas.addrs, Commentf("sql: %s", cas.sql))
 		c.Assert(gotNames, DeepEquals, cas.names, Commentf("sql: %s", cas.sql))
 	}
-
-	// More test about the systemInfo's privileges.
-	tk.MustExec("create user 'testuser'@'localhost'")
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{
-		Username: "testuser",
-		Hostname: "localhost",
-	}, nil, nil), Equals, true)
-
-	err := tk.QueryToErr("select * from information_schema.CLUSTER_SYSTEMINFO")
-	c.Assert(err, NotNil)
-	// This error is come from cop(TiDB) fetch from rpc server.
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
-
-	err = tk.QueryToErr("select * from information_schema.CLUSTER_HARDWARE")
-	c.Assert(err, NotNil)
-	// This error is come from cop(TiDB) fetch from rpc server.
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
-
-	err = tk.QueryToErr("select * from information_schema.CLUSTER_LOAD")
-	c.Assert(err, NotNil)
-	// This error is come from cop(TiDB) fetch from rpc server.
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 }
 
 func (s *testTableSuite) TestSystemSchemaID(c *C) {
@@ -894,8 +872,10 @@ func (s *testClusterTableSuite) TestClusterTablePrivileges(c *C) {
 	// More tests about the Cluster_TiDB_Trx's privileges.
 	tk.MustExec("create user 'testuser'@'localhost'")
 	tk.MustExec("create user 'testuser2'@'localhost'")
+	defer tk.MustExec("drop user 'testuser'@'localhost'")
+	defer tk.MustExec("drop user 'testuser2'@'localhost'")
+
 	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
-	tk.MustExec("flush privileges")
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
