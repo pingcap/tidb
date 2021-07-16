@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -30,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var _ = SerialSuites(&testEvaluatorSerialSuites{})
@@ -42,13 +45,32 @@ func TestT(t *testing.T) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
+	tikv.EnableFailpoints()
 
 	testleak.BeforeTest()
 	defer testleak.AfterTestT(t)()
 
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
+
+	// Some test depends on the values of timeutil.SystemLocation()
+	// If we don't SetSystemTZ() here, the value would change unpredictable.
+	// Affectd by the order whether a testsuite runs before or after integration test.
+	// Note, SetSystemTZ() is a sync.Once operation.
+	timeutil.SetSystemTZ("system")
+
+	fpname := "github.com/pingcap/tidb/expression/PanicIfPbCodeUnspecified"
+	err := failpoint.Enable(fpname, "return(true)")
+	if err != nil {
+		t.Fatalf("enable global failpoint `%s` failed: %v", fpname, err)
+	}
+
 	TestingT(t)
+
+	err = failpoint.Disable(fpname)
+	if err != nil {
+		t.Fatalf("disable global failpoint `%s` failed: %v", fpname, err)
+	}
 }
 
 type testEvaluatorSuiteBase struct {

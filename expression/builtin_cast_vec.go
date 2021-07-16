@@ -342,7 +342,7 @@ func (b *builtinCastDurationAsIntSig) vecEvalInt(input *chunk.Chunk, result *chu
 
 		duration.Duration = ds[i]
 		duration.Fsp = fsp
-		dur, err := duration.RoundFrac(types.DefaultFsp)
+		dur, err := duration.RoundFrac(types.DefaultFsp, b.ctx.GetSessionVars().Location())
 		if err != nil {
 			return err
 		}
@@ -1214,6 +1214,15 @@ func (b *builtinCastRealAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 		}
 		dur, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, strconv.FormatFloat(f64s[i], 'f', -1, 64), int8(b.tp.Decimal))
 		if err != nil {
+			if types.ErrTruncatedWrongVal.Equal(err) {
+				err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+				if err != nil {
+					return err
+				}
+				// ErrTruncatedWrongVal needs to be considered NULL.
+				result.SetNull(i, true)
+				continue
+			}
 			return err
 		}
 		ds[i] = dur.Duration
@@ -1247,7 +1256,7 @@ func (b *builtinCastTimeAsDurationSig) vecEvalDuration(input *chunk.Chunk, resul
 		if err != nil {
 			return err
 		}
-		d, err = d.RoundFrac(int8(b.tp.Decimal))
+		d, err = d.RoundFrac(int8(b.tp.Decimal), b.ctx.GetSessionVars().Location())
 		if err != nil {
 			return err
 		}
@@ -1276,7 +1285,7 @@ func (b *builtinCastDurationAsDurationSig) vecEvalDuration(input *chunk.Chunk, r
 			continue
 		}
 		dur.Duration = v
-		rd, err = dur.RoundFrac(int8(b.tp.Decimal))
+		rd, err = dur.RoundFrac(int8(b.tp.Decimal), b.ctx.GetSessionVars().Location())
 		if err != nil {
 			return err
 		}
@@ -1779,14 +1788,14 @@ func (b *builtinCastDecimalAsDurationSig) vecEvalDuration(input *chunk.Chunk, re
 		if err != nil {
 			if types.ErrTruncatedWrongVal.Equal(err) {
 				err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
-			}
-			if err != nil {
-				return err
-			}
-			if dur == types.ZeroDuration {
+				if err != nil {
+					return err
+				}
+				// ErrTruncatedWrongVal needs to be considered NULL.
 				result.SetNull(i, true)
 				continue
 			}
+			return err
 		}
 		ds[i] = dur.Duration
 	}

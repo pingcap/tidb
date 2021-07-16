@@ -912,10 +912,8 @@ func (b *builtinCastRealAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if err != nil {
 		if types.ErrTruncatedWrongVal.Equal(err) {
 			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
-			// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
-			if res == types.ZeroDuration {
-				return res, true, err
-			}
+			// ErrTruncatedWrongVal needs to be considered NULL.
+			return res, true, err
 		}
 	}
 	return res, false, err
@@ -1077,10 +1075,8 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row chunk.Row) (res types
 	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(val.ToString()), int8(b.tp.Decimal))
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
-		// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
-		if res == types.ZeroDuration {
-			return res, true, err
-		}
+		// ErrTruncatedWrongVal needs to be considered NULL.
+		return res, true, err
 	}
 	return res, false, err
 }
@@ -1442,7 +1438,7 @@ func (b *builtinCastTimeAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if err != nil {
 		return res, false, err
 	}
-	res, err = res.RoundFrac(int8(b.tp.Decimal))
+	res, err = res.RoundFrac(int8(b.tp.Decimal), b.ctx.GetSessionVars().Location())
 	return res, false, err
 }
 
@@ -1461,7 +1457,7 @@ func (b *builtinCastDurationAsDurationSig) evalDuration(row chunk.Row) (res type
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = res.RoundFrac(int8(b.tp.Decimal))
+	res, err = res.RoundFrac(int8(b.tp.Decimal), b.ctx.GetSessionVars().Location())
 	return res, false, err
 }
 
@@ -1480,7 +1476,7 @@ func (b *builtinCastDurationAsIntSig) evalInt(row chunk.Row) (res int64, isNull 
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	dur, err := val.RoundFrac(types.DefaultFsp)
+	dur, err := val.RoundFrac(types.DefaultFsp, b.ctx.GetSessionVars().Location())
 	if err != nil {
 		return res, false, err
 	}
@@ -1808,6 +1804,7 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+	expr = TryPushCastIntoControlFunctionForHybridType(ctx, expr, tp)
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:
@@ -1844,6 +1841,14 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 // WrapWithCastAsInt wraps `expr` with `cast` if the return type of expr is not
 // type int, otherwise, returns `expr` directly.
 func WrapWithCastAsInt(ctx sessionctx.Context, expr Expression) Expression {
+	if expr.GetType().Tp == mysql.TypeEnum {
+		if col, ok := expr.(*Column); ok {
+			col = col.Clone().(*Column)
+			col.RetType = col.RetType.Clone()
+			expr = col
+		}
+		expr.GetType().Flag |= mysql.EnumSetAsIntFlag
+	}
 	if expr.GetType().EvalType() == types.ETInt {
 		return expr
 	}
@@ -1906,7 +1911,11 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 		argLen = -1
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
-	tp.Charset, tp.Collate = expr.CharsetAndCollation(ctx)
+	if expr.Coercibility() == CoercibilityExplicit {
+		tp.Charset, tp.Collate = expr.CharsetAndCollation(ctx)
+	} else {
+		tp.Charset, tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	}
 	tp.Flen, tp.Decimal = argLen, types.UnspecifiedLength
 	return BuildCastFunction(ctx, expr, tp)
 }
@@ -1974,4 +1983,93 @@ func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 		Flag:    mysql.BinaryFlag,
 	}
 	return BuildCastFunction(ctx, expr, tp)
+}
+
+// TryPushCastIntoControlFunctionForHybridType try to push cast into control function for Hybrid Type.
+// If necessary, it will rebuild control function using changed args.
+// When a hybrid type is the output of a control function, the result may be as a numeric type to subsequent calculation
+// We should perform the `Cast` operation early to avoid using the wrong type for calculation
+// For example, the condition `if(1, e, 'a') = 1`, `if` function will output `e` and compare with `1`.
+// If the evaltype is ETString, it will get wrong result. So we can rewrite the condition to
+// `IfInt(1, cast(e as int), cast('a' as int)) = 1` to get the correct result.
+func TryPushCastIntoControlFunctionForHybridType(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
+	sf, ok := expr.(*ScalarFunction)
+	if !ok {
+		return expr
+	}
+
+	var wrapCastFunc func(ctx sessionctx.Context, expr Expression) Expression
+	switch tp.EvalType() {
+	case types.ETInt:
+		wrapCastFunc = WrapWithCastAsInt
+	case types.ETReal:
+		wrapCastFunc = WrapWithCastAsReal
+	default:
+		return expr
+	}
+
+	isHybrid := func(ft *types.FieldType) bool {
+		// todo: compatible with mysql control function using bit type. issue 24725
+		return ft.Hybrid() && ft.Tp != mysql.TypeBit
+	}
+
+	args := sf.GetArgs()
+	switch sf.FuncName.L {
+	case ast.If:
+		if isHybrid(args[1].GetType()) || isHybrid(args[2].GetType()) {
+			args[1] = wrapCastFunc(ctx, args[1])
+			args[2] = wrapCastFunc(ctx, args[2])
+			f, err := funcs[ast.If].getFunction(ctx, args)
+			if err != nil {
+				return expr
+			}
+			sf.RetType, sf.Function = f.getRetTp(), f
+			return sf
+		}
+	case ast.Case:
+		hasHybrid := false
+		for i := 0; i < len(args)-1; i += 2 {
+			hasHybrid = hasHybrid || isHybrid(args[i+1].GetType())
+		}
+		if len(args)%2 == 1 {
+			hasHybrid = hasHybrid || isHybrid(args[len(args)-1].GetType())
+		}
+		if !hasHybrid {
+			return expr
+		}
+
+		for i := 0; i < len(args)-1; i += 2 {
+			args[i+1] = wrapCastFunc(ctx, args[i+1])
+		}
+		if len(args)%2 == 1 {
+			args[len(args)-1] = wrapCastFunc(ctx, args[len(args)-1])
+		}
+		f, err := funcs[ast.Case].getFunction(ctx, args)
+		if err != nil {
+			return expr
+		}
+		sf.RetType, sf.Function = f.getRetTp(), f
+		return sf
+	case ast.Elt:
+		hasHybrid := false
+		for i := 1; i < len(args); i++ {
+			hasHybrid = hasHybrid || isHybrid(args[i].GetType())
+		}
+		if !hasHybrid {
+			return expr
+		}
+
+		for i := 1; i < len(args); i++ {
+			args[i] = wrapCastFunc(ctx, args[i])
+		}
+		f, err := funcs[ast.Elt].getFunction(ctx, args)
+		if err != nil {
+			return expr
+		}
+		sf.RetType, sf.Function = f.getRetTp(), f
+		return sf
+	default:
+		return expr
+	}
+	return expr
 }

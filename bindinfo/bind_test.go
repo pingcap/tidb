@@ -30,13 +30,14 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 func TestT(t *testing.T) {
@@ -60,7 +62,7 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	domain  *domain.Domain
 	*parser.Parser
@@ -68,6 +70,10 @@ type testSuite struct {
 
 type mockSessionManager struct {
 	PS []*util.ProcessInfo
+}
+
+func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
@@ -109,7 +115,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 	useMockTikv := *mockTikv
 	if useMockTikv {
 		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.WithClusterInspector(func(c testutils.Cluster) {
 				mockstore.BootstrapWithSingleStore(c)
 				s.cluster = c
 			}),
@@ -151,7 +157,8 @@ func normalizeWithDefaultDB(c *C, sql, db string) (string, string) {
 	testParser := parser.New()
 	stmt, err := testParser.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	return parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, "test", ""))
+	normalized, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, "test", ""))
+	return normalized, digest.String()
 }
 
 func (s *testSuite) TestBindParse(c *C) {
@@ -177,7 +184,7 @@ func (s *testSuite) TestBindParse(c *C) {
 	c.Check(bindHandle.Size(), Equals, 1)
 
 	sql, hash := parser.NormalizeDigest("select * from test . t")
-	bindData := bindHandle.GetBindRecord(hash, sql, "test")
+	bindData := bindHandle.GetBindRecord(hash.String(), sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from `test` . `t`")
 	bind := bindData.Bindings[0]
@@ -651,7 +658,7 @@ func (s *testSuite) TestBindingSymbolList(c *C) {
 	// Normalize
 	sql, hash := parser.NormalizeDigest("select a, b from test . t where a = 1 limit 0, 1")
 
-	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
+	bindData := s.domain.BindHandle().GetBindRecord(hash.String(), sql, "test")
 	c.Assert(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select `a` , `b` from `test` . `t` where `a` = ? limit ...")
 	bind := bindData.Bindings[0]
@@ -771,7 +778,7 @@ func (s *testSuite) TestErrorBind(c *C) {
 	c.Assert(err, IsNil, Commentf("err %v", err))
 
 	sql, hash := parser.NormalizeDigest("select * from test . t where i > ?")
-	bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
+	bindData := s.domain.BindHandle().GetBindRecord(hash.String(), sql, "test")
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from `test` . `t` where `i` > ?")
 	bind := bindData.Bindings[0]
@@ -2091,4 +2098,19 @@ func (s *testSuite) TestBindingWithoutCharset(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` = ?")
 	c.Assert(rows[0][1], Equals, "SELECT * FROM `test`.`t` WHERE `a` = 'aa'")
+}
+
+func (s *testSuite) TestTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set tidb_enable_global_temporary_table = true")
+	tk.MustExec("create global temporary table t(a int, b int, key(a), key(b)) on commit delete rows")
+	tk.MustExec("create table t2(a int, b int, key(a), key(b))")
+	tk.MustGetErrCode("create session binding for select * from t where b = 123 using select * from t ignore index(b) where b = 123;", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create binding for insert into t select * from t2 where t2.b = 1 and t2.c > 1 using insert into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create binding for replace into t select * from t2 where t2.b = 1 and t2.c > 1 using replace into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create binding for update t set a = 1 where b = 1 and c > 1 using update /*+ use_index(t, c) */ t set a = 1 where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create binding for delete from t where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
 }

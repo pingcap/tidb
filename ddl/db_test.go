@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -43,11 +44,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -60,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 const (
@@ -76,19 +78,22 @@ var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
 var _ = Suite(&testDBSuite6{&testDBSuite{}})
 var _ = Suite(&testDBSuite7{&testDBSuite{}})
+var _ = Suite(&testDBSuite8{&testDBSuite{}})
 var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
+var _ = SerialSuites(&testSerialDBSuite1{&testDBSuite{}})
 
 const defaultBatchSize = 1024
 const defaultReorgBatchSize = 256
 
 type testDBSuite struct {
-	cluster    cluster.Cluster
+	cluster    testutils.Cluster
 	store      kv.Storage
 	dom        *domain.Domain
 	schemaName string
 	s          session.Session
 	lease      time.Duration
 	autoIDStep int64
+	ctx        sessionctx.Context
 }
 
 func setUpSuite(s *testDBSuite, c *C) {
@@ -102,7 +107,7 @@ func setUpSuite(s *testDBSuite, c *C) {
 	ddl.SetWaitTimeWhenErrorOccurred(0)
 
 	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
@@ -113,6 +118,7 @@ func setUpSuite(s *testDBSuite, c *C) {
 	c.Assert(err, IsNil)
 	s.s, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
+	s.ctx = s.s.(sessionctx.Context)
 
 	_, err = s.s.Execute(context.Background(), "create database test_db")
 	c.Assert(err, IsNil)
@@ -144,7 +150,9 @@ type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
 type testDBSuite6 struct{ *testDBSuite }
 type testDBSuite7 struct{ *testDBSuite }
+type testDBSuite8 struct{ *testDBSuite }
 type testSerialDBSuite struct{ *testDBSuite }
+type testSerialDBSuite1 struct{ *testDBSuite }
 
 func testAddIndexWithPK(tk *testkit.TestKit) {
 	tk.MustExec("drop table if exists test_add_index_with_pk")
@@ -285,7 +293,8 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 }
 
 // TestAddPrimaryKeyRollback1 is used to test scenarios that will roll back when a duplicate primary key is encountered.
-func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
+func (s *testDBSuite8) TestAddPrimaryKeyRollback1(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210705")
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
@@ -294,7 +303,7 @@ func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
 }
 
 // TestAddPrimaryKeyRollback2 is used to test scenarios that will roll back when a null primary key is encountered.
-func (s *testDBSuite1) TestAddPrimaryKeyRollback2(c *C) {
+func (s *testDBSuite8) TestAddPrimaryKeyRollback2(c *C) {
 	hasNullValsInKey := true
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
@@ -303,11 +312,81 @@ func (s *testDBSuite1) TestAddPrimaryKeyRollback2(c *C) {
 }
 
 func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210702")
 	hasNullValsInKey := false
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
 	errMsg := "[kv:1062]Duplicate entry '" + strconv.Itoa(defaultBatchSize*2-10) + "' for key 'c3_index'"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
+}
+
+func (s *testSerialDBSuite) TestWriteReorgForColumnTypeChangeOnAmendTxn(c *C) {
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test_db")
+	tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = ON;")
+	defer func() {
+		tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = OFF;")
+	}()
+
+	d := s.dom.DDL()
+	originalHook := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalHook)
+	testInsertOnModifyColumn := func(sql string, startColState, commitColState model.SchemaState, retStrs []string, retErr error) {
+		tk := testkit.NewTestKit(c, s.store)
+		tk.MustExec("use test_db")
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("create table t1 (c1 int, c2 int, c3 int, unique key(c1))")
+		tk.MustExec("insert into t1 values (20, 20, 20);")
+
+		var checkErr error
+		tk1 := testkit.NewTestKit(c, s.store)
+		hook := &ddl.TestDDLCallback{Do: s.dom}
+		times := 0
+		hook.OnJobUpdatedExported = func(job *model.Job) {
+			if job.Type != model.ActionModifyColumn || checkErr != nil ||
+				(job.SchemaState != startColState && job.SchemaState != commitColState) {
+				return
+			}
+
+			if job.SchemaState == startColState {
+				tk1.MustExec("use test_db")
+				tk1.MustExec("begin pessimistic;")
+				tk1.MustExec("insert into t1 values(101, 102, 103)")
+				return
+			}
+			if times == 0 {
+				_, checkErr = tk1.Exec("commit;")
+			}
+			times++
+		}
+		d.(ddl.DDLForTest).SetHook(hook)
+
+		tk.MustExec(sql)
+		if retErr == nil {
+			c.Assert(checkErr, IsNil)
+		} else {
+			c.Assert(strings.Contains(checkErr.Error(), retErr.Error()), IsTrue)
+		}
+		tk.MustQuery("select * from t1;").Check(testkit.Rows(retStrs...))
+
+		tk.MustExec("admin check table t1")
+	}
+
+	// Testing it needs reorg data.
+	ddlStatement := "alter table t1 change column c2 cc smallint;"
+	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StateWriteReorganization, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+	testInsertOnModifyColumn(ddlStatement, model.StateDeleteOnly, model.StateWriteReorganization, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StateWriteReorganization, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StatePublic, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+	testInsertOnModifyColumn(ddlStatement, model.StateDeleteOnly, model.StatePublic, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StatePublic, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+
+	// Testing it needs not reorg data. This case only have two state: none, public.
+	ddlStatement = "alter table t1 change column c2 cc bigint;"
+	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StateWriteReorganization, []string{"20 20 20"}, nil)
+	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StateWriteReorganization, []string{"20 20 20"}, nil)
+	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StatePublic, []string{"20 20 20", "101 102 103"}, nil)
+	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StatePublic, []string{"20 20 20"}, nil)
 }
 
 func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
@@ -442,7 +521,7 @@ LOOP:
 	tk.MustExec("drop table t1")
 }
 
-func (s *testDBSuite5) TestCancelAddPrimaryKey(c *C) {
+func (s *testDBSuite8) TestCancelAddPrimaryKey(c *C) {
 	idxName := "primary"
 	addIdxSQL := "alter table t1 add primary key idx_c2 (c2);"
 	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "", s.dom)
@@ -458,7 +537,7 @@ func (s *testDBSuite5) TestCancelAddPrimaryKey(c *C) {
 	tk.MustExec("drop table t1")
 }
 
-func (s *testDBSuite3) TestCancelAddIndex(c *C) {
+func (s *testDBSuite7) TestCancelAddIndex(c *C) {
 	idxName := "c3_index "
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
 	testCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL, "", s.dom)
@@ -1070,7 +1149,7 @@ func (s *testDBSuite6) TestAddMultiColumnsIndexClusterIndex(c *C) {
 	tk.MustExec("admin check table t;")
 }
 
-func (s *testDBSuite1) TestAddPrimaryKey1(c *C) {
+func (s *testDBSuite6) TestAddPrimaryKey1(c *C) {
 	testAddIndex(c, s.store, s.lease, testPlain,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, unique key(c1))", "primary")
 }
@@ -1103,7 +1182,7 @@ func (s *testDBSuite4) TestAddPrimaryKey4(c *C) {
 			      partition p4 values less than maxvalue)`, "primary")
 }
 
-func (s *testDBSuite1) TestAddIndex1(c *C) {
+func (s *testDBSuite6) TestAddIndex1(c *C) {
 	testAddIndex(c, s.store, s.lease, testPlain,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))", "")
 }
@@ -1125,7 +1204,7 @@ func (s *testDBSuite3) TestAddIndex3(c *C) {
 			      partition by hash (c1) partitions 4;`, "")
 }
 
-func (s *testDBSuite4) TestAddIndex4(c *C) {
+func (s *testDBSuite8) TestAddIndex4(c *C) {
 	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by range columns (c1) (
@@ -2033,7 +2112,7 @@ func (s *testDBSuite5) TestCreateIndexType(c *C) {
 	tk.MustExec(sql)
 }
 
-func (s *testDBSuite1) TestColumn(c *C) {
+func (s *testDBSuite6) TestColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
 	tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
@@ -2278,10 +2357,8 @@ func (s *testDBSuite6) TestDropColumn(c *C) {
 		testddlutil.ExecMultiSQLInGoroutine(c, s.store, "drop_col_db", []string{"insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1"}, dmlDone)
 	}
 	for i := 0; i < num; i++ {
-		select {
-		case err := <-ddlDone:
-			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
-		}
+		err := <-ddlDone
+		c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 	}
 
 	// Test for drop partition table column.
@@ -2358,12 +2435,12 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrWrongTableName)
 	s.mustExec(tk, c, "create table t4 (c1 int, c2 int, c3 int default 1, index (c1));")
 	tk.MustExec("insert into t4(c2) values (null);")
-	sql = "alter table t4 change c1 a1 int not null;"
-	tk.MustGetErrCode(sql, errno.ErrInvalidUseOfNull)
+	_, err = tk.Exec("alter table t4 change c1 a1 int not null;")
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a1' at row 1")
 	sql = "alter table t4 change c2 a bigint not null;"
 	tk.MustGetErrCode(sql, mysql.WarnDataTruncated)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
-	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
+	tk.MustExec(sql)
 	// Rename to an existing column.
 	s.mustExec(tk, c, "alter table t3 add column a bigint")
 	sql = "alter table t3 change aa a bigint"
@@ -3007,7 +3084,7 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	tk.MustExec("create table t3 (a int, b int);")
 	failSQL = "alter table t1 add foreign key (c) REFERENCES t3(a);"
 	tk.MustGetErrCode(failSQL, errno.ErrKeyColumnDoesNotExits)
-	// test oreign key not match error
+	// test origin key not match error
 	failSQL = "alter table t1 add foreign key (a) REFERENCES t3(a, b);"
 	tk.MustGetErrCode(failSQL, errno.ErrWrongFkDef)
 	// Test drop column with foreign key.
@@ -3026,7 +3103,26 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	tk.MustExec("drop table if exists t1,t2,t3,t4;")
 }
 
-func (s *testDBSuite3) TestFKOnGeneratedColumns(c *C) {
+func (s *testDBSuite2) TestTemporaryTableForeignKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustExec("drop table if exists t1_tmp;")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("create global temporary table t1_tmp (a int, b int) on commit delete rows;")
+	// test add foreign key.
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (a int, b int);")
+	failSQL := "alter table t1_tmp add foreign key (c) REFERENCES t2(a);"
+	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
+	// Test drop column with foreign key.
+	failSQL = "create global temporary table t3 (c int,d int,foreign key (d) references t1 (b)) on commit delete rows;"
+	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
+	tk.MustExec("drop table if exists t1,t2,t3,t1_tmp;")
+}
+
+func (s *testDBSuite8) TestFKOnGeneratedColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// test add foreign key to generated column
@@ -3490,6 +3586,37 @@ out:
 	tk.MustExec("drop table tnn")
 }
 
+func (s *testDBSuite3) TestVirtualColumnDDL(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_gv_ddl")
+	tk.MustExec(`create global temporary table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored) on commit delete rows;`)
+	defer tk.MustExec("drop table if exists test_gv_ddl")
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
+	c.Assert(err, IsNil)
+	testCases := []struct {
+		generatedExprString string
+		generatedStored     bool
+	}{
+		{"", false},
+		{"`a` + 8", false},
+		{"`b` + 2", true},
+	}
+	for i, column := range table.Meta().Columns {
+		c.Assert(column.GeneratedExprString, Equals, testCases[i].generatedExprString)
+		c.Assert(column.GeneratedStored, Equals, testCases[i].generatedStored)
+	}
+	result := tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test_gv_ddl values (1, default, default)")
+	tk.MustQuery("select * from test_gv_ddl").Check(testkit.Rows("1 9 11"))
+	_, err = tk.Exec("commit")
+	c.Assert(err, IsNil)
+}
+
 func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3805,7 +3932,8 @@ func (s *testDBSuite3) TestColumnModifyingDefinition(c *C) {
 	tk.MustExec("drop table if exists test2;")
 	tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
 	tk.MustExec("insert into test2(c2) values (null);")
-	tk.MustGetErrCode("alter table test2 change c2 a int not null", errno.ErrInvalidUseOfNull)
+	_, err = tk.Exec("alter table test2 change c2 a int not null")
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
 	tk.MustGetErrCode("alter table test2 change c1 a1 bigint not null;", mysql.WarnDataTruncated)
 }
 
@@ -3946,12 +4074,6 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 	// Make sure the count of regions more than backfill workers.
 	tk.MustQuery("split table t1 between (0) and (8192) regions 8;").Check(testkit.Rows("8 1"))
 
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-	}()
-
 	tbl := s.testGetTable(c, "t1")
 	originalHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -4052,11 +4174,8 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal2(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull", `return("insert into test.tt values (NULL, NULL)")`), IsNil)
 	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
 		err := failpoint.Disable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull")
 		c.Assert(err, IsNil)
 	}()
@@ -4085,7 +4204,6 @@ func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal(c *C) {
 
 func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
 	// varchar to varchar
 	tk.MustExec("drop table if exists tt;")
@@ -4098,9 +4216,11 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk.MustGetErrMsg("alter table tt change a a varchar(4);", "[types:1406]Data Too Long, field len 4, data len 5")
 	tk.MustExec("alter table tt change a a varchar(100);")
 
-	tk.MustExec("drop table if exists tt;")
-	tk.MustExec("create table tt (a char(10));")
-	tk.MustExec("insert into tt values ('111'),('10000');")
+	// varchar to char
+	tk.MustExec("alter table tt change a a char(10);")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeString)
+	c.Assert(c2.FieldType.Flen, Equals, 10)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1406]Data Too Long, field len 4, data len 5")
 
@@ -4164,14 +4284,6 @@ func testModifyColumnNullToNotNull(c *C, s *testDBSuite, enableChangeColumnType 
 	s.mustExec(tk, c, "use test_db")
 	s.mustExec(tk, c, "drop table if exists t1")
 	s.mustExec(tk, c, "create table t1 (c1 int, c2 int);")
-
-	if enableChangeColumnType {
-		enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-		tk.Se.GetSessionVars().EnableChangeColumnType = true
-		defer func() {
-			tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-		}()
-	}
 
 	tbl := s.testGetTable(c, "t1")
 	getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "t1", "c2", false)
@@ -4799,52 +4911,9 @@ func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
 
 }
 
-func (s *testDBSuite1) TestModifyColumnTime(c *C) {
-	limit := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(3)
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_db")
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
-
-	// Set time zone to UTC.
-	originalTz := tk.Se.GetSessionVars().TimeZone
-	tk.Se.GetSessionVars().TimeZone = time.UTC
-	defer func() {
-		variable.SetDDLErrorCountLimit(limit)
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-		tk.Se.GetSessionVars().TimeZone = originalTz
-	}()
-
-	now := time.Now().UTC()
-	now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	timeToDate1 := now.Format("2006-01-02")
-	timeToDate2 := now.AddDate(0, 0, 30).Format("2006-01-02")
-
-	timeToDatetime1 := now.Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	timeToDatetime2 := now.Add(20 * time.Hour).Format("2006-01-02 15:04:05")
-	timeToDatetime3 := now.Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	timeToDatetime4 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	timeToDatetime5 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Format("2006-01-02 15:04:05")
-
-	timeToTimestamp1 := now.Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	timeToTimestamp2 := now.Add(20 * time.Hour).Format("2006-01-02 15:04:05")
-	timeToTimestamp3 := now.Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	timeToTimestamp4 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	timeToTimestamp5 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Format("2006-01-02 15:04:05")
+func (s *testDBSuite1) TestModifyColumnTime_TimeToYear(c *C) {
 	currentYear := strconv.Itoa(time.Now().Year())
-
-	// 1. In conversion between date/time, fraction parts are taken into account
-	// Refer to doc: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-type-conversion.html
-	// 2. Failed tests are commentd to pass unit-test
-	tests := []struct {
-		from   string
-		value  string
-		to     string
-		expect string
-		err    uint16
-	}{
+	tests := []testModifyColumnTimeCase{
 		// time to year, it's reasonable to return current year and discard the time (even if MySQL may get data out of range error).
 		{"time", `"30 20:00:12"`, "year", currentYear, 0},
 		{"time", `"30 20:00"`, "year", currentYear, 0},
@@ -4860,7 +4929,16 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"time", `"20:00:12.498"`, "year", currentYear, 0},
 		{"time", `"200012.498"`, "year", currentYear, 0},
 		{"time", `200012.498`, "year", currentYear, 0},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_TimeToDate(c *C) {
+	now := time.Now().UTC()
+	now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	timeToDate1 := now.Format("2006-01-02")
+	timeToDate2 := now.AddDate(0, 0, 30).Format("2006-01-02")
+	tests := []testModifyColumnTimeCase{
 		// time to date
 		{"time", `"30 20:00:12"`, "date", timeToDate2, 0},
 		{"time", `"30 20:00"`, "date", timeToDate2, 0},
@@ -4876,7 +4954,19 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"time", `"20:00:12.498"`, "date", timeToDate1, 0},
 		{"time", `"200012.498"`, "date", timeToDate1, 0},
 		{"time", `200012.498`, "date", timeToDate1, 0},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_TimeToDatetime(c *C) {
+	now := time.Now().UTC()
+	now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	timeToDatetime1 := now.Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToDatetime2 := now.Add(20 * time.Hour).Format("2006-01-02 15:04:05")
+	timeToDatetime3 := now.Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToDatetime4 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToDatetime5 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Format("2006-01-02 15:04:05")
+	tests := []testModifyColumnTimeCase{
 		// time to datetime
 		{"time", `"30 20:00:12"`, "datetime", timeToDatetime4, 0},
 		{"time", `"30 20:00"`, "datetime", timeToDatetime5, 0},
@@ -4892,7 +4982,19 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"time", `"20:00:12.498"`, "datetime", timeToDatetime1, 0},
 		{"time", `"200012.498"`, "datetime", timeToDatetime1, 0},
 		{"time", `200012.498`, "datetime", timeToDatetime1, 0},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_TimeToTimestamp(c *C) {
+	now := time.Now().UTC()
+	now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	timeToTimestamp1 := now.Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToTimestamp2 := now.Add(20 * time.Hour).Format("2006-01-02 15:04:05")
+	timeToTimestamp3 := now.Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToTimestamp4 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToTimestamp5 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Format("2006-01-02 15:04:05")
+	tests := []testModifyColumnTimeCase{
 		// time to timestamp
 		{"time", `"30 20:00:12"`, "timestamp", timeToTimestamp4, 0},
 		{"time", `"30 20:00"`, "timestamp", timeToTimestamp5, 0},
@@ -4908,7 +5010,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"time", `"20:00:12.498"`, "timestamp", timeToTimestamp1, 0},
 		{"time", `"200012.498"`, "timestamp", timeToTimestamp1, 0},
 		{"time", `200012.498`, "timestamp", timeToTimestamp1, 0},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite7) TestModifyColumnTime_DateToTime(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// date to time
 		{"date", `"2019-01-02"`, "time", "00:00:00", 0},
 		{"date", `"19-01-02"`, "time", "00:00:00", 0},
@@ -4916,7 +5023,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"date", `"190102"`, "time", "00:00:00", 0},
 		{"date", `20190102`, "time", "00:00:00", 0},
 		{"date", `190102`, "time", "00:00:00", 0},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_DateToYear(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// date to year
 		{"date", `"2019-01-02"`, "year", "2019", 0},
 		{"date", `"19-01-02"`, "year", "2019", 0},
@@ -4924,7 +5036,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"date", `"190102"`, "year", "2019", 0},
 		{"date", `20190102`, "year", "2019", 0},
 		{"date", `190102`, "year", "2019", 0},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_DateToDatetime(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// date to datetime
 		{"date", `"2019-01-02"`, "datetime", "2019-01-02 00:00:00", 0},
 		{"date", `"19-01-02"`, "datetime", "2019-01-02 00:00:00", 0},
@@ -4932,7 +5049,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"date", `"190102"`, "datetime", "2019-01-02 00:00:00", 0},
 		{"date", `20190102`, "datetime", "2019-01-02 00:00:00", 0},
 		{"date", `190102`, "datetime", "2019-01-02 00:00:00", 0},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_DateToTimestamp(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// date to timestamp
 		{"date", `"2019-01-02"`, "timestamp", "2019-01-02 00:00:00", 0},
 		{"date", `"19-01-02"`, "timestamp", "2019-01-02 00:00:00", 0},
@@ -4940,7 +5062,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"date", `"190102"`, "timestamp", "2019-01-02 00:00:00", 0},
 		{"date", `20190102`, "timestamp", "2019-01-02 00:00:00", 0},
 		{"date", `190102`, "timestamp", "2019-01-02 00:00:00", 0},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_TimestampToYear(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// timestamp to year
 		{"timestamp", `"2006-01-02 15:04:05"`, "year", "2006", 0},
 		{"timestamp", `"06-01-02 15:04:05"`, "year", "2006", 0},
@@ -4949,7 +5076,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"timestamp", `20060102150405`, "year", "2006", 0},
 		{"timestamp", `060102150405`, "year", "2006", 0},
 		{"timestamp", `"2006-01-02 23:59:59.506"`, "year", "2006", 0},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_TimestampToTime(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// timestamp to time
 		{"timestamp", `"2006-01-02 15:04:05"`, "time", "15:04:05", 0},
 		{"timestamp", `"06-01-02 15:04:05"`, "time", "15:04:05", 0},
@@ -4958,7 +5090,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"timestamp", `20060102150405`, "time", "15:04:05", 0},
 		{"timestamp", `060102150405`, "time", "15:04:05", 0},
 		{"timestamp", `"2006-01-02 23:59:59.506"`, "time", "00:00:00", 0},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_TimestampToDate(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// timestamp to date
 		{"timestamp", `"2006-01-02 15:04:05"`, "date", "2006-01-02", 0},
 		{"timestamp", `"06-01-02 15:04:05"`, "date", "2006-01-02", 0},
@@ -4967,7 +5104,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"timestamp", `20060102150405`, "date", "2006-01-02", 0},
 		{"timestamp", `060102150405`, "date", "2006-01-02", 0},
 		{"timestamp", `"2006-01-02 23:59:59.506"`, "date", "2006-01-03", 0},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_TimestampToDatetime(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// timestamp to datetime
 		{"timestamp", `"2006-01-02 15:04:05"`, "datetime", "2006-01-02 15:04:05", 0},
 		{"timestamp", `"06-01-02 15:04:05"`, "datetime", "2006-01-02 15:04:05", 0},
@@ -4976,7 +5118,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"timestamp", `20060102150405`, "datetime", "2006-01-02 15:04:05", 0},
 		{"timestamp", `060102150405`, "datetime", "2006-01-02 15:04:05", 0},
 		{"timestamp", `"2006-01-02 23:59:59.506"`, "datetime", "2006-01-03 00:00:00", 0},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_DatetimeToYear(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// datetime to year
 		{"datetime", `"2006-01-02 15:04:05"`, "year", "2006", 0},
 		{"datetime", `"06-01-02 15:04:05"`, "year", "2006", 0},
@@ -4988,7 +5135,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		// MySQL will get "Data truncation: Out of range value for column 'a' at row 1.
 		{"datetime", `"1000-01-02 23:59:59"`, "year", "", errno.ErrInvalidYear},
 		{"datetime", `"9999-01-02 23:59:59"`, "year", "", errno.ErrInvalidYear},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_DatetimeToTime(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// datetime to time
 		{"datetime", `"2006-01-02 15:04:05"`, "time", "15:04:05", 0},
 		{"datetime", `"06-01-02 15:04:05"`, "time", "15:04:05", 0},
@@ -4999,7 +5151,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"datetime", `"2006-01-02 23:59:59.506"`, "time", "00:00:00", 0},
 		{"datetime", `"1000-01-02 23:59:59"`, "time", "23:59:59", 0},
 		{"datetime", `"9999-01-02 23:59:59"`, "time", "23:59:59", 0},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_DatetimeToDate(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// datetime to date
 		{"datetime", `"2006-01-02 15:04:05"`, "date", "2006-01-02", 0},
 		{"datetime", `"06-01-02 15:04:05"`, "date", "2006-01-02", 0},
@@ -5010,7 +5167,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"datetime", `"2006-01-02 23:59:59.506"`, "date", "2006-01-03", 0},
 		{"datetime", `"1000-01-02 23:59:59"`, "date", "1000-01-02", 0},
 		{"datetime", `"9999-01-02 23:59:59"`, "date", "9999-01-02", 0},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_DatetimeToTimestamp(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// datetime to timestamp
 		{"datetime", `"2006-01-02 15:04:05"`, "timestamp", "2006-01-02 15:04:05", 0},
 		{"datetime", `"06-01-02 15:04:05"`, "timestamp", "2006-01-02 15:04:05", 0},
@@ -5019,9 +5181,14 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"datetime", `20060102150405`, "timestamp", "2006-01-02 15:04:05", 0},
 		{"datetime", `060102150405`, "timestamp", "2006-01-02 15:04:05", 0},
 		{"datetime", `"2006-01-02 23:59:59.506"`, "timestamp", "2006-01-03 00:00:00", 0},
-		{"datetime", `"1000-01-02 23:59:59"`, "timestamp", "1000-01-02 23:59:59", 0},
-		{"datetime", `"9999-01-02 23:59:59"`, "timestamp", "9999-01-02 23:59:59", 0},
+		{"datetime", `"1971-01-02 23:59:59"`, "timestamp", "1971-01-02 23:59:59", 0},
+		{"datetime", `"2009-01-02 23:59:59"`, "timestamp", "2009-01-02 23:59:59", 0},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_YearToTime(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// year to time
 		// failed cases are not handled by TiDB
 		{"year", `"2019"`, "time", "00:20:19", 0},
@@ -5034,7 +5201,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"year", `69`, "time", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "time", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "time", "", errno.ErrTruncatedWrongValue},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_YearToDate(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// year to date
 		{"year", `"2019"`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `2019`, "date", "", errno.ErrTruncatedWrongValue},
@@ -5047,7 +5219,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"year", `69`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "date", "", errno.ErrTruncatedWrongValue},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_YearToDatetime(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// year to datetime
 		{"year", `"2019"`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `2019`, "datetime", "", errno.ErrTruncatedWrongValue},
@@ -5060,7 +5237,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"year", `69`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "datetime", "", errno.ErrTruncatedWrongValue},
+	}
+	testModifyColumnTime(c, s.store, tests)
+}
 
+func (s *testDBSuite1) TestModifyColumnTime_YearToTimestamp(c *C) {
+	tests := []testModifyColumnTimeCase{
 		// year to timestamp
 		{"year", `"2019"`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `2019`, "timestamp", "", errno.ErrTruncatedWrongValue},
@@ -5074,6 +5256,31 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"year", `70`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "timestamp", "", errno.ErrTruncatedWrongValue},
 	}
+	testModifyColumnTime(c, s.store, tests)
+}
+
+type testModifyColumnTimeCase struct {
+	from   string
+	value  string
+	to     string
+	expect string
+	err    uint16
+}
+
+func testModifyColumnTime(c *C, store kv.Storage, tests []testModifyColumnTimeCase) {
+	limit := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(3)
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test_db")
+
+	// Set time zone to UTC.
+	originalTz := tk.Se.GetSessionVars().TimeZone
+	tk.Se.GetSessionVars().TimeZone = time.UTC
+	defer func() {
+		variable.SetDDLErrorCountLimit(limit)
+		tk.Se.GetSessionVars().TimeZone = originalTz
+	}()
 
 	for _, t := range tests {
 		tk.MustExec("drop table if exists t_mc")
@@ -5197,6 +5404,58 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 	c.Assert(err.Error(), Equals, "the tiflash replica count: 2 should be less than the total tiflash server count: 0")
 }
 
+func (s *testSerialDBSuite) TestSetTableFlashReplicaForSystemTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	sysTables := make([]string, 0, 24)
+	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA"}
+	for _, db := range memOrSysDB {
+		tk.MustExec("use " + db)
+		tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
+		rows := tk.MustQuery("show tables").Rows()
+		for i := 0; i < len(rows); i++ {
+			sysTables = append(sysTables, rows[i][0].(string))
+		}
+		for _, one := range sysTables {
+			_, err := tk.Exec(fmt.Sprintf("alter table `%s` set tiflash replica 1", one))
+			if db == "MySQL" {
+				c.Assert(err.Error(), Equals, "[ddl:8200]ALTER table replica for tables in system database is currently unsupported")
+			} else {
+				c.Assert(err.Error(), Equals, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)))
+			}
+
+		}
+		sysTables = sysTables[:0]
+	}
+}
+
+func (s *testSerialDBSuite) TestSetTiFlashReplicaForTemporaryTable(c *C) {
+	// test for tiflash replica
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+		c.Assert(err, IsNil)
+	}()
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("drop table if exists temp")
+	tk.MustExec("create global temporary table temp(id int) on commit delete rows")
+	tk.MustGetErrCode("alter table temp set tiflash replica 1", errno.ErrOptOnTemporaryTable)
+	tk.MustExec("drop table temp")
+
+	tk.MustExec("drop table if exists normal")
+	tk.MustExec("create table normal(id int)")
+	defer tk.MustExec("drop table normal")
+	tk.MustExec("alter table normal set tiflash replica 1")
+	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='normal'").Check(testkit.Rows("1"))
+	tk.MustExec("create global temporary table temp like normal on commit delete rows")
+	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='temp'").Check(testkit.Rows())
+	tk.MustExec("drop table temp")
+	tk.MustExec("set tidb_enable_noop_functions = 1")
+	tk.MustExec("create temporary table temp like normal")
+	tk.MustQuery("select REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='temp'").Check(testkit.Rows())
+}
+
 func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
@@ -5236,6 +5495,19 @@ func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 	_, err = tk.Exec("insert into t1 set a=1;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[autoid:1467]Failed to read auto-increment value from storage engine")
+}
+
+func (s *testSerialDBSuite) TestShardRowIDBitsOnTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists shard_row_id_temporary")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	_, err := tk.Exec("create global temporary table shard_row_id_temporary (a int) shard_row_id_bits = 5 on commit delete rows;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
+	tk.MustExec("create global temporary table shard_row_id_temporary (a int) on commit delete rows;")
+	defer tk.MustExec("drop table if exists shard_row_id_temporary")
+	_, err = tk.Exec("alter table shard_row_id_temporary shard_row_id_bits = 4;")
+	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
 }
 
 // port from mysql
@@ -6305,13 +6577,6 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-		config.RestoreFunc()()
-	}()
-
 	hook := &ddl.TestDDLCallback{}
 	var checkErr error
 	assertChangingColName := "_col$_c2_0"
@@ -6429,8 +6694,6 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 func (s *testSerialDBSuite) TestModifyColumnTypeWithWarnings(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	// Enable column change variable.
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
 	// Test normal warnings.
 	tk.MustExec("drop table if exists t")
@@ -6466,8 +6729,6 @@ func (s *testSerialDBSuite) TestModifyColumnTypeWithWarnings(c *C) {
 func (s *testSerialDBSuite) TestModifyColumnTypeWhenInterception(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	// Enable column change variable.
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
 	// Test normal warnings.
 	tk.MustExec("drop table if exists t")
@@ -6475,7 +6736,7 @@ func (s *testSerialDBSuite) TestModifyColumnTypeWhenInterception(c *C) {
 
 	count := defaultBatchSize * 4
 	// Add some rows.
-	dml := fmt.Sprintf("insert into t values")
+	dml := "insert into t values"
 	for i := 1; i <= count; i++ {
 		dml += fmt.Sprintf("(%d, %f)", i, 11.22)
 		if i != count {
@@ -6663,6 +6924,26 @@ func (s *testSerialSuite) TestTruncateAllPartitions(c *C) {
 	tk1.MustQuery("select count(*) from partition_table;").Check(testkit.Rows("0"))
 }
 
+func (s *testSerialSuite) TestIssue23872(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists test_create_table;")
+	defer tk.MustExec("drop table if exists test_create_table;")
+	tk.MustExec("create table test_create_table(id smallint,id1 int, primary key (id));")
+	rs, err := tk.Exec("select * from test_create_table;")
+	c.Assert(err, IsNil)
+	cols := rs.Fields()
+	expectFlag := uint16(mysql.NotNullFlag | mysql.PriKeyFlag | mysql.NoDefaultValueFlag)
+	c.Assert(cols[0].Column.Flag, Equals, uint(expectFlag))
+	tk.MustExec("create table t(a int default 1, primary key(a));")
+	defer tk.MustExec("drop table if exists t;")
+	rs1, err := tk.Exec("select * from t;")
+	c.Assert(err, IsNil)
+	cols1 := rs1.Fields()
+	expectFlag1 := uint16(mysql.NotNullFlag | mysql.PriKeyFlag)
+	c.Assert(cols1[0].Column.Flag, Equals, uint(expectFlag1))
+}
+
 // Close issue #23321.
 // See https://github.com/pingcap/tidb/issues/23321
 func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) {
@@ -6679,4 +6960,47 @@ func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) 
 
 	_, err := tk.Exec("alter table test_add_index_after_add_col add unique index cc(c);")
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '0' for key 'cc'")
+}
+
+// For Close issue #24288
+// see https://github.com/pingcap/tidb/issues/24288
+func (s *testDBSuite8) TestDdlMaxLimitOfIdentifier(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// create/drop database test
+	longDbName := strings.Repeat("库", mysql.MaxDatabaseNameLength-1)
+	tk.MustExec(fmt.Sprintf("create database %s", longDbName))
+	defer func() {
+		tk.MustExec(fmt.Sprintf("drop database %s", longDbName))
+	}()
+	tk.MustExec(fmt.Sprintf("use %s", longDbName))
+
+	// create/drop table,index test
+	longTblName := strings.Repeat("表", mysql.MaxTableNameLength-1)
+	longColName := strings.Repeat("三", mysql.MaxColumnNameLength-1)
+	longIdxName := strings.Repeat("索", mysql.MaxIndexIdentifierLen-1)
+	tk.MustExec(fmt.Sprintf("create table %s(f1 int primary key,f2 int, %s varchar(50))", longTblName, longColName))
+	tk.MustExec(fmt.Sprintf("create index %s on %s(%s)", longIdxName, longTblName, longColName))
+	defer func() {
+		tk.MustExec(fmt.Sprintf("drop index %s on %s", longIdxName, longTblName))
+		tk.MustExec(fmt.Sprintf("drop table %s", longTblName))
+	}()
+
+	// alter table
+	tk.MustExec(fmt.Sprintf("alter table %s change f2 %s int", longTblName, strings.Repeat("二", mysql.MaxColumnNameLength-1)))
+
+}
+
+// Close issue #24580.
+// See https://github.com/pingcap/tidb/issues/24580
+func (s *testDBSuite8) TestIssue24580(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(250) default null);")
+	tk.MustExec("insert into t values();")
+
+	_, err := tk.Exec("alter table t modify a char not null;")
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
+	tk.MustExec("drop table if exists t")
 }

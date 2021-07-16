@@ -457,7 +457,7 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 		stmt, err := s.ParseOneStmt(ca, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -483,7 +483,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		s.ctx.GetSessionVars().SetHashJoinConcurrency(1)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -848,7 +848,7 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		_, _, err = BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		if tt.err == nil {
@@ -1077,6 +1077,43 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
+			sql: `grant all privileges on *.* to 'test'@'%'`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "", "", "", nil, false, "", false},
+				{mysql.InsertPriv, "", "", "", nil, false, "", false},
+				{mysql.UpdatePriv, "", "", "", nil, false, "", false},
+				{mysql.DeletePriv, "", "", "", nil, false, "", false},
+				{mysql.CreatePriv, "", "", "", nil, false, "", false},
+				{mysql.DropPriv, "", "", "", nil, false, "", false},
+				{mysql.ProcessPriv, "", "", "", nil, false, "", false},
+				{mysql.ReferencesPriv, "", "", "", nil, false, "", false},
+				{mysql.AlterPriv, "", "", "", nil, false, "", false},
+				{mysql.ShowDBPriv, "", "", "", nil, false, "", false},
+				{mysql.SuperPriv, "", "", "", nil, false, "", false},
+				{mysql.ExecutePriv, "", "", "", nil, false, "", false},
+				{mysql.IndexPriv, "", "", "", nil, false, "", false},
+				{mysql.CreateUserPriv, "", "", "", nil, false, "", false},
+				{mysql.CreateTablespacePriv, "", "", "", nil, false, "", false},
+				{mysql.TriggerPriv, "", "", "", nil, false, "", false},
+				{mysql.CreateViewPriv, "", "", "", nil, false, "", false},
+				{mysql.ShowViewPriv, "", "", "", nil, false, "", false},
+				{mysql.CreateRolePriv, "", "", "", nil, false, "", false},
+				{mysql.DropRolePriv, "", "", "", nil, false, "", false},
+				{mysql.CreateTMPTablePriv, "", "", "", nil, false, "", false},
+				{mysql.LockTablesPriv, "", "", "", nil, false, "", false},
+				{mysql.CreateRoutinePriv, "", "", "", nil, false, "", false},
+				{mysql.AlterRoutinePriv, "", "", "", nil, false, "", false},
+				{mysql.EventPriv, "", "", "", nil, false, "", false},
+				{mysql.ShutdownPriv, "", "", "", nil, false, "", false},
+				{mysql.ReloadPriv, "", "", "", nil, false, "", false},
+				{mysql.FilePriv, "", "", "", nil, false, "", false},
+				{mysql.ConfigPriv, "", "", "", nil, false, "", false},
+				{mysql.ReplicationClientPriv, "", "", "", nil, false, "", false},
+				{mysql.ReplicationSlavePriv, "", "", "", nil, false, "", false},
+				{mysql.GrantPriv, "", "", "", nil, false, "", false},
+			},
+		},
+		{
 			sql: `grant select on test.ttt to 'test'@'%'`,
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "ttt", "", nil, false, "", false},
@@ -1105,6 +1142,57 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
 				{mysql.CreateViewPriv, "test", "", "", nil, false, "", false},
 				{mysql.ShowViewPriv, "test", "", "", nil, false, "", false},
+			},
+		},
+		{
+			sql: `revoke connection_admin on *.* from u1`,
+			ans: []visitInfo{
+				{mysql.ExtendedPriv, "", "", "", nil, false, "CONNECTION_ADMIN", true},
+			},
+		},
+		{
+			sql: `revoke connection_admin, select on *.* from u1`,
+			ans: []visitInfo{
+				{mysql.ExtendedPriv, "", "", "", nil, false, "CONNECTION_ADMIN", true},
+				{mysql.SelectPriv, "", "", "", nil, false, "", false},
+				{mysql.GrantPriv, "", "", "", nil, false, "", false},
+			},
+		},
+		{
+			sql: `revoke all privileges on *.* FROM u1`,
+			ans: []visitInfo{
+				{mysql.SelectPriv, "", "", "", nil, false, "", false},
+				{mysql.InsertPriv, "", "", "", nil, false, "", false},
+				{mysql.UpdatePriv, "", "", "", nil, false, "", false},
+				{mysql.DeletePriv, "", "", "", nil, false, "", false},
+				{mysql.CreatePriv, "", "", "", nil, false, "", false},
+				{mysql.DropPriv, "", "", "", nil, false, "", false},
+				{mysql.ProcessPriv, "", "", "", nil, false, "", false},
+				{mysql.ReferencesPriv, "", "", "", nil, false, "", false},
+				{mysql.AlterPriv, "", "", "", nil, false, "", false},
+				{mysql.ShowDBPriv, "", "", "", nil, false, "", false},
+				{mysql.SuperPriv, "", "", "", nil, false, "", false},
+				{mysql.ExecutePriv, "", "", "", nil, false, "", false},
+				{mysql.IndexPriv, "", "", "", nil, false, "", false},
+				{mysql.CreateUserPriv, "", "", "", nil, false, "", false},
+				{mysql.CreateTablespacePriv, "", "", "", nil, false, "", false},
+				{mysql.TriggerPriv, "", "", "", nil, false, "", false},
+				{mysql.CreateViewPriv, "", "", "", nil, false, "", false},
+				{mysql.ShowViewPriv, "", "", "", nil, false, "", false},
+				{mysql.CreateRolePriv, "", "", "", nil, false, "", false},
+				{mysql.DropRolePriv, "", "", "", nil, false, "", false},
+				{mysql.CreateTMPTablePriv, "", "", "", nil, false, "", false},
+				{mysql.LockTablesPriv, "", "", "", nil, false, "", false},
+				{mysql.CreateRoutinePriv, "", "", "", nil, false, "", false},
+				{mysql.AlterRoutinePriv, "", "", "", nil, false, "", false},
+				{mysql.EventPriv, "", "", "", nil, false, "", false},
+				{mysql.ShutdownPriv, "", "", "", nil, false, "", false},
+				{mysql.ReloadPriv, "", "", "", nil, false, "", false},
+				{mysql.FilePriv, "", "", "", nil, false, "", false},
+				{mysql.ConfigPriv, "", "", "", nil, false, "", false},
+				{mysql.ReplicationClientPriv, "", "", "", nil, false, "", false},
+				{mysql.ReplicationSlavePriv, "", "", "", nil, false, "", false},
+				{mysql.GrantPriv, "", "", "", nil, false, "", false},
 			},
 		},
 		{
@@ -1169,7 +1257,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "RESTORE DATABASE test FROM 'local:///tmp/a'",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
 			},
 		},
 		{
@@ -1181,7 +1269,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "SHOW RESTORES",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
 			},
 		},
 		{
@@ -1208,15 +1296,29 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", true},
 			},
 		},
+		{
+			sql: "RENAME USER user1 to user1_tmp",
+			ans: []visitInfo{
+				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied, false, "", false},
+			},
+		},
+		{
+			sql: "SHOW CONFIG",
+			ans: []visitInfo{
+				{mysql.ConfigPriv, "", "", "", ErrSpecificAccessDenied, false, "", false},
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		// to fix, Table 'test.ttt' doesn't exist
-		_ = Preprocess(s.ctx, stmt, s.is)
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+
+		// TODO: to fix, Table 'test.ttt' doesn't exist
+		_ = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+
+		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		_, err = builder.Build(context.TODO(), stmt)
 		c.Assert(err, IsNil, comment)
@@ -1295,9 +1397,9 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt)
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		plan, err := builder.Build(ctx, stmt)
 		s.testData.OnRecord(func() {
 			output[i].Err = err != nil
@@ -1308,7 +1410,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		}
 		c.Assert(err, IsNil)
 		p := plan.(LogicalPlan)
-		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+		p, err = logicalOptimize(ctx, builder.optFlag, p)
 		s.testData.OnRecord(func() {
 			output[i].Best = ToString(p)
 		})
@@ -1328,9 +1430,9 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt)
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1403,9 +1505,9 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt)
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1440,9 +1542,9 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1512,7 +1614,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	if err != nil {
 		return nil, nil, err
 	}
-	err = Preprocess(s.ctx, stmt, s.is)
+	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1523,7 +1625,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 			return nil, nil, err
 		}
 	}
-	builder, _ := NewPlanBuilder(sctx, s.is, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, stmt)
 	if err != nil {
 		return nil, nil, err
@@ -1604,9 +1706,9 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tt.result, comment)
@@ -1675,7 +1777,7 @@ func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
 	for _, tt := range tests {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
 		s.ctx.GetSessionVars().StmtCtx.Tables = nil
 		p := TryFastPlan(s.ctx, stmt)
@@ -1699,7 +1801,7 @@ func (s *testPlanSuite) TestUpdateEQCond(c *C) {
 	}{
 		{
 			sql:  "select t1.a from t t1, t t2 where t1.a = t2.a+1",
-			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t.a,Column#25)->Projection",
+			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t.a,Column#25)->Projection->Projection",
 		},
 	}
 	ctx := context.TODO()
@@ -1707,9 +1809,9 @@ func (s *testPlanSuite) TestUpdateEQCond(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil)
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1724,9 +1826,9 @@ func (s *testPlanSuite) TestConflictedJoinTypeHints(c *C) {
 	ctx := context.TODO()
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	err = Preprocess(s.ctx, stmt, s.is)
+	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 	c.Assert(err, IsNil)
-	builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, stmt)
 	c.Assert(err, IsNil)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1745,9 +1847,9 @@ func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
 	ctx := context.TODO()
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	err = Preprocess(s.ctx, stmt, s.is)
+	err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 	c.Assert(err, IsNil)
-	builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, stmt)
 	c.Assert(err, IsNil)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1797,7 +1899,7 @@ func (s *testPlanSuite) TestResolvingCorrelatedAggregate(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		err = Preprocess(s.ctx, stmt, s.is)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		c.Assert(err, IsNil, comment)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
@@ -1839,7 +1941,8 @@ func (s *testPlanSuite) TestFastPathInvalidBatchPointGet(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tc.sql)
 		stmt, err := s.ParseOneStmt(tc.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		c.Assert(Preprocess(s.ctx, stmt, s.is), IsNil, comment)
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		c.Assert(err, IsNil, comment)
 		plan := TryFastPlan(s.ctx, stmt)
 		if tc.fastPlan {
 			c.Assert(plan, NotNil)

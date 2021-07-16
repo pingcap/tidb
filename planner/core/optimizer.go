@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/lock"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
@@ -47,6 +48,7 @@ var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 const (
 	flagGcSubstitute uint64 = 1 << iota
 	flagPrunColumns
+	flagStabilizeResults
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagEliminateAgg
@@ -64,6 +66,7 @@ const (
 var optRuleList = []logicalOptRule{
 	&gcSubstituter{},
 	&columnPruner{},
+	&resultReorder{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
 	&aggregationEliminator{},
@@ -88,7 +91,7 @@ type logicalOptRule interface {
 func BuildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, types.NameSlice, error) {
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
-	builder, _ := NewPlanBuilder(sctx, is, &utilhint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(sctx, is, &utilhint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, nil, err
@@ -102,13 +105,13 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 		if v.privilege == mysql.ExtendedPriv {
 			if !pm.RequestDynamicVerification(activeRoles, v.dynamicPriv, v.dynamicWithGrant) {
 				if v.err == nil {
-					return ErrPrivilegeCheckFail
+					return ErrPrivilegeCheckFail.GenWithStackByArgs(v.dynamicPriv)
 				}
 				return v.err
 			}
 		} else if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
 			if v.err == nil {
-				return ErrPrivilegeCheckFail
+				return ErrPrivilegeCheckFail.GenWithStackByArgs(v.privilege.String())
 			}
 			return v.err
 		}
@@ -131,11 +134,20 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 	return nil
 }
 
+func checkStableResultMode(sctx sessionctx.Context) bool {
+	s := sctx.GetSessionVars()
+	st := s.StmtCtx
+	return s.EnableStableResultMode && (!st.InInsertStmt && !st.InUpdateStmt && !st.InDeleteStmt && !st.InLoadDataStmt)
+}
+
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
 	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
 		flag |= flagPrunColumnsAgain
+	}
+	if checkStableResultMode(sctx) {
+		flag |= flagStabilizeResults
 	}
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
@@ -156,9 +168,34 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	return finalPlan, cost, nil
 }
 
+// mergeContinuousSelections merge continuous selections which may occur after changing plans.
+func mergeContinuousSelections(p PhysicalPlan) {
+	if sel, ok := p.(*PhysicalSelection); ok {
+		for {
+			childSel := sel.children[0]
+			if tmp, ok := childSel.(*PhysicalSelection); ok {
+				sel.Conditions = append(sel.Conditions, tmp.Conditions...)
+				sel.SetChild(0, tmp.children[0])
+			} else {
+				break
+			}
+		}
+	}
+	for _, child := range p.Children() {
+		mergeContinuousSelections(child)
+	}
+	// merge continuous selections in a coprocessor task of tiflash
+	tableReader, isTableReader := p.(*PhysicalTableReader)
+	if isTableReader && tableReader.StoreType == kv.TiFlash {
+		mergeContinuousSelections(tableReader.tablePlan)
+		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
+	}
+}
+
 func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	plan = eliminatePhysicalProjection(plan)
 	plan = InjectExtraProjection(plan)
+	mergeContinuousSelections(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
 	plan = enableParallelApply(sctx, plan)
 	return plan

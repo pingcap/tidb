@@ -25,12 +25,12 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 type testUpdateSuite struct {
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	domain  *domain.Domain
 	*parser.Parser
@@ -42,7 +42,7 @@ func (s *testUpdateSuite) SetUpSuite(c *C) {
 	useMockTikv := *mockTikv
 	if useMockTikv {
 		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.WithClusterInspector(func(c testutils.Cluster) {
 				mockstore.BootstrapWithSingleStore(c)
 				s.cluster = c
 			}),

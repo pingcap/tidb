@@ -95,10 +95,7 @@ type ImplTableDual struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplTableDual) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	if !prop.IsEmpty() {
-		return false
-	}
-	return true
+	return prop.IsEmpty()
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -116,10 +113,7 @@ type ImplMemTableScan struct {
 
 // Match implements ImplementationRule Match interface.
 func (r *ImplMemTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
-	if !prop.IsEmpty() {
-		return false
-	}
-	return true
+	return prop.IsEmpty()
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -181,10 +175,10 @@ func (r *ImplTiKVSingleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *pr
 	sg := expr.ExprNode.(*plannercore.TiKVSingleGather)
 	if sg.IsIndexGather {
 		reader := sg.GetPhysicalIndexReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
-		return []memo.Implementation{impl.NewIndexReaderImpl(reader, sg.Source.TblColHists)}, nil
+		return []memo.Implementation{impl.NewIndexReaderImpl(reader, sg.Source)}, nil
 	}
 	reader := sg.GetPhysicalTableReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
-	return []memo.Implementation{impl.NewTableReaderImpl(reader, sg.Source.TblColHists)}, nil
+	return []memo.Implementation{impl.NewTableReaderImpl(reader, sg.Source)}, nil
 }
 
 // ImplTableScan implements TableScan as PhysicalTableScan.

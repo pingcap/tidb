@@ -43,14 +43,14 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	// the align the output schema. In the future, we can solve this in-compatibility by
 	// passing down the aggregation mode to TiFlash.
 	if physicalAgg, ok := p.Children()[0].(*PhysicalHashAgg); ok {
-		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase {
+		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
 			if physicalAgg.isFinalAgg() {
 				return false
 			}
 		}
 	}
 	if physicalAgg, ok := p.Children()[0].(*PhysicalStreamAgg); ok {
-		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase {
+		if physicalAgg.MppRunMode == Mpp1Phase || physicalAgg.MppRunMode == Mpp2Phase || physicalAgg.MppRunMode == MppScalar {
 			if physicalAgg.isFinalAgg() {
 				return false
 			}
@@ -59,6 +59,9 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	// If this projection is specially added for `DO`, we keep it.
 	if p.CalculateNoDelay {
 		return false
+	}
+	if p.Schema().Len() == 0 {
+		return true
 	}
 	child := p.Children()[0]
 	if p.Schema().Len() != child.Schema().Len() {

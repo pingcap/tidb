@@ -27,34 +27,26 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
-var _ = Suite(&testSQLSuite{})
-var _ = SerialSuites(&testSQLSerialSuite{})
+var _ = SerialSuites(&testSQLSuite{})
 
 type testSQLSuite struct {
 	testSQLSuiteBase
 }
 
-type testSQLSerialSuite struct {
-	testSQLSuiteBase
-}
-
 type testSQLSuiteBase struct {
-	OneByOneSuite
 	store kv.Storage
 	dom   *domain.Domain
 }
 
 func (s *testSQLSuiteBase) SetUpSuite(c *C) {
-	s.OneByOneSuite.SetUpSuite(c)
 	var err error
 	s.store = NewTestStore(c)
-	// actual this is better done in `OneByOneSuite.SetUpSuite`, but this would cause circle dependency
-	if *WithTiKV {
+	if *withTiKV {
 		session.ResetStoreForWithTiKVTest(s.store)
 	}
 
@@ -65,21 +57,20 @@ func (s *testSQLSuiteBase) SetUpSuite(c *C) {
 func (s *testSQLSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
-	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testSQLSerialSuite) TestFailBusyServerCop(c *C) {
+func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/rpcServerBusy", `return(true)`), IsNil)
 	go func() {
 		defer wg.Done()
 		time.Sleep(time.Millisecond * 100)
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcServerBusy"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/rpcServerBusy"), IsNil)
 	}()
 
 	go func() {
@@ -100,7 +91,6 @@ func (s *testSQLSerialSuite) TestFailBusyServerCop(c *C) {
 }
 
 func TestMain(m *testing.M) {
-	tikv.ReadTimeoutMedium = 2 * time.Second
 	os.Exit(m.Run())
 }
 

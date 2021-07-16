@@ -118,6 +118,14 @@ var (
 			Help:      "Keys locking for a single statement",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 21), // 1 ~ 1048576
 		})
+
+	ValidateReadTSFromPDCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "validate_read_ts_from_pd_count",
+			Help:      "Counter of validating read ts by getting a timestamp from PD",
+		})
 )
 
 // Label constants.
@@ -146,4 +154,5 @@ const (
 	LblInTxn       = "in_txn"
 	LblVersion     = "version"
 	LblHash        = "hash"
+	LblCTEType     = "cte_type"
 )
