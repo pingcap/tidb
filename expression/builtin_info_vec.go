@@ -219,7 +219,7 @@ func (b *builtinBenchmarkSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	loopCount := b.constLoopCount
 	arg, ctx := b.args[1], b.ctx
 	evalType := arg.GetType().EvalType()
-	buf, err := b.bufAllocator.get(evalType, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -332,7 +332,7 @@ func (b *builtinTiDBDecodeKeySig) vectorized() bool {
 
 func (b *builtinTiDBDecodeKeySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
