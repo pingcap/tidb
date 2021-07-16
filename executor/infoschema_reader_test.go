@@ -559,6 +559,7 @@ func (s *testInfoschemaTableSuite) TestTableSessionVar(c *C) {
 }
 
 func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
+	c.Skip("Skip this unstable test(#25896) and bring it back before 2021-07-29.")
 	tk := testkit.NewTestKit(c, s.store)
 	statistics.ClearHistoryJobs()
 	tk.MustExec("use test")

@@ -963,8 +963,9 @@ func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *col
 	return nil
 }
 
-// RequestDynamicVerification checks all roles for a specific DYNAMIC privilege.
-func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
+// HasExplicitlyGrantedDynamicPrivilege checks if a user has a DYNAMIC privilege
+// without accepting SUPER privilege as a fallback.
+func (p *MySQLPrivilege) HasExplicitlyGrantedDynamicPrivilege(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
 	privName = strings.ToUpper(privName)
 	roleList := p.FindAllRole(activeRoles)
 	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
@@ -983,6 +984,15 @@ func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIden
 				}
 			}
 		}
+	}
+	return false
+}
+
+// RequestDynamicVerification checks all roles for a specific DYNAMIC privilege.
+func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
+	privName = strings.ToUpper(privName)
+	if p.HasExplicitlyGrantedDynamicPrivilege(activeRoles, user, host, privName, withGrant) {
+		return true
 	}
 	// If SEM is enabled, and the privilege is of type restricted, do not fall through
 	// To using SUPER as a replacement privilege.
