@@ -19,6 +19,7 @@ import (
 	"math"
 	"runtime/trace"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -260,13 +261,23 @@ func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
 	return IsReadOnly(node, vars), nil
 }
 
+var planBuilderPool = sync.Pool{
+	New: func() interface{} {
+		return plannercore.NewPlanBuilder()
+	},
+}
+
 func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, float64, error) {
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
-	builder, _ := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
+
+	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+
+	builder.Init(sctx, is, hintProcessor)
 
 	// reset fields about rewrite
 	sctx.GetSessionVars().RewritePhaseInfo.Reset()
@@ -465,7 +476,11 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
 	defer trace.StartRegion(ctx, "Optimize").End()
 	var err error
-	builder, _ := plannercore.NewPlanBuilder(sctx, is, nil)
+
+	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+
+	builder.Init(sctx, is, nil)
 	p, err := builder.Build(ctx, execAst)
 	if err != nil {
 		return nil, err
