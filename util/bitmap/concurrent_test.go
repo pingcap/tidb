@@ -77,6 +77,6 @@ func TestConcurrentBitmapUniqueSetter(t *testing.T) {
 		}
 	}
 	wg.Wait()
-	assert.Equal(t, clearCounter < loopCount, true)
+	assert.Less(t, clearCounter, uint64(loopCount))
 	assert.Equal(t, setterCounter, clearCounter+1)
 }
