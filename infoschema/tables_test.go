@@ -1489,7 +1489,7 @@ func (s *testClusterTableSuite) TestStmtSummaryEvictedCountTable(c *C) {
 
 }
 
-func (s *testTableSuite) TestStmtSummaryEvictPointGet(c *C) {
+func (s *testTableSuite) TestStmtSummaryEvictedPointGet(c *C) {
 	interval := int64(1800)
 	tk := s.newTestKitWithRoot(c)
 	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval=%v;", interval))
