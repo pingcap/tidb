@@ -581,6 +581,14 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 }
 
 func (ds *DataSource) canConvertToPointGet(candidate *candidatePath) bool {
+	// If the schema contains ExtraPidColID, do not convert to point get.
+	// Because the point get executor can not handle the extra partition ID column now.
+	for _, col := range ds.schema.Columns {
+		if col.ID == modelExtraPidColID {
+			return false
+		}
+	}
+
 	path := candidate.path
 
 	canConvertPointGet := (!ds.isPartition && len(path.Ranges) > 0) || (ds.isPartition && len(path.Ranges) == 1)
@@ -628,6 +636,16 @@ func (ds *DataSource) canConvertToPointGet(candidate *candidatePath) bool {
 		//When it's the same with the number of index columns, there's just exact one equal condition on each index column.
 		if !path.IsTablePath && path.EqCondCount != len(path.FullIdxCols) {
 			return false
+		}
+	}
+
+	if tblInfo := ds.table.Meta(); tblInfo.GetPartitionInfo() != nil {
+		// If the schema contains ExtraPidColID, do not convert to point get.
+		// Because the point get executor can not handle the extra partition ID column now.
+		for _, col := range ds.schema.Columns {
+			if col.ID == modelExtraPidColID {
+				return false
+			}
 		}
 	}
 

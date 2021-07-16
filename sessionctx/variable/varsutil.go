@@ -122,6 +122,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 			return "", true, err
 		}
 		return string(info), true, nil
+	case TiDBLastQueryInfo:
+		info, err := json.Marshal(s.LastQueryInfo)
+		if err != nil {
+			return "", true, err
+		}
+		return string(info), true, nil
 	case TiDBGeneralLog:
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
 	case TiDBPProfSQLCPU:
@@ -459,7 +465,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
 		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
 		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo,
-		TiDBAllowAutoRandExplicitInsert, TiDBEnableTelemetry, TiDBEnableAmendPessimisticTxn:
+		TiDBAllowAutoRandExplicitInsert, TiDBEnableTelemetry, TiDBEnableAmendPessimisticTxn, TiDBEnableOrderedResultMode:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,

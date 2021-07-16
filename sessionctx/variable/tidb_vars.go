@@ -72,6 +72,9 @@ const (
 	// TiDBLastTxnInfo is used to get the last transaction info within the current session.
 	TiDBLastTxnInfo = "tidb_last_txn_info"
 
+	// TiDBLastTxnInfo is used to get the last query info within the current session.
+	TiDBLastQueryInfo = "tidb_last_query_info"
+
 	// tidb_config is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
 
@@ -432,6 +435,9 @@ const (
 
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
+
+	// TiDBEnableOrderedResultMode indicates if stabilize query results.
+	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
 )
 
 // Default TiDB system variable values.
@@ -535,6 +541,7 @@ const (
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableAmendPessimisticTxn   = false
 	DefTiDBEnableRateLimitAction       = true
+	DefTiDBEnableOrderedResultMode     = false
 )
 
 // Process global variables.
