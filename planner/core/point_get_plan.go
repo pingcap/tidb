@@ -172,10 +172,10 @@ func (p *PointGetPlan) AccessObject(normalized bool) string {
 
 // OperatorInfo implements dataAccesser interface.
 func (p *PointGetPlan) OperatorInfo(normalized bool) string {
-	var buffer strings.Builder
 	if p.Handle == nil && !p.Lock {
 		return ""
 	}
+	var buffer strings.Builder
 	if p.Handle != nil {
 		if normalized {
 			buffer.WriteString("handle:?")
