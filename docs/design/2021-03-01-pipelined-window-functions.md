@@ -102,12 +102,12 @@ Pipelining won't cause any compatibility issue.
 
 ## Implementation
 
-* [ ] Create PipelinedWindowExec based on current implementation and modify the windowProcessor interface (see [PR23022](https://github.com/pingcap/tidb/pull/23022))
-* [ ] Change data flow, make Next() pulling data from windowProcessor, and windowProcessor calls fetchChild and process data at maximum effort
-* [ ] Modify Slide semantic and add FinishUpdate function on SlidingWindowAggFunc interface, and modify correspondingly on each window function (
-* [ ] Done pipelining for SlidingWindowAggFunc, add test to make sure it is correct 
-* [ ] Modify RN to be SlidingWindowAggFunc, and add planner support
-* [ ] Add test for RN
-* [ ] Benchmark, make sure it has constant memory consumption and no execution time regression
+* [x] Create PipelinedWindowExec based on current implementation and modify the windowProcessor interface (see [PR23022](https://github.com/pingcap/tidb/pull/23022))
+* [x] Change data flow, make Next() pulling data from windowProcessor, and windowProcessor calls fetchChild and process data at maximum effort
+* [x] Modify Slide semantic and add FinishUpdate function on SlidingWindowAggFunc interface, and modify correspondingly on each window function (
+* [x] Done pipelining for SlidingWindowAggFunc, add test to make sure it is correct 
+* [x] Modify RN to be SlidingWindowAggFunc, and add planner support
+* [x] Add test for RN
+* [x] Benchmark, make sure it has constant memory consumption and no execution time regression
 
 
