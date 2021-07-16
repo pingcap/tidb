@@ -1375,4 +1375,13 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 		"  KEY `b` (`b`)\n" +
 		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
 	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 " + expect))
+
+	tk.MustExec("set tidb_enable_noop_functions=true")
+	tk.MustExec("create temporary table t6 (i int primary key, j int)")
+	expect = "CREATE TEMPORARY TABLE `t6` (\n" +
+		"  `i` int(11) NOT NULL,\n" +
+		"  `j` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	tk.MustQuery("show create table t6").Check(testkit.Rows("t6 " + expect))
 }
