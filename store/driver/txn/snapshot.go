@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/options"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type tikvSnapshot struct {
@@ -94,6 +94,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	case kv.ResourceGroupTag:
 		s.KVSnapshot.SetResourceGroupTag(val.([]byte))
+	case kv.TxnScope:
+		s.KVSnapshot.SetTxnScope(val.(string))
 	}
 }
 

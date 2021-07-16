@@ -43,14 +43,15 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/logutil"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/logutil"
+	tikverr "github.com/tikv/client-go/v2/error"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/txnkv/rangetask"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -235,6 +236,7 @@ func createSession(store kv.Storage) session.Session {
 		}
 		// Disable privilege check for gc worker session.
 		privilege.BindPrivilegeManager(se, nil)
+		se.GetSessionVars().CommonGlobalLoaded = true
 		se.GetSessionVars().InRestrictedSQL = true
 		return se
 	}
@@ -847,13 +849,6 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 		return errors.Errorf("[gc worker] destroy range finished with errors: %v", errs)
 	}
 
-	// Notify all affected regions in the range that UnsafeDestroyRange occurs.
-	notifyTask := tikv.NewNotifyDeleteRangeTask(w.tikvStore, startKey, endKey, concurrency)
-	err = notifyTask.Execute(ctx)
-	if err != nil {
-		return errors.Annotate(err, "[gc worker] failed notifying regions affected by UnsafeDestroyRange")
-	}
-
 	return nil
 }
 
@@ -1027,11 +1022,11 @@ func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, con
 		zap.Int("concurrency", concurrency))
 	startTime := time.Now()
 
-	handler := func(ctx context.Context, r tikvstore.KeyRange) (tikv.RangeTaskStat, error) {
+	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 		return w.resolveLocksForRange(ctx, safePoint, r.StartKey, r.EndKey)
 	}
 
-	runner := tikv.NewRangeTaskRunner("resolve-locks-runner", w.tikvStore, concurrency, handler)
+	runner := rangetask.NewRangeTaskRunner("resolve-locks-runner", w.tikvStore, concurrency, handler)
 	// Run resolve lock on the whole TiKV cluster. Empty keys means the range is unbounded.
 	err := runner.RunOnRange(ctx, []byte(""), []byte(""))
 	if err != nil {
@@ -1050,7 +1045,7 @@ func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, con
 	return nil
 }
 
-func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, startKey []byte, endKey []byte) (tikv.RangeTaskStat, error) {
+func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, startKey []byte, endKey []byte) (rangetask.TaskStat, error) {
 	// for scan lock request, we must return all locks even if they are generated
 	// by the same transaction. because gc worker need to make sure all locks have been
 	// cleaned.
@@ -1063,12 +1058,12 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		req.ScanLock().Limit = 3
 	})
 
-	var stat tikv.RangeTaskStat
+	var stat rangetask.TaskStat
 	key := startKey
 	bo := tikv.NewGcResolveLockMaxBackoffer(ctx)
 	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
 		sleep := v.(int)
-		// cooperate with github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry
+		// cooperate with github.com/tikv/client-go/v2/locate/invalidCacheAndRetry
 		ctx = context.WithValue(ctx, "injectedBackoff", struct{}{})
 		bo = tikv.NewBackofferWithVars(ctx, sleep, nil)
 	})
@@ -1553,8 +1548,8 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 	return nil
 }
 
-func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []byte, safePoint uint64) (tikv.RangeTaskStat, error) {
-	var stat tikv.RangeTaskStat
+func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []byte, safePoint uint64) (rangetask.TaskStat, error) {
+	var stat rangetask.TaskStat
 	defer func() {
 		metrics.GCActionRegionResultCounter.WithLabelValues("success").Add(float64(stat.CompletedRegions))
 		metrics.GCActionRegionResultCounter.WithLabelValues("fail").Add(float64(stat.FailedRegions))
@@ -1637,11 +1632,11 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) 
 		zap.Uint64("safePoint", safePoint))
 	startTime := time.Now()
 
-	runner := tikv.NewRangeTaskRunner(
+	runner := rangetask.NewRangeTaskRunner(
 		"gc-runner",
 		w.tikvStore,
 		concurrency,
-		func(ctx context.Context, r tikvstore.KeyRange) (tikv.RangeTaskStat, error) {
+		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			return w.doGCForRange(ctx, r.StartKey, r.EndKey, safePoint)
 		})
 
@@ -1897,7 +1892,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 		return
 	}
 	// Notify PD to drop the placement rules, even if there may be no placement rules.
-	bundles := []*placement.Bundle{placement.BuildPlacementDropBundle(pid)}
+	bundles := []*placement.Bundle{placement.NewBundle(pid)}
 	err = infosync.PutRuleBundles(context.TODO(), bundles)
 	return
 }

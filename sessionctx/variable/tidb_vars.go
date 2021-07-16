@@ -135,7 +135,7 @@ const (
 	// tidb_disable_txn_auto_retry disables transaction auto retry.
 	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
 
-	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
+	// Deprecated: tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
 
 	// tidb_enable_chunk_rpc enables TiDB to use Chunk format for coprocessor requests.
@@ -299,9 +299,16 @@ const (
 	// The default value is 0
 	TiDBAllowBatchCop = "tidb_allow_batch_cop"
 
-	// TiDBAllowMPPExecution means if we should use mpp way to execute query. Default value is 1 (or 'ON'), means to be determined by the optimizer.
-	// Value set to 2 (or 'ENFORCE') which means to use mpp whenever possible. Value set to 2 (or 'OFF') means never use mpp.
+	// TiDBAllowMPPExecution means if we should use mpp way to execute query or not.
+	// Default value is `true`, means to be determined by the optimizer.
+	// Value set to `false` means never use mpp.
 	TiDBAllowMPPExecution = "tidb_allow_mpp"
+
+	// TiDBEnforceMPPExecution means if we should enforce mpp way to execute query or not.
+	// Default value is `false`, means to be determined by variable `tidb_allow_mpp`.
+	// Value set to `true` means enforce use mpp.
+	// Note if you want to set `tidb_enforce_mpp` to `true`, you must set `tidb_allow_mpp` to `true` first.
+	TiDBEnforceMPPExecution = "tidb_enforce_mpp"
 
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
 	TiDBInitChunkSize = "tidb_init_chunk_size"
@@ -497,6 +504,9 @@ const (
 	// TiDBRedactLog indicates that whether redact log.
 	TiDBRedactLog = "tidb_redact_log"
 
+	// TiDBRestrictedReadOnly is meant for the cloud admin to toggle the cluster read only
+	TiDBRestrictedReadOnly = "tidb_restricted_read_only"
+
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
@@ -536,9 +546,6 @@ const (
 	// Now we only support TiFlash.
 	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
 
-	// TiDBEnableDynamicPrivileges enables MySQL 8.0 compatible dynamic privileges (experimental).
-	TiDBEnableDynamicPrivileges = "tidb_enable_dynamic_privileges"
-
 	// TiDBEnableTopSQL indicates whether the top SQL is enabled.
 	TiDBEnableTopSQL = "tidb_enable_top_sql"
 
@@ -551,10 +558,18 @@ const (
 	// TiDBTopSQLMaxStatementCount indicates the max number of statements been collected.
 	TiDBTopSQLMaxStatementCount = "tidb_top_sql_max_statement_count"
 
+	// TiDBTopSQLMaxCollect indicates the max capacity of the collect map.
+	TiDBTopSQLMaxCollect = "tidb_top_sql_max_collect"
+
 	// TiDBTopSQLReportIntervalSeconds indicates the top SQL report interval seconds.
 	TiDBTopSQLReportIntervalSeconds = "tidb_top_sql_report_interval_seconds"
 	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
 	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
+	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
+	TiDBEnableLocalTxn = "tidb_enable_local_txn"
+
+	// TiDBEnableOrderedResultMode indicates if stabilize query results.
+	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
 )
 
 // TiDB vars that have only global scope
@@ -639,7 +654,8 @@ const (
 	DefBroadcastJoinThresholdCount     = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
-	DefTiDBAllowMPPExecution           = "ON"
+	DefTiDBAllowMPPExecution           = true
+	DefTiDBEnforceMPPExecution         = false
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -685,11 +701,12 @@ const (
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = ClusteredIndexDefModeIntOnly
 	DefTiDBRedactLog                   = false
+	DefTiDBRestrictedReadOnly          = false
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableParallelApply         = false
 	DefTiDBEnableAmendPessimisticTxn   = false
-	DefTiDBPartitionPruneMode          = "dynamic"
+	DefTiDBPartitionPruneMode          = "static"
 	DefTiDBEnableRateLimitAction       = true
 	DefTiDBEnableAsyncCommit           = false
 	DefTiDBEnable1PC                   = false
@@ -703,8 +720,12 @@ const (
 	DefTiDBTopSQLAgentAddress          = ""
 	DefTiDBTopSQLPrecisionSeconds      = 1
 	DefTiDBTopSQLMaxStatementCount     = 200
+	DefTiDBTopSQLMaxCollect            = 10000
 	DefTiDBTopSQLReportIntervalSeconds = 60
 	DefTiDBEnableGlobalTemporaryTable  = false
+	DefTMPTableSize                    = 16777216
+	DefTiDBEnableLocalTxn              = false
+	DefTiDBEnableOrderedResultMode     = false
 )
 
 // Process global variables.
@@ -734,8 +755,11 @@ var (
 		AgentAddress:          atomic.NewString(DefTiDBTopSQLAgentAddress),
 		PrecisionSeconds:      atomic.NewInt64(DefTiDBTopSQLPrecisionSeconds),
 		MaxStatementCount:     atomic.NewInt64(DefTiDBTopSQLMaxStatementCount),
+		MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
 		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 	}
+	EnableLocalTxn     = atomic.NewBool(DefTiDBEnableLocalTxn)
+	RestrictedReadOnly = atomic.NewBool(DefTiDBRestrictedReadOnly)
 )
 
 // TopSQL is the variable for control top sql feature.
@@ -748,6 +772,8 @@ type TopSQL struct {
 	PrecisionSeconds *atomic.Int64
 	// The maximum number of statements kept in memory.
 	MaxStatementCount *atomic.Int64
+	// The maximum capacity of the collect map.
+	MaxCollect *atomic.Int64
 	// The report data interval of top-sql.
 	ReportIntervalSeconds *atomic.Int64
 }

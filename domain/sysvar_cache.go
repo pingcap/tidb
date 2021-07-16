@@ -16,6 +16,7 @@ package domain
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/tidb/sessionctx"
@@ -152,6 +153,8 @@ func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 func checkEnableServerGlobalVar(name, sVal string) {
 	var err error
 	switch name {
+	case variable.TiDBEnableLocalTxn:
+		variable.EnableLocalTxn.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableStmtSummary:
 		err = stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
 	case variable.TiDBStmtSummaryInternalQuery:
@@ -166,6 +169,38 @@ func checkEnableServerGlobalVar(name, sVal string) {
 		err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(sVal, false)
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(sVal, false)
+	case variable.TiDBEnableTopSQL:
+		variable.TopSQLVariable.Enable.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBTopSQLPrecisionSeconds:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.PrecisionSeconds.Store(val)
+	case variable.TiDBTopSQLMaxStatementCount:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.MaxStatementCount.Store(val)
+	case variable.TiDBTopSQLMaxCollect:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.MaxCollect.Store(val)
+	case variable.TiDBTopSQLReportIntervalSeconds:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.ReportIntervalSeconds.Store(val)
+	case variable.TiDBRestrictedReadOnly:
+		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))

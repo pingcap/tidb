@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 const (
@@ -61,7 +61,7 @@ func TestT(t *testing.T) {
 type testSuite struct {
 	*parser.Parser
 	ctx     sessionctx.Context
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	domain  *domain.Domain
 }
@@ -71,7 +71,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),

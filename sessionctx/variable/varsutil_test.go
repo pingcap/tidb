@@ -104,6 +104,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.ShardAllocateStep, Equals, int64(DefTiDBShardAllocateStep))
 	c.Assert(vars.AnalyzeVersion, Equals, DefTiDBAnalyzeVersion)
 	c.Assert(vars.CTEMaxRecursionDepth, Equals, DefCTEMaxRecursionDepth)
+	c.Assert(vars.TMPTableSize, Equals, int64(DefTMPTableSize))
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
@@ -551,6 +552,9 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBEnableTablePartition, "OFF", false},
 		{TiDBEnableTablePartition, "AUTO", false},
 		{TiDBEnableTablePartition, "UN", true},
+		{TiDBEnableListTablePartition, "ON", false},
+		{TiDBEnableListTablePartition, "OFF", false},
+		{TiDBEnableListTablePartition, "list", true},
 		{TiDBOptCorrelationExpFactor, "a", true},
 		{TiDBOptCorrelationExpFactor, "-10", true},
 		{TiDBOptCorrelationThreshold, "a", true},

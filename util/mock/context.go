@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var _ sessionctx.Context = (*Context)(nil)

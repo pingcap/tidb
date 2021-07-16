@@ -51,13 +51,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -1074,7 +1074,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(dbtbl.TableInfo.Name.L, Equals, "user")
 	c.Assert(dbtbl.DBInfo.Name.L, Equals, "mysql")
-	se, err := session.CreateSession(ts.store.(kv.Storage))
+	se, err := session.CreateSession(ts.store)
 	c.Assert(err, IsNil)
 	c.Assert(dbtbl.SchemaVersion, Equals, domain.GetDomain(se.(sessionctx.Context)).InfoSchema().SchemaMetaVersion())
 
@@ -1148,7 +1148,7 @@ func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
-	se, err := session.CreateSession(ts.store.(kv.Storage))
+	se, err := session.CreateSession(ts.store)
 	c.Assert(err, IsNil)
 
 	form := make(url.Values)
@@ -1238,6 +1238,7 @@ func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	form = make(url.Values)
 	form.Set("tidb_deadlock_history_capacity", "5")
 	resp, err = ts.formStatus("/settings", form)
+	c.Assert(err, IsNil)
 	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 5)
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(6))
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[4].ID, Equals, uint64(10))
@@ -1248,6 +1249,7 @@ func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	form = make(url.Values)
 	form.Set("tidb_deadlock_history_capacity", "6")
 	resp, err = ts.formStatus("/settings", form)
+	c.Assert(err, IsNil)
 	deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
 	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 6)
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(7))
@@ -1296,7 +1298,7 @@ func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
 	c.Assert(info.GitHash, Equals, versioninfo.TiDBGitHash)
 
 	store := ts.server.newTikvHandlerTool().Store.(kv.Storage)
-	do, err := session.GetDomain(store.(kv.Storage))
+	do, err := session.GetDomain(store)
 	c.Assert(err, IsNil)
 	ddl := do.DDL()
 	c.Assert(info.ID, Equals, ddl.GetID())
@@ -1319,7 +1321,7 @@ func (ts *HTTPHandlerTestSerialSuite) TestAllServerInfo(c *C) {
 	c.Assert(clusterInfo.ServersNum, Equals, 1)
 
 	store := ts.server.newTikvHandlerTool().Store.(kv.Storage)
-	do, err := session.GetDomain(store.(kv.Storage))
+	do, err := session.GetDomain(store)
 	c.Assert(err, IsNil)
 	ddl := do.DDL()
 	c.Assert(clusterInfo.OwnerID, Equals, ddl.GetID())
