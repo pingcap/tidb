@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -576,16 +577,6 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 			continue
 		}
 
-		if sessionData == nil {
-			// Create this txn just for getting a MemBuffer. It's a little tricky
-			bufferTxn, err := s.store.BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
-			if err != nil {
-				return err
-			}
-
-			sessionData = bufferTxn.GetMemBuffer()
-		}
-
 		if stage == kv.InvalidStagingHandle {
 			stage = sessionData.Staging()
 		}
@@ -630,7 +621,6 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 
 	if stage != kv.InvalidStagingHandle {
 		sessionData.Release(stage)
-		s.sessionVars.TemporaryTableData = sessionData
 		stage = kv.InvalidStagingHandle
 	}
 
@@ -1328,6 +1318,10 @@ func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...inter
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
 		s.sessionVars.InRestrictedSQL = origin
+		if variable.TopSQLEnabled() {
+			//  Restore the goroutine label by using the original ctx after execution is finished.
+			pprof.SetGoroutineLabels(ctx)
+		}
 	}()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -1469,8 +1463,9 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	if variable.TopSQLEnabled() {
 		normalized, digest := parser.NormalizeDigest(sql)
 		if digest != nil {
-			// Fixme: reset/clean the label when internal sql execute finish.
-			topsql.AttachSQLInfo(ctx, normalized, digest, "", nil)
+			// Reset the goroutine label when internal sql execute finish.
+			// Specifically reset in ExecRestrictedStmt function.
+			topsql.AttachSQLInfo(ctx, normalized, digest, "", nil, s.sessionVars.InRestrictedSQL)
 		}
 	}
 	return stmts[0], nil
@@ -1479,6 +1474,9 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
 func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*ast.ResultField, error) {
+	if variable.TopSQLEnabled() {
+		defer pprof.SetGoroutineLabels(ctx)
+	}
 	var execOption sqlexec.ExecOption
 	for _, opt := range opts {
 		opt(&execOption)
@@ -1585,7 +1583,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
 	if variable.TopSQLEnabled() {
-		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil)
+		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, s.sessionVars.InRestrictedSQL)
 	}
 
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {

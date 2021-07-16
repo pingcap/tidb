@@ -466,6 +466,7 @@ func (*testSysVarSuite) TestIsNoop(c *C) {
 }
 
 func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
+	c.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
 	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
 	// Eventually these should be changed to use getters so that the switch
 	// statement in GetSessionOnlySysVars can be removed.

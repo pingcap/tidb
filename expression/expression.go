@@ -340,7 +340,7 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 		if CanImplicitEvalReal(expr) {
 			eType = types.ETReal
 		}
-		buf, err := globalColumnAllocator.get(eType, n)
+		buf, err := globalColumnAllocator.get()
 		if err != nil {
 			return nil, nil, err
 		}
