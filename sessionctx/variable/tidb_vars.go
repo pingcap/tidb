@@ -135,7 +135,7 @@ const (
 	// tidb_disable_txn_auto_retry disables transaction auto retry.
 	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
 
-	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
+	// Deprecated: tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
 
 	// tidb_enable_chunk_rpc enables TiDB to use Chunk format for coprocessor requests.
@@ -565,8 +565,8 @@ const (
 	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
 	TiDBEnableLocalTxn = "tidb_enable_local_txn"
 
-	// TiDBEnableStableResultMode indicates if stabilize query results.
-	TiDBEnableStableResultMode = "tidb_enable_stable_result_mode"
+	// TiDBEnableOrderedResultMode indicates if stabilize query results.
+	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
 )
 
 // TiDB vars that have only global scope
@@ -721,7 +721,7 @@ const (
 	DefTiDBEnableGlobalTemporaryTable  = false
 	DefTMPTableSize                    = 16777216
 	DefTiDBEnableLocalTxn              = false
-	DefTiDBEnableStableResultMode      = false
+	DefTiDBEnableOrderedResultMode     = false
 )
 
 // Process global variables.
