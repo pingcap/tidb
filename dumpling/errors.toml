@@ -1021,6 +1021,11 @@ error = '''
 Internal : %s
 '''
 
+["planner:1836"]
+error = '''
+Running in read-only mode
+'''
+
 ["planner:3029"]
 error = '''
 Expression #%d of ORDER BY contains aggregate function and applies to the result of a non-aggregated query
