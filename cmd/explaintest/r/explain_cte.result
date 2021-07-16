@@ -18,13 +18,13 @@ CTE_0	10000.00	root		Non-Recursive CTE
   └─TableFullScan_7	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain with cte(a,b,c,d) as (select * from t1, t2) select * from cte;
 id	estRows	task	access object	operator info
-CTEFullScan_18	100000000.00	root	CTE:cte	data:CTE_0
+CTEFullScan_19	100000000.00	root	CTE:cte	data:CTE_0
 CTE_0	100000000.00	root		Non-Recursive CTE
-└─HashJoin_10(Seed Part)	100000000.00	root		CARTESIAN inner join
-  ├─TableReader_17(Build)	10000.00	root		data:TableFullScan_16
-  │ └─TableFullScan_16	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader_13(Probe)	10000.00	root		data:TableFullScan_12
-    └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─HashJoin_11(Seed Part)	100000000.00	root		CARTESIAN inner join
+  ├─TableReader_18(Build)	10000.00	root		data:TableFullScan_17
+  │ └─TableFullScan_17	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader_14(Probe)	10000.00	root		data:TableFullScan_13
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain with recursive cte(a) as (select 1 union select a+1 from cte where a < 10) select * from cte;
 id	estRows	task	access object	operator info
 CTEFullScan_17	2.00	root	CTE:cte	data:CTE_0
@@ -177,26 +177,26 @@ CTE_0	8001.00	root		Recursive CTE, limit(offset:0, count:0)
   └─CTETable_27	10000.00	root		Scan on CTE_0
 explain with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 1) select * from cte1;
 id	estRows	task	access object	operator info
-CTEFullScan_34	1.00	root	CTE:cte1	data:CTE_0
+CTEFullScan_36	1.00	root	CTE:cte1	data:CTE_0
 CTE_0	1.00	root		Non-Recursive CTE
-└─Limit_21(Seed Part)	1.00	root		offset:0, count:1
-  └─HashAgg_22	1.00	root		group by:Column#11, funcs:firstrow(Column#11)->Column#11
-    └─Union_23	20000.00	root		
-      ├─TableReader_26	10000.00	root		data:TableFullScan_25
-      │ └─TableFullScan_25	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-      └─IndexReader_33	10000.00	root		index:IndexFullScan_32
-        └─IndexFullScan_32	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+└─Limit_23(Seed Part)	1.00	root		offset:0, count:1
+  └─HashAgg_24	1.00	root		group by:Column#11, funcs:firstrow(Column#11)->Column#11
+    └─Union_25	20000.00	root		
+      ├─TableReader_28	10000.00	root		data:TableFullScan_27
+      │ └─TableFullScan_27	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─IndexReader_35	10000.00	root		index:IndexFullScan_34
+        └─IndexFullScan_34	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 explain with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 100 offset 100) select * from cte1;
 id	estRows	task	access object	operator info
-CTEFullScan_34	100.00	root	CTE:cte1	data:CTE_0
+CTEFullScan_36	100.00	root	CTE:cte1	data:CTE_0
 CTE_0	100.00	root		Non-Recursive CTE
-└─Limit_21(Seed Part)	100.00	root		offset:100, count:100
-  └─HashAgg_22	200.00	root		group by:Column#11, funcs:firstrow(Column#11)->Column#11
-    └─Union_23	20000.00	root		
-      ├─TableReader_26	10000.00	root		data:TableFullScan_25
-      │ └─TableFullScan_25	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-      └─IndexReader_33	10000.00	root		index:IndexFullScan_32
-        └─IndexFullScan_32	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
+└─Limit_23(Seed Part)	100.00	root		offset:100, count:100
+  └─HashAgg_24	200.00	root		group by:Column#11, funcs:firstrow(Column#11)->Column#11
+    └─Union_25	20000.00	root		
+      ├─TableReader_28	10000.00	root		data:TableFullScan_27
+      │ └─TableFullScan_27	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─IndexReader_35	10000.00	root		index:IndexFullScan_34
+        └─IndexFullScan_34	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 explain with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 0 offset 0) select * from cte1;
 id	estRows	task	access object	operator info
 CTEFullScan_18	0.00	root	CTE:cte1	data:CTE_0
