@@ -172,7 +172,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		} else {
 			err = e.executeDropTable(x)
 			if err == nil {
-				_ = e.dropLocalTemporaryTables(localTempTableNames)
+				err = e.dropLocalTemporaryTables(localTempTableNames)
 			}
 		}
 	case *ast.RecoverTableStmt:
