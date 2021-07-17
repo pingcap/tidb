@@ -23,20 +23,20 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 var _ = Suite(&testAdminSuite{})
 
 type testAdminSuite struct {
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	domain  *domain.Domain
 }
 
 func (s *testAdminSuite) SetUpSuite(c *C) {
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),

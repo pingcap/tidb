@@ -153,6 +153,8 @@ func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 func checkEnableServerGlobalVar(name, sVal string) {
 	var err error
 	switch name {
+	case variable.TiDBEnableLocalTxn:
+		variable.EnableLocalTxn.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableStmtSummary:
 		err = stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
 	case variable.TiDBStmtSummaryInternalQuery:
@@ -197,6 +199,8 @@ func checkEnableServerGlobalVar(name, sVal string) {
 			break
 		}
 		variable.TopSQLVariable.ReportIntervalSeconds.Store(val)
+	case variable.TiDBRestrictedReadOnly:
+		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))

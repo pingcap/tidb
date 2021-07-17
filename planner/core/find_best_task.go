@@ -384,7 +384,7 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, planCoun
 	memTable := PhysicalMemTable{
 		DBName:         p.DBName,
 		Table:          p.TableInfo,
-		Columns:        p.TableInfo.Columns,
+		Columns:        p.Columns,
 		Extractor:      p.Extractor,
 		QueryTimeRange: p.QueryTimeRange,
 	}.Init(p.ctx, p.stats, p.blockOffset)
@@ -723,7 +723,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			// We do not build [batch] point get for dynamic table partitions now. This can be optimized.
 			if ds.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 				canConvertPointGet = false
-			} else if len(path.Ranges) > 1 {
+			}
+			if canConvertPointGet && len(path.Ranges) > 1 {
 				// We can only build batch point get for hash partitions on a simple column now. This is
 				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
 				// the `getPhysID()` function. Once we optimize that part, we can come back and enable
@@ -732,7 +733,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				if hashPartColName == nil {
 					canConvertPointGet = false
 				}
-			} else {
+			}
+			if canConvertPointGet {
 				// If the schema contains ExtraPidColID, do not convert to point get.
 				// Because the point get executor can not handle the extra partition ID column now.
 				for _, col := range ds.schema.Columns {

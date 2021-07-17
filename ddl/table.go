@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	tidb_util "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 const tiflashCheckTiDBHTTPAPIHalfInterval = 2500 * time.Millisecond
@@ -316,7 +315,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		} else {
 			tids = []int64{tblInfo.ID}
 		}
-		err = w.delRangeManager.removeFromGCDeleteRange(dropJobID, tids)
+		err = w.delRangeManager.removeFromGCDeleteRange(w.ddlJobCtx, dropJobID, tids)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -330,7 +329,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 		failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
 			if val.(bool) && atomic.CompareAndSwapUint32(&mockRecoverTableCommitErrOnce, 0, 1) {
-				tikv.MockCommitErrorEnable()
+				err = failpoint.Enable(`tikvclient/mockCommitErrorOpt`, "return(true)")
 			}
 		})
 
@@ -556,8 +555,11 @@ func onRebaseAutoRandomType(store kv.Storage, t *meta.Meta, job *model.Job) (ver
 
 func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
 	schemaID := job.SchemaID
-	var newBase int64
-	err := job.DecodeArgs(&newBase)
+	var (
+		newBase int64
+		force   bool
+	)
+	err := job.DecodeArgs(&newBase, &force)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -582,8 +584,13 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.Al
 	if alloc := tbl.Allocators(nil).Get(tp); alloc != nil {
 		// The next value to allocate is `newBase`.
 		newEnd := newBase - 1
-		err = alloc.Rebase(tblInfo.ID, newEnd, false)
+		if force {
+			err = alloc.ForceRebase(tblInfo.ID, newEnd)
+		} else {
+			err = alloc.Rebase(tblInfo.ID, newEnd, false)
+		}
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 	}

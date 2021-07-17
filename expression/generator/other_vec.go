@@ -57,7 +57,7 @@ const builtinOtherImports = `import (
 
 var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 {{ define "BufAllocator" }}
-	buf0, err := b.bufAllocator.get(types.ET{{ .Input.ETName }}, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -65,7 +65,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 	if err := b.args[0].VecEval{{ .Input.TypeName }}(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ET{{ .Input.ETName }}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -201,7 +201,7 @@ func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) erro
 				{{- end }}
 			{{- end }}
 		}
-		args = args[:0]
+		args = make([]Expression, 0, len(b.nonConstArgsIdx))
 		for _, i := range b.nonConstArgsIdx {
 			args = append(args, b.args[i])
 		}
