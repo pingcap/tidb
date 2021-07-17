@@ -719,12 +719,11 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 			withEnd := withIdx + len(withSb.String())
 			tmp := strings.Replace(bindSQL[withEnd:], "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
 			return strings.Join([]string{bindSQL[withIdx:withEnd], tmp}, "")
-		} else {
-			selectIdx = strings.Index(bindSQL, "SELECT")
-			// Remove possible `explain` prefix.
-			bindSQL = bindSQL[selectIdx:]
-			return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
 		}
+		selectIdx = strings.Index(bindSQL, "SELECT")
+		// Remove possible `explain` prefix.
+		bindSQL = bindSQL[selectIdx:]
+		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
 	case *ast.InsertStmt:
 		insertIdx := int(0)
 		if n.IsReplace {
