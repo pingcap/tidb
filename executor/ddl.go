@@ -153,7 +153,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.AlterDatabaseStmt:
 		err = e.executeAlterDatabase(x)
 	case *ast.AlterTableStmt:
-		err = e.executeAlterTable(x)
+		err = e.executeAlterTable(ctx, x)
 	case *ast.CreateIndexStmt:
 		err = e.executeCreateIndex(x)
 	case *ast.CreateDatabaseStmt:
@@ -533,9 +533,9 @@ func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 	return err
 }
 
-func (e *DDLExec) executeAlterTable(s *ast.AlterTableStmt) error {
+func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	err := domain.GetDomain(e.ctx).DDL().AlterTable(e.ctx, ti, s.Specs)
+	err := domain.GetDomain(e.ctx).DDL().AlterTable(ctx, e.ctx, ti, s.Specs)
 	return err
 }
 
