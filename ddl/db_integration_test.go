@@ -2999,9 +2999,6 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 	defer tk.MustExec("drop table if exists a_normal_table_2")
 	_, err = tk.Exec("drop table a_local_temp_table_3, a_local_temp_table_4, a_local_temp_table_5, a_normal_table_2, a_local_temp_table_6")
 	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.a_local_temp_table_6'")
-	tk.MustQuery("select * from a_local_temp_table_3").Check(testkit.Rows())
-	tk.MustQuery("select * from a_local_temp_table_4").Check(testkit.Rows())
-	tk.MustQuery("select * from a_local_temp_table_5").Check(testkit.Rows())
 
 	tk.MustExec("drop table if exists check_data_normal_table_3")
 	tk.MustExec("create table check_data_normal_table_3 (id int)")
@@ -3009,7 +3006,6 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 	tk.MustExec("create temporary table a_local_temp_table_6 (id int)")
 	_, err = tk.Exec("drop table check_data_normal_table_3, check_data_normal_table_7, a_local_temp_table_6")
 	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.check_data_normal_table_7'")
-	tk.MustQuery("select * from a_local_temp_table_6").Check(testkit.Rows())
 
 	// Check filter out data from removed local temp tables
 	tk.MustExec("create temporary table a_local_temp_table_7 (id int)")
@@ -3036,7 +3032,8 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 
 	_, err = tk.Exec("select * from a_local_temp_table_7")
 	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.a_local_temp_table_7' doesn't exist")
-	iter, _ := txn.Iter(tablePrefix, nil)
-	hasData := iter.Key().HasPrefix(tablePrefix)
-	c.Assert(hasData, IsFalse)
+	memData := sessionVars.TemporaryTableData
+	iter, err := memData.Iter(tablePrefix, nil)
+	c.Assert(err, IsNil)
+	c.Assert(iter.Valid(), IsFalse)
 }
