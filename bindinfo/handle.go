@@ -711,7 +711,11 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 			withIdx := strings.Index(bindSQL, "WITH")
 			restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &withSb)
 			restoreCtx.DefaultDB = defaultDB
-			n.With.Restore(restoreCtx)
+			err := n.With.Restore(restoreCtx)
+			if err != nil {
+				logutil.BgLogger().Debug("[sql-bind] restore SQL failed", zap.Error(err))
+				return ""
+			}
 			withEnd := withIdx + len(withSb.String())
 			tmp := strings.Replace(bindSQL[withEnd:], "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
 			return strings.Join([]string{bindSQL[withIdx:withEnd], tmp}, "")
