@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/stretchr/testify/assert"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -69,13 +70,9 @@ func TestString(t *testing.T) {
 	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: 1 " +
 		"Get_commit_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1 " +
 		"Process_keys: 10 Total_keys: 100 Rocksdb_delete_skipped_count: 1 Rocksdb_key_skipped_count: 1 Rocksdb_block_cache_hit_count: 1 Rocksdb_block_read_count: 1 Rocksdb_block_read_byte: 100"
-	if str := detail.String(); str != expected {
-		t.Errorf("got:\n%s\nexpected:\n%s", str, expected)
-	}
+	assert.Equal(t, expected, detail.String())
 	detail = &ExecDetails{}
-	if str := detail.String(); str != "" {
-		t.Errorf("got:\n%s\nexpected:\n", str)
-	}
+	assert.Equal(t, "", detail.String())
 }
 
 func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIterations uint64) *tipb.ExecutorExecutionSummary {
@@ -108,48 +105,35 @@ func TestCopRuntimeStats(t *testing.T) {
 		RocksdbBlockReadByte:      100,
 	}
 	stats.RecordScanDetail(tableScanID, "tikv", scanDetail)
-	if stats.ExistsCopStats(tableScanID) != true {
-		t.Fatal("exist")
-	}
+	assert.True(t, stats.ExistsCopStats(tableScanID))
+
 	cop := stats.GetOrCreateCopStats(tableScanID, "tikv")
-	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, "+
-		"scan_detail: {total_process_keys: 10, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 1, block: {cache_hit_count: 10, read_count: 20, read_byte: 100 Bytes}}}" {
-		t.Fatalf(cop.String())
-	}
+	expected := "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, " +
+		"scan_detail: {total_process_keys: 10, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 1, block: {cache_hit_count: 10, read_count: 20, read_byte: 100 Bytes}}}"
+	assert.Equal(t, expected, cop.String())
+
 	copStats := cop.stats["8.8.8.8"]
-	if copStats == nil {
-		t.Fatal("cop stats is nil")
-	}
+	assert.NotNil(t, copStats)
+
 	copStats[0].SetRowNum(10)
 	copStats[0].Record(time.Second, 10)
-	if copStats[0].String() != "time:1s, loops:2" {
-		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
-	}
+	assert.Equal(t, "time:1s, loops:2", copStats[0].String())
+	assert.Equal(t, "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}", stats.GetOrCreateCopStats(aggID, "tikv").String())
 
-	if stats.GetOrCreateCopStats(aggID, "tikv").String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}" {
-		t.Fatalf("agg cop stats string is not as expected, got: %v", stats.GetOrCreateCopStats(aggID, "tikv").String())
-	}
 	rootStats := stats.GetRootStats(tableReaderID)
-	if rootStats == nil {
-		t.Fatal("table_reader")
-	}
-	if stats.ExistsRootStats(tableReaderID) == false {
-		t.Fatal("table_reader not exists")
-	}
+	assert.NotNil(t, rootStats)
+	assert.True(t, stats.ExistsRootStats(tableReaderID))
 
 	cop.scanDetail.ProcessedKeys = 0
 	cop.scanDetail.RocksdbKeySkippedCount = 0
 	cop.scanDetail.RocksdbBlockReadCount = 0
 	// Print all fields even though the value of some fields is 0.
-	if cop.String() != "tikv_task:{proc max:1s, min:2ns, p80:1s, p95:1s, iters:4, tasks:2}, "+
-		"scan_detail: {total_process_keys: 0, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 0, block: {cache_hit_count: 10, read_count: 0, read_byte: 100 Bytes}}}" {
-		t.Fatalf(cop.String())
-	}
+	str := "tikv_task:{proc max:1s, min:2ns, p80:1s, p95:1s, iters:4, tasks:2}, " +
+		"scan_detail: {total_process_keys: 0, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 0, block: {cache_hit_count: 10, read_count: 0, read_byte: 100 Bytes}}}"
+	assert.Equal(t, str, cop.String())
 
 	zeroScanDetail := util.ScanDetail{}
-	if zeroScanDetail.String() != "" {
-		t.Fatalf(zeroScanDetail.String())
-	}
+	assert.Equal(t, "", zeroScanDetail.String())
 }
 
 func TestCopRuntimeStatsForTiFlash(t *testing.T) {
