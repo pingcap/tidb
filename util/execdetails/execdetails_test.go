@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -70,9 +70,9 @@ func TestString(t *testing.T) {
 	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: 1 " +
 		"Get_commit_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1 " +
 		"Process_keys: 10 Total_keys: 100 Rocksdb_delete_skipped_count: 1 Rocksdb_key_skipped_count: 1 Rocksdb_block_cache_hit_count: 1 Rocksdb_block_read_count: 1 Rocksdb_block_read_byte: 100"
-	assert.Equal(t, expected, detail.String())
+	require.Equal(t, expected, detail.String())
 	detail = &ExecDetails{}
-	assert.Equal(t, "", detail.String())
+	require.Equal(t, "", detail.String())
 }
 
 func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIterations uint64) *tipb.ExecutorExecutionSummary {
@@ -105,24 +105,24 @@ func TestCopRuntimeStats(t *testing.T) {
 		RocksdbBlockReadByte:      100,
 	}
 	stats.RecordScanDetail(tableScanID, "tikv", scanDetail)
-	assert.True(t, stats.ExistsCopStats(tableScanID))
+	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetOrCreateCopStats(tableScanID, "tikv")
 	expected := "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, " +
 		"scan_detail: {total_process_keys: 10, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 1, block: {cache_hit_count: 10, read_count: 20, read_byte: 100 Bytes}}}"
-	assert.Equal(t, expected, cop.String())
+	require.Equal(t, expected, cop.String())
 
 	copStats := cop.stats["8.8.8.8"]
-	assert.NotNil(t, copStats)
+	require.NotNil(t, copStats)
 
 	copStats[0].SetRowNum(10)
 	copStats[0].Record(time.Second, 10)
-	assert.Equal(t, "time:1s, loops:2", copStats[0].String())
-	assert.Equal(t, "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}", stats.GetOrCreateCopStats(aggID, "tikv").String())
+	require.Equal(t, "time:1s, loops:2", copStats[0].String())
+	require.Equal(t, "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}", stats.GetOrCreateCopStats(aggID, "tikv").String())
 
 	rootStats := stats.GetRootStats(tableReaderID)
-	assert.NotNil(t, rootStats)
-	assert.True(t, stats.ExistsRootStats(tableReaderID))
+	require.NotNil(t, rootStats)
+	require.True(t, stats.ExistsRootStats(tableReaderID))
 
 	cop.scanDetail.ProcessedKeys = 0
 	cop.scanDetail.RocksdbKeySkippedCount = 0
@@ -130,10 +130,10 @@ func TestCopRuntimeStats(t *testing.T) {
 	// Print all fields even though the value of some fields is 0.
 	str := "tikv_task:{proc max:1s, min:2ns, p80:1s, p95:1s, iters:4, tasks:2}, " +
 		"scan_detail: {total_process_keys: 0, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 0, block: {cache_hit_count: 10, read_count: 0, read_byte: 100 Bytes}}}"
-	assert.Equal(t, str, cop.String())
+	require.Equal(t, str, cop.String())
 
 	zeroScanDetail := util.ScanDetail{}
-	assert.Equal(t, "", zeroScanDetail.String())
+	require.Equal(t, "", zeroScanDetail.String())
 }
 
 func TestCopRuntimeStatsForTiFlash(t *testing.T) {
@@ -156,34 +156,25 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 		RocksdbBlockReadByte:      100,
 	}
 	stats.RecordScanDetail(tableScanID, "tiflash", scanDetail)
-	if stats.ExistsCopStats(tableScanID) != true {
-		t.Fatal("exist")
-	}
+	require.True(t, stats.ExistsCopStats(tableScanID))
+
 	cop := stats.GetOrCreateCopStats(tableScanID, "tiflash")
-	if cop.String() != "tiflash_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}" {
-		t.Fatal(cop.String())
-	}
+	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}", cop.String())
+
 	copStats := cop.stats["8.8.8.8"]
-	if copStats == nil {
-		t.Fatal("cop stats is nil")
-	}
+	require.NotNil(t, copStats)
+
 	copStats[0].SetRowNum(10)
 	copStats[0].Record(time.Second, 10)
-	if copStats[0].String() != "time:1s, loops:2, threads:1" {
-		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
-	}
+	require.Equal(t, "time:1s, loops:2, threads:1", copStats[0].String())
+	expected := "tiflash_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}"
+	require.Equal(t, expected, stats.GetOrCreateCopStats(aggID, "tiflash").String())
 
-	if stats.GetOrCreateCopStats(aggID, "tiflash").String() != "tiflash_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}" {
-		t.Fatalf("agg cop stats string is not as expected, got: %v", stats.GetOrCreateCopStats(aggID, "tiflash").String())
-	}
 	rootStats := stats.GetRootStats(tableReaderID)
-	if rootStats == nil {
-		t.Fatal("table_reader")
-	}
-	if stats.ExistsRootStats(tableReaderID) == false {
-		t.Fatal("table_reader not exists")
-	}
+	require.NotNil(t, rootStats)
+	require.True(t, stats.ExistsRootStats(tableReaderID))
 }
+
 func TestRuntimeStatsWithCommit(t *testing.T) {
 	t.Parallel()
 	commitDetail := &util.CommitDetails{
@@ -208,9 +199,8 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		Commit: commitDetail,
 	}
 	expect := "commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, backoff: {time: 1s, type: [backoff1 backoff2]}, resolve_lock: 1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
-	if stats.String() != expect {
-		t.Fatalf("%v != %v", stats.String(), expect)
-	}
+	require.Equal(t, expect, stats.String())
+
 	lockDetail := &util.LockKeysDetails{
 		TotalTime:       time.Second,
 		RegionNum:       2,
@@ -233,9 +223,7 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		LockKeys: lockDetail,
 	}
 	expect = "lock_keys: {time:1s, region:2, keys:10, resolve_lock:2s, backoff: {time: 3s, type: [backoff4 backoff5]}, lock_rpc:5s, rpc_count:50, retry_count:2}"
-	if stats.String() != expect {
-		t.Fatalf("%v != %v", stats.String(), expect)
-	}
+	require.Equal(t, expect, stats.String())
 }
 
 func TestRootRuntimeStats(t *testing.T) {
@@ -265,9 +253,7 @@ func TestRootRuntimeStats(t *testing.T) {
 	})
 	stats := stmtStats.GetRootStats(1)
 	expect := "time:3s, loops:2, worker:15, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
-	if stats.String() != expect {
-		t.Fatalf("%v != %v", stats.String(), expect)
-	}
+	require.Equal(t, expect, stats.String())
 }
 
 func TestFormatDurationForExplain(t *testing.T) {
@@ -311,12 +297,9 @@ func TestFormatDurationForExplain(t *testing.T) {
 	}
 	for _, ca := range cases {
 		d, err := time.ParseDuration(ca.t)
-		if err != nil {
-			t.Fatalf("%v != %v", err, nil)
-		}
+		require.Nil(t, err)
+
 		result := FormatDuration(d)
-		if result != ca.s {
-			t.Fatalf("%v != %v", result, ca.s)
-		}
+		require.Equal(t, ca.s, result)
 	}
 }
