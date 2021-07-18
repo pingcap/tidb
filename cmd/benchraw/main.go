@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net/http"
@@ -26,7 +27,8 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
 	"github.com/tikv/client-go/v2/config"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/rawkv"
+
 	"go.uber.org/zap"
 )
 
@@ -42,7 +44,8 @@ var (
 
 // batchRawPut blinds put bench.
 func batchRawPut(value []byte) {
-	cli, err := tikv.NewRawKVClient(strings.Split(*pdAddr, ","), config.Security{
+	ctx := context.Background()
+	cli, err := rawkv.NewClient(ctx, strings.Split(*pdAddr, ","), config.Security{
 		ClusterSSLCA:   *sslCA,
 		ClusterSSLCert: *sslCert,
 		ClusterSSLKey:  *sslKey,
@@ -61,7 +64,7 @@ func batchRawPut(value []byte) {
 			for j := 0; j < base; j++ {
 				k := base*i + j
 				key := fmt.Sprintf("key_%d", k)
-				err = cli.Put([]byte(key), value)
+				err = cli.Put(ctx, []byte(key), value)
 				if err != nil {
 					log.Fatal("put failed", zap.Error(err))
 				}
