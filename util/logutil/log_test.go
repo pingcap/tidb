@@ -67,14 +67,14 @@ func (s *testLogSuite) TestZapLoggerWithKeys(c *C) {
 	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxSize: 4096}}
 	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
 	err := InitLogger(conf)
-	c.Assert(err, IsNil)
+	c.Assert(err, IsNil) // TODO
 	connID := uint64(123)
 	ctx := WithConnID(context.Background(), connID)
 	s.testZapLogger(ctx, c, fileCfg.Filename, zapLogWithConnIDPattern)
 	os.Remove(fileCfg.Filename)
 
 	err = InitLogger(conf)
-	c.Assert(err, IsNil)
+	c.Assert(err, IsNil) // TODO
 	key := "ctxKey"
 	val := "ctxValue"
 	ctx1 := WithKeyValue(context.Background(), key, val)
@@ -89,7 +89,7 @@ func (s *testLogSuite) testZapLogger(ctx context.Context, c *C, fileName, patter
 	Logger(ctx).Error("error msg", zap.String("test with key", "true"))
 
 	f, err := os.Open(fileName)
-	c.Assert(err, IsNil)
+	c.Assert(err, IsNil) // TODO
 	defer f.Close()
 
 	r := bufio.NewReader(f)
@@ -99,26 +99,26 @@ func (s *testLogSuite) testZapLogger(ctx context.Context, c *C, fileName, patter
 		if err != nil {
 			break
 		}
-		c.Assert(str, Matches, pattern)
-		c.Assert(strings.Contains(str, "stack"), IsFalse)
-		c.Assert(strings.Contains(str, "errorVerbose"), IsFalse)
+		c.Assert(str, Matches, pattern)                          // TODO
+		c.Assert(strings.Contains(str, "stack"), IsFalse)        // TODO
+		c.Assert(strings.Contains(str, "errorVerbose"), IsFalse) // TODO
 	}
-	c.Assert(err, Equals, io.EOF)
+	c.Assert(err, Equals, io.EOF) // TODO
 }
 
 func (s *testLogSuite) TestSetLevel(c *C) {
 	conf := NewLogConfig("info", DefaultLogFormat, "", EmptyFileLogConfig, false)
 	err := InitLogger(conf)
-	c.Assert(err, IsNil)
+	c.Assert(err, IsNil) // TODO
 
-	c.Assert(log.GetLevel(), Equals, zap.InfoLevel)
+	c.Assert(log.GetLevel(), Equals, zap.InfoLevel) // TODO
 	err = SetLevel("warn")
-	c.Assert(err, IsNil)
-	c.Assert(log.GetLevel(), Equals, zap.WarnLevel)
+	c.Assert(err, IsNil)                            // TODO
+	c.Assert(log.GetLevel(), Equals, zap.WarnLevel) // TODO
 	err = SetLevel("Error")
-	c.Assert(err, IsNil)
-	c.Assert(log.GetLevel(), Equals, zap.ErrorLevel)
+	c.Assert(err, IsNil)                             // TODO
+	c.Assert(log.GetLevel(), Equals, zap.ErrorLevel) // TODO
 	err = SetLevel("DEBUG")
-	c.Assert(err, IsNil)
-	c.Assert(log.GetLevel(), Equals, zap.DebugLevel)
+	c.Assert(err, IsNil)                             // TODO
+	c.Assert(log.GetLevel(), Equals, zap.DebugLevel) // TODO
 }

@@ -38,7 +38,7 @@ func (s *testHexSuite) TestHex(c *C) {
 	region.StartKey = []byte{'t', 200, '\\', 000, 000, 000, '\\', 000, 000, 000, 37, '-', 000, 000, 000, 000, 000, 000, 000, 37}
 	region.EndKey = []byte("3asg3asd")
 
-	c.Assert(logutil.Hex(&region).String(), Equals, "{Id:6662 StartKey:74c85c0000005c000000252d0000000000000025 EndKey:3361736733617364 RegionEpoch:<nil> Peers:[] EncryptionMeta:<nil>}")
+	c.Assert(logutil.Hex(&region).String(), Equals, "{Id:6662 StartKey:74c85c0000005c000000252d0000000000000025 EndKey:3361736733617364 RegionEpoch:<nil> Peers:[] EncryptionMeta:<nil>}") // TODO
 }
 
 func (s *testHexSuite) TestPrettyPrint(c *C) {
@@ -46,19 +46,19 @@ func (s *testHexSuite) TestPrettyPrint(c *C) {
 
 	byteSlice := []byte("asd2fsdafs中文3af")
 	logutil.PrettyPrint(&buf, reflect.ValueOf(byteSlice))
-	c.Assert(buf.String(), Equals, "61736432667364616673e4b8ade69687336166")
-	c.Assert(buf.String(), Equals, hex.EncodeToString(byteSlice))
+	c.Assert(buf.String(), Equals, "61736432667364616673e4b8ade69687336166") // TODO
+	c.Assert(buf.String(), Equals, hex.EncodeToString(byteSlice))            // TODO
 	buf.Reset()
 
 	// Go reflect can't distinguish uint8 from byte!
 	intSlice := []uint8{1, 2, 3, uint8('a'), uint8('b'), uint8('c'), uint8('\'')}
 	logutil.PrettyPrint(&buf, reflect.ValueOf(intSlice))
-	c.Assert(buf.String(), Equals, "01020361626327")
+	c.Assert(buf.String(), Equals, "01020361626327") // TODO
 	buf.Reset()
 
 	var ran kv.KeyRange
 	ran.StartKey = kv.Key("_txxey23_i263")
 	ran.EndKey = nil
 	logutil.PrettyPrint(&buf, reflect.ValueOf(ran))
-	c.Assert(buf.String(), Equals, "{StartKey:5f747878657932335f69323633 EndKey:}")
+	c.Assert(buf.String(), Equals, "{StartKey:5f747878657932335f69323633 EndKey:}") // TODO
 }
