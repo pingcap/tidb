@@ -1392,41 +1392,52 @@ func (s *testEvaluatorSuite) TestUTCDate(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestStrToDate(c *C) {
+	// If you want to add test cases for `strToDate` but not the builtin function,
+	// adding cases in `types.format_test.go` `TestStrToDate` maybe more clear and easier
 	tests := []struct {
 		Date    string
 		Format  string
 		Success bool
+		Kind    byte
 		Expect  time.Time
 	}{
-		{"10/28/2011 9:46:29 pm", "%m/%d/%Y %l:%i:%s %p", true, time.Date(2011, 10, 28, 21, 46, 29, 0, time.Local)},
-		{"10/28/2011 9:46:29 Pm", "%m/%d/%Y %l:%i:%s %p", true, time.Date(2011, 10, 28, 21, 46, 29, 0, time.Local)},
-		{"2011/10/28 9:46:29 am", "%Y/%m/%d %l:%i:%s %p", true, time.Date(2011, 10, 28, 9, 46, 29, 0, time.Local)},
-		{"20161122165022", `%Y%m%d%H%i%s`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
-		{"2016 11 22 16 50 22", `%Y%m%d%H%i%s`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
-		{"16-50-22 2016 11 22", `%H-%i-%s%Y%m%d`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
-		{"16-50 2016 11 22", `%H-%i-%s%Y%m%d`, false, time.Time{}},
-		{"15-01-2001 1:59:58.999", "%d-%m-%Y %I:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 999000000, time.Local)},
-		{"15-01-2001 1:59:58.1", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 100000000, time.Local)},
-		{"15-01-2001 1:59:58.", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 000000000, time.Local)},
-		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
-		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%S.%f", true, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
-		{"2003-01-02 10:11:12 PM", "%Y-%m-%d %H:%i:%S %p", false, time.Time{}},
-		{"10:20:10AM", "%H:%i:%S%p", false, time.Time{}},
+		{"10/28/2011 9:46:29 pm", "%m/%d/%Y %l:%i:%s %p", true, types.KindMysqlTime, time.Date(2011, 10, 28, 21, 46, 29, 0, time.Local)},
+		{"10/28/2011 9:46:29 Pm", "%m/%d/%Y %l:%i:%s %p", true, types.KindMysqlTime, time.Date(2011, 10, 28, 21, 46, 29, 0, time.Local)},
+		{"2011/10/28 9:46:29 am", "%Y/%m/%d %l:%i:%s %p", true, types.KindMysqlTime, time.Date(2011, 10, 28, 9, 46, 29, 0, time.Local)},
+		{"20161122165022", `%Y%m%d%H%i%s`, true, types.KindMysqlTime, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
+		{"2016 11 22 16 50 22", `%Y%m%d%H%i%s`, true, types.KindMysqlTime, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
+		{"16-50-22 2016 11 22", `%H-%i-%s%Y%m%d`, true, types.KindMysqlTime, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
+		{"16-50 2016 11 22", `%H-%i-%s%Y%m%d`, false, types.KindMysqlTime, time.Time{}},
+		{"15-01-2001 1:59:58.999", "%d-%m-%Y %I:%i:%s.%f", true, types.KindMysqlTime, time.Date(2001, 1, 15, 1, 59, 58, 999000000, time.Local)},
+		{"15-01-2001 1:59:58.1", "%d-%m-%Y %H:%i:%s.%f", true, types.KindMysqlTime, time.Date(2001, 1, 15, 1, 59, 58, 100000000, time.Local)},
+		{"15-01-2001 1:59:58.", "%d-%m-%Y %H:%i:%s.%f", true, types.KindMysqlTime, time.Date(2001, 1, 15, 1, 59, 58, 000000000, time.Local)},
+		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%s.%f", true, types.KindMysqlTime, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
+		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%S.%f", true, types.KindMysqlTime, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
+		{"2003-01-02 10:11:12 PM", "%Y-%m-%d %H:%i:%S %p", false, types.KindMysqlTime, time.Time{}},
+		{"10:20:10AM", "%H:%i:%S%p", false, types.KindMysqlTime, time.Time{}},
 		// test %@(skip alpha), %#(skip number), %.(skip punct)
-		{"2020-10-10ABCD", "%Y-%m-%d%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
-		{"2020-10-101234", "%Y-%m-%d%#", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
-		{"2020-10-10....", "%Y-%m-%d%.", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
-		{"2020-10-10.1", "%Y-%m-%d%.%#%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
-		{"abcd2020-10-10.1", "%@%Y-%m-%d%.%#%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
-		{"abcd-2020-10-10.1", "%@-%Y-%m-%d%.%#%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
-		{"2020-10-10", "%Y-%m-%d%@", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
-		{"2020-10-10abcde123abcdef", "%Y-%m-%d%@%#", true, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-10ABCD", "%Y-%m-%d%@", true, types.KindMysqlTime, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-101234", "%Y-%m-%d%#", true, types.KindMysqlTime, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-10....", "%Y-%m-%d%.", true, types.KindMysqlTime, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-10.1", "%Y-%m-%d%.%#%@", true, types.KindMysqlTime, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"abcd2020-10-10.1", "%@%Y-%m-%d%.%#%@", true, types.KindMysqlTime, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"abcd-2020-10-10.1", "%@-%Y-%m-%d%.%#%@", true, types.KindMysqlTime, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-10", "%Y-%m-%d%@", true, types.KindMysqlTime, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		{"2020-10-10abcde123abcdef", "%Y-%m-%d%@%#", true, types.KindMysqlTime, time.Date(2020, 10, 10, 0, 0, 0, 0, time.Local)},
+		// some input for '%r'
+		{"12:3:56pm  13/05/2019", "%r %d/%c/%Y", true, types.KindMysqlTime, time.Date(2019, 5, 13, 12, 3, 56, 0, time.Local)},
+		{"11:13:56 am", "%r", true, types.KindMysqlDuration, time.Date(0, 0, 0, 11, 13, 56, 0, time.Local)},
+		// some input for '%T'
+		{"12:13:56 13/05/2019", "%T %d/%c/%Y", true, types.KindMysqlTime, time.Date(2019, 5, 13, 12, 13, 56, 0, time.Local)},
+		{"19:3:56  13/05/2019", "%T %d/%c/%Y", true, types.KindMysqlTime, time.Date(2019, 5, 13, 19, 3, 56, 0, time.Local)},
+		{"21:13:24", "%T", true, types.KindMysqlDuration, time.Date(0, 0, 0, 21, 13, 24, 0, time.Local)},
 	}
 
 	fc := funcs[ast.StrToDate]
 	for _, test := range tests {
 		date := types.NewStringDatum(test.Date)
 		format := types.NewStringDatum(test.Format)
+		c.Logf("input: %s, format: %s", test.Date, test.Format)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{date, format}))
 		c.Assert(err, IsNil)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
@@ -1436,10 +1447,17 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 			c.Assert(result.IsNull(), IsTrue)
 			continue
 		}
-		c.Assert(result.Kind(), Equals, types.KindMysqlTime)
-		value := result.GetMysqlTime()
-		t1, _ := value.GoTime(time.Local)
-		c.Assert(t1, Equals, test.Expect)
+		c.Assert(result.Kind(), Equals, test.Kind)
+		switch test.Kind {
+		case types.KindMysqlTime:
+			value := result.GetMysqlTime()
+			t1, _ := value.GoTime(time.Local)
+			c.Assert(t1, Equals, test.Expect)
+		case types.KindMysqlDuration:
+			value := result.GetMysqlDuration()
+			timeExpect := test.Expect.Sub(time.Date(0, 0, 0, 0, 0, 0, 0, time.Local))
+			c.Assert(value.Duration, Equals, timeExpect)
+		}
 	}
 }
 
@@ -2758,22 +2776,35 @@ func (s *testEvaluatorSuite) TestLastDay(c *C) {
 		c.Assert(result, Equals, test.expect)
 	}
 
-	testsNull := []interface{}{
-		"0000-00-00",
-		"1992-13-00",
-		"2007-10-07 23:59:61",
-		"2005-00-00",
-		"2005-00-01",
-		"2243-01 00:00:00",
-		123456789}
+	var timeData types.Time
+	timeData.StrToDate(s.ctx.GetSessionVars().StmtCtx, "202010", "%Y%m")
+	testsNull := []struct {
+		param           interface{}
+		isNilNoZeroDate bool
+		isNil           bool
+	}{
+		{"0000-00-00", true, true},
+		{"1992-13-00", true, true},
+		{"2007-10-07 23:59:61", true, true},
+		{"2005-00-00", true, true},
+		{"2005-00-01", true, true},
+		{"2243-01 00:00:00", true, true},
+		{123456789, true, true},
+		{timeData, true, false},
+	}
 
 	for _, i := range testsNull {
-		t := []types.Datum{types.NewDatum(i)}
+		t := []types.Datum{types.NewDatum(i.param)}
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
-		c.Assert(d.IsNull(), IsTrue)
+		c.Assert(d.IsNull() == i.isNilNoZeroDate, IsTrue)
+		s.ctx.GetSessionVars().SQLMode &= ^mysql.ModeNoZeroDate
+		d, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.IsNull() == i.isNil, IsTrue)
+		s.ctx.GetSessionVars().SQLMode |= mysql.ModeNoZeroDate
 	}
 }
 

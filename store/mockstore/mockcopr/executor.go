@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/mockstore/mocktikv"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 var (
@@ -77,7 +77,7 @@ type tableScanExec struct {
 	startTS        uint64
 	isolationLevel kvrpcpb.IsolationLevel
 	resolvedLocks  []uint64
-	mvccStore      mocktikv.MVCCStore
+	mvccStore      testutils.MVCCStore
 	cursor         int
 	seekKey        []byte
 	start          int
@@ -209,8 +209,8 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 			e.seekKey = ran.StartKey
 		}
 	}
-	var pairs []mocktikv.Pair
-	var pair mocktikv.Pair
+	var pairs []testutils.MVCCPair
+	var pair testutils.MVCCPair
 	if e.Desc {
 		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS, e.isolationLevel, e.resolvedLocks)
 	} else {
@@ -256,7 +256,7 @@ type indexScanExec struct {
 	startTS        uint64
 	isolationLevel kvrpcpb.IsolationLevel
 	resolvedLocks  []uint64
-	mvccStore      mocktikv.MVCCStore
+	mvccStore      testutils.MVCCStore
 	cursor         int
 	seekKey        []byte
 	hdStatus       tablecodec.HandleStatus
@@ -383,8 +383,8 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 			e.seekKey = ran.StartKey
 		}
 	}
-	var pairs []mocktikv.Pair
-	var pair mocktikv.Pair
+	var pairs []testutils.MVCCPair
+	var pair testutils.MVCCPair
 	if e.Desc {
 		pairs = e.mvccStore.ReverseScan(ran.StartKey, e.seekKey, 1, e.startTS, e.isolationLevel, e.resolvedLocks)
 	} else {

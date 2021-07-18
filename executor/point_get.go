@@ -55,14 +55,14 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	e := &PointGetExecutor{
 		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ID()),
 		txnScope:     b.txnScope,
-		isStaleness:  b.explicitStaleness,
+		isStaleness:  b.isStaleness,
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
-	if p.Lock {
+	e.Init(p, startTS)
+	if e.lock {
 		b.hasLock = true
 	}
-	e.Init(p, startTS)
 	return e
 }
 
@@ -107,8 +107,14 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
 	e.idxVals = p.IndexValues
 	e.startTS = startTs
 	e.done = false
-	e.lock = p.Lock
-	e.lockWaitTime = p.LockWaitTime
+	if e.tblInfo.TempTableType == model.TempTableNone {
+		e.lock = p.Lock
+		e.lockWaitTime = p.LockWaitTime
+	} else {
+		// Temporary table should not do any lock operations
+		e.lock = false
+		e.lockWaitTime = 0
+	}
 	e.rowDecoder = decoder
 	e.partInfo = p.PartitionInfo
 	e.columns = p.Columns
@@ -246,6 +252,17 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				err = e.lockKeyIfNeeded(ctx, e.idxKey)
 				if err != nil {
 					return err
+				}
+				// Change the unique index LOCK into PUT record.
+				if e.lock && len(e.handleVal) > 0 {
+					if !e.txn.Valid() {
+						return kv.ErrInvalidTxn
+					}
+					memBuffer := e.txn.GetMemBuffer()
+					err = memBuffer.Set(e.idxKey, e.handleVal)
+					if err != nil {
+						return err
+					}
 				}
 			}
 			if len(e.handleVal) == 0 {
@@ -390,6 +407,12 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	if e.tblInfo.TempTableType == model.TempTableGlobal {
 		return nil, nil
 	}
+
+	// Local temporary table always get snapshot value from session
+	if e.tblInfo.TempTableType == model.TempTableLocal {
+		return e.ctx.GetSessionVars().GetTemporaryTableSnapshotValue(ctx, key)
+	}
+
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
 		if e.ctx.GetSessionVars().EnablePointGetCache {
