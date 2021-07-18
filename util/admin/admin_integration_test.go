@@ -15,50 +15,60 @@ package admin_test
 
 import (
 	"strconv"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/suite"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
-var _ = Suite(&testAdminSuite{})
+func TestAdminIntegrationTestSuite(t *testing.T) {
+	var s = new(testAdminSuite)
+	s.t = t
+	suite.Run(t, s)
+}
 
 type testAdminSuite struct {
+	suite.Suite
+	tk      *testkit.TestKit
 	cluster testutils.Cluster
 	store   kv.Storage
 	domain  *domain.Domain
+	t       *testing.T
 }
 
-func (s *testAdminSuite) SetUpSuite(c *C) {
+func (s *testAdminSuite) SetupSuite() {
 	store, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
 	)
-	c.Assert(err, IsNil)
+	s.Require().Nil(err)
 	s.store = store
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	d, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
+	s.Require().Nil(err)
 	d.SetStatsUpdating(true)
 	s.domain = d
+
+	s.tk = testkit.NewTestKit(s.t, s.store)
 }
 
-func (s *testAdminSuite) TearDownSuite(c *C) {
+func (s *testAdminSuite) TearDownSuite() {
 	s.domain.Close()
 	s.store.Close()
 }
 
-func (s *testAdminSuite) TestAdminCheckTable(c *C) {
+func (s *testAdminSuite) TestAdminCheckTable() {
 	// test NULL value.
-	tk := testkit.NewTestKit(c, s.store)
+	var tk = s.tk
 	tk.MustExec("use test")
 	// test index column has pk-handle column
 	tk.MustExec("drop table if exists t")
@@ -104,13 +114,13 @@ func (s *testAdminSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec("admin check table t1;")
 }
 
-func (s *testAdminSuite) TestAdminCheckTableClusterIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func (s *testAdminSuite) TestAdminCheckTableClusterIndex() {
+	var tk = s.tk
 	tk.MustExec("drop database if exists admin_check_table_clustered_index;")
 	tk.MustExec("create database admin_check_table_clustered_index;")
 	tk.MustExec("use admin_check_table_clustered_index;")
 
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Se().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec("create table t (a bigint, b varchar(255), c int, primary key (a, b), index idx_0(a, b), index idx_1(b, c));")
 	tk.MustExec("insert into t values (1, '1', 1);")
