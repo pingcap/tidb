@@ -3401,6 +3401,39 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 	return &(b.tableHintInfo[len(b.tableHintInfo)-1])
 }
 
+func getSourceFields(p LogicalPlan) []*ast.SelectField {
+	fields := make([]*ast.SelectField, 0, len(p.OutputNames()))
+	for i, name := range p.OutputNames() {
+		col := p.Schema().Columns[i]
+		if col.IsHidden || col.ID == model.ExtraHandleID {
+			continue
+		}
+
+		colName := &ast.ColumnNameExpr{
+			Name: &ast.ColumnName{
+				Schema: name.DBName,
+				Table:  name.TblName,
+				Name:   name.ColName,
+			}}
+		colName.SetType(col.GetType())
+		field := &ast.SelectField{Expr: colName}
+		field.SetText(name.ColName.O)
+
+		fields = append(fields, field)
+	}
+	return fields
+}
+
+func findLastSubqueryIndexes(fields []*ast.SelectField) int {
+	lastIdx := len(fields) - 1
+	for ; lastIdx >= 0; lastIdx-- {
+		if _, ok := fields[lastIdx].Expr.(*ast.SubqueryExpr); ok {
+			break
+		}
+	}
+	return lastIdx
+}
+
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
@@ -3566,6 +3599,39 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 		for agg, idx := range totalMap {
 			totalMap[agg] = aggIndexMap[idx]
+		}
+	}
+
+	// Use multi-layer projections to ensure the column in the subquery can find its reference to the outer alias column.
+	// See issue #8190 for details.
+	lastIdx := findLastSubqueryIndexes(sel.Fields.Fields)
+	if lastIdx > 0 {
+		fields := getSourceFields(p)
+
+		hasAliasField := false
+		for i := 0; i < lastIdx; i++ {
+			field := sel.Fields.Fields[i]
+			if _, isSubquery := field.Expr.(*ast.SubqueryExpr); !isSubquery && field.AsName.L != "" {
+				hasAliasField = true
+				fields = append(fields, field)
+			}
+		}
+		if hasAliasField {
+			p, _, _, err = b.buildProjection(ctx, p, fields, totalMap, nil, false, sel.OrderBy != nil)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		for i := 0; i < lastIdx; i++ {
+			field := sel.Fields.Fields[i]
+			if _, isSubquery := field.Expr.(*ast.SubqueryExpr); isSubquery {
+				fields = append(fields, field)
+				p, _, _, err = b.buildProjection(ctx, p, fields, totalMap, nil, false, sel.OrderBy != nil)
+				if err != nil {
+					return nil, err
+				}
+			}
 		}
 	}
 

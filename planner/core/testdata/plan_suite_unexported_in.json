@@ -131,7 +131,13 @@
       "select t1.b from t t1 where t1.b in (select t2.b from t t2 where t2.a = t1.a order by t2.a)",
       "select t1.b from t t1 where exists(select t2.b from t t2 where t2.a = t1.a order by t2.a)",
       // `Sort` will not be eliminated, if it is not the top level operator.
-      "select t1.b from t t1 where t1.b = (select t2.b from t t2 where t2.a = t1.a order by t2.a limit 1)"
+      "select t1.b from t t1 where t1.b = (select t2.b from t t2 where t2.a = t1.a order by t2.a limit 1)",
+      // Test the column of the subquery is reference to the outer alias column.
+      "select 1 as a, (select a)",
+      "select 1 as a, (select a union select a)",
+      "select c t1c, (select t1c from t2) t2c, a, (select t2c from t2), b from t",
+      "select c t1c, (select t1c) t2c, d t1d, (select t2c), (select t1d), b from t",
+      "select c as t1c, (select c from t2 where t1c = a) t2c, (select t2c from t2 where a > 0) from t"
     ]
   },
   {

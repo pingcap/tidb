@@ -117,7 +117,12 @@
       "Join{DataScan(t1)->DataScan(t2)->Aggr(max(test.t.a),firstrow(test.t.b))}(test.t.b,test.t.b)->Projection->Sel([eq(test.t.b, Column#25)])->Projection",
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)(test.t.b,test.t.b)->Projection",
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection",
-      "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection->Sort->Limit}->Projection->Sel([eq(test.t.b, test.t.b)])->Projection"
+      "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection->Sort->Limit}->Projection->Sel([eq(test.t.b, test.t.b)])->Projection",
+      "Join{Dual->Projection->Dual}->Projection->Projection",
+      "Apply{Dual->Projection->UnionAll{Dual->Projection->Projection->Dual->Projection->Projection}->Aggr(firstrow(Column#5))->MaxOneRow}->Projection",
+      "Apply{Apply{Apply{DataScan(t)->Projection->DataScan(t2)->Projection->MaxOneRow}->Projection->DataScan(t2)->Projection->MaxOneRow}->DataScan(t2)->Projection->MaxOneRow}->Projection",
+      "Join{Join{Join{Join{Join{Join{DataScan(t)->Projection->Dual->Projection->MaxOneRow}->Projection->Dual}->Projection->Dual->Projection->MaxOneRow}->Projection->Dual}->Projection->Dual}->Projection->Dual}->Projection->Projection",
+      "Apply{Join{Join{DataScan(t)->Projection->DataScan(t2)}(test.t.c,test.t2.a)->Projection->Projection->DataScan(t2)}(test.t.c,test.t2.a)->Projection->DataScan(t2)->Sel([gt(test.t2.a, 0)])->Projection->MaxOneRow}->Projection"
     ]
   },
   {
