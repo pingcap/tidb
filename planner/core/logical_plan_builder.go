@@ -3609,11 +3609,21 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		fields := getSourceFields(p)
 
 		hasAliasField := false
+		hasAlias := false
+		var subqueryFields []*ast.SelectField
 		for i := 0; i < lastIdx; i++ {
 			field := sel.Fields.Fields[i]
-			if _, isSubquery := field.Expr.(*ast.SubqueryExpr); !isSubquery && field.AsName.L != "" {
-				hasAliasField = true
-				fields = append(fields, field)
+			_, isSubquery := field.Expr.(*ast.SubqueryExpr)
+			if isSubquery && hasAlias {
+				subqueryFields = append(subqueryFields, field)
+			}
+
+			if field.AsName.L != "" {
+				hasAlias = true
+				if !isSubquery {
+					hasAliasField = true
+					fields = append(fields, field)
+				}
 			}
 		}
 		if hasAliasField {
@@ -3623,14 +3633,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			}
 		}
 
-		for i := 0; i < lastIdx; i++ {
-			field := sel.Fields.Fields[i]
-			if _, isSubquery := field.Expr.(*ast.SubqueryExpr); isSubquery {
-				fields = append(fields, field)
-				p, _, _, err = b.buildProjection(ctx, p, fields, totalMap, nil, false, sel.OrderBy != nil)
-				if err != nil {
-					return nil, err
-				}
+		for _, field := range subqueryFields {
+			fields = append(fields, field)
+			p, _, _, err = b.buildProjection(ctx, p, fields, totalMap, nil, false, sel.OrderBy != nil)
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
