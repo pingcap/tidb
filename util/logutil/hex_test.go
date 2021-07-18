@@ -26,11 +26,11 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-type HexTestSuite struct {
+type testHexSuite struct {
 	suite.Suite
 }
 
-func (s *HexTestSuite) TestHex() {
+func (s *testHexSuite) TestHex() {
 	assert := assert.New(s.T())
 	var region metapb.Region
 	region.Id = 6662
@@ -40,7 +40,7 @@ func (s *HexTestSuite) TestHex() {
 	assert.Equal(logutil.Hex(&region).String(), "{Id:6662 StartKey:74c85c0000005c000000252d0000000000000025 EndKey:3361736733617364 RegionEpoch:<nil> Peers:[] EncryptionMeta:<nil>}")
 }
 
-func (s *HexTestSuite) TestPrettyPrint() {
+func (s *testHexSuite) TestPrettyPrint() {
 	assert := assert.New(s.T())
 	var buf bytes.Buffer
 
@@ -64,5 +64,5 @@ func (s *HexTestSuite) TestPrettyPrint() {
 }
 
 func TestHexTestSuite(t *testing.T) {
-	suite.Run(t, new(HexTestSuite))
+	suite.Run(t, new(testHexSuite))
 }

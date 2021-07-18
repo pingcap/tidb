@@ -39,16 +39,16 @@ const (
 
 var PrettyPrint = prettyPrint
 
-type LogTestSuite struct {
+type testLogSuite struct {
 	suite.Suite
 	buf *bytes.Buffer
 }
 
-func (s *LogTestSuite) SetupTest() {
+func (s *testLogSuite) SetupTest() {
 	s.buf = &bytes.Buffer{}
 }
 
-func (s *LogTestSuite) TestZapLoggerWithKeys() {
+func (s *testLogSuite) TestZapLoggerWithKeys() {
 	assert := assert.New(s.T())
 	if runtime.GOOS == "windows" {
 		// Skip this test on windows for two reason:
@@ -75,7 +75,7 @@ func (s *LogTestSuite) TestZapLoggerWithKeys() {
 	os.Remove(fileCfg.Filename)
 }
 
-func (s *LogTestSuite) testZapLogger(ctx context.Context, assert *assert.Assertions, fileName, pattern string) {
+func (s *testLogSuite) testZapLogger(ctx context.Context, assert *assert.Assertions, fileName, pattern string) {
 	Logger(ctx).Debug("debug msg", zap.String("test with key", "true"))
 	Logger(ctx).Info("info msg", zap.String("test with key", "true"))
 	Logger(ctx).Warn("warn msg", zap.String("test with key", "true"))
@@ -99,7 +99,7 @@ func (s *LogTestSuite) testZapLogger(ctx context.Context, assert *assert.Asserti
 	assert.Equal(err, io.EOF)
 }
 
-func (s *LogTestSuite) TestSetLevel() {
+func (s *testLogSuite) TestSetLevel() {
 	assert := assert.New(s.T())
 	conf := NewLogConfig("info", DefaultLogFormat, "", EmptyFileLogConfig, false)
 	err := InitLogger(conf)
@@ -118,5 +118,5 @@ func (s *LogTestSuite) TestSetLevel() {
 }
 
 func TestLogTestSuite(t *testing.T) {
-	suite.Run(t, new(LogTestSuite))
+	suite.Run(t, new(testLogSuite))
 }
