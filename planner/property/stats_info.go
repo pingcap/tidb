@@ -35,7 +35,7 @@ func ToString(ndvs []GroupNDV) string {
 type StatsInfo struct {
 	RowCount float64
 
-	// Column.UniqueID -> ColNDVs
+	// Column.UniqueID -> NDV
 	ColNDVs map[int64]float64
 
 	HistColl *statistics.HistColl
