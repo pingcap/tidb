@@ -152,7 +152,12 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 		return types.NewDatum(info.CurrentDB)
 	},
 	AllSQLDigestsStr: func(info *TxnInfo) types.Datum {
-		res, err := json.Marshal(info.AllSQLDigests)
+		allSQLDigests := info.AllSQLDigests
+		// Replace nil with empty array
+		if allSQLDigests == nil {
+			allSQLDigests = []string{}
+		}
+		res, err := json.Marshal(allSQLDigests)
 		if err != nil {
 			logutil.BgLogger().Warn("Failed to marshal sql digests list as json", zap.Uint64("txnStartTS", info.StartTS))
 			return types.NewDatum(nil)

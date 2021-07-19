@@ -2231,7 +2231,7 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 				if c.Name.O == util.ClusterTableInstanceColumnName {
 					row = append(row, types.NewDatum(instanceAddr))
 				} else if c.Name.O == txninfo.CurrentSQLDigestTextStr {
-					if text, ok := sqlRetriever.sqlDigestsMap[e.txnInfo[i].CurrentSQLDigest]; ok {
+					if text, ok := sqlRetriever.sqlDigestsMap[e.txnInfo[i].CurrentSQLDigest]; ok && len(text) != 0 {
 						row = append(row, types.NewDatum(text))
 					} else {
 						row = append(row, types.NewDatum(nil))
