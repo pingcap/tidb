@@ -333,6 +333,9 @@ func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn process
 			}
 
 			iter, err = NewUnionIter(iter, snapIter, false)
+			if err != nil {
+				return err
+			}
 		}
 
 		for ; iter.Valid(); err = iter.Next() {
