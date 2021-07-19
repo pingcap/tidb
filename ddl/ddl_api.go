@@ -4464,9 +4464,9 @@ func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, s
 	if !ctx.GetSessionVars().EnableExtendedStats {
 		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
 	}
-	// Not support Cardinality and Dependency statistics type for now.
+	// Not support ColNDVs and Dependency statistics type for now.
 	if stats.StatsType == ast.StatsTypeCardinality || stats.StatsType == ast.StatsTypeDependency {
-		return errors.New("Cardinality and Dependency statistics types are not supported now")
+		return errors.New("ColNDVs and Dependency statistics types are not supported now")
 	}
 	_, tbl, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
@@ -4498,7 +4498,7 @@ func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, s
 		return errors.New("Only support Correlation and Dependency statistics types on 2 columns")
 	}
 	if len(colIDs) < 1 && stats.StatsType == ast.StatsTypeCardinality {
-		return errors.New("Only support Cardinality statistics type on at least 2 columns")
+		return errors.New("Only support ColNDVs statistics type on at least 2 columns")
 	}
 	// TODO: check whether covering index exists for cardinality / dependency types.
 
