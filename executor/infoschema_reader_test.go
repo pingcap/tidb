@@ -926,6 +926,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	defer tk1.MustExec("drop user 'testuser3'@'localhost'")
 
 	tk.MustExec("grant all privileges on *.* to 'testuser2'@'localhost'")
+	tk.MustExec("grant select on *.* to 'testuser3'@'localhost'")
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
@@ -946,7 +947,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 		Hostname: "localhost",
 	}, nil, nil), Equals, true)
 
-	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("24"))
 }
 
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {
