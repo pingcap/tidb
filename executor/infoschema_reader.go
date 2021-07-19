@@ -1269,7 +1269,8 @@ func (e *memtableRetriever) setDataForProcessList(ctx sessionctx.Context) {
 
 func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
 	pm := privilege.GetPrivilegeManager(ctx)
-	e.rows = pm.UserPrivilegesTable()
+	// The results depend on the user querying the information.
+	e.rows = pm.UserPrivilegesTable(ctx.GetSessionVars().ActiveRoles, ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
 }
 
 func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) {
@@ -1918,6 +1919,9 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 }
 
 func (e *memtableRetriever) setDataForStatementsSummaryEvicted(ctx sessionctx.Context) error {
+	if !hasPriv(ctx, mysql.ProcessPriv) {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
 	e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
 	switch e.table.Name.O {
 	case infoschema.ClusterTableStatementsSummaryEvicted:
