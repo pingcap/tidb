@@ -26,8 +26,10 @@ import (
 type TxnRunningState = int32
 
 const (
-	// TxnRunningNormal means the transaction is running normally
-	TxnRunningNormal TxnRunningState = iota
+	// TxnIdle means the transaction is idle, i.e. waiting for the user's next statement
+	TxnIdle TxnRunningState = iota
+	// TxnRunning means the transaction is running, i.e. executing a statement
+	TxnRunning
 	// TxnLockWaiting means the transaction is blocked on a lock
 	TxnLockWaiting
 	// TxnCommitting means the transaction is (at least trying to) committing
@@ -38,7 +40,7 @@ const (
 
 // TxnRunningStateStrs is the names of the TxnRunningStates
 var TxnRunningStateStrs = []string{
-	"Normal", "LockWaiting", "Committing", "RollingBack",
+	"Idle", "Running", "LockWaiting", "Committing", "RollingBack",
 }
 
 // TxnInfo is information about a running transaction

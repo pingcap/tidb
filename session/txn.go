@@ -82,7 +82,7 @@ func (txn *LazyTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 func (txn *LazyTxn) init() {
 	txn.mutations = make(map[int64]*binlog.TableMutation)
 	txn.mu.Lock()
-	txn.mu.TxnInfo.State = txninfo.TxnRunningNormal
+	txn.mu.TxnInfo.State = txninfo.TxnIdle
 	txn.mu.Unlock()
 }
 
@@ -217,7 +217,7 @@ func (txn *LazyTxn) changeInvalidToValid(kvTxn kv.Transaction) {
 	defer txn.mu.Unlock()
 	txn.resetTxnInfo(
 		kvTxn.StartTS(),
-		txninfo.TxnRunningNormal,
+		txninfo.TxnIdle,
 		uint64(txn.Transaction.Len()),
 		uint64(txn.Transaction.Size()),
 		"",
@@ -251,7 +251,7 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context) error {
 	defer txn.mu.Unlock()
 	txn.resetTxnInfo(
 		t.StartTS(),
-		txninfo.TxnRunningNormal,
+		txninfo.TxnIdle,
 		uint64(txn.Transaction.Len()),
 		uint64(txn.Transaction.Size()),
 		txn.mu.TxnInfo.CurrentSQLDigest,
@@ -280,18 +280,19 @@ func (txn *LazyTxn) onStmtStart(currentSQLDigest string) {
 
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
+	txn.mu.TxnInfo.State = txninfo.TxnRunning
 	txn.mu.TxnInfo.CurrentSQLDigest = currentSQLDigest
 	// Keeps at most 50 history sqls to avoid consuming too much memory.
 	const maxTransactionStmtHistory int = 50
 	if len(txn.mu.TxnInfo.AllSQLDigests) < maxTransactionStmtHistory {
 		txn.mu.TxnInfo.AllSQLDigests = append(txn.mu.TxnInfo.AllSQLDigests, currentSQLDigest)
 	}
-
 }
 
 func (txn *LazyTxn) onStmtEnd() {
 	txn.mu.Lock()
 	txn.mu.TxnInfo.CurrentSQLDigest = ""
+	txn.mu.TxnInfo.State = txninfo.TxnIdle
 	txn.mu.Unlock()
 }
 
