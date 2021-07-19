@@ -207,7 +207,7 @@ func (s *testInfoschemaTableSuite) TestSchemataCharacterSet(c *C) {
 func (s *testInfoschemaTableSuite) TestViews(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("CREATE DEFINER='root'@'localhost' VIEW test.v1 AS SELECT 1")
-	tk.MustQuery("SELECT * FROM information_schema.views WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 SELECT 1 CASCADED NO root@localhost DEFINER utf8mb4 utf8mb4_bin"))
+	tk.MustQuery("SELECT * FROM information_schema.views WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 SELECT 1 AS `1` CASCADED NO root@localhost DEFINER utf8mb4 utf8mb4_bin"))
 	tk.MustQuery("SELECT table_catalog, table_schema, table_name, table_type, engine, version, row_format, table_rows, avg_row_length, data_length, max_data_length, index_length, data_free, auto_increment, update_time, check_time, table_collation, checksum, create_options, table_comment FROM information_schema.tables WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 VIEW <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> VIEW"))
 }
 
@@ -395,17 +395,23 @@ func (s *testInfoschemaTableSuite) TestUserPrivileges(c *C) {
 
 func (s *testInfoschemaTableSuite) TestUserPrivilegesTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
+
 	// test the privilege of new user for information_schema.user_privileges
 	tk.MustExec("create user usageuser")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "usageuser",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def USAGE NO"))
 	// the usage row disappears when there is a non-dynamic privilege added
-	tk.MustExec("GRANT SELECT ON *.* to usageuser")
+	tk1.MustExec("GRANT SELECT ON *.* to usageuser")
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def Select NO"))
 	// test grant privilege
-	tk.MustExec("GRANT SELECT ON *.* to usageuser WITH GRANT OPTION")
+	tk1.MustExec("GRANT SELECT ON *.* to usageuser WITH GRANT OPTION")
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def Select YES"))
 	// test DYNAMIC privs
-	tk.MustExec("GRANT BACKUP_ADMIN ON *.* to usageuser")
+	tk1.MustExec("GRANT BACKUP_ADMIN ON *.* to usageuser")
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'" ORDER BY privilege_type`).Check(testkit.Rows("'usageuser'@'%' def BACKUP_ADMIN NO", "'usageuser'@'%' def Select YES"))
 }
 
@@ -553,6 +559,7 @@ func (s *testInfoschemaTableSuite) TestTableSessionVar(c *C) {
 }
 
 func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
+	c.Skip("Skip this unstable test(#25896) and bring it back before 2021-07-29.")
 	tk := testkit.NewTestKit(c, s.store)
 	statistics.ClearHistoryJobs()
 	tk.MustExec("use test")

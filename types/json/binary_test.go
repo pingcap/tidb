@@ -112,24 +112,24 @@ func (s *testJSONSuite) TestBinaryJSONType(c *C) {
 
 func (s *testJSONSuite) TestBinaryJSONUnquote(c *C) {
 	var tests = []struct {
-		j        string
+		json     string
 		unquoted string
+		err      error
 	}{
-		{j: `3`, unquoted: "3"},
-		{j: `"3"`, unquoted: "3"},
-		{j: `"[{\"x\":\"{\\\"y\\\":12}\"}]"`, unquoted: `[{"x":"{\"y\":12}"}]`},
-		{j: `"hello, \"escaped quotes\" world"`, unquoted: "hello, \"escaped quotes\" world"},
-		{j: "\"\\u4f60\"", unquoted: "你"},
-		{j: `true`, unquoted: "true"},
-		{j: `null`, unquoted: "null"},
-		{j: `{"a": [1, 2]}`, unquoted: `{"a": [1, 2]}`},
-		{j: `"\""`, unquoted: `"`},
-		{j: `"'"`, unquoted: `'`},
-		{j: `"''"`, unquoted: `''`},
-		{j: `""`, unquoted: ``},
+		{json: `3`, unquoted: "3", err: nil},
+		{json: `"3"`, unquoted: "3", err: nil},
+		{json: `"[{\"x\":\"{\\\"y\\\":12}\"}]"`, unquoted: `[{"x":"{\"y\":12}"}]`, err: nil},
+		{json: `"hello, \"escaped quotes\" world"`, unquoted: "hello, \"escaped quotes\" world", err: nil},
+		{json: "\"\\u4f60\"", unquoted: "你", err: nil},
+		{json: `true`, unquoted: "true", err: nil},
+		{json: `null`, unquoted: "null", err: nil},
+		{json: `{"a": [1, 2]}`, unquoted: `{"a": [1, 2]}`, err: nil},
+		{json: `"'"`, unquoted: `'`, err: nil},
+		{json: `"''"`, unquoted: `''`, err: nil},
+		{json: `""`, unquoted: ``, err: nil},
 	}
 	for _, tt := range tests {
-		bj := mustParseBinaryFromString(c, tt.j)
+		bj := mustParseBinaryFromString(c, tt.json)
 		unquoted, err := bj.Unquote()
 		c.Assert(err, IsNil)
 		c.Assert(unquoted, Equals, tt.unquoted)

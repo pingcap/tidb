@@ -624,6 +624,7 @@ func (do *Domain) Close() {
 
 	do.sysSessionPool.Close()
 	do.slowQuery.Close()
+
 	do.cancel()
 	do.wg.Wait()
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
