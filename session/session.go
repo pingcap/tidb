@@ -949,7 +949,13 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	ret := make(map[string]string, len(rows))
 	for _, r := range rows {
 		k, v := r.GetString(0), r.GetString(1)
-		ret[k] = v
+		if s.varFromTiDBTable(k) {
+			if v, err = s.getTiDBTableValue(k, v); err == nil {
+				ret[k] = v
+			}
+		} else {
+			ret[k] = v
+		}
 	}
 	return ret, nil
 }

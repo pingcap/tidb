@@ -668,6 +668,9 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		unreachedVars = make([]string, 0, len(variable.GetSysVars()))
 	)
 	for _, v := range variable.GetSysVars() {
+		if variable.FilterImplicitFeatureSwitch(v.Name) {
+			continue
+		}
 		if !e.GlobalScope {
 			// For a session scope variable,
 			// 1. try to fetch value from SessionVars.Systems;
@@ -695,6 +698,9 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 			return errors.Trace(err)
 		}
 		for _, varName := range unreachedVars {
+			if variable.FilterImplicitFeatureSwitch(varName) {
+				continue
+			}
 			varValue, ok := systemVars[varName]
 			if !ok {
 				varValue = variable.GetSysVar(varName).Value
