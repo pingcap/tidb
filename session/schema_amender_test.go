@@ -18,11 +18,9 @@ import (
 	"context"
 	"sort"
 	"strconv"
-	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -255,7 +253,6 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 	defer store.Close()
 	se := &session{
 		store:       store,
-		parserPool:  &sync.Pool{New: func() interface{} { return parser.New() }},
 		sessionVars: variable.NewSessionVars(),
 	}
 	startStates := []model.SchemaState{model.StateNone, model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization}
