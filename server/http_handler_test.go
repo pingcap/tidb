@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/tikv/client-go/v2/tikv"
@@ -1124,22 +1125,14 @@ func (ts *HTTPHandlerTestSuite) TestGetSchemaStorage(c *C) {
 
 	do := ts.domain
 	h := do.StatsHandle()
+	do.SetStatsUpdating(true)
 
-	db, err := sql.Open("mysql", ts.getDSN())
-	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer func() {
-		c.Assert(db.Close(), IsNil)
-	}()
-	dbt := &DBTest{c, db}
-	dbt.mustExec("use test")
-	dbt.mustExec("drop table if exists t")
-	dbt.mustExec("create table t (c int, d int, e char(5), index idx(e))")
-	dbt.mustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
-
-	time.Sleep(200 * time.Millisecond)
-
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int, d int, e char(5), index idx(e))")
+	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
 	h.FlushStats()
-	h.HandleUpdateStats(do.InfoSchema())
 
 	resp, err := ts.fetchStatus("/schema_storage/test")
 	c.Assert(err, IsNil)
