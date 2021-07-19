@@ -762,6 +762,9 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 			return errors.Trace(err)
 		}
 	}
+	if err != nil {
+		return err
+	}
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return errors.Trace(err)
