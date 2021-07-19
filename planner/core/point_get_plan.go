@@ -1091,15 +1091,24 @@ func buildSchemaFromFields(
 		return expression.NewSchema(columns...), names
 	}
 	// fields len is 0 for update and delete.
-	for _, col := range tbl.Columns {
-		names = append(names, &types.FieldName{
+	namesAlloc, colAlloc, tpAlloc := make([]types.FieldName, len(tbl.Columns)), make([]expression.Column, len(tbl.Columns)), make([]types.FieldType, len(tbl.Columns))
+	for i, col := range tbl.Columns {
+		namesAlloc[i] = types.FieldName{
 			DBName:      dbName,
 			OrigTblName: tbl.Name,
 			TblName:     tblName,
 			ColName:     col.Name,
-		})
-		column := colInfoToColumn(col, len(columns))
-		columns = append(columns, column)
+		}
+		names = append(names, &namesAlloc[i])
+		tpAlloc[i] = col.FieldType
+		colAlloc[i] = expression.Column{
+			RetType:  &tpAlloc[i],
+			ID:       col.ID,
+			UniqueID: int64(col.Offset),
+			Index:    i,
+			OrigName: col.Name.L,
+		}
+		columns = append(columns, &colAlloc[i])
 	}
 	schema := expression.NewSchema(columns...)
 	return schema, names
@@ -1386,9 +1395,20 @@ func buildOrderedList(ctx sessionctx.Context, plan Plan, list []*ast.Assignment,
 			Col:     col,
 			ColName: plan.OutputNames()[idx].ColName,
 		}
-		expr, err := expression.RewriteSimpleExprWithNames(ctx, assign.Expr, plan.Schema(), plan.OutputNames())
-		if err != nil {
-			return nil, true
+		var expr expression.Expression
+		switch x := assign.Expr.(type) {
+		case *driver.ValueExpr:
+			expr = &expression.Constant{
+				Value:   x.Datum,
+				RetType: &x.Type,
+			}
+		case *driver.ParamMarkerExpr:
+			expr, err = expression.ParamMarkerExpression(ctx, x)
+		default:
+			expr, err = expression.RewriteSimpleExprWithNames(ctx, x, plan.Schema(), plan.OutputNames())
+			if err != nil {
+				return nil, true
+			}
 		}
 		expr = expression.BuildCastFunction(ctx, expr, col.GetType())
 		if allAssignmentsAreConstant {
