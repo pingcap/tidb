@@ -18,16 +18,18 @@ type HandleType string
 const (
 	IntHandle    HandleType = "int"
 	CommonHandle HandleType = "common"
+
+	UnknownHandle HandleType = "unknown"
 )
 
 // DecodedKey is a struct contains detailed information about a key, its json form should be used to fill KEY_INFO field in `DEADLOCKS` and `DATA_LOCK_WAITS`
 type DecodedKey struct {
-	DbID              int64      `json:"db_id"`
-	DbName            string     `json:"db_name"`
+	DbID              int64      `json:"db_id,omitempty"`
+	DbName            string     `json:"db_name,omitempty"`
 	TableID           int64      `json:"table_id"`
-	TableName         string     `json:"table_name"`
-	HandleType        HandleType `json:"handle_type"`
-	IsPartitionHandle bool       `json:"partition_handle"`
+	TableName         string     `json:"table_name,omitempty"`
+	HandleType        HandleType `json:"handle_type,omitempty"`
+	IsPartitionHandle bool       `json:"partition_handle,omitempty"`
 	HandleValue       string     `json:"handle_value,omitempty"`
 	IndexID           int64      `json:"index_id,omitempty"`
 	IndexName         string     `json:"index_name,omitempty"`
@@ -49,7 +51,7 @@ func handleType(handle kv.Handle) HandleType {
 			zap.String("handle Type", fmt.Sprintf("%T", handle)),
 		)
 	}
-	return ""
+	return UnknownHandle
 }
 
 // DecodeKey decodes `key` into `DecodedKey`, which is used to fill KEY_INFO field in `DEADLOCKS` and `DATA_LOCK_WAITS`
@@ -59,19 +61,22 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 	if err != nil {
 		return result, err
 	}
+	result.TableID = tableID
+
 	table, ok := infoschema.TableByID(tableID)
 	if !ok {
-		return result, errors.Errorf("no table associated which id=%d found", tableID)
+		// The schema may have changed since when the key is get.
+		// In this case we just omit the table name but show the table ID.
+		return result, nil
 	}
+	result.TableName = table.Meta().Name.O
+
 	schema, ok := infoschema.SchemaByTable(table.Meta())
 	if !ok {
 		return result, errors.Errorf("no schema associated with table which tableID=%d found", tableID)
 	}
-
-	result.TableID = tableID
 	result.DbID = schema.ID
 	result.DbName = schema.Name.O
-	result.TableName = table.Meta().Name.O
 
 	if isRecordKey {
 		_, handle, err := tablecodec.DecodeRecordKey(key)

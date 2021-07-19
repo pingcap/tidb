@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/types"
@@ -178,7 +177,7 @@ func (d *DeadlockHistory) GetAllDatum(infoschema infoschema.InfoSchema) [][]type
 				if err == nil {
 					decodedKeyJSON, err := json.Marshal(decodedKey)
 					if err != nil {
-						log.Warn("marshal decoded key info to JSON failed", zap.Error(err))
+						logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
 					} else {
 						row[6] = string(decodedKeyJSON)
 					}

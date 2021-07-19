@@ -30,7 +30,6 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -1036,33 +1035,6 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 			}
 		}
 		e.rows = append(e.rows, row)
-	}
-	return nil
-}
-
-func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
-	if !hasPriv(ctx, mysql.ProcessPriv) {
-		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
-	}
-	waits, err := ctx.GetStore().GetLockWaits()
-	if err != nil {
-		return err
-	}
-	for _, wait := range waits {
-		var digestStr interface{}
-		digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
-		if err != nil {
-			logutil.BgLogger().Warn("failed to decode resource group tag", zap.Error(err))
-			digestStr = nil
-		} else {
-			digestStr = hex.EncodeToString(digest)
-		}
-		e.rows = append(e.rows, types.MakeDatums(
-			hex.EncodeToString(wait.Key),
-			wait.Txn,
-			wait.WaitForTxn,
-			digestStr,
-		))
 	}
 	return nil
 }
@@ -2127,21 +2099,18 @@ func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context)
 			digestStr = hex.EncodeToString(digest)
 		}
 		infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
-		var decodedKeyStr interface{}
+		var decodedKeyStr interface{} = nil
 		decodedKey, err := keydecoder.DecodeKey(wait.Key, infoSchema)
 		if err == nil {
 			decodedKeyBytes, err := json.Marshal(decodedKey)
 			if err != nil {
-				log.Warn("marshal decoded key info to JSON failed", zap.Error(err))
+				logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
 			} else {
 				decodedKeyStr = string(decodedKeyBytes)
 			}
-		} else {
-			// failed to decoded key
-			decodedKeyStr = nil
 		}
 		e.rows = append(e.rows, types.MakeDatums(
-			hex.EncodeToString(wait.Key),
+			strings.ToUpper(hex.EncodeToString(wait.Key)),
 			decodedKeyStr,
 			wait.Txn,
 			wait.WaitForTxn,

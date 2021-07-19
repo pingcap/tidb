@@ -80,6 +80,7 @@ func TestDecodeKey(t *testing.T) {
 	values := types.MakeDatums("abc", 1)
 	sc := &stmtctx.StatementContext{}
 	encodedValue, err := codec.EncodeKey(sc, nil, values...)
+	assert.Nil(t, err)
 	key = []byte{
 		't',
 		// table id = 1
