@@ -35,7 +35,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.10 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/ngaut/unistore v0.0.0-20210528070817-0a50b11eddfd
+	github.com/ngaut/unistore v0.0.0-20210719114803-9cf36a97f8a1
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
@@ -51,14 +51,14 @@ require (
 	github.com/pingcap/kvproto v0.0.0-20210719093058-3f79c94c42c2
 	github.com/pingcap/log v0.0.0-20210317133921-96f4fcab92a4
 	github.com/pingcap/parser v0.0.0-20210623034316-5ee95ed0081f
-	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
+	github.com/pingcap/sysutil v0.0.0-20210221112134-a07bda3bde99
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
 	github.com/pingcap/tipb v0.0.0-20210601083426-79a378b6d1c4
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
 	github.com/rivo/uniseg v0.2.0 // indirect
-	github.com/shirou/gopsutil v3.21.2+incompatible
+	github.com/shirou/gopsutil v3.20.12+incompatible
 	github.com/sirupsen/logrus v1.6.0
 	github.com/soheilhy/cmux v0.1.4
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
@@ -93,5 +93,3 @@ require (
 )
 
 go 1.13
-
-replace github.com/ngaut/unistore => github.com/hanfei1991/unistore v0.0.0-20210719094323-543ee28414a0
