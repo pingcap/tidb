@@ -20,7 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
-	"github.com/tikv/client-go/v2/mockstore/mocktikv"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -37,9 +37,10 @@ var _ = Suite(&testCoprocessorSuite{})
 func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
-	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
-	_, regionIDs, _ := mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &tikv.CodecPDClient{Client: mocktikv.NewPDClient(cluster)}
+	_, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	c.Assert(err, IsNil)
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := &tikv.CodecPDClient{Client: pdClient}
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 
@@ -154,9 +155,10 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
-	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
-	mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &tikv.CodecPDClient{Client: mocktikv.NewPDClient(cluster)}
+	_, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	c.Assert(err, IsNil)
+	testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := &tikv.CodecPDClient{Client: pdClient}
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 
@@ -207,9 +209,10 @@ func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {
 func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	// nil --- 'm' --- nil
 	// <-  0  -> <- 1 ->
-	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
-	storeID, regionIDs, peerIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
-	pdCli := &tikv.CodecPDClient{Client: mocktikv.NewPDClient(cluster)}
+	_, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	c.Assert(err, IsNil)
+	storeID, regionIDs, peerIDs := testutils.BootstrapWithMultiRegions(cluster, []byte("m"))
+	pdCli := &tikv.CodecPDClient{Client: pdClient}
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)

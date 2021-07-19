@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -248,6 +249,84 @@ func BenchmarkExplainStringIndexScan(b *testing.B) {
 			b.Fatal(err)
 		}
 		readResult(ctx, rs[0], 1)
+	}
+	b.StopTimer()
+}
+
+func BenchmarkPointGet(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, "create table t (pk int primary key)")
+	mustExecute(se, "insert t values (61),(62),(63),(64)")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t where pk = 64")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+}
+
+func BenchmarkBatchPointGet(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, "create table t (pk int primary key)")
+	mustExecute(se, "insert t values (61),(62),(63),(64)")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t where pk in (61, 64, 67)")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+}
+
+func BenchmarkPreparedPointGet(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, "create table t (pk int primary key)")
+	mustExecute(se, "insert t values (61),(62),(63),(64)")
+
+	stmtID, _, _, err := se.PrepareStmt("select * from t where pk = ?")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(64)})
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 	b.StopTimer()
 }
@@ -1643,6 +1722,9 @@ func TestBenchDaily(t *testing.T) {
 	}
 
 	tests := []func(b *testing.B){
+		BenchmarkPreparedPointGet,
+		BenchmarkPointGet,
+		BenchmarkBatchPointGet,
 		BenchmarkBasic,
 		BenchmarkTableScan,
 		BenchmarkTableLookup,

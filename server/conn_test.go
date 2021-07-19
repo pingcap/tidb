@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 type ConnTestSuite struct {
@@ -52,7 +52,7 @@ func (ts *ConnTestSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	var err error
 	ts.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
 			store := c.AllocID()
@@ -206,6 +206,8 @@ func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Parallel()
 	var outBuffer bytes.Buffer
 	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(ts.store)
 	srv, err := NewServer(cfg, drv)
 	c.Assert(err, IsNil)

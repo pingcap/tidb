@@ -3008,7 +3008,7 @@ func (du *baseDateArithmetical) sub(ctx sessionctx.Context, date types.Time, int
 
 func (du *baseDateArithmetical) vecGetDateFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -3050,7 +3050,7 @@ func (du *baseDateArithmetical) vecGetDateFromInt(b *baseBuiltinFunc, input *chu
 
 func (du *baseDateArithmetical) vecGetDateFromString(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -3115,7 +3115,7 @@ func (du *baseDateArithmetical) vecGetDateFromDatetime(b *baseBuiltinFunc, input
 
 func (du *baseDateArithmetical) vecGetIntervalFromString(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -3152,7 +3152,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromString(b *baseBuiltinFunc, inp
 
 func (du *baseDateArithmetical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -3253,7 +3253,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, in
 
 func (du *baseDateArithmetical) vecGetIntervalFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -3276,7 +3276,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromInt(b *baseBuiltinFunc, input 
 
 func (du *baseDateArithmetical) vecGetIntervalFromReal(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETReal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -5153,7 +5153,7 @@ func getBf4TimeAddSub(ctx sessionctx.Context, funcName string, args []Expression
 }
 
 func getTimeZone(ctx sessionctx.Context) *time.Location {
-	ret := ctx.GetSessionVars().TimeZone
+	ret := ctx.GetSessionVars().Location()
 	if ret == nil {
 		ret = time.Local
 	}
@@ -7037,7 +7037,7 @@ func (b *builtinLastDaySig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	}
 	tm := arg
 	year, month := tm.Year(), tm.Month()
-	if arg.InvalidZero() {
+	if tm.Month() == 0 || (tm.Day() == 0 && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()) {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
 	}
 	lastDay := types.GetLastDay(year, month)

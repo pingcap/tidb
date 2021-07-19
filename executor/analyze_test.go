@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -240,6 +240,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 }
 
 func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
+	_ = checkHistogram
 	c.Skip("unstable, skip it and fix it before 20210618")
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
@@ -288,9 +289,9 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 }
 
 func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
-	var cls cluster.Cluster
+	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cls = c
 		}),
@@ -395,9 +396,10 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 }
 
 func (s *testFastAnalyze) TestFastAnalyze(c *C) {
-	var cls cluster.Cluster
+	c.Skip("Skip this unstable test(#25782) and bring it back before 2021-07-29.")
+	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cls = c
 		}),
@@ -714,9 +716,9 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 		return cli
 	}
 
-	var cls cluster.Cluster
+	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cls = c
 		}),
