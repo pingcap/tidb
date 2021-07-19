@@ -923,18 +923,15 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 		Hostname: "localhost",
 	}, nil, nil), Equals, true)
 
-	err = tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema'")
-	c.Assert(err, NotNil)
-	// This error is come from cop(TiDB) fetch from rpc server.
-	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SUPER privilege(s) for this operation")
+	// User has no access to this schema, so the result set is empty.
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema'").Check(testkit.Rows("0"))
 
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
 		Username: "testuser2",
 		Hostname: "localhost",
 	}, nil, nil), Equals, true)
 
-	err = tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema'")
-	c.Assert(err, IsNil)
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("24"))
 }
 
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {

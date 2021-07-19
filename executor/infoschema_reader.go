@@ -1616,9 +1616,6 @@ type tableStorageStatsRetriever struct {
 }
 
 func (e *tableStorageStatsRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if !hasPriv(sctx, mysql.SuperPriv) {
-		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
-	}
 	if e.retrieved {
 		return nil, nil
 	}
@@ -1674,19 +1671,33 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 		}
 	}
 
+	// Privilege checker.
+	checker := func(db, table string) bool {
+		if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+			return pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, db, table, "", mysql.SuperPriv)
+		}
+		return true
+	}
+
 	// Extract the tables to the initialTable.
 	for _, DB := range databases {
 		// The user didn't specified the table, extract all tables of this db to initialTable.
 		if len(tables) == 0 {
 			tbs := is.SchemaTables(model.NewCIStr(DB))
 			for _, tb := range tbs {
-				e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+				// For every db.table, check it's privileges.
+				if checker(DB, tb.Meta().Name.L) {
+					e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+				}
 			}
 		} else {
 			// The user specified the table, extract the specified tables of this db to initialTable.
 			for tb := range tables {
 				if tb, err := is.TableByName(model.NewCIStr(DB), model.NewCIStr(tb)); err == nil {
-					e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+					// For every db.table, check it's privileges.
+					if checker(DB, tb.Meta().Name.L) {
+						e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+					}
 				}
 			}
 		}
