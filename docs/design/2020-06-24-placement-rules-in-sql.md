@@ -623,6 +623,109 @@ Specifically, `index` is in such a format:
 
 In such a way, the most granular rule always works.
 
+### Region label configuration
+
+Instead of configuring key ranges, you can also configure region labels in placement rules. PD supports label rules, which indicate the key range of a database / table / partition name. TiDB pushes label rules once the schema changes, so that PD maintains the relationship between database / table /partition names and their corresponding key ranges.
+
+This is what a label rule may look like:
+
+```
+{
+    "id": "db1/tb1",
+    "labels": [
+        {
+            "key": "database-name",
+            "value": "db1"
+        },
+        {
+            "key": "table-name",
+            "value": "db1/tb1"
+        }
+    ],
+    "match-type": "key-range",
+    "match": {
+        "start-key": "7480000000000000ff0a00000000000000f8",
+        "end-key": "7480000000000000ff0b00000000000000f8"
+    }
+}
+```
+
+It connects the table name `db1/tb` with the key range.
+
+Now you need to connect the label with the database / table / partition name in the placement rules.
+
+For example:
+
+```
+{
+    "group_id": "group_id",
+    "id": "id",
+    "region_label_key": "schema/table-name",
+    "region_label_value": "db1/tb1",
+    "role": "leader",
+    "label_constraints": [
+        {"key": "zone", "op": "in", "values": ["sh", "bj"]}
+    ]
+}
+```
+
+Combined with the label rule, PD indirectly knows the key range of `db1/tb1` is marked with the label constraint `{"key": "zone", "op": "in", "values": ["sh", "bj"]}`.
+
+### Database placement
+
+Defining placement rules of databases simplifies the procedures when there are many tables.
+
+For example, in a typical multi-tenant scenario, each user has a private database. The dataset in one database is relatively small, and it’s rare to query across databases. In this case, a whole database can be placed in a single region to reduce multi-region latency.
+
+For another example, multiple businesses may run on a single TiDB cluster, which can reduce the overhead of maintaining multiple clusters. The resources of multiple businesses need to be isolated to avoid the risk that one business takes too many resources and affects others.
+
+Since key range is not successive in one database, each table in the database corresponds to at least one placement rule, so there may be many placement rules. In either case above, there may be up to millions of tables in one database, which costs lots of time to update the rules and lots of space to store the rules.
+
+Another option is to take advantage of the region label, which is described earlier.
+
+In the example below, it defines multiple label rules for one database. Each label rule corresponds to one table or partition.
+
+```
+{
+    "id": "db1/tb1",
+    "labels": [
+        {
+            "key": "database-name",
+            "value": "db1"
+        },
+        {
+            "key": "table-name",
+            "value": "db1/tb1"
+        }
+    ],
+    "match-type": "key-range",
+    "match": {
+        "start-key": "7480000000000000ff0a00000000000000f8",
+        "end-key": "7480000000000000ff0b00000000000000f8"
+    }
+},
+{
+    "id": "db1/tb2",
+    "labels": [
+        {
+            "key": "database-name",
+            "value": "db1"
+        },
+        {
+            "key": "table-name",
+            "value": "db1/tb2"
+        }
+    ],
+    "match-type": "key-range",
+    "match": {
+        "start-key": "7480000000000000ff0c00000000000000f8",
+        "end-key": "7480000000000000ff0d00000000000000f8"
+    }
+}
+```
+
+Then you need only one placement rule for the database. When you change the placement of the database, you need to update one placement rule. However, when you drop a database, you need to delete multiple label rules plus one placement rule.
+
 ## Examples
 
 ### Optimization: Follower read in every region
@@ -783,4 +886,4 @@ For compliance use-cases, it is clear that data at rest should reside within a g
   - Added short-hand syntactic sugar for constraints to handle default cases.
   - Changed it so that you can no longer specify multiple constraints.
   - Use defaults for `count` of each role, and `ROLE_CONSTRAINTS` syntax.
-  
+
