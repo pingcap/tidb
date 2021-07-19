@@ -57,7 +57,7 @@ func (s *StatsInfo) Count() int64 {
 	return int64(s.RowCount)
 }
 
-// Scale receives a selectivity and multiplies it with RowCount and ColNDVs.
+// Scale receives a selectivity and multiplies it with RowCount and NDV.
 func (s *StatsInfo) Scale(factor float64) *StatsInfo {
 	profile := &StatsInfo{
 		RowCount:     s.RowCount * factor,
