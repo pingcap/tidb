@@ -52,7 +52,7 @@ func (b *builtinLowerSig) vectorized() bool {
 
 func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -61,7 +61,7 @@ func (b *builtinRepeatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 		return err
 	}
 
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -109,7 +109,7 @@ func (b *builtinRepeatSig) vectorized() bool {
 
 func (b *builtinStringIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -159,7 +159,7 @@ func (b *builtinUpperSig) vectorized() bool {
 
 func (b *builtinLeftUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -168,7 +168,7 @@ func (b *builtinLeftUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 		return err
 	}
 
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -204,7 +204,7 @@ func (b *builtinLeftUTF8Sig) vectorized() bool {
 
 func (b *builtinRightUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -213,7 +213,7 @@ func (b *builtinRightUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -252,7 +252,7 @@ func (b *builtinRightUTF8Sig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_space
 func (b *builtinSpaceSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -319,7 +319,7 @@ func (b *builtinConcatSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
 func (b *builtinConcatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -368,7 +368,7 @@ func (b *builtinLocate3ArgsUTF8Sig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -376,7 +376,7 @@ func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -434,7 +434,7 @@ func (b *builtinHexStrArgSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
 func (b *builtinHexStrArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETString, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -461,7 +461,7 @@ func (b *builtinLTrimSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ltrim
 func (b *builtinLTrimSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -490,7 +490,7 @@ func (b *builtinQuoteSig) vectorized() bool {
 
 func (b *builtinQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -517,7 +517,7 @@ func (b *builtinInsertSig) vectorized() bool {
 
 func (b *builtinInsertSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	str, err := b.bufAllocator.get(types.ETString, n)
+	str, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -525,7 +525,7 @@ func (b *builtinInsertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalString(b.ctx, input, str); err != nil {
 		return err
 	}
-	pos, err := b.bufAllocator.get(types.ETInt, n)
+	pos, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -533,7 +533,7 @@ func (b *builtinInsertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[1].VecEvalInt(b.ctx, input, pos); err != nil {
 		return err
 	}
-	length, err := b.bufAllocator.get(types.ETInt, n)
+	length, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -541,7 +541,7 @@ func (b *builtinInsertSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[2].VecEvalInt(b.ctx, input, length); err != nil {
 		return err
 	}
-	newstr, err := b.bufAllocator.get(types.ETString, n)
+	newstr, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -592,7 +592,7 @@ func (b *builtinConcatWSSig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	bufs := make([]*chunk.Column, argsLen)
 	var err error
 	for i := 0; i < argsLen; i++ {
-		bufs[i], err = b.bufAllocator.get(types.ETString, n)
+		bufs[i], err = b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -661,7 +661,7 @@ func (b *builtinConvertSig) vectorized() bool {
 
 func (b *builtinConvertSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	expr, err := b.bufAllocator.get(types.ETString, n)
+	expr, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -701,7 +701,7 @@ func (b *builtinSubstringIndexSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substring-index
 func (b *builtinSubstringIndexSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -710,7 +710,7 @@ func (b *builtinSubstringIndexSig) vecEvalString(input *chunk.Chunk, result *chu
 		return err
 	}
 
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -719,7 +719,7 @@ func (b *builtinSubstringIndexSig) vecEvalString(input *chunk.Chunk, result *chu
 		return err
 	}
 
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -778,7 +778,7 @@ func (b *builtinUnHexSig) vectorized() bool {
 
 func (b *builtinUnHexSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -815,7 +815,7 @@ func (b *builtinExportSet3ArgSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
 func (b *builtinExportSet3ArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	bits, err := b.bufAllocator.get(types.ETInt, n)
+	bits, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -823,7 +823,7 @@ func (b *builtinExportSet3ArgSig) vecEvalString(input *chunk.Chunk, result *chun
 	if err := b.args[0].VecEvalInt(b.ctx, input, bits); err != nil {
 		return err
 	}
-	on, err := b.bufAllocator.get(types.ETString, n)
+	on, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -831,7 +831,7 @@ func (b *builtinExportSet3ArgSig) vecEvalString(input *chunk.Chunk, result *chun
 	if err := b.args[1].VecEvalString(b.ctx, input, on); err != nil {
 		return err
 	}
-	off, err := b.bufAllocator.get(types.ETString, n)
+	off, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -860,7 +860,7 @@ func (b *builtinASCIISig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ascii
 func (b *builtinASCIISig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -894,7 +894,7 @@ func (b *builtinLpadSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lpad
 func (b *builtinLpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	strBuf, err := b.bufAllocator.get(types.ETString, n)
+	strBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -902,7 +902,7 @@ func (b *builtinLpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	if err := b.args[0].VecEvalString(b.ctx, input, strBuf); err != nil {
 		return err
 	}
-	lenBuf, err := b.bufAllocator.get(types.ETInt, n)
+	lenBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -910,7 +910,7 @@ func (b *builtinLpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	if err := b.args[1].VecEvalInt(b.ctx, input, lenBuf); err != nil {
 		return err
 	}
-	padBuf, err := b.bufAllocator.get(types.ETString, n)
+	padBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -963,7 +963,7 @@ func (b *builtinLpadUTF8Sig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_lpad
 func (b *builtinLpadUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -971,7 +971,7 @@ func (b *builtinLpadUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -979,7 +979,7 @@ func (b *builtinLpadUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	buf2, err := b.bufAllocator.get(types.ETString, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1029,7 +1029,7 @@ func (b *builtinFindInSetSig) vectorized() bool {
 
 func (b *builtinFindInSetSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	str, err := b.bufAllocator.get(types.ETString, n)
+	str, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1037,7 +1037,7 @@ func (b *builtinFindInSetSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalString(b.ctx, input, str); err != nil {
 		return err
 	}
-	strlist, err := b.bufAllocator.get(types.ETString, n)
+	strlist, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1072,7 +1072,7 @@ func (b *builtinLeftSig) vectorized() bool {
 
 func (b *builtinLeftSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1080,7 +1080,7 @@ func (b *builtinLeftSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1132,7 +1132,7 @@ func (b *builtinRTrimSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rtrim
 func (b *builtinRTrimSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1161,7 +1161,7 @@ func (b *builtinStrcmpSig) vectorized() bool {
 
 func (b *builtinStrcmpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	leftBuf, err := b.bufAllocator.get(types.ETString, n)
+	leftBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1169,7 +1169,7 @@ func (b *builtinStrcmpSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	if err := b.args[0].VecEvalString(b.ctx, input, leftBuf); err != nil {
 		return err
 	}
-	rightBuf, err := b.bufAllocator.get(types.ETString, n)
+	rightBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1196,12 +1196,12 @@ func (b *builtinLocate2ArgsSig) vectorized() bool {
 
 func (b *builtinLocate2ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETString, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1237,7 +1237,7 @@ func (b *builtinLocate3ArgsSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETString, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1245,7 +1245,7 @@ func (b *builtinLocate3ArgsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1296,7 +1296,7 @@ func (b *builtinExportSet4ArgSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
 func (b *builtinExportSet4ArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	bits, err := b.bufAllocator.get(types.ETInt, n)
+	bits, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1304,7 +1304,7 @@ func (b *builtinExportSet4ArgSig) vecEvalString(input *chunk.Chunk, result *chun
 	if err := b.args[0].VecEvalInt(b.ctx, input, bits); err != nil {
 		return err
 	}
-	on, err := b.bufAllocator.get(types.ETString, n)
+	on, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1312,7 +1312,7 @@ func (b *builtinExportSet4ArgSig) vecEvalString(input *chunk.Chunk, result *chun
 	if err := b.args[1].VecEvalString(b.ctx, input, on); err != nil {
 		return err
 	}
-	off, err := b.bufAllocator.get(types.ETString, n)
+	off, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1320,7 +1320,7 @@ func (b *builtinExportSet4ArgSig) vecEvalString(input *chunk.Chunk, result *chun
 	if err := b.args[2].VecEvalString(b.ctx, input, off); err != nil {
 		return err
 	}
-	separator, err := b.bufAllocator.get(types.ETString, n)
+	separator, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1349,7 +1349,7 @@ func (b *builtinRpadSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rpad
 func (b *builtinRpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	strBuf, err := b.bufAllocator.get(types.ETString, n)
+	strBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1357,7 +1357,7 @@ func (b *builtinRpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	if err := b.args[0].VecEvalString(b.ctx, input, strBuf); err != nil {
 		return err
 	}
-	lenBuf, err := b.bufAllocator.get(types.ETInt, n)
+	lenBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1365,7 +1365,7 @@ func (b *builtinRpadSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	if err := b.args[1].VecEvalInt(b.ctx, input, lenBuf); err != nil {
 		return err
 	}
-	padBuf, err := b.bufAllocator.get(types.ETString, n)
+	padBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1417,7 +1417,7 @@ func (b *builtinFormatWithLocaleSig) vectorized() bool {
 func (b *builtinFormatWithLocaleSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
-	dBuf, err := b.bufAllocator.get(types.ETInt, n)
+	dBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1427,7 +1427,7 @@ func (b *builtinFormatWithLocaleSig) vecEvalString(input *chunk.Chunk, result *c
 	}
 	dInt64s := dBuf.Int64s()
 
-	localeBuf, err := b.bufAllocator.get(types.ETString, n)
+	localeBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1438,7 +1438,7 @@ func (b *builtinFormatWithLocaleSig) vecEvalString(input *chunk.Chunk, result *c
 
 	// decimal x
 	if b.args[0].GetType().EvalType() == types.ETDecimal {
-		xBuf, err := b.bufAllocator.get(types.ETDecimal, n)
+		xBuf, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -1453,7 +1453,7 @@ func (b *builtinFormatWithLocaleSig) vecEvalString(input *chunk.Chunk, result *c
 	}
 
 	// real x
-	xBuf, err := b.bufAllocator.get(types.ETReal, n)
+	xBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1473,7 +1473,7 @@ func (b *builtinSubstring2ArgsSig) vectorized() bool {
 
 func (b *builtinSubstring2ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1481,7 +1481,7 @@ func (b *builtinSubstring2ArgsSig) vecEvalString(input *chunk.Chunk, result *chu
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1522,7 +1522,7 @@ func (b *builtinSubstring2ArgsUTF8Sig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
 func (b *builtinSubstring2ArgsUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1531,7 +1531,7 @@ func (b *builtinSubstring2ArgsUTF8Sig) vecEvalString(input *chunk.Chunk, result 
 		return err
 	}
 
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1575,7 +1575,7 @@ func (b *builtinTrim2ArgsSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
 func (b *builtinTrim2ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1583,7 +1583,7 @@ func (b *builtinTrim2ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1613,7 +1613,7 @@ func (b *builtinInstrUTF8Sig) vectorized() bool {
 
 func (b *builtinInstrUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	str, err := b.bufAllocator.get(types.ETString, n)
+	str, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1621,7 +1621,7 @@ func (b *builtinInstrUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	if err := b.args[0].VecEvalString(b.ctx, input, str); err != nil {
 		return err
 	}
-	substr, err := b.bufAllocator.get(types.ETString, n)
+	substr, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1662,7 +1662,7 @@ func (b *builtinOctStringSig) vectorized() bool {
 
 func (b *builtinOctStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1711,7 +1711,7 @@ func (b *builtinEltSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_elt
 func (b *builtinEltSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETInt, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1735,7 +1735,7 @@ func (b *builtinEltSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		if bufs[j] == nil {
-			bufs[j], err = b.bufAllocator.get(types.ETString, n)
+			bufs[j], err = b.bufAllocator.get()
 			if err != nil {
 				return err
 			}
@@ -1761,7 +1761,7 @@ func (b *builtinInsertUTF8Sig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_insert
 func (b *builtinInsertUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1769,7 +1769,7 @@ func (b *builtinInsertUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1777,7 +1777,7 @@ func (b *builtinInsertUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1785,7 +1785,7 @@ func (b *builtinInsertUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.C
 	if err := b.args[2].VecEvalInt(b.ctx, input, buf2); err != nil {
 		return err
 	}
-	buf3, err := b.bufAllocator.get(types.ETString, n)
+	buf3, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1838,7 +1838,7 @@ func (b *builtinExportSet5ArgSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
 func (b *builtinExportSet5ArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	bits, err := b.bufAllocator.get(types.ETInt, n)
+	bits, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1846,7 +1846,7 @@ func (b *builtinExportSet5ArgSig) vecEvalString(input *chunk.Chunk, result *chun
 	if err := b.args[0].VecEvalInt(b.ctx, input, bits); err != nil {
 		return err
 	}
-	on, err := b.bufAllocator.get(types.ETString, n)
+	on, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1854,7 +1854,7 @@ func (b *builtinExportSet5ArgSig) vecEvalString(input *chunk.Chunk, result *chun
 	if err := b.args[1].VecEvalString(b.ctx, input, on); err != nil {
 		return err
 	}
-	off, err := b.bufAllocator.get(types.ETString, n)
+	off, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1862,7 +1862,7 @@ func (b *builtinExportSet5ArgSig) vecEvalString(input *chunk.Chunk, result *chun
 	if err := b.args[2].VecEvalString(b.ctx, input, off); err != nil {
 		return err
 	}
-	separator, err := b.bufAllocator.get(types.ETString, n)
+	separator, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1870,7 +1870,7 @@ func (b *builtinExportSet5ArgSig) vecEvalString(input *chunk.Chunk, result *chun
 	if err := b.args[3].VecEvalString(b.ctx, input, separator); err != nil {
 		return err
 	}
-	numberOfBits, err := b.bufAllocator.get(types.ETInt, n)
+	numberOfBits, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1904,7 +1904,7 @@ func (b *builtinSubstring3ArgsUTF8Sig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
 func (b *builtinSubstring3ArgsUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1913,7 +1913,7 @@ func (b *builtinSubstring3ArgsUTF8Sig) vecEvalString(input *chunk.Chunk, result 
 		return err
 	}
 
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1922,7 +1922,7 @@ func (b *builtinSubstring3ArgsUTF8Sig) vecEvalString(input *chunk.Chunk, result 
 		return err
 	}
 
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1973,17 +1973,17 @@ func (b *builtinTrim3ArgsSig) vectorized() bool {
 
 func (b *builtinTrim3ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETString, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2037,7 +2037,7 @@ func (b *builtinOrdSig) vectorized() bool {
 
 func (b *builtinOrdSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2070,7 +2070,7 @@ func (b *builtinInstrSig) vectorized() bool {
 
 func (b *builtinInstrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	str, err := b.bufAllocator.get(types.ETString, n)
+	str, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2078,7 +2078,7 @@ func (b *builtinInstrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 	if err := b.args[0].VecEvalString(b.ctx, input, str); err != nil {
 		return err
 	}
-	substr, err := b.bufAllocator.get(types.ETString, n)
+	substr, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2109,7 +2109,7 @@ func (b *builtinLengthSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html
 func (b *builtinLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2139,7 +2139,7 @@ func (b *builtinLocate2ArgsUTF8Sig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2147,7 +2147,7 @@ func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2192,7 +2192,7 @@ func (b *builtinBitLengthSig) vectorized() bool {
 
 func (b *builtinBitLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2223,7 +2223,7 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 	l := len(b.args)
 	buf := make([]*chunk.Column, l-1)
 	for i := 0; i < len(b.args)-1; i++ {
-		te, err := b.bufAllocator.get(types.ETInt, n)
+		te, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -2233,7 +2233,7 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 			return err
 		}
 	}
-	bufstr, err := b.bufAllocator.get(types.ETString, n)
+	bufstr, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2266,7 +2266,7 @@ func (b *builtinReplaceSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
 func (b *builtinReplaceSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2274,7 +2274,7 @@ func (b *builtinReplaceSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETString, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2282,7 +2282,7 @@ func (b *builtinReplaceSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	buf2, err := b.bufAllocator.get(types.ETString, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2318,7 +2318,7 @@ func (b *builtinMakeSetSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_make-set
 func (b *builtinMakeSetSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	nr := input.NumRows()
-	bitsBuf, err := b.bufAllocator.get(types.ETInt, nr)
+	bitsBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2329,7 +2329,7 @@ func (b *builtinMakeSetSig) vecEvalString(input *chunk.Chunk, result *chunk.Colu
 
 	strBuf := make([]*chunk.Column, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		strBuf[i-1], err = b.bufAllocator.get(types.ETString, nr)
+		strBuf[i-1], err = b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -2366,7 +2366,7 @@ func (b *builtinOctIntSig) vectorized() bool {
 
 func (b *builtinOctIntSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2395,7 +2395,7 @@ func (b *builtinToBase64Sig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_to-base64
 func (b *builtinToBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2440,7 +2440,7 @@ func (b *builtinTrim1ArgSig) vectorized() bool {
 
 func (b *builtinTrim1ArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2471,7 +2471,7 @@ func (b *builtinRpadUTF8Sig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_rpad
 func (b *builtinRpadUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2479,7 +2479,7 @@ func (b *builtinRpadUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2487,7 +2487,7 @@ func (b *builtinRpadUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
 		return err
 	}
-	buf2, err := b.bufAllocator.get(types.ETString, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2537,7 +2537,7 @@ func (b *builtinCharLengthBinarySig) vectorized() bool {
 
 func (b *builtinCharLengthBinarySig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2564,7 +2564,7 @@ func (b *builtinBinSig) vectorized() bool {
 
 func (b *builtinBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2594,7 +2594,7 @@ func (b *builtinFormatSig) vectorized() bool {
 func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
-	dBuf, err := b.bufAllocator.get(types.ETInt, n)
+	dBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2606,7 +2606,7 @@ func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 
 	// decimal x
 	if b.args[0].GetType().EvalType() == types.ETDecimal {
-		xBuf, err := b.bufAllocator.get(types.ETDecimal, n)
+		xBuf, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -2621,7 +2621,7 @@ func (b *builtinFormatSig) vecEvalString(input *chunk.Chunk, result *chunk.Colum
 	}
 
 	// real x
-	xBuf, err := b.bufAllocator.get(types.ETReal, n)
+	xBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2641,7 +2641,7 @@ func (b *builtinRightSig) vectorized() bool {
 
 func (b *builtinRightSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2649,7 +2649,7 @@ func (b *builtinRightSig) vecEvalString(input *chunk.Chunk, result *chunk.Column
 	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2684,7 +2684,7 @@ func (b *builtinSubstring3ArgsSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
 func (b *builtinSubstring3ArgsSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2693,7 +2693,7 @@ func (b *builtinSubstring3ArgsSig) vecEvalString(input *chunk.Chunk, result *chu
 		return err
 	}
 
-	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2702,7 +2702,7 @@ func (b *builtinSubstring3ArgsSig) vecEvalString(input *chunk.Chunk, result *chu
 		return err
 	}
 
-	buf2, err := b.bufAllocator.get(types.ETInt, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2753,7 +2753,7 @@ func (b *builtinHexIntArgSig) vectorized() bool {
 
 func (b *builtinHexIntArgSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2781,7 +2781,7 @@ func (b *builtinFromBase64Sig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_from-base64
 func (b *builtinFromBase64Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -2826,7 +2826,7 @@ func (b *builtinCharLengthUTF8Sig) vectorized() bool {
 
 func (b *builtinCharLengthUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
