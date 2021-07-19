@@ -34,7 +34,8 @@ func TestHex(t *testing.T) {
 	region.StartKey = []byte{'t', 200, '\\', 000, 000, 000, '\\', 000, 000, 000, 37, '-', 000, 000, 000, 000, 000, 000, 000, 37}
 	region.EndKey = []byte("3asg3asd")
 
-	require.Equal(t, logutil.Hex(&region).String(), "{Id:6662 StartKey:74c85c0000005c000000252d0000000000000025 EndKey:3361736733617364 RegionEpoch:<nil> Peers:[] EncryptionMeta:<nil>}")
+	expected := "{Id:6662 StartKey:74c85c0000005c000000252d0000000000000025 EndKey:3361736733617364 RegionEpoch:<nil> Peers:[] EncryptionMeta:<nil>}"
+	require.Equal(t, expected, logutil.Hex(&region).String())
 }
 
 func TestPrettyPrint(t *testing.T) {
@@ -44,19 +45,19 @@ func TestPrettyPrint(t *testing.T) {
 
 	byteSlice := []byte("asd2fsdafs中文3af")
 	logutil.PrettyPrint(&buf, reflect.ValueOf(byteSlice))
-	require.Equal(t, buf.String(), "61736432667364616673e4b8ade69687336166")
-	require.Equal(t, buf.String(), hex.EncodeToString(byteSlice))
+	require.Equal(t, "61736432667364616673e4b8ade69687336166", buf.String())
+	require.Equal(t, hex.EncodeToString(byteSlice), buf.String())
 	buf.Reset()
 
 	// Go reflect can't distinguish uint8 from byte!
 	intSlice := []uint8{1, 2, 3, uint8('a'), uint8('b'), uint8('c'), uint8('\'')}
 	logutil.PrettyPrint(&buf, reflect.ValueOf(intSlice))
-	require.Equal(t, buf.String(), "01020361626327")
+	require.Equal(t, "01020361626327", buf.String())
 	buf.Reset()
 
 	var ran kv.KeyRange
 	ran.StartKey = kv.Key("_txxey23_i263")
 	ran.EndKey = nil
 	logutil.PrettyPrint(&buf, reflect.ValueOf(ran))
-	require.Equal(t, buf.String(), "{StartKey:5f747878657932335f69323633 EndKey:}")
+	require.Equal(t, "{StartKey:5f747878657932335f69323633 EndKey:}", buf.String())
 }

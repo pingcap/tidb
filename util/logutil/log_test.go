@@ -19,23 +19,12 @@ import (
 	"io"
 	"os"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/log"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
-
-const (
-	// zapLogPatern is used to match the zap log format, such as the following log:
-	// [2019/02/13 15:56:05.385 +08:00] [INFO] [log_test.go:167] ["info message"] [conn=conn1] ["str key"=val] ["int key"=123]
-	zapLogWithConnIDPattern = `\[\d\d\d\d/\d\d/\d\d \d\d:\d\d:\d\d.\d\d\d\ (\+|-)\d\d:\d\d\] \[(FATAL|ERROR|WARN|INFO|DEBUG)\] \[([\w_%!$@.,+~-]+|\\.)+:\d+\] \[.*\] \[conn=.*\] (\[.*=.*\]).*\n`
-	// [2019/02/13 15:56:05.385 +08:00] [INFO] [log_test.go:167] ["info message"] [ctxKey=ctxKey1] ["str key"=val] ["int key"=123]
-	zapLogWithKeyValPattern = `\[\d\d\d\d/\d\d/\d\d \d\d:\d\d:\d\d.\d\d\d\ (\+|-)\d\d:\d\d\] \[(FATAL|ERROR|WARN|INFO|DEBUG)\] \[([\w_%!$@.,+~-]+|\\.)+:\d+\] \[.*\] \[ctxKey=.*\] (\[.*=.*\]).*\n`
-)
-
-var PrettyPrint = prettyPrint
 
 func TestZapLoggerWithKeys(t *testing.T) {
 	t.Parallel()
@@ -54,7 +43,8 @@ func TestZapLoggerWithKeys(t *testing.T) {
 	connID := uint64(123)
 	ctx := WithConnID(context.Background(), connID)
 	testZapLogger(ctx, t, fileCfg.Filename, zapLogWithConnIDPattern)
-	os.Remove(fileCfg.Filename)
+	err = os.Remove(fileCfg.Filename)
+	require.NoError(t, err)
 
 	err = InitLogger(conf)
 	require.NoError(t, err)
@@ -62,7 +52,8 @@ func TestZapLoggerWithKeys(t *testing.T) {
 	val := "ctxValue"
 	ctx1 := WithKeyValue(context.Background(), key, val)
 	testZapLogger(ctx1, t, fileCfg.Filename, zapLogWithKeyValPattern)
-	os.Remove(fileCfg.Filename)
+	err = os.Remove(fileCfg.Filename)
+	require.NoError(t, err)
 }
 
 func testZapLogger(ctx context.Context, t *testing.T, fileName, pattern string) {
@@ -73,7 +64,10 @@ func testZapLogger(ctx context.Context, t *testing.T, fileName, pattern string) 
 
 	f, err := os.Open(fileName)
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() {
+		err = f.Close()
+		require.NoError(t, err)
+	}()
 
 	r := bufio.NewReader(f)
 	for {
@@ -83,10 +77,10 @@ func testZapLogger(ctx context.Context, t *testing.T, fileName, pattern string) 
 			break
 		}
 		require.Regexp(t, pattern, str)
-		require.False(t, strings.Contains(str, "stack"))
-		require.False(t, strings.Contains(str, "errorVerbose"))
+		require.NotContains(t, str, "stack")
+		require.NotContains(t, str, "errorVerbose")
 	}
-	require.Equal(t, err, io.EOF)
+	require.Equal(t, io.EOF, err)
 }
 
 func TestSetLevel(t *testing.T) {
@@ -95,15 +89,15 @@ func TestSetLevel(t *testing.T) {
 	conf := NewLogConfig("info", DefaultLogFormat, "", EmptyFileLogConfig, false)
 	err := InitLogger(conf)
 	require.NoError(t, err)
+	require.Equal(t, zap.InfoLevel, log.GetLevel())
 
-	require.Equal(t, log.GetLevel(), zap.InfoLevel)
 	err = SetLevel("warn")
 	require.NoError(t, err)
-	require.Equal(t, log.GetLevel(), zap.WarnLevel)
+	require.Equal(t, zap.WarnLevel, log.GetLevel())
 	err = SetLevel("Error")
 	require.NoError(t, err)
-	require.Equal(t, log.GetLevel(), zap.ErrorLevel)
+	require.Equal(t, zap.ErrorLevel, log.GetLevel())
 	err = SetLevel("DEBUG")
 	require.NoError(t, err)
-	require.Equal(t, log.GetLevel(), zap.DebugLevel)
+	require.Equal(t, zap.DebugLevel, log.GetLevel())
 }
