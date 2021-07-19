@@ -185,6 +185,12 @@ func (r *GRPCReportClient) tryEstablishConnection(ctx context.Context, targetRPC
 		// Address is not changed, skip.
 		return nil
 	}
+
+	if r.conn != nil {
+		err := r.conn.Close()
+		logutil.BgLogger().Warn("[top-sql] grpc client close connection failed", zap.Error(err))
+	}
+
 	r.conn, err = r.dial(ctx, targetRPCAddr)
 	if err != nil {
 		return err
