@@ -406,12 +406,16 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
 	tk.MustExec("set session tidb_slow_log_masking = 1")
 	tk.MustQuery(`select @@session.tidb_slow_log_masking;`).Check(testkit.Rows("1"))
-
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = -120")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '?'")) // redacted because of tidb_slow_log_masking = 1 above
 	tk.MustQuery("select @@session.tidb_dml_batch_size").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_slow_log_masking = 0")
+	tk.MustExec("set session tidb_dml_batch_size = -120")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '-120'")) // without redaction
+
 	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
 	tk.MustExec("set @@global.tidb_dml_batch_size = 200")                    // now permitted due to TiDB #19809
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120")) // global only applies to new sessions
