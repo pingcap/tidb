@@ -20,17 +20,98 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"reflect"
 	"runtime"
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/integration"
+	"go.uber.org/goleak"
 )
+
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+	}
+	goleak.VerifyTestMain(m, opts...)
+}
+
+func TestTopology(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	currentID := "test"
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	client := cluster.RandClient()
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockServerInfo", "return(true)"))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockServerInfo")
+		require.NoError(t, err)
+	}()
+
+	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, false)
+	require.NoError(t, err)
+
+	err = info.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
+	require.NoError(t, err)
+
+	topology, err := info.getTopologyFromEtcd(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(1282967700000), topology.StartTimestamp)
+
+	v, ok := topology.Labels["foo"]
+	require.True(t, ok)
+	require.Equal(t, "bar", v)
+	require.Equal(t, info.getTopologyInfo(), *topology)
+
+	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.info.IP, info.info.Port)
+	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, info.info.IP, info.info.Port)
+
+	err = util.DeleteKeyFromEtcd(nonTTLKey, client, owner.NewSessionDefaultRetryCnt, time.Second)
+	require.NoError(t, err)
+
+	// Refresh and re-test if the key exists
+	err = info.RestartTopology(ctx)
+	require.NoError(t, err)
+
+	topology, err = info.getTopologyFromEtcd(ctx)
+	require.NoError(t, err)
+
+	s, err := os.Executable()
+	require.NoError(t, err)
+
+	dir := path.Dir(s)
+	require.Equal(t, dir, topology.DeployPath)
+	require.Equal(t, int64(1282967700000), topology.StartTimestamp)
+	require.Equal(t, info.getTopologyInfo(), *topology)
+
+	// check ttl key
+	ttlExists, err := info.ttlKeyExists(ctx)
+	require.NoError(t, err)
+	require.True(t, ttlExists)
+
+	err = util.DeleteKeyFromEtcd(ttlKey, client, owner.NewSessionDefaultRetryCnt, time.Second)
+	require.NoError(t, err)
+
+	err = info.updateTopologyAliveness(ctx)
+	require.NoError(t, err)
+
+	ttlExists, err = info.ttlKeyExists(ctx)
+	require.NoError(t, err)
+	require.True(t, ttlExists)
+}
 
 func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*topologyInfo, error) {
 	key := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, is.info.IP, is.info.Port)
@@ -62,130 +143,4 @@ func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
 		return false, errors.New("too many arguments in resp.Kvs")
 	}
 	return len(resp.Kvs) == 1, nil
-}
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-var _ = Suite(&testSuite{})
-
-type testSuite struct {
-}
-
-func TestTopology(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	currentID := "test"
-
-	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer clus.Terminate(t)
-
-	cli := clus.RandClient()
-
-	err := failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockServerInfo", "return(true)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockServerInfo")
-		if err != nil {
-			t.Fatal(err)
-		}
-	}()
-
-	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, cli, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = info.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
-
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	topo, err := info.getTopologyFromEtcd(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if topo.StartTimestamp != 1282967700000 {
-		t.Fatal("start_timestamp of topology info does not match")
-	}
-	if v, ok := topo.Labels["foo"]; !ok || v != "bar" {
-		t.Fatal("labels of topology info does not match")
-	}
-
-	if !reflect.DeepEqual(*topo, info.getTopologyInfo()) {
-		t.Fatal("the info in etcd is not match with info.")
-	}
-
-	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.info.IP, info.info.Port)
-	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, info.info.IP, info.info.Port)
-
-	err = util.DeleteKeyFromEtcd(nonTTLKey, cli, owner.NewSessionDefaultRetryCnt, time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Refresh and re-test if the key exists
-	err = info.RestartTopology(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	topo, err = info.getTopologyFromEtcd(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	s, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	dir := path.Dir(s)
-
-	if topo.DeployPath != dir {
-		t.Fatal("DeployPath not match expected path")
-	}
-
-	if topo.StartTimestamp != 1282967700000 {
-		t.Fatal("start_timestamp of topology info does not match")
-	}
-
-	if !reflect.DeepEqual(*topo, info.getTopologyInfo()) {
-		t.Fatal("the info in etcd is not match with info.")
-	}
-
-	// check ttl key
-	ttlExists, err := info.ttlKeyExists(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ttlExists {
-		t.Fatal("ttl non-exists")
-	}
-
-	err = util.DeleteKeyFromEtcd(ttlKey, cli, owner.NewSessionDefaultRetryCnt, time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = info.updateTopologyAliveness(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ttlExists, err = info.ttlKeyExists(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ttlExists {
-		t.Fatal("ttl non-exists")
-	}
 }
