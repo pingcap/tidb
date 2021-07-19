@@ -50,8 +50,8 @@ func NewTestKit(t *testing.T, store kv.Storage) *TestKit {
 	}
 }
 
-// Se get session.
-func (tk *TestKit) Se() session.Session {
+// Session return a session
+func (tk *TestKit) Session() session.Session {
 	return tk.session
 }
 

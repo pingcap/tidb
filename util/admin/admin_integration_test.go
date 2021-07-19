@@ -17,58 +17,23 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
-func TestAdminIntegrationTestSuite(t *testing.T) {
-	var s = new(testAdminSuite)
-	s.t = t
-	suite.Run(t, s)
-}
+func TestAdminCheckTable(t *testing.T) {
+	t.Parallel()
 
-type testAdminSuite struct {
-	suite.Suite
-	tk      *testkit.TestKit
-	cluster testutils.Cluster
-	store   kv.Storage
-	domain  *domain.Domain
-	t       *testing.T
-}
+	store, clean := newIntegrationMockStore(t)
+	defer clean()
 
-func (s *testAdminSuite) SetupSuite() {
-	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithSingleStore(c)
-			s.cluster = c
-		}),
-	)
-	s.Require().Nil(err)
-	s.store = store
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
-	d, err := session.BootstrapSession(s.store)
-	s.Require().Nil(err)
-	d.SetStatsUpdating(true)
-	s.domain = d
-
-	s.tk = testkit.NewTestKit(s.t, s.store)
-}
-
-func (s *testAdminSuite) TearDownSuite() {
-	s.domain.Close()
-	s.store.Close()
-}
-
-func (s *testAdminSuite) TestAdminCheckTable() {
 	// test NULL value.
-	var tk = s.tk
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// test index column has pk-handle column
 	tk.MustExec("drop table if exists t")
@@ -114,13 +79,18 @@ func (s *testAdminSuite) TestAdminCheckTable() {
 	tk.MustExec("admin check table t1;")
 }
 
-func (s *testAdminSuite) TestAdminCheckTableClusterIndex() {
-	var tk = s.tk
+func TestAdminCheckTableClusterIndex(t *testing.T) {
+	t.Parallel()
+
+	store, clean := newIntegrationMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists admin_check_table_clustered_index;")
 	tk.MustExec("create database admin_check_table_clustered_index;")
 	tk.MustExec("use admin_check_table_clustered_index;")
 
-	tk.Se().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec("create table t (a bigint, b varchar(255), c int, primary key (a, b), index idx_0(a, b), index idx_1(b, c));")
 	tk.MustExec("insert into t values (1, '1', 1);")
@@ -145,4 +115,28 @@ func (s *testAdminSuite) TestAdminCheckTableClusterIndex() {
 
 	tk.MustExec("insert into t values (1000, '1000', 1000, '1000', '1000');")
 	tk.MustExec("admin check table t;")
+}
+
+func newIntegrationMockStore(t *testing.T) (store kv.Storage, clean func()) {
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+		}),
+	)
+	require.NoError(t, err)
+
+	session.SetSchemaLease(0)
+	session.DisableStats4Test()
+	d, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+
+	d.SetStatsUpdating(true)
+
+	clean = func() {
+		d.Close()
+		err := store.Close()
+		require.NoError(t, err)
+	}
+
+	return
 }
