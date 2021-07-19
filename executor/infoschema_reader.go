@@ -19,7 +19,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/session/txninfo"
 	"io"
 	"net/http"
 	"sort"
@@ -44,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -1130,12 +1130,12 @@ func (e *memtableRetriever) setDataFromEngines() {
 	var rows [][]types.Datum
 	rows = append(rows,
 		types.MakeDatums(
-			"InnoDB",                                                     // Engine
-			"DEFAULT",                                                    // Support
+			"InnoDB",  // Engine
+			"DEFAULT", // Support
 			"Supports transactions, row-level locking, and foreign keys", // Comment
-			"YES",                                                        // Transactions
-			"YES",                                                        // XA
-			"YES",                                                        // Savepoints
+			"YES", // Transactions
+			"YES", // XA
+			"YES", // Savepoints
 		),
 	)
 	e.rows = rows
@@ -1823,14 +1823,14 @@ func (e *memtableRetriever) setDataForServersInfo(ctx sessionctx.Context) error 
 	rows := make([][]types.Datum, 0, len(serversInfo))
 	for _, info := range serversInfo {
 		row := types.MakeDatums(
-			info.ID,                                       // DDL_ID
-			info.IP,                                       // IP
-			int(info.Port),                                // PORT
-			int(info.StatusPort),                          // STATUS_PORT
-			info.Lease,                                    // LEASE
-			info.Version,                                  // VERSION
-			info.GitHash,                                  // GIT_HASH
-			info.BinlogStatus,                             // BINLOG_STATUS
+			info.ID,              // DDL_ID
+			info.IP,              // IP
+			int(info.Port),       // PORT
+			int(info.StatusPort), // STATUS_PORT
+			info.Lease,           // LEASE
+			info.Version,         // VERSION
+			info.GitHash,         // GIT_HASH
+			info.BinlogStatus,    // BINLOG_STATUS
 			stringutil.BuildStringFromLabels(info.Labels), // LABELS
 		)
 		if sem.IsEnabled() {
@@ -1904,10 +1904,10 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 				}
 			}
 			record := types.MakeDatums(
-				schema.Name.O,                                        // TABLE_SCHEMA
-				tbl.Name.O,                                           // TABLE_NAME
-				tbl.ID,                                               // TABLE_ID
-				int64(tbl.TiFlashReplica.Count),                      // REPLICA_COUNT
+				schema.Name.O,                   // TABLE_SCHEMA
+				tbl.Name.O,                      // TABLE_NAME
+				tbl.ID,                          // TABLE_ID
+				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT
 				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
 				tbl.TiFlashReplica.Available,                         // AVAILABLE
 				progress,                                             // PROGRESS
@@ -2056,35 +2056,6 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 	return nil
 }
 
-//func (e *memtableRetriever) setDataForTiDBTrx(ctx sessionctx.Context) {
-//	sm := ctx.GetSessionManager()
-//	if sm == nil {
-//		return
-//	}
-//
-//	loginUser := ctx.GetSessionVars().User
-//	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
-//	infoList := sm.ShowTxnList()
-//	for _, info := range infoList {
-//		// If you have the PROCESS privilege, you can see all running transactions.
-//		// Otherwise, you can see only your own transactions.
-//		if !hasProcessPriv && loginUser != nil && info.Username != loginUser.Username {
-//			continue
-//		}
-//		e.rows = append(e.rows, info.ToDatum())
-//	}
-//}
-
-//func (e *memtableRetriever) setDataForClusterTiDBTrx(ctx sessionctx.Context) error {
-//	e.setDataForTiDBTrx(ctx)
-//	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
-//	if err != nil {
-//		return err
-//	}
-//	e.rows = rows
-//	return nil
-//}
-
 func (e *memtableRetriever) setDataForDeadlock(ctx sessionctx.Context) error {
 	if !hasPriv(ctx, mysql.ProcessPriv) {
 		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
@@ -2182,10 +2153,10 @@ func (b *batchRetriever) nextBatch(retrieveRange func(start, end int) error) err
 type tidbTrxTableRetriever struct {
 	dummyCloser
 	batchRetriever
-	table        *model.TableInfo
-	columns      []*model.ColumnInfo
-	txnInfo      []*txninfo.TxnInfo
-	initialized  bool
+	table       *model.TableInfo
+	columns     []*model.ColumnInfo
+	txnInfo     []*txninfo.TxnInfo
+	initialized bool
 }
 
 func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -2230,6 +2201,28 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 
 	var res [][]types.Datum
 	err = e.nextBatch(func(start, end int) error {
+		// Collect the SQL digests that needs to be retrieved
+		var sqlRetriever *sqlDigestTextRetriever
+		for _, c := range e.columns {
+			if c.Name.O == txninfo.CurrentSQLDigestTextStr {
+				if sqlRetriever == nil {
+					sqlRetriever = &sqlDigestTextRetriever{
+						sqlDigestsMap: make(map[string]string),
+					}
+				}
+
+				for i := start; i < end; i++ {
+					sqlRetriever.sqlDigestsMap[e.txnInfo[i].CurrentSQLDigest] = ""
+				}
+			}
+		}
+		if sqlRetriever != nil {
+			err1 := sqlRetriever.retrieveLocal(ctx, sctx)
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
+		}
+
 		res = make([][]types.Datum, 0, end-start)
 
 		for i := start; i < end; i++ {
@@ -2237,6 +2230,12 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 			for _, c := range e.columns {
 				if c.Name.O == util.ClusterTableInstanceColumnName {
 					row = append(row, types.NewDatum(instanceAddr))
+				} else if c.Name.O == txninfo.CurrentSQLDigestTextStr {
+					if text, ok := sqlRetriever.sqlDigestsMap[e.txnInfo[i].CurrentSQLDigest]; ok {
+						row = append(row, types.NewDatum(text))
+					} else {
+						row = append(row, types.NewDatum(nil))
+					}
 				} else {
 					row = append(row, e.txnInfo[i].ToDatum(c.Name.O))
 				}

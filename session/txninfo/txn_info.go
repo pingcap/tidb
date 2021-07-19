@@ -15,13 +15,13 @@ package txninfo
 
 import (
 	"encoding/json"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 // TxnRunningState is the current state of a transaction
@@ -39,18 +39,30 @@ const (
 )
 
 const (
-	IDStr                   = "ID"
-	StartTimeStr            = "START_TIME"
-	CurrentSQLDigestStr     = "CURRENT_SQL_DIGEST"
+	// IDStr is the column name of the TIDB_TRX table's ID column.
+	IDStr = "ID"
+	// StartTimeStr is the column name of the TIDB_TRX table's StartTime column.
+	StartTimeStr = "START_TIME"
+	// CurrentSQLDigestStr is the column name of the TIDB_TRX table's CurrentSQLDigest column.
+	CurrentSQLDigestStr = "CURRENT_SQL_DIGEST"
+	// CurrentSQLDigestTextStr is the column name of the TIDB_TRX table's CurrentSQLDigestText column.
 	CurrentSQLDigestTextStr = "CURRENT_SQL_DIGEST_TEXT"
-	StateStr                = "STATE"
-	WaitingStartTimeStr     = "WAITING_START_TIME"
-	MemBufferKeysStr        = "MEM_BUFFER_KEYS"
-	MemBufferBytesStr       = "MEM_BUFFER_BYTES"
-	SessionIDStr            = "SESSION_ID"
-	UserStr                 = "USER"
-	DBStr                   = "DB"
-	AllSQLDigestsStr        = "ALL_SQL_DIGESTS"
+	// StateStr is the column name of the TIDB_TRX table's State column.
+	StateStr = "STATE"
+	// WaitingStartTimeStr is the column name of the TIDB_TRX table's WaitingStartTime column.
+	WaitingStartTimeStr = "WAITING_START_TIME"
+	// MemBufferKeysStr is the column name of the TIDB_TRX table's MemBufferKeys column.
+	MemBufferKeysStr = "MEM_BUFFER_KEYS"
+	// MemBufferBytesStr is the column name of the TIDB_TRX table's MemBufferBytes column.
+	MemBufferBytesStr = "MEM_BUFFER_BYTES"
+	// SessionIDStr is the column name of the TIDB_TRX table's SessionID column.
+	SessionIDStr = "SESSION_ID"
+	// UserStr is the column name of the TIDB_TRX table's User column.
+	UserStr = "USER"
+	// DBStr is the column name of the TIDB_TRX table's DB column.
+	DBStr = "DB"
+	// AllSQLDigestsStr is the column name of the TIDB_TRX table's AllSQLDigests column.
+	AllSQLDigestsStr = "ALL_SQL_DIGESTS"
 )
 
 // TxnRunningStateStrs is the names of the TxnRunningStates
