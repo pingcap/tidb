@@ -1675,7 +1675,7 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 	// Privilege checker.
 	checker := func(db, table string) bool {
 		if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-			return pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, db, table, "", mysql.SuperPriv)
+			return pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, db, table, "", mysql.AllPrivMask)
 		}
 		return true
 	}

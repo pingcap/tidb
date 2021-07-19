@@ -923,7 +923,7 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	defer tk1.MustExec("drop user 'testuser'@'localhost'")
 	defer tk1.MustExec("drop user 'testuser2'@'localhost'")
 
-	tk.MustExec("grant super on *.* to 'testuser2'@'localhost'")
+	tk.MustExec("grant all privileges on *.* to 'testuser2'@'localhost'")
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
