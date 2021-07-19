@@ -864,7 +864,7 @@ func (p *LogicalJoin) getGroupNDVs(colGroups [][]*expression.Column, childStats 
 // If the type of join is SemiJoin, the selectivity of it will be same as selection's.
 // If the type of join is LeftOuterSemiJoin, it will not add or remove any row. The last column is a boolean value, whose ColNDVs should be two.
 // If the type of join is inner/outer join, the output of join(s, t) should be N(s) * N(t) / (V(s.key) * V(t.key)) * Min(s.key, t.key).
-// N(s) stands for the number of rows in relation s. V(s.key) means the ColNDVs of join key in s.
+// N(s) stands for the number of rows in relation s. V(s.key) means the NDV of join key in s.
 // This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
 // every matched bucket.
 func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
