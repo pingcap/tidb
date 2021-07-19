@@ -17,6 +17,8 @@ import (
 	"math"
 	"sort"
 
+	"github.com/pingcap/parser/model"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -326,7 +328,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			}
 		}
 	}
-	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn {
+	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn && ds.tableInfo.TempTableType == model.TempTableNone {
 		err := ds.generateAndPruneIndexMergePath(ds.indexMergeHints != nil)
 		if err != nil {
 			return nil, err
