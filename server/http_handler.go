@@ -1041,7 +1041,6 @@ func (h schemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 			writeData(w, results)
 		}
 	}
-	return
 }
 
 // ServeHTTP handles request of list a database or table's schemas.
