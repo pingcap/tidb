@@ -1,3 +1,16 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package keydecoder
 
 import (
@@ -55,6 +68,10 @@ func TestDecodeKey(t *testing.T) {
 	assert.Equal(t, decodedKey.HandleType, IntHandle)
 	assert.Equal(t, decodedKey.IsPartitionHandle, false)
 	assert.Equal(t, decodedKey.HandleValue, "1")
+	// these are default values, ie. will be omitted when got marshaled into json
+	assert.Equal(t, decodedKey.IndexID, int64(0))
+	assert.Equal(t, decodedKey.IndexName, "")
+	assert.Nil(t, decodedKey.IndexValues)
 
 	ch := mustNewCommonHandle(t, 100, "abc")
 	encodedCommonKey := ch.Encoded()
@@ -76,6 +93,10 @@ func TestDecodeKey(t *testing.T) {
 	assert.Equal(t, decodedKey.HandleType, CommonHandle)
 	assert.Equal(t, decodedKey.IsPartitionHandle, false)
 	assert.Equal(t, decodedKey.HandleValue, "{100, abc}")
+	// these are default values, ie. will be omitted when got marshaled into json
+	assert.Equal(t, decodedKey.IndexID, int64(0))
+	assert.Equal(t, decodedKey.IndexName, "")
+	assert.Nil(t, decodedKey.IndexValues)
 
 	values := types.MakeDatums("abc", 1)
 	sc := &stmtctx.StatementContext{}
@@ -101,4 +122,8 @@ func TestDecodeKey(t *testing.T) {
 	assert.Equal(t, decodedKey.IndexID, int64(1))
 	assert.Equal(t, decodedKey.IndexName, "index1")
 	assert.Equal(t, decodedKey.IndexValues, []string{"abc", "1"})
+	// these are default values, ie. will be omitted when got marshaled into json
+	assert.Equal(t, decodedKey.HandleType, HandleType(""))
+	assert.Equal(t, decodedKey.HandleValue, "")
+	assert.Equal(t, decodedKey.IsPartitionHandle, false)
 }
