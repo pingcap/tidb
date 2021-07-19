@@ -223,6 +223,8 @@ type session struct {
 
 	// indexUsageCollector collects index usage information.
 	idxUsageCollector *handle.SessionIndexUsageCollector
+
+	cache [1]ast.StmtNode
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -1245,7 +1247,15 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	defer parserPool.Put(p)
 	p.SetSQLMode(s.sessionVars.SQLMode)
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
-	return p.Parse(sql, charset, collation)
+	tmp, warn, err := p.Parse(sql, charset, collation)
+	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
+	if len(tmp) == 1 {
+		s.cache[0] = tmp[0]
+		return s.cache[:], warn, err
+	}
+	res := make([]ast.StmtNode, len(tmp))
+	copy(res, tmp)
+	return res, warn, err
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecutionTime uint64) {
