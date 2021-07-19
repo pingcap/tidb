@@ -1140,10 +1140,6 @@ func (p *LogicalCTETable) DeriveStats(childStats []*property.StatsInfo, selfSche
 	if p.stats != nil {
 		return p.stats, nil
 	}
-	var err error
-	p.stats, err = p.seedPlan.recursiveDeriveStats(colGroups)
-	if err != nil {
-		return nil, err
-	}
+	p.stats = p.seedPlan.statsInfo()
 	return p.stats, nil
 }
