@@ -14,7 +14,9 @@
 package txninfo
 
 import (
-	"strings"
+	"encoding/json"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
@@ -34,6 +36,21 @@ const (
 	TxnCommitting
 	// TxnRollingBack means the transaction is rolling back
 	TxnRollingBack
+)
+
+const (
+	IDStr                   = "ID"
+	StartTimeStr            = "START_TIME"
+	CurrentSQLDigestStr     = "CURRENT_SQL_DIGEST"
+	CurrentSQLDigestTextStr = "CURRENT_SQL_DIGEST_TEXT"
+	StateStr                = "STATE"
+	WaitingStartTimeStr     = "WAITING_START_TIME"
+	MemBufferKeysStr        = "MEM_BUFFER_KEYS"
+	MemBufferBytesStr       = "MEM_BUFFER_BYTES"
+	SessionIDStr            = "SESSION_ID"
+	UserStr                 = "USER"
+	DBStr                   = "DB"
+	AllSQLDigestsStr        = "ALL_SQL_DIGESTS"
 )
 
 // TxnRunningStateStrs is the names of the TxnRunningStates
@@ -78,44 +95,103 @@ type TxnInfo struct {
 	CurrentDB string
 }
 
-// ToDatum Converts the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table.
-func (info *TxnInfo) ToDatum() []types.Datum {
-	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
+var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
+	IDStr: func(info *TxnInfo) types.Datum {
+		return types.NewDatum(info.StartTS)
+	},
+	StartTimeStr: func(info *TxnInfo) types.Datum {
+		humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
+		return types.NewDatum(types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, types.MaxFsp))
+	},
+	CurrentSQLDigestStr: func(info *TxnInfo) types.Datum {
+		if len(info.CurrentSQLDigest) != 0 {
+			return types.NewDatum(info.CurrentSQLDigest)
+		}
+		return types.NewDatum(nil)
+	},
+	StateStr: func(info *TxnInfo) types.Datum {
+		e, err := types.ParseEnumValue(TxnRunningStateStrs, uint64(info.State+1))
+		if err != nil {
+			panic("this should never happen")
+		}
 
-	var currentDigest interface{}
-	if len(info.CurrentSQLDigest) != 0 {
-		currentDigest = info.CurrentSQLDigest
+		state := types.NewMysqlEnumDatum(e)
+		return state
+	},
+	WaitingStartTimeStr: func(info *TxnInfo) types.Datum {
+		if !info.BlockStartTime.Valid {
+			return types.NewDatum(nil)
+		}
+		return types.NewDatum(types.NewTime(types.FromGoTime(info.BlockStartTime.Time), mysql.TypeTimestamp, types.MaxFsp))
+	},
+	MemBufferKeysStr: func(info *TxnInfo) types.Datum {
+		return types.NewDatum(info.EntriesCount)
+	},
+	MemBufferBytesStr: func(info *TxnInfo) types.Datum {
+		return types.NewDatum(info.EntriesSize)
+	},
+	SessionIDStr: func(info *TxnInfo) types.Datum {
+		return types.NewDatum(info.ConnectionID)
+	},
+	UserStr: func(info *TxnInfo) types.Datum {
+		return types.NewDatum(info.Username)
+	},
+	DBStr: func(info *TxnInfo) types.Datum {
+		return types.NewDatum(info.CurrentDB)
+	},
+	AllSQLDigestsStr: func(info *TxnInfo) types.Datum {
+		res, err := json.Marshal(info.AllSQLDigests)
+		if err != nil {
+			logutil.BgLogger().Warn("Failed to marshal sql digests list as json", zap.Uint64("txnStartTS", info.StartTS))
+			return types.NewDatum(nil)
+		}
+		return types.NewDatum(string(res))
+	},
+}
+
+// ToDatum Converts the `TxnInfo`'s specified column to `Datum` to show in the `TIDB_TRX` table.
+func (info *TxnInfo) ToDatum(column string) types.Datum {
+	//humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
+	//
+	//var currentDigest interface{}
+	//if len(info.CurrentSQLDigest) != 0 {
+	//	currentDigest = info.CurrentSQLDigest
+	//}
+	//
+	//var blockStartTime interface{}
+	//if !info.BlockStartTime.Valid {
+	//	blockStartTime = nil
+	//} else {
+	//	blockStartTime = types.NewTime(types.FromGoTime(info.BlockStartTime.Time), mysql.TypeTimestamp, types.MaxFsp)
+	//}
+	//
+	//e, err := types.ParseEnumValue(TxnRunningStateStrs, uint64(info.State+1))
+	//if err != nil {
+	//	panic("this should never happen")
+	//}
+	//
+	//allSQLs := "[" + strings.Join(info.AllSQLDigests, ", ") + "]"
+	//
+	//state := types.NewMysqlEnumDatum(e)
+	//
+	//datums := types.MakeDatums(
+	//	info.StartTS,
+	//	types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, types.MaxFsp),
+	//	currentDigest,
+	//)
+	//datums = append(datums, state)
+	//datums = append(datums, types.MakeDatums(
+	//	blockStartTime,
+	//	info.EntriesCount,
+	//	info.EntriesSize,
+	//	info.ConnectionID,
+	//	info.Username,
+	//	info.CurrentDB,
+	//	allSQLs)...)
+	//return datums
+	res, ok := columnValueGetterMap[column]
+	if !ok {
+		return types.NewDatum(nil)
 	}
-
-	var blockStartTime interface{}
-	if !info.BlockStartTime.Valid {
-		blockStartTime = nil
-	} else {
-		blockStartTime = types.NewTime(types.FromGoTime(info.BlockStartTime.Time), mysql.TypeTimestamp, types.MaxFsp)
-	}
-
-	e, err := types.ParseEnumValue(TxnRunningStateStrs, uint64(info.State+1))
-	if err != nil {
-		panic("this should never happen")
-	}
-
-	allSQLs := "[" + strings.Join(info.AllSQLDigests, ", ") + "]"
-
-	state := types.NewMysqlEnumDatum(e)
-
-	datums := types.MakeDatums(
-		info.StartTS,
-		types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, types.MaxFsp),
-		currentDigest,
-	)
-	datums = append(datums, state)
-	datums = append(datums, types.MakeDatums(
-		blockStartTime,
-		info.EntriesCount,
-		info.EntriesSize,
-		info.ConnectionID,
-		info.Username,
-		info.CurrentDB,
-		allSQLs)...)
-	return datums
+	return res(info)
 }
