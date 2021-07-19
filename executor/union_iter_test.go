@@ -165,7 +165,3 @@ func (m *mockIter) Next() error {
 func (m *mockIter) Close() {
 	m.cur = -1
 }
-
-func (m *mockIter) reset() {
-	m.cur = 0
-}
