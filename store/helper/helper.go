@@ -233,9 +233,16 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
-	req, err := http.NewRequest("GET", util.InternalHTTPSchema()+"://"+pdHosts[0]+rw, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
+	req := new(http.Request)
+	for _, host := range pdHosts {
+		req, err = http.NewRequest("GET", util.InternalHTTPSchema()+"://"+host+rw, nil)
+		if err != nil {
+			// Try to request from another PD node when some nodes may down.
+			if strings.Contains(err.Error(), "connection refused") {
+				continue
+			}
+			return nil, errors.Trace(err)
+		}
 	}
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
@@ -777,9 +784,16 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 		return errors.New("pd unavailable")
 	}
 	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", util.InternalHTTPSchema()+"://"+pdHosts[0]+uri))
-	req, err := http.NewRequest(method, util.InternalHTTPSchema()+"://"+pdHosts[0]+uri, body)
-	if err != nil {
-		return errors.Trace(err)
+	req := new(http.Request)
+	for _, host := range pdHosts {
+		req, err = http.NewRequest(method, util.InternalHTTPSchema()+"://"+host+uri, body)
+		if err != nil {
+			// Try to request from another PD node when some nodes may down.
+			if strings.Contains(err.Error(), "connection refused") {
+				continue
+			}
+			return errors.Trace(err)
+		}
 	}
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
@@ -862,9 +876,16 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
-	req, err := http.NewRequest("GET", util.InternalHTTPSchema()+"://"+pdHosts[0]+pdapi.Stores, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
+	req := new(http.Request)
+	for _, host := range pdHosts {
+		req, err = http.NewRequest("GET", util.InternalHTTPSchema()+"://"+host+pdapi.Stores, nil)
+		if err != nil {
+			// Try to request from another PD node when some nodes may down.
+			if strings.Contains(err.Error(), "connection refused") {
+				continue
+			}
+			return nil, errors.Trace(err)
+		}
 	}
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
