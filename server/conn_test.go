@@ -206,6 +206,8 @@ func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Parallel()
 	var outBuffer bytes.Buffer
 	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(ts.store)
 	srv, err := NewServer(cfg, drv)
 	c.Assert(err, IsNil)
