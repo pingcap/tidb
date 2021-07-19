@@ -1345,7 +1345,14 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 	case ast.AdminCaptureBindings:
 		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
 	case ast.AdminEvolveBindings:
-		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, nil
+		{
+			var err error
+			// The 'baseline evolution' only work in the CI environment before the feature is GA.
+			if !config.CheckTableBeforeDrop {
+				err = errors.Errorf("The 'baseline evolution' of TiDB has not been GA yet, so it is forbidden to use it.")
+			}
+			return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
+		}
 	case ast.AdminReloadBindings:
 		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
 	case ast.AdminShowTelemetry:
