@@ -20,49 +20,43 @@ import (
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/suite"
 )
 
-type testHexSuite struct {
-	suite.Suite
-}
+func TestHex(t *testing.T) {
+	t.Parallel()
 
-func (s *testHexSuite) TestHex() {
-	assert := assert.New(s.T())
 	var region metapb.Region
 	region.Id = 6662
 	region.StartKey = []byte{'t', 200, '\\', 000, 000, 000, '\\', 000, 000, 000, 37, '-', 000, 000, 000, 000, 000, 000, 000, 37}
 	region.EndKey = []byte("3asg3asd")
 
-	assert.Equal(logutil.Hex(&region).String(), "{Id:6662 StartKey:74c85c0000005c000000252d0000000000000025 EndKey:3361736733617364 RegionEpoch:<nil> Peers:[] EncryptionMeta:<nil>}")
+	require.Equal(t, logutil.Hex(&region).String(), "{Id:6662 StartKey:74c85c0000005c000000252d0000000000000025 EndKey:3361736733617364 RegionEpoch:<nil> Peers:[] EncryptionMeta:<nil>}")
 }
 
-func (s *testHexSuite) TestPrettyPrint() {
-	assert := assert.New(s.T())
+func TestPrettyPrint(t *testing.T) {
+	t.Parallel()
+
 	var buf bytes.Buffer
 
 	byteSlice := []byte("asd2fsdafs中文3af")
 	logutil.PrettyPrint(&buf, reflect.ValueOf(byteSlice))
-	assert.Equal(buf.String(), "61736432667364616673e4b8ade69687336166")
-	assert.Equal(buf.String(), hex.EncodeToString(byteSlice))
+	require.Equal(t, buf.String(), "61736432667364616673e4b8ade69687336166")
+	require.Equal(t, buf.String(), hex.EncodeToString(byteSlice))
 	buf.Reset()
 
 	// Go reflect can't distinguish uint8 from byte!
 	intSlice := []uint8{1, 2, 3, uint8('a'), uint8('b'), uint8('c'), uint8('\'')}
 	logutil.PrettyPrint(&buf, reflect.ValueOf(intSlice))
-	assert.Equal(buf.String(), "01020361626327")
+	require.Equal(t, buf.String(), "01020361626327")
 	buf.Reset()
 
 	var ran kv.KeyRange
 	ran.StartKey = kv.Key("_txxey23_i263")
 	ran.EndKey = nil
 	logutil.PrettyPrint(&buf, reflect.ValueOf(ran))
-	assert.Equal(buf.String(), "{StartKey:5f747878657932335f69323633 EndKey:}")
-}
-
-func TestHexTestSuite(t *testing.T) {
-	suite.Run(t, new(testHexSuite))
+	require.Equal(t, buf.String(), "{StartKey:5f747878657932335f69323633 EndKey:}")
 }

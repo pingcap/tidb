@@ -15,7 +15,6 @@ package logutil
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"io"
 	"os"
@@ -24,8 +23,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/log"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -39,50 +37,42 @@ const (
 
 var PrettyPrint = prettyPrint
 
-type testLogSuite struct {
-	suite.Suite
-	buf *bytes.Buffer
-}
+func TestZapLoggerWithKeys(t *testing.T) {
+	t.Parallel()
 
-func (s *testLogSuite) SetupTest() {
-	s.buf = &bytes.Buffer{}
-}
-
-func (s *testLogSuite) TestZapLoggerWithKeys() {
-	assert := assert.New(s.T())
 	if runtime.GOOS == "windows" {
 		// Skip this test on windows for two reason:
 		// 1. The pattern match fails somehow. It seems windows treat \n as slash and character n.
 		// 2. Remove file doesn't work as long as the log instance hold the file.
-		s.T().Skip("skip on windows")
+		t.Skip("skip on windows")
 	}
 
 	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxSize: 4096}}
 	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
 	err := InitLogger(conf)
-	assert.Nil(err)
+	require.NoError(t, err)
 	connID := uint64(123)
 	ctx := WithConnID(context.Background(), connID)
-	s.testZapLogger(ctx, assert, fileCfg.Filename, zapLogWithConnIDPattern)
+	testZapLogger(ctx, t, fileCfg.Filename, zapLogWithConnIDPattern)
 	os.Remove(fileCfg.Filename)
 
 	err = InitLogger(conf)
-	assert.Nil(err)
+	require.NoError(t, err)
 	key := "ctxKey"
 	val := "ctxValue"
 	ctx1 := WithKeyValue(context.Background(), key, val)
-	s.testZapLogger(ctx1, assert, fileCfg.Filename, zapLogWithKeyValPattern)
+	testZapLogger(ctx1, t, fileCfg.Filename, zapLogWithKeyValPattern)
 	os.Remove(fileCfg.Filename)
 }
 
-func (s *testLogSuite) testZapLogger(ctx context.Context, assert *assert.Assertions, fileName, pattern string) {
+func testZapLogger(ctx context.Context, t *testing.T, fileName, pattern string) {
 	Logger(ctx).Debug("debug msg", zap.String("test with key", "true"))
 	Logger(ctx).Info("info msg", zap.String("test with key", "true"))
 	Logger(ctx).Warn("warn msg", zap.String("test with key", "true"))
 	Logger(ctx).Error("error msg", zap.String("test with key", "true"))
 
 	f, err := os.Open(fileName)
-	assert.Nil(err)
+	require.NoError(t, err)
 	defer f.Close()
 
 	r := bufio.NewReader(f)
@@ -92,31 +82,28 @@ func (s *testLogSuite) testZapLogger(ctx context.Context, assert *assert.Asserti
 		if err != nil {
 			break
 		}
-		assert.Regexp(pattern, str)
-		assert.False(strings.Contains(str, "stack"))
-		assert.False(strings.Contains(str, "errorVerbose"))
+		require.Regexp(t, pattern, str)
+		require.False(t, strings.Contains(str, "stack"))
+		require.False(t, strings.Contains(str, "errorVerbose"))
 	}
-	assert.Equal(err, io.EOF)
+	require.Equal(t, err, io.EOF)
 }
 
-func (s *testLogSuite) TestSetLevel() {
-	assert := assert.New(s.T())
+func TestSetLevel(t *testing.T) {
+	t.Parallel()
+
 	conf := NewLogConfig("info", DefaultLogFormat, "", EmptyFileLogConfig, false)
 	err := InitLogger(conf)
-	assert.Nil(err)
+	require.NoError(t, err)
 
-	assert.Equal(log.GetLevel(), zap.InfoLevel)
+	require.Equal(t, log.GetLevel(), zap.InfoLevel)
 	err = SetLevel("warn")
-	assert.Nil(err)
-	assert.Equal(log.GetLevel(), zap.WarnLevel)
+	require.NoError(t, err)
+	require.Equal(t, log.GetLevel(), zap.WarnLevel)
 	err = SetLevel("Error")
-	assert.Nil(err)
-	assert.Equal(log.GetLevel(), zap.ErrorLevel)
+	require.NoError(t, err)
+	require.Equal(t, log.GetLevel(), zap.ErrorLevel)
 	err = SetLevel("DEBUG")
-	assert.Nil(err)
-	assert.Equal(log.GetLevel(), zap.DebugLevel)
-}
-
-func TestLogTestSuite(t *testing.T) {
-	suite.Run(t, new(testLogSuite))
+	require.NoError(t, err)
+	require.Equal(t, log.GetLevel(), zap.DebugLevel)
 }
