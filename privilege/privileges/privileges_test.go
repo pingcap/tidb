@@ -1458,7 +1458,9 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
 
 	// Even though we have super, we still can't read protected information from tidb_servers_info, cluster_* tables
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NOT NULL`).Check(testkit.Rows("0"))
-	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NOT NULL`).Check(testkit.Rows("0"))
+	err := tk.QueryToErr(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NOT NULL`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 	// 36 = a UUID. Normally it is an IP address.
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.CLUSTER_STATEMENTS_SUMMARY WHERE length(instance) != 36`).Check(testkit.Rows("0"))
 
@@ -1476,24 +1478,83 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
 
 func (s *testPrivilegeSuite) TestClusterConfigInfoschema(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("CREATE USER ccnobody, ccconfig")
+	tk.MustExec("CREATE USER ccnobody, ccconfig, ccprocess")
 	tk.MustExec("GRANT CONFIG ON *.* TO ccconfig")
+	tk.MustExec("GRANT Process ON *.* TO ccprocess")
 
-	// incorrect permissions
+	// incorrect/no permissions
 	tk.Se.Auth(&auth.UserIdentity{
 		Username: "ccnobody",
 		Hostname: "localhost",
 	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT USAGE ON *.* TO 'ccnobody'@'%'"))
 
 	err := tk.QueryToErr("SELECT * FROM information_schema.cluster_config")
+	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CONFIG privilege(s) for this operation")
 
-	// With correct permissions
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_hardware")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CONFIG privilege(s) for this operation")
+
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_info")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_load")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_systeminfo")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_log WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	// With correct/CONFIG permissions
 	tk.Se.Auth(&auth.UserIdentity{
 		Username: "ccconfig",
 		Hostname: "localhost",
 	}, nil, nil)
+
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT CONFIG ON *.* TO 'ccconfig'@'%'"))
+	// Needs CONFIG privilege
 	tk.MustQuery("SELECT * FROM information_schema.cluster_config")
+	tk.MustQuery("SELECT * FROM information_schema.cluster_HARDWARE")
+	// Missing Process privilege
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_INFO")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_LOAD")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_SYSTEMINFO")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_LOG WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	// With correct/Process permissions
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "ccprocess",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT Process ON *.* TO 'ccprocess'@'%'"))
+	// Needs Process privilege
+	tk.MustQuery("SELECT * FROM information_schema.CLUSTER_info")
+	tk.MustQuery("SELECT * FROM information_schema.CLUSTER_load")
+	tk.MustQuery("SELECT * FROM information_schema.CLUSTER_systeminfo")
+	tk.MustQuery("SELECT * FROM information_schema.CLUSTER_log WHERE time BETWEEN '1970-07-13 00:00:00' AND '1970-07-13 02:00:00' AND message like '%'")
+	// Missing CONFIG privilege
+	err = tk.QueryToErr("SELECT * FROM information_schema.CLUSTER_config")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CONFIG privilege(s) for this operation")
+	err = tk.QueryToErr("SELECT * FROM information_schema.CLUSTER_hardware")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CONFIG privilege(s) for this operation")
 }
 
 func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
