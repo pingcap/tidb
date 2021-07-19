@@ -337,3 +337,29 @@ func (s *testValidatorSuite) TestForeignKey(c *C) {
 
 	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (c) REFERENCES test2.t (e)", false, nil)
 }
+
+func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
+	defer testleak.AfterTest(c)()
+	defer func() {
+		s.dom.Close()
+		s.store.Close()
+	}()
+
+	ctx := context.Background()
+	execSQLList := []string{
+		"use test",
+		"set tidb_enable_global_temporary_table=true",
+		"create table tb(id int);",
+		"create global temporary table temp(id int) on commit delete rows;",
+		"create global temporary table temp1(id int) on commit delete rows;",
+	}
+	for _, execSQL := range execSQLList {
+		_, err := s.se.Execute(ctx, execSQL)
+		c.Assert(err, IsNil)
+	}
+	s.is = s.dom.InfoSchema()
+	s.runSQL(c, "drop global temporary table tb;", false, core.ErrDropTableOnTemporaryTable)
+	s.runSQL(c, "drop global temporary table temp", false, nil)
+	s.runSQL(c, "drop global temporary table test.tb;", false, core.ErrDropTableOnTemporaryTable)
+	s.runSQL(c, "drop global temporary table test.temp1", false, nil)
+}
