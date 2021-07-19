@@ -10,19 +10,24 @@
 * [Motivation or Background](#motivation-or-background)
 * [Detailed Design](#detailed-design)
     * [New Syntax Overview](#new-syntax-overview)
-	* [Updates to Existing Syntax](#updates-to-existing-syntax)
-	* [Placement Rules Syntax](#placement-rules-syntax)
-	* [Additional Semantics](#additional-semantics)
+    * [Updates to Existing Syntax](#updates-to-existing-syntax)
+    * [Placement Rules Syntax](#placement-rules-syntax)
+    * [Additional Semantics](#additional-semantics)
+    * [Privilege management](#privilege-management)
 * [Implementation](#implementation)
     * [Storing Placement Policies](#storing-placement-policies)
-    * [Storing Placement Rules](#storing-placement-rules)
+    * [Storage Consistency](#storage-consistency)
     * [Querying Placement Rules](#querying-placement-rules)
-    * [DDL procedures](#ddl-procedures)
     * [Building placement rules](#building-placement-rules)
     * [Rule priorities](#rule-priorities)
 * [Examples](#examples)
+    * [Optimization: Follower read in every region]
+    * [Optimization: Latest data on SSD]
+    * [Optimization: Multi-tenancy / control of shared resources]
+    * [Compliance: User data needs geographic split]
 * [Impacts & Risks](#impacts--risks)
 * [Investigation & Alternatives](#investigation--alternatives)
+    * [Known Limitations](#known-limitations)
 * [Unresolved Questions](#unresolved-questions)
     * [Compliance Requirements](#compliance-requirements)
     * [Behaviors](#behaviors)
@@ -154,7 +159,7 @@ Behavior notes:
 
 Besides `SHOW CREATE PLACEMENT POLICY x` and `SHOW CREATE TABLE t1` it should be possible to summarize all placement for a database system. This is beneficial for compliance scenarios.
 
-#### information_schema.placement_rules
+##### information_schema.placement_rules
 
 A new system table `information_schema.placement_rules` is added to view all explicit placement rules. An explicit rule is one that has been defined by the user and does not use inheritance rules, such as how partitions will use the same rules as the table they belong to.
 
@@ -171,7 +176,7 @@ The table contains columns such as:
 
 The system table is a virtual table, which doesn’t persist data. When querying the table, TiDB queries PD and integrates the result in a table format. That also means the metadata is stored on PD instead of TiKV.
 
-#### SHOW PLACEMENT
+##### SHOW PLACEMENT
 
 The `information_schema.placement_rules` table only contains stored placement rules, and users cannot query the effective rule of one object from it.
 
@@ -588,42 +593,7 @@ As database IDs are all globally unique, it's fine to replace table ID with data
 
 It's same for partitioned tables.
 
-### Rule priorities
-
-Tables only inherit rules from databases when they are created, and the value is saved in the meta data. Thus, the rules of priorities are simplified from an earlier version of this proposal (and are more inline with how character sets are inherited).
-
-The only rules are that indexes and partitions inherit the rules of tables. Partitions can explicitly overwrite the placement policy, but indexes currently do not allow placement policy to be defined (this simplification was made intentionally since there is not a clear use case until global secondary indexes are introduced).
-
-Thus the priority is:
-
-```
-db --> table (Copied from db on create if placement not explicitly specified for the table)
-unpartitioned table --> index
-partitioned table --> partition (can be overwritten) --> index
-```
-
-For example:
-
-1. At the beginning, all data is placed based on the default placement rules.
-2. When a placement rule is added on table `t`, all data on `t` is placed based on the rule.
-3. When a placement rule is added on partition `p0` of `t`, all data on `p0` is placed based on the rule of `p0`, but other partitions stay still.
-4. When the placement rule on `p0` is removed, data on `p0` is placed based on the rule of `t`, just like other partitions.
-
-Rules priorities are checked when a placement rule is added, altered, or dropped.
-
-Rule priorities can be implemented by fields `index` and `override` in the PD placement rule configuration. `override` is alway enabled, and `index` stands for the priority. Rules with higher `index` will overwrite the rules with lower `index` and same key range, but rules with same `index` don't overwrite each other, they just accumulate.
-
-Specifically, `index` is in such a format:
-
-* `index` of default placement rules is 0
-* `index` of database placement rules is 1
-* `index` of table placement rules is 2
-* `index` of partition placement rules is 3
-* `index` of index placement rules is 4
-
-In such a way, the most granular rule always works.
-
-### Region label configuration
+#### Region label configuration
 
 Instead of configuring key ranges, you can also configure region labels in placement rules. PD supports label rules, which indicate the key range of a database / table / partition name. TiDB pushes label rules once the schema changes, so that PD maintains the relationship between database / table /partition names and their corresponding key ranges.
 
@@ -671,7 +641,7 @@ For example:
 
 Combined with the label rule, PD indirectly knows the key range of `db1/tb1` is marked with the label constraint `{"key": "zone", "op": "in", "values": ["sh", "bj"]}`.
 
-### Database placement
+#### Database placement
 
 Defining placement rules of databases simplifies the procedures when there are many tables.
 
@@ -725,6 +695,42 @@ In the example below, it defines multiple label rules for one database. Each lab
 ```
 
 Then you need only one placement rule for the database. When you change the placement of the database, you need to update one placement rule. However, when you drop a database, you need to delete multiple label rules plus one placement rule.
+
+### Rule priorities
+
+Tables only inherit rules from databases when they are created, and the value is saved in the meta data. Thus, the rules of priorities are simplified from an earlier version of this proposal (and are more inline with how character sets are inherited).
+
+The only rules are that indexes and partitions inherit the rules of tables. Partitions can explicitly overwrite the placement policy, but indexes currently do not allow placement policy to be defined (this simplification was made intentionally since there is not a clear use case until global secondary indexes are introduced).
+
+Thus the priority is:
+
+```
+db --> table (Copied from db on create if placement not explicitly specified for the table)
+unpartitioned table --> index
+partitioned table --> partition (can be overwritten) --> index
+```
+
+For example:
+
+1. At the beginning, all data is placed based on the default placement rules.
+2. When a placement rule is added on table `t`, all data on `t` is placed based on the rule.
+3. When a placement rule is added on partition `p0` of `t`, all data on `p0` is placed based on the rule of `p0`, but other partitions stay still.
+4. When the placement rule on `p0` is removed, data on `p0` is placed based on the rule of `t`, just like other partitions.
+
+Rules priorities are checked when a placement rule is added, altered, or dropped.
+
+Rule priorities can be implemented by fields `index` and `override` in the PD placement rule configuration. `override` is alway enabled, and `index` stands for the priority. Rules with higher `index` will overwrite the rules with lower `index` and same key range, but rules with same `index` don't overwrite each other, they just accumulate.
+
+Specifically, `index` is in such a format:
+
+* `index` of default placement rules is 0
+* `index` of database placement rules is 1
+* `index` of table placement rules is 2
+* `index` of partition placement rules is 3
+* `index` of index placement rules is 4
+
+In such a way, the most granular rule always works.
+
 
 ## Examples
 
@@ -872,6 +878,49 @@ For compliance use-cases, it is clear that data at rest should reside within a g
 * **Internal SQL**: Similar to DDL, several centralized background tasks, such as updating histograms/statistics need to be able to _read_ the data.
 * **DML**: It is not yet known which restrictions need to be placed on user queries. For example, if a poorly written user-query does not clearly target the `USA` partition when reading user data, should it generate an error because the `EUROPE` partition needs to be read in order for the semantics of the query to be correct? This may cause problems in development and integration environments if the restrictions can not be distilled into environments with smaller topologies.
 * **Routing**: When there is a data center for Europe, and a Data center for the USA, and the data is partitioned with requirements that DML from the USA can not read data in Europe, how is that enforced? Is it configured in such a way that the tidb-servers in the USA can not route to the tikv-servers in Europe? If this is the case, then it means the European servers can not hold non-user compliance data that the USA might need to read. If it is not the case, then there might be some sort of key management/crypto scheme to control access to sensitive data.
+
+### Behaviors
+
+#### Syntax for Restricted Access (Compliance Case)
+
+Assume that if the example is logically like the "Compliance: User data needs geographic split" case:
+
+```sql
+CREATE TABLE users (
+	id INT NOT NULL auto_increment,
+	username VARCHAR(64) NOT NULL,
+	email VARCHAR(64) NOT NULL,
+	dateofbirth DATE NOT NULL,
+	country VARCHAR(10) NOT NULL,
+	PRIMARY KEY (id),
+	UNIQUE (username)
+) PARTITION BY LIST COLUMNS (country) (
+	PARTITION pEurope VALUES IN ('DE', 'FR', 'GB') PLACEMENT POLICY='europe',
+	PARTITION pOther VALUES IN ('US', 'CA', 'MX')
+);
+```
+
+What does `SHOW CREATE PLACEMENT POLICY europe` look like?
+
+I assume that it is something like:
+
+```sql
+CREATE PLACEMENT POLICY europe CONSTRAINTS="+region=eu-west-1" RESTRICTED;
+```
+
+This specific semantic will be the hardest to implement because of the other dependencies in the server.
+
+#### PD Balancing Behavior
+
+In the case of `FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=3`, is pd deterministic in balancing between each of the regions? If not, is it possible to ask PD to have certain scheduling/balancing policies.
+
+Other examples of scheduling policies (versus scheduling constraints) have been proposed by [@nolouch](https://github.com/nolouch), which I will paraphrase here:
+
+* `CREATE PLACEMENT POLICY p0 PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2" SCHEDULE=LOCALITY_IN_PRIMARY_REGION();`
+* `CREATE PLACEMENT POLICY p1 PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2" SCHEDULE=LOCALITY_BY_ROW();`
+* `CREATE PLACEMENT POLICY p2 PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2" SCHEDULE=SURVIVE_REGION_FAILURE();`
+
+The name `SCHEDULE` can be discussed, but in cases where there are 4 followers, being able to declaratively specify if you prefer full recovery over quick quorum is useful.
 
 ## Changelog
 
