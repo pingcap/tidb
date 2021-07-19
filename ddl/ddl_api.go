@@ -4464,7 +4464,7 @@ func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, s
 	if !ctx.GetSessionVars().EnableExtendedStats {
 		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
 	}
-	// Not support ColNDVs and Dependency statistics type for now.
+	// Not support Cardinality and Dependency statistics type for now.
 	if stats.StatsType == ast.StatsTypeCardinality || stats.StatsType == ast.StatsTypeDependency {
 		return errors.New("Cardinality and Dependency statistics types are not supported now")
 	}
