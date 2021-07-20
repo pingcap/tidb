@@ -2192,22 +2192,20 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	var res [][]types.Datum
 	err = e.nextBatch(func(start, end int) error {
 		// Collect the SQL digests that needs to be retrieved
-		var sqlRetriever *sqlDigestTextRetriever
+		var sqlRetriever *SQLDigestTextRetriever
 		for _, c := range e.columns {
 			if c.Name.O == txninfo.CurrentSQLDigestTextStr {
 				if sqlRetriever == nil {
-					sqlRetriever = &sqlDigestTextRetriever{
-						sqlDigestsMap: make(map[string]string),
-					}
+					sqlRetriever = NewSQLDigestTextRetriever()
 				}
 
 				for i := start; i < end; i++ {
-					sqlRetriever.sqlDigestsMap[e.txnInfo[i].CurrentSQLDigest] = ""
+					sqlRetriever.SQLDigestsMap[e.txnInfo[i].CurrentSQLDigest] = ""
 				}
 			}
 		}
 		if sqlRetriever != nil {
-			err1 := sqlRetriever.retrieveLocal(ctx, sctx)
+			err1 := sqlRetriever.RetrieveLocal(ctx, sctx)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
@@ -2221,7 +2219,7 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 				if c.Name.O == util.ClusterTableInstanceColumnName {
 					row = append(row, types.NewDatum(instanceAddr))
 				} else if c.Name.O == txninfo.CurrentSQLDigestTextStr {
-					if text, ok := sqlRetriever.sqlDigestsMap[e.txnInfo[i].CurrentSQLDigest]; ok && len(text) != 0 {
+					if text, ok := sqlRetriever.SQLDigestsMap[e.txnInfo[i].CurrentSQLDigest]; ok && len(text) != 0 {
 						row = append(row, types.NewDatum(text))
 					} else {
 						row = append(row, types.NewDatum(nil))

@@ -59,11 +59,50 @@ func deleteFromSet(set []string, value string) []string {
 	return set
 }
 
-type sqlDigestTextRetriever struct {
-	sqlDigestsMap map[string]string
+type SQLDigestTextRetriever struct {
+	SQLDigestsMap map[string]string
+
+	// Replace querying for test purposes.
+	mockLocalData  map[string]string
+	mockGlobalData map[string]string
+	fetchAllLimit  int
 }
 
-func (r *sqlDigestTextRetriever) runQuery(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
+func NewSQLDigestTextRetriever() *SQLDigestTextRetriever {
+	return &SQLDigestTextRetriever{
+		SQLDigestsMap: make(map[string]string),
+		fetchAllLimit: 512,
+	}
+}
+
+func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues []interface{}) (map[string]string, error) {
+	if len(inValues) == 0 {
+		return data, nil
+	}
+	res := make(map[string]string, len(inValues))
+	for _, digest := range inValues {
+		if text, ok := data[digest.(string)]; ok {
+			res[digest.(string)] = text
+		}
+	}
+	return res, nil
+}
+
+func (r *SQLDigestTextRetriever) runQuery(ctx context.Context, sctx sessionctx.Context, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
+	// If mock data is set, query the mock data instead of the real statements_summary tables.
+	if !queryGlobal && r.mockLocalData != nil {
+		return r.runMockQuery(r.mockLocalData, inValues)
+	} else if queryGlobal && r.mockGlobalData != nil {
+		return r.runMockQuery(r.mockGlobalData, inValues)
+	}
+
+	exec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
+	if !ok {
+		return nil, errors.New("restricted sql can't be executed in this context")
+	}
+
+	// Information in statements_summary will be periodically moved to statements_summary_history. Union them together
+	// to avoid missing information when statements_summary is just cleared.
 	stmt := "select digest, digest_text from information_schema.statements_summary union distinct " +
 		"select digest, digest_text from information_schema.statements_summary_history"
 	if queryGlobal {
@@ -90,50 +129,43 @@ func (r *sqlDigestTextRetriever) runQuery(ctx context.Context, exec sqlexec.Rest
 	return res, nil
 }
 
-func (r *sqlDigestTextRetriever) updateWithQueryResult(queryResult map[string]string) {
-	for digest, text := range r.sqlDigestsMap {
+func (r *SQLDigestTextRetriever) updateWithQueryResult(queryResult map[string]string) {
+	for digest, text := range r.SQLDigestsMap {
 		if len(text) > 0 {
 			// The text of this digest is already known
 			continue
 		}
 		sqlText, ok := queryResult[digest]
 		if ok {
-			r.sqlDigestsMap[digest] = sqlText
+			r.SQLDigestsMap[digest] = sqlText
 		}
 	}
 }
 
-func (r *sqlDigestTextRetriever) retrieveLocal(ctx context.Context, sctx sessionctx.Context) error {
-	const fetchAllLimit = 512
-
-	if len(r.sqlDigestsMap) == 0 {
+func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx sessionctx.Context) error {
+	if len(r.SQLDigestsMap) == 0 {
 		return nil
 	}
 
-	exec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
-	if !ok {
-		return errors.New("restricted sql can't be executed in this context")
-	}
-
 	var queryResult map[string]string
-	if len(r.sqlDigestsMap) <= fetchAllLimit {
-		inValues := make([]interface{}, 0, len(r.sqlDigestsMap))
-		for key := range r.sqlDigestsMap {
+	if len(r.SQLDigestsMap) <= r.fetchAllLimit {
+		inValues := make([]interface{}, 0, len(r.SQLDigestsMap))
+		for key := range r.SQLDigestsMap {
 			inValues = append(inValues, key)
 		}
 		var err error
-		queryResult, err = r.runQuery(ctx, exec, false, inValues)
+		queryResult, err = r.runQuery(ctx, sctx, false, inValues)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		if len(queryResult) == len(r.sqlDigestsMap) {
-			r.sqlDigestsMap = queryResult
+		if len(queryResult) == len(r.SQLDigestsMap) {
+			r.SQLDigestsMap = queryResult
 			return nil
 		}
 	} else {
 		var err error
-		queryResult, err = r.runQuery(ctx, exec, false, nil)
+		queryResult, err = r.runQuery(ctx, sctx, false, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -143,14 +175,14 @@ func (r *sqlDigestTextRetriever) retrieveLocal(ctx context.Context, sctx session
 	return nil
 }
 
-func (r *sqlDigestTextRetriever) retrieveGlobal(ctx context.Context, sctx sessionctx.Context) error {
-	err := r.retrieveLocal(ctx, sctx)
+func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx sessionctx.Context) error {
+	err := r.RetrieveLocal(ctx, sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	var unknownDigests []interface{}
-	for k, v := range r.sqlDigestsMap {
+	for k, v := range r.SQLDigestsMap {
 		if len(v) == 0 {
 			unknownDigests = append(unknownDigests, k)
 		}
@@ -160,20 +192,14 @@ func (r *sqlDigestTextRetriever) retrieveGlobal(ctx context.Context, sctx sessio
 		return nil
 	}
 
-	const fetchAllLimit = 512
-	exec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
-	if !ok {
-		return errors.New("restricted sql can't be executed in this context")
-	}
-
 	var queryResult map[string]string
-	if len(r.sqlDigestsMap) <= fetchAllLimit {
-		queryResult, err = r.runQuery(ctx, exec, true, unknownDigests)
+	if len(r.SQLDigestsMap) <= r.fetchAllLimit {
+		queryResult, err = r.runQuery(ctx, sctx, true, unknownDigests)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	} else {
-		queryResult, err = r.runQuery(ctx, exec, true, nil)
+		queryResult, err = r.runQuery(ctx, sctx, true, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
