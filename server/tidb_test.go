@@ -1218,16 +1218,11 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 	}{
 		{sql: "insert into t () values (),(),(),(),(),(),();", planRegexp: ""},
 		{sql: "insert into t (b) values (1),(1),(1),(1),(1),(1),(1),(1);", planRegexp: ""},
-		{sql: "replace into t (b) values (1),(1),(1),(1),(1),(1),(1),(1);", planRegexp: ""},
-<<<<<<< HEAD
 		{sql: "update t set b=a where b is null limit 1;", planRegexp: ".*Limit.*TableReader.*"},
-		{sql: "delete from t where b is null limit 2;", planRegexp: ".*Limit.*TableReader.*"},
-		{sql: "select * from t use index(idx) where a<10;", planRegexp: ".*IndexLookUp.*"},
-		{sql: "select * from t ignore index(idx) where a>0;", planRegexp: ".*TableReader.*"},
-=======
+		{sql: "delete from t where b = a limit 2;", planRegexp: ".*Limit.*TableReader.*"},
+		{sql: "replace into t (b) values (1),(1),(1),(1),(1),(1),(1),(1);", planRegexp: ""},
 		{sql: "select * from t use index(idx) where a<10;", planRegexp: ".*IndexLookUp.*"},
 		{sql: "select * from t ignore index(idx) where a>1000000000;", planRegexp: ".*TableReader.*"},
->>>>>>> 9e8bb505e... test: make test TestTopSQLCPUProfile stable by mock high cpu usage (#25702)
 		{sql: "select /*+ HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a=t2.a where t1.b is not null;", planRegexp: ".*HashJoin.*"},
 		{sql: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t2.a=t1.a where t1.b is not null;", planRegexp: ".*IndexHashJoin.*"},
 		{sql: "select * from t where a=1;", planRegexp: ".*Point_Get.*"},
@@ -1292,16 +1287,10 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		{prepare: "insert into t1 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
 		{prepare: "replace into t1 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
 		{prepare: "update t1 set b=a where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
-<<<<<<< HEAD
-		{prepare: "delete from t1 where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "select * from t1 use index(idx) where a<?;", args: []interface{}{1}, planRegexp: ".*IndexLookUp.*"},
-		{prepare: "select * from t1 ignore index(idx) where a>?;", args: []interface{}{1}, planRegexp: ".*TableReader.*"},
-=======
 		{prepare: "delete from t1 where b = a limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
 		{prepare: "replace into t1 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
 		{prepare: "select * from t1 use index(idx) where a<?;", args: []interface{}{10}, planRegexp: ".*IndexLookUp.*"},
 		{prepare: "select * from t1 ignore index(idx) where a>?;", args: []interface{}{1000000000}, planRegexp: ".*TableReader.*"},
->>>>>>> 9e8bb505e... test: make test TestTopSQLCPUProfile stable by mock high cpu usage (#25702)
 		{prepare: "select /*+ HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*HashJoin.*"},
 		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t2.a=t1.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
 		{prepare: "select * from t1 where a=?;", args: []interface{}{1}, planRegexp: ".*Point_Get.*"},
@@ -1341,16 +1330,11 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		cancel     func()
 	}{
 		{prepare: "insert into t2 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
-		{prepare: "replace into t2 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
-<<<<<<< HEAD
 		{prepare: "update t2 set b=a where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "delete from t2 where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "select * from t2 use index(idx) where a<?;", args: []interface{}{1}, planRegexp: ".*IndexLookUp.*"},
-		{prepare: "select * from t2 ignore index(idx) where a>?;", args: []interface{}{1}, planRegexp: ".*TableReader.*"},
-=======
+		{prepare: "delete from t2 where b = a limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
+		{prepare: "replace into t2 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
 		{prepare: "select * from t2 use index(idx) where a<?;", args: []interface{}{10}, planRegexp: ".*IndexLookUp.*"},
 		{prepare: "select * from t2 ignore index(idx) where a>?;", args: []interface{}{1000000000}, planRegexp: ".*TableReader.*"},
->>>>>>> 9e8bb505e... test: make test TestTopSQLCPUProfile stable by mock high cpu usage (#25702)
 		{prepare: "select /*+ HASH_JOIN(t1, t2) */ * from t2 t1 join t2 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*HashJoin.*"},
 		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t2 t1 join t2 t2 on t2.a=t1.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
 		{prepare: "select * from t2 where a=?;", args: []interface{}{1}, planRegexp: ".*Point_Get.*"},
@@ -1396,25 +1380,6 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		ca.cancel()
 	}
 
-<<<<<<< HEAD
-	// Check result of test case 1.
-	for _, ca := range cases1 {
-		checkFn(ca.sql, ca.planRegexp)
-		ca.cancel()
-	}
-
-	// Check result of test case 2.
-	for _, ca := range cases2 {
-		checkFn(ca.prepare, ca.planRegexp)
-		ca.cancel()
-	}
-
-	// Check result of test case 3.
-	for _, ca := range cases3 {
-		checkFn(ca.prepare, ca.planRegexp)
-		ca.cancel()
-	}
-=======
 	// Test case 4: transaction commit
 	ctx4, cancel4 := context.WithCancel(context.Background())
 	defer cancel4()
@@ -1425,7 +1390,6 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 	})
 	// Check result of test case 4.
 	checkFn("commit", "")
->>>>>>> 9e8bb505e... test: make test TestTopSQLCPUProfile stable by mock high cpu usage (#25702)
 }
 
 func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
