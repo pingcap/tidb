@@ -5018,7 +5018,7 @@ func (s *testSessionSuite) TestLocalTemporaryTableDelete(c *C) {
 
 		keepList := make([]int, 0)
 		for _, id := range idList {
-			if deleted, _ := deletedMap[id]; !deleted {
+			if _, exist := deletedMap[id]; !exist {
 				keepList = append(keepList, id)
 			}
 		}
