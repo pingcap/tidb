@@ -1908,6 +1908,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, err
 	}
 	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
+	defer s.txn.onStmtEnd()
 	var is infoschema.InfoSchema
 	var snapshotTS uint64
 	if preparedStmt.ForUpdateRead {
@@ -1924,14 +1925,10 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	} else {
 		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
-	var rs sqlexec.RecordSet
 	if ok {
-		rs, err = s.cachedPlanExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
-	} else {
-		rs, err = s.preparedStmtExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
+		return s.cachedPlanExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
 	}
-	s.txn.onStmtEnd()
-	return rs, err
+	return s.preparedStmtExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
