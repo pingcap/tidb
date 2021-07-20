@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -678,6 +679,8 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 	b.snapshotTS = v.SnapshotTS
+	b.explicitStaleness = v.IsStaleness
+	b.txnScope = v.TxnScope
 	if b.snapshotTS != 0 {
 		b.is, b.err = domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
 	}
@@ -691,6 +694,15 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		plan:         v.Plan,
 		outputNames:  v.OutputNames(),
 	}
+	failpoint.Inject("assertExecutePrepareStatementStalenessOption", func(val failpoint.Value) {
+		vs := strings.Split(val.(string), "_")
+		assertTS, assertTxnScope := vs[0], vs[1]
+		if strconv.FormatUint(b.snapshotTS, 10) != assertTS ||
+			assertTxnScope != b.txnScope {
+			panic("execute prepare statement have wrong staleness option")
+		}
+	})
+
 	return e
 }
 
@@ -2790,7 +2802,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
-	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
 	if ok, _ := ts.IsPartition(); ok {
 		return ret
 	}
@@ -3019,7 +3031,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ret
 	}
-	// When isPartition is set, it means the union rewriting is done, so a partition reader is prefered.
+	// When isPartition is set, it means the union rewriting is done, so a partition reader is preferred.
 	if ok, _ := is.IsPartition(); ok {
 		return ret
 	}
@@ -4253,17 +4265,23 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		return nil
 	}
 
-	// 2. Build iterInTbl.
+	// 2. Build tables to store intermediate results.
 	chkSize := b.ctx.GetSessionVars().MaxChunkSize
 	tps := seedExec.base().retFieldTypes
-	iterOutTbl := cteutil.NewStorageRowContainer(tps, chkSize)
-	if err := iterOutTbl.OpenAndRef(); err != nil {
-		b.err = err
-		return nil
-	}
-
 	var resTbl cteutil.Storage
 	var iterInTbl cteutil.Storage
+	var iterOutTbl cteutil.Storage
+
+	if v.RecurPlan != nil {
+		// For non-recursive CTE, the result will be put into resTbl directly.
+		// So no need to build iterOutTbl.
+		iterOutTbl := cteutil.NewStorageRowContainer(tps, chkSize)
+		if err := iterOutTbl.OpenAndRef(); err != nil {
+			b.err = err
+			return nil
+		}
+	}
+
 	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
 	if !ok {
 		b.err = errors.New("type assertion for CTEStorageMap failed")
