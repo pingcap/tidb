@@ -658,6 +658,9 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx sessionctx.Context, args
 		return nil, err
 	}
 	c.setType4DivDecimal(bf.tp, lhsTp, rhsTp)
+	if ctx.GetSessionVars().StmtCtx.DepthInExprTree > 0 {
+		bf.tp.Decimal = mysql.MaxDecimalScale
+	}
 	sig := &builtinArithmeticDivideDecimalSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DivideDecimal)
 	return sig, nil
@@ -671,7 +674,9 @@ func (s *builtinArithmeticDivideRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticDivideDecimalSig struct{ baseBuiltinFunc }
+type builtinArithmeticDivideDecimalSig struct{
+	baseBuiltinFunc
+}
 
 func (s *builtinArithmeticDivideDecimalSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticDivideDecimalSig{}
