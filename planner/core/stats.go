@@ -1110,6 +1110,8 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 		return nil, err
 	}
 	resStat := p.cte.seedPartPhysicalPlan.Stats()
+	// Changing the pointer so that seedStat in LogicalCTETable can get the new stat.
+	*p.seedStat = *resStat
 	p.stats = &property.StatsInfo{
 		RowCount:    resStat.RowCount,
 		Cardinality: make(map[int64]float64, selfSchema.Len()),
@@ -1140,6 +1142,6 @@ func (p *LogicalCTETable) DeriveStats(childStats []*property.StatsInfo, selfSche
 	if p.stats != nil {
 		return p.stats, nil
 	}
-	p.stats = p.seedPlan.statsInfo()
+	p.stats = p.seedStat
 	return p.stats, nil
 }

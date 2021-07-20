@@ -1215,13 +1215,14 @@ type LogicalCTE struct {
 
 	cte       *CTEClass
 	cteAsName model.CIStr
+	seedStat  *property.StatsInfo
 }
 
 // LogicalCTETable is for CTE table
 type LogicalCTETable struct {
 	logicalSchemaProducer
 
-	seedPlan     LogicalPlan
+	seedStat     *property.StatsInfo
 	name         string
 	idForStorage int
 }
