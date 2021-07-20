@@ -97,6 +97,8 @@ var (
 	ErrSequenceHasRunOut = dbterror.ClassTable.NewStd(mysql.ErrSequenceRunOut)
 	// ErrRowDoesNotMatchGivenPartitionSet returns when the destination partition conflict with the partition selection.
 	ErrRowDoesNotMatchGivenPartitionSet = dbterror.ClassTable.NewStd(mysql.ErrRowDoesNotMatchGivenPartitionSet)
+	// ErrTempTableFull returns a table is full error, it's used by temporary table now.
+	ErrTempTableFull = dbterror.ClassTable.NewStd(mysql.ErrRecordFileFull)
 )
 
 // RecordIterFunc is used for low-level record iteration.

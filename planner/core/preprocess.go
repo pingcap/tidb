@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -32,12 +34,13 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -53,7 +56,7 @@ func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
 }
 
-// WithPreprocessorReturn returns a PreprocessOpt to initialize the PreprocesorReturn.
+// WithPreprocessorReturn returns a PreprocessOpt to initialize the PreprocessorReturn.
 func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 	return func(p *preprocessor) {
 		p.PreprocessorReturn = ret
@@ -91,7 +94,7 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
-// prepreocssReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
+// preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
 func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
 	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0), withName: make(map[string]interface{})}
 	for _, optFn := range preprocessOpt {
@@ -127,7 +130,7 @@ const (
 
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
-	initedLastSnapshotTS bool
+	initedLastSnapshotTS bool //nolint
 	ExplicitStaleness    bool
 	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
@@ -339,6 +342,37 @@ func bindableStmtType(node ast.StmtNode) byte {
 	return TypeInvalid
 }
 
+func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
+	currentDB := p.ctx.GetSessionVars().CurrentDB
+	if tn.Schema.String() != "" {
+		currentDB = tn.Schema.L
+	}
+	if currentDB == "" {
+		return nil, errors.Trace(ErrNoDB)
+	}
+	sName := model.NewCIStr(currentDB)
+	tbl, err := p.ensureInfoSchema().TableByName(sName, tn.Name)
+	if err != nil {
+		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
+		// unless we know that the user has permissions to it, should it exist.
+		// By checking here, this makes all SELECT/SHOW/INSERT/UPDATE/DELETE statements safe.
+		currentUser, activeRoles := p.ctx.GetSessionVars().User, p.ctx.GetSessionVars().ActiveRoles
+		if pm := privilege.GetPrivilegeManager(p.ctx); pm != nil {
+			if !pm.RequestVerification(activeRoles, sName.L, tn.Name.O, "", mysql.AllPrivMask) {
+				u := currentUser.Username
+				h := currentUser.Hostname
+				if currentUser.AuthHostname != "" {
+					u = currentUser.AuthUsername
+					h = currentUser.AuthHostname
+				}
+				return nil, ErrTableaccessDenied.GenWithStackByArgs(p.stmtType(), u, h, tn.Name.O)
+			}
+		}
+		return nil, err
+	}
+	return tbl, err
+}
+
 func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, defaultDB string) {
 	origTp := bindableStmtType(originNode)
 	hintedTp := bindableStmtType(hintedNode)
@@ -357,6 +391,39 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 			return
 		}
 	}
+
+	// Check the bind operation is not on any temporary table.
+	var resNode ast.ResultSetNode
+	switch n := originNode.(type) {
+	case *ast.SelectStmt:
+		resNode = n.From.TableRefs
+	case *ast.DeleteStmt:
+		resNode = n.TableRefs.TableRefs
+	case *ast.UpdateStmt:
+		resNode = n.TableRefs.TableRefs
+	case *ast.InsertStmt:
+		resNode = n.Table.TableRefs
+	}
+	if resNode != nil {
+		tblNames := extractTableList(resNode, nil, false)
+		for _, tn := range tblNames {
+			tbl, err := p.tableByName(tn)
+			if err != nil {
+				// If the operation is order is: drop table -> drop binding
+				// The table doesn't  exist, it is not an error.
+				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+					continue
+				}
+				p.err = err
+				return
+			}
+			if tbl.Meta().TempTableType != model.TempTableNone {
+				p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
+				return
+			}
+		}
+	}
+
 	originSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()))
 	hintedSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(hintedNode, defaultDB, hintedNode.Text()))
 	if originSQL != hintedSQL {
@@ -600,17 +667,7 @@ func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 
 func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 	for _, table := range stmt.Tables {
-		currentDB := p.ctx.GetSessionVars().CurrentDB
-		if table.Schema.String() != "" {
-			currentDB = table.Schema.L
-		}
-		if currentDB == "" {
-			p.err = errors.Trace(ErrNoDB)
-			return
-		}
-		sName := model.NewCIStr(currentDB)
-		tName := table.Name
-		tableInfo, err := p.ensureInfoSchema().TableByName(sName, tName)
+		tableInfo, err := p.tableByName(table)
 		if err != nil {
 			p.err = err
 			return
@@ -639,9 +696,18 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			p.err = err
 			return
 		}
-		if tableInfo.Meta().TempTableType != model.TempTableNone {
+		tableMetaInfo := tableInfo.Meta()
+		if tableMetaInfo.TempTableType != model.TempTableNone {
 			p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("create table like")
 			return
+		}
+		if stmt.TemporaryKeyword != ast.TemporaryNone {
+			err := checkReferInfoForTemporaryTable(tableMetaInfo)
+			if err != nil {
+				p.err = err
+				return
+			}
+
 		}
 	}
 	if stmt.TemporaryKeyword != ast.TemporaryNone {
@@ -774,6 +840,29 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
 		return
 	}
+	if stmt.TemporaryKeyword == ast.TemporaryNone {
+		return
+	}
+	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
+	for _, t := range stmt.Tables {
+		if isIncorrectName(t.Name.String()) {
+			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
+			return
+		}
+		if t.Schema.String() != "" {
+			currentDB = t.Schema
+		}
+		tableInfo, err := p.ensureInfoSchema().TableByName(currentDB, t.Name)
+		if err != nil {
+			p.err = err
+			return
+		}
+		if tableInfo.Meta().TempTableType != model.TempTableGlobal {
+			p.err = ErrDropTableOnTemporaryTable
+			return
+		}
+	}
+
 }
 
 func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
@@ -1023,6 +1112,23 @@ func checkTableEngine(engineName string) error {
 	return nil
 }
 
+func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
+	if tableMetaInfo.AutoRandomBits != 0 {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random")
+	}
+	if tableMetaInfo.PreSplitRegions != 0 {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions")
+	}
+	if tableMetaInfo.Partition != nil {
+		return ErrPartitionNoTemporary
+	}
+	if tableMetaInfo.ShardRowIDBits != 0 {
+		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
+	}
+
+	return nil
+}
+
 // checkColumn checks if the column definition is valid.
 // See https://dev.mysql.com/doc/refman/5.7/en/storage-requirements.html
 func checkColumn(colDef *ast.ColumnDef) error {
@@ -1246,27 +1352,12 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	table, err := p.ensureInfoSchema().TableByName(tn.Schema, tn.Name)
+	table, err := p.tableByName(tn)
 	if err != nil {
-		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
-		// unless we know that the user has permissions to it, should it exist.
-		// By checking here, this makes all SELECT/SHOW/INSERT/UPDATE/DELETE statements safe.
-		currentUser, activeRoles := p.ctx.GetSessionVars().User, p.ctx.GetSessionVars().ActiveRoles
-		if pm := privilege.GetPrivilegeManager(p.ctx); pm != nil {
-			if !pm.RequestVerification(activeRoles, tn.Schema.L, tn.Name.O, "", mysql.AllPrivMask) {
-				u := currentUser.Username
-				h := currentUser.Hostname
-				if currentUser.AuthHostname != "" {
-					u = currentUser.AuthUsername
-					h = currentUser.AuthHostname
-				}
-				p.err = ErrTableaccessDenied.GenWithStackByArgs(p.stmtType(), u, h, tn.Name.O)
-				return
-			}
-		}
 		p.err = err
 		return
 	}
+
 	tableInfo := table.Meta()
 	dbInfo, _ := p.ensureInfoSchema().SchemaByName(tn.Schema)
 	// tableName should be checked as sequence object.
@@ -1403,6 +1494,9 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		}
 		txnCtx := p.ctx.GetSessionVars().TxnCtx
 		p.TxnScope = txnCtx.TxnScope
+		// It means we meet following case:
+		// 1. start transaction read only as of timestamp ts
+		// 2. select statement
 		if txnCtx.IsStaleness {
 			p.LastSnapshotTS = txnCtx.StartTS
 			p.ExplicitStaleness = txnCtx.IsStaleness
@@ -1419,6 +1513,9 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
 			return
 		}
+		// it means we meet following case:
+		// 1. set transaction read only as of timestamp ts
+		// 2. select statement
 		if !p.initedLastSnapshotTS {
 			p.SnapshotTSEvaluator = func(sessionctx.Context) (uint64, error) {
 				return ts, nil
@@ -1432,6 +1529,12 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		if p.err != nil {
 			return
 		}
+		if err := sessionctx.ValidateStaleReadTS(context.Background(), p.ctx, ts); err != nil {
+			p.err = errors.Trace(err)
+			return
+		}
+		// It means we meet following case:
+		// select statement with as of timestamp
 		if !p.initedLastSnapshotTS {
 			p.SnapshotTSEvaluator = func(ctx sessionctx.Context) (uint64, error) {
 				return calculateTsExpr(ctx, node)
@@ -1450,6 +1553,10 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		if p.err != nil {
 			return
 		}
+		p.ExplicitStaleness = true
+	}
+	if p.flag&inPrepare == 0 {
+		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.ExplicitStaleness
 	}
 	p.initedLastSnapshotTS = true
 }

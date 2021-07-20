@@ -94,6 +94,20 @@ func (ts *tidbTestSuite) SetUpSuite(c *C) {
 
 func (ts *tidbTestTopSQLSuite) SetUpSuite(c *C) {
 	ts.tidbTestSuiteBase.SetUpSuite(c)
+
+	// Initialize global variable for top-sql test.
+	db, err := sql.Open("mysql", ts.getDSN())
+	c.Assert(err, IsNil, Commentf("Error connecting"))
+	defer func() {
+		err := db.Close()
+		c.Assert(err, IsNil)
+	}()
+
+	dbt := &DBTest{c, db}
+	dbt.mustExec("set @@global.tidb_top_sql_precision_seconds=1;")
+	dbt.mustExec("set @@global.tidb_top_sql_report_interval_seconds=2;")
+	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
+
 	tracecpu.GlobalSQLCPUProfiler.Run()
 }
 
@@ -1206,6 +1220,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 	dbt.mustExec("set @@global.tidb_enable_top_sql='On';")
 	dbt.mustExec("set @@tidb_top_sql_agent_address='127.0.0.1:4001';")
 	dbt.mustExec("set @@global.tidb_top_sql_precision_seconds=1;")
+	dbt.mustExec("set @@global.tidb_txn_mode = 'pessimistic'")
 
 	// Test case 1: DML query: insert/update/replace/delete/select
 	cases1 := []struct {
@@ -1264,9 +1279,12 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cases2[i].cancel = cancel
 		prepare, args := ca.prepare, ca.args
+		var stmt *sql.Stmt
 		go ts.loopExec(ctx, c, func(db *sql.DB) {
-			stmt, err := db.Prepare(prepare)
-			c.Assert(err, IsNil)
+			if stmt == nil {
+				stmt, err = db.Prepare(prepare)
+				c.Assert(err, IsNil)
+			}
 			if strings.HasPrefix(prepare, "select") {
 				rows, err := stmt.Query(args...)
 				c.Assert(err, IsNil)
@@ -1301,9 +1319,13 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLCPUProfile(c *C) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cases3[i].cancel = cancel
 		prepare, args := ca.prepare, ca.args
+		doPrepare := true
 		go ts.loopExec(ctx, c, func(db *sql.DB) {
-			_, err := db.Exec(fmt.Sprintf("prepare stmt from '%v'", prepare))
-			c.Assert(err, IsNil)
+			if doPrepare {
+				doPrepare = false
+				_, err := db.Exec(fmt.Sprintf("prepare stmt from '%v'", prepare))
+				c.Assert(err, IsNil)
+			}
 			sqlBuf := bytes.NewBuffer(nil)
 			sqlBuf.WriteString("execute stmt ")
 			for i := range args {
@@ -1498,7 +1520,7 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	agentServer.HangFromNow(time.Second * 6)
 	// run another set of SQL queries
 	cancel()
-	cancel = runWorkload(11, 20)
+	_ = runWorkload(11, 20)
 	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
 
@@ -1510,19 +1532,20 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 	checkFn(0)
 	// set correct address, should collect records
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
-	agentServer.WaitCollectCnt(1, time.Second*4)
+	agentServer.WaitCollectCnt(1, time.Second*8)
 	checkFn(5)
-	// agent server shutdown
-	agentServer.Stop()
 	// run another set of SQL queries
 	cancel()
-	cancel = runWorkload(11, 20)
+
+	_ = runWorkload(11, 20)
+	// agent server shutdown
+	agentServer.Stop()
 	// agent server restart
 	agentServer, err = mockTopSQLReporter.StartMockAgentServer()
 	c.Assert(err, IsNil)
 	dbt.mustExec(fmt.Sprintf("set @@tidb_top_sql_agent_address='%v';", agentServer.Address()))
 	// check result
-	agentServer.WaitCollectCnt(1, time.Second*4)
+	agentServer.WaitCollectCnt(2, time.Second*8)
 	checkFn(5)
 }
 
