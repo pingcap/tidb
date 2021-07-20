@@ -59,15 +59,23 @@ func deleteFromSet(set []string, value string) []string {
 	return set
 }
 
+// SQLDigestTextRetriever is used to find the normalized SQL statement text by SQL digests in statements_summary table.
+// It's exported for text purposes.
 type SQLDigestTextRetriever struct {
+	// SQLDigestsMap is the place to put the digests that's requested for getting SQL text and also the place to put
+	// the query result.
 	SQLDigestsMap map[string]string
 
 	// Replace querying for test purposes.
 	mockLocalData  map[string]string
 	mockGlobalData map[string]string
-	fetchAllLimit  int
+	// There are two ways for querying information: 1) query specified digests by WHERE IN query, or 2) query all
+	// information to avoid the too long WHERE IN clause. If there are more than `fetchAllLimit` digests needs to be
+	// queried, the second way will be chosen; otherwise, the first way will be chosen.
+	fetchAllLimit int
 }
 
+// NewSQLDigestTextRetriever creates a new SQLDigestTextRetriever.
 func NewSQLDigestTextRetriever() *SQLDigestTextRetriever {
 	return &SQLDigestTextRetriever{
 		SQLDigestsMap: make(map[string]string),
@@ -88,6 +96,10 @@ func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues [
 	return res, nil
 }
 
+// runQuery runs query to the system tables to fetch normalized SQL texts corresponding to given SQL digests, if
+// `inValues` is given, or all digest -> SQL mappings otherwise. If `queryGlobal` is false, it queries
+// information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it queries the
+// cluster version of these two tables.
 func (r *SQLDigestTextRetriever) runQuery(ctx context.Context, sctx sessionctx.Context, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
 	// If mock data is set, query the mock data instead of the real statements_summary tables.
 	if !queryGlobal && r.mockLocalData != nil {
@@ -109,10 +121,11 @@ func (r *SQLDigestTextRetriever) runQuery(ctx context.Context, sctx sessionctx.C
 		stmt = "select digest, digest_text from information_schema.cluster_statements_summary union distinct " +
 			"select digest, digest_text from information_schema.cluster_statements_summary_history"
 	}
-
+	// Add the where clause if `inValues` is specified.
 	if len(inValues) > 0 {
 		stmt += " where digest in (" + strings.Repeat("%?,", len(inValues)-1) + "%?)"
 	}
+
 	stmtNode, err := exec.ParseWithParams(ctx, stmt, inValues...)
 	if err != nil {
 		return nil, err
@@ -142,6 +155,7 @@ func (r *SQLDigestTextRetriever) updateWithQueryResult(queryResult map[string]st
 	}
 }
 
+// RetrieveLocal tries to retrieve the SQL text of the SQL digests from local information.
 func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx sessionctx.Context) error {
 	if len(r.SQLDigestsMap) == 0 {
 		return nil
@@ -175,6 +189,7 @@ func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx session
 	return nil
 }
 
+// RetrieveGlobal tries to retrieve the SQL text of the SQL digests from the information of the whole cluster.
 func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx sessionctx.Context) error {
 	err := r.RetrieveLocal(ctx, sctx)
 	if err != nil {

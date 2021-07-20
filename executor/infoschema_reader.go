@@ -2191,7 +2191,7 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 
 	var res [][]types.Datum
 	err = e.nextBatch(func(start, end int) error {
-		// Collect the SQL digests that needs to be retrieved
+		// Before getting rows, collect the SQL digests that needs to be retrieved first.
 		var sqlRetriever *SQLDigestTextRetriever
 		for _, c := range e.columns {
 			if c.Name.O == txninfo.CurrentSQLDigestTextStr {
@@ -2204,6 +2204,7 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 				}
 			}
 		}
+		// Retrieve the SQL texts if necessary.
 		if sqlRetriever != nil {
 			err1 := sqlRetriever.RetrieveLocal(ctx, sctx)
 			if err1 != nil {
