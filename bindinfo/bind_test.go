@@ -2053,6 +2053,7 @@ func (s *testSuite) TestIssue20417(c *C) {
 func (s *testSuite) TestForbidEvolvePlanBaseLinesBeforeGA(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
+	config.CheckTableBeforeDrop = false
 	err := tk.ExecToErr("set @@tidb_evolve_plan_baselines=1")
 	c.Assert(err, ErrorMatches, "The 'baseline evolution' of TiDB has not been GA yet, so it is forbidden to use it.")
 	err = tk.ExecToErr("admin evolve bindings")
