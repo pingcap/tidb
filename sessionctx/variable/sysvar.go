@@ -80,6 +80,7 @@ const (
 )
 
 // SysVar is for system variable.
+// All the fields of SysVar should be READ ONLY after created.
 type SysVar struct {
 	// Scope is for whether can be changed or not
 	Scope ScopeFlag
@@ -556,30 +557,24 @@ func UnregisterSysVar(name string) {
 	sysVarsLock.Unlock()
 }
 
-// Clone deep copies the sysvar struct to avoid a race
-func (sv *SysVar) Clone() *SysVar {
-	dst := *sv
-	return &dst
-}
-
 // GetSysVar returns sys var info for name as key.
 func GetSysVar(name string) *SysVar {
 	name = strings.ToLower(name)
 	sysVarsLock.RLock()
 	defer sysVarsLock.RUnlock()
-	if sysVars[name] == nil {
-		return nil
-	}
-	return sysVars[name].Clone()
+
+	return sysVars[name]
 }
 
-// SetSysVar sets a sysvar. This will not propagate to the cluster, so it should only be
+// SetSysVar sets a sysvar. In fact, SysVar is immutable.
+// SetSysVar is implemented by register a new SysVar with the same name again.
+// This will not propagate to the cluster, so it should only be
 // used for instance scoped AUTO variables such as system_time_zone.
 func SetSysVar(name string, value string) {
-	name = strings.ToLower(name)
-	sysVarsLock.Lock()
-	defer sysVarsLock.Unlock()
-	sysVars[name].Value = value
+	old := GetSysVar(name)
+	tmp := *old
+	tmp.Value = value
+	RegisterSysVar(&tmp)
 }
 
 // GetSysVars deep copies the sysVars list under a RWLock
@@ -588,7 +583,8 @@ func GetSysVars() map[string]*SysVar {
 	defer sysVarsLock.RUnlock()
 	copy := make(map[string]*SysVar, len(sysVars))
 	for name, sv := range sysVars {
-		copy[name] = sv.Clone()
+		tmp := *sv
+		copy[name] = &tmp
 	}
 	return copy
 }
@@ -1106,7 +1102,8 @@ var defaultSysVars = []*SysVar{
 		appendDeprecationWarning(vars, TiDBMemQuotaIndexLookupJoin, TiDBMemQuotaQuery)
 		return normalizedValue, nil
 	}},
-	{Scope: ScopeSession, Name: TiDBEnableStreaming, Value: Off, Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+	// Deprecated: tidb_enable_streaming
+	{Scope: ScopeSession, Name: TiDBEnableStreaming, Value: Off, Type: TypeBool, skipInit: true, Hidden: true, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStreaming = TiDBOptOn(val)
 		return nil
 	}},
@@ -1618,7 +1615,8 @@ var defaultSysVars = []*SysVar{
 		errors.RedactLogEnabled.Store(s.EnableRedactLog)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt64, AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal, Name: TiDBRestrictedReadOnly, Value: BoolToOnOff(DefTiDBRestrictedReadOnly), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 		return nil
 	}},

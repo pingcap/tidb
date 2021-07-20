@@ -100,10 +100,11 @@ type Config struct {
 	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
-	TempStorageQuota int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
-	EnableStreaming  bool                    `toml:"enable-streaming" json:"enable-streaming"`
-	EnableBatchDML   bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
-	TxnLocalLatches  tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
+	TempStorageQuota int64 `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
+	// Deprecated
+	EnableStreaming bool                    `toml:"-" json:"-"`
+	EnableBatchDML  bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
+	TxnLocalLatches tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames        int                `toml:"lower-case-table-names" json:"lower-case-table-names"`
@@ -718,6 +719,7 @@ var deprecatedConfig = map[string]struct{}{
 	"enable-redact-log":              {}, // use variable tidb_redact_log instead
 	"tikv-client.copr-cache.enable":  {},
 	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
+	"enable-streaming":               {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
