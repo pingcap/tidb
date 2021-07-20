@@ -16,11 +16,13 @@ package reporter
 import (
 	"bytes"
 	"context"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -35,6 +37,8 @@ const (
 	reportTimeout             = 40 * time.Second
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
+	// keyOthers is the key to store the aggregation of all records that is out of Top N.
+	keyOthers = ""
 )
 
 var _ TopSQLReporter = &RemoteTopSQLReporter{}
@@ -42,7 +46,7 @@ var _ TopSQLReporter = &RemoteTopSQLReporter{}
 // TopSQLReporter collects Top SQL metrics.
 type TopSQLReporter interface {
 	tracecpu.Collector
-	RegisterSQL(sqlDigest []byte, normalizedSQL string)
+	RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool)
 	RegisterPlan(planDigest []byte, normalizedPlan string)
 	Close()
 }
@@ -53,12 +57,30 @@ type cpuData struct {
 }
 
 // dataPoints represents the cumulative SQL plan CPU time in current minute window
+// dataPoints do not guarantee the TimestampList is sorted by timestamp when there is a time jump backward.
 type dataPoints struct {
 	SQLDigest      []byte
 	PlanDigest     []byte
 	TimestampList  []uint64
 	CPUTimeMsList  []uint32
 	CPUTimeMsTotal uint64
+}
+
+func (d *dataPoints) isInvalid() bool {
+	return len(d.TimestampList) != len(d.CPUTimeMsList)
+}
+
+func (d *dataPoints) Len() int {
+	return len(d.TimestampList)
+}
+
+func (d *dataPoints) Less(i, j int) bool {
+	// sort by timestamp
+	return d.TimestampList[i] < d.TimestampList[j]
+}
+func (d *dataPoints) Swap(i, j int) {
+	d.TimestampList[i], d.TimestampList[j] = d.TimestampList[j], d.TimestampList[i]
+	d.CPUTimeMsList[i], d.CPUTimeMsList[j] = d.CPUTimeMsList[j], d.CPUTimeMsList[i]
 }
 
 type dataPointsOrderByCPUTime []*dataPoints
@@ -98,7 +120,7 @@ type RemoteTopSQLReporter struct {
 	cancel context.CancelFunc
 	client ReportClient
 
-	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are normalized SQL strings
+	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are SQLMeta.
 	normalizedSQLMap atomic.Value // sync.Map
 	sqlMapLength     atomic2.Int64
 
@@ -107,8 +129,14 @@ type RemoteTopSQLReporter struct {
 	normalizedPlanMap atomic.Value // sync.Map
 	planMapLength     atomic2.Int64
 
-	collectCPUDataChan chan cpuData
-	reportDataChan     chan reportData
+	collectCPUDataChan      chan cpuData
+	reportCollectedDataChan chan collectedData
+}
+
+// SQLMeta is the SQL meta which contains the normalized SQL string and a bool field which uses to distinguish internal SQL.
+type SQLMeta struct {
+	normalizedSQL string
+	isInternal    bool
 }
 
 // NewRemoteTopSQLReporter creates a new TopSQL reporter
@@ -118,11 +146,11 @@ type RemoteTopSQLReporter struct {
 func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 	ctx, cancel := context.WithCancel(context.Background())
 	tsr := &RemoteTopSQLReporter{
-		ctx:                ctx,
-		cancel:             cancel,
-		client:             client,
-		collectCPUDataChan: make(chan cpuData, 1),
-		reportDataChan:     make(chan reportData, 1),
+		ctx:                     ctx,
+		cancel:                  cancel,
+		client:                  client,
+		collectCPUDataChan:      make(chan cpuData, 1),
+		reportCollectedDataChan: make(chan collectedData, 1),
 	}
 	tsr.normalizedSQLMap.Store(&sync.Map{})
 	tsr.normalizedPlanMap.Store(&sync.Map{})
@@ -133,19 +161,41 @@ func NewRemoteTopSQLReporter(client ReportClient) *RemoteTopSQLReporter {
 	return tsr
 }
 
+var (
+	ignoreExceedSQLCounter              = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_exceed_sql")
+	ignoreExceedPlanCounter             = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_exceed_plan")
+	ignoreCollectChannelFullCounter     = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_collect_channel_full")
+	ignoreReportChannelFullCounter      = metrics.TopSQLIgnoredCounter.WithLabelValues("ignore_report_channel_full")
+	reportAllDurationSuccHistogram      = metrics.TopSQLReportDurationHistogram.WithLabelValues("all", metrics.LblOK)
+	reportAllDurationFailedHistogram    = metrics.TopSQLReportDurationHistogram.WithLabelValues("all", metrics.LblError)
+	reportRecordDurationSuccHistogram   = metrics.TopSQLReportDurationHistogram.WithLabelValues("record", metrics.LblOK)
+	reportRecordDurationFailedHistogram = metrics.TopSQLReportDurationHistogram.WithLabelValues("record", metrics.LblError)
+	reportSQLDurationSuccHistogram      = metrics.TopSQLReportDurationHistogram.WithLabelValues("sql", metrics.LblOK)
+	reportSQLDurationFailedHistogram    = metrics.TopSQLReportDurationHistogram.WithLabelValues("sql", metrics.LblError)
+	reportPlanDurationSuccHistogram     = metrics.TopSQLReportDurationHistogram.WithLabelValues("plan", metrics.LblOK)
+	reportPlanDurationFailedHistogram   = metrics.TopSQLReportDurationHistogram.WithLabelValues("plan", metrics.LblError)
+	topSQLReportRecordCounterHistogram  = metrics.TopSQLReportDataHistogram.WithLabelValues("record")
+	topSQLReportSQLCountHistogram       = metrics.TopSQLReportDataHistogram.WithLabelValues("sql")
+	topSQLReportPlanCountHistogram      = metrics.TopSQLReportDataHistogram.WithLabelValues("plan")
+)
+
 // RegisterSQL registers a normalized SQL string to a SQL digest.
 // This function is thread-safe and efficient.
 //
 // Note that the normalized SQL string can be of >1M long.
 // This function should be thread-safe, which means parallelly calling it in several goroutines should be fine.
 // It should also return immediately, and do any CPU-intensive job asynchronously.
-func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
+func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool) {
 	if tsr.sqlMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
+		ignoreExceedSQLCounter.Inc()
 		return
 	}
 	m := tsr.normalizedSQLMap.Load().(*sync.Map)
 	key := string(sqlDigest)
-	_, loaded := m.LoadOrStore(key, normalizedSQL)
+	_, loaded := m.LoadOrStore(key, SQLMeta{
+		normalizedSQL: normalizedSQL,
+		isInternal:    isInternal,
+	})
 	if !loaded {
 		tsr.sqlMapLength.Add(1)
 	}
@@ -155,6 +205,7 @@ func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL str
 // This function is thread-safe and efficient.
 func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedBinaryPlan string) {
 	if tsr.planMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
+		ignoreExceedPlanCounter.Inc()
 		return
 	}
 	m := tsr.normalizedPlanMap.Load().(*sync.Map)
@@ -178,6 +229,7 @@ func (tsr *RemoteTopSQLReporter) Collect(timestamp uint64, records []tracecpu.SQ
 	}:
 	default:
 		// ignore if chan blocked
+		ignoreCollectChannelFullCounter.Inc()
 	}
 }
 
@@ -187,14 +239,88 @@ func (tsr *RemoteTopSQLReporter) Close() {
 	tsr.client.Close()
 }
 
+func addEvictedCPUTime(collectTarget map[string]*dataPoints, timestamp uint64, totalCPUTimeMs uint32) {
+	if totalCPUTimeMs == 0 {
+		return
+	}
+	others, ok := collectTarget[keyOthers]
+	if !ok {
+		others = &dataPoints{}
+		collectTarget[keyOthers] = others
+	}
+	if len(others.TimestampList) == 0 {
+		others.TimestampList = []uint64{timestamp}
+		others.CPUTimeMsList = []uint32{totalCPUTimeMs}
+	} else {
+		others.TimestampList = append(others.TimestampList, timestamp)
+		others.CPUTimeMsList = append(others.CPUTimeMsList, totalCPUTimeMs)
+	}
+	others.CPUTimeMsTotal += uint64(totalCPUTimeMs)
+}
+
+// addEvictedIntoSortedDataPoints adds the evict dataPoints into others.
+// Attention, this function depend on others dataPoints is sorted, and this function will modify the evict dataPoints
+// to make sure it is sorted by timestamp.
+func addEvictedIntoSortedDataPoints(others *dataPoints, evict *dataPoints) *dataPoints {
+	if others == nil {
+		others = &dataPoints{}
+	}
+	if evict == nil || len(evict.TimestampList) == 0 {
+		return others
+	}
+	if evict.isInvalid() {
+		logutil.BgLogger().Warn("[top-sql] data points is invalid, it should never happen", zap.Any("self", others), zap.Any("evict", evict))
+		return others
+	}
+	// Sort the dataPoints by timestamp to fix the affect of time jump backward.
+	sort.Sort(evict)
+	if len(others.TimestampList) == 0 {
+		others.TimestampList = evict.TimestampList
+		others.CPUTimeMsList = evict.CPUTimeMsList
+		others.CPUTimeMsTotal = evict.CPUTimeMsTotal
+		return others
+	}
+	length := len(others.TimestampList) + len(evict.TimestampList)
+	timestampList := make([]uint64, 0, length)
+	cpuTimeMsList := make([]uint32, 0, length)
+	i := 0
+	j := 0
+	for i < len(others.TimestampList) && j < len(evict.TimestampList) {
+		if others.TimestampList[i] == evict.TimestampList[j] {
+			timestampList = append(timestampList, others.TimestampList[i])
+			cpuTimeMsList = append(cpuTimeMsList, others.CPUTimeMsList[i]+evict.CPUTimeMsList[j])
+			i++
+			j++
+		} else if others.TimestampList[i] < evict.TimestampList[j] {
+			timestampList = append(timestampList, others.TimestampList[i])
+			cpuTimeMsList = append(cpuTimeMsList, others.CPUTimeMsList[i])
+			i++
+		} else {
+			timestampList = append(timestampList, evict.TimestampList[j])
+			cpuTimeMsList = append(cpuTimeMsList, evict.CPUTimeMsList[j])
+			j++
+		}
+	}
+	if i < len(others.TimestampList) {
+		timestampList = append(timestampList, others.TimestampList[i:]...)
+		cpuTimeMsList = append(cpuTimeMsList, others.CPUTimeMsList[i:]...)
+	}
+	if j < len(evict.TimestampList) {
+		timestampList = append(timestampList, evict.TimestampList[j:]...)
+		cpuTimeMsList = append(cpuTimeMsList, evict.CPUTimeMsList[j:]...)
+	}
+	others.TimestampList = timestampList
+	others.CPUTimeMsList = cpuTimeMsList
+	others.CPUTimeMsTotal += evict.CPUTimeMsTotal
+	return others
+}
+
 func (tsr *RemoteTopSQLReporter) collectWorker() {
 	defer util.Recover("top-sql", "collectWorker", nil, false)
 
 	collectedData := make(map[string]*dataPoints)
-
 	currentReportInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load()
 	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
-
 	for {
 		select {
 		case data := <-tsr.collectCPUDataChan:
@@ -202,7 +328,6 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 			tsr.doCollect(collectedData, data.timestamp, data.records)
 		case <-reportTicker.C:
 			tsr.takeDataAndSendToReportChan(&collectedData)
-
 			// Update `reportTicker` if report interval changed.
 			if newInterval := variable.TopSQLVariable.ReportIntervalSeconds.Load(); newInterval != currentReportInterval {
 				currentReportInterval = newInterval
@@ -246,6 +371,7 @@ func getTopNDataPoints(records []*dataPoints) (topN, shouldEvict []*dataPoints) 
 }
 
 // doCollect collects top N records of each round into collectTarget, and evict the data that is not in top N.
+// All the evicted record will be summary into the collectedData.others.
 func (tsr *RemoteTopSQLReporter) doCollect(
 	collectTarget map[string]*dataPoints, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
 	defer util.Recover("top-sql", "doCollect", nil, false)
@@ -280,10 +406,15 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 		entry.CPUTimeMsTotal += uint64(record.CPUTimeMs)
 	}
 
-	// Evict redundant data.
+	if len(evicted) == 0 {
+		return
+	}
+	// Clean up non Top N data and merge them as "others" (keyed by in the `keyOthers`) in `collectTarget`.
 	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
 	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
+	totalEvictedCPUTime := uint32(0)
 	for _, evict := range evicted {
+		totalEvictedCPUTime += evict.CPUTimeMs
 		key := encodeKey(keyBuf, evict.SQLDigest, evict.PlanDigest)
 		_, ok := collectTarget[key]
 		if ok {
@@ -298,18 +429,16 @@ func (tsr *RemoteTopSQLReporter) doCollect(
 			tsr.planMapLength.Add(-1)
 		}
 	}
+	addEvictedCPUTime(collectTarget, timestamp, totalEvictedCPUTime)
 }
 
-// takeDataAndSendToReportChan takes out (resets) collected data. These data will be send to a report channel
-// for reporting later.
+// takeDataAndSendToReportChan takes collected data and then send to the report channel for reporting.
 func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *map[string]*dataPoints) {
-	// Fetch TopN dataPoints.
-	records := make([]*dataPoints, 0, len(*collectedDataPtr))
-	for _, v := range *collectedDataPtr {
-		records = append(records, v)
+	data := collectedData{
+		records:           *collectedDataPtr,
+		normalizedSQLMap:  tsr.normalizedSQLMap.Load().(*sync.Map),
+		normalizedPlanMap: tsr.normalizedPlanMap.Load().(*sync.Map),
 	}
-	normalizedSQLMap := tsr.normalizedSQLMap.Load().(*sync.Map)
-	normalizedPlanMap := tsr.normalizedPlanMap.Load().(*sync.Map)
 
 	// Reset data for next report.
 	*collectedDataPtr = make(map[string]*dataPoints)
@@ -318,29 +447,24 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(collectedDataPtr *m
 	tsr.sqlMapLength.Store(0)
 	tsr.planMapLength.Store(0)
 
-	// Evict redundant data.
-	var evicted []*dataPoints
-	records, evicted = getTopNDataPoints(records)
-	for _, evict := range evicted {
-		normalizedSQLMap.LoadAndDelete(string(evict.SQLDigest))
-		normalizedPlanMap.LoadAndDelete(string(evict.PlanDigest))
-	}
-
-	data := reportData{
-		collectedData:     records,
-		normalizedSQLMap:  normalizedSQLMap,
-		normalizedPlanMap: normalizedPlanMap,
-	}
-
 	// Send to report channel. When channel is full, data will be dropped.
 	select {
-	case tsr.reportDataChan <- data:
+	case tsr.reportCollectedDataChan <- data:
 	default:
+		// ignore if chan blocked
+		ignoreReportChannelFullCounter.Inc()
 	}
+}
+
+type collectedData struct {
+	records           map[string]*dataPoints
+	normalizedSQLMap  *sync.Map
+	normalizedPlanMap *sync.Map
 }
 
 // reportData contains data that reporter sends to the agent
 type reportData struct {
+	// collectedData contains the topN collected records and the `others` record which aggregation all records that is out of Top N.
 	collectedData     []*dataPoints
 	normalizedSQLMap  *sync.Map
 	normalizedPlanMap *sync.Map
@@ -365,21 +489,58 @@ func (d *reportData) hasData() bool {
 	return cnt > 0
 }
 
-// reportWorker sends data to the gRPC endpoint from the `reportDataChan` one by one.
+// reportWorker sends data to the gRPC endpoint from the `reportCollectedDataChan` one by one.
 func (tsr *RemoteTopSQLReporter) reportWorker() {
 	defer util.Recover("top-sql", "reportWorker", nil, false)
 
 	for {
 		select {
-		case data := <-tsr.reportDataChan:
-			// When `reportDataChan` receives something, there could be ongoing `RegisterSQL` and `RegisterPlan` running,
+		case data := <-tsr.reportCollectedDataChan:
+			// When `reportCollectedDataChan` receives something, there could be ongoing `RegisterSQL` and `RegisterPlan` running,
 			// who writes to the data structure that `data` contains. So we wait for a little while to ensure that
 			// these writes are finished.
 			time.Sleep(time.Millisecond * 100)
-			tsr.doReport(data)
+			report := tsr.getReportData(data)
+			tsr.doReport(report)
 		case <-tsr.ctx.Done():
 			return
 		}
+	}
+}
+
+// getReportData gets reportData from the collectedData.
+// This function will calculate the topN collected records and the `others` record which aggregation all records that is out of Top N.
+func (tsr *RemoteTopSQLReporter) getReportData(collected collectedData) reportData {
+	// Fetch TopN dataPoints.
+	others := collected.records[keyOthers]
+	delete(collected.records, keyOthers)
+	records := make([]*dataPoints, 0, len(collected.records))
+	for _, v := range collected.records {
+		records = append(records, v)
+	}
+
+	// Evict all records that is out of Top N.
+	var evicted []*dataPoints
+	records, evicted = getTopNDataPoints(records)
+	if others != nil {
+		// Sort the dataPoints by timestamp to fix the affect of time jump backward.
+		sort.Sort(others)
+	}
+	for _, evict := range evicted {
+		collected.normalizedSQLMap.LoadAndDelete(string(evict.SQLDigest))
+		collected.normalizedPlanMap.LoadAndDelete(string(evict.PlanDigest))
+		others = addEvictedIntoSortedDataPoints(others, evict)
+	}
+
+	// append others which summarize all evicted item's cpu-time.
+	if others != nil && others.CPUTimeMsTotal > 0 {
+		records = append(records, others)
+	}
+
+	return reportData{
+		collectedData:     records,
+		normalizedSQLMap:  collected.normalizedSQLMap,
+		normalizedPlanMap: collected.normalizedPlanMap,
 	}
 }
 
@@ -391,7 +552,6 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 	}
 
 	agentAddr := variable.TopSQLVariable.AgentAddress.Load()
-
 	timeout := reportTimeout
 	failpoint.Inject("resetTimeoutForTest", func(val failpoint.Value) {
 		if val.(bool) {
@@ -402,10 +562,13 @@ func (tsr *RemoteTopSQLReporter) doReport(data reportData) {
 		}
 	})
 	ctx, cancel := context.WithTimeout(tsr.ctx, timeout)
-
+	start := time.Now()
 	err := tsr.client.Send(ctx, agentAddr, data)
 	if err != nil {
 		logutil.BgLogger().Warn("[top-sql] client failed to send data", zap.Error(err))
+		reportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
+	} else {
+		reportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
 	}
 	cancel()
 }

@@ -173,6 +173,11 @@ func (vt *perfSchemaTable) WritableCols() []*table.Column {
 	return vt.cols
 }
 
+// DeletableCols implements table.Table Type interface.
+func (vt *perfSchemaTable) DeletableCols() []*table.Column {
+	return vt.cols
+}
+
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (vt *perfSchemaTable) FullHiddenColsAndVisibleCols() []*table.Column {
 	return vt.cols
