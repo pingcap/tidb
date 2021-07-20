@@ -609,7 +609,7 @@ const (
 	DefSkipASCIICheck                  = false
 	DefOptAggPushDown                  = false
 	DefOptBCJ                          = false
-	DefOptCartesianBCJ                 = 2
+	DefOptCartesianBCJ                 = 1
 	DefOptMPPOuterJoinFixedBuildSide   = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
