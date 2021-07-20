@@ -140,6 +140,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 			rewriter.schema = p.Schema()
 			rewriter.names = p.OutputNames()
 		}
+		rewriter.sctx.GetSessionVars().StmtCtx.DepthInExprTree = 0
 	}()
 
 	if len(b.rewriterPool) < b.rewriterCounter {
@@ -417,6 +418,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.tryFoldCounter++
 		}
 	case *ast.BinaryOperationExpr:
+		er.sctx.GetSessionVars().StmtCtx.DepthInExprTree++
 		er.asScalar = true
 		if v.Op == opcode.LogicAnd || v.Op == opcode.LogicOr {
 			er.tryFoldCounter++
@@ -1015,6 +1017,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			er.tryFoldCounter--
 		}
 		er.binaryOpToExpression(v)
+		er.sctx.GetSessionVars().StmtCtx.DepthInExprTree--
 	case *ast.BetweenExpr:
 		er.betweenToExpression(v)
 	case *ast.CaseExpr:

@@ -6511,3 +6511,22 @@ func (s *testSuite) TestTxnRetry(c *C) {
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t").Check(testkit.Rows("10"))
 }
+
+func (s *testSuite) TestIssue26348(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t (
+a varchar(8) DEFAULT NULL,
+b varchar(8) DEFAULT NULL,
+c decimal(20,2) DEFAULT NULL,
+d decimal(15,8) DEFAULT NULL
+);`)
+	tk.MustExec(`insert into t values(20210606, 20210606, 50000.00, 5.04600000);`)
+	tk.MustQuery(`select a * c *(d/36000) from t;`).Check(testkit.Rows("141642663.71666598"))
+	tk.MustQuery("select \"20210606\"*50000.00*(5.04600000/36000)").Check(testkit.Rows("141642663.71666598"))
+	// differs from MySQL, MySQL returns 141642663.71666599297980.
+	tk.MustQuery("select 20210606*50000.00*(5.04600000/36000)").Check(testkit.Rows("141642663.716665992979800000000000000000"))
+	tk.MustQuery("select cast(\"20210606\" as double)*50000.00*(5.04600000/36000)").Check(testkit.Rows("141642663.71666598"))
+}
