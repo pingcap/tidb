@@ -170,11 +170,11 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 		c.Assert(len(req.RecordListCpuTimeMs) > 0, IsTrue)
 		c.Assert(req.RecordListCpuTimeMs[0] > 0, IsTrue)
 		c.Assert(req.RecordListCpuTimeMs[0] > 0, IsTrue)
-		normalizedSQL, exist := server.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
+		sqlMeta, exist := server.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		expectedNormalizedSQL, exist := sqlMap[string(req.SqlDigest)]
 		c.Assert(exist, IsTrue)
-		c.Assert(normalizedSQL, Equals, expectedNormalizedSQL)
+		c.Assert(sqlMeta.NormalizedSql, Equals, expectedNormalizedSQL)
 
 		expectedNormalizedPlan := sql2plan[expectedNormalizedSQL]
 		if expectedNormalizedPlan == "" || len(req.PlanDigest) == 0 {

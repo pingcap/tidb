@@ -2350,6 +2350,11 @@ func (s *testSerialDBSuite1) TestCreateExpressionIndexError(c *C) {
 
 	tk.MustGetErrCode("create table t1 (col1 int, index ((concat(''))));", errno.ErrWrongKeyColumnFunctionalIndex)
 	tk.MustGetErrCode("CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))) NONCLUSTERED);", errno.ErrFunctionalIndexPrimaryKey)
+
+	// For issue 26349
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(id char(10) primary key, short_name char(10), name char(10), key n((upper(`name`))));")
+	tk.MustExec("update t t1 set t1.short_name='a' where t1.id='1';")
 }
 
 func (s *testSerialDBSuite1) TestAddExpressionIndexOnPartition(c *C) {
