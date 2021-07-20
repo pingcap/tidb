@@ -124,7 +124,7 @@
   {
     "name": "TestCollationColumnEstimate",
     "cases": [
-      "show stats_buckets",
+      "show stats_topn",
       "explain select * from t where a='aÄa'",
       "explain select * from t where a > 'aÄa'"
     ]
