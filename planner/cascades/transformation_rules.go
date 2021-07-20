@@ -1882,7 +1882,7 @@ func (*outerJoinEliminator) prepareForEliminateOuterJoin(joinExpr *memo.GroupExp
 	return
 }
 
-// check whether one of unique keys sets is contained by inner join keys.
+// isInnerJoinKeysContainUniqueKey check whether one of unique keys sets is contained by inner join keys.
 func (*outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerGroup *memo.Group, joinKeys *expression.Schema) (bool, error) {
 	// builds UniqueKey info of innerGroup.
 	innerGroup.BuildKeyInfo()
@@ -2129,7 +2129,7 @@ func (r *TransformAggregateCaseToSelection) isOnlyOneNotNull(ctx sessionctx.Cont
 	return !args[outputIdx].Equal(ctx, expression.NewNull()) && (argsNum == 2 || args[3-outputIdx].Equal(ctx, expression.NewNull()))
 }
 
-// TransformAggregateCaseToSelection only support `case when cond then var end` and `case when cond then var1 else var2 end`.
+// isTwoOrThreeArgCase represents that TransformAggregateCaseToSelection only support `case when cond then var end` and `case when cond then var1 else var2 end`.
 func (r *TransformAggregateCaseToSelection) isTwoOrThreeArgCase(expr expression.Expression) bool {
 	scalarFunc, ok := expr.(*expression.ScalarFunction)
 	if !ok {
@@ -2315,7 +2315,7 @@ func NewRuleInjectProjectionBelowAgg() Transformation {
 // Match implements Transformation interface.
 func (r *InjectProjectionBelowAgg) Match(expr *memo.ExprIter) bool {
 	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
-	return agg.IsCompleteModeAgg()
+	return agg.HasCompleteModeAgg()
 }
 
 // OnTransform implements Transformation interface.
@@ -2326,9 +2326,15 @@ func (r *InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*
 	hasScalarFunc := false
 	copyFuncs := make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs))
 	for _, aggFunc := range agg.AggFuncs {
-		copyFunc := aggFunc.Clone()
 		// WrapCastForAggArgs will modify AggFunc, so we should clone AggFunc.
-		copyFunc.WrapCastForAggArgs(agg.SCtx())
+		copyFunc := aggFunc.Clone()
+
+		// if aggFunc input is from 'partial data', no need to wrap cast for agg args
+		copyFunc.WrapCastAsDecimalForAggArgs(agg.SCtx())
+		if copyFunc.Mode != aggregation.FinalMode && copyFunc.Mode != aggregation.Partial2Mode {
+			copyFunc.WrapCastForAggArgs(agg.SCtx())
+		}
+
 		copyFuncs = append(copyFuncs, copyFunc)
 		for _, arg := range copyFunc.Args {
 			_, isScalarFunc := arg.(*expression.ScalarFunction)

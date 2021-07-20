@@ -60,7 +60,8 @@
       "select /*+ STREAM_AGG() */ count(distinct c) from t;", // should push down after stream agg implemented
       "select /*+ HASH_AGG() */ count(distinct c) from t;",
       "select count(distinct c) from t group by c;",
-      "select count(distinct c) from t;"
+      "select count(distinct c) from t;",
+      "select count(*) from t group by a having avg(distinct a)>1;" // #24449 Projection should be add between HashAgg and TableReader
     ]
   },
   {
