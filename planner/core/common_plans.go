@@ -270,6 +270,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		if err != nil {
 			return errors.Trace(err)
 		}
+		sctx.GetSessionVars().StmtCtx.IsStaleness = true
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the

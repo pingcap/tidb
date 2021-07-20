@@ -86,6 +86,7 @@ type StatementContext struct {
 	IgnoreNoPartition         bool
 	OptimDependOnMutableConst bool
 	IgnoreExplainIDSuffix     bool
+	IsStaleness               bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
