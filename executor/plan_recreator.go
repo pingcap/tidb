@@ -18,6 +18,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
@@ -27,9 +31,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"os"
-	"strings"
-	"time"
 )
 
 const recreatorPath string = "/tmp/recreator"
@@ -115,16 +116,17 @@ func (e *PlanRecreatorSingleExec) Open(ctx context.Context) error {
 	return nil
 }
 
+// Process dose the export/import work for reproducing sql queries.
 func (e *PlanRecreatorSingleInfo) Process() error {
+	// TODO: plan recreator load will be developed later
 	if e.Load {
 		return nil
 	} else {
-		return e.DumpSingle()
+		return e.dumpSingle()
 	}
 }
 
-// Process dose the export/import work for reproducing sql queries.
-func (e *PlanRecreatorSingleInfo) DumpSingle() error {
+func (e *PlanRecreatorSingleInfo) dumpSingle() error {
 	// Create zip file
 	err := os.MkdirAll(recreatorPath, os.ModePerm)
 	if err != nil {
@@ -210,7 +212,7 @@ func (e *PlanRecreatorSingleInfo) DumpSingle() error {
 		}
 		return nil
 	} else {
-		// Analyze
+		// Explain
 		recordSets, err := e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain %s", sb.String()))
 		if len(recordSets) > 0 {
 			defer recordSets[0].Close()
