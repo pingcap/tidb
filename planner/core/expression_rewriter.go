@@ -150,7 +150,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 			rewriter.schema = p.Schema()
 			rewriter.names = p.OutputNames()
 		}
-		rewriter.sctx.GetSessionVars().StmtCtx.DepthInExprTree = 1
+		rewriter.sctx.GetSessionVars().StmtCtx.DepthInExprTree = 0
 	}()
 
 	if len(b.rewriterPool) < b.rewriterCounter {

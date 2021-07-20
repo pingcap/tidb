@@ -658,7 +658,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx sessionctx.Context, args
 		return nil, err
 	}
 	c.setType4DivDecimal(bf.tp, lhsTp, rhsTp)
-	if ctx.GetSessionVars().StmtCtx.DepthInExprTree > 0 {
+	if ctx.GetSessionVars().StmtCtx.DepthInExprTree > 1 {
 		bf.tp.Decimal = mysql.MaxDecimalScale
 	}
 	sig := &builtinArithmeticDivideDecimalSig{bf}
