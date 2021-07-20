@@ -433,6 +433,8 @@ type cteInfo struct {
 	enterSubquery bool
 	recursiveRef  bool
 	limitLP       LogicalPlan
+	// seedStat is shared between logicalCTE and logicalCTETable.
+	seedStat *property.StatsInfo
 }
 
 // PlanBuilder builds Plan from an ast.Node.
