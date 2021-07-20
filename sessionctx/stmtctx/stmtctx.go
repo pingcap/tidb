@@ -157,8 +157,37 @@ type StatementContext struct {
 	LockKeysDuration      int64
 	LockKeysCount         int32
 	TblInfo2UnionScan     map[*model.TableInfo]bool
+<<<<<<< HEAD
 	TaskID                uint64              // unique ID for an execution of a statement
 	CheckKeyExists        map[string]struct{} // mark the keys needs to check for existence for pessimistic locks.
+=======
+	TaskID                uint64 // unique ID for an execution of a statement
+	TaskMapBakTS          uint64 // counter for
+
+	// stmtCache is used to store some statement-related values.
+	stmtCache map[StmtCacheKey]interface{}
+	// resourceGroupTag cache for the current statement resource group tag.
+	resourceGroupTag atomic.Value
+	// Map to store all CTE storages of current SQL.
+	// Will clean up at the end of the execution.
+	CTEStorageMap interface{}
+
+	// cache is used to reduce object allocation.
+	cache struct {
+		execdetails.RuntimeStatsColl
+		MemTracker  memory.Tracker
+		DiskTracker disk.Tracker
+		LogOnExceed [2]memory.LogOnExceed
+	}
+
+	// DepthInExprTree indicates the depth of the current expression being
+	// rewritten in an expression tree.
+	// NOTE: This var is introduced to remind an arithmetic expression to keep
+	// the precision of an real/decimal intermediate result as accurate as
+	// possible. Thus we only take the arithmetic expression into consideration.
+	// e.g. tidb/issues/26348
+	DepthInExprTree int
+>>>>>>> 39c9a4d47... *: keep the precision of intermediate decimal result as accurate as possible (#26372)
 }
 
 // StmtHints are SessionVars related sql hints.
