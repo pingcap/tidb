@@ -14,11 +14,12 @@
       {
         "SQL": "explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1",
         "Plan": [
-          "Projection 1.00 root  test.tbl.a, test.tbl.b, test.tbl.c",
-          "└─IndexLookUp 1.00 root  limit embedded(offset:2, count:1)",
-          "  ├─Limit(Build) 3.00 cop[tikv]  offset:0, count:3",
-          "  │ └─IndexRangeScan 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:true, desc",
-          "  └─TableRowIDScan(Probe) 1.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
+          "Limit 1.00 root  offset:2, count:1",
+          "└─Projection 3.00 root  test.tbl.a, test.tbl.b, test.tbl.c",
+          "  └─IndexLookUp 3.00 root  ",
+          "    ├─Limit(Build) 3.00 cop[tikv]  offset:0, count:3",
+          "    │ └─IndexRangeScan 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:true, desc",
+          "    └─TableRowIDScan(Probe) 3.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
         ]
       },
       {
@@ -124,6 +125,12 @@
         "SQL": "select count(1) from t join (select avg(a) from t where false group by a) as tmp",
         "Res": [
           "0"
+        ]
+      },
+      {
+        "SQL": "SELECT avg(2) FROM(SELECT min(c) FROM t JOIN(SELECT 1 c) d ORDER BY a) e",
+        "Res": [
+          "2.0000"
         ]
       }
     ]
@@ -1311,21 +1318,19 @@
       {
         "SQL": "select * from pt where id = 4 or c < 7",
         "Plan": [
-          "Projection_4 3330.01 root  test.pt.id, test.pt.c",
-          "└─IndexMerge_11 3330.01 root partition:all ",
-          "  ├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:pt, index:i_id(id) range:[4,4], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan_9(Build) 3323.33 cop[tikv] table:pt, index:i_c(c) range:[-inf,7), keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_10(Probe) 3330.01 cop[tikv] table:pt keep order:false, stats:pseudo"
+          "IndexMerge_11 3330.01 root partition:all ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:pt, index:i_id(id) range:[4,4], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_9(Build) 3323.33 cop[tikv] table:pt, index:i_c(c) range:[-inf,7), keep order:false, stats:pseudo",
+          "└─TableRowIDScan_10(Probe) 3330.01 cop[tikv] table:pt keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select * from pt where id > 4 or c = 7",
         "Plan": [
-          "Projection_4 3340.00 root  test.pt.id, test.pt.c",
-          "└─IndexMerge_11 3340.00 root partition:all ",
-          "  ├─IndexRangeScan_8(Build) 3333.33 cop[tikv] table:pt, index:i_id(id) range:(4,+inf], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan_9(Build) 10.00 cop[tikv] table:pt, index:i_c(c) range:[7,7], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_10(Probe) 3340.00 cop[tikv] table:pt keep order:false, stats:pseudo"
+          "IndexMerge_11 3340.00 root partition:all ",
+          "├─IndexRangeScan_8(Build) 3333.33 cop[tikv] table:pt, index:i_id(id) range:(4,+inf], keep order:false, stats:pseudo",
+          "├─IndexRangeScan_9(Build) 10.00 cop[tikv] table:pt, index:i_c(c) range:[7,7], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_10(Probe) 3340.00 cop[tikv] table:pt keep order:false, stats:pseudo"
         ]
       }
     ]

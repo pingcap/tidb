@@ -148,6 +148,20 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
+
+	// EnumType/SetType Unsupported: merge join conflicts with index order.
+	// ref: https://github.com/pingcap/tidb/issues/24473, https://github.com/pingcap/tidb/issues/25669
+	for _, leftKey := range leftJoinKeys {
+		if leftKey.RetType.Tp == mysql.TypeEnum || leftKey.RetType.Tp == mysql.TypeSet {
+			return nil
+		}
+	}
+	for _, rightKey := range rightJoinKeys {
+		if rightKey.RetType.Tp == mysql.TypeEnum || rightKey.RetType.Tp == mysql.TypeSet {
+			return nil
+		}
+	}
+
 	// TODO: support null equal join keys for merge join
 	if hasNullEQ {
 		return nil
@@ -453,6 +467,11 @@ func (p *LogicalJoin) constructIndexJoin(
 				lhs, ok1 := c.GetArgs()[0].(*expression.Column)
 				rhs, ok2 := c.GetArgs()[1].(*expression.Column)
 				if ok1 && ok2 {
+					if lhs.InOperand || rhs.InOperand {
+						// if this other-cond is from a `[not] in` sub-query, do not convert it into eq-cond since
+						// IndexJoin cannot deal with NULL correctly in this case; please see #25799 for more details.
+						continue
+					}
 					outerSchema, innerSchema := p.Children()[outerIdx].Schema(), p.Children()[1-outerIdx].Schema()
 					if outerSchema.Contains(lhs) && innerSchema.Contains(rhs) {
 						outerHashKeys = append(outerHashKeys, lhs)
@@ -514,6 +533,20 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 		if len(join.InnerHashKeys) > len(join.InnerJoinKeys) {
 			return nil
 		}
+
+		// EnumType/SetType Unsupported: merge join conflicts with index order.
+		// ref: https://github.com/pingcap/tidb/issues/24473, https://github.com/pingcap/tidb/issues/25669
+		for _, innerKey := range join.InnerJoinKeys {
+			if innerKey.RetType.Tp == mysql.TypeEnum || innerKey.RetType.Tp == mysql.TypeSet {
+				return nil
+			}
+		}
+		for _, outerKey := range join.OuterJoinKeys {
+			if outerKey.RetType.Tp == mysql.TypeEnum || outerKey.RetType.Tp == mysql.TypeSet {
+				return nil
+			}
+		}
+
 		hasPrefixCol := false
 		for _, l := range join.IdxColLens {
 			if l != types.UnspecifiedLength {
@@ -2037,6 +2070,7 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 			Count:  lt.Count,
 			Offset: lt.Offset,
 		}.Init(lt.ctx, lt.stats, lt.blockOffset, resultProp)
+		limit.SetSchema(lt.Schema())
 		ret = append(ret, limit)
 	}
 	return ret
