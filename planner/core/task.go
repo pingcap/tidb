@@ -14,10 +14,10 @@
 package core
 
 import (
-	"github.com/pingcap/errors"
 	"math"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
