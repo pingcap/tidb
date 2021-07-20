@@ -1192,7 +1192,8 @@ func (do *Domain) loadStatsWorker() {
 	defer util.Recover(metrics.LabelDomain, "loadStatsWorker", nil, false)
 	lease := do.statsLease
 	if lease == 0 {
-		lease = 3 * time.Second
+		// lease = 3 * time.Second
+		return
 	}
 	loadTicker := time.NewTicker(lease)
 	defer func() {

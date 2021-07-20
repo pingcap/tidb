@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"runtime/trace"
 	"strconv"
 	"sync"
@@ -43,7 +44,197 @@ import (
 var (
 	_ Executor = &HashJoinExec{}
 	_ Executor = &NestedLoopApplyExec{}
+	_ Executor = &NonParallelHashJoinExec{}
 )
+
+type NonParallelHashJoinExec struct {
+	*HashJoinExec
+	hashTblDone       bool
+	remainingIdx      int
+	remainingSelected []bool
+	remainingProbeChk *chunk.Chunk
+	remainingHCtx     *hashContext
+	remainingResChks []*chunk.Chunk
+}
+
+func (e *NonParallelHashJoinExec) Open(ctx context.Context) error {
+	if err := e.HashJoinExec.Open(ctx); err != nil {
+		return err
+	}
+	buildKeyColIdx := make([]int, len(e.buildKeys))
+	for i := range e.buildKeys {
+		buildKeyColIdx[i] = e.buildKeys[i].Index
+	}
+	hCtx := &hashContext{
+		allTypes:  e.buildTypes,
+		keyColIdx: buildKeyColIdx,
+	}
+	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
+	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
+	e.rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
+	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
+	e.rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
+    e.remainingResChks = make([]*chunk.Chunk, 0)
+    e.remainingIdx = math.MaxInt64
+	return nil
+}
+
+func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
+	req.Reset()
+	// construct hash table
+	if !e.hashTblDone {
+		if err = e.buildHashTable(ctx); err != nil {
+			return err
+		}
+		e.hashTblDone = true
+	}
+	// probe hash table
+    if len(e.remainingResChks) != 0 {
+        req.SwapColumns(e.remainingResChks[0])
+        e.remainingResChks = e.remainingResChks[1:]
+        return nil
+    }
+	resChk := newFirstChunk(e)
+	for {
+		if err = e.handleRemainingRows(e.remainingIdx, e.remainingSelected, e.remainingHCtx, e.remainingProbeChk, resChk); err != nil {
+			return err
+		}
+
+		if resChk.IsFull() || len(e.remainingResChks) != 0 {
+			req.SwapColumns(resChk)
+			break
+		}
+
+		chk := newFirstChunk(e.probeSideExec)
+		if err = Next(ctx, e.probeSideExec, chk); err != nil {
+			return err
+		}
+
+		if chk.NumRows() == 0 {
+			req.SwapColumns(resChk)
+			break
+		}
+
+		if err = e.doJoinWork(chk, resChk); err != nil {
+			return err
+		}
+		if resChk.IsFull() || len(e.remainingResChks) != 0 {
+			req.SwapColumns(resChk)
+			break
+		}
+	}
+	return nil
+}
+
+func (e *NonParallelHashJoinExec) buildHashTable(ctx context.Context) (err error) {
+	for {
+		chk := chunk.NewChunkWithCapacity(e.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
+		if err = Next(ctx, e.buildSideExec, chk); err != nil {
+			return err
+		}
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		if !e.useOuterToBuild {
+			err = e.rowContainer.PutChunk(chk, e.isNullEQ)
+		} else {
+            panic("not implemented yet")
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *NonParallelHashJoinExec) doJoinWork(probeChk *chunk.Chunk, resChk *chunk.Chunk) (err error) {
+	probeKeyColIdx := make([]int, len(e.probeKeys))
+	for i := range e.probeKeys {
+		probeKeyColIdx[i] = e.probeKeys[i].Index
+	}
+	selected := make([]bool, 0, chunk.InitialCapacity)
+	hCtx := &hashContext{
+		allTypes:  e.probeTypes,
+		keyColIdx: probeKeyColIdx,
+	}
+	hCtx.initHash(probeChk.NumRows())
+	if e.useOuterToBuild {
+		panic("not implemented yet")
+	} else {
+		selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(probeChk), selected)
+		if err != nil {
+			return err
+		}
+
+		for keyIdx, i := range hCtx.keyColIdx {
+			ignoreNull := len(e.isNullEQ) > keyIdx && e.isNullEQ[keyIdx]
+			err = codec.HashChunkSelected(e.rowContainer.sc, hCtx.hashVals, probeChk, hCtx.allTypes[i], i, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
+			if err != nil {
+				return err
+			}
+		}
+
+		if err = e.handleRemainingRows(0, selected, hCtx, probeChk, resChk); err != nil {
+			return nil
+		}
+	}
+	return nil
+}
+
+func (e *NonParallelHashJoinExec) handleRemainingRows(idx int, selected []bool, hCtx *hashContext, probeChk *chunk.Chunk, resChk *chunk.Chunk) error {
+    i := idx
+	for ; i < len(selected); i++ {
+		if !selected[i] || hCtx.hasNull[i] {
+			e.joiners[0].onMissMatch(false, probeChk.GetRow(i), resChk)
+		} else {
+			probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeChk.GetRow(i)
+			buildSideRows, _, err := e.rowContainer.GetMatchedRowsAndPtrs(probeKey, probeRow, hCtx)
+			if err != nil {
+				return err
+			}
+			if len(buildSideRows) == 0 {
+				e.joiners[0].onMissMatch(false, probeRow, resChk)
+				continue
+			}
+			iter := chunk.NewIterator4Slice(buildSideRows)
+			hasMatch, hasNull := false, false
+			for iter.Begin(); iter.Current() != iter.End(); {
+				matched, isNull, err := e.joiners[0].tryToMatchInners(probeRow, iter, resChk)
+				if err != nil {
+					return err
+				}
+				hasMatch = hasMatch || matched
+				hasNull = hasNull || isNull
+
+				if resChk.IsFull() {
+                    tmpChk := newFirstChunk(e)
+                    tmpChk.SwapColumns(resChk)
+                    e.remainingResChks = append(e.remainingResChks, tmpChk)
+				}
+			}
+			if !hasMatch {
+				e.joiners[0].onMissMatch(hasNull, probeRow, resChk)
+			}
+            if len(e.remainingResChks) != 0 {
+                if resChk.NumRows() == 0 {
+                    resChk.SwapColumns(e.remainingResChks[0])
+                    e.remainingResChks = e.remainingResChks[1:]
+                }
+                break
+            }
+		}
+	}
+    e.remainingIdx = i + 1
+    e.remainingSelected = selected
+    e.remainingProbeChk = probeChk
+    e.remainingHCtx = hCtx
+	return nil
+}
+
+func (e *NonParallelHashJoinExec) Close() error {
+	return e.HashJoinExec.Close()
+}
 
 // HashJoinExec implements the hash join algorithm.
 type HashJoinExec struct {

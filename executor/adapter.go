@@ -72,6 +72,10 @@ var (
 	totalCopWaitHistogramInternal   = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblInternal)
 )
 
+var UseParallel bool
+var ParallelHashJoinAlreadyBuilt bool
+var ParallelTableReaderAlreadyBuilt bool
+
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
 	SetProcessInfo(string, time.Time, byte, uint64)
@@ -84,6 +88,7 @@ type recordSet struct {
 	stmt       *ExecStmt
 	lastErr    error
 	txnStartTS uint64
+	started    bool
 }
 
 func (a *recordSet) Fields() []*ast.ResultField {
@@ -142,9 +147,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog()), zap.Stack("stack"))
 	}()
 
-	err = Next(ctx, a.executor, req)
-	if err != nil {
-		a.lastErr = err
+	if err = Next(ctx, a.executor, req); err != nil {
 		return err
 	}
 	numRows := req.NumRows()
@@ -212,9 +215,10 @@ type ExecStmt struct {
 	retryStartTime    time.Time
 
 	// OutputNames will be set if using cached plan
-	OutputNames []*types.FieldName
-	PsStmt      *plannercore.CachedPrepareStmt
-	Ti          *TelemetryInfo
+	OutputNames   []*types.FieldName
+	PsStmt        *plannercore.CachedPrepareStmt
+	Ti            *TelemetryInfo
+	startedSender map[int]bool
 }
 
 // PointGet short path for point exec directly from plan, keep only necessary steps
@@ -381,12 +385,19 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	if err != nil {
 		return nil, err
 	}
+	ParallelHashJoinAlreadyBuilt = false
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.setPlanLabelForTopSQL(ctx)
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
 		return nil, err
+	}
+
+	if UseParallel {
+		if err := a.cutTreeByExchange(ctx, e); err != nil {
+			return nil, err
+		}
 	}
 
 	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
@@ -434,6 +445,43 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
+}
+
+func (a *ExecStmt) cutTreeByExchange(ctx context.Context, e Executor) error {
+	a.startedSender = map[int]bool{}
+	if err := a.cutTreeByExchangeHelper(ctx, e); err != nil {
+		return err
+	}
+	a.startedSender = map[int]bool{}
+	return nil
+}
+
+func (a *ExecStmt) cutTreeByExchangeHelper(ctx context.Context, e Executor) error {
+	for _, exec := range e.base().children {
+		if err := a.cutTreeByExchangeHelper(ctx, exec); err != nil {
+			return err
+		}
+		if IsExchangeSender(e) {
+			if _, ok := a.startedSender[e.base().id]; ok {
+				continue
+			}
+			a.startedSender[e.base().id] = true
+			go func(ctx context.Context, e Executor, startedSender map[int]bool) {
+				for {
+					req := newFirstChunk(e)
+					if err := Next(ctx, e, req); err != nil {
+                        // TODO: another way to indicates done
+                        fmt.Println(err)
+                        break
+					}
+					// if req.NumRows() == 0 {
+					// 	break
+					// }
+				}
+			}(ctx, e, a.startedSender)
+		}
+	}
+	return nil
 }
 
 func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {
