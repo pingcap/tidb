@@ -1902,6 +1902,28 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		attachPlan2Task(finalAgg, t)
 		t.addCost(p.GetCost(inputRows, true, false))
 		return t
+	case MppScalar:
+		proj := p.convertAvgForMPP()
+		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
+		if partialAgg == nil || finalAgg == nil {
+			return invalidTask
+		}
+		attachPlan2Task(partialAgg, mpp)
+		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.AnyType}
+		newMpp := mpp.enforceExchangerImpl(prop)
+		attachPlan2Task(finalAgg, newMpp)
+		if proj == nil {
+			proj = PhysicalProjection{
+				Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)),
+			}.Init(p.ctx, p.statsInfo(), p.SelectBlockOffset())
+			for _, col := range p.Schema().Columns {
+				proj.Exprs = append(proj.Exprs, col)
+			}
+			proj.SetSchema(p.schema)
+		}
+		attachPlan2Task(proj, newMpp)
+		newMpp.addCost(p.GetCost(inputRows, false, true))
+		return newMpp
 	default:
 		return invalidTask
 	}
