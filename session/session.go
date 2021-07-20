@@ -560,9 +560,16 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	}
 
 	sessionData := sessVars.TemporaryTableData
-	var stage kv.StagingHandle
+	var (
+		stage           kv.StagingHandle
+		localTempTables *infoschema.LocalTemporaryTables
+	)
 
-	localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+	if sessVars.LocalTemporaryTables != nil {
+		localTempTables = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+	} else {
+		localTempTables = new(infoschema.LocalTemporaryTables)
+	}
 
 	defer func() {
 		// stage != kv.InvalidStagingHandle means error occurs, we need to cleanup sessionData

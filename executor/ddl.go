@@ -113,7 +113,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	// For each DDL, we should commit the previous transaction and create a new transaction.
 	// Following cases are exceptions
-	var localTempTableNames []*model.TableInfo
+	var localTempTablesToDrop []*model.TableInfo
 	switch s := e.stmt.(type) {
 	case *ast.CreateTableStmt:
 		if s.TemporaryKeyword == ast.TemporaryLocal {
@@ -132,14 +132,14 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		for tbIdx := len(s.Tables) - 1; tbIdx >= 0; tbIdx-- {
 			tb := s.Tables[tbIdx]
 			if tableInfo, ok := localTemporaryTables.TableByName(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name); ok {
-				localTempTableNames = append(localTempTableNames, tableInfo.Meta())
+				localTempTablesToDrop = append(localTempTablesToDrop, tableInfo.Meta())
 				localTemporaryTables.RemoveTable(tb.Schema, tb.Name)
 				s.Tables = append(s.Tables[:tbIdx], s.Tables[tbIdx+1:]...)
 			}
 		}
 		// if all tables are local temporary, directly drop those tables.
 		if len(s.Tables) == 0 {
-			return e.dropLocalTemporaryTables(localTempTableNames)
+			return e.dropLocalTemporaryTables(localTempTablesToDrop)
 		}
 	}
 
@@ -172,7 +172,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		} else {
 			err = e.executeDropTable(x)
 			if err == nil {
-				err = e.dropLocalTemporaryTables(localTempTableNames)
+				err = e.dropLocalTemporaryTables(localTempTablesToDrop)
 			}
 		}
 	case *ast.RecoverTableStmt:

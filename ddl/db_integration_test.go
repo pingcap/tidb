@@ -14,6 +14,7 @@
 package ddl_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -3114,7 +3115,10 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 	c.Assert(exist, IsTrue)
 	tblInfo := tbl.Meta()
 	tablePrefix := tablecodec.EncodeTablePrefix(tblInfo.ID)
+	endTablePrefix := tablecodec.EncodeTablePrefix(tblInfo.ID + 1)
 
+	tk.MustExec("insert into a_local_temp_table_7 values (0)")
+	tk.MustExec("insert into a_local_temp_table_7 values (2)")
 	tk.MustExec("begin")
 	tk.MustExec("insert into a_local_temp_table_7 values (1)")
 	tk.MustExec("drop table if exists a_local_temp_table_7")
@@ -3123,7 +3127,16 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 	_, err = tk.Exec("select * from a_local_temp_table_7")
 	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.a_local_temp_table_7' doesn't exist")
 	memData := sessionVars.TemporaryTableData
-	iter, err := memData.Iter(tablePrefix, nil)
+	iter, err := memData.Iter(tablePrefix, endTablePrefix)
 	c.Assert(err, IsNil)
+	for iter.Valid() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, tablePrefix) {
+			break
+		}
+		value := iter.Value()
+		c.Assert(len(value), Equals, 0)
+		_ = iter.Next()
+	}
 	c.Assert(iter.Valid(), IsFalse)
 }
