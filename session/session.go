@@ -502,10 +502,11 @@ func (s *session) doCommit(ctx context.Context) error {
 		}
 	}
 
+	sessVars := s.GetSessionVars()
 	// Get the related table or partition IDs.
-	relatedPhysicalTables := s.GetSessionVars().TxnCtx.TableDeltaMap
+	relatedPhysicalTables := sessVars.TxnCtx.TableDeltaMap
 	// Get accessed global temporary tables in the transaction.
-	temporaryTables := s.GetSessionVars().TxnCtx.GlobalTemporaryTables
+	temporaryTables := sessVars.TxnCtx.GlobalTemporaryTables
 	physicalTableIDs := make([]int64, 0, len(relatedPhysicalTables))
 	for id := range relatedPhysicalTables {
 		// Schema change on global temporary tables doesn't affect transactions.
@@ -518,11 +519,12 @@ func (s *session) doCommit(ctx context.Context) error {
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
-	if s.GetSessionVars().EnableAmendPessimisticTxn {
+	if sessVars.EnableAmendPessimisticTxn {
 		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
 	}
-	s.txn.SetOption(kv.EnableAsyncCommit, s.GetSessionVars().EnableAsyncCommit)
-	s.txn.SetOption(kv.Enable1PC, s.GetSessionVars().Enable1PC)
+	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)
+	s.txn.SetOption(kv.Enable1PC, sessVars.Enable1PC)
+	s.txn.SetOption(kv.ResourceGroupTag, sessVars.StmtCtx.GetResourceGroupTag())
 	// priority of the sysvar is lower than `start transaction with causal consistency only`
 	if val := s.txn.GetOption(kv.GuaranteeLinearizability); val == nil || val.(bool) {
 		// We needn't ask the TiKV client to guarantee linearizability for auto-commit transactions
@@ -531,13 +533,13 @@ func (s *session) doCommit(ctx context.Context) error {
 		// An auto-commit transaction fetches its startTS from the TSO so its commitTS > its startTS > the commitTS
 		// of any previously committed transactions.
 		s.txn.SetOption(kv.GuaranteeLinearizability,
-			s.GetSessionVars().TxnCtx.IsExplicit && s.GetSessionVars().GuaranteeLinearizability)
+			sessVars.TxnCtx.IsExplicit && sessVars.GuaranteeLinearizability)
 	}
 	if tables := s.GetSessionVars().TxnCtx.GlobalTemporaryTables; len(tables) > 0 {
 		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
 	}
 
-	return s.txn.Commit(tikvutil.SetSessionID(ctx, s.GetSessionVars().ConnectionID))
+	return s.txn.Commit(tikvutil.SetSessionID(ctx, sessVars.ConnectionID))
 }
 
 type temporaryTableKVFilter map[int64]tableutil.TempTable
