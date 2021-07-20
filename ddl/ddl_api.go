@@ -5140,7 +5140,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return errors.Trace(err)
 	}
 
-	finalColumns := make([]*model.ColumnInfo, len(tblInfo.Columns), len(tblInfo.Columns) + len(hiddenCols))
+	finalColumns := make([]*model.ColumnInfo, len(tblInfo.Columns), len(tblInfo.Columns)+len(hiddenCols))
 	copy(finalColumns, tblInfo.Columns)
 	finalColumns = append(finalColumns, hiddenCols...)
 	// Check before the job is put to the queue.
