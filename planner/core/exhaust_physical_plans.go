@@ -45,7 +45,7 @@ func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	if prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `UnionScan` is not supported now.")
-		return nil, true, nil
+		return nil, true
 	}
 	childProp := prop.CloneEssentialFields()
 	us := PhysicalUnionScan{
@@ -1699,7 +1699,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 		return nil, false
 	}
 	if prop.MPPPartitionTp == property.BroadcastType {
-		return nil, false, nil
+		return nil, false
 	}
 	joins := make([]PhysicalPlan, 0, 8)
 	canPushToTiFlash := p.canPushToCop(kv.TiFlash)
@@ -2109,7 +2109,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	if !prop.AllColsFromSchema(la.children[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
 		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Apply` is not supported now.")
-		return nil, true, nil
+		return nil, true
 	}
 	disableAggPushDownToCop(la.children[0])
 	join := la.GetHashJoin(prop)
@@ -2154,7 +2154,7 @@ func disableAggPushDownToCop(p LogicalPlan) {
 	}
 }
 
-func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
+func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 		"MPP mode may be blocked because operator `Window` is not supported now.")
 	if prop.IsFlashProp() {
@@ -2593,7 +2593,7 @@ func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	if prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `Lock` is not supported now.")
-		return nil, true, nil
+		return nil, true
 	}
 	childProp := prop.CloneEssentialFields()
 	lock := PhysicalLock{
@@ -2611,7 +2611,7 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	}
 	// TODO: UnionAll can pass partition info, but for briefness, we prevent it from pushing down.
 	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
-		return nil, true, nil
+		return nil, true
 	}
 	canUseMpp := p.ctx.GetSessionVars().IsMPPAllowed() && p.canPushToCop(kv.TiFlash)
 	chReqProps := make([]*property.PhysicalProperty, 0, len(p.children))
@@ -2684,7 +2684,7 @@ func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	if !prop.IsEmpty() || prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
-		return nil, true, nil
+		return nil, true
 	}
 	mor := PhysicalMaxOneRow{}.Init(p.ctx, p.stats, p.blockOffset, &property.PhysicalProperty{ExpectedCnt: 2})
 	return []PhysicalPlan{mor}, true

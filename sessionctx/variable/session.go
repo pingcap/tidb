@@ -1529,7 +1529,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBAllowBatchCop:
 		s.AllowBatchCop = int(tidbOptInt64(val, DefTiDBAllowBatchCop))
 	case TiDBAllowMPPExecution:
-		s.allowMPPExecution = val
+		s.allowMPPExecution = TiDBOptOn(val)
 	case TiDBIndexLookupSize:
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:
