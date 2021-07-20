@@ -1758,9 +1758,9 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 		records := agentServer.GetLatestRecords()
 		c.Assert(len(records), Equals, n)
 		for _, r := range records {
-			sqlNormalized, exist := agentServer.GetSQLMetaByDigestBlocking(r.SqlDigest, time.Second)
+			sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(r.SqlDigest, time.Second)
 			c.Assert(exist, IsTrue)
-			c.Check(sqlNormalized, Matches, "select.*from.*join.*")
+			c.Check(sqlMeta.NormalizedSql, Matches, "select.*from.*join.*")
 			if len(r.PlanDigest) == 0 {
 				continue
 			}
