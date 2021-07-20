@@ -181,6 +181,8 @@ func (d *DeadlockHistory) GetAllDatum(infoschema infoschema.InfoSchema) [][]type
 					} else {
 						row[6] = string(decodedKeyJSON)
 					}
+				} else {
+					logutil.BgLogger().Warn("decode key failed", zap.Error(err))
 				}
 			}
 

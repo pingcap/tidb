@@ -67,9 +67,12 @@ func handleType(handle kv.Handle) HandleType {
 	return UnknownHandle
 }
 
-// DecodeKey decodes `key` into `DecodedKey`, which is used to fill KEY_INFO field in `DEADLOCKS` and `DATA_LOCK_WAITS`
+// DecodeKey decodes `key` (either a Record key or an Index key) into `DecodedKey`, which is used to fill KEY_INFO field in `DEADLOCKS` and `DATA_LOCK_WAITS`
 func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error) {
 	var result DecodedKey
+	if !tablecodec.IsRecordKey(key) && !tablecodec.IsIndexKey(key) {
+		return result, errors.Errorf("Unknown key type for key %v", key)
+	}
 	tableID, indexID, isRecordKey, err := tablecodec.DecodeKeyHead(key)
 	if err != nil {
 		return result, err

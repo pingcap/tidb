@@ -2108,6 +2108,8 @@ func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context)
 			} else {
 				decodedKeyStr = string(decodedKeyBytes)
 			}
+		} else {
+			logutil.BgLogger().Warn("decode key failed", zap.Error(err))
 		}
 		e.rows = append(e.rows, types.MakeDatums(
 			strings.ToUpper(hex.EncodeToString(wait.Key)),
