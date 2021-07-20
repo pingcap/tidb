@@ -187,7 +187,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	if !distinct || skipCheck || opt.Untouched {
 		err = txn.GetMemBuffer().Set(key, idxVal)
 		if ss != nil {
-			ss.SetAssertion(key, kv.SetAssertNone)
+			err = ss.SetAssertion(key, kv.SetAssertNone)
 		}
 		return nil, err
 	}
@@ -218,7 +218,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			err = txn.GetMemBuffer().Set(key, idxVal)
 		}
 		if ss != nil {
-			ss.SetAssertion(key, kv.SetAssertNotExist)
+			err = ss.SetAssertion(key, kv.SetAssertNotExist)
 		}
 		return nil, err
 	}
@@ -245,9 +245,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 		switch c.idxInfo.State {
 		case model.StatePublic:
 			// If the index is in public state, delete this index means it must exists.
-			ss.SetAssertion(key, kv.SetAssertExist)
-		default:
-			ss.SetAssertion(key, kv.SetAssertNone)
+			err = ss.SetAssertion(key, kv.SetAssertExist)
 		}
 	}
 	return err

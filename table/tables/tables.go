@@ -414,6 +414,9 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	if err = memBuffer.Set(key, value); err != nil {
 		return err
 	}
+	if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
+		return err
+	}
 	memBuffer.Release(sh)
 	if shouldWriteBinlog(sctx, t.meta) {
 		if !t.meta.PKIsHandle && !t.meta.IsCommonHandle {
@@ -798,7 +801,14 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	if err != nil {
 		return nil, err
 	}
-	txn.SetAssertion(key, kv.SetAssertNone)
+	if setPresume && !txn.IsPessimistic() {
+		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+	} else {
+		err = txn.SetAssertion(key, kv.SetAssertNotExist)
+	}
+	if err != nil {
+		return nil, err
+	}
 
 	var createIdxOpts []table.CreateIdxOptFunc
 	if len(opts) > 0 {
@@ -1177,7 +1187,10 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 	}
 
 	key := t.RecordKey(h)
-	txn.SetAssertion(key, kv.SetAssertExist)
+	err = txn.SetAssertion(key, kv.SetAssertExist)
+	if err != nil {
+		return err
+	}
 	return txn.Delete(key)
 }
 

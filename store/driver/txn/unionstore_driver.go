@@ -161,6 +161,8 @@ func getTiKVFlagsOp(op kv.FlagsOp) tikvstore.FlagsOp {
 		return tikvstore.SetAssertExist
 	case kv.SetAssertNotExist:
 		return tikvstore.SetAssertNotExist
+	case kv.SetAssertUnknown:
+		return tikvstore.SetAssertUnknown
 	case kv.SetAssertNone:
 		return tikvstore.SetAssertNone
 	}

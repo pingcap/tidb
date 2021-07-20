@@ -192,7 +192,7 @@ type Transaction interface {
 // AssertionProto is an interface defined for the assertion protocol.
 type AssertionProto interface {
 	// SetAssertion sets an assertion for an operation on the key.
-	SetAssertion(key []byte, assertion ...FlagsOp)
+	SetAssertion(key []byte, assertion ...FlagsOp) error
 }
 
 // Client is used to send request to KV layer.

@@ -42,12 +42,17 @@ func (f KeyFlags) HasLocked() bool {
 
 // HasAssertExist returns whether the key need ensure exists in 2pc.
 func (f KeyFlags) HasAssertExist() bool {
-	return f&flagAssertExist != 0
+	return f&flagAssertExist != 0 && f&flagAssertNotExist == 0
 }
 
 // HasAssertNotExist returns whether the key need ensure non-exists in 2pc.
 func (f KeyFlags) HasAssertNotExist() bool {
-	return f&flagAssertNotExist != 0
+	return f&flagAssertNotExist != 0 && f&flagAssertExist == 0
+}
+
+// HasAssertion returns whether the key has assertion.
+func (f KeyFlags) HasAssertion() bool {
+	return f&flagAssertExist != 0 || f&flagAssertNotExist != 0
 }
 
 // HasNeedLocked return whether the key needed to be locked
@@ -112,6 +117,9 @@ func ApplyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 		case SetAssertNotExist:
 			origin &= ^flagAssertExist
 			origin |= flagAssertNotExist
+		case SetAssertUnknown:
+			origin |= flagAssertNotExist
+			origin |= flagAssertExist
 		case SetAssertNone:
 			origin &= ^flagAssertExist
 			origin &= ^flagAssertNotExist
@@ -151,6 +159,8 @@ const (
 	SetAssertExist
 	// SetAssertNotExist marks the key must not exist.
 	SetAssertNotExist
+	// SetAssertUnknown mark the key maybe exists or not exists.
+	SetAssertUnknown
 	// SetAssertNone cleans up the key's assert.
 	SetAssertNone
 )

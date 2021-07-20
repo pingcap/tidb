@@ -43,6 +43,8 @@ const (
 	SetAssertExist
 	// SetAssertNotExist marks the associated key must not exists.
 	SetAssertNotExist
+	// SetAssertUnknown marks the associated key is unknown and can not apply other assertion.
+	SetAssertUnknown
 	// SetAssertNone marks the associated key without any assert.
 	SetAssertNone
 )
