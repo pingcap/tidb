@@ -21,10 +21,10 @@
     * [Building placement rules](#building-placement-rules)
     * [Rule priorities](#rule-priorities)
 * [Examples](#examples)
-    * [Optimization: Follower read in every region]
-    * [Optimization: Latest data on SSD]
-    * [Optimization: Multi-tenancy / control of shared resources]
-    * [Compliance: User data needs geographic split]
+    * [Optimization: Follower read in every region](#optimization-follower-read-in-every-region)
+    * [Optimization: Latest data on SSD](#optimization-latest-data-on-ssd)
+    * [Optimization: Multi-tenancy / control of shared resources](#optimization-multi-tenancy--control-of-shared-resources)
+    * [Compliance: User data needs geographic split](#compliance-user-data-needs-geographic-split)
 * [Impacts & Risks](#impacts--risks)
 * [Investigation & Alternatives](#investigation--alternatives)
     * [Known Limitations](#known-limitations)
@@ -143,11 +143,15 @@ CREATE PLACEMENT POLICY `standardplacement1` PRIMARY REGION="us-east-1" REGIONS=
 CREATE PLACEMENT POLICY `standardplacement2` LEADER_CONSTRAINTS="[+region=us-east-1]"  FOLLOWERS_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=4;
 ```
 
-When the constraints is specified as a dictionary (`{}`) numeric values are also supported. So you can specify that each of the following regions must have one follower, with the final follower able to be in any region:
+When the constraints is specified as a dictionary (`{}`) numeric counts for each region must be specified and `FOLLOWERS=n` is disallowed. The special `+any` constraint permits additional followers to be added with no constraints:
 
 ```sql
-ALTER PLACEMENT POLICY `standardplacement3` LEADER_CONSTRAINTS="[+region=us-east-1]" FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,+region=us-east-2:1,+region=us-west-1:1}" FOLLOWERS=4;
+ALTER PLACEMENT POLICY `standardplacement3` LEADER_CONSTRAINTS="[+region=us-east-1]" FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,+region=us-east-2:1,+region=us-west-1:1,+any:1}";
 ```
+
+The placement policy above has 4 followers:
+- 1 each in the regions us-east-1, us-east-2 and us-west-1
+- 1 that has no constraints and may reside in any location (including the previously specified regions)
 
 Behavior notes:
 
@@ -165,7 +169,7 @@ A new system table `information_schema.placement_rules` is added to view all exp
 
 The table contains columns such as:
 
-* `rule_definition`: the placement policy definition (could be PLACEMENT POLICY=x, syntactic sugar variant or full list of constraints)
+* `rule_definition`: the placement policy definition (could be `PLACEMENT POLICY=x`, syntactic sugar variant or full list of constraints)
 * `followers`: the number of followers
 * `learners`: the number of learners
 * `voters`: the number of voters
@@ -316,22 +320,32 @@ The only way to judge whether it’s adding a TiFlash replica is to check the la
 
 #### Specifying role count
 
-The roles `FOLLOWERS`, `LEARNERS` and `VOTERS` also support an optional count. For example:
+The roles `FOLLOWERS`, `LEARNERS` and `VOTERS` also support an optional count in *list* format. For example:
 
 ```sql
 CREATE PLACEMENT POLICY `standardplacement1` PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4;
 CREATE PLACEMENT POLICY `standardplacement2` LEADER_CONSTRAINTS="[+region=us-east-1]"  FOLLOWERS_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=4;
 ```
 
-If the constraints is specified as a dictionary (e.g. `{"+region=us-east-1":1}`), and the count is smaller than the minimum number required to satisfy the constraint rule, then an error should be returned.
-Constraints do not automatically increase the count of the role, so if a larger number than the default is required it must be specified:
+If the constraints is specified as a dictionary (e.g. `{"+region=us-east-1":1}`) the count is not applicable and an error is returned:
 
 ```sql
-FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:2}" FOLLOWERS=2 // error, requires 3
-FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:2}" // default is 2, so also error
+FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:2}" FOLLOWERS=3 // technically accurate, but an error
+FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:2}" FOLLOWERS=2 // an error
 ```
 
-This changes an earlier proposal where the minimum count could be inferred by the constraints. The motivation for this change is to reduce the risk of misconfiguration in the event that rules are complex. See also "Policy Validation" below.
+For dictionary format, the count is inferred by the constraint. The following constraint creates 4 followers:
+
+```sql
+FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:2,+any:1}"
+```
+
+Explanation:
+- 1 follower in `us-east-1`
+- 2 followers not in `us-east-2`
+- 1 follower in any region (a special label of `+any`)
+
+`+any` changes an earlier proposal where the `FOLLOWERS` count could also be specified. This has been removed to reduce the risk of discrepancies and misconfiguration. See also "Policy Validation" below.
 
 #### Key range configuration
 
@@ -347,7 +361,7 @@ When placement policies are specified, they should be validated for correctness:
 
 1. The `FOLLOWERS` count should respect raft quorum expecations. The default is `2` (which creates raft groups of 3). If the number is odd, it could lead to split brain scenarios, so a warning should be issued. Warnings should also be issued for a count less than 2 (this might be useful for development environmens, so an error is not returned)
 2. A policy that is impossible based on the current topology (region=us-east-1 and followers=2, but there is only 1 store in us-east-1) should be a warning. This allows for some transitional topologies.
-3. If the constraints are specified as a dictionary, and the count is smaller thanthe minimum number required to satisfy the constraint rule, then an error should be returned (see "specifiying role count" above)
+3. If the constraints are specified as a dictionary, specifying the count (i.e. `FOLLOWERS=n`) is prohibited.
 
 #### Skipping Policy Validation
 
@@ -368,7 +382,7 @@ The following two policies are not identical:
 
 ```sql
 CREATE PLACEMENT POLICY p1 FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=2;
-CREATE PLACEMENT POLICY p2 FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:1}" FOLLOWERS=2;
+CREATE PLACEMENT POLICY p2 FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:1}";
 ```
 
 This is because p2 explicitly requires a follower count of 1 per region, whereas p2 allows for 2 in any of the above (TODO: is this correct, how does PD balance?)
@@ -738,7 +752,7 @@ In such a way, the most granular rule always works.
 
 This optimization is straight forward:
 ```sql
-CREATE PLACEMENT POLICY local_stale_reads FOLLOWER_CONSTRAINTS="{+us-east-1:1,+us-east-2:1,+us-west-1:1,+us-west-2:1}" FOLLOWERS=4;
+CREATE PLACEMENT POLICY local_stale_reads FOLLOWER_CONSTRAINTS="{+us-east-1:1,+us-east-2:1,+us-west-1:1,+us-west-2:1}";
 CREATE TABLE t (a int, b int) PLACEMENT POLICY=`local_stale_reads`;
 ```
 
@@ -912,7 +926,7 @@ This specific semantic will be the hardest to implement because of the other dep
 
 #### PD Balancing Behavior
 
-In the case of `FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=3`, is pd deterministic in balancing between each of the regions? If not, is it possible to ask PD to have certain scheduling/balancing policies.
+In the case of `FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=3`, is PD deterministic in balancing between each of the regions? If not, is it possible to ask PD to have certain scheduling/balancing policies.
 
 Other examples of scheduling policies (versus scheduling constraints) have been proposed by [@nolouch](https://github.com/nolouch), which I will paraphrase here:
 
