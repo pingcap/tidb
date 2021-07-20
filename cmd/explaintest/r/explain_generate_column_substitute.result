@@ -261,7 +261,7 @@ a	b	c	e
 desc select * from t order by a+1;
 id	estRows	task	access object	operator info
 Projection_5	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e
-└─Projection_13	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e, EMPTY_NAME
+└─Projection_13	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e, plus(test.t.a, 1)
   └─IndexLookUp_12	10000.00	root		
     ├─IndexFullScan_10(Build)	10000.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	keep order:true, stats:pseudo
     └─TableRowIDScan_11(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -432,12 +432,12 @@ Projection	0.00	root		test.t.a, test.t.b
   └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false
 desc format = 'brief' select count(upper(b)) from t group by upper(b);
 id	estRows	task	access object	operator info
-StreamAgg	4.80	root		group by:EMPTY_NAME, funcs:count(EMPTY_NAME)->Column#7
+StreamAgg	4.80	root		group by:upper(test.t.b), funcs:count(upper(test.t.b))->Column#7
 └─IndexReader	6.00	root		index:IndexFullScan
   └─IndexFullScan	6.00	cop[tikv]	table:t, index:expression_index_2(upper(`b`))	keep order:true
 desc format = 'brief' select max(upper(b)) from t group by upper(b);
 id	estRows	task	access object	operator info
-StreamAgg	4.80	root		group by:EMPTY_NAME, funcs:max(EMPTY_NAME)->Column#7
+StreamAgg	4.80	root		group by:upper(test.t.b), funcs:max(upper(test.t.b))->Column#7
 └─IndexReader	6.00	root		index:IndexFullScan
   └─IndexFullScan	6.00	cop[tikv]	table:t, index:expression_index_2(upper(`b`))	keep order:true
 desc format = 'brief' select count(upper(b)) from t use index() group by upper(b);
