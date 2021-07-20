@@ -2139,38 +2139,9 @@ func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionct
 	return rows, nil
 }
 
-type batchRetriever struct {
-	retrieved    bool
-	retrievedIdx int
-	batchSize    int
-	totalRows    int
-}
-
-func (b *batchRetriever) nextBatch(retrieveRange func(start, end int) error) error {
-	if b.retrieved {
-		return nil
-	}
-	start := b.retrievedIdx
-	end := b.retrievedIdx + b.batchSize
-	if end > b.totalRows {
-		end = b.totalRows
-	}
-
-	err := retrieveRange(start, end)
-	if err != nil {
-		b.retrieved = true
-		return err
-	}
-	b.retrievedIdx = end
-	if b.retrievedIdx == b.totalRows {
-		b.retrieved = true
-	}
-	return nil
-}
-
 type tidbTrxTableRetriever struct {
 	dummyCloser
-	batchRetriever
+	batchRetrieverHelper
 	table       *model.TableInfo
 	columns     []*model.ColumnInfo
 	txnInfo     []*txninfo.TxnInfo
@@ -2203,8 +2174,9 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 			}
 			e.txnInfo = append(e.txnInfo, info)
 		}
-		e.batchRetriever.totalRows = len(e.txnInfo)
-		e.batchRetriever.batchSize = 1024
+
+		e.batchRetrieverHelper.totalRows = len(e.txnInfo)
+		e.batchRetrieverHelper.batchSize = 1024
 	}
 
 	var err error

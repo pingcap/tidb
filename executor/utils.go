@@ -182,3 +182,36 @@ func (r *sqlDigestTextRetriever) retrieveGlobal(ctx context.Context, sctx sessio
 	r.updateWithQueryResult(queryResult)
 	return nil
 }
+
+type batchRetrieverHelper struct {
+	retrieved    bool
+	retrievedIdx int
+	batchSize    int
+	totalRows    int
+}
+
+func (b *batchRetrieverHelper) nextBatch(retrieveRange func(start, end int) error) error {
+	if b.retrieved {
+		return nil
+	}
+	if b.retrievedIdx >= b.totalRows {
+		b.retrieved = true
+		return nil
+	}
+	start := b.retrievedIdx
+	end := b.retrievedIdx + b.batchSize
+	if end > b.totalRows {
+		end = b.totalRows
+	}
+
+	err := retrieveRange(start, end)
+	if err != nil {
+		b.retrieved = true
+		return err
+	}
+	b.retrievedIdx = end
+	if b.retrievedIdx == b.totalRows {
+		b.retrieved = true
+	}
+	return nil
+}
