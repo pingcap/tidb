@@ -629,8 +629,13 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 	}
 	cpuCost += probeCost
 	// For merge join, only one group of rows with same join key(not null) are cached,
+<<<<<<< HEAD
 	// we compute averge memory cost using estimated group size.
 	NDV := getCardinality(innerKeys, innerSchema, innerStats)
+=======
+	// we compute average memory cost using estimated group size.
+	NDV := getColsNDV(innerKeys, innerSchema, innerStats)
+>>>>>>> 0bf495d5e... planner: unify the terms NDV and cardinality in the optimizer (#26345)
 	memoryCost := (innerStats.RowCount / NDV) * sessVars.MemoryFactor
 	return cpuCost + memoryCost
 }

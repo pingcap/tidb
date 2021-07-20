@@ -36,11 +36,11 @@ func (p *basePhysicalPlan) StatsCount() float64 {
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalTableDual) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	profile := &property.StatsInfo{
-		RowCount:    float64(p.RowCount),
-		Cardinality: make(map[int64]float64, selfSchema.Len()),
+		RowCount: float64(p.RowCount),
+		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	}
 	for _, col := range selfSchema.Columns {
-		profile.Cardinality[col.UniqueID] = float64(p.RowCount)
+		profile.ColNDVs[col.UniqueID] = float64(p.RowCount)
 	}
 	p.stats = profile
 	return p.stats, nil
@@ -51,12 +51,12 @@ func (p *LogicalMemTable) DeriveStats(childStats []*property.StatsInfo, selfSche
 	statsTable := statistics.PseudoTable(p.TableInfo)
 	stats := &property.StatsInfo{
 		RowCount:     float64(statsTable.Count),
-		Cardinality:  make(map[int64]float64, len(p.TableInfo.Columns)),
+		ColNDVs:      make(map[int64]float64, len(p.TableInfo.Columns)),
 		HistColl:     statsTable.GenerateHistCollFromColumnInfo(p.TableInfo.Columns, p.schema.Columns),
 		StatsVersion: statistics.PseudoVersion,
 	}
 	for _, col := range selfSchema.Columns {
-		stats.Cardinality[col.UniqueID] = float64(statsTable.Count)
+		stats.ColNDVs[col.UniqueID] = float64(statsTable.Count)
 	}
 	p.stats = stats
 	return p.stats, nil
@@ -71,11 +71,11 @@ func (p *LogicalShow) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 
 func getFakeStats(schema *expression.Schema) *property.StatsInfo {
 	profile := &property.StatsInfo{
-		RowCount:    1,
-		Cardinality: make(map[int64]float64, schema.Len()),
+		RowCount: 1,
+		ColNDVs:  make(map[int64]float64, schema.Len()),
 	}
 	for _, col := range schema.Columns {
-		profile.Cardinality[col.UniqueID] = 1
+		profile.ColNDVs[col.UniqueID] = 1
 	}
 	return profile
 }
@@ -115,11 +115,11 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSche
 		return nil, err
 	}
 	profile := &property.StatsInfo{
-		RowCount:    float64(1),
-		Cardinality: make(map[int64]float64, selfSchema.Len()),
+		RowCount: float64(1),
+		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	}
 	for _, col := range selfSchema.Columns {
-		profile.Cardinality[col.UniqueID] = 1
+		profile.ColNDVs[col.UniqueID] = 1
 	}
 	p.stats = profile
 	return profile, nil
@@ -147,7 +147,7 @@ func (ds *DataSource) initStats() {
 	}
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.statisticTable.Count),
-		Cardinality:  make(map[int64]float64, ds.schema.Len()),
+		ColNDVs:      make(map[int64]float64, ds.schema.Len()),
 		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
 		StatsVersion: ds.statisticTable.Version,
 	}
@@ -155,7 +155,7 @@ func (ds *DataSource) initStats() {
 		tableStats.StatsVersion = statistics.PseudoVersion
 	}
 	for _, col := range ds.schema.Columns {
-		tableStats.Cardinality[col.UniqueID] = ds.getColumnNDV(col.ID)
+		tableStats.ColNDVs[col.UniqueID] = ds.getColumnNDV(col.ID)
 	}
 	ds.tableStats = tableStats
 	ds.TblColHists = ds.statisticTable.ID2UniqueID(ds.TblCols)
@@ -490,12 +490,12 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, selfSch
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	p.stats = &property.StatsInfo{
-		Cardinality: make(map[int64]float64, selfSchema.Len()),
+		ColNDVs: make(map[int64]float64, selfSchema.Len()),
 	}
 	for _, childProfile := range childStats {
 		p.stats.RowCount += childProfile.RowCount
 		for _, col := range selfSchema.Columns {
-			p.stats.Cardinality[col.UniqueID] += childProfile.Cardinality[col.UniqueID]
+			p.stats.ColNDVs[col.UniqueID] += childProfile.ColNDVs[col.UniqueID]
 		}
 	}
 	return p.stats, nil
@@ -503,11 +503,11 @@ func (p *LogicalUnionAll) DeriveStats(childStats []*property.StatsInfo, selfSche
 
 func deriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *property.StatsInfo {
 	stats := &property.StatsInfo{
-		RowCount:    math.Min(limitCount, childProfile.RowCount),
-		Cardinality: make(map[int64]float64, len(childProfile.Cardinality)),
+		RowCount: math.Min(limitCount, childProfile.RowCount),
+		ColNDVs:  make(map[int64]float64, len(childProfile.ColNDVs)),
 	}
-	for id, c := range childProfile.Cardinality {
-		stats.Cardinality[id] = math.Min(c, stats.RowCount)
+	for id, c := range childProfile.ColNDVs {
+		stats.ColNDVs[id] = math.Min(c, stats.RowCount)
 	}
 	return stats
 }
@@ -524,37 +524,118 @@ func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, selfSchema 
 	return lt.stats, nil
 }
 
+<<<<<<< HEAD
 // getCardinality will return the Cardinality of a couple of columns. We simply return the max one, because we cannot know
 // the Cardinality for multi-dimension attributes properly. This is a simple and naive scheme of Cardinality estimation.
 func getCardinality(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
 	cardinality := 1.0
+=======
+func getGroupNDV4Cols(cols []*expression.Column, stats *property.StatsInfo) *property.GroupNDV {
+	if len(cols) == 0 || len(stats.GroupNDVs) == 0 {
+		return nil
+	}
+	cols = expression.SortColumns(cols)
+	for _, groupNDV := range stats.GroupNDVs {
+		if len(cols) != len(groupNDV.Cols) {
+			continue
+		}
+		match := true
+		for i, col := range groupNDV.Cols {
+			if col != cols[i].UniqueID {
+				match = false
+				break
+			}
+		}
+		if match {
+			return &groupNDV
+		}
+	}
+	return nil
+}
+
+// getColsNDV returns the NDV of a couple of columns.
+// If the columns match any GroupNDV maintained by child operator, we can get an accurate NDV.
+// Otherwise, we simply return the max NDV among the columns, which is a lower bound.
+func getColsNDV(cols []*expression.Column, schema *expression.Schema, profile *property.StatsInfo) float64 {
+	NDV := 1.0
+	if groupNDV := getGroupNDV4Cols(cols, profile); groupNDV != nil {
+		return math.Max(groupNDV.NDV, NDV)
+	}
+>>>>>>> 0bf495d5e... planner: unify the terms NDV and cardinality in the optimizer (#26345)
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
 		logutil.BgLogger().Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
-		return cardinality
+		return NDV
 	}
 	for _, idx := range indices {
 		// It is a very elementary estimation.
 		col := schema.Columns[idx]
-		cardinality = math.Max(cardinality, profile.Cardinality[col.UniqueID])
+		NDV = math.Max(NDV, profile.ColNDVs[col.UniqueID])
 	}
-	return cardinality
+	return NDV
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	childProfile := childStats[0]
 	p.stats = &property.StatsInfo{
-		RowCount:    childProfile.RowCount,
-		Cardinality: make(map[int64]float64, len(p.Exprs)),
+		RowCount: childProfile.RowCount,
+		ColNDVs:  make(map[int64]float64, len(p.Exprs)),
 	}
 	for i, expr := range p.Exprs {
 		cols := expression.ExtractColumns(expr)
-		p.stats.Cardinality[selfSchema.Columns[i].UniqueID] = getCardinality(cols, childSchema[0], childProfile)
+		p.stats.ColNDVs[selfSchema.Columns[i].UniqueID] = getColsNDV(cols, childSchema[0], childProfile)
 	}
 	return p.stats, nil
 }
 
+<<<<<<< HEAD
+=======
+// ExtractColGroups implements LogicalPlan ExtractColGroups interface.
+func (p *LogicalProjection) ExtractColGroups(colGroups [][]*expression.Column) [][]*expression.Column {
+	if len(colGroups) == 0 {
+		return nil
+	}
+	extColGroups, _ := p.Schema().ExtractColGroups(colGroups)
+	if len(extColGroups) == 0 {
+		return nil
+	}
+	extracted := make([][]*expression.Column, 0, len(extColGroups))
+	for _, cols := range extColGroups {
+		exprs := make([]*expression.Column, len(cols))
+		allCols := true
+		for i, offset := range cols {
+			col, ok := p.Exprs[offset].(*expression.Column)
+			// TODO: for functional dependent projections like `col1 + 1` -> `col2`, we can maintain GroupNDVs actually.
+			if !ok {
+				allCols = false
+				break
+			}
+			exprs[i] = col
+		}
+		if allCols {
+			extracted = append(extracted, expression.SortColumns(exprs))
+		}
+	}
+	return extracted
+}
+
+func (la *LogicalAggregation) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, gbyCols []*expression.Column) []property.GroupNDV {
+	if len(colGroups) == 0 {
+		return nil
+	}
+	// Check if the child profile provides GroupNDV for the GROUP BY columns.
+	// Note that gbyCols may not be the exact GROUP BY columns, e.g, GROUP BY a+b,
+	// but we have no other approaches for the NDV estimation of these cases
+	// except for using the independent assumption, unless we can use stats of expression index.
+	groupNDV := getGroupNDV4Cols(gbyCols, childProfile)
+	if groupNDV == nil {
+		return nil
+	}
+	return []property.GroupNDV{*groupNDV}
+}
+
+>>>>>>> 0bf495d5e... planner: unify the terms NDV and cardinality in the optimizer (#26345)
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	childProfile := childStats[0]
@@ -563,24 +644,67 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 		cols := expression.ExtractColumns(gbyExpr)
 		gbyCols = append(gbyCols, cols...)
 	}
+<<<<<<< HEAD
 	cardinality := getCardinality(gbyCols, childSchema[0], childProfile)
-	la.stats = &property.StatsInfo{
-		RowCount:    cardinality,
-		Cardinality: make(map[int64]float64, selfSchema.Len()),
+=======
+	if la.stats != nil {
+		// Reload GroupNDVs since colGroups may have changed.
+		la.stats.GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
+		return la.stats, nil
 	}
-	// We cannot estimate the Cardinality for every output, so we use a conservative strategy.
+	NDV := getColsNDV(gbyCols, childSchema[0], childProfile)
+>>>>>>> 0bf495d5e... planner: unify the terms NDV and cardinality in the optimizer (#26345)
+	la.stats = &property.StatsInfo{
+		RowCount: NDV,
+		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
+	}
+	// We cannot estimate the ColNDVs for every output, so we use a conservative strategy.
 	for _, col := range selfSchema.Columns {
-		la.stats.Cardinality[col.UniqueID] = cardinality
+		la.stats.ColNDVs[col.UniqueID] = NDV
 	}
 	la.inputCount = childProfile.RowCount
 	return la.stats, nil
 }
 
+<<<<<<< HEAD
+=======
+// ExtractColGroups implements LogicalPlan ExtractColGroups interface.
+func (la *LogicalAggregation) ExtractColGroups(_ [][]*expression.Column) [][]*expression.Column {
+	// Parent colGroups would be dicarded, because aggregation would make NDV of colGroups
+	// which does not match GroupByItems invalid.
+	// Note that gbyCols may not be the exact GROUP BY columns, e.g, GROUP BY a+b,
+	// but we have no other approaches for the NDV estimation of these cases
+	// except for using the independent assumption, unless we can use stats of expression index.
+	gbyCols := make([]*expression.Column, 0, len(la.GroupByItems))
+	for _, gbyExpr := range la.GroupByItems {
+		cols := expression.ExtractColumns(gbyExpr)
+		gbyCols = append(gbyCols, cols...)
+	}
+	if len(gbyCols) > 1 {
+		return [][]*expression.Column{expression.SortColumns(gbyCols)}
+	}
+	return nil
+}
+
+func (p *LogicalJoin) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
+	outerIdx := int(-1)
+	if p.JoinType == LeftOuterJoin || p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		outerIdx = 0
+	} else if p.JoinType == RightOuterJoin {
+		outerIdx = 1
+	}
+	if outerIdx >= 0 && len(colGroups) > 0 {
+		return childStats[outerIdx].GroupNDVs
+	}
+	return nil
+}
+
+>>>>>>> 0bf495d5e... planner: unify the terms NDV and cardinality in the optimizer (#26345)
 // DeriveStats implement LogicalPlan DeriveStats interface.
 // If the type of join is SemiJoin, the selectivity of it will be same as selection's.
-// If the type of join is LeftOuterSemiJoin, it will not add or remove any row. The last column is a boolean value, whose Cardinality should be two.
+// If the type of join is LeftOuterSemiJoin, it will not add or remove any row. The last column is a boolean value, whose NDV should be two.
 // If the type of join is inner/outer join, the output of join(s, t) should be N(s) * N(t) / (V(s.key) * V(t.key)) * Min(s.key, t.key).
-// N(s) stands for the number of rows in relation s. V(s.key) means the Cardinality of join key in s.
+// N(s) stands for the number of rows in relation s. V(s.key) means the NDV of join key in s.
 // This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
 // every matched bucket.
 func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
@@ -598,23 +722,28 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	p.equalCondOutCnt = helper.estimate()
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.stats = &property.StatsInfo{
-			RowCount:    leftProfile.RowCount * SelectionFactor,
-			Cardinality: make(map[int64]float64, len(leftProfile.Cardinality)),
+			RowCount: leftProfile.RowCount * SelectionFactor,
+			ColNDVs:  make(map[int64]float64, len(leftProfile.ColNDVs)),
 		}
-		for id, c := range leftProfile.Cardinality {
-			p.stats.Cardinality[id] = c * SelectionFactor
+		for id, c := range leftProfile.ColNDVs {
+			p.stats.ColNDVs[id] = c * SelectionFactor
 		}
 		return p.stats, nil
 	}
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		p.stats = &property.StatsInfo{
-			RowCount:    leftProfile.RowCount,
-			Cardinality: make(map[int64]float64, selfSchema.Len()),
+			RowCount: leftProfile.RowCount,
+			ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 		}
-		for id, c := range leftProfile.Cardinality {
-			p.stats.Cardinality[id] = c
+		for id, c := range leftProfile.ColNDVs {
+			p.stats.ColNDVs[id] = c
 		}
+<<<<<<< HEAD
 		p.stats.Cardinality[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
+=======
+		p.stats.ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
+		p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childStats)
+>>>>>>> 0bf495d5e... planner: unify the terms NDV and cardinality in the optimizer (#26345)
 		return p.stats, nil
 	}
 	count := p.equalCondOutCnt
@@ -623,16 +752,16 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	} else if p.JoinType == RightOuterJoin {
 		count = math.Max(count, rightProfile.RowCount)
 	}
-	cardinality := make(map[int64]float64, selfSchema.Len())
-	for id, c := range leftProfile.Cardinality {
-		cardinality[id] = math.Min(c, count)
+	colNDVs := make(map[int64]float64, selfSchema.Len())
+	for id, c := range leftProfile.ColNDVs {
+		colNDVs[id] = math.Min(c, count)
 	}
-	for id, c := range rightProfile.Cardinality {
-		cardinality[id] = math.Min(c, count)
+	for id, c := range rightProfile.ColNDVs {
+		colNDVs[id] = math.Min(c, count)
 	}
 	p.stats = &property.StatsInfo{
-		RowCount:    count,
-		Cardinality: cardinality,
+		RowCount: count,
+		ColNDVs:  colNDVs,
 	}
 	return p.stats, nil
 }
@@ -651,9 +780,9 @@ func (h *fullJoinRowCountHelper) estimate() float64 {
 	if h.cartesian {
 		return h.leftProfile.RowCount * h.rightProfile.RowCount
 	}
-	leftKeyCardinality := getCardinality(h.leftJoinKeys, h.leftSchema, h.leftProfile)
-	rightKeyCardinality := getCardinality(h.rightJoinKeys, h.rightSchema, h.rightProfile)
-	count := h.leftProfile.RowCount * h.rightProfile.RowCount / math.Max(leftKeyCardinality, rightKeyCardinality)
+	leftKeyNDV := getColsNDV(h.leftJoinKeys, h.leftSchema, h.leftProfile)
+	rightKeyNDV := getColsNDV(h.rightJoinKeys, h.rightSchema, h.rightProfile)
+	count := h.leftProfile.RowCount * h.rightProfile.RowCount / math.Max(leftKeyNDV, rightKeyNDV)
 	return count
 }
 
@@ -661,17 +790,17 @@ func (h *fullJoinRowCountHelper) estimate() float64 {
 func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	leftProfile := childStats[0]
 	la.stats = &property.StatsInfo{
-		RowCount:    leftProfile.RowCount,
-		Cardinality: make(map[int64]float64, selfSchema.Len()),
+		RowCount: leftProfile.RowCount,
+		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	}
-	for id, c := range leftProfile.Cardinality {
-		la.stats.Cardinality[id] = c
+	for id, c := range leftProfile.ColNDVs {
+		la.stats.ColNDVs[id] = c
 	}
 	if la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin {
-		la.stats.Cardinality[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
+		la.stats.ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 	} else {
 		for i := childSchema[0].Len(); i < selfSchema.Len(); i++ {
-			la.stats.Cardinality[selfSchema.Columns[i].UniqueID] = leftProfile.RowCount
+			la.stats.ColNDVs[selfSchema.Columns[i].UniqueID] = leftProfile.RowCount
 		}
 	}
 	return la.stats, nil
@@ -680,11 +809,11 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 // Exists and MaxOneRow produce at most one row, so we set the RowCount of stats one.
 func getSingletonStats(schema *expression.Schema) *property.StatsInfo {
 	ret := &property.StatsInfo{
-		RowCount:    1.0,
-		Cardinality: make(map[int64]float64, schema.Len()),
+		RowCount: 1.0,
+		ColNDVs:  make(map[int64]float64, schema.Len()),
 	}
 	for _, col := range schema.Columns {
-		ret.Cardinality[col.UniqueID] = 1
+		ret.ColNDVs[col.UniqueID] = 1
 	}
 	return ret
 }
@@ -699,16 +828,83 @@ func (p *LogicalMaxOneRow) DeriveStats(childStats []*property.StatsInfo, selfSch
 func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	childProfile := childStats[0]
 	p.stats = &property.StatsInfo{
-		RowCount:    childProfile.RowCount,
-		Cardinality: make(map[int64]float64, selfSchema.Len()),
+		RowCount: childProfile.RowCount,
+		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	}
 	childLen := selfSchema.Len() - len(p.WindowFuncDescs)
 	for i := 0; i < childLen; i++ {
 		id := selfSchema.Columns[i].UniqueID
-		p.stats.Cardinality[id] = childProfile.Cardinality[id]
+		p.stats.ColNDVs[id] = childProfile.ColNDVs[id]
 	}
 	for i := childLen; i < selfSchema.Len(); i++ {
-		p.stats.Cardinality[selfSchema.Columns[i].UniqueID] = childProfile.RowCount
+		p.stats.ColNDVs[selfSchema.Columns[i].UniqueID] = childProfile.RowCount
 	}
+<<<<<<< HEAD
+=======
+	p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childStats)
+	return p.stats, nil
+}
+
+// ExtractColGroups implements LogicalPlan ExtractColGroups interface.
+func (p *LogicalWindow) ExtractColGroups(colGroups [][]*expression.Column) [][]*expression.Column {
+	if len(colGroups) == 0 {
+		return nil
+	}
+	childSchema := p.Children()[0].Schema()
+	_, offsets := childSchema.ExtractColGroups(colGroups)
+	if len(offsets) == 0 {
+		return nil
+	}
+	extracted := make([][]*expression.Column, len(offsets))
+	for i, offset := range offsets {
+		extracted[i] = colGroups[offset]
+	}
+	return extracted
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+	if p.stats != nil {
+		return p.stats, nil
+	}
+
+	var err error
+	p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
+	if err != nil {
+		return nil, err
+	}
+	resStat := p.cte.seedPartPhysicalPlan.Stats()
+	p.stats = &property.StatsInfo{
+		RowCount: resStat.RowCount,
+		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
+	}
+	for i, col := range selfSchema.Columns {
+		p.stats.ColNDVs[col.UniqueID] += resStat.ColNDVs[p.cte.seedPartLogicalPlan.Schema().Columns[i].UniqueID]
+	}
+	if p.cte.recursivePartLogicalPlan != nil {
+		p.cte.recursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
+		if err != nil {
+			return nil, err
+		}
+		recurStat := p.cte.recursivePartPhysicalPlan.Stats()
+		for i, col := range selfSchema.Columns {
+			p.stats.ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
+		}
+		if p.cte.IsDistinct {
+			p.stats.RowCount = getColsNDV(p.schema.Columns, p.schema, p.stats)
+		} else {
+			p.stats.RowCount += recurStat.RowCount
+		}
+	}
+	return p.stats, nil
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalCTETable) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+	if p.stats != nil {
+		return p.stats, nil
+	}
+	p.stats = p.seedPlan.statsInfo()
+>>>>>>> 0bf495d5e... planner: unify the terms NDV and cardinality in the optimizer (#26345)
 	return p.stats, nil
 }

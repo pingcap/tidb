@@ -861,7 +861,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
 		RowCount:     math.Min(1.0, countAfterAccess),
 		StatsVersion: ds.stats.StatsVersion,
-		// Cardinality would not be used in cost computation of IndexJoin, set leave it as default nil.
+		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
 	}
 	rowSize := ds.TblColHists.GetTableAvgRowSize(p.ctx, ds.TblCols, ts.StoreType, true)
 	sessVars := ds.ctx.GetSessionVars()
@@ -1297,6 +1297,30 @@ func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, p
 		ijHelper.idxOff2KeyOff = ijHelper.curIdxOff2KeyOff
 		ijHelper.lastColManager = lastColManager
 	}
+<<<<<<< HEAD
+=======
+	var innerNDV float64
+	if stats := ijHelper.innerPlan.statsInfo(); stats != nil && stats.StatsVersion != statistics.PseudoVersion {
+		innerNDV = getColsNDV(path.IdxCols[:usedColsLen], ijHelper.innerPlan.Schema(), stats)
+	}
+	// We choose the index by the NDV of the used columns, the larger the better.
+	// If NDVs are same, we choose index which uses more columns.
+	// Note that these 2 heuristic rules are too simple to cover all cases,
+	// since the NDV of outer join keys are not considered, and the detached access conditions
+	// may contain expressions like `t1.a > t2.a`. It's pretty hard to evaluate the join selectivity
+	// of these non-column-equal conditions, so I prefer to keep these heuristic rules simple at least for now.
+	if innerNDV < ijHelper.usedColsNDV || (innerNDV == ijHelper.usedColsNDV && usedColsLen <= ijHelper.usedColsLen) {
+		return
+	}
+	ijHelper.chosenPath = path
+	ijHelper.usedColsLen = len(ranges[0].LowVal)
+	ijHelper.usedColsNDV = innerNDV
+	ijHelper.chosenRanges = ranges
+	ijHelper.chosenAccess = accesses
+	ijHelper.chosenRemained = remained
+	ijHelper.idxOff2KeyOff = ijHelper.curIdxOff2KeyOff
+	ijHelper.lastColManager = lastColManager
+>>>>>>> 0bf495d5e... planner: unify the terms NDV and cardinality in the optimizer (#26345)
 }
 
 func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range, haveExtraCol bool) (ranges []*ranger.Range, emptyRange bool, err error) {
@@ -1749,6 +1773,28 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	}
 	disableAggPushDownToCop(la.children[0])
 	join := la.GetHashJoin(prop)
+<<<<<<< HEAD
+=======
+	var columns = make([]*expression.Column, 0, len(la.CorCols))
+	for _, colColumn := range la.CorCols {
+		columns = append(columns, &colColumn.Column)
+	}
+	cacheHitRatio := 0.0
+	if la.stats.RowCount != 0 {
+		ndv := getColsNDV(columns, la.schema, la.stats)
+		// for example, if there are 100 rows and the number of distinct values of these correlated columns
+		// are 70, then we can assume 30 rows can hit the cache so the cache hit ratio is 1 - (70/100) = 0.3
+		cacheHitRatio = 1 - (ndv / la.stats.RowCount)
+	}
+
+	var canUseCache bool
+	if cacheHitRatio > 0.1 && la.ctx.GetSessionVars().MemQuotaApplyCache > 0 {
+		canUseCache = true
+	} else {
+		canUseCache = false
+	}
+
+>>>>>>> 0bf495d5e... planner: unify the terms NDV and cardinality in the optimizer (#26345)
 	apply := PhysicalApply{
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,

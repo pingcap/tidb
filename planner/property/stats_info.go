@@ -19,22 +19,43 @@ import (
 	"github.com/pingcap/tidb/statistics"
 )
 
+<<<<<<< HEAD
+=======
+// GroupNDV stores the NDV of a group of columns.
+type GroupNDV struct {
+	// Cols are the UniqueIDs of columns.
+	Cols []int64
+	NDV  float64
+}
+
+// ToString prints GroupNDV slice. It is only used for test.
+func ToString(ndvs []GroupNDV) string {
+	return fmt.Sprintf("%v", ndvs)
+}
+
+>>>>>>> 0bf495d5e... planner: unify the terms NDV and cardinality in the optimizer (#26345)
 // StatsInfo stores the basic information of statistics for the plan's output. It is used for cost estimation.
 type StatsInfo struct {
 	RowCount float64
 
-	// Column.UniqueID -> Cardinality
-	Cardinality map[int64]float64
+	// Column.UniqueID -> NDV
+	ColNDVs map[int64]float64
 
 	HistColl *statistics.HistColl
 	// StatsVersion indicates the statistics version of a table.
 	// If the StatsInfo is calculated using the pseudo statistics on a table, StatsVersion will be PseudoVersion.
 	StatsVersion uint64
+<<<<<<< HEAD
+=======
+
+	// GroupNDVs stores the NDV of column groups.
+	GroupNDVs []GroupNDV
+>>>>>>> 0bf495d5e... planner: unify the terms NDV and cardinality in the optimizer (#26345)
 }
 
 // String implements fmt.Stringer interface.
 func (s *StatsInfo) String() string {
-	return fmt.Sprintf("count %v, Cardinality %v", s.RowCount, s.Cardinality)
+	return fmt.Sprintf("count %v, ColNDVs %v", s.RowCount, s.ColNDVs)
 }
 
 // Count gets the RowCount in the StatsInfo.
@@ -42,16 +63,16 @@ func (s *StatsInfo) Count() int64 {
 	return int64(s.RowCount)
 }
 
-// Scale receives a selectivity and multiplies it with RowCount and Cardinality.
+// Scale receives a selectivity and multiplies it with RowCount and NDV.
 func (s *StatsInfo) Scale(factor float64) *StatsInfo {
 	profile := &StatsInfo{
 		RowCount:     s.RowCount * factor,
-		Cardinality:  make(map[int64]float64, len(s.Cardinality)),
+		ColNDVs:      make(map[int64]float64, len(s.ColNDVs)),
 		HistColl:     s.HistColl,
 		StatsVersion: s.StatsVersion,
 	}
-	for id, c := range s.Cardinality {
-		profile.Cardinality[id] = c * factor
+	for id, c := range s.ColNDVs {
+		profile.ColNDVs[id] = c * factor
 	}
 	return profile
 }
