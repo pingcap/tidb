@@ -1682,7 +1682,7 @@ func (s *testTableSuite) TestTrx(c *C) {
 	sm.txnInfo[0] = &txninfo.TxnInfo{
 		StartTS:          424768545227014155,
 		CurrentSQLDigest: digest.String(),
-		State:            txninfo.TxnRunningNormal,
+		State:            txninfo.TxnIdle,
 		EntriesCount:     1,
 		EntriesSize:      19,
 		ConnectionID:     2,
@@ -1703,7 +1703,7 @@ func (s *testTableSuite) TestTrx(c *C) {
 	sm.txnInfo[1].BlockStartTime.Time = blockTime2
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
-		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" Normal <nil> 1 19 2 root test []",
+		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" Idle <nil> 1 19 2 root test []",
 		"425070846483628033 2021-05-20 21:16:35.778000 <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [sql1, sql2]"))
 }
 
