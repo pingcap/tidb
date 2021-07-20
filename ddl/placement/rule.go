@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/go-yaml/yaml"
+	"gopkg.in/yaml.v2"
 )
 
 // PeerRoleType is the expected peer type of the placement rule.
