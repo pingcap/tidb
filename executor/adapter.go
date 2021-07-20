@@ -72,9 +72,6 @@ var (
 	totalCopWaitHistogramInternal   = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblInternal)
 )
 
-var UseParallel bool
-var ParallelHashJoinAlreadyBuilt bool
-var ParallelTableReaderAlreadyBuilt bool
 
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
@@ -385,7 +382,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	if err != nil {
 		return nil, err
 	}
-	ParallelHashJoinAlreadyBuilt = false
+	sctx.GetSessionVars().ParallelHashJoinAlreadyBuilt = false
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
 	ctx = a.setPlanLabelForTopSQL(ctx)
 
@@ -394,7 +391,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return nil, err
 	}
 
-	if UseParallel {
+	if sctx.GetSessionVars().UseParallel {
 		if err := a.cutTreeByExchange(ctx, e); err != nil {
 			return nil, err
 		}

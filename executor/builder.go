@@ -1148,10 +1148,10 @@ func (b *executorBuilder) buildSideEstCount(v *plannercore.PhysicalHashJoin) flo
 }
 
 func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executor {
-	if !UseParallel || ParallelHashJoinAlreadyBuilt {
+	if !b.ctx.GetSessionVars().UseParallel || b.ctx.GetSessionVars().ParallelHashJoinAlreadyBuilt {
 		return b.buildSingleHashJoin(v)
 	}
-	ParallelHashJoinAlreadyBuilt = true
+	b.ctx.GetSessionVars().ParallelHashJoinAlreadyBuilt = true
 	concurrency := b.ctx.GetSessionVars().HashJoinConcurrency()
 
 	// setup channels
@@ -1356,7 +1356,7 @@ func (b *executorBuilder) buildSingleHashJoin(v *plannercore.PhysicalHashJoin) E
 	}
 
 	concurrency := v.Concurrency
-	if UseParallel {
+	if b.ctx.GetSessionVars().UseParallel {
 		concurrency = 1
 	}
 
@@ -1450,7 +1450,7 @@ func (b *executorBuilder) buildSingleHashJoin(v *plannercore.PhysicalHashJoin) E
 	for _, key := range e.probeKeys {
 		e.probeTypes[key.Index].Flag = key.RetType.Flag
 	}
-	if UseParallel {
+	if b.ctx.GetSessionVars().UseParallel {
 		return &NonParallelHashJoinExec{
 			HashJoinExec: e,
 		}
@@ -3065,15 +3065,15 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 }
 
 // func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
-//     if !UseParallel {
+//     if !b.ctx.GetSessionVars().UseParallel {
 //         return b.buildSingleTableReader(v)
 //     }
-//     if ParallelTableReaderAlreadyBuilt {
+//     if b.ctx.GetSessionVars().ParallelTableReaderAlreadyBuilt {
 //         tableReaderCnt++
 //         return tableReaderBroadcast[tableReaderCnt-1]
 //     }
 //     tableReaderCnt = 1
-//     ParallelTableReaderAlreadyBuilt = true
+//     b.ctx.GetSessionVars().ParallelTableReaderAlreadyBuilt = true
 //
 //     concurrency := b.ctx.GetSessionVars().HashJoinConcurrency()
 //     broadcastChs := make([]chan *chunk.Chunk, 0, concurrency)
