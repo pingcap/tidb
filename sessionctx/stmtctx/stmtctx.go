@@ -157,6 +157,14 @@ type StatementContext struct {
 	TblInfo2UnionScan     map[*model.TableInfo]bool
 	TaskID                uint64              // unique ID for an execution of a statement
 	CheckKeyExists        map[string]struct{} // mark the keys needs to check for existence for pessimistic locks.
+
+	// DepthInExprTree indicates the depth of the current expression being
+	// rewritten in an expression tree.
+	// NOTE: This var is introduced to remind an arithmetic expression to keep
+	// the precision of an real/decimal intermediate result as accurate as
+	// possible. Thus we only take the arithmetic expression into consideration.
+	// e.g. tidb/issues/26348
+	DepthInExprTree int
 }
 
 // StmtHints are SessionVars related sql hints.
