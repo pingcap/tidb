@@ -890,31 +890,22 @@ type SelectLockExec struct {
 	Lock *ast.SelectLockInfo
 	keys []kv.Key
 
-	tblID2Handle     map[int64][]plannercore.HandleCols
+	tblID2Handle map[int64][]plannercore.HandleCols
+
+	// All the partition tables in the children of this executor.
 	partitionedTable []table.PartitionedTable
 
-	// tblID2Table is cached to reduce cost.
-	tblID2Table map[int64]table.PartitionedTable
+	// When SelectLock work on the partition table, we need the partition ID
+	// instead of table ID to calculate the lock KV. In that case, partition ID is store as an
+	// extra column in the chunk row.
+	// tblID2PIDColumnIndex stores the column index in the chunk row. The children may be join
+	// of multiple tables, so the map struct is used.
+	tblID2PIDColumnIndex map[int64]int
 }
 
 // Open implements the Executor Open interface.
 func (e *SelectLockExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
-
-	if len(e.tblID2Handle) > 0 && len(e.partitionedTable) > 0 {
-		e.tblID2Table = make(map[int64]table.PartitionedTable, len(e.partitionedTable))
-		for id := range e.tblID2Handle {
-			for _, p := range e.partitionedTable {
-				if id == p.Meta().ID {
-					e.tblID2Table[id] = p
-				}
-			}
-		}
-	}
-
-	return nil
+	return e.baseExecutor.Open(ctx)
 }
 
 // Next implements the Executor Next interface.
@@ -932,15 +923,14 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if req.NumRows() > 0 {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+
 			for id, cols := range e.tblID2Handle {
 				physicalID := id
-				if pt, ok := e.tblID2Table[id]; ok {
-					// On a partitioned table, we have to use physical ID to encode the lock key!
-					p, err := pt.GetPartitionByRow(e.ctx, row.GetDatumRow(e.base().retFieldTypes))
-					if err != nil {
-						return err
-					}
-					physicalID = p.GetPhysicalID()
+				if len(e.partitionedTable) > 0 {
+					// Replace the table ID with partition ID.
+					// The partition ID is returned as an extra column from the table reader.
+					offset := e.tblID2PIDColumnIndex[id]
+					physicalID = row.GetInt64(offset)
 				}
 
 				for _, col := range cols {
@@ -1036,7 +1026,7 @@ func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Ke
 		return keys
 	}
 
-	newKeys := keys[:]
+	newKeys := keys[:0:len(keys)]
 	for _, key := range keys {
 		tblID := tablecodec.DecodeTableID(key)
 		if _, ok := txnCtx.GlobalTemporaryTables[tblID]; !ok {
@@ -1670,6 +1660,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		DiskTracker:   disk.NewTracker(memory.LabelForSQLText, -1),
 		TaskID:        stmtctx.AllocateTaskID(),
 		CTEStorageMap: map[int]*CTEStorages{},
+		IsStaleness:   false,
 	}
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
@@ -1751,7 +1742,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true
-		sc.TruncateAsWarning = !vars.StrictSQLMode
+		// With IGNORE or LOCAL, data-interpretation errors become warnings and the load operation continues,
+		// even if the SQL mode is restrictive. For details: https://dev.mysql.com/doc/refman/8.0/en/load-data.html
+		// TODO: since TiDB only support the LOCAL by now, so the TruncateAsWarning are always true here.
+		sc.TruncateAsWarning = true
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		sc.IgnoreNoPartition = true
