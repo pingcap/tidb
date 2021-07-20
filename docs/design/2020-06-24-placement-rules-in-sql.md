@@ -73,7 +73,7 @@ Both syntaxes are considered [`table_option`](https://dev.mysql.com/doc/refman/8
 
 #### Direct Assignment
 
-Creating a new table with a directly assigned constraints. The leader is in `us-east-1` region, the followers are in `us-east-1` and `us-east-2`:
+Creating a new table with directly assigned constraints. The leader is in `us-east-1` region, the followers are in `us-east-1` and `us-east-2`:
 
 ```sql
 CREATE TABLE t1 (
@@ -130,10 +130,10 @@ Behavior notes:
 #### Advanced Placement
 
 The syntax `PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2"` is the recommended syntax for users, but it only works for supported labels.
-Consider the case where a user wants to allocate placement based on the label `storageclass`. Using constraints is required:
+Consider the case where a user wants to allocate placement based on the label `disk`. Using constraints is required:
 
 ```sql
-ALTER PLACEMENT POLICY `standardplacement` CONSTRAINTS="[+storageclass=ssd]";
+ALTER PLACEMENT POLICY `standardplacement` CONSTRAINTS="[+disk=ssd]";
 ```
 
 The following two placement policies are considered equal:
@@ -156,7 +156,7 @@ The placement policy above has 4 followers:
 Behavior notes:
 
 * Advanced placement is available in the context of `CREATE|ALTER PLACEMENT POLICY`, `CREATE|ALTER DATABASE` and `CREATE|ALTER TABLE`. i.e. the usage of all placement syntax is expected to be the same in all contexts.
-* It is possible to set `CONSTRAINTS`, `LEADER_CONSTRAINTS`, `FOLLOWER_CONSTRAINTS`, `LEARNER_CONSTRAINTS` and `VOTER_CONSTRAINTS`. Assumming that both `CONSTRAINTS` and `FOLLOWER_CONSTRAINTS` are specified, the conditions are "AND"ed together.
+* It is possible to set `CONSTRAINTS`, `LEADER_CONSTRAINTS`, `FOLLOWER_CONSTRAINTS`, `LEARNER_CONSTRAINTS` and `VOTER_CONSTRAINTS`. Assuming that both `CONSTRAINTS` and `FOLLOWER_CONSTRAINTS` are specified, the conditions are "AND"ed together.
 * See "Constraints configuration" below for a full set of rules and syntax for constraints.
 
 #### Metadata commands
@@ -204,7 +204,7 @@ The output of this statement contains these fields:
     * For database, it is shown in the format `DATABASE database_name`
     * For table, it is shown in the format `TABLE database_name.table_name`
     * For partition, it is shown in the format `TABLE database_name.table_name PARTITION partition_name`
-* Equivalent placement: A equivalent `ALTER` statement on `target` that defines the placement rule.
+* Equivalent placement: An equivalent `ALTER` statement on `target` that defines the placement rule.
 * Existing placement: All the executed `ALTER` statements that affect the placement of `target`, including the statements on its parent.
 * Scheduling state: The scheduling progress from the PD aspect.
 
@@ -294,7 +294,7 @@ For example, `FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:2}"` 
 
 In the list format, `count` is not specified. The number of followers for each constraint is not limited, but the total number of instances should still conform to the definition.
 
-For example, `FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=3` indicates to place 3 followers on either `us-east-1` or `us-east-1`. There may be 2 replicas on `us-east-1` and 1 in `us-east-2`, or 2 in `us-east-2` and 1 in `us-east-1`. It's up to PD, but PD will attempt to balance such that 3 do not end up in one region (TODO: this conflicts with "Ambiguous and edge cases" below, need to confirm expected behavior).
+For example, `FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=3` indicates to place 3 followers on either `us-east-1` or `us-east-1`. There may be 2 replicas on `us-east-1` and 1 in `us-east-2`, or 2 in `us-east-2` and 1 in `us-east-1`. It's up to PD (see "Schedule Property" for additional details).
 
 Label constraints can be implemented by defining `label_constraints` field in PD placement rule configuration. `+` and `-` correspond to property `op`. Specifically, `+` is equivalent to `in` and `-` is equivalent to `notIn`.
 
@@ -309,7 +309,7 @@ For example, `+region=us-east-1,+region=us-east-2,-disk=hdd` is equivalent to:
 
 Field `location_labels` in PD placement rule configuration is used to isolate replicas to different zones to improve availability. For now, the global configuration can be used as the default `location_labels` for all placement rules defined in SQL, so it's unnecessary to specify it.
 
-`PLACEMENT` also supports adding TiFlash replicas for a table, as statement `ALTER TABLE table_name SET TIFLASH REPLICA count` does. For example:
+`PLACEMENT` also supports adding TiFlash replicas for a table, as the statement `ALTER TABLE table_name SET TIFLASH REPLICA count` does. For example:
 
 ```sql
 ALTER TABLE t1
@@ -347,19 +347,52 @@ Explanation:
 
 `+any` changes an earlier proposal where the `FOLLOWERS` count could also be specified. This has been removed to reduce the risk of discrepancies and misconfiguration. See also "Policy Validation" below.
 
+#### Built-in Placement Policies
+
+By default every system will have two placement policies, which can be modified via `ALTER PLACEMENT POLICY` but never dropped:
+
+* `default`: This policy is used only in the event that a policy has not been specified.
+* `system`: This policy is used for internal TiDB system tables.
+
+Some common applications might be to increase the replica count on system or default tables. It is not typically recommended to add constraints to these policies as it will lead to cluster inbalance, but it is possible.
+
+#### Schedule Property
+
+When using either the syntactic sugar or list format for placement rules, PD is free to schedule followers/leaders/voters wherever it decides. For example:
+
+```sql
+CREATE PLACEMENT POLICY `standardplacement1` PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4;
+CREATE PLACEMENT POLICY `standardplacement2` LEADER_CONSTRAINTS="[+region=us-east-1]"  FOLLOWERS_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=4;
+```
+
+- Are each of the followers split equally in us-east-1 and us-east-2?
+- Could the majority of followers be placed in us-east-1? That would ensure fast quorum but reduced fault tolerance.
+
+To address the ambiguity the concept of a "schedule" is introduced, which is the name for a strategy that PD uses to determine where to place instances. For an example:
+
+```sql
+CREATE PLACEMENT POLICY `standardplacement1` PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4 SCHEDULE=SURVIVE_REGION_FAILURE();
+```
+
+The following `SCHEDULE` options are available:
+
+* `BALANCED()`: This is the default schedule. Followers will be balanced on leader balance per store. So if there are 15 stores in `us-east-1` and 5 stores in `us-east-2`, you can expect that approximately 3:1 followers will be placed in `us-east-1` to `us-east-2`.
+* `SURVIVE_REGION_FAILURE()`: Followers will be balanced based on the value of the "region" label. So for example if `us-east-1` has 15 stores and `us-east-2` has 5, it doesn't matter. 2 stores will be placed in each.
+* `LOCALITY_IN_PRIMARY_REGION()`: As many followers as required to achieve quorum will be placed in the primary region. The remaining followers will use an approximately `BALANCED()` schedule.
+
 #### Key range configuration
 
 In PD placement rule implementation, the key range must be specified. Now that `table_name` is specified in the `ALTER TABLE` statement, key range can be inferred.
 
-Typically, key format is in such a format: `t_{table_id}_r_{pk_value}`, where `pk_value` may be `_tidb_rowid` in some cases. `table_id` can be inferred from `table_name`, thus key range is `t_{table_id}_` to `t_{table_id+1}_`.
+Typically, key format is in such a format: `t_{table_id}_r_{pk_value}`, where `pk_value` may be `_tidb_rowid` in some cases. `table_id` can be inferred from `table_name`, thus the key range is `t_{table_id}_` to `t_{table_id+1}_`.
 
-Similarly, key range of partitions can also be inferred.
+Similarly, the key range of partitions can also be inferred.
 
 #### Policy Validation
 
 When placement policies are specified, they should be validated for correctness:
 
-1. The `FOLLOWERS` count should respect raft quorum expecations. The default is `2` (which creates raft groups of 3). If the number is odd, it could lead to split brain scenarios, so a warning should be issued. Warnings should also be issued for a count less than 2 (this might be useful for development environmens, so an error is not returned)
+1. The `FOLLOWERS` count should respect raft quorum expectations. The default is `2` (which creates raft groups of 3). If the number is odd, it could lead to split brain scenarios, so a warning should be issued. Warnings should also be issued for a count less than 2 (this might be useful for development environments, so an error is not returned)
 2. A policy that is impossible based on the current topology (region=us-east-1 and followers=2, but there is only 1 store in us-east-1) should be a warning. This allows for some transitional topologies.
 3. If the constraints are specified as a dictionary, specifying the count (i.e. `FOLLOWERS=n`) is prohibited.
 
@@ -385,7 +418,7 @@ CREATE PLACEMENT POLICY p1 FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-e
 CREATE PLACEMENT POLICY p2 FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:1}";
 ```
 
-This is because p2 explicitly requires a follower count of 1 per region, whereas p2 allows for 2 in any of the above (TODO: is this correct, how does PD balance?)
+This is because p2 explicitly requires a follower count of 1 per region, whereas p2 allows for 2 in any of the above (see "Schedule Property" above for an explanation).
 
 This is useful in the case that you want to ensure that `FOLLOWERS=2` exists in any of a list of zones:
 
@@ -506,7 +539,7 @@ The fact that the DDL procedure in TiDB is mature helps to achieve some features
 - DDL is rollbackable as the middle states can transform from one to another
 - Updating schema version guarantees all active transactions are based on the same version of placement rules
 
-The actual "completion" of the DDL job as far as TiDB is concerned is that PD has been notified of the placement rules for all of the affected regions. PD will then asynchrnously apply the placement rules to all of the regions, and this progress is not observable via `ADMIN SHOW DDL JOBS`. The progress of scheduling can be observed via `SHOW PLACEMENT` or by reading `information_schema.placement_rules`.
+The actual "completion" of the DDL job as far as TiDB is concerned is that PD has been notified of the placement rules for all of the affected regions. PD will then asynchronously apply the placement rules to all of the regions, and this progress is not observable via `ADMIN SHOW DDL JOBS`. The progress of scheduling can be observed via `SHOW PLACEMENT` or by reading `information_schema.placement_rules`.
 
 ### Privilege management
 
@@ -533,7 +566,7 @@ PD uses placement rules to schedule data, so a replica of placement rules for _t
 The rules to guarantee consistency between these two sources is as follows:
 
 - Changes to definition (`CREATE|ALTER TABLE`, `CREATE|ALTER PLACEMENT POLICY`, `CREATE|ALTER DATABASE`) will first be persisted to TiKV.
-- The changes will then be applied to PD (and asyncronously apply)
+- The changes will then be applied to PD (and asynchronously apply)
 
 It is safe to automatically retry applying the rules to PD because they are all idempotent in the current design.
 
@@ -545,25 +578,25 @@ Because placement rules can also be configured outside of placement rules in SQL
 
 The scenarios where TiDB queries placement rules are as follows:
 
-1. The optimizer uses placement rules to decide to route cop request to TiKV or TiFlash. It's already implemented and the TiFlash information is written into table information, which is stored on TiKV.
-2. It will be probably used in locality-aware features in the future, such as follower-read. Follower-read is always used when TiDB wants to read the nearest replica to reduce multi-region latency. In some distributed databases, it’s implemented by labelling data nodes and selecting the nearest replica according to the labels.
+1. The optimizer uses placement rules to decide to route cop requests to TiKV or TiFlash. It's already implemented and the TiFlash information is written into table information, which is stored on TiKV.
+2. It will probably be used in locality-aware features in the future, such as follower-read. Follower-read is always used when TiDB wants to read the nearest replica to reduce multi-region latency. In some distributed databases, it’s implemented by labelling data nodes and selecting the nearest replica according to the labels.
 3. Local transactions need to know the binding relationship between Raft leader and region, which is also defined by placement rules.
 4. Once a rule is defined on a table, all the subsequent partitions added to the table should also inherit the rule. So the `ADD PARTITION` operation should query the rules on the table. The same is true for creating tables and indices.
-5. `SHOW PLACEMENT` statement should output the placement rules correctly.
+5. The `SHOW PLACEMENT` statement should output the placement rules correctly.
 
 As placement rules will be queried in case 1, 2 and 3, low latency must be guaranteed. As discussed in section "Storing placement rules", PD is the source of truth. To lower the latency, the only way is caching the placement rules in TiDB.
 
 Since the cache is created, there must be a way to validate it. Different from region cache, placement rules cache can only be validated each time from PD. There are some ways to work around:
 
-- Update the schema version once a placement rule is changed, just like other DDL. PD broadcasts the latest schema version to all the TiDB instances, and then TiDB instances fetch the newest placement rules from PD. There will be a slight delay for queries before reading the latest placement rules. The side affect is that more transactions will retry since the schema version is changed.
+- Update the schema version once a placement rule is changed, just like other DDL. PD broadcasts the latest schema version to all the TiDB instances, and then TiDB instances fetch the newest placement rules from PD. There will be a slight delay for queries before reading the latest placement rules. The side effect is that more transactions will retry since the schema version is changed.
 - TiDB queries placement rules from PD periodly. The delay is controllable but not eliminable.
-- Once a placement rule is changed, PD broadcasts it to all the TiDB instances. In this approach, schema version is not involved, so transactions are not affected. The delay is not eliminable either.
+- Once a placement rule is changed, PD broadcasts it to all the TiDB instances. In this approach, the schema version is not involved, so transactions are not affected. The delay is not eliminable either.
 
 All the approaches above will result in a delay. Fortunately, for case 1 and 2 above, delay is acceptable. It doesn’t matter much if the optimizer doesn’t perceive the placement rules changement immediately. The worst result is that the latency is relatively high for a short time.
 
-For case 3, although delay is acceptable, but all TiDB instances must be always consistent on the placement rules. To achieve this goal, schema version needs to be updated, thus transactions with old placement rules will fail when committed.
+For case 3, although delay is acceptable, but all TiDB instances must be always consistent on the placement rules. To achieve this goal, the schema version needs to be updated, thus transactions with old placement rules will fail when committed.
 
-For case 4 and 5, delay is not acceptable. Once the placement rules are written successfully, subsequent DDL statements should fetch the latest placement rules to gaurantee linearizability. Now that schema version is changed and the latest placement rules are broadcast to all the TiDB instances immediately, delay is eliminable. 
+For case 4 and 5, delay is not acceptable. Once the placement rules are written successfully, subsequent DDL statements should fetch the latest placement rules to guarantee linearizability. Now that the schema version is changed and the latest placement rules are broadcast to all the TiDB instances immediately, delay is eliminable. 
 
 Once the schema version is changed, all TiDB instances recognize the object ID and fetch placement rules from PD, rather than TiKV.
 
@@ -860,11 +893,11 @@ Assuming that global indexes can be added to the TiDB server, this use-case can 
   - The DDL statement `CREATE PLACEMENT POLICY` has been added (allowing common configurations to be saved).
   - Configuring placement rules for indexes is no longer supported (we can add it once global indexes are added).
   - The inheritance rules have been simplified to match character set/collation inheritance.
-2. There is a risk that we do not fully understand compliance requirements (see unresolved questions), or that the substaintial effort required to achieve compliance with DDL, internal SQL and DML.
-3. Related to (2), there is risk that the implementation of compliance requirements has significant burden on multiple teams, including ecosystem tools (Backup, CDC, DM). Even tools such as dumpling should ideally be able to backup placement rules in logical form.
+2. There is a risk that we do not fully understand compliance requirements (see unresolved questions), or that the substantial effort required to achieve compliance with DDL, internal SQL and DML.
+3. Related to (2), there is risk that the implementation of compliance requirements has a significant burden on multiple teams, including ecosystem tools (Backup, CDC, DM). Even tools such as dumpling should ideally be able to backup placement rules in logical form.
 4. The compliance use-case may depend on global secondary indexes for many scenarios (see "Compliance: User data needs geographic split"), but they are not currently supported.
 4. There is some risk that a common use case can not be expressed in `CONSTRAINT` syntax, leading to complicated scenarios where users still need to express placement by using PD directly. Ideally, we can recommend users use SQL rules exclusively.
-5. Many other features in TiDB are in development, some of which may influence placement rules. Clustered index affects the key format of primary index, but fortunately the prefix of key range is untouched. Global secondary index largely affect the placement rules of partitioned tables.
+5. Many other features in TiDB are in development, some of which may influence placement rules. Clustered index affects the key format of primary index, but fortunately the prefix of key range is untouched. Global secondary index largely affects the placement rules of partitioned tables.
 
 ## Investigation & Alternatives
 
@@ -924,23 +957,6 @@ CREATE PLACEMENT POLICY europe CONSTRAINTS="+region=eu-west-1" RESTRICTED;
 
 This specific semantic will be the hardest to implement because of the other dependencies in the server.
 
-#### PD Balancing Behavior
-
-In the case of `FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=3`, is PD deterministic in balancing between each of the regions? If not, is it possible to ask PD to have certain scheduling/balancing policies.
-
-Other examples of scheduling policies (versus scheduling constraints) have been proposed by [@nolouch](https://github.com/nolouch), which I will paraphrase here:
-
-* `CREATE PLACEMENT POLICY p0 PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2" SCHEDULE=LOCALITY_IN_PRIMARY_REGION();`
-* `CREATE PLACEMENT POLICY p1 PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2" SCHEDULE=LOCALITY_BY_ROW();`
-* `CREATE PLACEMENT POLICY p2 PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2" SCHEDULE=SURVIVE_REGION_FAILURE();`
-
-The name `SCHEDULE` can be discussed, but in cases where there are 4 followers, being able to declaratively specify if you prefer full recovery over quick quorum is useful.
-
-#### Should we have "built-in" placement policies?
-
-Examples could be "default", "system" etc. This might be helpful if you want to change the default or increase the follower count on system metadata.
-
-
 ## Changelog
 
 * 2021-07-19:
@@ -954,4 +970,6 @@ Examples could be "default", "system" etc. This might be helpful if you want to 
   - Added short-hand syntactic sugar for constraints to handle default cases.
   - Changed it so that you can no longer specify multiple constraints.
   - Use defaults for `count` of each role, and `ROLE_CONSTRAINTS` syntax.
+  - Added `SCHEDULE` property
+  - Removed further ambiguous cases such as count when using dictionary syntax.
 
