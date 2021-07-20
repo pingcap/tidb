@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -226,6 +227,8 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 			c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
 		}
 	}
+	failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO")
+	failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance")
 }
 
 func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
@@ -861,79 +864,223 @@ func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer3)
 }
 
-func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
+func (s *testStaleTxnSuite) TestStaleReadTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	tk.MustExec("set @@tidb_enable_global_temporary_table=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tmp1")
+	tk.MustExec("create global temporary table tmp1 " +
+		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
+		"on commit delete rows")
+	time.Sleep(time.Second)
+	tk.MustGetErrMsg("select * from tmp1 as of timestamp NOW() where id=1", "can not stale read temporary table")
+
+	queries := []struct {
+		sql string
+	}{
+		{
+			sql: "select * from tmp1 where id=1",
+		},
+		{
+			sql: "select * from tmp1 where code=1",
+		},
+		{
+			sql: "select * from tmp1 where id in (1, 2, 3)",
+		},
+		{
+			sql: "select * from tmp1 where code in (1, 2, 3)",
+		},
+		{
+			sql: "select * from tmp1 where id > 1",
+		},
+		{
+			sql: "select /*+use_index(tmp1, code)*/ * from tmp1 where code > 1",
+		},
+		{
+			sql: "select /*+use_index(tmp1, code)*/ code from tmp1 where code > 1",
+		},
+		{
+			sql: "select /*+ use_index_merge(tmp1, primary, code) */ * from tmp1 where id > 1 or code > 2",
+		},
+	}
+
+	addStaleReadToSQL := func(sql string) string {
+		idx := strings.Index(sql, " where ")
+		if idx < 0 {
+			return ""
+		}
+		return sql[0:idx] + " as of timestamp NOW()" + sql[idx:]
+	}
+
+	for _, query := range queries {
+		sql := addStaleReadToSQL(query.sql)
+		if sql != "" {
+			tk.MustGetErrMsg(sql, "can not stale read temporary table")
+		}
+	}
+
+	tk.MustExec("start transaction read only as of timestamp NOW()")
+	for _, query := range queries {
+		tk.MustGetErrMsg(query.sql, "can not stale read temporary table")
+	}
+	tk.MustExec("commit")
+
+	for _, query := range queries {
+		tk.MustExec(query.sql)
+	}
+
+	tk.MustExec("set transaction read only as of timestamp NOW()")
+	tk.MustExec("start transaction")
+	for _, query := range queries {
+		tk.MustGetErrMsg(query.sql, "can not stale read temporary table")
+	}
+	tk.MustExec("commit")
+
+	for _, query := range queries {
+		tk.MustExec(query.sql)
+	}
+}
+
+func (s *testStaleTxnSerialSuite) TestStaleReadPrepare(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
-
-	tolerance := 50 * time.Millisecond
-
-	tk.MustExec("insert into t values (1)")
-	time.Sleep(tolerance)
+	time.Sleep(2 * time.Second)
+	conf := *config.GetGlobalConfig()
+	oldConf := conf
+	defer config.StoreGlobalConfig(&oldConf)
+	conf.Labels = map[string]string{
+		placement.DCLabelKey: "sh",
+	}
+	config.StoreGlobalConfig(&conf)
 	time1 := time.Now()
-
-	tk.MustExec("insert into t values (2)")
-	time.Sleep(tolerance)
-	time2 := time.Now()
-
-	tk.MustExec("insert into t values (3)")
-	time.Sleep(tolerance)
-
-	staleRows := testkit.Rows("1")
-	staleSQL := fmt.Sprintf(`select * from t as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000"))
-
-	// test normal stale select
-	tk.MustQuery(staleSQL).Check(staleRows)
-
-	// test stale select in txn
-	tk.MustExec("begin")
-	c.Assert(tk.ExecToErr(staleSQL), NotNil)
+	tso := oracle.ComposeTS(time1.Unix()*1000, 0)
+	time.Sleep(200 * time.Millisecond)
+	failpoint.Enable("github.com/pingcap/tidb/executor/assertExecutePrepareStatementStalenessOption",
+		fmt.Sprintf(`return("%v_%v")`, tso, "sh"))
+	tk.MustExec(fmt.Sprintf(`prepare p1 from "select * from t as of timestamp '%v'"`, time1.Format("2006-1-2 15:04:05")))
+	tk.MustExec("execute p1")
+	// assert execute prepared statement in stale read txn
+	tk.MustExec(`prepare p2 from "select * from t"`)
+	tk.MustExec(fmt.Sprintf("start transaction read only as of timestamp '%v'", time1.Format("2006-1-2 15:04:05")))
+	tk.MustExec("execute p2")
 	tk.MustExec("commit")
 
-	// test prepared stale select
-	tk.MustExec(fmt.Sprintf(`prepare s from "%s"`, staleSQL))
-	tk.MustQuery("execute s")
-
-	// test prepared stale select in txn
-	tk.MustExec("begin")
-	c.Assert(tk.ExecToErr(staleSQL), NotNil)
-	tk.MustExec("commit")
-
-	// test stale select in stale txn
-	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time2.Format("2006-1-2 15:04:05.000")))
-	c.Assert(tk.ExecToErr(staleSQL), NotNil)
-	tk.MustExec("commit")
+	// assert execute prepared statement in stale read txn
+	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%v'", time1.Format("2006-1-2 15:04:05")))
+	tk.MustExec("execute p2")
+	failpoint.Disable("github.com/pingcap/tidb/executor/assertExecutePrepareStatementStalenessOption")
 
 	// test prepared stale select in stale txn
-	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time2.Format("2006-1-2 15:04:05.000")))
-	c.Assert(tk.ExecToErr(staleSQL), NotNil)
+	tk.MustExec(fmt.Sprintf(`start transaction read only as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000")))
+	c.Assert("execute p1", NotNil)
 	tk.MustExec("commit")
 
-	// test prepared stale select with schema change
-	tk.MustExec("alter table t add column c int")
-	tk.MustExec("insert into t values (4, 5)")
-	time.Sleep(10 * time.Millisecond)
-	tk.MustQuery("execute s").Check(staleRows)
+	// assert execute prepared statement should be error after set transaction read only as of
+	tk.MustExec(fmt.Sprintf(`set transaction read only as of timestamp '%s'`, time1.Format("2006-1-2 15:04:05.000")))
+	c.Assert("execute p1", NotNil)
+}
 
-	// test dynamic timestamp stale select
-	time3 := time.Now()
-	tk.MustExec("alter table t add column d int")
-	tk.MustExec("insert into t values (4, 4, 4)")
-	time.Sleep(tolerance)
-	time4 := time.Now()
-	staleRows = testkit.Rows("1 <nil>", "2 <nil>", "3 <nil>", "4 5")
-	tk.MustQuery(fmt.Sprintf("select * from t as of timestamp CURRENT_TIMESTAMP(3) - INTERVAL %d MICROSECOND", time4.Sub(time3).Microseconds())).Check(staleRows)
+func (s *testStaleTxnSuite) TestStmtCtxStaleFlag(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+	time.Sleep(2 * time.Second)
+	time1 := time.Now().Format("2006-1-2 15:04:05")
+	testcases := []struct {
+		sql          string
+		hasStaleFlag bool
+	}{
+		// assert select as of statement
+		{
+			sql:          fmt.Sprintf("select * from t as of timestamp '%v'", time1),
+			hasStaleFlag: true,
+		},
+		// assert select statement
+		{
+			sql:          "select * from t",
+			hasStaleFlag: false,
+		},
+		// assert select statement in stale transaction
+		{
+			sql:          fmt.Sprintf("start transaction read only as of timestamp '%v'", time1),
+			hasStaleFlag: false,
+		},
+		{
+			sql:          "select * from t",
+			hasStaleFlag: true,
+		},
+		{
+			sql:          "commit",
+			hasStaleFlag: false,
+		},
+		// assert select statement after set transaction
+		{
+			sql:          fmt.Sprintf("set transaction read only as of timestamp '%v'", time1),
+			hasStaleFlag: false,
+		},
+		{
+			sql:          "select * from t",
+			hasStaleFlag: true,
+		},
+		// assert select statement after consumed set transaction
+		{
+			sql:          "select * from t",
+			hasStaleFlag: false,
+		},
+		// assert prepare statement with select as of statement
+		{
+			sql:          fmt.Sprintf(`prepare p from 'select * from t as of timestamp "%v"'`, time1),
+			hasStaleFlag: false,
+		},
+		// assert execute statement with select as of statement
+		{
+			sql:          "execute p",
+			hasStaleFlag: true,
+		},
+		// assert prepare common select statement
+		{
+			sql:          "prepare p1 from 'select * from t'",
+			hasStaleFlag: false,
+		},
+		{
+			sql:          "execute p1",
+			hasStaleFlag: false,
+		},
+		// assert execute select statement in stale transaction
+		{
+			sql:          fmt.Sprintf("start transaction read only as of timestamp '%v'", time1),
+			hasStaleFlag: false,
+		},
+		{
+			sql:          "execute p1",
+			hasStaleFlag: true,
+		},
+		{
+			sql:          "commit",
+			hasStaleFlag: false,
+		},
+	}
 
-	// test prepared dynamic timestamp stale select
-	time5 := time.Now()
-	tk.MustExec(fmt.Sprintf(`prepare v from "select * from t as of timestamp CURRENT_TIMESTAMP(3) - INTERVAL %d MICROSECOND"`, time5.Sub(time3).Microseconds()))
-	tk.MustQuery("execute v").Check(staleRows)
-
-	// test point get
-	time6 := time.Now()
-	tk.MustExec("insert into t values (5, 5, 5)")
-	time.Sleep(tolerance)
-	tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s' where c=5", time6.Format("2006-1-2 15:04:05.000"))).Check(testkit.Rows("4 5 <nil>"))
+	for _, testcase := range testcases {
+		failpoint.Enable("github.com/pingcap/tidb/exector/assertStmtCtxIsStaleness",
+			fmt.Sprintf("return(%v)", testcase.hasStaleFlag))
+		tk.MustExec(testcase.sql)
+		failpoint.Disable("github.com/pingcap/tidb/exector/assertStmtCtxIsStaleness")
+		// assert stale read flag should be false after each statement execution
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.IsStaleness, IsFalse)
+	}
 }

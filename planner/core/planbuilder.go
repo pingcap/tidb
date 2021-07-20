@@ -1086,6 +1086,10 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	}
 
 	available = removeIgnoredPaths(available, ignored, tblInfo)
+	if ctx.GetSessionVars().StmtCtx.IsStaleness {
+		// skip tiflash if the statement is for stale read until tiflash support stale read
+		available = removeTiflashDuringStaleRead(available)
+	}
 
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
@@ -1139,6 +1143,17 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 		}
 	}
 	return remainedPaths
+}
+
+func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
+	n := 0
+	for _, path := range paths {
+		if path.StoreType != kv.TiFlash {
+			paths[n] = path
+			n++
+		}
+	}
+	return paths[:n]
 }
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
