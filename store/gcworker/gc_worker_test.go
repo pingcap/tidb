@@ -38,11 +38,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
-	"github.com/tikv/client-go/v2/mockstore/mocktikv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/oracle/oracles"
-	"github.com/tikv/client-go/v2/retry"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	pd "github.com/tikv/pd/client"
@@ -56,7 +54,7 @@ func TestT(t *testing.T) {
 type testGCWorkerSuite struct {
 	store      kv.Storage
 	tikvStore  tikv.Storage
-	cluster    cluster.Cluster
+	cluster    testutils.Cluster
 	oracle     *oracles.MockOracle
 	gcWorker   *GCWorker
 	dom        *domain.Domain
@@ -82,7 +80,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 
 	store, err := mockstore.NewMockStore(
 		mockstore.WithStoreType(mockstore.MockTiKV),
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			s.initRegion.storeIDs, s.initRegion.peerIDs, s.initRegion.regionID, _ = mockstore.BootstrapWithMultiStores(c, 3)
 			s.cluster = c
 		}),
@@ -941,11 +939,11 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 		if regionID.GetID() == s.initRegion.regionID && *firstAccessRef {
 			*firstAccessRef = false
 			// merge region2 into region1 and return EpochNotMatch error.
-			mCluster := s.cluster.(*mocktikv.Cluster)
+			mCluster := s.cluster.(*testutils.MockCluster)
 			mCluster.Merge(s.initRegion.regionID, region2)
 			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
 			_, err := s.tikvStore.GetRegionCache().OnRegionEpochNotMatch(
-				retry.NewNoopBackoff(context.Background()),
+				tikv.NewNoopBackoff(context.Background()),
 				&tikv.RPCContext{Region: regionID, Store: &tikv.Store{}},
 				[]*metapb.Region{regionMeta})
 			c.Assert(err, IsNil)

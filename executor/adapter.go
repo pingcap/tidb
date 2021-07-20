@@ -307,9 +307,10 @@ func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
 	if a.Plan == nil || !variable.TopSQLEnabled() {
 		return ctx
 	}
-	normalizedSQL, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
+	vars := a.Ctx.GetSessionVars()
+	normalizedSQL, sqlDigest := vars.StmtCtx.SQLDigest()
 	normalizedPlan, planDigest := getPlanDigest(a.Ctx, a.Plan)
-	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest)
+	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, vars.InRestrictedSQL)
 }
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
@@ -906,6 +907,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 	// Reset DurationParse due to the next statement may not need to be parsed (not a text protocol query).
 	sessVars.DurationParse = 0
+	// Clean the stale read flag when statement execution finish
+	sessVars.StmtCtx.IsStaleness = false
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work

@@ -95,7 +95,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	}
 	derivedCharset, derivedCollate := DeriveCollationFromExprs(ctx, args...)
 	bf := baseBuiltinFunc{
-		bufAllocator:           newLocalSliceBuffer(len(args)),
+		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
 		childrenReversedOnce:   new(sync.Once),
 
@@ -246,7 +246,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		fieldType.Flag |= mysql.IsBooleanFlag
 	}
 	bf = baseBuiltinFunc{
-		bufAllocator:           newLocalSliceBuffer(len(args)),
+		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
 		childrenReversedOnce:   new(sync.Once),
 
@@ -266,7 +266,7 @@ func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
 	bf := baseBuiltinFunc{
-		bufAllocator:           newLocalSliceBuffer(len(args)),
+		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
 		childrenReversedOnce:   new(sync.Once),
 
@@ -417,7 +417,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.ctx = from.ctx
 	b.tp = from.tp
 	b.pbCode = from.pbCode
-	b.bufAllocator = newLocalSliceBuffer(len(b.args))
+	b.bufAllocator = newLocalColumnPool()
 	b.childrenVectorizedOnce = new(sync.Once)
 	b.childrenReversedOnce = new(sync.Once)
 	b.ctor = from.ctor
@@ -792,6 +792,8 @@ var funcs = map[string]functionClass{
 	ast.UUID:            &uuidFunctionClass{baseFunctionClass{ast.UUID, 0, 0}},
 	ast.UUIDShort:       &uuidShortFunctionClass{baseFunctionClass{ast.UUIDShort, 0, 0}},
 	ast.VitessHash:      &vitessHashFunctionClass{baseFunctionClass{ast.VitessHash, 1, 1}},
+	ast.UUIDToBin:       &uuidToBinFunctionClass{baseFunctionClass{ast.UUIDToBin, 1, 2}},
+	ast.BinToUUID:       &binToUUIDFunctionClass{baseFunctionClass{ast.BinToUUID, 1, 2}},
 
 	// get_lock() and release_lock() are parsed but do nothing.
 	// It is used for preventing error in Ruby's activerecord migrations.
