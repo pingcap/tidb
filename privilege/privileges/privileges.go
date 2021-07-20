@@ -460,9 +460,9 @@ func (p *UserPrivileges) DBIsVisible(activeRoles []*auth.RoleIdentity, db string
 }
 
 // UserPrivilegesTable implements the Manager interface.
-func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
+func (p *UserPrivileges) UserPrivilegesTable(activeRoles []*auth.RoleIdentity, user, host string) [][]types.Datum {
 	mysqlPriv := p.Handle.Get()
-	return mysqlPriv.UserPrivilegesTable()
+	return mysqlPriv.UserPrivilegesTable(activeRoles, user, host)
 }
 
 // ShowGrants implements privilege.Manager ShowGrants interface.
