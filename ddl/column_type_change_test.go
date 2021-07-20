@@ -2112,6 +2112,7 @@ func (s *testColumnTypeChangeSuite) TestCastToTimeStampDecodeError(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (" +
 		"  `a` datetime DEFAULT '1764-06-11 02:46:14'" +
 		") ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3'")
@@ -2138,6 +2139,7 @@ func (s *testColumnTypeChangeSuite) TestCastDateToTimestampInReorgAttribute(c *C
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (`a` DATE NULL DEFAULT '8497-01-06')")
 	tk.MustExec("insert into t values(now())")
 
@@ -2175,4 +2177,5 @@ func (s *testColumnTypeChangeSuite) TestCastDateToTimestampInReorgAttribute(c *C
 	tk.MustExec("alter table t modify column a  TIMESTAMP NULL DEFAULT '2021-04-28 03:35:11' FIRST")
 	c.Assert(checkErr1.Error(), Equals, "[types:1292]Incorrect datetime value: '3977-02-22 00:00:00'")
 	c.Assert(checkErr2.Error(), Equals, "[types:1292]Incorrect datetime value: '3977-02-22 00:00:00'")
+	tk.MustExec("drop table if exists t")
 }
