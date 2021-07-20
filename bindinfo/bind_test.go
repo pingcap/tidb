@@ -2122,7 +2122,6 @@ func (s *testSuite) TestBindingLastUpdateTime(c *C) {
 	tk.MustExec("drop table if exists t0;")
 	tk.MustExec("create table t0(a int, key(a));")
 
-	tk.MustQuery(`show status like 'last_plan_binding_update_time';`).Check(testkit.Rows("last_plan_binding_update_time 0000-00-00 00:00:00"))
 	tk.MustExec("create global binding for select * from t0 using select * from t0 use index(a);")
 	tk.MustExec("admin reload bindings;")
 	rows := tk.MustQuery("show global bindings").Rows()
