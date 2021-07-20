@@ -18,18 +18,12 @@ import (
 	"sync/atomic"
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
+func TestConcurrentBitmapSet(t *testing.T) {
+	t.Parallel()
 
-var _ = Suite(&testBitmap{})
-
-type testBitmap struct{}
-
-func (s *testBitmap) TestConcurrentBitmapSet(c *C) {
 	const loopCount = 1000
 	const interval = 2
 
@@ -46,16 +40,18 @@ func (s *testBitmap) TestConcurrentBitmapSet(c *C) {
 
 	for i := 0; i < loopCount; i++ {
 		if i%interval == 0 {
-			c.Assert(bm.UnsafeIsSet(i), IsTrue)
+			assert.Equal(t, true, bm.UnsafeIsSet(i))
 		} else {
-			c.Assert(bm.UnsafeIsSet(i), IsFalse)
+			assert.Equal(t, false, bm.UnsafeIsSet(i))
 		}
 	}
 }
 
 // TestConcurrentBitmapUniqueSetter checks if isSetter is unique everytime
 // when a bit is set.
-func (s *testBitmap) TestConcurrentBitmapUniqueSetter(c *C) {
+func TestConcurrentBitmapUniqueSetter(t *testing.T) {
+	t.Parallel()
+
 	const loopCount = 10000
 	const competitorsPerSet = 50
 
@@ -63,7 +59,7 @@ func (s *testBitmap) TestConcurrentBitmapUniqueSetter(c *C) {
 	bm := NewConcurrentBitmap(32)
 	var setterCounter uint64
 	var clearCounter uint64
-	// Concurrently set bit, and check if isSetter count matchs zero clearing count.
+	// Concurrently set bit, and check if isSetter count matches zero clearing count.
 	for i := 0; i < loopCount; i++ {
 		// Clear bitmap to zero.
 		if atomic.CompareAndSwapUint32(&(bm.segments[0]), 0x00000001, 0x00000000) {
@@ -81,7 +77,6 @@ func (s *testBitmap) TestConcurrentBitmapUniqueSetter(c *C) {
 		}
 	}
 	wg.Wait()
-	// If clearCounter is too big, it means setter concurrency of this test is not enough.
-	c.Assert(clearCounter < loopCount, Equals, true)
-	c.Assert(setterCounter, Equals, clearCounter+1)
+	assert.Less(t, clearCounter, uint64(loopCount))
+	assert.Equal(t, setterCounter, clearCounter+1)
 }
