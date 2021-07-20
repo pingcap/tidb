@@ -537,12 +537,6 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.GuaranteeLinearizability,
 			sessVars.TxnCtx.IsExplicit && sessVars.GuaranteeLinearizability)
 	}
-<<<<<<< HEAD
-=======
-	if tables := sessVars.TxnCtx.GlobalTemporaryTables; len(tables) > 0 {
-		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
-	}
->>>>>>> ddfc0bd8c... *: fix wrong resource tag of transaction commit statement (#25616)
 
 	return s.txn.Commit(tikvutil.SetSessionID(ctx, sessVars.ConnectionID))
 }
