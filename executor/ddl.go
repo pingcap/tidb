@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -92,7 +93,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.AlterDatabaseStmt:
 		err = e.executeAlterDatabase(x)
 	case *ast.AlterTableStmt:
-		err = e.executeAlterTable(x)
+		err = e.executeAlterTable(ctx, x)
 	case *ast.CreateIndexStmt:
 		err = e.executeCreateIndex(x)
 	case *ast.CreateDatabaseStmt:
@@ -256,6 +257,18 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		sessVars.LocalTemporaryTables = infoschema.NewLocalTemporaryTables()
 	}
 	localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+
+	// Init MemBuffer in session
+	if sessVars.TemporaryTableData == nil {
+		// Create this txn just for getting a MemBuffer. It's a little tricky
+		bufferTxn, err := e.ctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
+		if err != nil {
+			return err
+		}
+
+		sessVars.TemporaryTableData = bufferTxn.GetMemBuffer()
+	}
+
 	err = localTempTables.AddTable(dbInfo, tbl)
 
 	if err != nil && s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
@@ -267,8 +280,16 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
-	err := domain.GetDomain(e.ctx).DDL().CreateView(e.ctx, s)
-	return err
+	ret := &core.PreprocessorReturn{}
+	err := core.Preprocess(e.ctx, s.Select, core.WithPreprocessorReturn(ret))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ret.IsStaleness {
+		return ErrViewInvalid.GenWithStackByArgs(s.ViewName.Schema.L, s.ViewName.Name.L)
+	}
+
+	return domain.GetDomain(e.ctx).DDL().CreateView(e.ctx, s)
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
@@ -435,9 +456,9 @@ func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 	return err
 }
 
-func (e *DDLExec) executeAlterTable(s *ast.AlterTableStmt) error {
+func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	err := domain.GetDomain(e.ctx).DDL().AlterTable(e.ctx, ti, s.Specs)
+	err := domain.GetDomain(e.ctx).DDL().AlterTable(ctx, e.ctx, ti, s.Specs)
 	return err
 }
 
