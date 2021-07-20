@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"math"
 	"sort"
 
@@ -1095,4 +1096,50 @@ func (p *LogicalWindow) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 		extracted[i] = colGroups[offset]
 	}
 	return extracted
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+	if p.stats != nil {
+		return p.stats, nil
+	}
+
+	var err error
+	p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
+	if err != nil {
+		return nil, err
+	}
+	resStat := p.cte.seedPartPhysicalPlan.Stats()
+	p.stats = &property.StatsInfo{
+		RowCount:    resStat.RowCount,
+		Cardinality: make(map[int64]float64, selfSchema.Len()),
+	}
+	for i, col := range selfSchema.Columns {
+		p.stats.Cardinality[col.UniqueID] += resStat.Cardinality[p.cte.seedPartLogicalPlan.Schema().Columns[i].UniqueID]
+	}
+	if p.cte.recursivePartLogicalPlan != nil {
+		p.cte.recursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
+		if err != nil {
+			return nil, err
+		}
+		recurStat := p.cte.recursivePartPhysicalPlan.Stats()
+		for i, col := range selfSchema.Columns {
+			p.stats.Cardinality[col.UniqueID] += recurStat.Cardinality[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
+		}
+		if p.cte.IsDistinct {
+			p.stats.RowCount = getCardinality(p.schema.Columns, p.schema, p.stats)
+		} else {
+			p.stats.RowCount += recurStat.RowCount
+		}
+	}
+	return p.stats, nil
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalCTETable) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+	if p.stats != nil {
+		return p.stats, nil
+	}
+	p.stats = p.seedPlan.statsInfo()
+	return p.stats, nil
 }
