@@ -123,7 +123,7 @@ Behavior notes:
 - Placement policies are globally unique names. Thus, a policy named `companyplacementpolicy` can apply to the db `test` as well as `userdb`. The namespace does not overlap with other DB objects.
 - Placement Policy names are case insensitive, and follow the same rules as tables/other identifiers for length (64 chars) and special characters.
 - The full placement policy can be seen with `SHOW CREATE PLACEMENT POLICY x`. This is useful for shorthand usage by DBAs, and consistent with other database objects.
-- It is possible to update the definition of a placement policy with `ALTER PLACEMENT POLICY x LEADER_CONSTRAINTS="[+region=us-east-1]" FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,+region=us-east-2:1}";` This is modeled on the statement `ALTER VIEW` (where the view needs to be redefined). When `ALTER PLACEMENT POLICY x` is executed, all tables that use this placement policy will need to be updated in pd.
+- It is possible to update the definition of a placement policy with `ALTER PLACEMENT POLICY x LEADER_CONSTRAINTS="[+region=us-east-1]" FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,+region=us-east-2:1}";` This is modeled on the statement `ALTER VIEW` (where the view needs to be redefined). When `ALTER PLACEMENT POLICY x` is executed, all tables that use this placement policy will need to be updated in PD.
 - The statement `DROP PLACEMENT POLICY` should execute without error. If any partitions currently use this policy, they will be converted to the policy used by the table they belong to. If any tables use this policy, they will be converted to the policy used by the database they belong to. If any databases use this policy, they will be converted to the default placement policy. This is modeled on the behavior of dropping a `ROLE` that might be assigned to users.
 - The statement `RENAME PLACEMENT POLICY x TO y` renames a placement policy. The `SHOW CREATE TABLE` output of all databases, tables and partitions that used this placement policy should be updated to the new name.
 
@@ -373,10 +373,10 @@ CREATE PLACEMENT POLICY p2 FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us
 
 This is because p2 explicitly requires a follower count of 1 per region, whereas p2 allows for 2 in any of the above (TODO: is this correct, how does PD balance?)
 
-This is useful in the case that you want to ensure that `REPLICAS=2` exists in any of a list of zones:
+This is useful in the case that you want to ensure that `FOLLOWERS=2` exists in any of a list of zones:
 
 ```sql
-CREATE PLACEMENT POLICY p2 CONSTRAINTS="[+zone=sh,+zone=gz,+zone=bz]" ROLE=follower REPLICAS=2;
+CREATE PLACEMENT POLICY p2 FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-east-2,+region=us-west-1]" FOLLOWERS=2;
 ```
 
 ### Additional Semantics
@@ -567,7 +567,7 @@ However, an object (database, table, partition) may have multiple rules for a si
 
 ```sql
 ALTER TABLE t
-	VOTER_CONSTRAINTS="{+zone=bj:2,+zone=sh:1}" VOTERS=3;
+	VOTER_CONSTRAINTS="{+region=us-east-1:2,+region=us-east-2:1}" VOTERS=3;
 ```
 
 It needs 2 placement rules for `voter` in the PD placement rule configuration, because each rule can only specify one `count`. To make `id` unique, a unique identifier must be appended to `id`. DDL job ID plus an index in the job is a good choice.
@@ -634,12 +634,12 @@ For example:
     "region_label_value": "db1/tb1",
     "role": "leader",
     "label_constraints": [
-        {"key": "zone", "op": "in", "values": ["sh", "bj"]}
+        {"key": "region", "op": "in", "values": ["us-east-1", "us-east-2"]}
     ]
 }
 ```
 
-Combined with the label rule, PD indirectly knows the key range of `db1/tb1` is marked with the label constraint `{"key": "zone", "op": "in", "values": ["sh", "bj"]}`.
+Combined with the label rule, PD indirectly knows the key range of `db1/tb1` is marked with the label constraint `{"key": "region", "op": "in", "values": ["us-east-1", "us-east-2"]}`.
 
 #### Database placement
 
@@ -921,6 +921,11 @@ Other examples of scheduling policies (versus scheduling constraints) have been 
 * `CREATE PLACEMENT POLICY p2 PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2" SCHEDULE=SURVIVE_REGION_FAILURE();`
 
 The name `SCHEDULE` can be discussed, but in cases where there are 4 followers, being able to declaratively specify if you prefer full recovery over quick quorum is useful.
+
+#### Should we have "built-in" placement policies?
+
+Examples could be "default", "system" etc. This might be helpful if you want to change the default or increase the follower count on system metadata.
+
 
 ## Changelog
 
