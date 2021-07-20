@@ -1363,17 +1363,9 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 	for _, aggFunc := range aggFuncs {
 		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
 		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
-<<<<<<< HEAD
-			return false
-		}
-		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
-		if pb == nil {
-			return false
-=======
 			reason = "expressions of AggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now"
 			ret = false
 			break
->>>>>>> 27489d43b... planner: Log warnings when agg function can not be pushdown in explain statement (#25553)
 		}
 		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
 			reason = "AggFunc `" + aggFunc.Name + "` is not supported now"
@@ -1392,10 +1384,6 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 			break
 		}
 	}
-<<<<<<< HEAD
-	if expression.ContainVirtualColumn(groupByItems) {
-		return false
-=======
 	if ret && expression.ContainVirtualColumn(groupByItems) {
 		reason = "groupByItems contain virtual columns, which is not supported now"
 		ret = false
@@ -1406,13 +1394,11 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 	}
 
 	if !ret && sc.InExplainStmt {
-		sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because " + reason)
 		storageName := storeType.Name()
 		if storeType == kv.UnSpecified {
 			storageName = "storage layer"
 		}
 		sc.AppendWarning(errors.New("Aggregation can not be pushed to " + storageName + " because " + reason))
->>>>>>> 27489d43b... planner: Log warnings when agg function can not be pushdown in explain statement (#25553)
 	}
 	return ret
 }
