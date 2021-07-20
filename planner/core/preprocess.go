@@ -1551,7 +1551,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		p.ExplicitStaleness = true
 	}
 	if p.flag&inPrepare == 0 {
-		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
+		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.ExplicitStaleness
 	}
 	p.initedLastSnapshotTS = true
 }
