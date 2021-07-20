@@ -139,7 +139,7 @@ func (s *testStatsSuite) TestGroupNDVs(c *C) {
 	}
 }
 
-func (s *testStatsSuite) TestCardinalityGroupCols(c *C) {
+func (s *testStatsSuite) TestNDVGroupCols(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer func() {
