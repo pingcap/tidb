@@ -121,9 +121,9 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 		for i := range req.RecordListTimestampSec {
 			c.Assert(req.RecordListTimestampSec[i], Equals, uint64(1))
 		}
-		normalizedSQL, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
+		sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
-		c.Assert(normalizedSQL, Equals, "sqlNormalized"+strconv.Itoa(id))
+		c.Assert(sqlMeta.NormalizedSql, Equals, "sqlNormalized"+strconv.Itoa(id))
 		normalizedPlan, exist := agentServer.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedPlan, Equals, "planNormalized"+strconv.Itoa(id))
@@ -165,9 +165,9 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 		}
 		c.Assert(id > maxSQLNum, IsTrue)
 		c.Assert(req.RecordListCpuTimeMs[0], Equals, uint32(id))
-		normalizedSQL, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
+		sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
-		c.Assert(normalizedSQL, Equals, "sqlNormalized"+strconv.Itoa(id))
+		c.Assert(sqlMeta.NormalizedSql, Equals, "sqlNormalized"+strconv.Itoa(id))
 		normalizedPlan, exist := agentServer.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(normalizedPlan, Equals, "planNormalized"+strconv.Itoa(id))
@@ -428,7 +428,7 @@ func (s *testTopSQLReporter) TestCollectInternal(c *C) {
 		if id == 0 {
 			c.Fatalf("the id should not be 0")
 		}
-		sqlMeta, exist := agentServer.GetSQLMetaByDigest(req.SqlDigest)
+		sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		c.Assert(sqlMeta.IsInternalSql, Equals, id%2 == 0)
 	}
