@@ -2633,7 +2633,7 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
 		return nil, true
 	}
-	canUseMpp := p.ctx.GetSessionVars().IsMPPAllowed() && p.canPushToCop(kv.TiFlash)
+	canUseMpp := p.ctx.GetSessionVars().IsMPPAllowed() && p.canPushToCopImpl(kv.TiFlash, true)
 	chReqProps := make([]*property.PhysicalProperty, 0, len(p.children))
 	for range p.children {
 		if canUseMpp && prop.TaskTp == property.MppTaskType {
