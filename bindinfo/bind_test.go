@@ -2127,12 +2127,12 @@ func (s *testSuite) TestBindingLastUpdateTime(c *C) {
 	tk.MustExec("admin reload bindings;")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	update_time := rows[0][5]
+	updateTime := rows[0][5]
 	rows1 := tk.MustQuery("show status like 'last_plan_binding_update_time';").Rows()
-	update_time1 := rows1[0][1]
-	c.Assert(update_time1, Equals, update_time)
+	updateTime1 := rows1[0][1]
+	c.Assert(updateTime1, Equals, updateTime)
 	rows2 := tk.MustQuery("show session status like 'last_plan_binding_update_time';").Rows()
-	update_time2 := rows2[0][1]
-	c.Assert(update_time2, Equals, update_time)
+	updateTime2 := rows2[0][1]
+	c.Assert(updateTime2, Equals, updateTime)
 	tk.MustQuery(`show global status like 'last_plan_binding_update_time';`).Check(testkit.Rows())
 }
