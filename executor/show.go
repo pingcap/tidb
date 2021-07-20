@@ -577,7 +577,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			1,                // Seq_in_index
 			pkCol.Name.O,     // Column_name
 			"A",              // Collation
-			0,                // ColNDVs
+			0,                // Cardinality
 			nil,              // Sub_part
 			nil,              // Packed
 			"",               // Null
@@ -629,7 +629,7 @@ func (e *ShowExec) fetchShowIndex() error {
 				i + 1,                  // Seq_in_index
 				colName,                // Column_name
 				"A",                    // Collation
-				0,                      // ColNDVs
+				0,                      // Cardinality
 				subPart,                // Sub_part
 				nil,                    // Packed
 				nullVal,                // Null
