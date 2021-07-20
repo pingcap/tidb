@@ -2683,6 +2683,12 @@ func (s *testSuiteP2) TestHistoryRead(c *C) {
 	// SnapshotTS Is not updated if check failed.
 	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
 
+	// Setting snapshot to a time in the future will fail. (One day before the 2038 problem)
+	_, err = tk.Exec("set @@tidb_snapshot = '2038-01-18 03:14:07'")
+	c.Assert(err, ErrorMatches, "cannot set read timestamp to a future time")
+	// SnapshotTS Is not updated if check failed.
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
+
 	curVer1, _ := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	time.Sleep(time.Millisecond)
 	snapshotTime := time.Now()

@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -126,6 +127,13 @@ func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store,
 	default:
 	}
 	store := c.cluster.GetStore(storeID)
+	// It's same as PD's implementation.
+	if store == nil {
+		return nil, fmt.Errorf("invalid store ID %d, not found", storeID)
+	}
+	if store.GetState() == metapb.StoreState_Tombstone {
+		return nil, nil
+	}
 	return store, nil
 }
 
