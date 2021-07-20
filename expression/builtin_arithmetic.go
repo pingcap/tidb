@@ -674,9 +674,7 @@ func (s *builtinArithmeticDivideRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinArithmeticDivideDecimalSig struct{
-	baseBuiltinFunc
-}
+type builtinArithmeticDivideDecimalSig struct{ baseBuiltinFunc }
 
 func (s *builtinArithmeticDivideDecimalSig) Clone() builtinFunc {
 	newSig := &builtinArithmeticDivideDecimalSig{}
