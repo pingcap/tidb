@@ -78,6 +78,9 @@ type memtableRetriever struct {
 
 // retrieve implements the infoschemaRetriever interface
 func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.table.Name.O == infoschema.TableClusterInfo && !hasPriv(sctx, mysql.ProcessPriv) {
+		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
 	if e.retrieved {
 		return nil, nil
 	}
@@ -94,11 +97,11 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableStatistics:
 			e.setDataForStatistics(sctx, dbs)
 		case infoschema.TableTables:
-			err = e.setDataFromTables(sctx, dbs)
+			err = e.setDataFromTables(ctx, sctx, dbs)
 		case infoschema.TableSequences:
 			e.setDataFromSequences(sctx, dbs)
 		case infoschema.TablePartitions:
-			err = e.setDataFromPartitions(sctx, dbs)
+			err = e.setDataFromPartitions(ctx, sctx, dbs)
 		case infoschema.TableClusterInfo:
 			err = e.dataForTiDBClusterInfo(sctx)
 		case infoschema.TableAnalyzeStatus:
@@ -184,13 +187,13 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	return adjustColumns(ret, e.columns, e.table), nil
 }
 
-func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), "select table_id, count from mysql.stats_meta")
+func getRowCountAllTable(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, error) {
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(ctx, "select table_id, count from mysql.stats_meta")
 	if err != nil {
 		return nil, err
 	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return nil, err
 	}
@@ -209,13 +212,13 @@ type tableHistID struct {
 	histID  int64
 }
 
-func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]uint64, error) {
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
+func getColLengthAllTables(ctx context.Context, sctx sessionctx.Context) (map[tableHistID]uint64, error) {
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(ctx, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
 	if err != nil {
 		return nil, err
 	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +281,7 @@ var tableStatsCache = &statsCache{}
 // TableStatsCacheExpiry is the expiry time for table stats cache.
 var TableStatsCacheExpiry = 3 * time.Second
 
-func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
+func (c *statsCache) get(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
 	c.mu.RLock()
 	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
 		tableRows, colLength := c.tableRows, c.colLength
@@ -292,11 +295,11 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
 		return c.tableRows, c.colLength, nil
 	}
-	tableRows, err := getRowCountAllTable(ctx)
+	tableRows, err := getRowCountAllTable(ctx, sctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	colLength, err := getColLengthAllTables(ctx)
+	colLength, err := getColLengthAllTables(ctx, sctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -445,13 +448,13 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 	e.rows = append(e.rows, rows...)
 }
 
-func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []*model.DBInfo) error {
-	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
+func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
+	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx, sctx)
 	if err != nil {
 		return err
 	}
 
-	checker := privilege.GetPrivilegeManager(ctx)
+	checker := privilege.GetPrivilegeManager(sctx)
 
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
@@ -469,7 +472,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				continue
 			}
 
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 			pkType := "NONCLUSTERED"
@@ -480,7 +483,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				var autoIncID interface{}
 				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
 				if hasAutoIncID {
-					autoIncID, err = getAutoIncrementID(ctx, schema, table)
+					autoIncID, err = getAutoIncrementID(sctx, schema, table)
 					if err != nil {
 						return err
 					}
@@ -692,17 +695,17 @@ func calcCharOctLength(lenInChar int, cs string) int {
 	return lenInBytes
 }
 
-func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) error {
-	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
+func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
+	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx, sctx)
 	if err != nil {
 		return err
 	}
-	checker := privilege.GetPrivilegeManager(ctx)
+	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
 				continue
 			}
 			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
@@ -1018,10 +1021,21 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 }
 
 func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
+	pm := privilege.GetPrivilegeManager(ctx)
+	if pm == nil {
+		// internal session created with createSession doesn't has the PrivilegeManager. For most experienced cases before,
+		// we use it like this:
+		// ```
+		// checker := privilege.GetPrivilegeManager(ctx)
+		// if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+		//	  continue
+		// }
+		// do something.
+		// ```
+		// So once the privilege manager is nil, it's a signature of internal sql, so just passing the checker through.
+		return true
 	}
-	return false
+	return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
 }
 
 func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
@@ -1255,7 +1269,8 @@ func (e *memtableRetriever) setDataForProcessList(ctx sessionctx.Context) {
 
 func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
 	pm := privilege.GetPrivilegeManager(ctx)
-	e.rows = pm.UserPrivilegesTable()
+	// The results depend on the user querying the information.
+	e.rows = pm.UserPrivilegesTable(ctx.GetSessionVars().ActiveRoles, ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
 }
 
 func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) {
@@ -1657,19 +1672,33 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 		}
 	}
 
+	// Privilege checker.
+	checker := func(db, table string) bool {
+		if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+			return pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, db, table, "", mysql.AllPrivMask)
+		}
+		return true
+	}
+
 	// Extract the tables to the initialTable.
 	for _, DB := range databases {
 		// The user didn't specified the table, extract all tables of this db to initialTable.
 		if len(tables) == 0 {
 			tbs := is.SchemaTables(model.NewCIStr(DB))
 			for _, tb := range tbs {
-				e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+				// For every db.table, check it's privileges.
+				if checker(DB, tb.Meta().Name.L) {
+					e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+				}
 			}
 		} else {
 			// The user specified the table, extract the specified tables of this db to initialTable.
 			for tb := range tables {
 				if tb, err := is.TableByName(model.NewCIStr(DB), model.NewCIStr(tb)); err == nil {
-					e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+					// For every db.table, check it's privileges.
+					if checker(DB, tb.Meta().Name.L) {
+						e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+					}
 				}
 			}
 		}
@@ -1904,6 +1933,9 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 }
 
 func (e *memtableRetriever) setDataForStatementsSummaryEvicted(ctx sessionctx.Context) error {
+	if !hasPriv(ctx, mysql.ProcessPriv) {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
 	e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
 	switch e.table.Name.O {
 	case infoschema.ClusterTableStatementsSummaryEvicted:

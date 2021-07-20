@@ -509,7 +509,7 @@ func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
 			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
 			cli.checkRows(c, rows, "user1@127.0.0.1")
 			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT Select ON test.* TO 'user1'@'%'")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
 		})
 	// Test with unix domain socket file connection with all hosts
 	cli.runTests(c, func(config *mysql.Config) {
@@ -522,7 +522,7 @@ func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
 			rows := dbt.mustQuery("select user()")
 			cli.checkRows(c, rows, "user1@localhost")
 			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT Select ON test.* TO 'user1'@'%'")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
 		})
 
 	// Setup user1@127.0.0.1 for loop back network interface access
@@ -549,7 +549,7 @@ func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
 			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
 			cli.checkRows(c, rows, "user1@127.0.0.1")
 			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT Select,Insert ON test.* TO 'user1'@'127.0.0.1'")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT SELECT,INSERT ON test.* TO 'user1'@'127.0.0.1'")
 		})
 	// Test with unix domain socket file connection with all hosts
 	cli.runTests(c, func(config *mysql.Config) {
@@ -562,7 +562,7 @@ func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
 			rows := dbt.mustQuery("select user()")
 			cli.checkRows(c, rows, "user1@localhost")
 			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT Select ON test.* TO 'user1'@'%'")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
 		})
 
 	// Setup user1@localhost for socket (and if MySQL compatible; loop back network interface access)
@@ -590,7 +590,7 @@ func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
 			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
 			cli.checkRows(c, rows, "user1@127.0.0.1")
 			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT Select,Insert ON test.* TO 'user1'@'127.0.0.1'")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT SELECT,INSERT ON test.* TO 'user1'@'127.0.0.1'")
 		})
 	// Test with unix domain socket file connection with all hosts
 	cli.runTests(c, func(config *mysql.Config) {
@@ -603,7 +603,7 @@ func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
 			rows := dbt.mustQuery("select user()")
 			cli.checkRows(c, rows, "user1@localhost")
 			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT Select,Insert,Update,Delete ON test.* TO 'user1'@'localhost'")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
 		})
 
 }
@@ -683,7 +683,7 @@ func (ts *tidbTestSuite) TestOnlySocket(c *C) {
 			rows := dbt.mustQuery("select user()")
 			cli.checkRows(c, rows, "user1@localhost")
 			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT Select ON test.* TO 'user1'@'%'")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
 		})
 
 	// Setup user1@127.0.0.1 for loop back network interface access
@@ -713,7 +713,7 @@ func (ts *tidbTestSuite) TestOnlySocket(c *C) {
 			rows := dbt.mustQuery("select user()")
 			cli.checkRows(c, rows, "user1@localhost")
 			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT Select ON test.* TO 'user1'@'%'")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
 		})
 
 	// Setup user1@localhost for socket (and if MySQL compatible; loop back network interface access)
@@ -742,7 +742,7 @@ func (ts *tidbTestSuite) TestOnlySocket(c *C) {
 			rows := dbt.mustQuery("select user()")
 			cli.checkRows(c, rows, "user1@localhost")
 			rows = dbt.mustQuery("show grants")
-			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT Select,Insert,Update,Delete ON test.* TO 'user1'@'localhost'")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
 		})
 
 }

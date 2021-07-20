@@ -153,6 +153,10 @@ type columnAPI interface {
 	// Writable states includes Public, WriteOnly, WriteOnlyReorganization.
 	WritableCols() []*Column
 
+	// DeletableCols returns columns of the table in deletable states.
+	// Deletable states includes Public, WriteOnly, WriteOnlyReorganization, DeleteOnly, DeleteReorganization.
+	DeletableCols() []*Column
+
 	// FullHiddenColsAndVisibleCols returns hidden columns in all states and unhidden columns in public states.
 	FullHiddenColsAndVisibleCols() []*Column
 }
