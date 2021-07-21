@@ -2956,28 +2956,15 @@ func (b *builtinTranslateSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	}
 	result.ReserveString(n)
 	var (
-		commonMap              map[rune]rune
-		useCommonMap           = false
-		lenFrom, lenTo, minLen int
+		mp           map[rune]rune
+		useCommonMap = false
 	)
 	_, isFromConst := b.args[1].(*Constant)
 	_, isToConst := b.args[2].(*Constant)
 	if isFromConst && isToConst {
-		commonMap = make(map[rune]rune)
 		useCommonMap = true
 		fromRunes, toRunes := []rune(buf1.GetString(0)), []rune(buf2.GetString(0))
-		lenFrom, lenTo = len(fromRunes), len(toRunes)
-		if lenFrom < lenTo {
-			minLen = lenFrom
-		} else {
-			minLen = lenTo
-		}
-		for idx := lenFrom - 1; idx >= lenTo; idx-- {
-			commonMap[fromRunes[idx]] = -1
-		}
-		for idx := minLen - 1; idx >= 0; idx-- {
-			commonMap[fromRunes[idx]] = toRunes[idx]
-		}
+		mp = buildTranslateMap(fromRunes, toRunes)
 	}
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
@@ -2986,33 +2973,17 @@ func (b *builtinTranslateSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		}
 		srcStr := buf0.GetString(i)
 		var tgt strings.Builder
-		if useCommonMap {
-			for _, charSrc := range srcStr {
-				if charTo, ok := commonMap[charSrc]; ok {
-					if charTo != -1 {
-						tgt.WriteRune(charTo)
-					}
-				} else {
-					tgt.WriteRune(charSrc)
-				}
-			}
-		} else {
+		if !useCommonMap {
 			fromRunes, toRunes := []rune(buf1.GetString(i)), []rune(buf2.GetString(i))
-			mp := make(map[rune]rune)
-			for idx := lenFrom - 1; idx >= lenTo; idx-- {
-				mp[fromRunes[idx]] = -1
-			}
-			for idx := minLen - 1; idx >= 0; idx-- {
-				mp[fromRunes[idx]] = toRunes[idx]
-			}
-			for _, charSrc := range srcStr {
-				if charTo, ok := mp[charSrc]; ok {
-					if charTo != -1 {
-						tgt.WriteRune(charTo)
-					}
-				} else {
-					tgt.WriteRune(charSrc)
+			mp = buildTranslateMap(fromRunes, toRunes)
+		}
+		for _, charSrc := range srcStr {
+			if charTo, ok := mp[charSrc]; ok {
+				if charTo != -1 {
+					tgt.WriteRune(charTo)
 				}
+			} else {
+				tgt.WriteRune(charSrc)
 			}
 		}
 		result.AppendString(tgt.String())

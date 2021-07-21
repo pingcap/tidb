@@ -2461,6 +2461,7 @@ func (s *testEvaluatorSuite) TestTranslate(c *C) {
 		{[]interface{}{"中文", "文", "国"}, false, false, "中国"},
 		{[]interface{}{"UPPERCASE", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"}, false, false, "uppercase"},
 		{[]interface{}{"lowercase", "abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"}, false, false, "LOWERCASE"},
+		{[]interface{}{"aaaaabbbbb", "aaabbb", "xyzXYZ"}, false, false, "xxxxxXXXXX"},
 		{[]interface{}{"Ti*DB User's Guide", " */'", "___"}, false, false, "Ti_DB_Users_Guide"},
 		{[]interface{}{"", "null", "null"}, true, false, ""},
 		{[]interface{}{"null", "", "null"}, true, false, ""},

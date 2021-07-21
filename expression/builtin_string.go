@@ -4014,7 +4014,6 @@ func (b *builtinTranslateSig) evalString(row chunk.Row) (d string, isNull bool, 
 	var (
 		srcStr, fromStr, toStr     string
 		isFromStrNull, isToStrNull bool
-		lenFrom, lenTo, minLen     int
 		tgt                        strings.Builder
 	)
 	srcStr, isNull, err = b.args[0].EvalString(b.ctx, row)
@@ -4032,20 +4031,7 @@ func (b *builtinTranslateSig) evalString(row chunk.Row) (d string, isNull bool, 
 	if srcStr == "" || fromStr == "" || toStr == "" {
 		return d, true, err
 	}
-	fromRunes, toRunes := []rune(fromStr), []rune(toStr)
-	lenFrom, lenTo = len(fromRunes), len(toRunes)
-	if lenFrom < lenTo {
-		minLen = lenFrom
-	} else {
-		minLen = lenTo
-	}
-	mp := make(map[rune]rune)
-	for idx := lenFrom - 1; idx >= lenTo; idx-- {
-		mp[fromRunes[idx]] = -1
-	}
-	for idx := minLen - 1; idx >= 0; idx-- {
-		mp[fromRunes[idx]] = toRunes[idx]
-	}
+	mp := buildTranslateMap([]rune(fromStr), []rune(toStr))
 	for _, charSrc := range srcStr {
 		if charTo, ok := mp[charSrc]; ok {
 			if charTo != -1 {
@@ -4056,4 +4042,20 @@ func (b *builtinTranslateSig) evalString(row chunk.Row) (d string, isNull bool, 
 		}
 	}
 	return tgt.String(), false, nil
+}
+
+func buildTranslateMap(from, to []rune) map[rune]rune {
+	mp := make(map[rune]rune)
+	lenFrom, lenTo := len(from), len(to)
+	minLen := lenTo
+	if lenFrom < lenTo {
+		minLen = lenFrom
+	}
+	for idx := lenFrom - 1; idx >= lenTo; idx-- {
+		mp[from[idx]] = -1
+	}
+	for idx := minLen - 1; idx >= 0; idx-- {
+		mp[from[idx]] = to[idx]
+	}
+	return mp
 }
