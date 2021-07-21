@@ -4029,7 +4029,8 @@ func (b *builtinTranslateSig) evalString(row chunk.Row) (d string, isNull bool, 
 	if isToStrNull || err != nil {
 		return d, isNull, err
 	}
-	lenFrom, lenTo = len(fromStr), len(toStr)
+	fromRunes, toRunes := []rune(fromStr), []rune(toStr)
+	lenFrom, lenTo = len(fromRunes), len(toRunes)
 	if lenFrom < lenTo {
 		minLen = lenFrom
 	} else {
@@ -4037,10 +4038,10 @@ func (b *builtinTranslateSig) evalString(row chunk.Row) (d string, isNull bool, 
 	}
 	mp := make(map[rune]rune)
 	for idx := lenFrom - 1; idx >= lenTo; idx-- {
-		mp[[]rune(fromStr)[idx]] = -1
+		mp[fromRunes[idx]] = -1
 	}
 	for idx := minLen - 1; idx >= 0; idx-- {
-		mp[[]rune(fromStr)[idx]] = []rune(toStr)[idx]
+		mp[fromRunes[idx]] = toRunes[idx]
 	}
 	for _, charSrc := range srcStr {
 		if charTo, ok := mp[charSrc]; ok {
