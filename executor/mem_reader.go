@@ -322,8 +322,22 @@ func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn process
 	if err != nil {
 		return err
 	}
+
+	tempTableData := ctx.GetSessionVars().TemporaryTableData
 	for _, rg := range kvRanges {
 		iter := txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
+		if tempTableData != nil {
+			snapIter, err := tempTableData.Iter(rg.StartKey, rg.EndKey)
+			if err != nil {
+				return err
+			}
+
+			iter, err = NewUnionIter(iter, snapIter, false)
+			if err != nil {
+				return err
+			}
+		}
+
 		for ; iter.Valid(); err = iter.Next() {
 			if err != nil {
 				return err

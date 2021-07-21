@@ -38,7 +38,7 @@ type mockVecPlusIntBuiltinFunc struct {
 
 func (p *mockVecPlusIntBuiltinFunc) allocBuf(n int) (*chunk.Column, error) {
 	if p.enableAlloc {
-		return p.bufAllocator.get(types.ETInt, n)
+		return p.bufAllocator.get()
 	}
 	if p.buf == nil {
 		p.buf = chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), n)
@@ -136,22 +136,52 @@ func (s *testVectorizeSuite2) TestMockVecPlusIntParallel(c *C) {
 	wg.Wait()
 }
 
-func BenchmarkColumnBufferAllocate(b *testing.B) {
-	allocator := newLocalSliceBuffer(1)
+const (
+	numColumnPoolOp = 4096
+)
+
+func BenchmarkColumnPoolGet(b *testing.B) {
+	allocator := newLocalColumnPool()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		buf, _ := allocator.get(types.ETInt, 1024)
-		allocator.put(buf)
+		for j := 0; j < numColumnPoolOp; j++ {
+			_, _ = allocator.get()
+		}
 	}
 }
 
-func BenchmarkColumnBufferAllocateParallel(b *testing.B) {
-	allocator := newLocalSliceBuffer(1)
+func BenchmarkColumnPoolGetParallel(b *testing.B) {
+	allocator := newLocalColumnPool()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			buf, _ := allocator.get(types.ETInt, 1024)
-			allocator.put(buf)
+			for i := 0; i < numColumnPoolOp; i++ {
+				_, _ = allocator.get()
+			}
+		}
+	})
+}
+
+func BenchmarkColumnPoolGetPut(b *testing.B) {
+	allocator := newLocalColumnPool()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < numColumnPoolOp; j++ {
+			col, _ := allocator.get()
+			allocator.put(col)
+		}
+	}
+}
+
+func BenchmarkColumnPoolGetPutParallel(b *testing.B) {
+	allocator := newLocalColumnPool()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			for i := 0; i < numColumnPoolOp; i++ {
+				col, _ := allocator.get()
+				allocator.put(col)
+			}
 		}
 	})
 }
@@ -209,7 +239,7 @@ func (p *mockBuiltinDouble) vecEvalReal(input *chunk.Chunk, result *chunk.Column
 func (p *mockBuiltinDouble) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	var buf *chunk.Column
 	var err error
-	if buf, err = p.baseBuiltinFunc.bufAllocator.get(p.evalType, input.NumRows()); err != nil {
+	if buf, err = p.baseBuiltinFunc.bufAllocator.get(); err != nil {
 		return err
 	}
 	if err := p.args[0].VecEvalString(p.ctx, input, buf); err != nil {
@@ -270,7 +300,7 @@ func (p *mockBuiltinDouble) vecEvalDuration(input *chunk.Chunk, result *chunk.Co
 func (p *mockBuiltinDouble) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
 	var buf *chunk.Column
 	var err error
-	if buf, err = p.baseBuiltinFunc.bufAllocator.get(p.evalType, input.NumRows()); err != nil {
+	if buf, err = p.baseBuiltinFunc.bufAllocator.get(); err != nil {
 		return err
 	}
 	if err := p.args[0].VecEvalJSON(p.ctx, input, buf); err != nil {
