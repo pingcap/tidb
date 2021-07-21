@@ -237,7 +237,7 @@ func (txn *tikvTxn) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
 	key1 := append([]byte{}, key...)
 	var as []kv.FlagsOp
 	f, err := txn.GetUnionStore().GetMemBuffer().GetFlags(key1)
-	if err != nil && !kv.IsErrNotFound(err) {
+	if err != nil && !tikverr.IsErrNotFound(err) {
 		return err
 	}
 	if err == nil && !f.HasAssertion() {
