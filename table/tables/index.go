@@ -150,7 +150,6 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	for _, fn := range opts {
 		fn(&opt)
 	}
-	ss := opt.AssertionProto
 	vars := sctx.GetSessionVars()
 	writeBufs := vars.GetWriteStmtBufs()
 	skipCheck := vars.StmtCtx.BatchCheck
@@ -189,8 +188,8 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		if err != nil {
 			return nil, err
 		}
-		if ss != nil && (!distinct || skipCheck) {
-			err = ss.SetAssertion(key, kv.SetAssertNotExist)
+		if !distinct || skipCheck {
+			err = txn.SetAssertion(key, kv.SetAssertNotExist)
 		}
 		return nil, err
 	}
@@ -224,12 +223,10 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		if err != nil {
 			return nil, err
 		}
-		if ss != nil {
-			if lazyCheck && !txn.IsPessimistic() {
-				err = ss.SetAssertion(key, kv.SetAssertUnknown)
-			} else {
-				err = ss.SetAssertion(key, kv.SetAssertNotExist)
-			}
+		if lazyCheck && !txn.IsPessimistic() {
+			err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		} else {
+			err = txn.SetAssertion(key, kv.SetAssertNotExist)
 		}
 		return nil, err
 	}

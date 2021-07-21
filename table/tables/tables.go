@@ -819,7 +819,6 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			}
 		}
 	}
-	createIdxOpts = append(createIdxOpts, table.WithAssertion(txn))
 	// Insert new entries into indices.
 	h, err := t.addIndices(sctx, recordID, r, txn, createIdxOpts)
 	if err != nil {
@@ -1227,7 +1226,7 @@ func (t *TableCommon) removeRowIndex(sc *stmtctx.StatementContext, h kv.Handle, 
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals []types.Datum, newData []types.Datum, idx table.Index, txn kv.Transaction, untouched bool, popts ...table.CreateIdxOptFunc) error {
-	opts := []table.CreateIdxOptFunc{table.WithAssertion(txn)}
+	var opts []table.CreateIdxOptFunc
 	opts = append(opts, popts...)
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
