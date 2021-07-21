@@ -3976,3 +3976,80 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 	}
 	return string(ctor.Key(str)), false, nil
 }
+
+type translateFunctionClass struct {
+	baseFunctionClass
+}
+
+// getFunction sets translate built-in function signature.
+// The syntax of translate in Oracle is 'TRANSLATE(expr, from_string, to_string)'.
+func (c *translateFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	SetBinFlagOrBinStr(argType, bf.tp)
+	sig := &builtinTranslateSig{bf}
+	return sig, nil
+}
+
+type builtinTranslateSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTranslateSig) Clone() builtinFunc {
+	newSig := &builtinTranslateSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinTranslateSig, corresponding to translate(srcStr, fromStr, toStr)
+// See https://docs.oracle.com/cd/B19306_01/server.102/b14200/functions196.htm
+func (b *builtinTranslateSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
+	var (
+		srcStr, fromStr, toStr     string
+		isFromStrNull, isToStrNull bool
+		lenFrom, lenTo, minLen     int
+		tgt                        strings.Builder
+	)
+	srcStr, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, err
+	}
+	fromStr, isFromStrNull, err = b.args[1].EvalString(b.ctx, row)
+	if isFromStrNull || err != nil {
+		return d, isNull, err
+	}
+	toStr, isToStrNull, err = b.args[2].EvalString(b.ctx, row)
+	if isToStrNull || err != nil {
+		return d, isNull, err
+	}
+	lenFrom, lenTo = len(fromStr), len(toStr)
+	if lenFrom < lenTo {
+		minLen = lenFrom
+	} else {
+		minLen = lenTo
+	}
+	mp := make(map[rune]rune)
+	for idx := lenFrom - 1; idx >= lenTo; idx-- {
+		mp[[]rune(fromStr)[idx]] = -1
+	}
+	for idx := minLen - 1; idx >= 0; idx-- {
+		mp[[]rune(fromStr)[idx]] = []rune(toStr)[idx]
+	}
+	for _, charSrc := range srcStr {
+		if charTo, ok := mp[charSrc]; ok {
+			if charTo != -1 {
+				tgt.WriteRune(charTo)
+			}
+		} else {
+			tgt.WriteRune(charSrc)
+		}
+	}
+	return tgt.String(), false, nil
+}
