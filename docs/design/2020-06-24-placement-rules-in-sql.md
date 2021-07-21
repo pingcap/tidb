@@ -191,7 +191,7 @@ To simplify the procedure, a `SHOW PLACEMENT` statement is provided to summarize
 The statement is in such a format:
 
 ```sql
-SHOW PLACEMENT FOR [{DATABASE | SCHEMA} schema_name] [TABLE table_name] [PARTITION partition_name];
+SHOW PLACEMENT FOR [{DATABASE | SCHEMA} schema_name] [TABLE table_name [PARTITION partition_name]];
 ```
 
 TiDB will automatically find the effective rule based on the rule priorities.
@@ -973,4 +973,3 @@ This specific semantic will be the hardest to implement because of the other dep
   - Use defaults for `count` of each role, and `ROLE_CONSTRAINTS` syntax.
   - Added `SCHEDULE` property
   - Removed further ambiguous cases such as count when using dictionary syntax.
-
