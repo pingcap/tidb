@@ -460,7 +460,7 @@ type LogicalMemTable struct {
 	QueryTimeRange QueryTimeRange
 }
 
-// LogicalUnionScan is only used in non read-only txn.
+// LogicalUnionScan is used in non read-only txn or for scanning a local temporary table whose snapshot data is located in memory.
 type LogicalUnionScan struct {
 	baseLogicalPlan
 
