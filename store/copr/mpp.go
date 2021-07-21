@@ -33,6 +33,8 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // MPPClient servers MPP requests.
@@ -210,23 +212,41 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	// TODO: Handle dispatch task response correctly, including retry logic and cancel logic.
 	var rpcResp *tikvrpc.Response
 	var err error
+	var retry bool
 	// If copTasks is not empty, we should send request according to region distribution.
 	// Or else it's the task without region, which always happens in high layer task without table.
 	// In that case
 	if originalTask != nil {
 		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient())
-		rpcResp, _, _, err = sender.SendReqToAddr(bo, originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutMedium)
+		rpcResp, retry, _, err = sender.SendReqToAddr(bo, originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutMedium)
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
 		// That's a hard job but we can try it in the future.
 		if sender.GetRPCError() != nil {
 			logutil.BgLogger().Error("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 			// we return timeout to trigger tikv's fallback
-			m.sendError(derr.ErrTiFlashServerTimeout)
-			return
+			derr = tikv.ErrTiFlashServerTimeout
 		}
 	} else {
 		rpcResp, err = m.store.GetTiKVClient().SendRequest(ctx, req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutMedium)
+		if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
+			retry = false
+		} else if err != nil {
+			newErr := bo.Backoff(tikv.BoTiFlashRPC, err)
+			if newErr != nil {
+				retry = false
+				err = newErr
+			} else {
+				retry = true
+				logutil.BgLogger().Error("mpp dispatch meet error, and retrying", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
+			}
+		}
+	}
+
+	if retry {
+		logutil.BgLogger().Error("mpp dispatch meet error, and retrying", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
+		m.handleDispatchReq(ctx, bo, req)
+		return
 	}
 
 	if err != nil {
