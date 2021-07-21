@@ -186,8 +186,11 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 
 	if !distinct || skipCheck || opt.Untouched {
 		err = txn.GetMemBuffer().Set(key, idxVal)
-		if ss != nil {
-			err = ss.SetAssertion(key, kv.SetAssertNone)
+		if err != nil {
+			return nil, err
+		}
+		if ss != nil && (!distinct || skipCheck) {
+			err = ss.SetAssertion(key, kv.SetAssertNotExist)
 		}
 		return nil, err
 	}
@@ -212,13 +215,21 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		return nil, err
 	}
 	if err != nil || len(value) == 0 {
-		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
+		lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
+		if lazyCheck {
 			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
 		} else {
 			err = txn.GetMemBuffer().Set(key, idxVal)
 		}
+		if err != nil {
+			return nil, err
+		}
 		if ss != nil {
-			err = ss.SetAssertion(key, kv.SetAssertNotExist)
+			if lazyCheck {
+				err = ss.SetAssertion(key, kv.SetAssertUnknown)
+			} else {
+				err = ss.SetAssertion(key, kv.SetAssertNotExist)
+			}
 		}
 		return nil, err
 	}
