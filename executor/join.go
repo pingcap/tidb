@@ -48,10 +48,10 @@ var (
 
 type NonParallelHashJoinExec struct {
 	*HashJoinExec
-	hashTblDone       bool
-	hCtx     *hashContext
+	hashTblDone      bool
+	hCtx             *hashContext
 	remainingResChks []*chunk.Chunk
-    selected []bool
+	selected         []bool
 }
 
 func (e *NonParallelHashJoinExec) Open(ctx context.Context) error {
@@ -71,7 +71,7 @@ func (e *NonParallelHashJoinExec) Open(ctx context.Context) error {
 	e.rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
 	e.rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
-    e.remainingResChks = make([]*chunk.Chunk, 0, 100)
+	e.remainingResChks = make([]*chunk.Chunk, 0, 100)
 
 	probeKeyColIdx := make([]int, len(e.probeKeys))
 	for i := range e.probeKeys {
@@ -96,12 +96,12 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 		e.hashTblDone = true
 	}
 	// probe hash table
-    if len(e.remainingResChks) != 0 {
-        lastIdx := len(e.remainingResChks) - 1
-        req.SwapColumns(e.remainingResChks[lastIdx])
-        e.remainingResChks = e.remainingResChks[:lastIdx]
-        return nil
-    }
+	if len(e.remainingResChks) != 0 {
+		lastIdx := len(e.remainingResChks) - 1
+		req.SwapColumns(e.remainingResChks[lastIdx])
+		e.remainingResChks = e.remainingResChks[:lastIdx]
+		return nil
+	}
 	resChk := newFirstChunk(e)
 	for {
 		chk := newFirstChunk(e.probeSideExec)
@@ -138,7 +138,7 @@ func (e *NonParallelHashJoinExec) buildHashTable(ctx context.Context) (err error
 		if !e.useOuterToBuild {
 			err = e.rowContainer.PutChunk(chk, e.isNullEQ)
 		} else {
-            panic("not implemented yet")
+			panic("not implemented yet")
 		}
 		if err != nil {
 			return err
@@ -165,45 +165,45 @@ func (e *NonParallelHashJoinExec) doJoinWork(probeChk *chunk.Chunk, resChk *chun
 			}
 		}
 
-        for i := 0; i < len(e.selected); i++ {
-            if !e.selected[i] || e.hCtx.hasNull[i] {
-                e.joiners[0].onMissMatch(false, probeChk.GetRow(i), resChk)
-            } else {
-                probeKey, probeRow := e.hCtx.hashVals[i].Sum64(), probeChk.GetRow(i)
-                buildSideRows, _, err := e.rowContainer.GetMatchedRowsAndPtrs(probeKey, probeRow, e.hCtx)
-                if err != nil {
-                    return err
-                }
-                if len(buildSideRows) == 0 {
-                    e.joiners[0].onMissMatch(false, probeRow, resChk)
-                    continue
-                }
-                iter := chunk.NewIterator4Slice(buildSideRows)
-                hasMatch, hasNull := false, false
-                for iter.Begin(); iter.Current() != iter.End(); {
-                    matched, isNull, err := e.joiners[0].tryToMatchInners(probeRow, iter, resChk)
-                    if err != nil {
-                        return err
-                    }
-                    hasMatch = hasMatch || matched
-                    hasNull = hasNull || isNull
+		for i := 0; i < len(e.selected); i++ {
+			if !e.selected[i] || e.hCtx.hasNull[i] {
+				e.joiners[0].onMissMatch(false, probeChk.GetRow(i), resChk)
+			} else {
+				probeKey, probeRow := e.hCtx.hashVals[i].Sum64(), probeChk.GetRow(i)
+				buildSideRows, _, err := e.rowContainer.GetMatchedRowsAndPtrs(probeKey, probeRow, e.hCtx)
+				if err != nil {
+					return err
+				}
+				if len(buildSideRows) == 0 {
+					e.joiners[0].onMissMatch(false, probeRow, resChk)
+					continue
+				}
+				iter := chunk.NewIterator4Slice(buildSideRows)
+				hasMatch, hasNull := false, false
+				for iter.Begin(); iter.Current() != iter.End(); {
+					matched, isNull, err := e.joiners[0].tryToMatchInners(probeRow, iter, resChk)
+					if err != nil {
+						return err
+					}
+					hasMatch = hasMatch || matched
+					hasNull = hasNull || isNull
 
-                    if resChk.IsFull() {
-                        tmpChk := newFirstChunk(e)
-                        tmpChk.SwapColumns(resChk)
-                        e.remainingResChks = append(e.remainingResChks, tmpChk)
-                    }
-                }
-                if !hasMatch {
-                    e.joiners[0].onMissMatch(hasNull, probeRow, resChk)
-                }
-            }
-        }
-        if resChk.NumRows() == 0 {
-            lastIdx := len(e.remainingResChks) - 1
-            resChk.SwapColumns(e.remainingResChks[lastIdx])
-            e.remainingResChks = e.remainingResChks[:lastIdx]
-        }
+					if resChk.IsFull() {
+						tmpChk := newFirstChunk(e)
+						tmpChk.SwapColumns(resChk)
+						e.remainingResChks = append(e.remainingResChks, tmpChk)
+					}
+				}
+				if !hasMatch {
+					e.joiners[0].onMissMatch(hasNull, probeRow, resChk)
+				}
+			}
+		}
+		if resChk.NumRows() == 0 {
+			lastIdx := len(e.remainingResChks) - 1
+			resChk.SwapColumns(e.remainingResChks[lastIdx])
+			e.remainingResChks = e.remainingResChks[:lastIdx]
+		}
 	}
 	return nil
 }

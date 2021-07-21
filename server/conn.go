@@ -1211,25 +1211,25 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			data = data[:len(data)-1]
 			dataStr = string(hack.String(data))
 		}
-        // idx := -1
-        // if idx = strings.Index(dataStr, "repeatCnt"); idx != -1 {
-        //     tmpStr := dataStr[idx+9:]
-        //     endIdx := strings.IndexByte(tmpStr, ' ')
-        //     if endIdx == -1 {
-        //         panic("invalid sql")
-        //     }
-        //     numStr := tmpStr[:endIdx]
-        //     fmt.Println("!!!!!!!numStr: ", numStr)
-        //     cnt, err := strconv.Atoi(numStr)
-        //     if err != nil {
-        //         return err
-        //     }
-        //     for i := 0; i < cnt; i++ {
-        //         if err := cc.handleQuery(ctx, dataStr); err != nil {
-        //             return err
-        //         }
-        //     }
-        // }
+		// idx := -1
+		// if idx = strings.Index(dataStr, "repeatCnt"); idx != -1 {
+		//     tmpStr := dataStr[idx+9:]
+		//     endIdx := strings.IndexByte(tmpStr, ' ')
+		//     if endIdx == -1 {
+		//         panic("invalid sql")
+		//     }
+		//     numStr := tmpStr[:endIdx]
+		//     fmt.Println("!!!!!!!numStr: ", numStr)
+		//     cnt, err := strconv.Atoi(numStr)
+		//     if err != nil {
+		//         return err
+		//     }
+		//     for i := 0; i < cnt; i++ {
+		//         if err := cc.handleQuery(ctx, dataStr); err != nil {
+		//             return err
+		//         }
+		//     }
+		// }
 		return cc.handleQuery(ctx, dataStr)
 	case mysql.ComFieldList:
 		return cc.handleFieldList(ctx, dataStr)

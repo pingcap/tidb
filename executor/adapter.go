@@ -72,7 +72,6 @@ var (
 	totalCopWaitHistogramInternal   = metrics.TotalCopWaitHistogram.WithLabelValues(metrics.LblInternal)
 )
 
-
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
 	SetProcessInfo(string, time.Time, byte, uint64)
@@ -467,9 +466,9 @@ func (a *ExecStmt) cutTreeByExchangeHelper(ctx context.Context, e Executor) erro
 				for {
 					req := newFirstChunk(e)
 					if err := Next(ctx, e, req); err != nil {
-                        // TODO: another way to indicates done
-                        // fmt.Println(err)
-                        break
+						// TODO: another way to indicates done
+						// fmt.Println(err)
+						break
 					}
 					// if req.NumRows() == 0 {
 					// 	break
