@@ -4028,9 +4028,6 @@ func (b *builtinTranslateSig) evalString(row chunk.Row) (d string, isNull bool, 
 	if isToStrNull || err != nil {
 		return d, isNull, err
 	}
-	if srcStr == "" || fromStr == "" || toStr == "" {
-		return d, true, err
-	}
 	mp := buildTranslateMap([]rune(fromStr), []rune(toStr))
 	for _, charSrc := range srcStr {
 		if charTo, ok := mp[charSrc]; ok {

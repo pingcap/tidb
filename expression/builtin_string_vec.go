@@ -2967,10 +2967,6 @@ func (b *builtinTranslateSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		mp = buildTranslateMap(fromRunes, toRunes)
 	}
 	for i := 0; i < n; i++ {
-		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
-			result.AppendNull()
-			continue
-		}
 		srcStr := buf0.GetString(i)
 		var tgt strings.Builder
 		if !useCommonMap {
