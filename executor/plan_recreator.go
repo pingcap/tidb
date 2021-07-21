@@ -18,19 +18,22 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"strings"
-	"time"
-
+	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"os"
+	"strings"
+	"time"
 )
 
 const recreatorPath string = "/tmp/recreator"
@@ -136,8 +139,33 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() error {
 	if err != nil {
 		return errors.New("Plan Recreator: cannot create zip file.")
 	}
-	defer zf.Close()
 	zw := zip.NewWriter(zf)
+	defer func() {
+		err = zw.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("Closing zip writer failed.")
+		}
+		zf.Close()
+	}()
+
+	// Dump config
+	cf, err := zw.Create("config.toml")
+	if err != nil {
+		return err
+	}
+	if err := toml.NewEncoder(cf).Encode(config.GetGlobalConfig()); err != nil {
+		return err
+	}
+
+	// Dump meta
+	mt, err := zw.Create("meta.txt")
+	if err != nil {
+		return err
+	}
+	_, err = mt.Write([]byte(printer.GetTiDBInfo()))
+	if err != nil {
+		return err
+	}
 
 	// Retrieve current DB
 	sessionVars := e.Ctx.GetSessionVars()
@@ -178,66 +206,87 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() error {
 		}
 	}
 
-	// Dump explain
-	var sb strings.Builder
-	ctx := format.NewRestoreCtx(format.RestoreStringDoubleQuotes, &sb)
-	err = e.ExecStmt.Restore(ctx)
+	// Dump variables
+	varMap := make(map[string]string)
+	recordSets, err := e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "show variables")
+	if len(recordSets) > 0 {
+		defer recordSets[0].Close()
+	}
+	if err != nil {
+		return err
+	}
+	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
+	if err != nil {
+		return err
+	}
+	vf, err := zw.Create("variables.toml")
+	if err != nil {
+		return err
+	}
+	for _, row := range sRows {
+		varMap[row[0]] = row[1]
+	}
+	if err := toml.NewEncoder(vf).Encode(varMap); err != nil {
+		return err
+	}
+
+	// Dump sql
+	sql, err := zw.Create("sqls.sql")
 	if err != nil {
 		return nil
 	}
+	sql.Write([]byte(e.ExecStmt.Text()))
+
+	// Dump bindings
+	normSql, _ := parser.NormalizeDigest(e.ExecStmt.Text())
+	recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("show bindings where Original_sql='%s'", normSql))
+	if len(recordSets) > 0 {
+		defer recordSets[0].Close()
+	}
+	if err != nil {
+		return err
+	}
+	sRows, err = resultSetToStringSlice(context.Background(), recordSets[0])
+	if err != nil {
+		return err
+	}
+	bf, err := zw.Create("bindings.sql")
+	if err != nil {
+		return err
+	}
+	for _, row := range sRows {
+		fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
+	}
+
+	// Dump explain
 	if e.Analyze {
 		// Explain analyze
-		recordSets, err := e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain analyze %s", sb.String()))
-		if len(recordSets) > 0 {
-			defer recordSets[0].Close()
-		}
+		recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain analyze %s", e.ExecStmt.Text()))
 		if err != nil {
 			return err
 		}
-		sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
-		if err != nil {
-			return err
-		}
-		fw, err := zw.Create("explain.txt")
-		if err != nil {
-			return err
-		}
-		for _, row := range sRows {
-			fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
-		}
-
-		err = zw.Close()
-		if err != nil {
-			return err
-		}
-		return nil
 	} else {
 		// Explain
-		recordSets, err := e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain %s", sb.String()))
-		if len(recordSets) > 0 {
-			defer recordSets[0].Close()
-		}
+		recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain %s", e.ExecStmt.Text()))
 		if err != nil {
 			return err
 		}
-		sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
-		if err != nil {
-			return err
-		}
-		fw, err := zw.Create("explain.txt")
-		if err != nil {
-			return err
-		}
-		for _, row := range sRows {
-			fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
-		}
-
-		err = zw.Close()
-		if err != nil {
-			return err
-		}
-		return nil
 	}
+	if len(recordSets) > 0 {
+		defer recordSets[0].Close()
+	}
+	sRows, err = resultSetToStringSlice(context.Background(), recordSets[0])
+	if err != nil {
+		return err
+	}
+	fw, err := zw.Create("explain.txt")
+	if err != nil {
+		return err
+	}
+	for _, row := range sRows {
+		fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
+	}
+	return nil
 }
 
 func extractTableNames(ExecStmt ast.StmtNode, curDB string) (map[tableNamePair]struct{}, error) {
