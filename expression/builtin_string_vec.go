@@ -2927,3 +2927,99 @@ func formatReal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64, re
 	}
 	return nil
 }
+
+func (b *builtinTranslateSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	buf1, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	buf2, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	if err := b.args[2].VecEvalString(b.ctx, input, buf2); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	var (
+		commonMap              map[rune]rune
+		useCommonMap           = false
+		lenFrom, lenTo, minLen int
+	)
+	_, isFromConst := b.args[1].(*Constant)
+	_, isToConst := b.args[2].(*Constant)
+	if isFromConst && isToConst {
+		commonMap = make(map[rune]rune)
+		useCommonMap = true
+		fromRunes, toRunes := []rune(buf1.GetString(0)), []rune(buf2.GetString(0))
+		lenFrom, lenTo = len(fromRunes), len(toRunes)
+		if lenFrom < lenTo {
+			minLen = lenFrom
+		} else {
+			minLen = lenTo
+		}
+		for idx := lenFrom - 1; idx >= lenTo; idx-- {
+			commonMap[fromRunes[idx]] = -1
+		}
+		for idx := minLen - 1; idx >= 0; idx-- {
+			commonMap[fromRunes[idx]] = toRunes[idx]
+		}
+	}
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		srcStr := buf0.GetString(i)
+		var tgt strings.Builder
+		if useCommonMap {
+			for _, charSrc := range srcStr {
+				if charTo, ok := commonMap[charSrc]; ok {
+					if charTo != -1 {
+						tgt.WriteRune(charTo)
+					}
+				} else {
+					tgt.WriteRune(charSrc)
+				}
+			}
+		} else {
+			fromRunes, toRunes := []rune(buf1.GetString(i)), []rune(buf2.GetString(i))
+			mp := make(map[rune]rune)
+			for idx := lenFrom - 1; idx >= lenTo; idx-- {
+				mp[fromRunes[idx]] = -1
+			}
+			for idx := minLen - 1; idx >= 0; idx-- {
+				mp[fromRunes[idx]] = toRunes[idx]
+			}
+			for _, charSrc := range srcStr {
+				if charTo, ok := mp[charSrc]; ok {
+					if charTo != -1 {
+						tgt.WriteRune(charTo)
+					}
+				} else {
+					tgt.WriteRune(charSrc)
+				}
+			}
+		}
+		result.AppendString(tgt.String())
+	}
+	return nil
+}
+
+func (b *builtinTranslateSig) vectorized() bool {
+	return true
+}
