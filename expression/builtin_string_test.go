@@ -2468,13 +2468,12 @@ func (s *testEvaluatorSuite) TestTranslate(c *C) {
 		{[]interface{}{"", "null", "null"}, false, false, ""},
 		{[]interface{}{"null", "", "null"}, false, false, "null"},
 		{[]interface{}{"null", "null", ""}, false, false, ""},
-		{[]interface{}{nil, "error", "error"}, false, false, ""},
-		{[]interface{}{"error", nil, "error"}, false, false, ""},
-		{[]interface{}{"error", "error", nil}, false, false, ""},
-		{[]interface{}{nil, nil, nil}, false, false, ""},
+		{[]interface{}{nil, "error", "error"}, true, false, ""},
+		{[]interface{}{"error", nil, "error"}, true, false, ""},
+		{[]interface{}{"error", "error", nil}, true, false, ""},
+		{[]interface{}{nil, nil, nil}, true, false, ""},
 	}
 	for _, t := range cases {
-		fmt.Printf("translate=%+v\n", t)
 		f, err := newFunctionForTest(s.ctx, ast.Translate, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
