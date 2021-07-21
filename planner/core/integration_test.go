@@ -1448,6 +1448,9 @@ func (s *testIntegrationSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("create table t(a int, b int, unique index i_a (a) invisible, unique index i_b(b))")
 	tk.MustExec("insert into t values (1,2)")
 
+	// For issue 26217, can't use invisible index after admin check table.
+	tk.MustExec("admin check table t")
+
 	// Optimizer cannot use invisible indexes.
 	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1"))
 	c.Check(tk.MustUseIndex("select a from t order by a", "i_a"), IsFalse)
@@ -3966,4 +3969,14 @@ func (s *testIntegrationSerialSuite) TestSelectIgnoreTemporaryTableInView(c *C) 
 	tk.MustQuery("select * from v4").Check(testkit.Rows("3 4 3 5"))
 	tk.MustQuery("select * from v5").Check(testkit.Rows("1 2", "3 4"))
 
+}
+
+func (s *testIntegrationSerialSuite) TestIssue26250(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tp (id int primary key) partition by range (id) (partition p0 values less than (100));")
+	tk.MustExec("create table tn (id int primary key);")
+	tk.MustExec("insert into tp values(1),(2);")
+	tk.MustExec("insert into tn values(1),(2);")
+	tk.MustQuery("select * from tp,tn where tp.id=tn.id and tn.id=1 for update;").Check(testkit.Rows("1 1"))
 }

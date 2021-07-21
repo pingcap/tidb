@@ -679,7 +679,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL,\n"+
 			"  `b` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin/*!90000 SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
 	))
 	tk.MustExec("drop table t")
 
@@ -1300,6 +1300,9 @@ func (s *testSuite5) TestShowVar(c *C) {
 	c.Check(res.Rows(), HasLen, 0)
 	// Test Hidden tx_read_ts
 	res = tk.MustQuery("show variables like '%tx_read_ts'")
+	c.Check(res.Rows(), HasLen, 0)
+	// Test Hidden tidb_enable_streaming
+	res = tk.MustQuery("show variables like '%tidb_enable_streaming%';")
 	c.Check(res.Rows(), HasLen, 0)
 }
 

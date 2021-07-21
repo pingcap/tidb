@@ -104,11 +104,16 @@ type ddlJobCache struct {
 
 func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager) *worker {
 	worker := &worker{
-		id:              atomic.AddInt32(&ddlWorkerID, 1),
-		tp:              tp,
-		ddlJobCh:        make(chan struct{}, 1),
-		ctx:             ctx,
-		ddlJobCache:     ddlJobCache{ddlJobCtx: context.Background()},
+		id:       atomic.AddInt32(&ddlWorkerID, 1),
+		tp:       tp,
+		ddlJobCh: make(chan struct{}, 1),
+		ctx:      ctx,
+		ddlJobCache: ddlJobCache{
+			ddlJobCtx:          context.Background(),
+			cacheSQL:           "",
+			cacheNormalizedSQL: "",
+			cacheDigest:        nil,
+		},
 		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,

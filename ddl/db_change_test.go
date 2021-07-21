@@ -731,6 +731,28 @@ func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
 }
 
+// TestDeleteOnlyForDropColumnWithIndexes test for delete data when a middle-state column with indexes in it.
+func (s *testStateChangeSuite) TestDeleteOnlyForDropColumnWithIndexes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	sqls := make([]sqlWithErr, 2)
+	sqls[0] = sqlWithErr{"delete from t1", nil}
+	sqls[1] = sqlWithErr{"delete from t1 where b=1", errors.Errorf("[planner:1054]Unknown column 'b' in 'where clause'")}
+	prepare := func() {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("create table t1(a int key, b int, c int, index idx(b));")
+		tk.MustExec("insert into t1 values(1,1,1);")
+	}
+	prepare()
+	dropColumnSQL := "alter table t1 drop column b"
+	query := &expectQuery{sql: "select * from t1;", rows: []string{}}
+	s.runTestInSchemaState(c, model.StateWriteOnly, true, dropColumnSQL, sqls, query)
+	prepare()
+	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
+	prepare()
+	s.runTestInSchemaState(c, model.StateDeleteReorganization, true, dropColumnSQL, sqls, query)
+}
+
 // TestDeleteOnlyForDropExpressionIndex tests for deleting data when the hidden column is delete-only state.
 func (s *serialTestStateChangeSuite) TestDeleteOnlyForDropExpressionIndex(c *C) {
 	originalVal := config.GetGlobalConfig().Experimental.AllowsExpressionIndex
@@ -851,9 +873,9 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 			return
 		}
 		for _, sqlWithErr := range sqlWithErrs {
-			_, err = se.Execute(context.Background(), sqlWithErr.sql)
-			if !terror.ErrorEqual(err, sqlWithErr.expectErr) {
-				checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err)
+			_, err1 := se.Execute(context.Background(), sqlWithErr.sql)
+			if !terror.ErrorEqual(err1, sqlWithErr.expectErr) {
+				checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err1)
 				break
 			}
 		}

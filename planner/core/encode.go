@@ -67,6 +67,9 @@ func (pn *planEncoder) encodePlanTree(p Plan) string {
 }
 
 func (pn *planEncoder) encodeCTEPlan() {
+	if len(pn.ctes) <= 0 {
+		return
+	}
 	explainedCTEPlan := make(map[int]struct{})
 	for i := 0; i < len(pn.ctes); i++ {
 		x := (*CTEDefinition)(pn.ctes[i])
