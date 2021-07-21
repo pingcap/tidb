@@ -1286,7 +1286,7 @@ func (b *executorBuilder) addExchangeBroadcast(hashJoins []*NonParallelHashJoinE
 	*execID++
 
 	for i := 0; i < concurrency; i++ {
-		broadcastSender.outputs = append(broadcastSender.outputs, make(chan *chunk.Chunk))
+		broadcastSender.outputs = append(broadcastSender.outputs, make(chan *chunk.Chunk, 5))
 	}
 
 	for i := 0; i < concurrency; i++ {
@@ -1321,7 +1321,7 @@ func (b *executorBuilder) addExchangeRandom(hashJoins []*NonParallelHashJoinExec
 	*execID++
 
 	for i := 0; i < concurrency; i++ {
-		randomSender.outputs = append(randomSender.outputs, make(chan *chunk.Chunk))
+		randomSender.outputs = append(randomSender.outputs, make(chan *chunk.Chunk, 3))
 	}
 
 	for i := 0; i < concurrency; i++ {
