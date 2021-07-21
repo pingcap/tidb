@@ -168,44 +168,6 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 
 // ToDatum Converts the `TxnInfo`'s specified column to `Datum` to show in the `TIDB_TRX` table.
 func (info *TxnInfo) ToDatum(column string) types.Datum {
-	//humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
-	//
-	//var currentDigest interface{}
-	//if len(info.CurrentSQLDigest) != 0 {
-	//	currentDigest = info.CurrentSQLDigest
-	//}
-	//
-	//var blockStartTime interface{}
-	//if !info.BlockStartTime.Valid {
-	//	blockStartTime = nil
-	//} else {
-	//	blockStartTime = types.NewTime(types.FromGoTime(info.BlockStartTime.Time), mysql.TypeTimestamp, types.MaxFsp)
-	//}
-	//
-	//e, err := types.ParseEnumValue(TxnRunningStateStrs, uint64(info.State+1))
-	//if err != nil {
-	//	panic("this should never happen")
-	//}
-	//
-	//allSQLs := "[" + strings.Join(info.AllSQLDigests, ", ") + "]"
-	//
-	//state := types.NewMysqlEnumDatum(e)
-	//
-	//datums := types.MakeDatums(
-	//	info.StartTS,
-	//	types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, types.MaxFsp),
-	//	currentDigest,
-	//)
-	//datums = append(datums, state)
-	//datums = append(datums, types.MakeDatums(
-	//	blockStartTime,
-	//	info.EntriesCount,
-	//	info.EntriesSize,
-	//	info.ConnectionID,
-	//	info.Username,
-	//	info.CurrentDB,
-	//	allSQLs)...)
-	//return datums
 	res, ok := columnValueGetterMap[column]
 	if !ok {
 		return types.NewDatum(nil)
