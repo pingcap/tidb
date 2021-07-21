@@ -468,7 +468,7 @@ func (a *ExecStmt) cutTreeByExchangeHelper(ctx context.Context, e Executor) erro
 					req := newFirstChunk(e)
 					if err := Next(ctx, e, req); err != nil {
                         // TODO: another way to indicates done
-                        fmt.Println(err)
+                        // fmt.Println(err)
                         break
 					}
 					// if req.NumRows() == 0 {

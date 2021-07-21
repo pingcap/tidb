@@ -111,9 +111,11 @@ func (e *ExchangeSenderBroadcast) Next(ctx context.Context, req *chunk.Chunk) er
         // TODO: another way to indicates done
 		return errors.New("sender broadcast done")
 	}
-	for _, ch := range e.outputs {
-		ch <- req.CopyConstruct()
+    for i := 1; i < len(e.outputs); i++ {
+        // TODO: this is dangerous
+		e.outputs[i] <- req.CopyConstruct()
 	}
+    e.outputs[0] <- req
 	return nil
 }
 

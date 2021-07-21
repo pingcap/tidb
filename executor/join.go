@@ -51,10 +51,10 @@ type NonParallelHashJoinExec struct {
 	*HashJoinExec
 	hashTblDone       bool
 	remainingIdx      int
-	remainingSelected []bool
 	remainingProbeChk *chunk.Chunk
-	remainingHCtx     *hashContext
+	hCtx     *hashContext
 	remainingResChks []*chunk.Chunk
+    selected []bool
 }
 
 func (e *NonParallelHashJoinExec) Open(ctx context.Context) error {
@@ -76,6 +76,17 @@ func (e *NonParallelHashJoinExec) Open(ctx context.Context) error {
 	e.rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
     e.remainingResChks = make([]*chunk.Chunk, 0)
     e.remainingIdx = math.MaxInt64
+
+	probeKeyColIdx := make([]int, len(e.probeKeys))
+	for i := range e.probeKeys {
+		probeKeyColIdx[i] = e.probeKeys[i].Index
+	}
+	e.selected = make([]bool, 0, chunk.InitialCapacity)
+	e.hCtx = &hashContext{
+		allTypes:  e.probeTypes,
+		keyColIdx: probeKeyColIdx,
+	}
+	e.hCtx.initHash(e.ctx.GetSessionVars().MaxChunkSize)
 	return nil
 }
 
@@ -90,17 +101,18 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 	}
 	// probe hash table
     if len(e.remainingResChks) != 0 {
-        req.SwapColumns(e.remainingResChks[0])
-        e.remainingResChks = e.remainingResChks[1:]
+        lastIdx := len(e.remainingResChks) - 1
+        req.SwapColumns(e.remainingResChks[lastIdx])
+        e.remainingResChks = e.remainingResChks[:lastIdx]
         return nil
     }
 	resChk := newFirstChunk(e)
 	for {
-		if err = e.handleRemainingRows(e.remainingIdx, e.remainingSelected, e.remainingHCtx, e.remainingProbeChk, resChk); err != nil {
+		if err = e.handleRemainingRows(e.remainingIdx, e.selected, e.hCtx, e.remainingProbeChk, resChk); err != nil {
 			return err
 		}
 
-		if resChk.IsFull() || len(e.remainingResChks) != 0 {
+		if len(e.remainingResChks) != 0 || resChk.IsFull() {
 			req.SwapColumns(resChk)
 			break
 		}
@@ -118,7 +130,7 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 		if err = e.doJoinWork(chk, resChk); err != nil {
 			return err
 		}
-		if resChk.IsFull() || len(e.remainingResChks) != 0 {
+		if len(e.remainingResChks) != 0 || resChk.IsFull() {
 			req.SwapColumns(resChk)
 			break
 		}
@@ -149,33 +161,24 @@ func (e *NonParallelHashJoinExec) buildHashTable(ctx context.Context) (err error
 }
 
 func (e *NonParallelHashJoinExec) doJoinWork(probeChk *chunk.Chunk, resChk *chunk.Chunk) (err error) {
-	probeKeyColIdx := make([]int, len(e.probeKeys))
-	for i := range e.probeKeys {
-		probeKeyColIdx[i] = e.probeKeys[i].Index
-	}
-	selected := make([]bool, 0, chunk.InitialCapacity)
-	hCtx := &hashContext{
-		allTypes:  e.probeTypes,
-		keyColIdx: probeKeyColIdx,
-	}
-	hCtx.initHash(probeChk.NumRows())
+	e.hCtx.initHash(probeChk.NumRows())
 	if e.useOuterToBuild {
 		panic("not implemented yet")
 	} else {
-		selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(probeChk), selected)
+		e.selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(probeChk), e.selected)
 		if err != nil {
 			return err
 		}
 
-		for keyIdx, i := range hCtx.keyColIdx {
+		for keyIdx, i := range e.hCtx.keyColIdx {
 			ignoreNull := len(e.isNullEQ) > keyIdx && e.isNullEQ[keyIdx]
-			err = codec.HashChunkSelected(e.rowContainer.sc, hCtx.hashVals, probeChk, hCtx.allTypes[i], i, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
+			err = codec.HashChunkSelected(e.rowContainer.sc, e.hCtx.hashVals, probeChk, e.hCtx.allTypes[i], i, e.hCtx.buf, e.hCtx.hasNull, e.selected, ignoreNull)
 			if err != nil {
 				return err
 			}
 		}
 
-		if err = e.handleRemainingRows(0, selected, hCtx, probeChk, resChk); err != nil {
+		if err = e.handleRemainingRows(0, e.selected, e.hCtx, probeChk, resChk); err != nil {
 			return nil
 		}
 	}
@@ -218,17 +221,17 @@ func (e *NonParallelHashJoinExec) handleRemainingRows(idx int, selected []bool, 
 			}
             if len(e.remainingResChks) != 0 {
                 if resChk.NumRows() == 0 {
-                    resChk.SwapColumns(e.remainingResChks[0])
-                    e.remainingResChks = e.remainingResChks[1:]
+                    lastIdx := len(e.remainingResChks) - 1
+                    resChk.SwapColumns(e.remainingResChks[lastIdx])
+                    e.remainingResChks = e.remainingResChks[:lastIdx]
                 }
                 break
             }
 		}
 	}
     e.remainingIdx = i + 1
-    e.remainingSelected = selected
+    e.selected = selected
     e.remainingProbeChk = probeChk
-    e.remainingHCtx = hCtx
 	return nil
 }
 
