@@ -27,8 +27,6 @@ import (
 )
 
 func TestHex(t *testing.T) {
-	t.Parallel()
-
 	var region metapb.Region
 	region.Id = 6662
 	region.StartKey = []byte{'t', 200, '\\', 000, 000, 000, '\\', 000, 000, 000, 37, '-', 000, 000, 000, 000, 000, 000, 000, 37}
@@ -39,8 +37,6 @@ func TestHex(t *testing.T) {
 }
 
 func TestPrettyPrint(t *testing.T) {
-	t.Parallel()
-
 	var buf bytes.Buffer
 
 	byteSlice := []byte("asd2fsdafs中文3af")

@@ -27,8 +27,6 @@ import (
 )
 
 func TestZapLoggerWithKeys(t *testing.T) {
-	t.Parallel()
-
 	if runtime.GOOS == "windows" {
 		// Skip this test on windows for two reason:
 		// 1. The pattern match fails somehow. It seems windows treat \n as slash and character n.
@@ -84,8 +82,6 @@ func testZapLogger(ctx context.Context, t *testing.T, fileName, pattern string) 
 }
 
 func TestSetLevel(t *testing.T) {
-	t.Parallel()
-
 	conf := NewLogConfig("info", DefaultLogFormat, "", EmptyFileLogConfig, false)
 	err := InitLogger(conf)
 	require.NoError(t, err)
