@@ -3,21 +3,28 @@ package executor
 import (
 	"context"
 	"reflect"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/expression"
 )
 
 var _ Executor = &ExchangeSender{}
 var _ Executor = &ExchangeReceiver{}
 var _ Executor = &ExchangeReceiverFullMerge{}
 var _ Executor = &ExchangeSenderBroadcast{}
+var _ Executor = &ExchangeSenderBroadcastHT{}
+var _ Executor = &ExchangeReceiverPassThroughHT{}
+var _ Executor = &ExchangeReceiverPassThrough{}
 
 func IsExchangeSender(e Executor) bool {
 	_, ok1 := e.(*ExchangeSenderBroadcast)
 	_, ok2 := e.(*ExchangeSenderPassThrough)
 	_, ok3 := e.(*ExchangeSenderRandom)
-	return ok1 || ok2 || ok3
+	_, ok4 := e.(*ExchangeSenderBroadcastHT)
+	return ok1 || ok2 || ok3 || ok4
 }
 
 type ExchangeSender struct {
@@ -225,5 +232,100 @@ func (e *ExchangeSenderRandom) Next(ctx context.Context, req *chunk.Chunk) error
 }
 
 func (e *ExchangeSenderRandom) Close() error {
+	return e.baseExecutor.Close()
+}
+
+type ExchangeSenderBroadcastHT struct {
+	ExchangeSender
+
+	outputs []chan *chunk.Chunk
+    ht *hashRowContainer
+
+    buildSideEstCount float64
+	buildKeys         []*expression.Column
+	buildTypes        []*types.FieldType
+    useOuterToBuild bool
+    isNullEQ []bool
+}
+
+func (e *ExchangeSenderBroadcastHT) Open(ctx context.Context) error {
+	if e.opened {
+		return nil
+	}
+	e.opened = true
+
+    if e.useOuterToBuild {
+        panic("not implemented yet")
+    }
+
+	buildKeyColIdx := make([]int, len(e.buildKeys))
+	for i := range e.buildKeys {
+		buildKeyColIdx[i] = e.buildKeys[i].Index
+	}
+	hCtx := &hashContext{
+		allTypes:  e.buildTypes,
+		keyColIdx: buildKeyColIdx,
+	}
+	e.ht = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
+	return e.baseExecutor.Open(ctx)
+}
+
+func (e *ExchangeSenderBroadcastHT) sendAndCloseOutputs() {
+	for _, ch := range e.outputs {
+        ch <- (*chunk.Chunk)(unsafe.Pointer(e.ht))
+		close(ch)
+	}
+}
+
+func (e *ExchangeSenderBroadcastHT) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if err := Next(ctx, e.children[0], req); err != nil {
+		// TODO: another way to indicates done
+        panic("go error in BroadcastHT")
+	}
+	if req.NumRows() == 0 {
+		e.sendAndCloseOutputs()
+		return errors.New("sender broadcast done")
+	}
+
+    if err := e.ht.PutChunk(req, e.isNullEQ); err != nil {
+        panic("put chunk error")
+    }
+	return nil
+}
+
+func (e *ExchangeSenderBroadcastHT) Close() error {
+    if err := e.ht.Close(); err != nil {
+        return err
+    }
+	return e.baseExecutor.Close()
+}
+
+type ExchangeReceiverPassThroughHT struct {
+	ExchangeReceiver
+
+    // TODO change type to HT
+	input chan *chunk.Chunk
+}
+
+func (e *ExchangeReceiverPassThroughHT) Open(ctx context.Context) error {
+	if e.opened {
+		return nil
+	}
+	e.opened = true
+	return e.baseExecutor.Open(ctx)
+}
+
+func (e *ExchangeReceiverPassThroughHT) Next(ctx context.Context, req *chunk.Chunk) error {
+	chk, ok := <-e.input
+	if ok {
+        htPtr := (*hashRowContainer)(unsafe.Pointer(chk))
+        reqPtr := (**hashRowContainer)(unsafe.Pointer(req))
+        *reqPtr = htPtr
+	}
+	return nil
+}
+
+func (e *ExchangeReceiverPassThroughHT) Close() error {
 	return e.baseExecutor.Close()
 }

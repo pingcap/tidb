@@ -22,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -58,19 +59,6 @@ func (e *NonParallelHashJoinExec) Open(ctx context.Context) error {
 	if err := e.HashJoinExec.Open(ctx); err != nil {
 		return err
 	}
-	buildKeyColIdx := make([]int, len(e.buildKeys))
-	for i := range e.buildKeys {
-		buildKeyColIdx[i] = e.buildKeys[i].Index
-	}
-	hCtx := &hashContext{
-		allTypes:  e.buildTypes,
-		keyColIdx: buildKeyColIdx,
-	}
-	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
-	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
-	e.rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
-	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
-	e.rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
 	e.remainingResChks = make([]*chunk.Chunk, 0, 100)
 
 	probeKeyColIdx := make([]int, len(e.probeKeys))
@@ -126,25 +114,12 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 }
 
 func (e *NonParallelHashJoinExec) buildHashTable(ctx context.Context) (err error) {
-	for {
-		chk := chunk.NewChunkWithCapacity(e.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
-		if err = Next(ctx, e.buildSideExec, chk); err != nil {
-			return err
-		}
-		if chk.NumRows() == 0 {
-			break
-		}
-
-		if !e.useOuterToBuild {
-			err = e.rowContainer.PutChunk(chk, e.isNullEQ)
-		} else {
-			panic("not implemented yet")
-		}
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+    var htPtr *hashRowContainer
+    if err = Next(ctx, e.buildSideExec, (*chunk.Chunk)(unsafe.Pointer(&htPtr))); err != nil {
+        return err
+    }
+    e.rowContainer = htPtr
+    return nil
 }
 
 func (e *NonParallelHashJoinExec) doJoinWork(probeChk *chunk.Chunk, resChk *chunk.Chunk) (err error) {

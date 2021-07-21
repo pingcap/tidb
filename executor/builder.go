@@ -1277,11 +1277,16 @@ func (b *executorBuilder) getAllHashJoinsHelper(join *NonParallelHashJoinExec, a
 func (b *executorBuilder) addExchangeBroadcast(hashJoins []*NonParallelHashJoinExec, concurrency int, execID *int) error {
 	var exec Executor
 	exec = hashJoins[0].buildSideExec
-	broadcastSender := &ExchangeSenderBroadcast{
+	broadcastSender := &ExchangeSenderBroadcastHT{
 		ExchangeSender: ExchangeSender{
 			baseExecutor: newBaseExecutor(b.ctx, exec.base().schema, *execID, exec),
 		},
 		outputs: make([]chan *chunk.Chunk, 0, concurrency),
+        buildSideEstCount: hashJoins[0].buildSideEstCount,
+        buildKeys: hashJoins[0].buildKeys,
+        buildTypes: hashJoins[0].buildTypes,
+        useOuterToBuild: hashJoins[0].useOuterToBuild,
+        isNullEQ: hashJoins[0].isNullEQ,
 	}
 	*execID++
 
@@ -1291,7 +1296,7 @@ func (b *executorBuilder) addExchangeBroadcast(hashJoins []*NonParallelHashJoinE
 
 	for i := 0; i < concurrency; i++ {
 		exec = hashJoins[i].buildSideExec
-		broadcastReceiver := &ExchangeReceiverPassThrough{
+		broadcastReceiver := &ExchangeReceiverPassThroughHT{
 			ExchangeReceiver: ExchangeReceiver{
 				baseExecutor: newBaseExecutor(b.ctx, broadcastSender.base().schema, *execID, broadcastSender),
 			},
