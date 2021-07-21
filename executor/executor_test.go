@@ -8319,45 +8319,6 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 		))
 }
 
-func (s *testSuite1) TestTemporaryTableNoPessimisticLock(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create global temporary table t (a int primary key, b int) on commit delete rows")
-	tk.MustExec("insert into t values (1, 1)")
-
-	// Do something on the temporary table, pessimistic transaction mode.
-	tk.MustExec("begin pessimistic")
-	tk.MustExec("insert into t values (2, 2)")
-	tk.MustExec("update t set b = b + 1 where a = 1")
-	tk.MustExec("delete from t where a > 1")
-	tk.MustQuery("select count(*) from t where b >= 2 for update")
-
-	// Get the temporary table ID.
-	schema := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
-	tbl, err := schema.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	meta := tbl.Meta()
-	c.Assert(meta.TempTableType, Equals, model.TempTableGlobal)
-
-	// Scan the table range to check there is no lock.
-	// It's better to use the rawkv client, but the txnkv client should also works.
-	// If there is a lock, the txnkv client should have reported the lock error.
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	seekKey := tablecodec.EncodeTablePrefix(meta.ID)
-	endKey := tablecodec.EncodeTablePrefix(meta.ID + 1)
-	scanner, err := txn.Iter(seekKey, endKey)
-	c.Assert(err, IsNil)
-	for scanner.Valid() {
-		// No lock written to TiKV here.
-		c.FailNow()
-	}
-
-	tk.MustExec("rollback")
-}
-
 func (s testSerialSuite) TestExprBlackListForEnum(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -8482,7 +8443,14 @@ func (s testSerialSuite) TestTemporaryTableNoNetwork(c *C) {
 	// Index lookup
 	tk.HasPlan("select id from tmp_t where a = 1", "IndexLookUp")
 	tk.MustQuery("select id from tmp_t where a = 1").Check(testkit.Rows("1"))
+	tk.MustExec("rollback")
 
+	// Pessimistic lock
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into tmp_t values (2, 2)")
+	tk.MustExec("update tmp_t set id = id + 1 where a = 1")
+	tk.MustExec("delete from tmp_t where a > 1")
+	tk.MustQuery("select count(*) from tmp_t where a >= 1 for update")
 	tk.MustExec("rollback")
 }
 
@@ -8839,4 +8807,23 @@ func (s *testSuite) TestIssue25506(c *C) {
 	tk.MustExec("create table tbl_23 (col_15 bit(15))")
 	tk.MustExec("insert into tbl_23 values (0xF)")
 	tk.MustQuery("(select col_15 from tbl_23) union all (select col_15 from tbl_3 for update) order by col_15").Check(testkit.Rows("\x00\x00\x0F", "\x00\x00\xFF", "\x00\xFF\xFF"))
+}
+
+func (s *testSuite) TestIssue26348(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t (
+a varchar(8) DEFAULT NULL,
+b varchar(8) DEFAULT NULL,
+c decimal(20,2) DEFAULT NULL,
+d decimal(15,8) DEFAULT NULL
+);`)
+	tk.MustExec(`insert into t values(20210606, 20210606, 50000.00, 5.04600000);`)
+	tk.MustQuery(`select a * c *(d/36000) from t;`).Check(testkit.Rows("141642663.71666598"))
+	tk.MustQuery("select \"20210606\"*50000.00*(5.04600000/36000)").Check(testkit.Rows("141642663.71666598"))
+	// differs from MySQL, MySQL returns 141642663.71666599297980.
+	tk.MustQuery("select 20210606*50000.00*(5.04600000/36000)").Check(testkit.Rows("141642663.716665992979800000000000000000"))
+	tk.MustQuery("select cast(\"20210606\" as double)*50000.00*(5.04600000/36000)").Check(testkit.Rows("141642663.71666598"))
 }
