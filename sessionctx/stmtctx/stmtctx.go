@@ -182,14 +182,6 @@ type StatementContext struct {
 		DiskTracker disk.Tracker
 		LogOnExceed [2]memory.LogOnExceed
 	}
-
-	// DepthInExprTree indicates the depth of the current expression being
-	// rewritten in an expression tree.
-	// NOTE: This var is introduced to remind an arithmetic expression to keep
-	// the precision of an real/decimal intermediate result as accurate as
-	// possible. Thus we only take the arithmetic expression into consideration.
-	// e.g. tidb/issues/26348
-	DepthInExprTree int
 }
 
 // StmtHints are SessionVars related sql hints.
