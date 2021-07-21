@@ -112,7 +112,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsTrue)
 
-	err = index.Delete(sc, txn, values, kv.IntHandle(1), nil)
+	err = index.Delete(sc, txn, values, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 
 	it, err = index.SeekFirst(txn)

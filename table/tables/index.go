@@ -239,7 +239,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 }
 
 // Delete removes the entry for handle h and indexedValues from KV index.
-func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, ss kv.Transaction) error {
+func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error {
 	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
 		return err
@@ -249,12 +249,10 @@ func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexed
 	} else {
 		err = txn.GetMemBuffer().Delete(key)
 	}
-	if ss != nil {
-		switch c.idxInfo.State {
-		case model.StatePublic:
-			// If the index is in public state, delete this index means it must exists.
-			err = ss.SetAssertion(key, kv.SetAssertExist)
-		}
+	switch c.idxInfo.State {
+	case model.StatePublic:
+		// If the index is in public state, delete this index means it must exists.
+		err = txn.SetAssertion(key, kv.SetAssertExist)
 	}
 	return err
 }

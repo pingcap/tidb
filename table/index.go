@@ -66,7 +66,7 @@ type Index interface {
 	// Create supports insert into statement.
 	Create(ctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOptFunc) (kv.Handle, error)
 	// Delete supports delete from statement.
-	Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, ss kv.Transaction) error
+	Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
 	// Drop supports drop table, drop index statements.
 	Drop(txn kv.Transaction) error
 	// Exist supports check index exists or not.
