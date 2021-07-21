@@ -152,10 +152,10 @@ func (m *mppIterator) run(ctx context.Context) {
 		m.mu.Unlock()
 		m.wg.Add(1)
 		bo := backoff.NewBackoffer(ctx, copNextMaxBackoff)
-		go func () {
-			m.handleDispatchReq(ctx, bo, task)
+		go func (mppTask *kv.MPPDispatchRequest) {
+			m.handleDispatchReq(ctx, bo, mppTask)
 			m.wg.Done()
-		}()
+		}(task)
 	}
 	m.wg.Wait()
 	close(m.respChan)
