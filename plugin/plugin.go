@@ -18,13 +18,11 @@ import (
 	"path/filepath"
 	gplugin "plugin"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
@@ -81,13 +79,11 @@ func (p copyOnWriteContext) plugins() *plugins {
 
 // Config presents the init configuration for plugin framework.
 type Config struct {
-	Plugins        []string
-	PluginDir      string
-	GlobalSysVar   *map[string]*variable.SysVar
-	PluginVarNames *[]string
-	SkipWhenFail   bool
-	EnvVersion     map[string]uint16
-	EtcdClient     *clientv3.Client
+	Plugins      []string
+	PluginDir    string
+	SkipWhenFail bool
+	EnvVersion   map[string]uint16
+	EtcdClient   *clientv3.Client
 }
 
 // Plugin presents a TiDB plugin.
@@ -122,13 +118,6 @@ func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins) error {
 		for component, reqVer := range p.RequireVersion {
 			if ver, ok := tiPlugins.versions[component]; !ok || ver < reqVer {
 				return errRequireVersionCheckFail.GenWithStackByArgs(p.Name, component, reqVer, ver)
-			}
-		}
-	}
-	if p.SysVars != nil {
-		for varName := range p.SysVars {
-			if !strings.HasPrefix(varName, p.Name) {
-				return errInvalidPluginSysVarName.GenWithStackByArgs(p.Name, varName, p.Name)
 			}
 		}
 	}
@@ -197,14 +186,6 @@ func Load(ctx context.Context, cfg Config) (err error) {
 					continue
 				}
 				return
-			}
-			if cfg.GlobalSysVar != nil {
-				for key, value := range tiPlugins.plugins[kind][i].SysVars {
-					variable.RegisterSysVar(value)
-					if value.Scope != variable.ScopeSession && cfg.PluginVarNames != nil {
-						*cfg.PluginVarNames = append(*cfg.PluginVarNames, key)
-					}
-				}
 			}
 		}
 	}
@@ -448,11 +429,24 @@ func GetAll() map[Kind][]Plugin {
 	return plugins.plugins
 }
 
+func (p *Plugin) supportsFlush(pluginName string) error {
+	if p == nil {
+		return errors.Errorf("plugin '%s' not found", pluginName)
+	}
+	if p.State != Ready {
+		return errors.Errorf("plugin '%s' is not ready", pluginName)
+	}
+	if p.Manifest.flushWatcher == nil {
+		return errors.Errorf("plugin %s does not support flush", pluginName)
+	}
+	return nil
+}
+
 // NotifyFlush notify plugins to do flush logic.
 func NotifyFlush(dom *domain.Domain, pluginName string) error {
 	p := getByName(pluginName)
-	if p == nil || p.Manifest.flushWatcher == nil || p.State != Ready {
-		return errors.Errorf("plugin %s doesn't exists or unsupported flush or doesn't start with PD", pluginName)
+	if err := p.supportsFlush(pluginName); err != nil {
+		return err
 	}
 	_, err := dom.GetEtcdClient().KV.Put(context.Background(), p.Manifest.flushWatcher.path, strconv.Itoa(int(p.Disabled)))
 	if err != nil {
@@ -464,8 +458,8 @@ func NotifyFlush(dom *domain.Domain, pluginName string) error {
 // ChangeDisableFlagAndFlush changes plugin disable flag and notify other nodes to do same change.
 func ChangeDisableFlagAndFlush(dom *domain.Domain, pluginName string, disable bool) error {
 	p := getByName(pluginName)
-	if p == nil || p.Manifest.flushWatcher == nil || p.State != Ready {
-		return errors.Errorf("plugin %s doesn't exists or unsupported flush or doesn't start with PD", pluginName)
+	if err := p.supportsFlush(pluginName); err != nil {
+		return err
 	}
 	disableInt := uint32(0)
 	if disable {

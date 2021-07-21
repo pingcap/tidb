@@ -35,10 +35,9 @@ func TestLoadPluginSuccess(t *testing.T) {
 	pluginSign := pluginName + "-" + strconv.Itoa(int(pluginVersion))
 
 	cfg := Config{
-		Plugins:        []string{pluginSign},
-		PluginDir:      "",
-		PluginVarNames: &variable.PluginVarNames,
-		EnvVersion:     map[string]uint16{"go": 1112},
+		Plugins:    []string{pluginSign},
+		PluginDir:  "",
+		EnvVersion: map[string]uint16{"go": 1112},
 	}
 
 	// setup load test hook.
@@ -49,7 +48,6 @@ func TestLoadPluginSuccess(t *testing.T) {
 					Kind:    Authentication,
 					Name:    pluginName,
 					Version: pluginVersion,
-					SysVars: map[string]*variable.SysVar{pluginName + "_key": {Scope: variable.ScopeGlobal, Name: pluginName + "_key", Value: "v1"}},
 					OnInit: func(ctx context.Context, manifest *Manifest) error {
 						return nil
 					},
@@ -126,11 +124,10 @@ func TestLoadPluginSkipError(t *testing.T) {
 	pluginSign := pluginName + "-" + strconv.Itoa(int(pluginVersion))
 
 	cfg := Config{
-		Plugins:        []string{pluginSign, pluginSign, "notExists-2"},
-		PluginDir:      "",
-		PluginVarNames: &variable.PluginVarNames,
-		EnvVersion:     map[string]uint16{"go": 1112},
-		SkipWhenFail:   true,
+		Plugins:      []string{pluginSign, pluginSign, "notExists-2"},
+		PluginDir:    "",
+		EnvVersion:   map[string]uint16{"go": 1112},
+		SkipWhenFail: true,
 	}
 
 	// setup load test hook.
@@ -141,7 +138,6 @@ func TestLoadPluginSkipError(t *testing.T) {
 					Kind:    Audit,
 					Name:    pluginName,
 					Version: pluginVersion,
-					SysVars: map[string]*variable.SysVar{pluginName + "_key": {Scope: variable.ScopeGlobal, Name: pluginName + "_key", Value: "v1"}},
 					OnInit: func(ctx context.Context, manifest *Manifest) error {
 						return io.EOF
 					},
@@ -221,11 +217,10 @@ func TestLoadFail(t *testing.T) {
 	pluginSign := pluginName + "-" + strconv.Itoa(int(pluginVersion))
 
 	cfg := Config{
-		Plugins:        []string{pluginSign, pluginSign, "notExists-2"},
-		PluginDir:      "",
-		PluginVarNames: &variable.PluginVarNames,
-		EnvVersion:     map[string]uint16{"go": 1112},
-		SkipWhenFail:   false,
+		Plugins:      []string{pluginSign, pluginSign, "notExists-2"},
+		PluginDir:    "",
+		EnvVersion:   map[string]uint16{"go": 1112},
+		SkipWhenFail: false,
 	}
 
 	// setup load test hook.
@@ -236,7 +231,6 @@ func TestLoadFail(t *testing.T) {
 					Kind:    Audit,
 					Name:    pluginName,
 					Version: pluginVersion,
-					SysVars: map[string]*variable.SysVar{pluginName + "_key": {Scope: variable.ScopeGlobal, Name: pluginName + "_key", Value: "v1"}},
 					OnInit: func(ctx context.Context, manifest *Manifest) error {
 						return io.EOF
 					},

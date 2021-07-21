@@ -39,7 +39,6 @@ package main
 
 import (
 	"github.com/pingcap/tidb/plugin"
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 func PluginManifest() *plugin.Manifest {
@@ -52,15 +51,6 @@ func PluginManifest() *plugin.Manifest {
 			RequireVersion: map[string]uint16{},
 			License:        "{{.license}}",
 			BuildTime:      "{{.buildTime}}",
-			SysVars: map[string]*variable.SysVar{
-			    {{range .sysVars}}
-				"{{.name}}": {
-					Scope: variable.Scope{{.scope}},
-					Name:  "{{.name}}",
-					Value: "{{.value}}",
-				},
-				{{end}}
-			},
 			{{if .validate }}
 				Validate:   {{.validate}},
 			{{end}}
