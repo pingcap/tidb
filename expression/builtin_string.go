@@ -4022,11 +4022,11 @@ func (b *builtinTranslateSig) evalString(row chunk.Row) (d string, isNull bool, 
 	}
 	fromStr, isFromStrNull, err = b.args[1].EvalString(b.ctx, row)
 	if isFromStrNull || err != nil {
-		return d, isNull, err
+		return d, isFromStrNull, err
 	}
 	toStr, isToStrNull, err = b.args[2].EvalString(b.ctx, row)
 	if isToStrNull || err != nil {
-		return d, isNull, err
+		return d, isToStrNull, err
 	}
 	mp := buildTranslateMap([]rune(fromStr), []rune(toStr))
 	for _, charSrc := range srcStr {

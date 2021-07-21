@@ -2463,13 +2463,18 @@ func (s *testEvaluatorSuite) TestTranslate(c *C) {
 		{[]interface{}{"lowercase", "abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"}, false, false, "LOWERCASE"},
 		{[]interface{}{"aaaaabbbbb", "aaabbb", "xyzXYZ"}, false, false, "xxxxxXXXXX"},
 		{[]interface{}{"Ti*DB User's Guide", " */'", "___"}, false, false, "Ti_DB_Users_Guide"},
-		{[]interface{}{"", "null", "null"}, true, false, ""},
-		{[]interface{}{"null", "", "null"}, true, false, ""},
-		{[]interface{}{"null", "null", ""}, true, false, ""},
-		{[]interface{}{nil, "error", "error"}, true, false, ""},
-		{[]interface{}{nil, nil, nil}, true, false, ""},
+		{[]interface{}{"abc", "ab", ""}, false, false, "c"},
+		{[]interface{}{"aaa", "a", ""}, false, false, ""},
+		{[]interface{}{"", "null", "null"}, false, false, ""},
+		{[]interface{}{"null", "", "null"}, false, false, "null"},
+		{[]interface{}{"null", "null", ""}, false, false, ""},
+		{[]interface{}{nil, "error", "error"}, false, false, ""},
+		{[]interface{}{"error", nil, "error"}, false, false, ""},
+		{[]interface{}{"error", "error", nil}, false, false, ""},
+		{[]interface{}{nil, nil, nil}, false, false, ""},
 	}
 	for _, t := range cases {
+		fmt.Printf("translate=%+v\n", t)
 		f, err := newFunctionForTest(s.ctx, ast.Translate, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
