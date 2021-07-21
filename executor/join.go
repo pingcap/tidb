@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"runtime/trace"
 	"strconv"
 	"sync"
@@ -50,8 +49,6 @@ var (
 type NonParallelHashJoinExec struct {
 	*HashJoinExec
 	hashTblDone       bool
-	remainingIdx      int
-	remainingProbeChk *chunk.Chunk
 	hCtx     *hashContext
 	remainingResChks []*chunk.Chunk
     selected []bool
@@ -74,8 +71,7 @@ func (e *NonParallelHashJoinExec) Open(ctx context.Context) error {
 	e.rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
 	e.rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
-    e.remainingResChks = make([]*chunk.Chunk, 0)
-    e.remainingIdx = math.MaxInt64
+    e.remainingResChks = make([]*chunk.Chunk, 0, 100)
 
 	probeKeyColIdx := make([]int, len(e.probeKeys))
 	for i := range e.probeKeys {
@@ -108,15 +104,6 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
     }
 	resChk := newFirstChunk(e)
 	for {
-		if err = e.handleRemainingRows(e.remainingIdx, e.selected, e.hCtx, e.remainingProbeChk, resChk); err != nil {
-			return err
-		}
-
-		if len(e.remainingResChks) != 0 || resChk.IsFull() {
-			req.SwapColumns(resChk)
-			break
-		}
-
 		chk := newFirstChunk(e.probeSideExec)
 		if err = Next(ctx, e.probeSideExec, chk); err != nil {
 			return err
@@ -178,60 +165,46 @@ func (e *NonParallelHashJoinExec) doJoinWork(probeChk *chunk.Chunk, resChk *chun
 			}
 		}
 
-		if err = e.handleRemainingRows(0, e.selected, e.hCtx, probeChk, resChk); err != nil {
-			return nil
-		}
-	}
-	return nil
-}
-
-func (e *NonParallelHashJoinExec) handleRemainingRows(idx int, selected []bool, hCtx *hashContext, probeChk *chunk.Chunk, resChk *chunk.Chunk) error {
-    i := idx
-	for ; i < len(selected); i++ {
-		if !selected[i] || hCtx.hasNull[i] {
-			e.joiners[0].onMissMatch(false, probeChk.GetRow(i), resChk)
-		} else {
-			probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeChk.GetRow(i)
-			buildSideRows, _, err := e.rowContainer.GetMatchedRowsAndPtrs(probeKey, probeRow, hCtx)
-			if err != nil {
-				return err
-			}
-			if len(buildSideRows) == 0 {
-				e.joiners[0].onMissMatch(false, probeRow, resChk)
-				continue
-			}
-			iter := chunk.NewIterator4Slice(buildSideRows)
-			hasMatch, hasNull := false, false
-			for iter.Begin(); iter.Current() != iter.End(); {
-				matched, isNull, err := e.joiners[0].tryToMatchInners(probeRow, iter, resChk)
-				if err != nil {
-					return err
-				}
-				hasMatch = hasMatch || matched
-				hasNull = hasNull || isNull
-
-				if resChk.IsFull() {
-                    tmpChk := newFirstChunk(e)
-                    tmpChk.SwapColumns(resChk)
-                    e.remainingResChks = append(e.remainingResChks, tmpChk)
-				}
-			}
-			if !hasMatch {
-				e.joiners[0].onMissMatch(hasNull, probeRow, resChk)
-			}
-            if len(e.remainingResChks) != 0 {
-                if resChk.NumRows() == 0 {
-                    lastIdx := len(e.remainingResChks) - 1
-                    resChk.SwapColumns(e.remainingResChks[lastIdx])
-                    e.remainingResChks = e.remainingResChks[:lastIdx]
+        for i := 0; i < len(e.selected); i++ {
+            if !e.selected[i] || e.hCtx.hasNull[i] {
+                e.joiners[0].onMissMatch(false, probeChk.GetRow(i), resChk)
+            } else {
+                probeKey, probeRow := e.hCtx.hashVals[i].Sum64(), probeChk.GetRow(i)
+                buildSideRows, _, err := e.rowContainer.GetMatchedRowsAndPtrs(probeKey, probeRow, e.hCtx)
+                if err != nil {
+                    return err
                 }
-                break
+                if len(buildSideRows) == 0 {
+                    e.joiners[0].onMissMatch(false, probeRow, resChk)
+                    continue
+                }
+                iter := chunk.NewIterator4Slice(buildSideRows)
+                hasMatch, hasNull := false, false
+                for iter.Begin(); iter.Current() != iter.End(); {
+                    matched, isNull, err := e.joiners[0].tryToMatchInners(probeRow, iter, resChk)
+                    if err != nil {
+                        return err
+                    }
+                    hasMatch = hasMatch || matched
+                    hasNull = hasNull || isNull
+
+                    if resChk.IsFull() {
+                        tmpChk := newFirstChunk(e)
+                        tmpChk.SwapColumns(resChk)
+                        e.remainingResChks = append(e.remainingResChks, tmpChk)
+                    }
+                }
+                if !hasMatch {
+                    e.joiners[0].onMissMatch(hasNull, probeRow, resChk)
+                }
             }
-		}
+        }
+        if resChk.NumRows() == 0 {
+            lastIdx := len(e.remainingResChks) - 1
+            resChk.SwapColumns(e.remainingResChks[lastIdx])
+            e.remainingResChks = e.remainingResChks[:lastIdx]
+        }
 	}
-    e.remainingIdx = i + 1
-    e.selected = selected
-    e.remainingProbeChk = probeChk
 	return nil
 }
 
