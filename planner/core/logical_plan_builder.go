@@ -4025,7 +4025,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			ColName:     col.Name,
 			OrigTblName: tableInfo.Name,
 			OrigColName: col.Name,
-			Hidden:      col.Hidden,
 			// For update statement and delete statement, internal version should see the special middle state column, while user doesn't.
 			NotExplicitUsable: col.State != model.StatePublic,
 		})
@@ -4085,7 +4084,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	var result LogicalPlan = ds
 	dirty := tableHasDirtyContent(b.ctx, tableInfo)
-	if dirty {
+	if dirty || tableInfo.TempTableType == model.TempTableLocal {
 		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		result = us
