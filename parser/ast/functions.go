@@ -223,6 +223,7 @@ const (
 	SubstringIndex  = "substring_index"
 	ToBase64        = "to_base64"
 	Trim            = "trim"
+	Translate       = "translate"
 	Upper           = "upper"
 	Ucase           = "ucase"
 	Hex             = "hex"
