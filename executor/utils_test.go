@@ -61,8 +61,8 @@ func (s *pkgTestSuite) TestBatchRetrieverHelper(c *C) {
 	}
 	for !r.retrieved {
 		err = r.nextBatch(collect)
+		c.Assert(err, IsNil)
 	}
-	c.Assert(err, IsNil)
 	c.Assert(rangeStarts, DeepEquals, []int{0, 3, 6, 9})
 	c.Assert(rangeEnds, DeepEquals, []int{3, 6, 9, 10})
 	rangeStarts = rangeStarts[:0]
@@ -74,10 +74,23 @@ func (s *pkgTestSuite) TestBatchRetrieverHelper(c *C) {
 	}
 	for !r.retrieved {
 		err = r.nextBatch(collect)
+		c.Assert(err, IsNil)
 	}
-	c.Assert(err, IsNil)
 	c.Assert(rangeStarts, DeepEquals, []int{0, 3, 6})
 	c.Assert(rangeEnds, DeepEquals, []int{3, 6, 9})
+	rangeStarts = rangeStarts[:0]
+	rangeEnds = rangeEnds[:0]
+
+	r = &batchRetrieverHelper{
+		batchSize: 100,
+		totalRows: 10,
+	}
+	for !r.retrieved {
+		err = r.nextBatch(collect)
+		c.Assert(err, IsNil)
+	}
+	c.Assert(rangeStarts, DeepEquals, []int{0})
+	c.Assert(rangeStarts, DeepEquals, []int{10})
 }
 
 func (s *pkgTestSuite) TestSQLDigestTextRetriever(c *C) {
