@@ -223,7 +223,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
 		// That's a hard job but we can try it in the future.
 		if sender.GetRPCError() != nil {
-			logutil.BgLogger().Error("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
+			logutil.BgLogger().Warn("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 			// we return timeout to trigger tikv's fallback
 			derr = tikv.ErrTiFlashServerTimeout
 		}
@@ -238,13 +238,12 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 				err = newErr
 			} else {
 				retry = true
-				logutil.BgLogger().Error("mpp dispatch meet error, and retrying", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 			}
 		}
 	}
 
 	if retry {
-		logutil.BgLogger().Error("mpp dispatch meet error, and retrying", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
+		logutil.BgLogger().Warn("mpp dispatch meet error and retrying", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 		m.handleDispatchReq(ctx, bo, req)
 		return
 	}
