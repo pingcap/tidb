@@ -819,6 +819,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			}
 		}
 	}
+	createIdxOpts = append(createIdxOpts, table.WithAssertion(txn))
 	// Insert new entries into indices.
 	h, err := t.addIndices(sctx, recordID, r, txn, createIdxOpts)
 	if err != nil {

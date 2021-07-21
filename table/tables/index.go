@@ -225,7 +225,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			return nil, err
 		}
 		if ss != nil {
-			if lazyCheck {
+			if lazyCheck && !txn.IsPessimistic() {
 				err = ss.SetAssertion(key, kv.SetAssertUnknown)
 			} else {
 				err = ss.SetAssertion(key, kv.SetAssertNotExist)
