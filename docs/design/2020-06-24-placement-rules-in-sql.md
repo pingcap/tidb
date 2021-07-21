@@ -478,12 +478,13 @@ This behavior is inspired by how a `CHARACTER SET` or `COLLATE` attribute applie
 Placement policy can be removed from an object via the following syntax:
 
 ```sql
-ALTER DATABASE test [DEFAULT] PLACEMENT SET DEFAULT;
-ALTER TABLE t1 PLACEMENT=default;
-ALTER TABLE t1 PARTITION partition_name PLACEMENT=default;
+ALTER DATABASE test [DEFAULT] PLACEMENT POLICY SET DEFAULT; -- standard syntax for ALTER DATABASE
+ALTER DATABASE test [DEFAULT] PLACEMENT POLICY=default; -- alternative
+ALTER TABLE t1 PLACEMENT POLICY=default;
+ALTER TABLE t1 PARTITION partition_name PLACEMENT POLICY=default;
 ```
 
-In this case the default rules will apply to placement, and the output from `SHOW CREATE TABLE t1` should show no placement information.
+In this case the default rules will apply to placement, and the output from `SHOW CREATE TABLE t1` should show no placement information (including any of the _table_options_ from direct placement).
 
 For a more complex rule using partitions, consider the following example:
 
