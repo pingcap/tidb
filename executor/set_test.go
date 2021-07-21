@@ -519,6 +519,17 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec(`set tidb_enable_ordered_result_mode=1`)
 	tk.MustQuery(`select @@global.tidb_enable_ordered_result_mode`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select @@tidb_enable_ordered_result_mode`).Check(testkit.Rows("1"))
+
+	// test for tidb_opt_enable_correlation_adjustment
+	tk.MustQuery(`select @@tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_opt_enable_correlation_adjustment = 0`)
+	tk.MustQuery(`select @@global.tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("0"))
+	tk.MustExec(`set global tidb_opt_enable_correlation_adjustment = 1`)
+	tk.MustQuery(`select @@global.tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("1"))
+	tk.MustExec(`set tidb_opt_enable_correlation_adjustment=0`)
+	tk.MustQuery(`select @@global.tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("0"))
+
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
