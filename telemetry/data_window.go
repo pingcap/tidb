@@ -135,7 +135,7 @@ func (b BuiltinFunctionsUsage) Merge(usageData BuiltinFunctionsUsage) {
 	for k, v := range usageData {
 		prev, ok := b[k]
 		if !ok {
-			b[k] = prev
+			b[k] = v
 		} else {
 			b[k] = prev + v
 		}
