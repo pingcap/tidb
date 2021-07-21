@@ -50,6 +50,11 @@ func NewTestKit(t *testing.T, store kv.Storage) *TestKit {
 	}
 }
 
+// Session return a session
+func (tk *TestKit) Session() session.Session {
+	return tk.session
+}
+
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	res, err := tk.Exec(sql, args...)
@@ -59,6 +64,29 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	if res != nil {
 		tk.require.Nil(res.Close())
 	}
+}
+
+// MustQuery query the statements and returns result rows.
+// If expected result is set it asserts the query result equals expected result.
+func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
+	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
+	rs, err := tk.Exec(sql, args...)
+	tk.require.NoError(err, comment)
+	tk.require.NotNil(rs, comment)
+	return tk.ResultSetToResult(rs, comment)
+}
+
+// ResultSetToResult converts sqlexec.RecordSet to testkit.Result.
+// It is used to check results of execute statement in binary mode.
+func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment string) *Result {
+	return tk.ResultSetToResultWithCtx(context.Background(), rs, comment)
+}
+
+// ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
+func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment string) *Result {
+	rows, err := session.ResultSetToStringSlice(ctx, tk.session, rs)
+	tk.require.NoError(err, comment)
+	return &Result{rows: rows, comment: comment, assert: tk.assert, require: tk.require}
 }
 
 // Exec executes a sql statement using the prepared stmt API
