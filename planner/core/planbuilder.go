@@ -2943,7 +2943,7 @@ func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Inse
 		}
 		var missingColIdx int
 		affectedValuesCols, missingColIdx = table.FindColumns(insertPlan.Table.VisibleCols(), colName, insertPlan.Table.Meta().PKIsHandle)
-		if missingColIdx > 0 {
+		if missingColIdx >= 0 {
 			return nil, ErrUnknownColumn.GenWithStackByArgs(
 				insertStmt.Columns[missingColIdx].Name.O, clauseMsg[fieldList])
 		}
@@ -2974,7 +2974,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 
 	// Check whether the column to be updated is the generated column.
 	tCols, missingColIdx := table.FindColumns(insertPlan.Table.VisibleCols(), colNames, tableInfo.PKIsHandle)
-	if missingColIdx > 0 {
+	if missingColIdx >= 0 {
 		return ErrUnknownColumn.GenWithStackByArgs(insert.Setlist[missingColIdx].Column.Name.O, clauseMsg[fieldList])
 	}
 	generatedColumns := make(map[string]struct{}, len(tCols))
