@@ -153,7 +153,10 @@ func (m *mppIterator) run(ctx context.Context) {
 		}
 		m.wg.Add(1)
 		bo := tikv.NewBackoffer(ctx, copNextMaxBackoff)
-		go m.handleDispatchReq(ctx, bo, task)
+		go func () {
+			m.handleDispatchReq(ctx, bo, task)
+			m.wg.Done()
+		}()
 	}
 	m.wg.Wait()
 	close(m.respChan)
@@ -177,9 +180,6 @@ func (m *mppIterator) sendToRespCh(resp *mppResponse) (exit bool) {
 // - dispatch all tasks at once, and connect tasks at second.
 // - dispatch tasks and establish connection at the same time.
 func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer, req *kv.MPPDispatchRequest) {
-	defer func() {
-		m.wg.Done()
-	}()
 	var regionInfos []*coprocessor.RegionInfo
 	originalTask, ok := req.Meta.(*batchCopTask)
 	if ok {
