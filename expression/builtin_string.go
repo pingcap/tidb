@@ -4029,6 +4029,9 @@ func (b *builtinTranslateSig) evalString(row chunk.Row) (d string, isNull bool, 
 	if isToStrNull || err != nil {
 		return d, isNull, err
 	}
+	if srcStr == "" || fromStr == "" || toStr == "" {
+		return d, true, err
+	}
 	fromRunes, toRunes := []rune(fromStr), []rune(toStr)
 	lenFrom, lenTo = len(fromRunes), len(toRunes)
 	if lenFrom < lenTo {

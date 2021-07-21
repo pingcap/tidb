@@ -2447,3 +2447,40 @@ func (s *testEvaluatorSerialSuites) TestCIWeightString(c *C) {
 	checkResult("utf8mb4_general_ci", generalTests)
 	checkResult("utf8mb4_unicode_ci", unicodeTests)
 }
+
+func (s *testEvaluatorSuite) TestTranslate(c *C) {
+	cases := []struct {
+		args  []interface{}
+		isNil bool
+		isErr bool
+		res   string
+	}{
+		{[]interface{}{"ABC", "A", "B"}, false, false, "BBC"},
+		{[]interface{}{"ABC", "Z", "ABC"}, false, false, "ABC"},
+		{[]interface{}{"A.B.C", ".A", "|"}, false, false, "|B|C"},
+		{[]interface{}{"中文", "文", "国"}, false, false, "中国"},
+		{[]interface{}{"UPPERCASE", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"}, false, false, "uppercase"},
+		{[]interface{}{"lowercase", "abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"}, false, false, "LOWERCASE"},
+		{[]interface{}{"Ti*DB User's Guide", " */'", "___"}, false, false, "Ti_DB_Users_Guide"},
+		{[]interface{}{"", "null", "null"}, true, false, ""},
+		{[]interface{}{"null", "", "null"}, true, false, ""},
+		{[]interface{}{"null", "null", ""}, true, false, ""},
+		{[]interface{}{nil, "error", "error"}, true, false, ""},
+		{[]interface{}{nil, nil, nil}, true, false, ""},
+	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Translate, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		if t.isErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.res)
+			}
+		}
+	}
+}
