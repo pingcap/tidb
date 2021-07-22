@@ -14,14 +14,15 @@
 package set
 
 import (
-	"github.com/pingcap/check"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-var _ = check.Suite(&intSetTestSuite{})
+func TestIntSet(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
 
-type intSetTestSuite struct{}
-
-func (s *intSetTestSuite) TestIntSet(c *check.C) {
 	set := NewIntSet()
 	vals := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	for i := range vals {
@@ -31,17 +32,20 @@ func (s *intSetTestSuite) TestIntSet(c *check.C) {
 		set.Insert(vals[i])
 		set.Insert(vals[i])
 	}
-	c.Assert(set.Count(), check.Equals, len(vals))
+	assert.Equal(set.Count(), len(vals))
 
-	c.Assert(len(set), check.Equals, len(vals))
+	assert.Equal(len(set), len(vals))
 	for i := range vals {
-		c.Assert(set.Exist(vals[i]), check.IsTrue)
+		assert.True(set.Exist(vals[i]))
 	}
 
-	c.Assert(set.Exist(11), check.IsFalse)
+	assert.False(set.Exist(11))
 }
 
-func (s *intSetTestSuite) TestInt64Set(c *check.C) {
+func TestInt64Set(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+
 	set := NewInt64Set()
 	vals := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	for i := range vals {
@@ -52,16 +56,16 @@ func (s *intSetTestSuite) TestInt64Set(c *check.C) {
 		set.Insert(vals[i])
 	}
 
-	c.Assert(len(set), check.Equals, len(vals))
+	assert.Equal(len(set), len(vals))
 	for i := range vals {
-		c.Assert(set.Exist(vals[i]), check.IsTrue)
+		assert.True(set.Exist(vals[i]))
 	}
 
-	c.Assert(set.Exist(11), check.IsFalse)
+	assert.False(set.Exist(11))
 
 	set = NewInt64Set(1, 2, 3, 4, 5, 6)
 	for i := 1; i < 7; i++ {
-		c.Assert(set.Exist(int64(i)), check.IsTrue)
+		assert.True(set.Exist(int64(i)))
 	}
-	c.Assert(set.Exist(7), check.IsFalse)
+	assert.False(set.Exist(7))
 }
