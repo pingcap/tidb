@@ -114,6 +114,8 @@ var (
 
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = dbterror.ClassDDL.NewStd(mysql.ErrDupKeyName)
+	// ErrFkDupName returns for duplicated fk key name
+	ErrFkDupName = dbterror.ClassDDL.NewStd(mysql.ErrFkDupName)
 	// ErrInvalidDDLState returns for invalid ddl model object state.
 	ErrInvalidDDLState = dbterror.ClassDDL.NewStdErr(mysql.ErrInvalidDDLState, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState].Raw), nil))
 	// ErrUnsupportedModifyPrimaryKey returns an error when add or drop the primary key.

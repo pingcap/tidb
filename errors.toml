@@ -316,6 +316,11 @@ error = '''
 Table to exchange with partition has foreign key references: '%-.64s'
 '''
 
+["ddl:1826"]
+error = '''
+Duplicate foreign key constraint name '%s'
+'''
+
 ["ddl:1846"]
 error = '''
 %s is not supported. Reason: %s. Try %s.
