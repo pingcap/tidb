@@ -139,7 +139,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowCreateSequence:
 		return e.fetchShowCreateSequence()
 	case ast.ShowCreateUser:
-		return e.fetchShowCreateUser()
+		return e.fetchShowCreateUser(ctx)
 	case ast.ShowCreateView:
 		return e.fetchShowCreateView()
 	case ast.ShowCreateDatabase:
@@ -149,7 +149,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowDrainerStatus:
 		return e.fetchShowPumpOrDrainerStatus(node.DrainerNode)
 	case ast.ShowEngines:
-		return e.fetchShowEngines()
+		return e.fetchShowEngines(ctx)
 	case ast.ShowGrants:
 		return e.fetchShowGrants()
 	case ast.ShowIndex:
@@ -165,7 +165,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowOpenTables:
 		return e.fetchShowOpenTables()
 	case ast.ShowTableStatus:
-		return e.fetchShowTableStatus()
+		return e.fetchShowTableStatus(ctx)
 	case ast.ShowTriggers:
 		return e.fetchShowTriggers()
 	case ast.ShowVariables:
@@ -290,14 +290,14 @@ func (e *ShowExec) fetchShowBind() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowEngines() error {
+func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT * FROM information_schema.engines`)
+	stmt, err := exec.ParseWithParams(ctx, `SELECT * FROM information_schema.engines`)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -411,7 +411,7 @@ func (e *ShowExec) fetchShowTables() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowTableStatus() error {
+func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker != nil && e.ctx.GetSessionVars().User != nil {
 		if !checker.DBIsVisible(e.ctx.GetSessionVars().ActiveRoles, e.DBName.O) {
@@ -424,7 +424,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT
+	stmt, err := exec.ParseWithParams(ctx, `SELECT
 		table_name, engine, version, row_format, table_rows,
 		avg_row_length, data_length, max_data_length, index_length,
 		data_free, auto_increment, create_time, update_time, check_time,
@@ -447,7 +447,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
 		snapshot = e.ctx.GetSessionVars().SnapshotTS
 	}
 
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
+	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -575,7 +575,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			"",               // Comment
 			"",               // Index_comment
 			"YES",            // Index_visible
-			"NULL",           // Expression
+			nil,              // Expression
 			"YES",            // Clustered
 		})
 	}
@@ -611,7 +611,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			}
 
 			colName := col.Name.O
-			expression := "NULL"
+			var expression interface{}
 			if tblCol.Hidden {
 				colName = "NULL"
 				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
@@ -921,6 +921,9 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
 		}
+		if idxInfo.Comment != "" {
+			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
+		}
 		if idxInfo.Primary {
 			if tableInfo.PKIsHandle || tableInfo.IsCommonHandle {
 				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
@@ -1012,7 +1015,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.ShardRowIDBits > 0 {
-		fmt.Fprintf(buf, "/*!90000 SHARD_ROW_ID_BITS=%d ", tableInfo.ShardRowIDBits)
+		fmt.Fprintf(buf, " /*T! SHARD_ROW_ID_BITS=%d ", tableInfo.ShardRowIDBits)
 		if tableInfo.PreSplitRegions > 0 {
 			fmt.Fprintf(buf, "PRE_SPLIT_REGIONS=%d ", tableInfo.PreSplitRegions)
 		}
@@ -1309,7 +1312,7 @@ func (e *ShowExec) fetchShowCollation() error {
 }
 
 // fetchShowCreateUser composes show create create user result.
-func (e *ShowExec) fetchShowCreateUser() error {
+func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker == nil {
 		return errors.New("miss privilege checker")
@@ -1331,11 +1334,11 @@ func (e *ShowExec) fetchShowCreateUser() error {
 
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, hostName)
+	stmt, err := exec.ParseWithParams(ctx, `SELECT plugin FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.UserTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1351,11 +1354,11 @@ func (e *ShowExec) fetchShowCreateUser() error {
 		authplugin = rows[0].GetString(0)
 	}
 
-	stmt, err = exec.ParseWithParams(context.TODO(), `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
+	stmt, err = exec.ParseWithParams(ctx, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rows, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1709,8 +1712,8 @@ func (e *ShowExec) fillRegionsToChunk(regions []regionMeta) {
 			e.result.AppendInt64(6, 0)
 		}
 
-		e.result.AppendInt64(7, regions[i].writtenBytes)
-		e.result.AppendInt64(8, regions[i].readBytes)
+		e.result.AppendUint64(7, regions[i].writtenBytes)
+		e.result.AppendUint64(8, regions[i].readBytes)
 		e.result.AppendInt64(9, regions[i].approximateSize)
 		e.result.AppendInt64(10, regions[i].approximateKeys)
 	}
@@ -1729,7 +1732,7 @@ func (e *ShowExec) fetchShowBuiltins() error {
 func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName model.CIStr, tbl *model.TableInfo) error {
 	if tbl.IsView() {
 		// Retrieve view columns info.
-		planBuilder, _ := plannercore.NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
+		planBuilder, _ := plannercore.NewPlanBuilder().Init(sctx, is, &hint.BlockHintProcessor{})
 		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl); err == nil {
 			viewSchema := viewLogicalPlan.Schema()
 			viewOutputNames := viewLogicalPlan.OutputNames()

@@ -14,7 +14,6 @@
 package core
 
 import (
-	"context"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -384,7 +383,7 @@ func (p *LogicalMemTable) findBestTask(prop *property.PhysicalProperty, planCoun
 	memTable := PhysicalMemTable{
 		DBName:         p.DBName,
 		Table:          p.TableInfo,
-		Columns:        p.TableInfo.Columns,
+		Columns:        p.Columns,
 		Extractor:      p.Extractor,
 		QueryTimeRange: p.QueryTimeRange,
 	}.Init(p.ctx, p.stats, p.blockOffset)
@@ -723,7 +722,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			// We do not build [batch] point get for dynamic table partitions now. This can be optimized.
 			if ds.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 				canConvertPointGet = false
-			} else if len(path.Ranges) > 1 {
+			}
+			if canConvertPointGet && len(path.Ranges) > 1 {
 				// We can only build batch point get for hash partitions on a simple column now. This is
 				// decided by the current implementation of `BatchPointGetExec::initialize()`, specifically,
 				// the `getPhysID()` function. Once we optimize that part, we can come back and enable
@@ -731,6 +731,16 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				hashPartColName = getHashPartitionColumnName(ds.ctx, tblInfo)
 				if hashPartColName == nil {
 					canConvertPointGet = false
+				}
+			}
+			if canConvertPointGet {
+				// If the schema contains ExtraPidColID, do not convert to point get.
+				// Because the point get executor can not handle the extra partition ID column now.
+				for _, col := range ds.schema.Columns {
+					if col.ID == model.ExtraPidColID {
+						canConvertPointGet = false
+						break
+					}
 				}
 			}
 		}
@@ -1969,22 +1979,14 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 		// Already built it.
 		return p.cte.cteTask, 1, nil
 	}
-	sp, _, err := DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
-	if err != nil {
-		return nil, 1, err
-	}
 
-	var rp PhysicalPlan
-	if p.cte.recursivePartLogicalPlan != nil {
-		rp, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
-		if err != nil {
-			return nil, 1, err
-		}
-	}
-
-	pcte := PhysicalCTE{SeedPlan: sp, RecurPlan: rp, CTE: p.cte, cteAsName: p.cteAsName}.Init(p.ctx, p.stats)
+	pcte := PhysicalCTE{SeedPlan: p.cte.seedPartPhysicalPlan, RecurPlan: p.cte.recursivePartPhysicalPlan, CTE: p.cte, cteAsName: p.cteAsName}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
-	t = &rootTask{pcte, sp.statsInfo().RowCount, false}
+	cst := p.cte.seedPartPhysicalPlan.Cost()
+	if p.cte.recursivePartPhysicalPlan != nil {
+		cst += p.cte.recursivePartPhysicalPlan.Cost()
+	}
+	t = &rootTask{pcte, cst, false}
 	p.cte.cteTask = t
 	return t, 1, nil
 }

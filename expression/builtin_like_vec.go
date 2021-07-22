@@ -17,7 +17,6 @@ import (
 	"regexp"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -27,7 +26,7 @@ func (b *builtinLikeSig) vectorized() bool {
 
 func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	bufVal, err := b.bufAllocator.get(types.ETString, n)
+	bufVal, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -35,7 +34,7 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	if err = b.args[0].VecEvalString(b.ctx, input, bufVal); err != nil {
 		return err
 	}
-	bufPattern, err := b.bufAllocator.get(types.ETString, n)
+	bufPattern, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -44,7 +43,7 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 		return err
 	}
 
-	bufEscape, err := b.bufAllocator.get(types.ETInt, n)
+	bufEscape, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -109,7 +108,7 @@ func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n in
 
 func (b *builtinRegexpSharedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	bufExpr, err := b.bufAllocator.get(types.ETString, n)
+	bufExpr, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -118,7 +117,7 @@ func (b *builtinRegexpSharedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 
-	bufPat, err := b.bufAllocator.get(types.ETString, n)
+	bufPat, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}

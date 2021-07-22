@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/core"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -44,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -117,7 +120,7 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	switch x := e.Statement.(type) {
 	case *ast.GrantRoleStmt:
-		err = e.executeGrantRole(x)
+		err = e.executeGrantRole(ctx, x)
 	case *ast.UseStmt:
 		err = e.executeUse(x)
 	case *ast.FlushStmt:
@@ -133,13 +136,13 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.CreateUserStmt:
 		err = e.executeCreateUser(ctx, x)
 	case *ast.AlterUserStmt:
-		err = e.executeAlterUser(x)
+		err = e.executeAlterUser(ctx, x)
 	case *ast.DropUserStmt:
-		err = e.executeDropUser(x)
+		err = e.executeDropUser(ctx, x)
 	case *ast.RenameUserStmt:
 		err = e.executeRenameUser(x)
 	case *ast.SetPwdStmt:
-		err = e.executeSetPwd(x)
+		err = e.executeSetPwd(ctx, x)
 	case *ast.KillStmt:
 		err = e.executeKillStmt(ctx, x)
 	case *ast.BinlogStmt:
@@ -150,9 +153,9 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.SetRoleStmt:
 		err = e.executeSetRole(x)
 	case *ast.RevokeRoleStmt:
-		err = e.executeRevokeRole(x)
+		err = e.executeRevokeRole(ctx, x)
 	case *ast.SetDefaultRoleStmt:
-		err = e.executeSetDefaultRole(x)
+		err = e.executeSetDefaultRole(ctx, x)
 	case *ast.ShutdownStmt:
 		err = e.executeShutdown(x)
 	case *ast.AdminStmt:
@@ -193,9 +196,9 @@ func (e *SimpleExec) setDefaultRoleNone(s *ast.SetDefaultRoleStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) setDefaultRoleRegular(s *ast.SetDefaultRoleStmt) error {
+func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaultRoleStmt) error {
 	for _, user := range s.UserList {
-		exists, err := userExists(e.ctx, user.Username, user.Hostname)
+		exists, err := userExists(ctx, e.ctx, user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
@@ -204,7 +207,7 @@ func (e *SimpleExec) setDefaultRoleRegular(s *ast.SetDefaultRoleStmt) error {
 		}
 	}
 	for _, role := range s.RoleList {
-		exists, err := userExists(e.ctx, role.Username, role.Hostname)
+		exists, err := userExists(ctx, e.ctx, role.Username, role.Hostname)
 		if err != nil {
 			return err
 		}
@@ -263,9 +266,9 @@ func (e *SimpleExec) setDefaultRoleRegular(s *ast.SetDefaultRoleStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) setDefaultRoleAll(s *ast.SetDefaultRoleStmt) error {
+func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRoleStmt) error {
 	for _, user := range s.UserList {
-		exists, err := userExists(e.ctx, user.Username, user.Hostname)
+		exists, err := userExists(ctx, e.ctx, user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
@@ -373,7 +376,7 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 	return nil
 }
 
-func (e *SimpleExec) executeSetDefaultRole(s *ast.SetDefaultRoleStmt) (err error) {
+func (e *SimpleExec) executeSetDefaultRole(ctx context.Context, s *ast.SetDefaultRoleStmt) (err error) {
 	sessionVars := e.ctx.GetSessionVars()
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker == nil {
@@ -398,11 +401,11 @@ func (e *SimpleExec) executeSetDefaultRole(s *ast.SetDefaultRoleStmt) (err error
 
 	switch s.SetRoleOpt {
 	case ast.SetRoleAll:
-		err = e.setDefaultRoleAll(s)
+		err = e.setDefaultRoleAll(ctx, s)
 	case ast.SetRoleNone:
 		err = e.setDefaultRoleNone(s)
 	case ast.SetRoleRegular:
-		err = e.setDefaultRoleRegular(s)
+		err = e.setDefaultRoleRegular(ctx, s)
 	}
 	if err != nil {
 		return
@@ -630,9 +633,9 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeRevokeRole(s *ast.RevokeRoleStmt) error {
+func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStmt) error {
 	for _, role := range s.Roles {
-		exists, err := userExists(e.ctx, role.Username, role.Hostname)
+		exists, err := userExists(ctx, e.ctx, role.Username, role.Hostname)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -654,7 +657,7 @@ func (e *SimpleExec) executeRevokeRole(s *ast.RevokeRoleStmt) error {
 	}
 	sql := new(strings.Builder)
 	for _, user := range s.Users {
-		exists, err := userExists(e.ctx, user.Username, user.Hostname)
+		exists, err := userExists(ctx, e.ctx, user.Username, user.Hostname)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -757,7 +760,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 		if len(users) > 0 {
 			sqlexec.MustFormatSQL(sql, ",")
 		}
-		exists, err1 := userExists(e.ctx, spec.User.Username, spec.User.Hostname)
+		exists, err1 := userExists(ctx, e.ctx, spec.User.Username, spec.User.Hostname)
 		if err1 != nil {
 			return err1
 		}
@@ -774,13 +777,18 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			continue
 		}
 		pwd, ok := spec.EncodedPassword()
+
 		if !ok {
 			return errors.Trace(ErrPasswordFormat)
 		}
+		authPlugin := mysql.AuthNativePassword
+		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" {
+			authPlugin = spec.AuthOpt.AuthPlugin
+		}
 		if s.IsCreateRole {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, mysql.AuthNativePassword, "Y")
+			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, authPlugin, "Y")
 		} else {
-			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, mysql.AuthNativePassword)
+			sqlexec.MustFormatSQL(sql, `(%?, %?, %?, %?)`, spec.User.Hostname, spec.User.Username, pwd, authPlugin)
 		}
 		users = append(users, spec.User)
 	}
@@ -829,7 +837,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	return err
 }
 
-func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
+func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) error {
 	if s.CurrentAuth != nil {
 		user := e.ctx.GetSessionVars().User
 		if user == nil {
@@ -851,20 +859,51 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 
 	failedUsers := make([]string, 0, len(s.Specs))
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil {
+		return errors.New("could not load privilege checker")
+	}
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	hasCreateUserPriv := checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv)
+	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
+	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
+	hasSystemSchemaPriv := checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.UpdatePriv)
+
 	for _, spec := range s.Specs {
 		user := e.ctx.GetSessionVars().User
 		if spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname)) {
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
 		} else {
-			checker := privilege.GetPrivilegeManager(e.ctx)
-			activeRoles := e.ctx.GetSessionVars().ActiveRoles
-			if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
-				return ErrDBaccessDenied.GenWithStackByArgs(spec.User.Username, spec.User.Hostname, "mysql")
+
+			// The user executing the query (user) does not match the user specified (spec.User)
+			// The MySQL manual states:
+			// "In most cases, ALTER USER requires the global CREATE USER privilege, or the UPDATE privilege for the mysql system schema"
+			//
+			// This is true unless the user being modified has the SYSTEM_USER dynamic privilege.
+			// See: https://mysqlserverteam.com/the-system_user-dynamic-privilege/
+			//
+			// In the current implementation of DYNAMIC privileges, SUPER can be used as a substitute for any DYNAMIC privilege
+			// (unless SEM is enabled; in which case RESTRICTED_* privileges will not use SUPER as a substitute). This is intentional
+			// because visitInfo can not accept OR conditions for permissions and in many cases MySQL permits SUPER instead.
+
+			// Thus, any user with SUPER can effectively ALTER/DROP a SYSTEM_USER, and
+			// any user with only CREATE USER can not modify the properties of users with SUPER privilege.
+			// We extend this in TiDB with SEM, where SUPER users can not modify users with RESTRICTED_USER_ADMIN.
+			// For simplicity: RESTRICTED_USER_ADMIN also counts for SYSTEM_USER here.
+
+			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
+				return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			}
+			if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, spec.User) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+				return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
+			}
+			if sem.IsEnabled() && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, spec.User) && !hasRestrictedUserPriv {
+				return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
 			}
 		}
 
-		exists, err := userExists(e.ctx, spec.User.Username, spec.User.Hostname)
+		exists, err := userExists(ctx, e.ctx, spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -874,28 +913,35 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 			continue
 		}
 
+		authplugin, err := e.userAuthPlugin(spec.User.Username, spec.User.Hostname)
+		if err != nil {
+			return err
+		}
+		if spec.AuthOpt != nil {
+			spec.AuthOpt.AuthPlugin = authplugin
+		}
 		exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 		if spec.AuthOpt != nil {
 			pwd, ok := spec.EncodedPassword()
 			if !ok {
 				return errors.Trace(ErrPasswordFormat)
 			}
-			stmt, err := exec.ParseWithParams(context.TODO(), `UPDATE %n.%n SET authentication_string=%? WHERE Host=%? and User=%?;`, mysql.SystemDB, mysql.UserTable, pwd, spec.User.Hostname, spec.User.Username)
+			stmt, err := exec.ParseWithParams(ctx, `UPDATE %n.%n SET authentication_string=%? WHERE Host=%? and User=%?;`, mysql.SystemDB, mysql.UserTable, pwd, spec.User.Hostname, spec.User.Username)
 			if err != nil {
 				return err
 			}
-			_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+			_, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
 			}
 		}
 
 		if len(privData) > 0 {
-			stmt, err := exec.ParseWithParams(context.TODO(), "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
+			stmt, err := exec.ParseWithParams(ctx, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
 			if err != nil {
 				return err
 			}
-			_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+			_, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
 			}
@@ -923,7 +969,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
+func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt) error {
 	sessionVars := e.ctx.GetSessionVars()
 	for i, user := range s.Users {
 		if user.CurrentUser {
@@ -933,7 +979,7 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 	}
 
 	for _, role := range s.Roles {
-		exists, err := userExists(e.ctx, role.Username, role.Hostname)
+		exists, err := userExists(ctx, e.ctx, role.Username, role.Hostname)
 		if err != nil {
 			return err
 		}
@@ -942,7 +988,7 @@ func (e *SimpleExec) executeGrantRole(s *ast.GrantRoleStmt) error {
 		}
 	}
 	for _, user := range s.Users {
-		exists, err := userExists(e.ctx, user.Username, user.Hostname)
+		exists, err := userExists(ctx, e.ctx, user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
@@ -1101,28 +1147,27 @@ func renameUserHostInSystemTable(sqlExecutor sqlexec.SQLExecutor, tableName, use
 	return err
 }
 
-func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
+func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) error {
 	// Check privileges.
 	// Check `CREATE USER` privilege.
-	if !config.GetGlobalConfig().Security.SkipGrantTable {
-		checker := privilege.GetPrivilegeManager(e.ctx)
-		if checker == nil {
-			return errors.New("miss privilege checker")
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil {
+		return errors.New("miss privilege checker")
+	}
+	activeRoles := e.ctx.GetSessionVars().ActiveRoles
+	if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.DeletePriv) {
+		if s.IsDropRole {
+			if !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv) &&
+				!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+				return core.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE or CREATE USER")
+			}
 		}
-		activeRoles := e.ctx.GetSessionVars().ActiveRoles
-		if !checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.DeletePriv) {
-			if s.IsDropRole {
-				if !checker.RequestVerification(activeRoles, "", "", "", mysql.DropRolePriv) &&
-					!checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
-					return core.ErrSpecificAccessDenied.GenWithStackByArgs("DROP ROLE or CREATE USER")
-				}
-			}
-			if !s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
-			}
+		if !s.IsDropRole && !checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv) {
+			return core.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		}
 	}
-
+	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
+	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
 	failedUsers := make([]string, 0, len(s.UserList))
 	sysSession, err := e.getSysSession()
 	defer e.releaseSysSession(sysSession)
@@ -1137,7 +1182,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 
 	sql := new(strings.Builder)
 	for _, user := range s.UserList {
-		exists, err := userExists(e.ctx, user.Username, user.Hostname)
+		exists, err := userExists(ctx, e.ctx, user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
@@ -1148,6 +1193,18 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 				failedUsers = append(failedUsers, user.String())
 				break
 			}
+		}
+
+		// Certain users require additional privileges in order to be modified.
+		// If this is the case, we need to rollback all changes and return a privilege error.
+		// Because in TiDB SUPER can be used as a substitute for any dynamic privilege, this effectively means that
+		// any user with SUPER requires a user with SUPER to be able to DROP the user.
+		// We also allow RESTRICTED_USER_ADMIN to count for simplicity.
+		if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, user) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+			if _, err := sqlExecutor.ExecuteInternal(context.TODO(), "rollback"); err != nil {
+				return err
+			}
+			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
 		}
 
 		// begin a transaction to delete a user.
@@ -1243,13 +1300,13 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 	return nil
 }
 
-func userExists(ctx sessionctx.Context, name string, host string) (bool, error) {
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, host)
+func userExists(ctx context.Context, sctx sessionctx.Context, name string, host string) (bool, error) {
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(ctx, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, host)
 	if err != nil {
 		return false, err
 	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return false, err
 	}
@@ -1277,7 +1334,16 @@ func userExistsInternal(sqlExecutor sqlexec.SQLExecutor, name string, host strin
 	return rows > 0, err
 }
 
-func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
+func (e *SimpleExec) userAuthPlugin(name string, host string) (string, error) {
+	pm := privilege.GetPrivilegeManager(e.ctx)
+	authplugin, err := pm.GetAuthPlugin(name, host)
+	if err != nil {
+		return "", err
+	}
+	return authplugin, nil
+}
+
+func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
 	var u, h string
 	if s.User == nil {
 		if e.ctx.GetSessionVars().User == nil {
@@ -1294,7 +1360,7 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 		u = s.User.Username
 		h = s.User.Hostname
 	}
-	exists, err := userExists(e.ctx, u, h)
+	exists, err := userExists(ctx, e.ctx, u, h)
 	if err != nil {
 		return err
 	}
@@ -1302,13 +1368,24 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 		return errors.Trace(ErrPasswordNoMatch)
 	}
 
-	// update mysql.user
-	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), `UPDATE %n.%n SET authentication_string=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, auth.EncodePassword(s.Password), u, h)
+	authplugin, err := e.userAuthPlugin(u, h)
 	if err != nil {
 		return err
 	}
-	_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+	var pwd string
+	if authplugin == mysql.AuthCachingSha2Password {
+		pwd = auth.NewSha2Password(s.Password)
+	} else {
+		pwd = auth.EncodePassword(s.Password)
+	}
+
+	// update mysql.user
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(ctx, `UPDATE %n.%n SET authentication_string=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, h)
+	if err != nil {
+		return err
+	}
+	_, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return err
 }
@@ -1512,7 +1589,21 @@ func (e *SimpleExec) executeShutdown(s *ast.ShutdownStmt) error {
 // This function need to run with async model, otherwise it will block main coroutine
 func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 	time.Sleep(delay)
-	err := p.Kill()
+	// Send SIGTERM instead of SIGKILL to allow graceful shutdown and cleanups to work properly.
+	err := p.Signal(syscall.SIGTERM)
+	if err != nil {
+		panic(err)
+	}
+
+	// Sending SIGKILL should not be needed as SIGTERM should cause a graceful shutdown after
+	// n seconds as configured by the GracefulWaitBeforeShutdown. This is here in case that doesn't
+	// work for some reason.
+	graceTime := config.GetGlobalConfig().GracefulWaitBeforeShutdown
+
+	// The shutdown is supposed to start at graceTime and is allowed to take up to 10s.
+	time.Sleep(time.Second * time.Duration(graceTime+10))
+	logutil.BgLogger().Info("Killing process as grace period is over", zap.Int("pid", p.Pid), zap.Int("graceTime", graceTime))
+	err = p.Kill()
 	if err != nil {
 		panic(err)
 	}

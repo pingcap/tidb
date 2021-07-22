@@ -24,7 +24,6 @@ import (
 	"runtime"
 	"strings"
 	"time"
-	"unsafe"
 
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
@@ -241,7 +240,7 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='timeschema'").
 		Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>", "<nil> <nil> <nil> <nil> 3", "<nil> <nil> <nil> <nil> 3", "<nil> <nil> <nil> <nil> 4", "<nil> <nil> <nil> <nil> <nil>"))
 	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='strschema'").
-		Check(testkit.Rows("3 3 <nil> <nil> <nil>", "3 3 <nil> <nil> <nil>", "255 255 <nil> <nil> <nil>", "255 255 <nil> <nil> <nil>"))
+		Check(testkit.Rows("3 12 <nil> <nil> <nil>", "3 12 <nil> <nil> <nil>", "255 255 <nil> <nil> <nil>", "255 1020 <nil> <nil> <nil>"))
 	tk.MustQuery("select NUMERIC_SCALE from information_schema.COLUMNS where table_name='floatschema'").
 		Check(testkit.Rows("<nil>", "3"))
 
@@ -945,7 +944,7 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 	defaultVersions := []string{"5.7.25-TiDB-None", "5.7.25-TiDB-8.0.18", "5.7.25-TiDB-8.0.18-beta.1", "5.7.25-TiDB-v4.0.0-beta-446-g5268094af"}
 	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta"}
 	for i, v := range defaultVersions {
-		version := infoschema.FormatVersion(v, true)
+		version := infoschema.FormatTiDBVersion(v, true)
 		c.Assert(version, Equals, defaultRes[i])
 	}
 
@@ -953,9 +952,17 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 	versions := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
 	res := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
 	for i, v := range versions {
-		version := infoschema.FormatVersion(v, false)
+		version := infoschema.FormatTiDBVersion(v, false)
 		c.Assert(version, Equals, res[i])
 	}
+
+	versions = []string{"v4.0.12", "4.0.12", "v5.0.1"}
+	resultVersion := []string{"4.0.12", "4.0.12", "5.0.1"}
+
+	for i, versionString := range versions {
+		c.Assert(resultVersion[i], Equals, infoschema.FormatStoreServerVersion(versionString))
+	}
+
 }
 
 // Test statements_summary.
@@ -1374,12 +1381,18 @@ func (s *testTableSuite) TestStmtSummarySensitiveQuery(c *C) {
 		))
 }
 
+// test stmtSummaryEvictedCount
 func (s *testTableSuite) TestSimpleStmtSummaryEvictedCount(c *C) {
 	now := time.Now().Unix()
 	interval := int64(1800)
 	beginTimeForCurInterval := now - now%interval
 	tk := s.newTestKitWithPlanCache(c)
 	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", interval))
+
+	// clean up side effects
+	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
+	defer tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
+
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 	// first sql
@@ -1395,10 +1408,57 @@ func (s *testTableSuite) TestSimpleStmtSummaryEvictedCount(c *C) {
 				int64(2)),
 		))
 	// TODO: Add more tests.
+}
 
+// test stmtSummaryEvictedCount cluster table
+func (s *testClusterTableSuite) TestStmtSummaryEvictedCountTable(c *C) {
+	tk := s.newTestKitWithRoot(c)
+	// disable refreshing
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval=9999")
+	// set information_schema.statements_summary's size to 1
+	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
 	// clean up side effects
-	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
-	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
+	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
+	defer tk.MustExec("set global tidb_stmt_summary_refresh_interval = 1800")
+	// clear information_schema.statements_summary
+	tk.MustExec("set global tidb_enable_stmt_summary=0")
+	tk.MustExec("set global tidb_enable_stmt_summary=1")
+
+	// make a new session for test...
+	tk = s.newTestKitWithRoot(c)
+	// first sql
+	tk.MustExec("show databases;")
+	// second sql, evict former sql from stmt_summary
+	tk.MustQuery("select evicted_count from information_schema.cluster_statements_summary_evicted;").
+		Check(testkit.Rows("1"))
+	// after executed the sql above
+	tk.MustQuery("select evicted_count from information_schema.cluster_statements_summary_evicted;").
+		Check(testkit.Rows("2"))
+	// TODO: Add more tests.
+
+	tk.MustExec("create user 'testuser'@'localhost'")
+	tk.MustExec("create user 'testuser2'@'localhost'")
+	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
+	tk1 := s.newTestKitWithRoot(c)
+	defer tk1.MustExec("drop user 'testuser'@'localhost'")
+	defer tk1.MustExec("drop user 'testuser2'@'localhost'")
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser",
+		Hostname: "localhost",
+	}, nil, nil), Equals, true)
+
+	err := tk.QueryToErr("select * from information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED")
+	c.Assert(err, NotNil)
+	// This error is come from cop(TiDB) fetch from rpc server.
+	c.Assert(err.Error(), Equals, "other error: [planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser2",
+		Hostname: "localhost",
+	}, nil, nil), Equals, true)
+	err = tk.QueryToErr("select * from information_schema.CLUSTER_STATEMENTS_SUMMARY_EVICTED")
+	c.Assert(err, IsNil)
 }
 
 func (s *testTableSuite) TestStmtSummaryTableOther(c *C) {
@@ -1622,8 +1682,7 @@ func (s *testTableSuite) TestTrx(c *C) {
 	sm.txnInfo[0] = &txninfo.TxnInfo{
 		StartTS:          424768545227014155,
 		CurrentSQLDigest: digest.String(),
-		State:            txninfo.TxnRunningNormal,
-		BlockStartTime:   nil,
+		State:            txninfo.TxnIdle,
 		EntriesCount:     1,
 		EntriesSize:      19,
 		ConnectionID:     2,
@@ -1636,14 +1695,15 @@ func (s *testTableSuite) TestTrx(c *C) {
 		CurrentSQLDigest: "",
 		AllSQLDigests:    []string{"sql1", "sql2"},
 		State:            txninfo.TxnLockWaiting,
-		BlockStartTime:   unsafe.Pointer(&blockTime2),
 		ConnectionID:     10,
 		Username:         "user1",
 		CurrentDB:        "db1",
 	}
+	sm.txnInfo[1].BlockStartTime.Valid = true
+	sm.txnInfo[1].BlockStartTime.Time = blockTime2
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
-		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" Normal <nil> 1 19 2 root test []",
+		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" Idle <nil> 1 19 2 root test []",
 		"425070846483628033 2021-05-20 21:16:35.778000 <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [sql1, sql2]"))
 }
 

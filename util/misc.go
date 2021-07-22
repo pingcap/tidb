@@ -170,6 +170,8 @@ var (
 	PerformanceSchemaName = model.NewCIStr("PERFORMANCE_SCHEMA")
 	// MetricSchemaName is the `METRICS_SCHEMA` database name.
 	MetricSchemaName = model.NewCIStr("METRICS_SCHEMA")
+	// ClusterTableInstanceColumnName is the `INSTANCE` column name of the cluster table.
+	ClusterTableInstanceColumnName = "INSTANCE"
 )
 
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.

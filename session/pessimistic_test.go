@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
-	"github.com/tikv/client-go/v2/mockstore"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 
@@ -233,7 +232,7 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 }
 
 func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
-	if *mockstore.WithTiKV {
+	if *withTiKV {
 		c.Skip("skip with tikv because cluster manipulate is not available")
 	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -2079,7 +2078,7 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 
 func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	// TODO: implement commit_ts calculation in unistore
-	if !*mockstore.WithTiKV {
+	if !*withTiKV {
 		return
 	}
 
@@ -2153,7 +2152,7 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 
 func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 	// TODO: implement commit_ts calculation in unistore
-	if !*mockstore.WithTiKV {
+	if !*withTiKV {
 		return
 	}
 
@@ -2211,6 +2210,7 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 }
 
 func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
+	c.Skip("Skip this unstable test(#25986) and bring it back before 2021-07-29.")
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
@@ -2595,4 +2595,243 @@ func (s *testPessimisticSuite) TestAsyncCommitCalTSFail(c *C) {
 	tk2.MustExec("begin pessimistic")
 	tk2.MustExec("update tk set c2 = c2 + 1")
 	tk2.MustExec("commit")
+}
+
+func (s *testPessimisticSuite) TestChangeLockToPut(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table t1(c1 varchar(20) key, c2 int, c3 int, unique key k1(c2), key k2(c3))")
+	tk.MustExec(`insert into t1 values ("1", 1, 1), ("2", 2, 2), ("3", 3, 3)`)
+
+	// Test point get change lock to put.
+	for _, mode := range []string{"REPEATABLE-READ", "READ-COMMITTED"} {
+		tk.MustExec(fmt.Sprintf(`set tx_isolation = "%s"`, mode))
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery(`select * from t1 where c1 = "1" for update`).Check(testkit.Rows("1 1 1"))
+		tk.MustExec("commit")
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery(`select * from t1 where c1 = "1" for update`).Check(testkit.Rows("1 1 1"))
+		tk.MustExec("commit")
+		tk.MustExec("admin check table t1")
+		tk2.MustExec("begin")
+		tk2.MustQuery(`select * from t1 use index(k1) where c2 = "1" for update`).Check(testkit.Rows("1 1 1"))
+		tk2.MustQuery(`select * from t1 use index(k1) where c2 = "3" for update`).Check(testkit.Rows("3 3 3"))
+		tk2.MustExec("commit")
+		tk2.MustExec("begin")
+		tk2.MustQuery(`select * from t1 use index(k2) where c3 = 1`).Check(testkit.Rows("1 1 1"))
+		tk2.MustQuery("select * from t1 use index(k2) where c3 > 1").Check(testkit.Rows("2 2 2", "3 3 3"))
+		tk2.MustExec("commit")
+	}
+
+	// Test batch point get change lock to put.
+	for _, mode := range []string{"REPEATABLE-READ", "READ-COMMITTED"} {
+		tk.MustExec(fmt.Sprintf(`set tx_isolation = "%s"`, mode))
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery(`select * from t1 where c1 in ("1", "5", "3") for update`).Check(testkit.Rows("1 1 1", "3 3 3"))
+		tk.MustExec("commit")
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery(`select * from t1 where c1 in ("1", "2", "8") for update`).Check(testkit.Rows("1 1 1", "2 2 2"))
+		tk.MustExec("commit")
+		tk.MustExec("admin check table t1")
+		tk2.MustExec("begin")
+		tk2.MustQuery(`select * from t1 use index(k1) where c2 in ("1", "2", "3") for update`).Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
+		tk2.MustQuery(`select * from t1 use index(k2) where c2 in ("2") for update`).Check(testkit.Rows("2 2 2"))
+		tk2.MustExec("commit")
+		tk2.MustExec("begin")
+		tk2.MustQuery(`select * from t1 use index(k2) where c3 in (5, 8)`).Check(testkit.Rows())
+		tk2.MustQuery(`select * from t1 use index(k2) where c3 in (1, 8) for update`).Check(testkit.Rows("1 1 1"))
+		tk2.MustQuery(`select * from t1 use index(k2) where c3 > 1`).Check(testkit.Rows("2 2 2", "3 3 3"))
+		tk2.MustExec("commit")
+	}
+
+	tk.MustExec("admin check table t1")
+}
+
+func createTable(part bool, columnNames []string, columnTypes []string) string {
+	var str string
+	str = "create table t("
+	if part {
+		str = "create table t_part("
+	}
+	first := true
+	for i, colName := range columnNames {
+		if first {
+			first = false
+		} else {
+			str += ","
+		}
+		str += fmt.Sprintf("%s %s", colName, columnTypes[i])
+	}
+	str += ", primary key(c_int, c_str)"
+	str += ")"
+	if part {
+		str += "partition by hash(c_int) partitions 8"
+	}
+	return str
+}
+
+func (s *testPessimisticSuite) TestAmendForIndexChange(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = ON;")
+	tk.Se.GetSessionVars().EnableAsyncCommit = false
+	tk.Se.GetSessionVars().Enable1PC = false
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk2.MustExec("use test_db")
+	tk2.MustExec("drop table if exists t1")
+
+	// Add some different column types.
+	columnNames := []string{"c_int", "c_str", "c_datetime", "c_timestamp", "c_double", "c_decimal", "c_float"}
+	columnTypes := []string{"int", "varchar(40)", "datetime", "timestamp", "double", "decimal(12, 6)", "float"}
+
+	addIndexFunc := func(idxName string, part bool, a, b int) string {
+		var str string
+		str = "alter table t"
+		if part {
+			str = "alter table t_part"
+		}
+		str += " add index " + idxName + " ("
+		str += strings.Join(columnNames[a:b], ",")
+		str += ")"
+		return str
+	}
+
+	for i := 0; i < len(columnTypes); i++ {
+		for j := i + 1; j <= len(columnTypes); j++ {
+			// Create table and prepare some data.
+			tk2.MustExec("drop table if exists t")
+			tk2.MustExec("drop table if exists t_part")
+			tk2.MustExec(createTable(false, columnNames, columnTypes))
+			tk2.MustExec(createTable(true, columnNames, columnTypes))
+			tk2.MustExec(`insert into t values(1, "1", "2000-01-01", "2020-01-01", "1.1", "123.321", 1.1)`)
+			tk2.MustExec(`insert into t values(2, "2", "2000-01-02", "2020-01-02", "2.2", "223.322", 2.2)`)
+			tk2.MustExec(`insert into t_part values(1, "1", "2000-01-01", "2020-01-01", "1.1", "123.321", 1.1)`)
+			tk2.MustExec(`insert into t_part values(2, "2", "2000-01-02", "2020-01-02", "2.2", "223.322", 2.2)`)
+
+			// Start a pessimistic transaction, the amend should succeed for common table.
+			tk.MustExec("begin pessimistic")
+			tk.MustExec(`insert into t values(5, "555", "2000-01-05", "2020-01-05", "5.5", "555.555", 5.5)`)
+			idxName := fmt.Sprintf("index%d%d", i, j)
+			tk2.MustExec(addIndexFunc(idxName, false, i, j))
+			tk.MustExec("commit")
+			tk2.MustExec("admin check table t")
+
+			tk.MustExec("begin pessimistic")
+			tk.MustExec(`insert into t values(6, "666", "2000-01-06", "2020-01-06", "6.6", "666.666", 6.6)`)
+			tk2.MustExec(fmt.Sprintf(`alter table t drop index %s`, idxName))
+			tk.MustExec("commit")
+			tk2.MustExec("admin check table t")
+			tk2.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
+
+			// Start a pessimistic transaction for partition table, the amend should fail.
+			tk.MustExec("begin pessimistic")
+			tk.MustExec(`insert into t_part values(5, "555", "2000-01-05", "2020-01-05", "5.5", "555.555", 5.5)`)
+			tk2.MustExec(addIndexFunc(idxName, true, i, j))
+			c.Assert(tk.ExecToErr("commit"), NotNil)
+			tk2.MustExec("admin check table t_part")
+
+			tk.MustExec("begin pessimistic")
+			tk.MustExec(`insert into t_part values(6, "666", "2000-01-06", "2020-01-06", "6.6", "666.666", 6.6)`)
+			tk2.MustExec(fmt.Sprintf(`alter table t_part drop index %s`, idxName))
+			c.Assert(tk.ExecToErr("commit"), NotNil)
+			tk2.MustExec("admin check table t_part")
+			tk2.MustQuery("select count(*) from t_part").Check(testkit.Rows("2"))
+		}
+	}
+
+	tk2.MustExec("drop database test_db")
+}
+
+func (s *testPessimisticSuite) TestAmendForColumnChange(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = ON;")
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk2.MustExec("use test_db")
+	tk2.MustExec("drop table if exists t1")
+
+	// Add some different column types.
+	columnNames := []string{"c_int", "c_str", "c_datetime", "c_timestamp", "c_double", "c_decimal", "c_float"}
+	columnTypes := []string{"int", "varchar(40)", "datetime", "timestamp", "double", "decimal(12, 6)", "float"}
+	colChangeDDLs := []string{
+		"alter table %s change column c_int c_int bigint",
+		"alter table %s modify column c_str varchar(55)",
+		"alter table %s modify column c_datetime datetime",
+		"alter table %s modify column c_timestamp timestamp",
+		"alter table %s modify column c_double double default NULL",
+		"alter table %s modify column c_int bigint(20) default 100",
+		"alter table %s change column c_float c_float float",
+		"alter table %s modify column c_int bigint(20)",
+	}
+	amendSucc := []bool{
+		true,
+		true,
+		true,
+		true,
+		true,
+		false,
+		true,
+		true,
+	}
+	colChangeFunc := func(part bool, i int) string {
+		var sql string
+		sql = colChangeDDLs[i]
+		if part {
+			sql = fmt.Sprintf(sql, "t_part")
+		} else {
+			sql = fmt.Sprintf(sql, "t")
+		}
+		return sql
+	}
+
+	for i := 0; i < len(colChangeDDLs); i++ {
+		// Create table and prepare some data.
+		tk2.MustExec("drop table if exists t")
+		tk2.MustExec("drop table if exists t_part")
+		tk2.MustExec(createTable(false, columnNames, columnTypes))
+		tk2.MustExec(createTable(true, columnNames, columnTypes))
+		tk2.MustExec(`insert into t values(1, "1", "2000-01-01", "2020-01-01", "1.1", "123.321", 1.1)`)
+		tk2.MustExec(`insert into t values(2, "2", "2000-01-02", "2020-01-02", "2.2", "223.322", 2.2)`)
+		tk2.MustExec(`insert into t_part values(1, "1", "2000-01-01", "2020-01-01", "1.1", "123.321", 1.1)`)
+		tk2.MustExec(`insert into t_part values(2, "2", "2000-01-02", "2020-01-02", "2.2", "223.322", 2.2)`)
+
+		// Start a pessimistic transaction, the amend should succeed for common table.
+		tk.MustExec("begin pessimistic")
+		tk.MustExec(`insert into t values(5, "555", "2000-01-05", "2020-01-05", "5.5", "555.555", 5.5)`)
+		tk2.MustExec(colChangeFunc(false, i))
+		if amendSucc[i] {
+			tk.MustExec("commit")
+		} else {
+			c.Assert(tk.ExecToErr("commit"), NotNil)
+		}
+		tk2.MustExec("admin check table t")
+		if amendSucc[i] {
+			tk2.MustQuery("select count(*) from t").Check(testkit.Rows("3"))
+		} else {
+			tk2.MustQuery("select count(*) from t").Check(testkit.Rows("2"))
+		}
+
+		// Start a pessimistic transaction for partition table, the amend should fail.
+		tk.MustExec("begin pessimistic")
+		tk.MustExec(`insert into t_part values(5, "555", "2000-01-05", "2020-01-05", "5.5", "555.555", 5.5)`)
+		tk2.MustExec(colChangeFunc(true, i))
+		c.Assert(tk.ExecToErr("commit"), NotNil)
+		tk2.MustExec("admin check table t_part")
+		tk2.MustQuery("select count(*) from t_part").Check(testkit.Rows("2"))
+	}
+
+	tk2.MustExec("drop database test_db")
 }

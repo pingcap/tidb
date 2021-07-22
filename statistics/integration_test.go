@@ -13,6 +13,9 @@
 package statistics_test
 
 import (
+	"math"
+	"strconv"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -354,4 +357,52 @@ func (s *testIntegrationSuite) TestNULLOnFullSampling(c *C) {
 		})
 		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
+}
+
+func (s *testIntegrationSuite) TestAnalyzeSnapshot(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1), (1), (1)")
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("select count, snapshot from mysql.stats_meta").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "3")
+	s1Str := rows[0][1].(string)
+	s1, err := strconv.ParseUint(s1Str, 10, 64)
+	c.Assert(err, IsNil)
+	c.Assert(s1 < math.MaxUint64, IsTrue)
+	tk.MustExec("insert into t values(1), (1), (1)")
+	tk.MustExec("analyze table t")
+	rows = tk.MustQuery("select count, snapshot from mysql.stats_meta").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "6")
+	s2Str := rows[0][1].(string)
+	s2, err := strconv.ParseUint(s2Str, 10, 64)
+	c.Assert(err, IsNil)
+	c.Assert(s2 < math.MaxUint64, IsTrue)
+	c.Assert(s2 > s1, IsTrue)
+}
+
+func (s *testIntegrationSuite) TestHistogramsWithSameTxnTS(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec("create table t(a int, index(a))")
+	tk.MustExec("insert into t values(1), (1), (1)")
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("select version from mysql.stats_meta").Rows()
+	c.Assert(len(rows), Equals, 1)
+	v1 := rows[0][0].(string)
+	rows = tk.MustQuery("select version from mysql.stats_histograms").Rows()
+	c.Assert(len(rows), Equals, 2)
+	v2 := rows[0][0].(string)
+	c.Assert(v2, Equals, v1)
+	v3 := rows[1][0].(string)
+	c.Assert(v3, Equals, v2)
 }

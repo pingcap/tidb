@@ -19,6 +19,7 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -33,20 +34,38 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // RequestBuilder is used to build a "kv.Request".
 // It is called before we issue a kv request by "Select".
 type RequestBuilder struct {
 	kv.Request
-	// txnScope indicates the value of txn_scope
-	txnScope string
-	is       infoschema.InfoSchema
-	err      error
+	is  infoschema.InfoSchema
+	err error
 }
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
+	if builder.TxnScope == "" {
+		builder.TxnScope = oracle.GlobalTxnScope
+	}
+	if builder.IsStaleness && builder.TxnScope != kv.GlobalTxnScope {
+		builder.MatchStoreLabels = []*metapb.StoreLabel{
+			{
+				Key:   placement.DCLabelKey,
+				Value: builder.TxnScope,
+			},
+		}
+	}
+	failpoint.Inject("assertRequestBuilderStalenessOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if len(assertScope) > 0 {
+			if builder.IsStaleness && assertScope != builder.TxnScope {
+				panic("request builder get staleness option fail")
+			}
+		}
+	})
 	err := builder.verifyTxnScope()
 	if err != nil {
 		builder.err = err
@@ -229,16 +248,6 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
 	builder.Request.ReplicaRead = sv.GetReplicaRead()
-	builder.txnScope = sv.TxnCtx.TxnScope
-	builder.IsStaleness = sv.TxnCtx.IsStaleness
-	if builder.IsStaleness && builder.txnScope != kv.GlobalTxnScope {
-		builder.MatchStoreLabels = []*metapb.StoreLabel{
-			{
-				Key:   placement.DCLabelKey,
-				Value: builder.txnScope,
-			},
-		}
-	}
 	builder.SetResourceGroupTag(sv.StmtCtx)
 	return builder
 }
@@ -284,10 +293,10 @@ func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext)
 }
 
 func (builder *RequestBuilder) verifyTxnScope() error {
-	if builder.txnScope == "" {
-		builder.txnScope = kv.GlobalTxnScope
+	if builder.TxnScope == "" {
+		builder.TxnScope = kv.GlobalTxnScope
 	}
-	if builder.txnScope == kv.GlobalTxnScope || builder.is == nil {
+	if builder.TxnScope == kv.GlobalTxnScope || builder.is == nil {
 		return nil
 	}
 	visitPhysicalTableID := make(map[int64]struct{})
@@ -301,7 +310,7 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 	}
 
 	for phyTableID := range visitPhysicalTableID {
-		valid := VerifyTxnScope(builder.txnScope, phyTableID, builder.is)
+		valid := VerifyTxnScope(builder.TxnScope, phyTableID, builder.is)
 		if !valid {
 			var tblName string
 			var partName string
@@ -313,15 +322,27 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 				tblInfo, _ = builder.is.TableByID(phyTableID)
 				tblName = tblInfo.Meta().Name.String()
 			}
-			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, builder.txnScope)
+			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, builder.TxnScope)
 			if len(partName) > 0 {
 				err = fmt.Errorf("table %v's partition %v can not be read by %v txn_scope",
-					tblName, partName, builder.txnScope)
+					tblName, partName, builder.TxnScope)
 			}
 			return err
 		}
 	}
 	return nil
+}
+
+// SetTxnScope sets request TxnScope
+func (builder *RequestBuilder) SetTxnScope(scope string) *RequestBuilder {
+	builder.TxnScope = scope
+	return builder
+}
+
+// SetIsStaleness sets request IsStaleness
+func (builder *RequestBuilder) SetIsStaleness(is bool) *RequestBuilder {
+	builder.IsStaleness = is
+	return builder
 }
 
 // TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
@@ -613,7 +634,7 @@ func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSc
 	if !ok {
 		return true
 	}
-	leaderDC, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+	leaderDC, ok := bundle.GetLeaderDC(placement.DCLabelKey)
 	if !ok {
 		return true
 	}

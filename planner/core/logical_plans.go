@@ -451,6 +451,7 @@ type LogicalMemTable struct {
 	Extractor MemTablePredicateExtractor
 	DBName    model.CIStr
 	TableInfo *model.TableInfo
+	Columns   []*model.ColumnInfo
 	// QueryTimeRange is used to specify the time range for metrics summary tables and inspection tables
 	// e.g: select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary;
 	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary_by_label;
@@ -459,7 +460,7 @@ type LogicalMemTable struct {
 	QueryTimeRange QueryTimeRange
 }
 
-// LogicalUnionScan is only used in non read-only txn.
+// LogicalUnionScan is used in non read-only txn or for scanning a local temporary table whose snapshot data is located in memory.
 type LogicalUnionScan struct {
 	baseLogicalPlan
 
@@ -835,6 +836,10 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 			if !alreadyHandle {
 				path.IdxCols = append(path.IdxCols, handleCol)
 				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+				// Also updates the map that maps the index id to its prefix column ids.
+				if len(ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID]) == len(path.Index.Columns) {
+					ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID] = append(ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID], handleCol.UniqueID)
+				}
 			}
 		}
 	}
@@ -1191,6 +1196,9 @@ type CTEClass struct {
 	// seedPartLogicalPlan and recursivePartLogicalPlan are the logical plans for the seed part and recursive part of this CTE.
 	seedPartLogicalPlan      LogicalPlan
 	recursivePartLogicalPlan LogicalPlan
+	// seedPartPhysicalPlan and recursivePartPhysicalPlan are the physical plans for the seed part and recursive part of this CTE.
+	seedPartPhysicalPlan      PhysicalPlan
+	recursivePartPhysicalPlan PhysicalPlan
 	// cteTask is the physical plan for this CTE, is a wrapper of the PhysicalCTE.
 	cteTask task
 	// storageID for this CTE.
@@ -1208,12 +1216,14 @@ type LogicalCTE struct {
 
 	cte       *CTEClass
 	cteAsName model.CIStr
+	seedStat  *property.StatsInfo
 }
 
 // LogicalCTETable is for CTE table
 type LogicalCTETable struct {
 	logicalSchemaProducer
 
+	seedStat     *property.StatsInfo
 	name         string
 	idForStorage int
 }

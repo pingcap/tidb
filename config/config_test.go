@@ -230,6 +230,9 @@ group= "abc"
 zone= "dc-1"
 [security]
 spilled-file-encryption-method = "plaintext"
+[pessimistic-txn]
+deadlock-history-capacity = 123
+deadlock-history-collect-retryable = true
 `)
 
 	c.Assert(err, IsNil)
@@ -284,6 +287,8 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.EnableEnumLengthLimit, Equals, false)
 	c.Assert(conf.EnableForwarding, Equals, true)
 	c.Assert(conf.StoresRefreshInterval, Equals, uint64(30))
+	c.Assert(conf.PessimisticTxn.DeadlockHistoryCapacity, Equals, uint(123))
+	c.Assert(conf.PessimisticTxn.DeadlockHistoryCollectRetryable, Equals, true)
 
 	_, err = f.WriteString(`
 [log.file]

@@ -929,8 +929,9 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				if len(e.partitionedTable) > 0 {
 					// Replace the table ID with partition ID.
 					// The partition ID is returned as an extra column from the table reader.
-					offset := e.tblID2PIDColumnIndex[id]
-					physicalID = row.GetInt64(offset)
+					if offset, ok := e.tblID2PIDColumnIndex[id]; ok {
+						physicalID = row.GetInt64(offset)
+					}
 				}
 
 				for _, col := range cols {
@@ -983,11 +984,12 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 		LockExpired:           &seVars.TxnCtx.LockExpire,
 		ResourceGroupTag:      resourcegrouptag.EncodeResourceGroupTag(sqlDigest, planDigest),
 		OnDeadlock: func(deadlock *tikverr.ErrDeadlock) {
-			// TODO: Support collecting retryable deadlocks according to the config.
-			if !deadlock.IsRetryable {
-				rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
-				deadlockhistory.GlobalDeadlockHistory.Push(rec)
+			cfg := config.GetGlobalConfig()
+			if deadlock.IsRetryable && !cfg.PessimisticTxn.DeadlockHistoryCollectRetryable {
+				return
 			}
+			rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
+			deadlockhistory.GlobalDeadlockHistory.Push(rec)
 		},
 	}
 }
@@ -1022,14 +1024,14 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 
 func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Key {
 	txnCtx := vars.TxnCtx
-	if txnCtx == nil || txnCtx.GlobalTemporaryTables == nil {
+	if txnCtx == nil || txnCtx.TemporaryTables == nil {
 		return keys
 	}
 
-	newKeys := keys[:]
+	newKeys := keys[:0:len(keys)]
 	for _, key := range keys {
 		tblID := tablecodec.DecodeTableID(key)
-		if _, ok := txnCtx.GlobalTemporaryTables[tblID]; !ok {
+		if _, ok := txnCtx.TemporaryTables[tblID]; !ok {
 			newKeys = append(newKeys, key)
 		}
 	}
@@ -1290,12 +1292,14 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	for {
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			if !e.selected[e.inputRow.Idx()] {
-				continue
-			}
 			if req.IsFull() {
 				return nil
 			}
+
+			if !e.selected[e.inputRow.Idx()] {
+				continue
+			}
+
 			req.AppendRow(e.inputRow)
 		}
 		mSize := e.childResult.MemoryUsage()
@@ -1656,11 +1660,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	sc := &stmtctx.StatementContext{
 		TimeZone:      vars.Location(),
-		MemTracker:    memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
-		DiskTracker:   disk.NewTracker(memory.LabelForSQLText, -1),
 		TaskID:        stmtctx.AllocateTaskID(),
 		CTEStorageMap: map[int]*CTEStorages{},
+		IsStaleness:   false,
 	}
+
+	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
+	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
 	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
@@ -1692,14 +1698,14 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			pprof.SetGoroutineLabels(goCtx)
 		}
 		if variable.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
-			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil)
+			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL)
 		}
 	}
 	// execute missed stmtID uses empty sql
 	sc.OriginalSQL = s.Text()
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
-		sc.IgnoreExplainIDSuffix = (strings.ToLower(explainStmt.Format) == ast.ExplainFormatBrief)
+		sc.IgnoreExplainIDSuffix = (strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief)
 		s = explainStmt.Stmt
 	}
 	if _, ok := s.(*ast.ExplainForStmt); ok {
@@ -1741,7 +1747,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true
-		sc.TruncateAsWarning = !vars.StrictSQLMode
+		// With IGNORE or LOCAL, data-interpretation errors become warnings and the load operation continues,
+		// even if the SQL mode is restrictive. For details: https://dev.mysql.com/doc/refman/8.0/en/load-data.html
+		// TODO: since TiDB only support the LOCAL by now, so the TruncateAsWarning are always true here.
+		sc.TruncateAsWarning = true
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		sc.IgnoreNoPartition = true
@@ -1801,7 +1810,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevAffectedRows = -1
 	}
 	if globalConfig.EnableCollectExecutionInfo {
-		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+		// In ExplainFor case, RuntimeStatsColl should not be reset for reuse,
+		// because ExplainFor need to display the last statement information.
+		reuseObj := vars.StmtCtx.RuntimeStatsColl
+		if _, ok := s.(*ast.ExplainForStmt); ok {
+			reuseObj = nil
+		}
+		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
 	}
 
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)

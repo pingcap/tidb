@@ -558,15 +558,17 @@ func findIdxByColUniqueID(cols []*expression.Column, col *expression.Column) int
 	return -1
 }
 
-func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) ([]*expression.Column, []int, error) {
+func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) (expression.Expression, []*expression.Column, []int, error) {
 	var cols []*expression.Column
+	var partExpr expression.Expression
 	if len(pi.Columns) == 0 {
 		schema := expression.NewSchema(columns...)
 		exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		cols = expression.ExtractColumns(exprs[0])
+		partExpr = exprs[0]
 	} else {
 		for _, col := range pi.Columns {
 			idx := expression.FindFieldNameIdxByColName(names, col.L)
@@ -584,14 +586,14 @@ func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.Partition
 			deDupCols = append(deDupCols, c)
 		}
 	}
-	return deDupCols, offset, nil
+	return partExpr, deDupCols, offset, nil
 }
 
 func generateListPartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
 	pi := tblInfo.GetPartitionInfo()
-	exprCols, offset, err := extractListPartitionExprColumns(ctx, pi, columns, names)
+	partExpr, exprCols, offset, err := extractListPartitionExprColumns(ctx, pi, columns, names)
 	if err != nil {
 		return nil, err
 	}
@@ -607,6 +609,7 @@ func generateListPartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	ret := &PartitionExpr{
 		ForListPruning: listPrune,
 		ColumnOffset:   offset,
+		Expr:           partExpr,
 	}
 	return ret, nil
 }

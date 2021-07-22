@@ -249,8 +249,13 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		idxCols := expression.FindPrefixOfIndex(extractedCols, coll.Idx2ColumnIDs[id])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
-			for i := 0; i < len(idxCols); i++ {
+			for i := 0; i < len(idxCols) && i < len(idxInfo.Info.Columns); i++ {
 				lengths = append(lengths, idxInfo.Info.Columns[i].Length)
+			}
+			// If the found columns are more than the columns held by the index. We are appending the int pk to the tail of it.
+			// When storing index data to key-value store, we use (idx_col1, ...., idx_coln, handle_col) as its key.
+			if len(idxCols) > len(idxInfo.Info.Columns) {
+				lengths = append(lengths, types.UnspecifiedLength)
 			}
 			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, id2Paths[idxInfo.ID], idxCols...)
 			if err != nil {

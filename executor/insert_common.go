@@ -75,7 +75,7 @@ type InsertValues struct {
 	hasRefCols     bool
 	hasExtraHandle bool
 
-	// Fill the autoID lazily to datum. This is used for being compatible with JDBC using getGeneratedKeys().
+	// lazyFillAutoID indicates whatever had been filled the autoID lazily to datum. This is used for being compatible with JDBC using getGeneratedKeys().
 	// `insert|replace values` can guarantee consecutive autoID in a batch.
 	// Other statements like `insert select from` don't guarantee consecutive autoID.
 	// https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
@@ -86,7 +86,7 @@ type InsertValues struct {
 
 	stats *InsertRuntimeStat
 
-	// LoadData use two goroutines. One for generate batch data,
+	// isLoadData indicates whatever current goroutine is use for generating batch data. LoadData use two goroutines. One for generate batch data,
 	// The other one for commit task, which will invalid txn.
 	// We use mutex to protect routine from using invalid txn.
 	isLoadData bool
@@ -343,7 +343,7 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 	e.evalBuffer.SetDatums(row...)
 	for i, expr := range list {
 		val, err := expr.Eval(e.evalBuffer.ToRow())
-		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
+		if err != nil {
 			return nil, err
 		}
 		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false, false)

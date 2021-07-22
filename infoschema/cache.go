@@ -20,6 +20,16 @@ import (
 	"github.com/pingcap/tidb/metrics"
 )
 
+var (
+	getLatestCounter  = metrics.InfoCacheCounters.WithLabelValues("get", "latest")
+	getTSCounter      = metrics.InfoCacheCounters.WithLabelValues("get", "ts")
+	getVersionCounter = metrics.InfoCacheCounters.WithLabelValues("get", "version")
+
+	hitLatestCounter  = metrics.InfoCacheCounters.WithLabelValues("hit", "latest")
+	hitTSCounter      = metrics.InfoCacheCounters.WithLabelValues("hit", "ts")
+	hitVersionCounter = metrics.InfoCacheCounters.WithLabelValues("hit", "version")
+)
+
 // InfoCache handles information schema, including getting and setting.
 // The cache behavior, however, is transparent and under automatic management.
 // It only promised to cache the infoschema, if it is newer than all the cached.
@@ -40,9 +50,9 @@ func NewCache(capcity int) *InfoCache {
 func (h *InfoCache) GetLatest() InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	metrics.InfoCacheCounters.WithLabelValues("get", "latest").Inc()
+	getLatestCounter.Inc()
 	if len(h.cache) > 0 {
-		metrics.InfoCacheCounters.WithLabelValues("hit", "latest").Inc()
+		hitLatestCounter.Inc()
 		return h.cache[0]
 	}
 	return nil
@@ -52,12 +62,12 @@ func (h *InfoCache) GetLatest() InfoSchema {
 func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	metrics.InfoCacheCounters.WithLabelValues("get", "version").Inc()
+	getVersionCounter.Inc()
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return h.cache[i].SchemaMetaVersion() <= version
 	})
 	if i < len(h.cache) && h.cache[i].SchemaMetaVersion() == version {
-		metrics.InfoCacheCounters.WithLabelValues("hit", "version").Inc()
+		hitVersionCounter.Inc()
 		return h.cache[i]
 	}
 	return nil
@@ -70,10 +80,10 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	metrics.InfoCacheCounters.WithLabelValues("get", "ts").Inc()
+	getTSCounter.Inc()
 	if snapshotTS >= h.maxUpdatedSnapshotTS {
 		if len(h.cache) > 0 {
-			metrics.InfoCacheCounters.WithLabelValues("hit", "ts").Inc()
+			hitTSCounter.Inc()
 			return h.cache[0]
 		}
 	}

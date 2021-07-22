@@ -49,7 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	. "github.com/pingcap/tidb/util/testutil"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 // Make it serial because config is modified in test cases.
@@ -61,7 +61,7 @@ var _ = Suite(&testIntegrationSuite7{&testIntegrationSuite{}})
 type testSerialSuite struct {
 	CommonHandleSuite
 	store   kv.Storage
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	dom     *domain.Domain
 }
 
@@ -76,7 +76,7 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 
 	var err error
 	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
@@ -613,6 +613,39 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	c.Assert(len(tableInfo.ForeignKeys), Equals, 0)
+
+	// Issue 25613.
+	// Test from->normal, to->normal.
+	tk.MustExec("drop table if exists tb1, tb2")
+	tk.MustExec("create table tb1(id int);")
+	tk.MustExec("create table tb2 like tb1")
+	defer tk.MustExec("drop table if exists tb1, tb2")
+	tk.MustQuery("show create table tb2;").Check(testkit.Rows("tb2 CREATE TABLE `tb2` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Test from->normal, to->global temporary.
+	tk.MustExec("drop table if exists tb3, tb4")
+	tk.MustExec("create table tb3(id int);")
+	tk.MustExec("create global temporary table tb4 like tb3 on commit delete rows;")
+	defer tk.MustExec("drop table if exists tb3, tb4")
+	tk.MustQuery("show create table tb4;").Check(testkit.Rows("tb4 CREATE GLOBAL TEMPORARY TABLE `tb4` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
+
+	// Test from->global temporary, to->normal.
+	tk.MustExec("drop table if exists tb5, tb6")
+	tk.MustExec("create global temporary table tb5(id int) on commit delete rows;")
+	_, err = tk.Exec("create table tb6 like tb5;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
+	defer tk.MustExec("drop table if exists tb5, tb6")
+
+	// Test from->global temporary, to->global temporary.
+	tk.MustExec("drop table if exists tb7, tb8")
+	tk.MustExec("create global temporary table tb7(id int) on commit delete rows;")
+	_, err = tk.Exec("create global temporary table tb8 like tb7 on commit delete rows;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
+	defer tk.MustExec("drop table if exists tb7, tb8")
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.

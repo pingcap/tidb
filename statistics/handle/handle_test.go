@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/tikv/client-go/v2/oracle"
@@ -558,6 +559,23 @@ func (s *testStatsSuite) TestInitStatsVer2(c *C) {
 	h.SetLease(0)
 }
 
+func (s *testStatsSuite) TestReloadExtStatsLockRelease(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
+	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	tk.MustExec("analyze table t")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/statistics/handle/injectExtStatsLoadErr", `return("")`), IsNil)
+	err := tk.ExecToErr("admin reload stats_extended")
+	c.Assert(err.Error(), Equals, "gofail extendedStatsFromStorage error")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/handle/injectExtStatsLoadErr"), IsNil)
+	// Check the lock is released by `admin reload stats_extended` if error happens.
+	tk.MustExec("analyze table t")
+}
+
 func (s *testStatsSuite) TestLoadStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -758,6 +776,18 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	c.Assert(result.Rows()[0][9], Equals, "0")
 }
 
+func (s *testStatsSuite) TestAnalyzeVirtualCol(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int generated always as (-a) virtual, c int generated always as (-a) stored, index (c))")
+	tk.MustExec("insert into t(a) values(2),(1),(1),(3),(NULL)")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("analyze table t")
+	c.Assert(len(tk.MustQuery("show stats_histograms where table_name ='t'").Rows()), Equals, 3)
+}
+
 func (s *testStatsSuite) TestShowGlobalStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
@@ -846,6 +876,7 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	c.Assert(len(result.Rows()), Equals, 20)
 }
 
+// nolint:unused
 func (s *testStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, tblName, dbName string) {
 	tk.MustExec("create database if not exists " + dbName)
 	tk.MustExec("use " + dbName)
@@ -869,6 +900,7 @@ func (s *testStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 }
 
+// nolint:unused
 func (s *testStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, p string, topn, buckets int) {
 	delta := buckets/2 + 1
 	for _, isIdx := range []int{0, 1} {
@@ -882,11 +914,14 @@ func (s *testStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, 
 }
 
 func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
-	c.Skip("unstable, skip race test")
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	s.prepareForGlobalStatsWithOpts(c, tk, "test_gstats_opt", "test_gstats_opt")
 
+	// nolint:unused
 	type opt struct {
 		topn    int
 		buckets int
@@ -918,7 +953,9 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 }
 
 func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
-	c.Skip("unstable, skip race test")
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	s.prepareForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2")
@@ -2942,4 +2979,56 @@ func (s *testStatsSuite) TestColumnCountFromStorage(c *C) {
 	h.TableStatsFromStorage(tblInfo, tblInfo.ID, false, 0)
 	statsTbl := h.GetTableStats(tblInfo)
 	c.Assert(statsTbl.Columns[tblInfo.Columns[0].ID].Count, Equals, int64(2))
+}
+
+func (s *testStatsSuite) TestIncrementalModifyCountUpdate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	h := s.do.StatsHandle()
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	tbl, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	tid := tblInfo.ID
+
+	tk.MustExec("insert into t values(1),(2),(3)")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	err = h.Update(s.do.InfoSchema())
+	c.Assert(err, IsNil)
+	tk.MustExec("analyze table t")
+	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
+		"3 0",
+	))
+
+	tk.MustExec("begin")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	startTS := txn.StartTS()
+	tk.MustExec("commit")
+
+	tk.MustExec("insert into t values(4),(5),(6)")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	err = h.Update(s.do.InfoSchema())
+	c.Assert(err, IsNil)
+
+	// Simulate that the analyze would start before and finish after the second insert.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS)), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/injectBaseCount", "return(3)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/injectBaseModifyCount", "return(0)"), IsNil)
+	tk.MustExec("analyze table t")
+	// Check the count / modify_count changes during the analyze are not lost.
+	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
+		"6 3",
+	))
+	// Check the histogram is correct for the snapshot analyze.
+	tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d", tid)).Check(testkit.Rows(
+		"3",
+	))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseCount"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseModifyCount"), IsNil)
 }

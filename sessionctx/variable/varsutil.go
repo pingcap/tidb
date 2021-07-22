@@ -373,7 +373,7 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 		return err
 	}
 
-	t1, err := t.GoTime(s.TimeZone)
+	t1, err := t.GoTime(s.Location())
 	s.SnapshotTS = oracle.GoTimeToTS(t1)
 	// tx_read_ts should be mutual exclusive with tidb_snapshot
 	s.TxnReadTS = NewTxnReadTS(0)
@@ -390,7 +390,7 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 	if err != nil {
 		return err
 	}
-	t1, err := t.GoTime(s.TimeZone)
+	t1, err := t.GoTime(s.Location())
 	if err != nil {
 		return err
 	}
