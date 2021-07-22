@@ -410,25 +410,22 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	ctx.Store = s.store
 	times := 0
 	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
-			if job.SchemaState == model.StateDeleteOnly {
-				if checkErr != nil {
-					return
-				}
+			_, checkErr = tk1.Exec("insert into t1 values (6, 3, 3) on duplicate key update c1 = 10")
+			if checkErr == nil {
+				_, checkErr = tk1.Exec("update t1 set c1 = 7 where c2=6;")
+			}
+			if checkErr == nil {
 				_, checkErr = tk1.Exec("delete from t1 where c1 = 40;")
 			}
 		case model.StateWriteOnly:
-			if checkErr != nil {
-				return
-			}
 			_, checkErr = tk1.Exec("insert into t1 values (2, 2, 2)")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("update t1 set c1 = 3 where c2 = 80")
-			if checkErr != nil {
-				return
+			if checkErr == nil {
+				_, checkErr = tk1.Exec("update t1 set c1 = 3 where c2 = 80")
 			}
 		case model.StateWriteReorganization:
 			if checkErr == nil && job.SchemaState == model.StateWriteReorganization && times == 0 {
@@ -449,7 +446,7 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 
 	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
 	c.Assert(checkErr, IsNil)
-	tk.MustQuery("select * from t1 order by c1;").Check(testkit.Rows("2 2 2", "4 4 4", "5 80 80", "20 20 20", "160 160 160"))
+	tk.MustQuery("select * from t1 order by c1;").Check(testkit.Rows("2 2 2", "4 4 4", "5 80 80", "10 3 3", "20 20 20", "160 160 160"))
 
 	// Check whether the reorg information is cleaned up.
 	err := ctx.NewTxn(context.Background())
