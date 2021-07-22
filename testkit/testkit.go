@@ -50,6 +50,11 @@ func NewTestKit(t *testing.T, store kv.Storage) *TestKit {
 	}
 }
 
+// Session return a session
+func (tk *TestKit) Session() session.Session {
+	return tk.session
+}
+
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	res, err := tk.Exec(sql, args...)
