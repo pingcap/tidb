@@ -37,6 +37,7 @@ import (
 )
 
 const recreatorPath string = "/tmp/recreator"
+const remainedInterval float64 = 3
 
 // PlanRecreatorExec represents a plan recreator executor.
 type PlanRecreatorSingleExec struct {
@@ -91,8 +92,17 @@ func (k planRecreatorVarKeyType) String() string {
 	return "plan_recreator_var"
 }
 
+// planRecreatorFileListType is a dummy type to avoid naming collision in context.
+type planRecreatorFileListType int
+
+// String defines a Stringer function for debugging and pretty printing.
+func (k planRecreatorFileListType) String() string {
+	return "plan_recreator_file_list"
+}
+
 // PlanRecreatorVarKey is a variable key for load statistic.
 const PlanRecreatorVarKey planRecreatorVarKeyType = 0
+const PlanRecreatorFileList planRecreatorFileListType = 0
 
 // Next implements the Executor Next interface.
 func (e *PlanRecreatorSingleExec) Next(ctx context.Context, req *chunk.Chunk) error {
@@ -130,22 +140,48 @@ func (e *PlanRecreatorSingleInfo) Process() error {
 }
 
 func (e *PlanRecreatorSingleInfo) dumpSingle() error {
-	// Create zip file
+	// Create path
 	err := os.MkdirAll(recreatorPath, os.ModePerm)
 	if err != nil {
 		return errors.New("Plan Recreator: cannot create plan recreator path.")
 	}
-	zf, err := os.Create(recreatorPath + "/" + fmt.Sprintf("recreator_single_%v.zip", time.Now().UnixNano()))
+
+	// Create zip file
+	startTime := time.Now()
+	fileName := fmt.Sprintf("recreator_single_%v.zip", startTime.UnixNano())
+	zf, err := os.Create(recreatorPath + "/" + fileName)
 	if err != nil {
 		return errors.New("Plan Recreator: cannot create zip file.")
 	}
+	val := e.Ctx.Value(PlanRecreatorFileList)
+	if val == nil {
+		e.Ctx.SetValue(PlanRecreatorFileList, make(map[string]time.Time))
+	} else {
+		// clean outdated files
+		Flist := val.(map[string]time.Time)
+		for k, v := range Flist {
+			if time.Since(v).Minutes() > remainedInterval {
+				err := os.Remove(recreatorPath + "/" + k)
+				if err != nil {
+					logutil.BgLogger().Warn(fmt.Sprintf("Cleaning outdated file %s failed.", k))
+				}
+				delete(Flist, k)
+			}
+		}
+	}
+	e.Ctx.Value(PlanRecreatorFileList).(map[string]time.Time)[fileName] = startTime
+
+	// Create zip writer
 	zw := zip.NewWriter(zf)
 	defer func() {
-		err = zw.Close()
+		err := zw.Close()
 		if err != nil {
 			logutil.BgLogger().Warn("Closing zip writer failed.")
 		}
-		zf.Close()
+		err = zf.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("Closing zip file failed.")
+		}
 	}()
 
 	// Dump config
