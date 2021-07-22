@@ -35,7 +35,7 @@ import (
 func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	switch aggFuncDesc.Name {
 	case ast.AggFuncCount:
-		return buildCount(ctx, aggFuncDesc, ordinal)
+		return buildCount(aggFuncDesc, ordinal)
 	case ast.AggFuncSum:
 		return buildSum(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncAvg:
@@ -182,7 +182,7 @@ func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.Agg
 }
 
 // buildCount builds the AggFunc implementation for function "COUNT".
-func buildCount(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	// If mode is DedupMode, we return nil for not implemented.
 	if aggFuncDesc.Mode == aggregation.DedupMode {
 		return nil // not implemented yet.
