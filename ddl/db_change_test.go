@@ -1308,3 +1308,172 @@ func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 	sql2 := "flashback table t_flashback to t_flashback2"
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
+<<<<<<< HEAD
+=======
+
+// TestModifyColumnTypeArgs test job raw args won't be updated when error occurs in `updateVersionAndTableInfo`.
+func (s *serialTestStateChangeSuite) TestModifyColumnTypeArgs(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr", `return(2)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr"), IsNil)
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_modify_column_args")
+	tk.MustExec("create table t_modify_column_args(a int, unique(a))")
+
+	_, err := tk.Exec("alter table t_modify_column_args modify column a tinyint")
+	c.Assert(err, NotNil)
+	// error goes like `mock update version and tableInfo error,jobID=xx`
+	strs := strings.Split(err.Error(), ",")
+	c.Assert(strs[0], Equals, "[ddl:-1]mock update version and tableInfo error")
+	jobID := strings.Split(strs[1], "=")[1]
+
+	tbl := testGetTableByName(c, tk.Se, "test", "t_modify_column_args")
+	c.Assert(len(tbl.Meta().Columns), Equals, 1)
+	c.Assert(len(tbl.Meta().Indices), Equals, 1)
+
+	ID, err := strconv.Atoi(jobID)
+	c.Assert(err, IsNil)
+	var historyJob *model.Job
+	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		historyJob, err = t.GetHistoryDDLJob(int64(ID))
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(historyJob, NotNil)
+
+	var (
+		newCol                *model.ColumnInfo
+		oldColName            *model.CIStr
+		modifyColumnTp        byte
+		updatedAutoRandomBits uint64
+		changingCol           *model.ColumnInfo
+		changingIdxs          []*model.IndexInfo
+	)
+	pos := &ast.ColumnPosition{}
+	err = historyJob.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
+	c.Assert(err, IsNil)
+	c.Assert(changingCol, IsNil)
+	c.Assert(changingIdxs, IsNil)
+}
+
+func (s *testStateChangeSuite) TestWriteReorgForColumnTypeChange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`CREATE TABLE t_ctc (
+  a DOUBLE NULL DEFAULT '1.732088511183121',
+  c char(30) NOT NULL,
+  KEY idx (a,c)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='…comment';
+`)
+	defer func() {
+		tk.MustExec("drop table t_ctc")
+	}()
+
+	sqls := make([]sqlWithErr, 2)
+	sqls[0] = sqlWithErr{"INSERT INTO t_ctc SET c = 'zr36f7ywjquj1curxh9gyrwnx', a = '1.9897043136824033';", nil}
+	sqls[1] = sqlWithErr{"DELETE FROM t_ctc;", nil}
+	dropColumnsSQL := "alter table t_ctc change column a ddd TIME NULL DEFAULT '18:21:32' AFTER c;"
+	query := &expectQuery{sql: "admin check table t_ctc;", rows: nil}
+	s.runTestInSchemaState(c, model.StateWriteReorganization, false, dropColumnsSQL, sqls, query)
+}
+
+func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
+	originalVal := config.GetGlobalConfig().Experimental.AllowsExpressionIndex
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	defer func() {
+		config.GetGlobalConfig().Experimental.AllowsExpressionIndex = originalVal
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int default 0, b int default 0)")
+	defer func() {
+		tk.MustExec("drop table t")
+	}()
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test_db_state")
+
+	var checkErr error
+	d := s.dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &ddl.TestDDLCallback{}
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		err := originalCallback.OnChanged(nil)
+		c.Assert(err, IsNil)
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, checkErr = tk1.Exec("insert into t values (5, 5)")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t set b = 6")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("update t set b = 7 where a = 1")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t where b = 4")
+			if checkErr != nil {
+				return
+			}
+			// (1, 7), (2, 2), (3, 3), (5, 5), (0, 6)
+		case model.StateWriteOnly:
+			_, checkErr = tk1.Exec("insert into t values (8, 8)")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t set b = 9")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("update t set b = 7 where a = 2")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t where b = 3")
+			if checkErr != nil {
+				return
+			}
+			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
+		case model.StateWriteReorganization:
+			_, checkErr = tk1.Exec("insert into t values (10, 10)")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t set b = 11")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("update t set b = 7 where a = 5")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t where b = 6")
+			if checkErr != nil {
+				return
+			}
+			// (1, 7), (2, 7), (5, 7), (8, 8), (0, 9), (10, 10), (10, 10), (0, 11), (0, 11)
+		}
+	}
+
+	d.(ddl.DDLForTest).SetHook(callback)
+	tk.MustExec("alter table t add index idx((b+1))")
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10", "10 10"))
+}
+>>>>>>> cf5e2ffcc... ddl: fix expression index with insert causes losing index data (#26248)
