@@ -110,10 +110,10 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records m
 	}
 	for _, record := range records {
 		record := &tipb.CPUTimeRecord{
-			TimestampList: record.TimestampList,
-			CpuTimeMsList: record.CPUTimeMsList,
-			SqlDigest:     record.SQLDigest,
-			PlanDigest:    record.PlanDigest,
+			RecordListTimestampSec: record.TimestampList,
+			RecordListCpuTimeMs:    record.CPUTimeMsList,
+			SqlDigest:              record.SQLDigest,
+			PlanDigest:             record.PlanDigest,
 		}
 		if err := stream.Send(record); err != nil {
 			return err
@@ -185,6 +185,12 @@ func (r *GRPCReportClient) tryEstablishConnection(ctx context.Context, targetRPC
 		// Address is not changed, skip.
 		return nil
 	}
+
+	if r.conn != nil {
+		err := r.conn.Close()
+		logutil.BgLogger().Warn("[top-sql] grpc client close connection failed", zap.Error(err))
+	}
+
 	r.conn, err = r.dial(ctx, targetRPCAddr)
 	if err != nil {
 		return err
