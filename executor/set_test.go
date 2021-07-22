@@ -23,6 +23,7 @@ import (
 	"strconv"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -508,6 +509,16 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 	tk.MustExec("set @@tidb_enable_clustered_index = 'int_only'")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1287 'INT_ONLY' is deprecated and will be removed in a future release. Please use 'ON' or 'OFF' instead"))
+
+	// test for tidb_enable_ordered_result_mode
+	tk.MustQuery(`select @@tidb_enable_ordered_result_mode`).Check(testkit.Rows("0"))
+	tk.MustExec(`set global tidb_enable_ordered_result_mode = 1`)
+	tk.MustQuery(`select @@global.tidb_enable_ordered_result_mode`).Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_enable_ordered_result_mode = 0`)
+	tk.MustQuery(`select @@global.tidb_enable_ordered_result_mode`).Check(testkit.Rows("0"))
+	tk.MustExec(`set tidb_enable_ordered_result_mode=1`)
+	tk.MustQuery(`select @@global.tidb_enable_ordered_result_mode`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_enable_ordered_result_mode`).Check(testkit.Rows("1"))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
@@ -1366,6 +1377,12 @@ func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
 }
 
 func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
+		c.Assert(err, IsNil)
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@global.tidb_enable_top_sql='On';")
 	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("1"))

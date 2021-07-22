@@ -492,11 +492,14 @@ const (
 	version69 = 69
 	// version70 adds mysql.user.plugin to allow multiple authentication plugins
 	version70 = 70
+	// version71 forces tidb_multi_statement_mode=OFF when tidb_multi_statement_mode=WARN
+	// This affects upgrades from v4.0 where the default was WARN.
+	version71 = 71
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version70
+var currentBootstrapVersion int64 = version71
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -570,6 +573,7 @@ var (
 		upgradeToVer68,
 		upgradeToVer69,
 		upgradeToVer70,
+		upgradeToVer71,
 	}
 )
 
@@ -1505,6 +1509,13 @@ func upgradeToVer70(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN plugin CHAR(64) AFTER authentication_string", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET plugin='mysql_native_password'")
+}
+
+func upgradeToVer71(s Session, ver int64) {
+	if ver >= version71 {
+		return
+	}
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='OFF' WHERE VARIABLE_NAME = 'tidb_multi_statement_mode' AND VARIABLE_VALUE = 'WARN'")
 }
 
 func writeOOMAction(s Session) {

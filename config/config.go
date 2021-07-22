@@ -494,7 +494,8 @@ type Binlog struct {
 // PessimisticTxn is the config for pessimistic transaction.
 type PessimisticTxn struct {
 	// The max count of retry for a single statement in a pessimistic transaction.
-	MaxRetryCount           uint `toml:"max-retry-count" json:"max-retry-count"`
+	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
+	// The max count of deadlock events that will be recorded in the information_schema.deadlocks table.
 	DeadlockHistoryCapacity uint `toml:"deadlock-history-capacity" json:"deadlock-history-capacity"`
 }
 
@@ -653,7 +654,7 @@ var defaultConf = Config{
 	StmtSummary: StmtSummary{
 		Enable:              true,
 		EnableInternalQuery: false,
-		MaxStmtCount:        200,
+		MaxStmtCount:        3000,
 		MaxSQLLength:        4096,
 		RefreshInterval:     1800,
 		HistorySize:         24,

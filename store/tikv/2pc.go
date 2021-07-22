@@ -101,7 +101,6 @@ type twoPhaseCommitter struct {
 	maxCommitTS       uint64
 	prewriteStarted   bool
 	prewriteCancelled uint32
-	prewriteFailed    uint32
 	useOnePC          uint32
 	onePCCommitTS     uint64
 
@@ -1061,13 +1060,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	start := time.Now()
 	err = c.prewriteMutations(bo, c.mutations)
 
-	// Return an undetermined error only if we don't know the transaction fails.
-	// If it fails due to a write conflict or a already existed unique key, we
-	// needn't return an undetermined error even if such an error is set.
-	if atomic.LoadUint32(&c.prewriteFailed) == 1 {
-		c.setUndeterminedErr(nil)
-	}
 	if err != nil {
+		// TODO: Now we return an undetermined error as long as one of the prewrite
+		// RPCs fails. However, if there are multiple errors and some of the errors
+		// are not RPC failures, we can return the actual error instead of undetermined.
 		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
 			logutil.Logger(ctx).Error("2PC commit result undetermined",
 				zap.Error(err),

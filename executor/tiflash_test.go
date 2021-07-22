@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"bytes"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -846,4 +847,39 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableBroadcastJoin(c *C) {
 			}
 		}
 	}
+}
+
+func (s *tiflashTestSuite) TestForbidTiflashDuringStaleRead(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint(20))")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	time.Sleep(2 * time.Second)
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	rows := tk.MustQuery("explain select avg(a) from t").Rows()
+	resBuff := bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res := resBuff.String()
+	c.Assert(strings.Contains(res, "tiflash"), IsTrue)
+	c.Assert(strings.Contains(res, "tikv"), IsFalse)
+	tk.MustExec("set transaction read only as of timestamp now(1)")
+	rows = tk.MustQuery("explain select avg(a) from t").Rows()
+	resBuff = bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res = resBuff.String()
+	c.Assert(strings.Contains(res, "tiflash"), IsFalse)
+	c.Assert(strings.Contains(res, "tikv"), IsTrue)
 }

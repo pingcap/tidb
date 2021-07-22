@@ -2692,6 +2692,12 @@ func (s *testSuiteP2) TestHistoryRead(c *C) {
 	// SnapshotTS Is not updated if check failed.
 	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
 
+	// Setting snapshot to a time in the future will fail. (One day before the 2038 problem)
+	_, err = tk.Exec("set @@tidb_snapshot = '2038-01-18 03:14:07'")
+	c.Assert(err, ErrorMatches, "cannot set read timestamp to a future time")
+	// SnapshotTS Is not updated if check failed.
+	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
+
 	curVer1, _ := s.store.CurrentVersion(kv.GlobalTxnScope)
 	time.Sleep(time.Millisecond)
 	snapshotTime := time.Now()
@@ -2755,6 +2761,15 @@ func (s *testSuite2) TestLowResolutionTSORead(c *C) {
 	tk.MustExec("set @@tidb_low_resolution_tso = 'off'")
 	tk.MustExec("update low_resolution_tso set a = 2")
 	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("2"))
+}
+
+func (s *testSuite2) TestStaleReadFutureTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// Setting tx_read_ts to a time in the future will fail. (One day before the 2038 problem)
+	_, err := tk.Exec("set @@tx_read_ts = '2038-01-18 03:14:07'")
+	c.Assert(err, ErrorMatches, "cannot set read timestamp to a future time")
+	// TxnReadTS Is not updated if check failed.
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
 }
 
 func (s *testSuite) TestScanControlSelection(c *C) {

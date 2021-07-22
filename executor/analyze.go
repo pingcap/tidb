@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -905,11 +906,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 
 	for _, sample := range rootRowCollector.Samples {
-		for i := range sample.Columns {
-			if sample.Columns[i].Kind() == types.KindBytes {
-				sample.Columns[i].SetBytes(sample.Columns[i].GetBytes())
-			}
-		}
 		// Calculate handle from the row data for each row. It will be used to sort the samples.
 		sample.Handle, err = e.handleCols.BuildHandleByDatums(sample.Columns)
 		if err != nil {
@@ -1268,8 +1264,16 @@ workLoop:
 				if row.Columns[task.slicePos].IsNull() {
 					continue
 				}
+				val := row.Columns[task.slicePos]
+				ft := e.colsInfo[task.slicePos].FieldType
+				// When it's new collation data, we need to use its collate key instead of original value because only
+				// the collate key can ensure the correct ordering.
+				// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
+				if ft.EvalType() == types.ETString {
+					val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
+				}
 				sampleItems = append(sampleItems, &statistics.SampleItem{
-					Value:   row.Columns[task.slicePos],
+					Value:   val,
 					Ordinal: j,
 				})
 			}
