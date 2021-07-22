@@ -49,13 +49,13 @@ const (
 	DefPartialResult4ApproxCountDistinctSize = int64(unsafe.Sizeof(partialResult4ApproxCountDistinct{}))
 )
 
-type baseSpillAction struct {
+type countOriginalWithDistinctSpillAction struct {
 	spillFieldTypes []*types.FieldType
 	listInDisk      *chunk.ListInDisk
 	tmpChkForSpill  *chunk.Chunk
 }
 
-func (e *baseSpillAction) appendRow(sctx sessionctx.Context, row chunk.Row) (err error) {
+func (e *countOriginalWithDistinctSpillAction) appendRow(sctx sessionctx.Context, row chunk.Row) (err error) {
 	if e.listInDisk == nil {
 		e.listInDisk = chunk.NewListInDisk(e.spillFieldTypes)
 	}
@@ -78,7 +78,7 @@ func (e *baseSpillAction) appendRow(sctx sessionctx.Context, row chunk.Row) (err
 	return
 }
 
-func (e *baseSpillAction) flushTmpChk() (err error) {
+func (e *countOriginalWithDistinctSpillAction) flushTmpChk() (err error) {
 	if e.listInDisk != nil && e.tmpChkForSpill != nil && e.tmpChkForSpill.NumRows() > 0 {
 		err = e.listInDisk.Add(e.tmpChkForSpill)
 		if err != nil {
@@ -97,7 +97,7 @@ type partialResult4CountDistinctInt struct {
 type countOriginalWithDistinct4Int struct {
 	baseCount
 	baseSpillMode
-	baseSpillAction
+	countOriginalWithDistinctSpillAction
 }
 
 func (e *countOriginalWithDistinct4Int) SetInSpillMode(inSpillMode bool) {
