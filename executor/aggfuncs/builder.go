@@ -208,7 +208,7 @@ func buildCount(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, or
 			case types.ETInt:
 				return &countOriginalWithDistinct4Int{
 					baseCount:       baseCount{base},
-					baseSpillMode:   0,
+					baseSpillMode:   1, //todo test switch
 					spillFieldTypes: spillSetFieldTypes,
 				}
 			case types.ETReal:
