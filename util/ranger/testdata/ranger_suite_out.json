@@ -648,5 +648,46 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestPrefixIndexAppendPointRanges",
+    "Cases": [
+      {
+        "SQL": "select * from IDT_20755 use index (u_m_col) where col1 in (\"牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆\", \"物碃貞枕騫摨聫嚣蜻禼担堋黕詖蝒毎槒阆畒郒\", \"剮毵樍穋摻瀽鬦擀钟鷫產冖悄乮曙枱诠鑡轰砠\") and col2 in (72, 39, 73) and col3 != \"2024-10-19 08:55:32\"",
+        "Plan": [
+          "IndexLookUp 5.99 root  ",
+          "├─IndexRangeScan(Build) 5.99 cop[tikv] table:IDT_20755, index:u_m_col(COL1, COL2, COL3) range:[\"剮毵樍穋摻瀽鬦擀钟鷫\" 39 -inf,\"剮毵樍穋摻瀽鬦擀钟鷫\" 39 2024-10-19 08:55:32), (\"剮毵樍穋摻瀽鬦擀钟鷫\" 39 2024-10-19 08:55:32,\"剮毵樍穋摻瀽鬦擀钟鷫\" 39 +inf], [\"剮毵樍穋摻瀽鬦擀钟鷫\" 72 -inf,\"剮毵樍穋摻瀽鬦擀钟鷫\" 72 2024-10-19 08:55:32), (\"剮毵樍穋摻瀽鬦擀钟鷫\" 72 2024-10-19 08:55:32,\"剮毵樍穋摻瀽鬦擀钟鷫\" 72 +inf], [\"剮毵樍穋摻瀽鬦擀钟鷫\" 73 -inf,\"剮毵樍穋摻瀽鬦擀钟鷫\" 73 2024-10-19 08:55:32), (\"剮毵樍穋摻瀽鬦擀钟鷫\" 73 2024-10-19 08:55:32,\"剮毵樍穋摻瀽鬦擀钟鷫\" 73 +inf], [\"物碃貞枕騫摨聫嚣蜻禼\" 39 -inf,\"物碃貞枕騫摨聫嚣蜻禼\" 39 2024-10-19 08:55:32), (\"物碃貞枕騫摨聫嚣蜻禼\" 39 2024-10-19 08:55:32,\"物碃貞枕騫摨聫嚣蜻禼\" 39 +inf], [\"物碃貞枕騫摨聫嚣蜻禼\" 72 -inf,\"物碃貞枕騫摨聫嚣蜻禼\" 72 2024-10-19 08:55:32), (\"物碃貞枕騫摨聫嚣蜻禼\" 72 2024-10-19 08:55:32,\"物碃貞枕騫摨聫嚣蜻禼\" 72 +inf], [\"物碃貞枕騫摨聫嚣蜻禼\" 73 -inf,\"物碃貞枕騫摨聫嚣蜻禼\" 73 2024-10-19 08:55:32), (\"物碃貞枕騫摨聫嚣蜻禼\" 73 2024-10-19 08:55:32,\"物碃貞枕騫摨聫嚣蜻禼\" 73 +inf], [\"牾窓螎刳闌蜹瑦詬鍖湪\" 39 -inf,\"牾窓螎刳闌蜹瑦詬鍖湪\" 39 2024-10-19 08:55:32), (\"牾窓螎刳闌蜹瑦詬鍖湪\" 39 2024-10-19 08:55:32,\"牾窓螎刳闌蜹瑦詬鍖湪\" 39 +inf], [\"牾窓螎刳闌蜹瑦詬鍖湪\" 72 -inf,\"牾窓螎刳闌蜹瑦詬鍖湪\" 72 2024-10-19 08:55:32), (\"牾窓螎刳闌蜹瑦詬鍖湪\" 72 2024-10-19 08:55:32,\"牾窓螎刳闌蜹瑦詬鍖湪\" 72 +inf], [\"牾窓螎刳闌蜹瑦詬鍖湪\" 73 -inf,\"牾窓螎刳闌蜹瑦詬鍖湪\" 73 2024-10-19 08:55:32), (\"牾窓螎刳闌蜹瑦詬鍖湪\" 73 2024-10-19 08:55:32,\"牾窓螎刳闌蜹瑦詬鍖湪\" 73 +inf], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 5.99 cop[tikv]  in(test.idt_20755.col1, \"牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆\", \"物碃貞枕騫摨聫嚣蜻禼担堋黕詖蝒毎槒阆畒郒\", \"剮毵樍穋摻瀽鬦擀钟鷫產冖悄乮曙枱诠鑡轰砠\")",
+          "  └─TableRowIDScan 5.99 cop[tikv] table:IDT_20755 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆 73 2010-06-03 07:29:05"
+        ]
+      },
+      {
+        "SQL": "select * from IDT_20755 use index (u_m_col) where col1 = \"xxxxxxxxxxxxxxx\" and col2 in (72, 73) and col3 != \"2024-10-19 08:55:32\"",
+        "Plan": [
+          "IndexLookUp 1.33 root  ",
+          "├─IndexRangeScan(Build) 1.33 cop[tikv] table:IDT_20755, index:u_m_col(COL1, COL2, COL3) range:[\"xxxxxxxxxx\" 72 -inf,\"xxxxxxxxxx\" 72 2024-10-19 08:55:32), (\"xxxxxxxxxx\" 72 2024-10-19 08:55:32,\"xxxxxxxxxx\" 72 +inf], [\"xxxxxxxxxx\" 73 -inf,\"xxxxxxxxxx\" 73 2024-10-19 08:55:32), (\"xxxxxxxxxx\" 73 2024-10-19 08:55:32,\"xxxxxxxxxx\" 73 +inf], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 1.33 cop[tikv]  eq(test.idt_20755.col1, \"xxxxxxxxxxxxxxx\")",
+          "  └─TableRowIDScan 1.33 cop[tikv] table:IDT_20755 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "xxxxxxxxxxxxxxx 73 2010-06-03 07:29:05"
+        ]
+      },
+      {
+        "SQL": "select * from IDT_20755 use index (u_m_col) where col1 = \"xxxxxxxxxxxxxxx\" and col2 in (72, 73, 74) and col3 != \"2024-10-19 08:55:32\"",
+        "Plan": [
+          "IndexLookUp 2.00 root  ",
+          "├─IndexRangeScan(Build) 2.00 cop[tikv] table:IDT_20755, index:u_m_col(COL1, COL2, COL3) range:[\"xxxxxxxxxx\" 72 -inf,\"xxxxxxxxxx\" 72 2024-10-19 08:55:32), (\"xxxxxxxxxx\" 72 2024-10-19 08:55:32,\"xxxxxxxxxx\" 72 +inf], [\"xxxxxxxxxx\" 73 -inf,\"xxxxxxxxxx\" 73 2024-10-19 08:55:32), (\"xxxxxxxxxx\" 73 2024-10-19 08:55:32,\"xxxxxxxxxx\" 73 +inf], [\"xxxxxxxxxx\" 74 -inf,\"xxxxxxxxxx\" 74 2024-10-19 08:55:32), (\"xxxxxxxxxx\" 74 2024-10-19 08:55:32,\"xxxxxxxxxx\" 74 +inf], keep order:false, stats:pseudo",
+          "└─Selection(Probe) 2.00 cop[tikv]  eq(test.idt_20755.col1, \"xxxxxxxxxxxxxxx\")",
+          "  └─TableRowIDScan 2.00 cop[tikv] table:IDT_20755 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "xxxxxxxxxxxxxxx 73 2010-06-03 07:29:05"
+        ]
+      }
+    ]
   }
 ]
