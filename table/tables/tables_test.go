@@ -396,7 +396,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
 	c.Assert(err, IsNil)
-	tbInfo := tb.Meta()
+	tbInfo := tb.Meta().Clone()
 
 	// For test coverage
 	tbInfo.Columns[0].GeneratedExprString = "a"
