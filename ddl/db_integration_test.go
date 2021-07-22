@@ -3150,3 +3150,116 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 	}
 	c.Assert(iter.Valid(), IsFalse)
 }
+
+func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_noop_functions = 1")
+
+	tk.MustExec("drop table if exists t1, tn")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create table tn (id int)")
+	tk.MustExec("insert into t1 values(10), (11), (12)")
+	tk.MustExec("create temporary table t1 (id int primary key)")
+	tk.MustExec("create temporary table t2 (id int primary key)")
+	tk.MustExec("create database test2")
+	tk.MustExec("create temporary table test2.t2 (id int)")
+
+	// truncate table out of txn
+	tk.MustExec("insert into t1 values(1), (2), (3)")
+	tk.MustExec("insert into t2 values(4), (5), (6)")
+	tk.MustExec("insert into test2.t2 values(7), (8), (9)")
+	tk.MustExec("truncate table t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustQuery("select * from t2").Check(testkit.Rows("4", "5", "6"))
+	tk.MustExec("truncate table t2")
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+	tk.MustQuery("select * from test2.t2").Check(testkit.Rows("7", "8", "9"))
+	tk.MustExec("drop table t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("10", "11", "12"))
+	tk.MustExec("create temporary table t1 (id int)")
+
+	// truncate table with format dbName.tableName
+	tk.MustExec("insert into t2 values(4), (5), (6)")
+	tk.MustExec("insert into test2.t2 values(7), (8), (9)")
+	tk.MustExec("truncate table test2.t2")
+	tk.MustQuery("select * from test2.t2").Check(testkit.Rows())
+	tk.MustQuery("select * from t2").Check(testkit.Rows("4", "5", "6"))
+	tk.MustExec("truncate table test.t2")
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+
+	// truncate table in txn and rollback
+	tk.MustExec("insert into t1 values(1), (2), (3)")
+	tk.MustExec("insert into t2 values(4), (5), (6)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values(11), (12)")
+	tk.MustExec("insert into t2 values(24), (25)")
+	tk.MustExec("delete from t1 where id=2")
+	tk.MustExec("delete from t2 where id=4")
+	tk.MustExec("truncate table t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustQuery("select * from t2").Check(testkit.Rows("5", "6", "24", "25"))
+	tk.MustExec("truncate table t2")
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+	tk.MustExec("insert into t1 values(1), (31)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "31"))
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+	tk.MustExec("drop table t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("10", "11", "12"))
+	tk.MustExec("create temporary table t1 (id int)")
+
+	// truncate table in txn and commit
+	tk.MustExec("insert into t1 values(1), (2), (3)")
+	tk.MustExec("insert into t2 values(4), (5), (6)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values(11), (12)")
+	tk.MustExec("insert into t2 values(24), (25)")
+	tk.MustExec("delete from t1 where id=2")
+	tk.MustExec("delete from t2 where id=4")
+	tk.MustExec("truncate table t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustQuery("select * from t2").Check(testkit.Rows("5", "6", "24", "25"))
+	tk.MustExec("truncate table t2")
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+	tk.MustExec("insert into t1 values(1), (31)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "31"))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "31"))
+	tk.MustExec("truncate table t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+
+	// truncate temporary table do not commit txn explicitly
+	tk.MustExec("begin")
+	tk.MustExec("insert into tn values(100)")
+	tk.MustExec("insert into t1 values(1), (2), (3)")
+	tk.MustExec("truncate table t1")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from tn").Check(testkit.Rows())
+
+	// truncate temporary table will clear session data
+	localTemporaryTables := tk.Se.GetSessionVars().LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+	tb1, exist := localTemporaryTables.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1Info := tb1.Meta()
+	tablePrefix := tablecodec.EncodeTablePrefix(tbl1Info.ID)
+	endTablePrefix := tablecodec.EncodeTablePrefix(tbl1Info.ID + 1)
+	c.Assert(exist, IsTrue)
+	tk.MustExec("insert into t1 values(1), (2), (3)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values(5), (6), (7)")
+	tk.MustExec("truncate table t1")
+	tk.MustExec("commit")
+	iter, err := tk.Se.GetSessionVars().TemporaryTableData.Iter(tablePrefix, endTablePrefix)
+	c.Assert(err, IsNil)
+	for iter.Valid() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, tablePrefix) {
+			break
+		}
+		value := iter.Value()
+		c.Assert(len(value), Equals, 0)
+		_ = iter.Next()
+	}
+	c.Assert(iter.Valid(), IsFalse)
+}
