@@ -19,25 +19,16 @@ import (
 
 	basictracer "github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/tracing"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testTraceSuite{})
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-type testTraceSuite struct {
-}
-
-func (s *testTraceSuite) TestSpanFromContext(c *C) {
+func TestSpanFromContext(t *testing.T) {
 	ctx := context.TODO()
 	noopSp := tracing.SpanFromContext(ctx)
 	// test noop span
 	_, ok := noopSp.Tracer().(opentracing.NoopTracer)
-	c.Assert(ok, IsTrue)
+	require.True(t, ok)
 
 	// test tidb tracing
 	collectedSpan := make([]basictracer.RawSpan, 1)
@@ -51,14 +42,14 @@ func (s *testTraceSuite) TestSpanFromContext(c *C) {
 
 	// verify second span's operation is not nil, this way we can ensure
 	// callback logic works.
-	c.Assert(collectedSpan[0].Operation, NotNil)
+	require.NotNil(t, collectedSpan[0].Operation)
 }
 
-func (s *testTraceSuite) TestChildSpanFromContext(c *C) {
+func TestChildSpanFromContext(t *testing.T) {
 	ctx := context.TODO()
 	noopSp, _ := tracing.ChildSpanFromContxt(ctx, "")
 	_, ok := noopSp.Tracer().(opentracing.NoopTracer)
-	c.Assert(ok, IsTrue)
+	require.True(t, ok)
 
 	// test tidb tracing
 	collectedSpan := make([]basictracer.RawSpan, 1)
@@ -72,11 +63,11 @@ func (s *testTraceSuite) TestChildSpanFromContext(c *C) {
 
 	// verify second span's operation is not nil, this way we can ensure
 	// callback logic works.
-	c.Assert(collectedSpan[1].Operation, NotNil)
+	require.NotNil(t, collectedSpan[1].Operation)
 
 }
 
-func (s *testTraceSuite) TestFollowFrom(c *C) {
+func TestFollowFrom(t *testing.T) {
 	var collectedSpans []basictracer.RawSpan
 	// first start a root span
 	sp1 := tracing.NewRecordedTrace("test", func(sp basictracer.RawSpan) {
@@ -85,13 +76,13 @@ func (s *testTraceSuite) TestFollowFrom(c *C) {
 	sp2 := sp1.Tracer().StartSpan("follow_from", opentracing.FollowsFrom(sp1.Context()))
 	sp1.Finish()
 	sp2.Finish()
-	c.Assert(collectedSpans[1].Operation, Equals, "follow_from")
-	c.Assert(collectedSpans[1].ParentSpanID, Not(Equals), uint64(0))
+	require.Equal(t, "follow_from", collectedSpans[1].Operation)
+	require.NotEqual(t, uint64(0), collectedSpans[1].ParentSpanID)
 	// only root span has 0 parent id
-	c.Assert(collectedSpans[0].ParentSpanID, Equals, uint64(0))
+	require.Equal(t, uint64(0), collectedSpans[0].ParentSpanID)
 }
 
-func (s *testTraceSuite) TestCreateSapnBeforeSetupGlobalTracer(c *C) {
+func TestCreateSapnBeforeSetupGlobalTracer(t *testing.T) {
 	var collectedSpans []basictracer.RawSpan
 	sp := opentracing.StartSpan("before")
 	sp.Finish()
@@ -104,10 +95,10 @@ func (s *testTraceSuite) TestCreateSapnBeforeSetupGlobalTracer(c *C) {
 
 	// sp is a span started before we setup global tracer; hence such span will be
 	// droped.
-	c.Assert(len(collectedSpans), Equals, 1)
+	require.Len(t, collectedSpans, 1)
 }
 
-func (s *testTraceSuite) TestTreeRelationship(c *C) {
+func TestTreeRelationship(t *testing.T) {
 	var collectedSpans []basictracer.RawSpan
 	ctx := context.TODO()
 	// first start a root span
@@ -128,14 +119,14 @@ func (s *testTraceSuite) TestTreeRelationship(c *C) {
 	sp3.Finish()
 
 	// ensure length of collectedSpans is greather than 0
-	c.Assert(len(collectedSpans), Greater, 0)
+	require.Greater(t, len(collectedSpans), 0)
 	if len(collectedSpans) > 0 {
-		c.Assert(collectedSpans[0].Operation, Equals, "test")
-		c.Assert(collectedSpans[1].Operation, Equals, "parent")
-		c.Assert(collectedSpans[2].Operation, Equals, "child")
+		require.Equal(t, "test", collectedSpans[0].Operation)
+		require.Equal(t, "parent", collectedSpans[1].Operation)
+		require.Equal(t, "child", collectedSpans[2].Operation)
 		// check tree relationship
 		// sp1 is parent of sp2. And sp2 is parent of sp3.
-		c.Assert(collectedSpans[1].ParentSpanID, Equals, collectedSpans[0].Context.SpanID)
-		c.Assert(collectedSpans[2].ParentSpanID, Equals, collectedSpans[1].Context.SpanID)
+		require.Equal(t, collectedSpans[0].Context.SpanID, collectedSpans[1].ParentSpanID)
+		require.Equal(t, collectedSpans[1].Context.SpanID, collectedSpans[2].ParentSpanID)
 	}
 }
