@@ -436,12 +436,12 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			isPessimistic = c.isPessimistic
 		}
 
-		logutil.BgLogger().Error("----->",
-			zap.Stringer("op", op),
-			zap.String("key", PrettyKeyPrint(key)),
-			zap.ByteString("value", value),
-			zap.Bool("assertExist", flags.HasAssertExist()),
-			zap.Bool("assertNotExist", flags.HasAssertNotExist()))
+		//logutil.BgLogger().Error("----->",
+		//	zap.Stringer("op", op),
+		//	zap.String("key", PrettyKeyPrint(key)),
+		//	zap.ByteString("value", value),
+		//	zap.Bool("assertExist", flags.HasAssertExist()),
+		//	zap.Bool("assertNotExist", flags.HasAssertNotExist()))
 		c.mutations.Push(op, isPessimistic, flags.HasAssertExist(), flags.HasAssertNotExist(), it.Handle())
 		size += len(key) + len(value)
 
