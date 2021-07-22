@@ -722,7 +722,7 @@ func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 	h.SetLease(0)
 	c.Assert(h.Update(is), IsNil)
 	oriProbability := statistics.FeedbackProbability.Load()
-	oriMinLogCount := handle.MinLogScanCount.Load().Load()
+	oriMinLogCount := handle.MinLogScanCount.Load()
 	oriErrorRate := handle.MinLogErrorRate.Load()
 	defer func() {
 		statistics.FeedbackProbability.Store(oriProbability)
@@ -1406,13 +1406,13 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 
 	oriProbability := statistics.FeedbackProbability.Load()
 	oriMinLogCount := handle.MinLogScanCount.Load()
-	oriMinError := handle.MinLogErrorRate
+	oriMinError := handle.MinLogErrorRate.Load()
 	oriLevel := log.GetLevel()
 	oriLease := s.do.StatsHandle().Lease()
 	defer func() {
 		statistics.FeedbackProbability.Store(oriProbability)
 		handle.MinLogScanCount.Store(oriMinLogCount)
-		handle.MinLogErrorRate = oriMinError
+		handle.MinLogErrorRate.Store(oriMinError)
 		s.do.StatsHandle().SetLease(oriLease)
 		log.SetLevel(oriLevel)
 	}()
