@@ -3575,8 +3575,16 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg 
 		return true, "conversion between char and varchar string needs reorganization"
 	}
 
-	if toFlen > 0 && toFlen < originFlen {
-		return true, fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
+	if toFlen > 0 && toFlen != originFlen {
+		if toFlen < originFlen {
+			return true, fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
+		}
+
+		// Due to the behavior of padding \x00 at binary type, we need to reorg when binary length changed
+		isBinaryType := func(tp *types.FieldType) bool { return tp.Tp == mysql.TypeString && types.IsBinaryStr(tp) }
+		if isBinaryType(origin) && isBinaryType(to) {
+			return true, "can't change binary types of different length"
+		}
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
 		return true, fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
@@ -5140,13 +5148,16 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return errors.Trace(err)
 	}
 
+	finalColumns := make([]*model.ColumnInfo, len(tblInfo.Columns), len(tblInfo.Columns)+len(hiddenCols))
+	copy(finalColumns, tblInfo.Columns)
+	finalColumns = append(finalColumns, hiddenCols...)
 	// Check before the job is put to the queue.
 	// This check is redundant, but useful. If DDL check fail before the job is put
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, err := buildIndexColumns(append(tblInfo.Columns, hiddenCols...), indexPartSpecifications)
+	indexColumns, err := buildIndexColumns(finalColumns, indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5158,7 +5169,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		if err != nil {
 			return err
 		}
-		idxLen, err = indexColumnsLen(tblInfo.Columns, indexColumns)
+		idxLen, err = indexColumnsLen(finalColumns, indexColumns)
 		if err != nil {
 			return err
 		}
