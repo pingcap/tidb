@@ -225,14 +225,14 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		if sender.GetRPCError() != nil {
 			logutil.BgLogger().Warn("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 			// we return timeout to trigger tikv's fallback
-			derr = tikv.ErrTiFlashServerTimeout
+			err = derr.ErrTiFlashServerTimeout
 		}
 	} else {
 		rpcResp, err = m.store.GetTiKVClient().SendRequest(ctx, req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutMedium)
 		if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 			retry = false
 		} else if err != nil {
-			newErr := bo.Backoff(tikv.BoTiFlashRPC, err)
+			newErr := bo.Backoff(tikv.BoTiFlashRPC(), err)
 			if newErr != nil {
 				retry = false
 				err = newErr
@@ -334,7 +334,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 
 	if err != nil {
 		logutil.BgLogger().Warn("establish mpp connection meet error, and retrying", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
-		err = bo.Backoff(tikv.BoTiFlashRPC, err)
+		err = bo.Backoff(tikv.BoTiFlashRPC(), err)
 		if err != nil {
 			logutil.BgLogger().Warn("establish mpp connection meet error and cannot retry", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 			// we return timeout to trigger tikv's fallback
