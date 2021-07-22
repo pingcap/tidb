@@ -417,6 +417,10 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		}
 	}
 
+	if _, ok := a.StmtNode.(*ast.ShutdownStmt); ok {
+		// Next() will make the process exit, so logAudit here.
+		a.logAudit()
+	}
 	var err error
 	defer func() {
 		terror.Log(e.Close())

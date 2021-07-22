@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -73,8 +74,21 @@ func (e *SQLBindExec) dropSQLBind() error {
 }
 
 func (e *SQLBindExec) createSQLBind(ctx context.Context) error {
-	sqlExec := e.ctx.(sqlexec.SQLExecutor)
 	// Use explain to check the validity of bind sql.
+	pool := domain.GetDomain(e.ctx).SysSessionPool()
+	tmp, err := pool.Get()
+	if err != nil {
+		return err
+	}
+	vars := tmp.(sessionctx.Context).GetSessionVars()
+	save := vars.CurrentDB
+	vars.CurrentDB = e.ctx.GetSessionVars().CurrentDB
+	defer func() {
+		vars.CurrentDB = save
+		pool.Put(tmp)
+	}()
+
+	sqlExec := tmp.(sqlexec.SQLExecutor)
 	recordSets, err := sqlExec.Execute(ctx, fmt.Sprintf("explain %s", e.bindSQL))
 	if len(recordSets) > 0 {
 		if err1 := recordSets[0].Close(); err1 != nil {
