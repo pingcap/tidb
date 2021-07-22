@@ -80,7 +80,7 @@ func OnInit(ctx context.Context, manifest *plugin.Manifest) error {
 func OnShutdown(ctx context.Context, manifest *plugin.Manifest) error {
 	fmt.Println("## conn_ip_examples OnShutdown called ##")
 	fmt.Printf("---- context: %s\n", ctx)
-	//fmt.Printf("---- read cfg in shutdown [key: conn_ip_example_key, value: %s]\n", variable.GetSysVar("conn_ip_example_key").Value)
+	fmt.Printf("---- read cfg in shutdown [key: conn_ip_example_key, value: %s]\n", variable.GetSysVar("conn_ip_example_key").Value)
 	atomic.SwapInt32(&connection, 0)
 	return nil
 }
