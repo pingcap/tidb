@@ -180,7 +180,7 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 		memDelta += p.valSet.Insert(input)
 	}
 
-	if e.tmpChkForSpill.NumRows() > 0 {
+	if e.tmpChkForSpill != nil && e.tmpChkForSpill.NumRows() > 0 {
 		err = e.listInDisk.Add(e.tmpChkForSpill)
 		if err != nil {
 			return
