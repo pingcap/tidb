@@ -22,6 +22,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 	"strconv"
 	"strings"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
