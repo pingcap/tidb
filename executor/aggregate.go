@@ -1891,6 +1891,13 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 		logutil.BgLogger().Info("memory exceeds quota, set aggregate mode to spill-mode",
 			zap.Uint32("spillTimes", a.spillTimes))
 		atomic.StoreUint32(&a.e.inSpillMode, 1)
+
+		for _, af := range a.e.PartialAggFuncs {
+			if spillingAggFunc, ok := af.(aggfuncs.SpillingAggFunc); ok {
+				spillingAggFunc.SetInSpillMode(true)
+			}
+		}
+
 		return
 	}
 	if fallback := a.GetFallback(); fallback != nil {

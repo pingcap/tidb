@@ -175,6 +175,12 @@ type AggFunc interface {
 	AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error
 }
 
+// SpillingAggFunc is the interface to evaluate the agg function using spill to disk mode
+type SpillingAggFunc interface {
+	// SetInSpillMode sets spill to disk mode
+	SetInSpillMode(inSpillMode bool)
+}
+
 type baseAggFunc struct {
 	// args stores the input arguments for an aggregate function, we should
 	// call arg.EvalXXX to get the actual input data for this function.

@@ -51,10 +51,16 @@ const (
 
 type partialResult4CountDistinctInt struct {
 	valSet set.Int64SetWithMemoryUsage
+	mem    int64
 }
 
 type countOriginalWithDistinct4Int struct {
 	baseCount
+	baseSpillMode
+
+	spillFieldTypes []*types.FieldType
+	listInDisk      *chunk.ListInDisk
+	tmpChkForSpill  *chunk.Chunk
 }
 
 func (e *countOriginalWithDistinct4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -67,19 +73,79 @@ func (e *countOriginalWithDistinct4Int) AllocPartialResult() (pr PartialResult, 
 func (e *countOriginalWithDistinct4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctInt)(pr)
 	p.valSet, _ = set.NewInt64SetWithMemoryUsage()
+	p.mem = 0
 }
 
-func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) (err error) {
+	var count int64
+	defer func() {
+		if err == nil {
+			chk.AppendInt64(e.ordinal, count)
+		}
+	}()
+
 	p := (*partialResult4CountDistinctInt)(pr)
-	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
+	count += int64(p.valSet.Count())
+
+	if !e.InSpillMode() {
+		return nil
+	}
+
+	var memDelta int64
+	var memUsage int64
+	memLimit := p.mem
+	var listInDisk *chunk.ListInDisk
+	for {
+		if e.listInDisk == nil {
+			break
+		}
+		listInDisk, e.listInDisk = e.listInDisk, nil
+		numChunks := listInDisk.NumChunks()
+		if numChunks < 0 {
+			break
+		}
+
+		//reset params
+		e.ResetPartialResult(pr)
+		e.SetInSpillMode(false)
+
+		memUsage = 0
+		var c *chunk.Chunk
+		for idx := 0; idx < numChunks; idx++ {
+			c, err = listInDisk.GetChunk(idx)
+			numRows := c.NumRows()
+			rows := make([]chunk.Row, 0, numRows)
+			for i := 0; i < numRows; i++ {
+				rows = append(rows, c.GetRow(i))
+			}
+			memDelta, err = e.UpdatePartialResult(sctx, rows, pr)
+			if err != nil {
+				return err
+			}
+			memUsage += memDelta
+			if memUsage > memLimit {
+				e.SetInSpillMode(true)
+			}
+		}
+		count += int64(p.valSet.Count())
+	}
+
 	return nil
 }
 
 func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4CountDistinctInt)(pr)
 
+	defer func() {
+		p.mem += memDelta
+	}()
+
+	var (
+		input  int64
+		isNull bool
+	)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalInt(sctx, row)
+		input, isNull, err = e.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return memDelta, err
 		}
@@ -89,7 +155,37 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 		if p.valSet.Exist(input) {
 			continue
 		}
+		if e.InSpillMode() {
+			if e.listInDisk == nil {
+				e.listInDisk = chunk.NewListInDisk(e.spillFieldTypes)
+
+			}
+			if e.tmpChkForSpill == nil {
+				e.tmpChkForSpill = chunk.New(
+					e.spillFieldTypes,
+					sctx.GetSessionVars().InitChunkSize,
+					sctx.GetSessionVars().MaxChunkSize,
+				)
+			}
+			e.tmpChkForSpill.AppendRow(row)
+			if e.tmpChkForSpill.IsFull() {
+				err = e.listInDisk.Add(e.tmpChkForSpill)
+				if err != nil {
+					return
+				}
+				e.tmpChkForSpill.Reset()
+			}
+			continue
+		}
 		memDelta += p.valSet.Insert(input)
+	}
+
+	if e.tmpChkForSpill.NumRows() > 0 {
+		err = e.listInDisk.Add(e.tmpChkForSpill)
+		if err != nil {
+			return
+		}
+		e.tmpChkForSpill.Reset()
 	}
 
 	return memDelta, nil
@@ -856,4 +952,18 @@ type approxCountDistinctFinal struct {
 
 func (e *approxCountDistinctFinal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	return e.baseApproxCountDistinct.AppendFinalResult2Chunk(sctx, pr, chk)
+}
+
+type baseSpillMode uint32
+
+func (m *baseSpillMode) SetInSpillMode(inSpillMode bool) {
+	var v uint32
+	if inSpillMode {
+		v = 1
+	}
+	*m = baseSpillMode(v)
+}
+
+func (m *baseSpillMode) InSpillMode() bool {
+	return *m == 1
 }

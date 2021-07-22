@@ -35,7 +35,7 @@ import (
 func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	switch aggFuncDesc.Name {
 	case ast.AggFuncCount:
-		return buildCount(aggFuncDesc, ordinal)
+		return buildCount(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncSum:
 		return buildSum(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncAvg:
@@ -182,7 +182,7 @@ func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.Agg
 }
 
 // buildCount builds the AggFunc implementation for function "COUNT".
-func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+func buildCount(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	// If mode is DedupMode, we return nil for not implemented.
 	if aggFuncDesc.Mode == aggregation.DedupMode {
 		return nil // not implemented yet.
@@ -198,6 +198,7 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	if aggFuncDesc.HasDistinct &&
 		(aggFuncDesc.Mode == aggregation.CompleteMode || aggFuncDesc.Mode == aggregation.Partial1Mode) {
 		if len(base.args) == 1 {
+			spillSetFieldTypes := []*types.FieldType{aggFuncDesc.Args[0].GetType()}
 			// optimize with single column
 			// TODO: because Time and JSON does not have `hashcode()` or similar method
 			// so they're in exception for now.
@@ -205,7 +206,11 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			// https://github.com/pingcap/tidb/issues/15857
 			switch aggFuncDesc.Args[0].GetType().EvalType() {
 			case types.ETInt:
-				return &countOriginalWithDistinct4Int{baseCount{base}}
+				return &countOriginalWithDistinct4Int{
+					baseCount:       baseCount{base},
+					baseSpillMode:   0,
+					spillFieldTypes: spillSetFieldTypes,
+				}
 			case types.ETReal:
 				return &countOriginalWithDistinct4Real{baseCount{base}}
 			case types.ETDecimal:
