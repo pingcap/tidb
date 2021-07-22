@@ -240,10 +240,9 @@
         "  └─TableFullScan_5 6.00 cop[tikv] table:tprefix keep order:false"
       ],
       [
-        "IndexLookUp_11 0.00 root  ",
-        "├─IndexRangeScan_8(Build) 0.00 cop[tikv] table:tprefix, index:prefixa(a) range:[\"88\",\"88\"], keep order:false",
-        "└─Selection_10(Probe) 0.00 cop[tikv]  eq(test.tprefix.a, \"888\")",
-        "  └─TableRowIDScan_9 0.00 cop[tikv] table:tprefix keep order:false"
+        "TableReader_7 0.67 root  data:Selection_6",
+        "└─Selection_6 0.67 cop[tikv]  eq(test.tprefix.a, \"888\")",
+        "  └─TableFullScan_5 6.00 cop[tikv] table:tprefix keep order:false"
       ],
       [
         "TableReader_7 1.00 root  data:Selection_6",
@@ -457,16 +456,16 @@
         "└─IndexRangeScan_5 4.00 cop[tikv] table:topn_before_hist, index:idx(a) range:[1,1], keep order:false"
       ],
       [
-        "IndexReader_6 0.00 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 0.00 cop[tikv] table:topn_before_hist, index:idx(a) range:[2,2], keep order:false"
+        "IndexReader_6 0.60 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 0.60 cop[tikv] table:topn_before_hist, index:idx(a) range:[2,2], keep order:false"
       ],
       [
         "IndexReader_6 4.00 root  index:IndexRangeScan_5",
         "└─IndexRangeScan_5 4.00 cop[tikv] table:topn_after_hist, index:idx(a) range:[7,7], keep order:false"
       ],
       [
-        "IndexReader_6 0.00 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 0.00 cop[tikv] table:topn_after_hist, index:idx(a) range:[6,6], keep order:false"
+        "IndexReader_6 0.60 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 0.60 cop[tikv] table:topn_after_hist, index:idx(a) range:[6,6], keep order:false"
       ],
       [
         "TableReader_7 4.00 root  data:Selection_6",

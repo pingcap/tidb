@@ -639,7 +639,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	tbl.Count *= 10
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 10)
+	c.Assert(int(count), Equals, 1)
 }
 
 func (s *testStatisticsSuite) TestIndexRanges(c *C) {

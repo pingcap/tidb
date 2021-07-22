@@ -243,44 +243,54 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		longExpr += fmt.Sprintf(" and a > %d ", i)
 	}
 	tests := []struct {
-		exprs       string
-		selectivity float64
+		exprs                    string
+		selectivity              float64
+		selectivityAfterIncrease float64
 	}{
 		{
-			exprs:       "a > 0 and a < 2",
-			selectivity: 0.01851851851,
+			exprs:                    "a > 0 and a < 2",
+			selectivity:              0.01851851851,
+			selectivityAfterIncrease: 0.01851851851,
 		},
 		{
-			exprs:       "a >= 1 and a < 2",
-			selectivity: 0.01851851851,
+			exprs:                    "a >= 1 and a < 2",
+			selectivity:              0.01851851851,
+			selectivityAfterIncrease: 0.01851851851,
 		},
 		{
-			exprs:       "a >= 1 and b > 1 and a < 2",
-			selectivity: 0.01783264746,
+			exprs:                    "a >= 1 and b > 1 and a < 2",
+			selectivity:              0.01783264746,
+			selectivityAfterIncrease: 0.01803635116,
 		},
 		{
-			exprs:       "a >= 1 and c > 1 and a < 2",
-			selectivity: 0.00617283950,
+			exprs:                    "a >= 1 and c > 1 and a < 2",
+			selectivity:              0.00617283950,
+			selectivityAfterIncrease: 0.00619135802,
 		},
 		{
-			exprs:       "a >= 1 and c >= 1 and a < 2",
-			selectivity: 0.01234567901,
+			exprs:                    "a >= 1 and c >= 1 and a < 2",
+			selectivity:              0.01234567901,
+			selectivityAfterIncrease: 0.01236419753,
 		},
 		{
-			exprs:       "d = 0 and e = 1",
-			selectivity: 0.11111111111,
+			exprs:                    "d = 0 and e = 1",
+			selectivity:              0.11111111111,
+			selectivityAfterIncrease: 0.11111111111,
 		},
 		{
-			exprs:       "b > 1",
-			selectivity: 0.96296296296,
+			exprs:                    "b > 1",
+			selectivity:              0.96296296296,
+			selectivityAfterIncrease: 0.97396296296,
 		},
 		{
-			exprs:       "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
-			selectivity: 0,
+			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
+			selectivity:              0,
+			selectivityAfterIncrease: 0.00003333788,
 		},
 		{
-			exprs:       longExpr,
-			selectivity: 0.001,
+			exprs:                    longExpr,
+			selectivity:              0.001,
+			selectivityAfterIncrease: 0.001,
 		},
 	}
 
@@ -311,7 +321,7 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		histColl.Count *= 10
 		ratio, _, err = histColl.Selectivity(sctx, sel.Conditions, nil)
 		c.Assert(err, IsNil, comment)
-		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
+		c.Assert(math.Abs(ratio-tt.selectivityAfterIncrease) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivityAfterIncrease, ratio))
 	}
 }
 
@@ -389,14 +399,14 @@ func (s *testStatsSuite) TestOutOfRangeEQEstimation(c *C) {
 	statsTbl := h.GetTableStats(table.Meta())
 	sc := &stmtctx.StatementContext{}
 	col := statsTbl.Columns[table.Meta().Columns[0].ID]
-	count, err := col.GetColumnRowCount(sc, getRange(250, 250), 0, false)
+	count, err := col.GetColumnRowCount(sc, getRange(250, 250), statsTbl.Count, false)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, float64(0))
 
 	for i := 0; i < 8; i++ {
-		count, err := col.GetColumnRowCount(sc, getRange(250, 250), int64(i+1), false)
+		count, err := col.GetColumnRowCount(sc, getRange(250, 250), statsTbl.Count+int64(i)+1, false)
 		c.Assert(err, IsNil)
-		c.Assert(count, Equals, math.Min(float64(i+1), 4)) // estRows must be less than modifyCnt
+		c.Assert(count < math.Min(float64(i+1), 4), IsTrue) // estRows must be less than modifyCnt
 	}
 }
 
@@ -431,20 +441,20 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 
 	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, 30))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 2.4000000000000004)
+	c.Assert(count, Equals, 2.3000000000000003)
 
 	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, math.MaxInt64))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 2.4000000000000004)
+	c.Assert(count, Equals, 2.3000000000000003)
 
 	idxID := table.Meta().Indices[0].ID
 	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(30, 30))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 0.2)
+	c.Assert(count, Equals, 0.1)
 
 	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(9, 30))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 2.2)
+	c.Assert(count, Equals, 2.1)
 
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values (null, null)")

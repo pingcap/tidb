@@ -517,7 +517,7 @@ func (coll *HistColl) crossValidationSelectivity(sc *stmtctx.StatementContext, i
 				HighExclude: highExclude,
 			}
 
-			rowCount, err := col.GetColumnRowCount(sc, []*ranger.Range{&rang}, coll.ModifyCount, col.IsHandle)
+			rowCount, err := col.GetColumnRowCount(sc, []*ranger.Range{&rang}, coll.Count, col.IsHandle)
 			if err != nil {
 				return 0, 0, err
 			}
