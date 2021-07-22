@@ -15,7 +15,6 @@ package aggfuncs
 
 import (
 	"encoding/binary"
-	"fmt"
 	"math"
 	"unsafe"
 
