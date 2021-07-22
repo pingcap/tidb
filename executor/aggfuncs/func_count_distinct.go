@@ -103,12 +103,8 @@ func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(sctx sessionctx.
 	memLimit := p.mem
 	var listInDisk *chunk.ListInDisk
 	for {
-		if e.listInDisk == nil {
-			break
-		}
 		listInDisk, e.listInDisk = e.listInDisk, nil
-		numChunks := listInDisk.NumChunks()
-		if numChunks < 0 {
+		if listInDisk == nil {
 			break
 		}
 
@@ -116,10 +112,11 @@ func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(sctx sessionctx.
 		e.ResetPartialResult(pr)
 		e.SetInSpillMode(false)
 
-		memUsage = 0
 		var c *chunk.Chunk
+		memUsage = 0
+		numChunks := listInDisk.NumChunks()
 		for idx := 0; idx < numChunks; idx++ {
-			c, err = listInDisk.GetChunk(idx)
+			c, _ = listInDisk.GetChunk(idx)
 			numRows := c.NumRows()
 			rows := make([]chunk.Row, 0, numRows)
 			for i := 0; i < numRows; i++ {
