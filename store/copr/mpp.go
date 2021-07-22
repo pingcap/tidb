@@ -153,8 +153,10 @@ func (m *mppIterator) run(ctx context.Context) {
 		m.wg.Add(1)
 		bo := backoff.NewBackoffer(ctx, copNextMaxBackoff)
 		go func(mppTask *kv.MPPDispatchRequest) {
+			defer func() {
+				m.wg.Done()
+			}()
 			m.handleDispatchReq(ctx, bo, mppTask)
-			m.wg.Done()
 		}(task)
 	}
 	m.wg.Wait()
@@ -232,18 +234,14 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 			retry = false
 		} else if err != nil {
-			newErr := bo.Backoff(tikv.BoTiFlashRPC(), err)
-			if newErr != nil {
-				retry = false
-				err = newErr
-			} else {
+			if bo.Backoff(tikv.BoTiFlashRPC(), err) == nil{
 				retry = true
 			}
 		}
 	}
 
 	if retry {
-		logutil.BgLogger().Warn("mpp dispatch meet error and retrying", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
+		logutil.BgLogger().Warn("mpp dispatch meet error and retrying", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 		m.handleDispatchReq(ctx, bo, req)
 		return
 	}
