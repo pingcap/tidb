@@ -691,10 +691,10 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		return (newCol.Flen > 0 && newCol.Flen < oldCol.Flen) || (toUnsigned != originUnsigned)
 	}
 	// Ignore the potential max display length represented by integer's flen, use default flen instead.
-	oldColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.Tp)
-	newColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(newCol.Tp)
+	defaultOldColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.Tp)
+	defaultNewColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(newCol.Tp)
 	needTruncationOrToggleSignForInteger := func() bool {
-		return (newColFlen > 0 && newColFlen < oldColFlen) || (toUnsigned != originUnsigned)
+		return (defaultNewColFlen > 0 && defaultNewColFlen < defaultOldColFlen) || (toUnsigned != originUnsigned)
 	}
 
 	// Deal with the same type.
@@ -708,6 +708,11 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 			return isElemsChangedToModifyColumn(oldCol.Elems, newCol.Elems)
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			return toUnsigned != originUnsigned
+		case mysql.TypeString:
+			// Due to the behavior of padding \x00 at binary type, always change column data when binary length changed
+			if types.IsBinaryStr(&oldCol.FieldType) {
+				return newCol.Flen != oldCol.Flen
+			}
 		}
 
 		return needTruncationOrToggleSign()
