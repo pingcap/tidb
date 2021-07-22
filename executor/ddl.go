@@ -239,14 +239,14 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 }
 
 func (e *DDLExec) executeTruncateLocalTemporaryTable(s *ast.TruncateTableStmt) error {
-	localTempTables := e.getLocalTemporaryTables()
-	if localTempTables == nil {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(s.Table.Schema, s.Table.Name)
-	}
-
 	dbInfo, exists := e.ctx.GetInfoSchema().(infoschema.InfoSchema).SchemaByName(s.Table.Schema)
 	if !exists {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema)
+	}
+
+	localTempTables := e.getLocalTemporaryTables()
+	if localTempTables == nil {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(s.Table.Schema, s.Table.Name)
 	}
 
 	tbl, exists := localTempTables.TableByName(s.Table.Schema, s.Table.Name)
