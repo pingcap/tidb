@@ -208,7 +208,7 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			case types.ETInt:
 				return &countOriginalWithDistinct4Int{
 					baseCount:       baseCount{base},
-					baseSpillMode:   0, //todo test switch
+					baseSpillMode:   0,
 					spillFieldTypes: spillSetFieldTypes,
 				}
 			case types.ETReal:

@@ -15,6 +15,7 @@ package aggfuncs
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 	"unsafe"
 
@@ -165,7 +166,6 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 		if e.InSpillMode() {
 			if e.listInDisk == nil {
 				e.listInDisk = chunk.NewListInDisk(e.spillFieldTypes)
-
 			}
 			if e.tmpChkForSpill == nil {
 				e.tmpChkForSpill = chunk.New(
