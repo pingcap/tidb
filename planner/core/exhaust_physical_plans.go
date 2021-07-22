@@ -1696,7 +1696,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 		}
 	})
 
-	if (p.preferJoinType&preferBCJoin) == 0 && p.preferJoinType > 0  {
+	if (p.preferJoinType&preferBCJoin) == 0 && p.preferJoinType > 0 {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.")
 		if prop.IsFlashProp() {
 			return nil, false, nil
