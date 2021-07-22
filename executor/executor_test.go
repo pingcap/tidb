@@ -8808,22 +8808,3 @@ func (s *testSuite) TestIssue25506(c *C) {
 	tk.MustExec("insert into tbl_23 values (0xF)")
 	tk.MustQuery("(select col_15 from tbl_23) union all (select col_15 from tbl_3 for update) order by col_15").Check(testkit.Rows("\x00\x00\x0F", "\x00\x00\xFF", "\x00\xFF\xFF"))
 }
-
-func (s *testSuite) TestIssue26348(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`CREATE TABLE t (
-a varchar(8) DEFAULT NULL,
-b varchar(8) DEFAULT NULL,
-c decimal(20,2) DEFAULT NULL,
-d decimal(15,8) DEFAULT NULL
-);`)
-	tk.MustExec(`insert into t values(20210606, 20210606, 50000.00, 5.04600000);`)
-	tk.MustQuery(`select a * c *(d/36000) from t;`).Check(testkit.Rows("141642663.71666598"))
-	tk.MustQuery("select \"20210606\"*50000.00*(5.04600000/36000)").Check(testkit.Rows("141642663.71666598"))
-	// differs from MySQL, MySQL returns 141642663.71666599297980.
-	tk.MustQuery("select 20210606*50000.00*(5.04600000/36000)").Check(testkit.Rows("141642663.716665992979800000000000000000"))
-	tk.MustQuery("select cast(\"20210606\" as double)*50000.00*(5.04600000/36000)").Check(testkit.Rows("141642663.71666598"))
-}
