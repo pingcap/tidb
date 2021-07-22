@@ -63,6 +63,13 @@ type countOriginalWithDistinct4Int struct {
 	tmpChkForSpill  *chunk.Chunk
 }
 
+func (e *countOriginalWithDistinct4Int) SetInSpillMode(inSpillMode bool) {
+	e.baseSpillMode.SetInSpillMode(inSpillMode)
+	e.spillFieldTypes = nil
+	e.listInDisk = nil
+	e.tmpChkForSpill = nil
+}
+
 func (e *countOriginalWithDistinct4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	valSet, setSize := set.NewInt64SetWithMemoryUsage()
 	return PartialResult(&partialResult4CountDistinctInt{

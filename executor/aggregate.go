@@ -945,6 +945,11 @@ func (e *HashAggExec) resetSpillMode() {
 	e.numOfSpilledChks = e.listInDisk.NumChunks()
 	e.memTracker.ReplaceBytesUsed(setSize)
 	atomic.StoreUint32(&e.inSpillMode, 0)
+	for _, af := range e.PartialAggFuncs {
+		if spillingAggFunc, ok := af.(aggfuncs.SpillingAggFunc); ok {
+			spillingAggFunc.SetInSpillMode(false)
+		}
+	}
 }
 
 // execute fetches Chunks from src and update each aggregate function for each row in Chunk.
