@@ -1248,11 +1248,9 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	if isIndex {
 		idx := t.Indices[id]
 		expected, err = idx.GetRowCount(sc, nil, ranges, t.ModifyCount)
-		expected *= idx.GetIncreaseFactor(t.Count)
 	} else {
 		c := t.Columns[id]
 		expected, err = c.GetColumnRowCount(sc, ranges, t.ModifyCount, true)
-		expected *= c.GetIncreaseFactor(t.Count)
 	}
 	q.Expected = int64(expected)
 	return err

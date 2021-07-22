@@ -45,6 +45,16 @@ func calcFraction(lower, upper, value float64) float64 {
 
 func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	switch value.Kind() {
+	case types.KindFloat32:
+		return float64(value.GetFloat32())
+	case types.KindFloat64:
+		return value.GetFloat64()
+	case types.KindInt64:
+		return float64(value.GetInt64())
+	case types.KindUint64:
+		return float64(value.GetUint64())
+	case types.KindMysqlDuration:
+		return float64(value.GetMysqlDuration().Duration)
 	case types.KindMysqlDecimal:
 		scalar, err := value.GetMysqlDecimal().ToFloat64()
 		if err != nil {
