@@ -18,24 +18,16 @@ import (
 	"math/rand"
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
+func TestRand(t *testing.T) {
+	t.Parallel()
 
-var _ = Suite(&testRandSuite{})
-
-type testRandSuite struct {
-}
-
-func (s *testRandSuite) TestRand(c *C) {
 	x := Uint32N(1024)
-	c.Assert(x < 1024, IsTrue)
+	assert.True(t, x < 1024)
 	y := Uint64N(1 << 63)
-	c.Assert(y < 1<<63, IsTrue)
+	assert.True(t, y < 1<<63)
 
 	_ = Buf(20)
 	var arr [256]bool
@@ -50,7 +42,7 @@ func (s *testRandSuite) TestRand(c *C) {
 		}
 	}
 	fmt.Println(sum)
-	c.Assert(sum < 24, IsTrue)
+	assert.True(t, sum < 24)
 }
 
 func BenchmarkFastRand(b *testing.B) {
