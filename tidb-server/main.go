@@ -569,6 +569,7 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.DataDir, cfg.Path)
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ", "))
+	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
 	variable.MemoryUsageAlarmRatio.Store(cfg.Performance.MemoryUsageAlarmRatio)
 
 	// For CI environment we default enable prepare-plan-cache.

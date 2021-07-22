@@ -19,6 +19,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -42,6 +43,8 @@ import (
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	if prop.IsFlashProp() {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+			"MPP mode may be blocked because operator `UnionScan` is not supported now.")
 		return nil, true
 	}
 	childProp := prop.CloneEssentialFields()
@@ -1664,7 +1667,6 @@ func checkChildFitBC(p Plan) bool {
 }
 
 // If we can use mpp broadcast join, that's our first choice.
-
 func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	if p.ctx.GetSessionVars().BroadcastJoinThresholdSize == 0 || p.ctx.GetSessionVars().BroadcastJoinThresholdCount == 0 {
 		return p.ctx.GetSessionVars().AllowBCJ
@@ -1692,15 +1694,16 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 		}
 	})
 
-	if prop.IsFlashProp() && ((p.preferJoinType&preferBCJoin) == 0 && p.preferJoinType > 0) {
+	if prop.IsFlashProp() && (p.preferJoinType&preferBCJoin) == 0 && p.preferJoinType > 0 {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.")
 		return nil, false
 	}
-	if prop.PartitionTp == property.BroadcastType {
+	if prop.MPPPartitionTp == property.BroadcastType {
 		return nil, false
 	}
 	joins := make([]PhysicalPlan, 0, 8)
 	canPushToTiFlash := p.canPushToCop(kv.TiFlash)
-	if p.ctx.GetSessionVars().AllowMPPExecution && canPushToTiFlash {
+	if p.ctx.GetSessionVars().IsMPPAllowed() && canPushToTiFlash {
 		if p.shouldUseMPPBCJ() {
 			mppJoins := p.tryToGetMppHashJoin(prop, true)
 			if (p.preferJoinType & preferBCJoin) > 0 {
@@ -1781,19 +1784,27 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	}
 
 	if p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because join type `" + p.JoinType.String() + "` is not supported now.")
 		return nil
 	}
 
 	if len(p.EqualConditions) == 0 {
-		if p.ctx.GetSessionVars().AllowCartesianBCJ == 0 || !useBCJ {
+		if !useBCJ || p.ctx.GetSessionVars().AllowCartesianBCJ == 0 {
+			// these warnings assume users won't change variables `tidb_opt_broadcast_join`.
+			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.")
 			return nil
 		}
 	}
-	if (len(p.LeftConditions) != 0 && p.JoinType != LeftOuterJoin) || (len(p.RightConditions) != 0 && p.JoinType != RightOuterJoin) {
+	if len(p.LeftConditions) != 0 && p.JoinType != LeftOuterJoin {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.")
+		return nil
+	}
+	if len(p.RightConditions) != 0 && p.JoinType != RightOuterJoin {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `right join` but has right conditions, which is not supported by mpp now.")
 		return nil
 	}
 
-	if prop.PartitionTp == property.BroadcastType {
+	if prop.MPPPartitionTp == property.BroadcastType {
 		return nil
 	}
 	if !canExprsInJoinPushdown(p, kv.TiFlash) {
@@ -1836,27 +1847,27 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	baseJoin.InnerChildIdx = preferredBuildIndex
 	childrenProps := make([]*property.PhysicalProperty, 2)
 	if useBCJ {
-		childrenProps[preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.BroadcastType, CanAddEnforcer: true}
+		childrenProps[preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.BroadcastType, CanAddEnforcer: true}
 		expCnt := math.MaxFloat64
 		if prop.ExpectedCnt < p.stats.RowCount {
 			expCntScale := prop.ExpectedCnt / p.stats.RowCount
 			expCnt = p.children[1-preferredBuildIndex].statsInfo().RowCount * expCntScale
 		}
-		if prop.PartitionTp == property.HashType {
+		if prop.MPPPartitionTp == property.HashType {
 			hashKeys := rkeys
 			if preferredBuildIndex == 1 {
 				hashKeys = lkeys
 			}
 			if matches := prop.IsSubsetOf(hashKeys); len(matches) != 0 {
-				childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, PartitionTp: property.HashType, PartitionCols: prop.PartitionCols}
+				childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.HashType, MPPPartitionCols: prop.MPPPartitionCols}
 			} else {
 				return nil
 			}
 		} else {
-			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, PartitionTp: property.AnyType}
+			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, MPPPartitionTp: property.AnyType}
 		}
 	} else {
-		if prop.PartitionTp == property.HashType {
+		if prop.MPPPartitionTp == property.HashType {
 			var matches []int
 			if matches = prop.IsSubsetOf(lkeys); len(matches) == 0 {
 				matches = prop.IsSubsetOf(rkeys)
@@ -1867,8 +1878,8 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			lkeys = chooseSubsetOfJoinKeys(lkeys, matches)
 			rkeys = chooseSubsetOfJoinKeys(rkeys, matches)
 		}
-		childrenProps[0] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: lkeys, CanAddEnforcer: true}
-		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: rkeys, CanAddEnforcer: true}
+		childrenProps[0] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: lkeys, CanAddEnforcer: true}
+		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: rkeys, CanAddEnforcer: true}
 	}
 	join := PhysicalHashJoin{
 		basePhysicalJoin: baseJoin,
@@ -2006,13 +2017,25 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	if !ok {
 		return nil, true
 	}
-	proj := PhysicalProjection{
-		Exprs:                p.Exprs,
-		CalculateNoDelay:     p.CalculateNoDelay,
-		AvoidColumnEvaluator: p.AvoidColumnEvaluator,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
-	proj.SetSchema(p.schema)
-	return []PhysicalPlan{proj}, true
+	newProps := []*property.PhysicalProperty{newProp}
+	// generate a mpp task candidate if enforced mpp
+	if newProp.TaskTp != property.MppTaskType && p.SCtx().GetSessionVars().IsMPPEnforced() && p.canPushToCop(kv.TiFlash) &&
+		expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Exprs, p.SCtx().GetClient(), kv.TiFlash) {
+		mppProp := newProp.CloneEssentialFields()
+		mppProp.TaskTp = property.MppTaskType
+		newProps = append(newProps, mppProp)
+	}
+	ret := make([]PhysicalPlan, 0, len(newProps))
+	for _, newProp := range newProps {
+		proj := PhysicalProjection{
+			Exprs:                p.Exprs,
+			CalculateNoDelay:     p.CalculateNoDelay,
+			AvoidColumnEvaluator: p.AvoidColumnEvaluator,
+		}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
+		proj.SetSchema(p.schema)
+		ret = append(ret, proj)
+	}
+	return ret, true
 }
 
 func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -2028,7 +2051,7 @@ func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPl
 	if !lt.limitHints.preferLimitToCop {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
-	if lt.ctx.GetSessionVars().AllowMPPExecution {
+	if lt.ctx.GetSessionVars().IsMPPAllowed() {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
@@ -2104,6 +2127,8 @@ func (la *LogicalApply) GetHashJoin(prop *property.PhysicalProperty) *PhysicalHa
 
 func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	if !prop.AllColsFromSchema(la.children[0].Schema()) || prop.IsFlashProp() { // for convenient, we don't pass through any prop
+		la.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+			"MPP mode may be blocked because operator `Apply` is not supported now.")
 		return nil, true
 	}
 	disableAggPushDownToCop(la.children[0])
@@ -2150,6 +2175,8 @@ func disableAggPushDownToCop(p LogicalPlan) {
 }
 
 func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
+	p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+		"MPP mode may be blocked because operator `Window` is not supported now.")
 	if prop.IsFlashProp() {
 		return nil, true
 	}
@@ -2213,7 +2240,12 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 			} else {
 				return false
 			}
+		// These operators can be partially push down to TiFlash, so we don't raise warning for them.
+		case *LogicalLimit, *LogicalTopN:
+			return false
 		default:
+			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+				"MPP mode may be blocked because operator `" + c.TP() + "` is not supported now.")
 			return false
 		}
 	}
@@ -2349,17 +2381,24 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 
 // TODO: support more operators and distinct later
 func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
+	hasUnsupportedDistinct := false
 	for _, agg := range la.AggFuncs {
 		// MPP does not support distinct except count distinct now
 		if agg.HasDistinct {
 			if agg.Name != ast.AggFuncCount {
-				return false
+				hasUnsupportedDistinct = true
 			}
 		}
 		// MPP does not support AggFuncApproxCountDistinct now
 		if agg.Name == ast.AggFuncApproxCountDistinct {
-			return false
+			hasUnsupportedDistinct = true
 		}
+	}
+	if hasUnsupportedDistinct {
+		if la.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			la.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("Aggregation can not be pushed to storage layer in mpp mode because it contains agg function with distinct"))
+		}
+		return false
 	}
 	return CheckAggCanPushCop(la.ctx, la.AggFuncs, la.GroupByItems, kv.TiFlash)
 }
@@ -2371,13 +2410,13 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.MppTaskType {
 		return nil
 	}
-	if prop.PartitionTp == property.BroadcastType {
+	if prop.MPPPartitionTp == property.BroadcastType {
 		return nil
 	}
 	if len(la.GroupByItems) > 0 {
 		partitionCols := la.GetGroupByCols()
 		// trying to match the required parititions.
-		if prop.PartitionTp == property.HashType {
+		if prop.MPPPartitionTp == property.HashType {
 			if matches := prop.IsSubsetOf(partitionCols); len(matches) != 0 {
 				partitionCols = chooseSubsetOfJoinKeys(partitionCols, matches)
 			} else {
@@ -2390,7 +2429,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		// If there are no available partition cols, but still have group by items, that means group by items are all expressions or constants.
 		// To avoid mess, we don't do any one-phase aggregation in this case.
 		if len(partitionCols) != 0 {
-			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols, CanAddEnforcer: true}
+			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols, CanAddEnforcer: true}
 			agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.schema.Clone())
 			agg.MppRunMode = Mpp1Phase
@@ -2398,7 +2437,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		}
 
 		// 2-phase agg
-		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.AnyType}
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
 		agg.MppRunMode = Mpp2Phase
@@ -2418,7 +2457,11 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
-		agg.MppRunMode = MppTiDB
+		if la.HasDistinct() {
+			agg.MppRunMode = MppScalar
+		} else {
+			agg.MppRunMode = MppTiDB
+		}
 		hashAggs = append(hashAggs, agg)
 	}
 	return
@@ -2437,10 +2480,13 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
 	}
 	canPushDownToTiFlash := la.canPushToCop(kv.TiFlash)
-	canPushDownToMPP := la.ctx.GetSessionVars().AllowMPPExecution && la.checkCanPushDownToMPP() && canPushDownToTiFlash
+	canPushDownToMPP := canPushDownToTiFlash && la.ctx.GetSessionVars().IsMPPAllowed() && la.checkCanPushDownToMPP()
 	if la.HasDistinct() {
 		// TODO: remove after the cost estimation of distinct pushdown is implemented.
 		if !la.ctx.GetSessionVars().AllowDistinctAggPushDown {
+			if la.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+				la.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("Aggregation can not be pushed to storage layer in non-mpp mode because it contains agg function with distinct"))
+			}
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
 	} else if !la.aggHints.preferAggToCop {
@@ -2547,7 +2593,7 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 	if !p.limitHints.preferLimitToCop {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
-	if p.canPushToCop(kv.TiFlash) && p.ctx.GetSessionVars().AllowMPPExecution {
+	if p.canPushToCop(kv.TiFlash) && p.ctx.GetSessionVars().IsMPPAllowed() {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
@@ -2565,6 +2611,8 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 
 func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	if prop.IsFlashProp() {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+			"MPP mode may be blocked because operator `Lock` is not supported now.")
 		return nil, true
 	}
 	childProp := prop.CloneEssentialFields()
@@ -2582,10 +2630,10 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 		return nil, true
 	}
 	// TODO: UnionAll can pass partition info, but for briefness, we prevent it from pushing down.
-	if prop.TaskTp == property.MppTaskType && prop.PartitionTp != property.AnyType {
+	if prop.TaskTp == property.MppTaskType && prop.MPPPartitionTp != property.AnyType {
 		return nil, true
 	}
-	canUseMpp := p.ctx.GetSessionVars().AllowMPPExecution && p.canPushToCopImpl(kv.TiFlash, true)
+	canUseMpp := p.ctx.GetSessionVars().IsMPPAllowed() && p.canPushToCopImpl(kv.TiFlash, true)
 	chReqProps := make([]*property.PhysicalProperty, 0, len(p.children))
 	for range p.children {
 		if canUseMpp && prop.TaskTp == property.MppTaskType {
@@ -2655,6 +2703,7 @@ func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 
 func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	if !prop.IsEmpty() || prop.IsFlashProp() {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `MaxOneRow` is not supported now.")
 		return nil, true
 	}
 	mor := PhysicalMaxOneRow{}.Init(p.ctx, p.stats, p.blockOffset, &property.PhysicalProperty{ExpectedCnt: 2})

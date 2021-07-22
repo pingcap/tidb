@@ -2546,6 +2546,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBMultiStatementMode,
 	variable.TiDBEnableExchangePartition,
 	variable.TiDBAllowFallbackToTiKV,
+	variable.TiDBEnableStableResultMode,
 }
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.

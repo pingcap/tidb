@@ -299,7 +299,16 @@ const (
 	// The default value is 0
 	TiDBAllowBatchCop = "tidb_allow_batch_cop"
 
+	// TiDBAllowMPPExecution means if we should use mpp way to execute query or not.
+	// Default value is `true`, means to be determined by the optimizer.
+	// Value set to `false` means never use mpp.
 	TiDBAllowMPPExecution = "tidb_allow_mpp"
+
+	// TiDBEnforceMPPExecution means if we should enforce mpp way to execute query or not.
+	// Default value is `false`, means to be determined by variable `tidb_allow_mpp`.
+	// Value set to `true` means enforce use mpp.
+	// Note if you want to set `tidb_enforce_mpp` to `true`, you must set `tidb_allow_mpp` to `true` first.
+	TiDBEnforceMPPExecution = "tidb_enforce_mpp"
 
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
 	TiDBInitChunkSize = "tidb_init_chunk_size"
@@ -537,6 +546,9 @@ const (
 	// TiDBAllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
+
+	// TiDBEnableStableResultMode indicates if stabilize query results.
+	TiDBEnableStableResultMode = "tidb_enable_stable_result_mode"
 )
 
 // TiDB vars that have only global scope
@@ -620,6 +632,7 @@ const (
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
 	DefTiDBAllowMPPExecution           = true
+	DefTiDBEnforceMPPExecution         = false
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -679,6 +692,7 @@ const (
 	DefTiDBEnableIndexMergeJoin        = false
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
+	DefTiDBEnableStableResultMode      = false
 )
 
 // Process global variables.
