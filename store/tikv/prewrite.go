@@ -203,7 +203,6 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			if err != nil {
 				return errors.Trace(err)
 			}
-			failpoint.Inject("forceRecursion", func() { same = false })
 			if same {
 				continue
 			}
@@ -217,6 +216,9 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
+			// Clear the RPC Error since the request is evaluated successfully.
+			sender.rpcError = nil
+
 			if batch.isPrimary {
 				// After writing the primary key, if the size of the transaction is larger than 32M,
 				// start the ttlManager. The ttlManager will be closed in tikvTxn.Commit().
@@ -277,17 +279,12 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				e := &tikverr.ErrKeyExist{AlreadyExist: alreadyExist}
-				err = c.extractKeyExistsErr(e)
-				if err != nil {
-					atomic.StoreUint32(&c.prewriteFailed, 1)
-				}
-				return err
+				return c.extractKeyExistsErr(e)
 			}
 
 			// Extract lock from key error
 			lock, err1 := extractLockFromKeyErr(keyErr)
 			if err1 != nil {
-				atomic.StoreUint32(&c.prewriteFailed, 1)
 				return errors.Trace(err1)
 			}
 			logutil.BgLogger().Info("prewrite encounters lock",
@@ -296,7 +293,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			locks = append(locks, lock)
 		}
 		start := time.Now()
-		msBeforeExpired, err := c.store.lockResolver.resolveLocksForWrite(bo, c.startTS, locks)
+		msBeforeExpired, err := c.store.lockResolver.resolveLocksForWrite(bo, c.startTS, c.forUpdateTS, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}
