@@ -189,7 +189,11 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			return nil, err
 		}
 		if !distinct || skipCheck {
-			err = txn.SetAssertion(key, kv.SetAssertNotExist)
+			if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
+				err = txn.SetAssertion(key, kv.SetAssertUnknown)
+			} else {
+				err = txn.SetAssertion(key, kv.SetAssertNotExist)
+			}
 		}
 		return nil, err
 	}
