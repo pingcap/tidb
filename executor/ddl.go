@@ -205,8 +205,16 @@ func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
-	err := domain.GetDomain(e.ctx).DDL().CreateView(e.ctx, s)
-	return err
+	ret := &core.PreprocessorReturn{}
+	err := core.Preprocess(e.ctx, s.Select, core.WithPreprocessorReturn(ret))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ret.ExplicitStaleness {
+		return ErrViewInvalid.GenWithStackByArgs(s.ViewName.Schema.L, s.ViewName.Name.L)
+	}
+
+	return domain.GetDomain(e.ctx).DDL().CreateView(e.ctx, s)
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
