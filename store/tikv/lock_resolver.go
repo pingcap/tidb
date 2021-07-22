@@ -787,8 +787,10 @@ func (lr *LockResolver) resolveLockAsync(bo *Backoffer, l *Lock, status TxnStatu
 	for region, locks := range keysByRegion {
 		curLocks := locks
 		curRegion := region
+		resolveBo, cancel := bo.Fork()
+		defer cancel()
 		go func() {
-			errChan <- lr.resolveRegionLocks(bo, l, curRegion, curLocks, status)
+			errChan <- lr.resolveRegionLocks(resolveBo, l, curRegion, curLocks, status)
 		}()
 	}
 
@@ -823,11 +825,11 @@ func (lr *LockResolver) checkAllSecondaries(bo *Backoffer, l *Lock, status *TxnS
 	}
 
 	errChan := make(chan error, len(regions))
-	checkBo, cancel := bo.Fork()
-	defer cancel()
 	for regionID, keys := range regions {
 		curRegionID := regionID
 		curKeys := keys
+		checkBo, cancel := bo.Fork()
+		defer cancel()
 
 		go func() {
 			errChan <- lr.checkSecondaries(checkBo, l.TxnID, curKeys, curRegionID, &shared)

@@ -66,7 +66,7 @@ const (
 var optRuleList = []logicalOptRule{
 	&gcSubstituter{},
 	&columnPruner{},
-	&resultsStabilizer{},
+	&resultReorder{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
 	&aggregationEliminator{},

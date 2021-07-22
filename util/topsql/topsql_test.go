@@ -167,9 +167,9 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 	records := server.GetLatestRecords()
 	checkSQLPlanMap := map[string]struct{}{}
 	for _, req := range records {
-		c.Assert(len(req.CpuTimeMsList) > 0, IsTrue)
-		c.Assert(req.CpuTimeMsList[0] > 0, IsTrue)
-		c.Assert(req.TimestampList[0] > 0, IsTrue)
+		c.Assert(len(req.RecordListCpuTimeMs) > 0, IsTrue)
+		c.Assert(req.RecordListCpuTimeMs[0] > 0, IsTrue)
+		c.Assert(req.RecordListCpuTimeMs[0] > 0, IsTrue)
 		normalizedSQL, exist := server.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
 		c.Assert(exist, IsTrue)
 		expectedNormalizedSQL, exist := sqlMap[string(req.SqlDigest)]

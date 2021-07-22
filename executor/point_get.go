@@ -247,6 +247,17 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				if err != nil {
 					return err
 				}
+				// Change the unique index LOCK into PUT record.
+				if e.lock && len(e.handleVal) > 0 {
+					if !e.txn.Valid() {
+						return kv.ErrInvalidTxn
+					}
+					memBuffer := e.txn.GetMemBuffer()
+					err = memBuffer.Set(e.idxKey, e.handleVal)
+					if err != nil {
+						return err
+					}
+				}
 			}
 			if len(e.handleVal) == 0 {
 				return nil

@@ -1759,7 +1759,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableGlobalTemporaryTable = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableStableResultMode, Value: BoolToOnOff(DefTiDBEnableStableResultMode), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableOrderedResultMode, Value: BoolToOnOff(DefTiDBEnableOrderedResultMode), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStableResultMode = TiDBOptOn(val)
 		return nil
 	}},

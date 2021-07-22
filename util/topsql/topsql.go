@@ -16,11 +16,16 @@ package topsql
 import (
 	"context"
 	"runtime/pprof"
+	"strings"
+	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
+	"go.uber.org/zap"
 )
 
 const (
@@ -66,6 +71,37 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 	} else {
 		linkPlanTextWithDigest(planDigestBytes, normalizedPlan)
 	}
+	failpoint.Inject("mockHighLoadForEachSQL", func(val failpoint.Value) {
+		// In integration test, some SQL run very fast that Top SQL pprof profile unable to sample data of those SQL,
+		// So need mock some high cpu load to make sure pprof profile successfully samples the data of those SQL.
+		// Attention: Top SQL pprof profile unable to sample data of those SQL which run very fast, this behavior is expected.
+		// The integration test was just want to make sure each type of SQL will be set goroutine labels and and can be collected.
+		if val.(bool) {
+			lowerSQL := strings.ToLower(normalizedSQL)
+			if strings.Contains(lowerSQL, "mysql") {
+				failpoint.Return(ctx)
+			}
+			isDML := false
+			for _, prefix := range []string{"insert", "update", "delete", "load", "replace", "select", "commit"} {
+				if strings.HasPrefix(lowerSQL, prefix) {
+					isDML = true
+					break
+				}
+			}
+			if !isDML {
+				failpoint.Return(ctx)
+			}
+			start := time.Now()
+			logutil.BgLogger().Info("attach SQL info", zap.String("sql", normalizedSQL), zap.Bool("has-plan", len(normalizedPlan) > 0))
+			for {
+				if time.Since(start) > 11*time.Millisecond {
+					break
+				}
+				for i := 0; i < 10e5; i++ {
+				}
+			}
+		}
+	})
 	return ctx
 }
 

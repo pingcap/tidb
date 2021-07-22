@@ -9752,3 +9752,16 @@ func (s *testIntegrationSuite2) TestIssue25591(c *C) {
 	rows = tk.MustQuery("select t1.col1, t2.col1, t2.col2 from t1_1 t1 inner join  t2_1 t2 on t1.col1 not in (1,t2.col1,t2.col2) order by 1,2,3;")
 	rows.Check(testkit.Rows())
 }
+
+func (s *testIntegrationSuite2) TestIssue25526(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tbl_6, tbl_17;")
+	tk.MustExec("create table tbl_6 (col_31 year, index(col_31));")
+	tk.MustExec("create table tbl_17 (col_102 int, col_105 int);")
+	tk.MustExec("replace into tbl_17 (col_102, col_105) values (9999, 0);")
+
+	rows := tk.MustQuery("select tbl_6.col_31 from tbl_6 where col_31 in (select col_102 from tbl_17 where tbl_17.col_102 = 9999 and tbl_17.col_105 = 0);")
+	rows.Check(testkit.Rows())
+}
