@@ -134,6 +134,10 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if len(stmts) != 1 {
 		return ErrPrepareMulti
 	}
+	saveStmtCtx := e.ctx.GetSessionVars().StmtCtx
+	defer func() {
+		e.ctx.GetSessionVars().StmtCtx = saveStmtCtx
+	}()
 	stmt := stmts[0]
 	err = ResetContextOfStmt(e.ctx, stmt)
 	if err != nil {

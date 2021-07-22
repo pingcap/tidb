@@ -59,6 +59,11 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
+	stmtCtx := e.ctx.GetSessionVars().StmtCtx
+	defer func() {
+		e.ctx.GetSessionVars().StmtCtx = stmtCtx
+	}()
+
 	store := appdash.NewMemoryStore()
 	tracer := traceImpl.NewTracer(store)
 	span := tracer.StartSpan("trace")
