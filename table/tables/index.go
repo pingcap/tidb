@@ -183,6 +183,8 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		return nil, err
 	}
 
+	opt.IgnoreAssertion = c.idxInfo.State != model.StatePublic
+
 	if !distinct || skipCheck || opt.Untouched {
 		err = txn.GetMemBuffer().Set(key, idxVal)
 		if err != nil {
