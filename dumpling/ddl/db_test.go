@@ -4060,7 +4060,7 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 	s.mustExec(tk, c, "drop table t1")
 }
 
-func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
+func (s *testSerialDBSuite) TestModifyColumnReorgInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
@@ -4210,15 +4210,58 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk.MustExec("create table tt (a varchar(10));")
 	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustExec("alter table tt change a a varchar(5);")
-	c2 := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
-	c.Assert(c2.FieldType.Flen, Equals, 5)
+	mvc := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(mvc.FieldType.Flen, Equals, 5)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a varchar(4);", "[types:1406]Data Too Long, field len 4, data len 5")
 	tk.MustExec("alter table tt change a a varchar(100);")
+	tk.MustQuery("select length(a) from tt").Check(testkit.Rows("3", "5"))
+
+	// char to char
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt (a char(10));")
+	tk.MustExec("insert into tt values ('111'),('10000');")
+	tk.MustExec("alter table tt change a a char(5);")
+	mc := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(mc.FieldType.Flen, Equals, 5)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1406]Data Too Long, field len 4, data len 5")
+	tk.MustExec("alter table tt change a a char(100);")
+	tk.MustQuery("select length(a) from tt").Check(testkit.Rows("3", "5"))
+
+	// binary to binary
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt (a binary(10));")
+	tk.MustExec("insert into tt values ('111'),('10000');")
+	tk.MustGetErrMsg("alter table tt change a a binary(5);", "[types:1406]Data Too Long, field len 5, data len 10")
+	mb := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(mb.FieldType.Flen, Equals, 10)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00", "10000\x00\x00\x00\x00\x00"))
+	tk.MustGetErrMsg("alter table tt change a a binary(4);", "[types:1406]Data Too Long, field len 4, data len 10")
+	tk.MustExec("alter table tt change a a binary(12);")
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00\x00\x00", "10000\x00\x00\x00\x00\x00\x00\x00"))
+	tk.MustQuery("select length(a) from tt").Check(testkit.Rows("12", "12"))
+
+	// varbinary to varbinary
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt (a varbinary(10));")
+	tk.MustExec("insert into tt values ('111'),('10000');")
+	tk.MustExec("alter table tt change a a varbinary(5);")
+	mvb := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(mvb.FieldType.Flen, Equals, 5)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+	tk.MustGetErrMsg("alter table tt change a a varbinary(4);", "[types:1406]Data Too Long, field len 4, data len 5")
+	tk.MustExec("alter table tt change a a varbinary(12);")
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+	tk.MustQuery("select length(a) from tt").Check(testkit.Rows("3", "5"))
 
 	// varchar to char
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt (a varchar(10));")
+	tk.MustExec("insert into tt values ('111'),('10000');")
+
 	tk.MustExec("alter table tt change a a char(10);")
-	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c2 := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeString)
 	c.Assert(c2.FieldType.Flen, Equals, 10)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
