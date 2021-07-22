@@ -567,6 +567,9 @@ const (
 	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
 	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
 	TiDBEnableLocalTxn = "tidb_enable_local_txn"
+
+	// TiDBEnableOrderedResultMode indicates if stabilize query results.
+	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
 )
 
 // TiDB vars that have only global scope
@@ -721,6 +724,7 @@ const (
 	DefTiDBEnableGlobalTemporaryTable  = false
 	DefTiDBEnableLocalTxn              = false
 	DefTMPTableSize                    = 16777216
+	DefTiDBEnableOrderedResultMode     = false
 )
 
 // Process global variables.

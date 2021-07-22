@@ -3634,7 +3634,6 @@ func (ds *DataSource) addExtraPIDColumn(info *extraPIDInfo) {
 
 	info.Columns = append(info.Columns, pidCol)
 	info.TblIDs = append(info.TblIDs, ds.TableInfo().ID)
-	return
 }
 
 var (

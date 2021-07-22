@@ -63,7 +63,7 @@ type Manager interface {
 	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
 
 	// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USER_PRIVILEGES table.
-	UserPrivilegesTable() [][]types.Datum
+	UserPrivilegesTable(activeRoles []*auth.RoleIdentity, user, host string) [][]types.Datum
 
 	// ActiveRoles active roles for current session.
 	// The first illegal role will be returned.

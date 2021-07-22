@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -184,6 +186,8 @@ type Execute struct {
 	PrepareParams []types.Datum
 	ExecID        uint32
 	SnapshotTS    uint64
+	IsStaleness   bool
+	TxnScope      string
 	Stmt          ast.StmtNode
 	StmtType      string
 	Plan          Plan
@@ -257,23 +261,16 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			vars.PreparedParams = append(vars.PreparedParams, val)
 		}
 	}
-
-	var snapshotTS uint64
-	if preparedObj.SnapshotTSEvaluator != nil {
-		if vars.InTxn() {
-			return ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
-		}
-		// if preparedObj.SnapshotTSEvaluator != nil, it is a stale read SQL:
-		// which means its infoschema is specified by the SQL, not the current/latest infoschema
-		var err error
-		snapshotTS, err = preparedObj.SnapshotTSEvaluator(sctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	snapshotTS, txnScope, isStaleness, err := e.handleExecuteBuilderOption(sctx, preparedObj)
+	if err != nil {
+		return err
+	}
+	if isStaleness {
 		is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		sctx.GetSessionVars().StmtCtx.IsStaleness = true
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
@@ -291,13 +288,72 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
-	err := e.getPhysicalPlan(ctx, sctx, is, preparedObj)
+	err = e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
 		return err
 	}
 	e.SnapshotTS = snapshotTS
+	e.TxnScope = txnScope
+	e.IsStaleness = isStaleness
 	e.Stmt = prepared.Stmt
 	return nil
+}
+
+func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
+	preparedObj *CachedPrepareStmt) (snapshotTS uint64, txnScope string, isStaleness bool, err error) {
+	snapshotTS = 0
+	txnScope = oracle.GlobalTxnScope
+	isStaleness = false
+	err = nil
+	vars := sctx.GetSessionVars()
+	readTS := vars.TxnReadTS.PeakTxnReadTS()
+	if readTS > 0 {
+		// It means we meet following case:
+		// 1. prepare p from 'select * from t as of timestamp now() - x seconds'
+		// 1. set transaction read only as of timestamp ts2
+		// 2. execute prepare p
+		// The execute statement would be refused due to timestamp conflict
+		if preparedObj.SnapshotTSEvaluator != nil {
+			err = ErrAsOf.FastGenWithCause("as of timestamp can't be set after set transaction read only as of.")
+			return
+		}
+		snapshotTS = vars.TxnReadTS.UseTxnReadTS()
+		isStaleness = true
+		txnScope = config.GetTxnScopeFromConfig()
+		return
+	}
+	// It means we meet following case:
+	// 1. prepare p from 'select * from t as of timestamp ts1'
+	// 1. begin
+	// 2. execute prepare p
+	// The execute statement would be refused due to timestamp conflict
+	if preparedObj.SnapshotTSEvaluator != nil {
+		if vars.InTxn() {
+			err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+			return
+		}
+		// if preparedObj.SnapshotTSEvaluator != nil, it is a stale read SQL:
+		// which means its infoschema is specified by the SQL, not the current/latest infoschema
+		snapshotTS, err = preparedObj.SnapshotTSEvaluator(sctx)
+		if err != nil {
+			err = errors.Trace(err)
+			return
+		}
+		isStaleness = true
+		txnScope = config.GetTxnScopeFromConfig()
+		return
+	}
+	// It means we meet following case:
+	// 1. prepare p from 'select * from t'
+	// 1. start transaction read only as of timestamp ts1
+	// 2. execute prepare p
+	if vars.InTxn() && vars.TxnCtx.IsStaleness {
+		isStaleness = true
+		snapshotTS = vars.TxnCtx.StartTS
+		txnScope = vars.TxnCtx.TxnScope
+		return
+	}
+	return
 }
 
 func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
