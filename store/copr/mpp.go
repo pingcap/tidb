@@ -234,7 +234,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 			retry = false
 		} else if err != nil {
-			if bo.Backoff(tikv.BoTiFlashRPC(), err) == nil{
+			if bo.Backoff(tikv.BoTiFlashRPC(), err) == nil {
 				retry = true
 			}
 		}
