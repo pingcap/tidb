@@ -49,6 +49,46 @@ const (
 	DefPartialResult4ApproxCountDistinctSize = int64(unsafe.Sizeof(partialResult4ApproxCountDistinct{}))
 )
 
+type baseSpillAction struct {
+	spillFieldTypes []*types.FieldType
+	listInDisk      *chunk.ListInDisk
+	tmpChkForSpill  *chunk.Chunk
+}
+
+func (e *baseSpillAction) appendRow(sctx sessionctx.Context, row chunk.Row) (err error) {
+	if e.listInDisk == nil {
+		e.listInDisk = chunk.NewListInDisk(e.spillFieldTypes)
+	}
+	if e.tmpChkForSpill == nil {
+		e.tmpChkForSpill = chunk.New(
+			e.spillFieldTypes,
+			sctx.GetSessionVars().InitChunkSize,
+			sctx.GetSessionVars().MaxChunkSize,
+		)
+	}
+
+	e.tmpChkForSpill.AppendRow(row)
+	if e.tmpChkForSpill.IsFull() {
+		err = e.listInDisk.Add(e.tmpChkForSpill)
+		if err != nil {
+			return
+		}
+		e.tmpChkForSpill.Reset()
+	}
+	return
+}
+
+func (e *baseSpillAction) flushTmpChk() (err error) {
+	if e.listInDisk != nil && e.tmpChkForSpill != nil && e.tmpChkForSpill.NumRows() > 0 {
+		err = e.listInDisk.Add(e.tmpChkForSpill)
+		if err != nil {
+			return
+		}
+		e.tmpChkForSpill.Reset()
+	}
+	return
+}
+
 type partialResult4CountDistinctInt struct {
 	valSet set.Int64SetWithMemoryUsage
 	mem    int64
@@ -57,10 +97,7 @@ type partialResult4CountDistinctInt struct {
 type countOriginalWithDistinct4Int struct {
 	baseCount
 	baseSpillMode
-
-	spillFieldTypes []*types.FieldType
-	listInDisk      *chunk.ListInDisk
-	tmpChkForSpill  *chunk.Chunk
+	baseSpillAction
 }
 
 func (e *countOriginalWithDistinct4Int) SetInSpillMode(inSpillMode bool) {
@@ -160,35 +197,18 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 			continue
 		}
 		if e.InSpillMode() {
-			if e.listInDisk == nil {
-				e.listInDisk = chunk.NewListInDisk(e.spillFieldTypes)
-			}
-			if e.tmpChkForSpill == nil {
-				e.tmpChkForSpill = chunk.New(
-					e.spillFieldTypes,
-					sctx.GetSessionVars().InitChunkSize,
-					sctx.GetSessionVars().MaxChunkSize,
-				)
-			}
-			e.tmpChkForSpill.AppendRow(row)
-			if e.tmpChkForSpill.IsFull() {
-				err = e.listInDisk.Add(e.tmpChkForSpill)
-				if err != nil {
-					return
-				}
-				e.tmpChkForSpill.Reset()
+			err = e.appendRow(sctx, row)
+			if err != nil {
+				return
 			}
 			continue
 		}
 		memDelta += p.valSet.Insert(input)
 	}
 
-	if e.tmpChkForSpill != nil && e.tmpChkForSpill.NumRows() > 0 {
-		err = e.listInDisk.Add(e.tmpChkForSpill)
-		if err != nil {
-			return
-		}
-		e.tmpChkForSpill.Reset()
+	err = e.flushTmpChk()
+	if err != nil {
+		return
 	}
 
 	return memDelta, nil
