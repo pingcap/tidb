@@ -153,7 +153,10 @@ func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(sctx sessionctx.
 		memUsage = 0
 		numChunks := listInDisk.NumChunks()
 		for idx := 0; idx < numChunks; idx++ {
-			c, _ = listInDisk.GetChunk(idx)
+			c, err = listInDisk.GetChunk(idx)
+			if err != nil {
+				return
+			}
 			numRows := c.NumRows()
 			rows := make([]chunk.Row, 0, numRows)
 			for i := 0; i < numRows; i++ {
