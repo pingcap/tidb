@@ -761,7 +761,7 @@ func (s *testStatsSuite) TestCollationColumnEstimate(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a varchar(20) collate utf8mb4_general_ci)")
 	tk.MustExec("insert into t values('aaa'), ('bbb'), ('AAA'), ('BBB')")
-	tk.MustExec("set @@session.tidb_analyze_version=1")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
 	h := s.do.StatsHandle()
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	tk.MustExec("analyze table t")

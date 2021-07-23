@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -93,14 +94,14 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			continue
 		}
 
-		if err := e.setSysVariable(name, v); err != nil {
+		if err := e.setSysVariable(ctx, name, v); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) error {
+func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expression.VarAssignment) error {
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
@@ -148,8 +149,10 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	}
 	if sessionVars.InTxn() {
 		if name == variable.TxnIsolationOneShot ||
-			name == variable.TiDBTxnReadTS ||
-			name == variable.TiDBSnapshot {
+			name == variable.TiDBTxnReadTS {
+			return errors.Trace(ErrCantChangeTxCharacteristics)
+		}
+		if name == variable.TiDBSnapshot && sessionVars.TxnCtx.IsStaleness {
 			return errors.Trace(ErrCantChangeTxCharacteristics)
 		}
 	}
@@ -159,15 +162,24 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	}
 	newSnapshotTS := getSnapshotTSByName()
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
-	// We don't check snapshot with gc safe point for read_ts
-	// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.
-	if newSnapshotIsSet && name != variable.TiDBTxnReadTS {
-		err = gcutil.ValidateSnapshot(e.ctx, newSnapshotTS)
+	if newSnapshotIsSet {
+		if name == variable.TiDBTxnReadTS {
+			err = sessionctx.ValidateStaleReadTS(ctx, e.ctx, newSnapshotTS)
+		} else {
+			err = sessionctx.ValidateSnapshotReadTS(ctx, e.ctx, newSnapshotTS)
+			// Also check gc safe point for snapshot read.
+			// We don't check snapshot with gc safe point for read_ts
+			// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.
+			if err == nil {
+				err = gcutil.ValidateSnapshot(e.ctx, newSnapshotTS)
+			}
+		}
 		if err != nil {
 			fallbackOldSnapshotTS()
 			return err
 		}
 	}
+
 	err = e.loadSnapshotInfoSchemaIfNeeded(newSnapshotTS)
 	if err != nil {
 		fallbackOldSnapshotTS()

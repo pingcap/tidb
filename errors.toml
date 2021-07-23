@@ -531,6 +531,11 @@ error = '''
 '%-.192s.%-.192s' is not %s
 '''
 
+["executor:1356"]
+error = '''
+View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+'''
+
 ["executor:1390"]
 error = '''
 Prepared statement contains too many placeholders
