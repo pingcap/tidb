@@ -3012,6 +3012,8 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 					Value:   x.Datum,
 					RetType: &x.Type,
 				}
+			case *driver.ParamMarkerExpr:
+				expr, err = expression.ParamMarkerExpression(b.ctx, x)
 			default:
 				b.curClause = fieldList
 				// subquery in insert values should not reference upper scope
