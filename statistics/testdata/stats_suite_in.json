@@ -137,5 +137,62 @@
       "select * from t where a > 8 or d < 4 or c > 7 or b < 5",
       "select * from t where a < 8 and (b > 10 or c < 3 or b > 4) and a > 2"
     ]
+  },
+  {
+    "Name": "TestOutOfRangeEstimation",
+    "Cases": [
+      {
+        "Start": 500,
+        "End": 600
+      },
+      {
+        "Start": 600,
+        "End": 650
+      },
+      {
+        "Start": 650,
+        "End": 700
+      },
+      {
+        "Start": 700,
+        "End": 750
+      },
+      {
+        "Start": 750,
+        "End": 800
+      },
+      {
+        "Start": 850,
+        "End": 900
+      },
+      {
+        "Start": 900,
+        "End": 1000
+      },
+      {
+        "Start": 1000,
+        "End": 1100
+      },
+      {
+        "Start": 1100,
+        "End": 1200
+      },
+      {
+        "Start": 1200,
+        "End": 1300
+      },
+      {
+        "Start": 0,
+        "End": 599
+      },
+      {
+        "Start": 600,
+        "End": 1200
+      },
+      {
+        "Start": 0,
+        "End": 1200
+      }
+    ]
   }
 ]

@@ -382,16 +382,16 @@ func getRange(start, end int64) []*ranger.Range {
 	return []*ranger.Range{ran}
 }
 
-func (s *testStatsSuite) TestOutOfRangeEQEstimation(c *C) {
+func (s *testStatsSuite) TestOutOfRangeEstimation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int)")
-	for i := 0; i < 1000; i++ {
-		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/4)) // 0 ~ 249
+	for i := 0; i < 3000; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5)) // [0, 600)
 	}
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t with 1000 samples")
 
 	h := s.do.StatsHandle()
 	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -399,14 +399,34 @@ func (s *testStatsSuite) TestOutOfRangeEQEstimation(c *C) {
 	statsTbl := h.GetTableStats(table.Meta())
 	sc := &stmtctx.StatementContext{}
 	col := statsTbl.Columns[table.Meta().Columns[0].ID]
-	count, err := col.GetColumnRowCount(sc, getRange(250, 250), statsTbl.Count, false)
+	count, err := col.GetColumnRowCount(sc, getRange(600, 600), statsTbl.Count, false)
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, float64(0))
+	// Because the ANALYZE collect data by random sampling, so the result is not an accurate value.
+	// so we use a range here.
+	c.Assert(count < 4.5, IsTrue)
+	c.Assert(count > 3.5, IsTrue)
 
-	for i := 0; i < 8; i++ {
-		count, err := col.GetColumnRowCount(sc, getRange(250, 250), statsTbl.Count+int64(i)+1, false)
+	var input []struct {
+		Start int64
+		End   int64
+	}
+	var output []struct {
+		Start int64
+		End   int64
+		Count float64
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	increasedTblRowCount := int64(float64(statsTbl.Count) * 1.5)
+	for i, ran := range input {
+		count, err = col.GetColumnRowCount(sc, getRange(ran.Start, ran.End), increasedTblRowCount, false)
 		c.Assert(err, IsNil)
-		c.Assert(count < math.Min(float64(i+1), 4), IsTrue) // estRows must be less than modifyCnt
+		s.testData.OnRecord(func() {
+			output[i].Start = ran.Start
+			output[i].End = ran.End
+			output[i].Count = count
+		})
+		c.Assert(count < output[i].Count*1.2, IsTrue)
+		c.Assert(count > output[i].Count*0.8, IsTrue)
 	}
 }
 
