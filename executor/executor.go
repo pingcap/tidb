@@ -984,11 +984,12 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 		LockExpired:           &seVars.TxnCtx.LockExpire,
 		ResourceGroupTag:      resourcegrouptag.EncodeResourceGroupTag(sqlDigest, planDigest),
 		OnDeadlock: func(deadlock *tikverr.ErrDeadlock) {
-			// TODO: Support collecting retryable deadlocks according to the config.
-			if !deadlock.IsRetryable {
-				rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
-				deadlockhistory.GlobalDeadlockHistory.Push(rec)
+			cfg := config.GetGlobalConfig()
+			if deadlock.IsRetryable && !cfg.PessimisticTxn.DeadlockHistoryCollectRetryable {
+				return
 			}
+			rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
+			deadlockhistory.GlobalDeadlockHistory.Push(rec)
 		},
 	}
 }
