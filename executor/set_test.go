@@ -519,6 +519,16 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec(`set tidb_enable_ordered_result_mode=1`)
 	tk.MustQuery(`select @@global.tidb_enable_ordered_result_mode`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select @@tidb_enable_ordered_result_mode`).Check(testkit.Rows("1"))
+
+	// test for tidb_opt_limit_push_down_threshold
+	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
+	tk.MustExec(`set global tidb_opt_limit_push_down_threshold = 20`)
+	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
+	tk.MustExec(`set global tidb_opt_limit_push_down_threshold = 100`)
+	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold = 20`)
+	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
+	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
