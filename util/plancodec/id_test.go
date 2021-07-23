@@ -14,8 +14,9 @@
 package plancodec
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestPlanIDChanged(t *testing.T) {
@@ -80,6 +81,6 @@ func TestPlanIDChanged(t *testing.T) {
 	}
 
 	for _, testcase := range testCases {
-		require.Equal(t, testcase.Value, testcase.Expected)
+		require.Equal(t, testcase.Expected, testcase.Value)
 	}
 }

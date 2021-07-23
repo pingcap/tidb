@@ -14,9 +14,10 @@
 package plancodec
 
 import (
+	"testing"
+
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 type encodeTaskTypeCase struct {
@@ -35,15 +36,15 @@ func TestEncodeTaskType(t *testing.T) {
 		{false, kv.TiDB, "1_2", "cop[tidb]"},
 	}
 	for _, cas := range cases {
-		require.Equal(t, EncodeTaskType(cas.IsRoot, cas.StoreType), cas.EncodedStr)
+		require.Equal(t, cas.EncodedStr, EncodeTaskType(cas.IsRoot, cas.StoreType))
 		str, err := decodeTaskType(cas.EncodedStr)
 		require.NoError(t, err)
-		require.Equal(t, str, cas.DecodedStr)
+		require.Equal(t, cas.DecodedStr, str)
 	}
 
 	str, err := decodeTaskType("1")
 	require.NoError(t, err)
-	require.Equal(t, str, "cop")
+	require.Equal(t, "cop", str)
 
 	_, err = decodeTaskType("1_x")
 	require.Error(t, err)
@@ -54,5 +55,5 @@ func TestDecodeDiscardPlan(t *testing.T) {
 
 	plan, err := DecodePlan(PlanDiscardedEncoded)
 	require.NoError(t, err)
-	require.Equal(t, plan, planDiscardedDecoded)
+	require.Equal(t, planDiscardedDecoded, plan)
 }
