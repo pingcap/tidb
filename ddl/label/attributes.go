@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	dbKey    = "db"
-	tableKey = "table"
+	dbKey        = "db"
+	tableKey     = "table"
+	partitionKey = "partition"
 )
 
 // Label is used to describe attributes
@@ -46,7 +47,7 @@ func (labels *Labels) Restore() string {
 	var sb strings.Builder
 	for i, label := range *labels {
 		switch label.Key {
-		case dbKey, tableKey:
+		case dbKey, tableKey, partitionKey:
 			continue
 		default:
 		}

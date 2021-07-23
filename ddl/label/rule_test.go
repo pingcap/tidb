@@ -33,7 +33,7 @@ func (t *testRuleSuite) TestApplyAttributesSpec(c *C) {
 
 func (t *testRuleSuite) TestResetID(c *C) {
 	rule := NewRule()
-	rule.ResetTable(1, "db1", "t1")
+	rule.Reset(1, "db1", "t1")
 	c.Assert(rule.ID, Equals, "schema/db1/t1")
 	c.Assert(rule.RuleType, Equals, ruleType)
 	c.Assert(rule.Labels, HasLen, 2)

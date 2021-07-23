@@ -157,6 +157,7 @@ func (t *testLabelsSuite) TestRestore(c *C) {
 	input2 := NewLabel("somethingelse")
 	input3 := NewLabel("db")
 	input4 := NewLabel("table")
+	input5 := NewLabel("partition")
 
 	tests := []TestCase{
 		{
@@ -171,7 +172,7 @@ func (t *testLabelsSuite) TestRestore(c *C) {
 		},
 		{
 			"normal3",
-			Labels{input3, input4},
+			Labels{input3, input4, input5},
 			"",
 		},
 		{
