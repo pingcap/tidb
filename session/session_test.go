@@ -4357,7 +4357,7 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 
 	info = tk.Se.TxnInfo()
 	c.Assert(info.CurrentSQLDigest, Equals, "")
-	c.Assert(info.State, Equals, txninfo.TxnRunningNormal)
+	c.Assert(info.State, Equals, txninfo.TxnIdle)
 	c.Assert(info.BlockStartTime.Valid, IsFalse)
 	c.Assert(info.StartTS, Equals, startTS)
 	_, beginDigest := parser.NormalizeDigest("begin pessimistic;")
@@ -4422,6 +4422,22 @@ func (s *testTxnStateSerialSuite) TestEntriesCountAndSize(c *C) {
 	c.Assert(info.EntriesCount, Equals, uint64(2))
 	c.Assert(info.EntriesSize, Equals, uint64(58))
 	tk.MustExec("commit;")
+}
+
+func (s *testTxnStateSerialSuite) TestRunning(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1);")
+	tk.MustExec("begin pessimistic;")
+	failpoint.Enable("github.com/pingcap/tidb/session/mockStmtSlow", "sleep(100)")
+	go func() {
+		tk.MustExec("select * from t for update;")
+		tk.MustExec("commit;")
+	}()
+	time.Sleep(20 * time.Millisecond)
+	info := tk.Se.TxnInfo()
+	c.Assert(info.State, Equals, txninfo.TxnRunning)
+	failpoint.Disable("github.com/pingcap/tidb/session/mockStmtSlow")
 }
 
 func (s *testTxnStateSerialSuite) TestBlocked(c *C) {
