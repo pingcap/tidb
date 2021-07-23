@@ -381,7 +381,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableReader(c *C) {
 
 	tk.MustExec("SET tidb_enforce_mpp=1")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10; i++ {
 		l, r := rand.Intn(400), rand.Intn(400)
 		if l > r {
 			l, r = r, l
