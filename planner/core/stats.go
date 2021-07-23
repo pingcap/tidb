@@ -1113,8 +1113,8 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 	// Changing the pointer so that seedStat in LogicalCTETable can get the new stat.
 	*p.seedStat = *resStat
 	p.stats = &property.StatsInfo{
-		RowCount:    resStat.RowCount,
-		ColNDVs: make(map[int64]float64, selfSchema.Len()),
+		RowCount: resStat.RowCount,
+		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	}
 	for i, col := range selfSchema.Columns {
 		p.stats.ColNDVs[col.UniqueID] += resStat.ColNDVs[p.cte.seedPartLogicalPlan.Schema().Columns[i].UniqueID]
