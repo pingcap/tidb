@@ -477,6 +477,7 @@
           "  └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
         ],
         "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
         ]
       },
@@ -490,6 +491,7 @@
           "  └─TableRangeScan_12 1.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
         ],
         "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
         ]
       },
@@ -503,6 +505,7 @@
           "  └─TableRangeScan_11 1.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
         ],
         "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
         ]
       },
@@ -516,6 +519,7 @@
           "  └─TableFullScan_33 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
         ]
       },
