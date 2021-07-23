@@ -378,12 +378,42 @@
       },
       {
         "Plan": [
+<<<<<<< HEAD:planner/core/testdata/stable_result_mode_suite_out.json
           "Projection_10 10000.00 root  Column#8, Column#7",
           "└─Sort_11 10000.00 root  test.t1.a, Column#7, Column#8",
           "  └─Window_13 10000.00 root  row_number()->Column#8 over(partition by test.t1.a)",
           "    └─Window_14 10000.00 root  sum(cast(test.t1.b, decimal(32,0) BINARY))->Column#7 over(partition by test.t1.a)",
           "      └─TableReader_17 10000.00 root  data:TableFullScan_16",
           "        └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+=======
+          "Sort_11 2666.67 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
+          "└─HashJoin_13 2666.67 root  CARTESIAN semi join, other cond:nulleq(test.t1.a, test.t2.a), nulleq(test.t1.b, test.t2.b), nulleq(test.t1.c, test.t2.c), nulleq(test.t1.d, test.t2.d)",
+          "  ├─TableReader_20(Build) 3333.33 root  data:Selection_19",
+          "  │ └─Selection_19 3333.33 cop[tikv]  gt(test.t2.b, 20)",
+          "  │   └─TableFullScan_18 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_16(Probe) 3333.33 root  data:TableRangeScan_15",
+          "    └─TableRangeScan_15 3333.33 cop[tikv] table:t1 range:(10,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Plan": [
+          "Sort_11 2666.67 root  test.t1.a, test.t1.b, test.t1.c, test.t1.d",
+          "└─HashJoin_13 2666.67 root  anti semi join, equal:[nulleq(test.t1.a, test.t2.a) nulleq(test.t1.b, test.t2.b) nulleq(test.t1.c, test.t2.c) nulleq(test.t1.d, test.t2.d)]",
+          "  ├─TableReader_20(Build) 3333.33 root  data:Selection_19",
+          "  │ └─Selection_19 3333.33 cop[tikv]  gt(test.t2.b, 20)",
+          "  │   └─TableFullScan_18 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_16(Probe) 3333.33 root  data:TableRangeScan_15",
+          "    └─TableRangeScan_15 3333.33 cop[tikv] table:t1 range:(10,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "Plan": [
+          "Projection_8 10000.00 root  Column#6",
+          "└─Sort_9 10000.00 root  test.t1.b, test.t1.a, Column#6",
+          "  └─Window_11 10000.00 root  sum(cast(test.t1.b, decimal(32,0) BINARY))->Column#6 over(partition by test.t1.a)",
+          "    └─TableReader_13 10000.00 root  data:TableFullScan_12",
+          "      └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+>>>>>>> 1c088522c... planner: fix the unstable test TestOrderedResultModeOnOtherOperators (#26481):planner/core/testdata/ordered_result_mode_suite_out.json
         ]
       },
       {
