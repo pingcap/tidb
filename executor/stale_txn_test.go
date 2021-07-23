@@ -379,9 +379,11 @@ func (s *testStaleTxnSuite) TestStalenessAndHistoryRead(c *C) {
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
 
 	// test snapshot mutex with txn
-	tk.MustExec("START TRANSACTION")
+	tk.MustExec(fmt.Sprintf(`START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time2.Format("2006-1-2 15:04:05.000")))
 	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Equals, time2TS)
 	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, IsNil)
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
 	err := tk.ExecToErr(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
 	c.Assert(err, ErrorMatches, ".*Transaction characteristics can't be changed while a transaction is in progress")
 	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))

@@ -126,7 +126,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
 	}
-	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
 	if NDV <= 1 {
 		return nil
 	}
@@ -167,7 +167,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 			partitionBy = append(partitionBy, col)
 		}
 	}
-	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
 	if NDV <= 1 {
 		return nil
 	}
