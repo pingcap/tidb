@@ -596,6 +596,7 @@ func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 	is := s.do.InfoSchema()
 	h.SetLease(0)
 	c.Assert(h.Update(is), IsNil)
+<<<<<<< HEAD
 	oriProbability := statistics.FeedbackProbability
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
@@ -603,10 +604,19 @@ func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
+=======
+	oriProbability := statistics.FeedbackProbability.Load()
+	oriMinLogCount := handle.MinLogScanCount.Load()
+	oriErrorRate := handle.MinLogErrorRate.Load()
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+		handle.MinLogScanCount.Store(oriMinLogCount)
+		handle.MinLogErrorRate.Store(oriErrorRate)
+>>>>>>> 95a40ac3d... planner: fix the unstable unit test `TestAnalyzeIncremental` (#26460)
 	}()
 	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount = 0
-	handle.MinLogErrorRate = 0
+	handle.MinLogScanCount.Store(0)
+	handle.MinLogErrorRate.Store(0)
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -671,6 +681,7 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 	is := s.do.InfoSchema()
 	h.SetLease(0)
 	c.Assert(h.Update(is), IsNil)
+<<<<<<< HEAD
 	oriProbability := statistics.FeedbackProbability
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
@@ -678,10 +689,19 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
+=======
+	oriProbability := statistics.FeedbackProbability.Load()
+	oriMinLogCount := handle.MinLogScanCount.Load()
+	oriErrorRate := handle.MinLogErrorRate.Load()
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+		handle.MinLogScanCount.Store(oriMinLogCount)
+		handle.MinLogErrorRate.Store(oriErrorRate)
+>>>>>>> 95a40ac3d... planner: fix the unstable unit test `TestAnalyzeIncremental` (#26460)
 	}()
 	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount = 0
-	handle.MinLogErrorRate = 0
+	handle.MinLogScanCount.Store(0)
+	handle.MinLogErrorRate.Store(0)
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -795,17 +815,17 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	h := s.do.StatsHandle()
 	oriProbability := statistics.FeedbackProbability
 	oriNumber := statistics.MaxNumberOfRanges
-	oriMinLogCount := handle.MinLogScanCount
-	oriErrorRate := handle.MinLogErrorRate
+	oriMinLogCount := handle.MinLogScanCount.Load()
+	oriErrorRate := handle.MinLogErrorRate.Load()
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
-		handle.MinLogScanCount = oriMinLogCount
-		handle.MinLogErrorRate = oriErrorRate
+		handle.MinLogScanCount.Store(oriMinLogCount)
+		handle.MinLogErrorRate.Store(oriErrorRate)
 	}()
 	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount = 0
-	handle.MinLogErrorRate = 0
+	handle.MinLogScanCount.Store(0)
+	handle.MinLogErrorRate.Store(0)
 	tests := []struct {
 		sql     string
 		hist    string
@@ -912,6 +932,7 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 	testKit.MustExec("insert into t values (1,2),(2,2),(3,4),(4,1),(5,6)")
 	testKit.MustExec("analyze table t")
 
+<<<<<<< HEAD
 	oriProbability := statistics.FeedbackProbability
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
@@ -919,10 +940,19 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
+=======
+	oriProbability := statistics.FeedbackProbability.Load()
+	oriMinLogCount := handle.MinLogScanCount.Load()
+	oriErrorRate := handle.MinLogErrorRate.Load()
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+		handle.MinLogScanCount.Store(oriMinLogCount)
+		handle.MinLogErrorRate.Store(oriErrorRate)
+>>>>>>> 95a40ac3d... planner: fix the unstable unit test `TestAnalyzeIncremental` (#26460)
 	}()
 	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount = 0
-	handle.MinLogErrorRate = 0
+	handle.MinLogScanCount.Store(0)
+	handle.MinLogErrorRate.Store(0)
 
 	h := s.do.StatsHandle()
 	tests := []struct {
@@ -1041,6 +1071,7 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t values (3,5)")
 	h := s.do.StatsHandle()
+<<<<<<< HEAD
 	oriProbability := statistics.FeedbackProbability
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
@@ -1049,11 +1080,21 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
+=======
+	oriProbability := statistics.FeedbackProbability.Load()
+	oriMinLogCount := handle.MinLogScanCount.Load()
+	oriErrorRate := handle.MinLogErrorRate.Load()
+	oriNumber := statistics.MaxNumberOfRanges
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+		handle.MinLogScanCount.Store(oriMinLogCount)
+		handle.MinLogErrorRate.Store(oriErrorRate)
+>>>>>>> 95a40ac3d... planner: fix the unstable unit test `TestAnalyzeIncremental` (#26460)
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
 	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount = 0
-	handle.MinLogErrorRate = 0
+	handle.MinLogScanCount.Store(0)
+	handle.MinLogErrorRate.Store(0)
 
 	is := s.do.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1101,6 +1142,7 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	testKit.MustExec("analyze table t")
 	testKit.MustExec("insert into t values (3,5)")
 	h := s.do.StatsHandle()
+<<<<<<< HEAD
 	oriProbability := statistics.FeedbackProbability
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
@@ -1108,10 +1150,19 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
+=======
+	oriProbability := statistics.FeedbackProbability.Load()
+	oriMinLogCount := handle.MinLogScanCount.Load()
+	oriErrorRate := handle.MinLogErrorRate.Load()
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+		handle.MinLogScanCount.Store(oriMinLogCount)
+		handle.MinLogErrorRate.Store(oriErrorRate)
+>>>>>>> 95a40ac3d... planner: fix the unstable unit test `TestAnalyzeIncremental` (#26460)
 	}()
 	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount = 0
-	handle.MinLogErrorRate = 0
+	handle.MinLogScanCount.Store(0)
+	handle.MinLogErrorRate.Store(0)
 
 	is := s.do.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1126,9 +1177,116 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	tbl := h.GetPartitionStats(tblInfo, pid)
 
 	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
+<<<<<<< HEAD
 		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
 		"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0\n"+
 		"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0")
+=======
+		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0\n"+
+		"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0\n"+
+		"num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0")
+}
+
+func (s *testStatsSuite) TestFeedbackWithStatsVer2(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set global tidb_analyze_version = 1")
+	testKit.MustExec("set @@tidb_analyze_version = 1")
+
+	oriProbability := statistics.FeedbackProbability.Load()
+	oriNumber := statistics.MaxNumberOfRanges
+	oriMinLogCount := handle.MinLogScanCount.Load()
+	oriErrorRate := handle.MinLogErrorRate.Load()
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+		statistics.MaxNumberOfRanges = oriNumber
+		handle.MinLogScanCount.Store(oriMinLogCount)
+		handle.MinLogErrorRate.Store(oriErrorRate)
+	}()
+	// Case 1: You can't set tidb_analyze_version to 2 if feedback is enabled.
+	statistics.FeedbackProbability.Store(1)
+	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
+	testKit.MustExec("set @@tidb_analyze_version = 2")
+	testKit.MustQuery("show warnings").Check(testkit.Rows(`Error 1105 variable tidb_analyze_version not updated because analyze version 2 is incompatible with query feedback. Please consider setting feedback-probability to 0.0 in config file to disable query feedback`))
+	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
+
+	// Case 2: Feedback wouldn't be applied on version 2 statistics.
+	statistics.FeedbackProbability.Store(0)
+	testKit.MustExec("set @@tidb_analyze_version = 2")
+	testKit.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("2"))
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), index idx(b))")
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t values (1,2),(2,2),(4,5),(2,3),(3,4)")
+	}
+	testKit.MustExec("analyze table t with 0 topn")
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	testKit.MustExec("analyze table t")
+	err = h.Update(s.do.InfoSchema())
+	c.Assert(err, IsNil)
+	statsTblBefore := h.GetTableStats(tblInfo)
+	statistics.FeedbackProbability.Store(1)
+	// make the statistics inaccurate.
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t values (3,4), (3,4), (3,4), (3,4), (3,4)")
+	}
+	// trigger feedback
+	testKit.MustExec("select * from t where t.a <= 5 order by a desc")
+	testKit.MustExec("select b from t use index(idx) where t.b <= 5")
+
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
+	err = h.DumpStatsFeedbackToKV()
+	c.Assert(err, IsNil)
+	err = h.HandleUpdateStats(s.do.InfoSchema())
+	c.Assert(err, IsNil)
+	statsTblAfter := h.GetTableStats(tblInfo)
+	// assert that statistics not changed
+	assertTableEqual(c, statsTblBefore, statsTblAfter)
+
+	// Case 3: Feedback is still effective on version 1 statistics.
+	testKit.MustExec("set tidb_analyze_version = 1")
+	testKit.MustExec("create table t1 (a bigint(64), b bigint(64), index idx(b))")
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t1 values (1,2),(2,2),(4,5),(2,3),(3,4)")
+	}
+	testKit.MustExec("analyze table t1 with 0 topn")
+	// make the statistics inaccurate.
+	for i := 0; i < 200; i++ {
+		testKit.MustExec("insert into t1 values (3,4), (3,4), (3,4), (3,4), (3,4)")
+	}
+	is = s.do.InfoSchema()
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	tblInfo = table.Meta()
+	statsTblBefore = h.GetTableStats(tblInfo)
+	// trigger feedback
+	testKit.MustExec("select b from t1 use index(idx) where t1.b <= 5")
+
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
+	err = h.DumpStatsFeedbackToKV()
+	c.Assert(err, IsNil)
+	err = h.HandleUpdateStats(s.do.InfoSchema())
+	c.Assert(err, IsNil)
+	statsTblAfter = h.GetTableStats(tblInfo)
+	// assert that statistics changed(feedback worked)
+	c.Assert(statistics.HistogramEqual(&statsTblBefore.Indices[1].Histogram, &statsTblAfter.Indices[1].Histogram, false), IsFalse)
+
+	// Case 4: When existing version 1 stats + tidb_analyze_version=2 + feedback enabled, explicitly running `analyze table` still results in version 1 stats.
+	statistics.FeedbackProbability.Store(0)
+	testKit.MustExec("set tidb_analyze_version = 2")
+	statistics.FeedbackProbability.Store(1)
+	testKit.MustExec("analyze table t1 with 0 topn")
+	testKit.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 Use analyze version 1 on table `t1` because this table already has version 1 statistics and query feedback is also enabled." +
+			" If you want to switch to version 2 statistics, please first disable query feedback by setting feedback-probability to 0.0 in the config file."))
+	testKit.MustQuery(fmt.Sprintf("select stats_ver from mysql.stats_histograms where table_id = %d", tblInfo.ID)).Check(testkit.Rows("1", "1", "1"))
+
+	testKit.MustExec("set global tidb_analyze_version = 1")
+>>>>>>> 95a40ac3d... planner: fix the unstable unit test `TestAnalyzeIncremental` (#26460)
 }
 
 type logHook struct {
@@ -1171,6 +1329,7 @@ func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.Chec
 func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 
+<<<<<<< HEAD
 	oriProbability := statistics.FeedbackProbability
 	oriMinLogCount := handle.MinLogScanCount
 	oriMinError := handle.MinLogErrorRate
@@ -1180,12 +1339,23 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriMinError
+=======
+	oriProbability := statistics.FeedbackProbability.Load()
+	oriMinLogCount := handle.MinLogScanCount.Load()
+	oriMinError := handle.MinLogErrorRate.Load()
+	oriLevel := log.GetLevel()
+	oriLease := s.do.StatsHandle().Lease()
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+		handle.MinLogScanCount.Store(oriMinLogCount)
+		handle.MinLogErrorRate.Store(oriMinError)
+>>>>>>> 95a40ac3d... planner: fix the unstable unit test `TestAnalyzeIncremental` (#26460)
 		s.do.StatsHandle().SetLease(oriLease)
 		log.SetLevel(oriLevel)
 	}()
 	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount = 0
-	handle.MinLogErrorRate = 0
+	handle.MinLogScanCount.Store(0)
+	handle.MinLogErrorRate.Store(0)
 	s.do.StatsHandle().SetLease(1)
 
 	testKit := testkit.NewTestKit(c, s.store)
@@ -1484,6 +1654,7 @@ func (s *testStatsSuite) TestIndexQueryFeedback4TopN(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
+<<<<<<< HEAD
 	oriProbability := statistics.FeedbackProbability
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
@@ -1491,10 +1662,19 @@ func (s *testStatsSuite) TestIndexQueryFeedback4TopN(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
+=======
+	oriProbability := statistics.FeedbackProbability.Load()
+	oriMinLogCount := handle.MinLogScanCount.Load()
+	oriErrorRate := handle.MinLogErrorRate.Load()
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+		handle.MinLogScanCount.Store(oriMinLogCount)
+		handle.MinLogErrorRate.Store(oriErrorRate)
+>>>>>>> 95a40ac3d... planner: fix the unstable unit test `TestAnalyzeIncremental` (#26460)
 	}()
 	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount = 0
-	handle.MinLogErrorRate = 0
+	handle.MinLogScanCount.Store(0)
+	handle.MinLogErrorRate.Store(0)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), index idx(a))")
@@ -1531,6 +1711,7 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
+<<<<<<< HEAD
 	oriProbability := statistics.FeedbackProbability
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
@@ -1538,10 +1719,19 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
+=======
+	oriProbability := statistics.FeedbackProbability.Load()
+	oriMinLogCount := handle.MinLogScanCount.Load()
+	oriErrorRate := handle.MinLogErrorRate.Load()
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+		handle.MinLogScanCount.Store(oriMinLogCount)
+		handle.MinLogErrorRate.Store(oriErrorRate)
+>>>>>>> 95a40ac3d... planner: fix the unstable unit test `TestAnalyzeIncremental` (#26460)
 	}()
 	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount = 0
-	handle.MinLogErrorRate = 0
+	handle.MinLogScanCount.Store(0)
+	handle.MinLogErrorRate.Store(0)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), index idx_ab(a,b))")
@@ -1606,17 +1796,17 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 	h := s.do.StatsHandle()
 	oriProbability := statistics.FeedbackProbability
 	oriNumber := statistics.MaxNumberOfRanges
-	oriMinLogCount := handle.MinLogScanCount
-	oriErrorRate := handle.MinLogErrorRate
+	oriMinLogCount := handle.MinLogScanCount.Load()
+	oriErrorRate := handle.MinLogErrorRate.Load()
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MaxNumberOfRanges = oriNumber
-		handle.MinLogScanCount = oriMinLogCount
-		handle.MinLogErrorRate = oriErrorRate
+		handle.MinLogScanCount.Store(oriMinLogCount)
+		handle.MinLogErrorRate.Store(oriErrorRate)
 	}()
 	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount = 0
-	handle.MinLogErrorRate = 0
+	handle.MinLogScanCount.Store(0)
+	handle.MinLogErrorRate.Store(0)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a tinyint, b tinyint, primary key(a), index idx(a, b))")
@@ -1680,6 +1870,7 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
 
+<<<<<<< HEAD
 	oriProbability := statistics.FeedbackProbability
 	oriMinLogCount := handle.MinLogScanCount
 	oriErrorRate := handle.MinLogErrorRate
@@ -1688,11 +1879,21 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 		statistics.FeedbackProbability = oriProbability
 		handle.MinLogScanCount = oriMinLogCount
 		handle.MinLogErrorRate = oriErrorRate
+=======
+	oriProbability := statistics.FeedbackProbability.Load()
+	oriMinLogCount := handle.MinLogScanCount.Load()
+	oriErrorRate := handle.MinLogErrorRate.Load()
+	oriNumber := statistics.MaxNumberOfRanges
+	defer func() {
+		statistics.FeedbackProbability.Store(oriProbability)
+		handle.MinLogScanCount.Store(oriMinLogCount)
+		handle.MinLogErrorRate.Store(oriErrorRate)
+>>>>>>> 95a40ac3d... planner: fix the unstable unit test `TestAnalyzeIncremental` (#26460)
 		statistics.MaxNumberOfRanges = oriNumber
 	}()
 	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount = 0
-	handle.MinLogErrorRate = 0
+	handle.MinLogScanCount.Store(0)
+	handle.MinLogErrorRate.Store(0)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a tinyint unsigned, primary key(a))")

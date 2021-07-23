@@ -42,6 +42,11 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
+<<<<<<< HEAD
+=======
+	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/atomic"
+>>>>>>> 95a40ac3d... planner: fix the unstable unit test `TestAnalyzeIncremental` (#26460)
 	"go.uber.org/zap"
 )
 
@@ -162,9 +167,9 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSi
 
 var (
 	// MinLogScanCount is the minimum scan count for a feedback to be logged.
-	MinLogScanCount = int64(1000)
+	MinLogScanCount = atomic.NewInt64(1000)
 	// MinLogErrorRate is the minimum error rate for a feedback to be logged.
-	MinLogErrorRate = 0.5
+	MinLogErrorRate = atomic.NewFloat64(0.5)
 )
 
 // StoreQueryFeedback merges the feedback into stats collector.
@@ -178,7 +183,9 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 		return errors.Trace(err)
 	}
 	rate := q.CalcErrorRate()
-	if !(rate >= MinLogErrorRate && (q.Actual() >= MinLogScanCount || q.Expected >= MinLogScanCount)) {
+	minScanCnt := MinLogScanCount.Load()
+	minErrRate := MinLogErrorRate.Load()
+	if !(rate >= minErrRate && (q.Actual() >= minScanCnt || q.Expected >= minScanCnt)) {
 		return nil
 	}
 	metrics.SignificantFeedbackCounter.Inc()
