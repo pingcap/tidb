@@ -66,6 +66,17 @@ type Column struct {
 	elemBuf    []byte
 }
 
+func NewColumnWithOld(oldCol *Column) *Column {
+	// TODO: fix data has no offsets
+	// fmt.Println("!!! NewColumnWithOld old cap: ", cap(oldCol.data))
+	return &Column{
+		nullBitmap: make([]byte, 0, cap(oldCol.nullBitmap)),
+		offsets:    make([]int64, 1, cap(oldCol.offsets)+1),
+		data:       make([]byte, 0, cap(oldCol.data)),
+		elemBuf:    make([]byte, len(oldCol.elemBuf)),
+	}
+}
+
 // NewColumn creates a new column with the specific length and capacity.
 func NewColumn(ft *types.FieldType, cap int) *Column {
 	return newColumn(getFixedLen(ft), cap)

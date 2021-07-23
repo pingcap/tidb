@@ -1281,12 +1281,12 @@ func (b *executorBuilder) addExchangeBroadcast(hashJoins []*NonParallelHashJoinE
 		ExchangeSender: ExchangeSender{
 			baseExecutor: newBaseExecutor(b.ctx, exec.base().schema, *execID, exec),
 		},
-		outputs: make([]chan *chunk.Chunk, 0, concurrency),
-        buildSideEstCount: hashJoins[0].buildSideEstCount,
-        buildKeys: hashJoins[0].buildKeys,
-        buildTypes: hashJoins[0].buildTypes,
-        useOuterToBuild: hashJoins[0].useOuterToBuild,
-        isNullEQ: hashJoins[0].isNullEQ,
+		outputs:           make([]chan *chunk.Chunk, 0, concurrency),
+		buildSideEstCount: hashJoins[0].buildSideEstCount,
+		buildKeys:         hashJoins[0].buildKeys,
+		buildTypes:        hashJoins[0].buildTypes,
+		useOuterToBuild:   hashJoins[0].useOuterToBuild,
+		isNullEQ:          hashJoins[0].isNullEQ,
 	}
 	*execID++
 

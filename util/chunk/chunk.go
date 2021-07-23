@@ -78,6 +78,18 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	return chk
 }
 
+func NewChunkWithOld(oldChk *Chunk) *Chunk {
+	chk := &Chunk{
+		columns:      make([]*Column, 0, len(oldChk.columns)),
+		capacity:     oldChk.capacity,
+		requiredRows: oldChk.requiredRows,
+	}
+	for _, col := range oldChk.columns {
+		chk.columns = append(chk.columns, NewColumnWithOld(col))
+	}
+	return chk
+}
+
 // renewWithCapacity creates a new Chunk based on an existing Chunk with capacity. The newly
 // created Chunk has the same data schema with the old Chunk.
 func renewWithCapacity(chk *Chunk, cap, maxChunkSize int) *Chunk {
@@ -418,6 +430,9 @@ func appendCellByCell(dst *Column, src *Column, rowIdx int) {
 	if src.isFixed() {
 		elemLen := len(src.elemBuf)
 		offset := rowIdx * elemLen
+		// if cap(dst.data) - len(dst.data) <= len(src.data[offset:offset+elemLen]) {
+		//     fmt.Printf("!!! dst cap: %v, dst len: %v, add len: %v\n", cap(dst.data), len(dst.data), len(src.data[offset:offset+elemLen]))
+		// }
 		dst.data = append(dst.data, src.data[offset:offset+elemLen]...)
 	} else {
 		start, end := src.offsets[rowIdx], src.offsets[rowIdx+1]

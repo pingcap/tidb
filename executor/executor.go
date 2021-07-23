@@ -268,8 +268,9 @@ type Executor interface {
 func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	base := e.base()
 	if base.runtimeStats != nil {
-		start := time.Now()
-		defer func() { base.runtimeStats.Record(time.Since(start), req.NumRows()) }()
+		// start := time.Now()
+		// TODO:
+		// defer func() { base.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	sessVars := base.ctx.GetSessionVars()
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {

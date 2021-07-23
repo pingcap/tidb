@@ -49,17 +49,24 @@ var (
 
 type NonParallelHashJoinExec struct {
 	*HashJoinExec
-	hashTblDone      bool
-	hCtx             *hashContext
-	remainingResChks []*chunk.Chunk
-	selected         []bool
+	hashTblDone     bool
+	hCtx            *hashContext
+	selected        []bool
+	probeSideResult *chunk.Chunk
+
+	needContinueJoinRow bool
+	needContinueProbe   bool
+	buildIter           chunk.Iterator
+	lastRowNum          int
+	probeRow            chunk.Row
+	probeChk            *chunk.Chunk
+	resChk              *chunk.Chunk
 }
 
 func (e *NonParallelHashJoinExec) Open(ctx context.Context) error {
 	if err := e.HashJoinExec.Open(ctx); err != nil {
 		return err
 	}
-	e.remainingResChks = make([]*chunk.Chunk, 0, 100)
 
 	probeKeyColIdx := make([]int, len(e.probeKeys))
 	for i := range e.probeKeys {
@@ -71,11 +78,35 @@ func (e *NonParallelHashJoinExec) Open(ctx context.Context) error {
 		keyColIdx: probeKeyColIdx,
 	}
 	e.hCtx.initHash(e.ctx.GetSessionVars().MaxChunkSize)
+	e.probeSideResult = newFirstChunk(e.probeSideExec)
+	e.resChk = newFirstChunk(e)
 	return nil
 }
 
 func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.Reset()
+
+	if e.needContinueJoinRow {
+		isFull, err := e.joinMatchedRows(e.buildIter, e.probeRow, e.resChk)
+		if err != nil {
+			return err
+		}
+		if isFull {
+			req.SwapColumns(e.resChk)
+			return nil
+		}
+	}
+
+	if e.needContinueProbe {
+		if err = e.probeHashTable(e.probeChk, e.lastRowNum, e.selected, e.hCtx, e.resChk); err != nil {
+			return err
+		}
+		if e.resChk.IsFull() {
+			req.SwapColumns(e.resChk)
+			return nil
+		}
+	}
+
 	// construct hash table
 	if !e.hashTblDone {
 		if err = e.buildHashTable(ctx); err != nil {
@@ -83,30 +114,23 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 		}
 		e.hashTblDone = true
 	}
+
 	// probe hash table
-	if len(e.remainingResChks) != 0 {
-		lastIdx := len(e.remainingResChks) - 1
-		req.SwapColumns(e.remainingResChks[lastIdx])
-		e.remainingResChks = e.remainingResChks[:lastIdx]
-		return nil
-	}
-	resChk := newFirstChunk(e)
 	for {
-		chk := newFirstChunk(e.probeSideExec)
-		if err = Next(ctx, e.probeSideExec, chk); err != nil {
+		if err = Next(ctx, e.probeSideExec, e.probeSideResult); err != nil {
 			return err
 		}
 
-		if chk.NumRows() == 0 {
-			req.SwapColumns(resChk)
+		if e.probeSideResult.NumRows() == 0 {
+			req.SwapColumns(e.resChk)
 			break
 		}
 
-		if err = e.doJoinWork(chk, resChk); err != nil {
+		if err = e.doJoinWork(e.probeSideResult, e.resChk); err != nil {
 			return err
 		}
-		if len(e.remainingResChks) != 0 || resChk.IsFull() {
-			req.SwapColumns(resChk)
+		if e.resChk.IsFull() {
+			req.SwapColumns(e.resChk)
 			break
 		}
 	}
@@ -114,12 +138,10 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 }
 
 func (e *NonParallelHashJoinExec) buildHashTable(ctx context.Context) (err error) {
-    var htPtr *hashRowContainer
-    if err = Next(ctx, e.buildSideExec, (*chunk.Chunk)(unsafe.Pointer(&htPtr))); err != nil {
-        return err
-    }
-    e.rowContainer = htPtr
-    return nil
+	if err = Next(ctx, e.buildSideExec, (*chunk.Chunk)(unsafe.Pointer(&e.rowContainer))); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (e *NonParallelHashJoinExec) doJoinWork(probeChk *chunk.Chunk, resChk *chunk.Chunk) (err error) {
@@ -140,47 +162,67 @@ func (e *NonParallelHashJoinExec) doJoinWork(probeChk *chunk.Chunk, resChk *chun
 			}
 		}
 
-		for i := 0; i < len(e.selected); i++ {
-			if !e.selected[i] || e.hCtx.hasNull[i] {
-				e.joiners[0].onMissMatch(false, probeChk.GetRow(i), resChk)
-			} else {
-				probeKey, probeRow := e.hCtx.hashVals[i].Sum64(), probeChk.GetRow(i)
-				buildSideRows, _, err := e.rowContainer.GetMatchedRowsAndPtrs(probeKey, probeRow, e.hCtx)
-				if err != nil {
-					return err
-				}
-				if len(buildSideRows) == 0 {
-					e.joiners[0].onMissMatch(false, probeRow, resChk)
-					continue
-				}
-				iter := chunk.NewIterator4Slice(buildSideRows)
-				hasMatch, hasNull := false, false
-				for iter.Begin(); iter.Current() != iter.End(); {
-					matched, isNull, err := e.joiners[0].tryToMatchInners(probeRow, iter, resChk)
-					if err != nil {
-						return err
-					}
-					hasMatch = hasMatch || matched
-					hasNull = hasNull || isNull
-
-					if resChk.IsFull() {
-						tmpChk := newFirstChunk(e)
-						tmpChk.SwapColumns(resChk)
-						e.remainingResChks = append(e.remainingResChks, tmpChk)
-					}
-				}
-				if !hasMatch {
-					e.joiners[0].onMissMatch(hasNull, probeRow, resChk)
-				}
-			}
-		}
-		if resChk.NumRows() == 0 {
-			lastIdx := len(e.remainingResChks) - 1
-			resChk.SwapColumns(e.remainingResChks[lastIdx])
-			e.remainingResChks = e.remainingResChks[:lastIdx]
+		if err = e.probeHashTable(probeChk, 0, e.selected, e.hCtx, resChk); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func (e *NonParallelHashJoinExec) probeHashTable(probeChk *chunk.Chunk, startIdx int, selected []bool, hCtx *hashContext, resChk *chunk.Chunk) error {
+	for i := startIdx; i < len(selected); i++ {
+		if !selected[i] || hCtx.hasNull[i] {
+			e.joiners[0].onMissMatch(false, probeChk.GetRow(i), resChk)
+		} else {
+			probeKey := hCtx.hashVals[i].Sum64()
+			e.probeRow = probeChk.GetRow(i)
+			buildSideRows, _, err := e.rowContainer.GetMatchedRowsAndPtrs(probeKey, e.probeRow, hCtx)
+			if err != nil {
+				return err
+			}
+			if len(buildSideRows) == 0 {
+				e.joiners[0].onMissMatch(false, e.probeRow, resChk)
+				continue
+			}
+			e.buildIter = chunk.NewIterator4Slice(buildSideRows)
+			e.buildIter.Begin()
+			isFull, err := e.joinMatchedRows(e.buildIter, e.probeRow, resChk)
+			if err != nil {
+				return err
+			}
+			if isFull {
+				e.needContinueProbe = true
+				e.lastRowNum = i + 1
+				e.selected = selected
+				e.probeChk = probeChk
+				return nil
+			}
+		}
+	}
+	e.needContinueProbe = false
+	return nil
+}
+
+func (e *NonParallelHashJoinExec) joinMatchedRows(iter chunk.Iterator, probeRow chunk.Row, resChk *chunk.Chunk) (isFull bool, err error) {
+	hasMatch, hasNull := false, false
+	for iter.Current() != iter.End() {
+		matched, isNull, err := e.joiners[0].tryToMatchInners(probeRow, iter, resChk)
+		if err != nil {
+			return false, err
+		}
+		hasMatch = hasMatch || matched
+		hasNull = hasNull || isNull
+
+		if resChk.IsFull() {
+			e.needContinueJoinRow = true
+			return true, nil
+		}
+	}
+	e.needContinueJoinRow = false
+	if !hasMatch {
+		e.joiners[0].onMissMatch(hasNull, probeRow, resChk)
+	}
+	return false, nil
 }
 
 func (e *NonParallelHashJoinExec) Close() error {
