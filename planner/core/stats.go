@@ -1114,10 +1114,10 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 	*p.seedStat = *resStat
 	p.stats = &property.StatsInfo{
 		RowCount:    resStat.RowCount,
-		Cardinality: make(map[int64]float64, selfSchema.Len()),
+		ColNDVs: make(map[int64]float64, selfSchema.Len()),
 	}
 	for i, col := range selfSchema.Columns {
-		p.stats.Cardinality[col.UniqueID] += resStat.Cardinality[p.cte.seedPartLogicalPlan.Schema().Columns[i].UniqueID]
+		p.stats.ColNDVs[col.UniqueID] += resStat.ColNDVs[p.cte.seedPartLogicalPlan.Schema().Columns[i].UniqueID]
 	}
 	if p.cte.recursivePartLogicalPlan != nil {
 		p.cte.recursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
@@ -1126,10 +1126,10 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 		}
 		recurStat := p.cte.recursivePartPhysicalPlan.Stats()
 		for i, col := range selfSchema.Columns {
-			p.stats.Cardinality[col.UniqueID] += recurStat.Cardinality[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
+			p.stats.ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}
 		if p.cte.IsDistinct {
-			p.stats.RowCount = getCardinality(p.schema.Columns, p.schema, p.stats)
+			p.stats.RowCount = getColsNDV(p.schema.Columns, p.schema, p.stats)
 		} else {
 			p.stats.RowCount += recurStat.RowCount
 		}
