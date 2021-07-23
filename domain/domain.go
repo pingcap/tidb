@@ -622,11 +622,10 @@ func (do *Domain) Close() {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
 
-	do.sysSessionPool.Close()
 	do.slowQuery.Close()
-
 	do.cancel()
 	do.wg.Wait()
+	do.sysSessionPool.Close()
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 

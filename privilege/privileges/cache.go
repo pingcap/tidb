@@ -1364,7 +1364,8 @@ func privOnColumnsToString(p privOnColumns) string {
 		if idx > 0 {
 			buf.WriteString(", ")
 		}
-		fmt.Fprintf(&buf, "%s(", mysql.Priv2Str[priv])
+		privStr := privToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)
+		fmt.Fprintf(&buf, "%s(", privStr)
 		for i, col := range v {
 			if i > 0 {
 				fmt.Fprintf(&buf, ", ")
@@ -1424,7 +1425,7 @@ func privToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allP
 		if priv&p == 0 {
 			continue
 		}
-		s := allPrivNames[p]
+		s := strings.ToUpper(allPrivNames[p])
 		pstrs = append(pstrs, s)
 	}
 	return strings.Join(pstrs, ",")
@@ -1478,7 +1479,7 @@ func appendUserPrivilegesTableRow(rows [][]types.Datum, user UserRecord) [][]typ
 	}
 	for _, priv := range mysql.AllGlobalPrivs {
 		if user.Privileges&priv > 0 {
-			privilegeType := mysql.Priv2Str[priv]
+			privilegeType := strings.ToUpper(mysql.Priv2Str[priv])
 			// +---------------------------+---------------+-------------------------+--------------+
 			// | GRANTEE                   | TABLE_CATALOG | PRIVILEGE_TYPE          | IS_GRANTABLE |
 			// +---------------------------+---------------+-------------------------+--------------+
