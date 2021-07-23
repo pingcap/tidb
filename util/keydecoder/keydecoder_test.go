@@ -152,13 +152,13 @@ func TestDecodeKey(t *testing.T) {
 		// int handle, value = 1
 		0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 	}, stubInfoschema)
-	// we should get as much infomation as we can
+	// we should get as much information as we can
 	assert.Nil(t, err)
 	assert.Equal(t, decodedKey.TableID, int64(3))
 	assert.Equal(t, decodedKey.HandleType, IntHandle)
 	assert.Equal(t, decodedKey.HandleValue, "1")
 
-	// rest infomation are all default value, ie. omitted when got marshaled into json
+	// rest information are all default value, ie. omitted when got marshaled into json
 	assert.Equal(t, decodedKey.DbID, int64(0))
 	assert.Equal(t, decodedKey.DbName, "")
 	assert.Equal(t, decodedKey.TableName, "")

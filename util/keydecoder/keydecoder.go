@@ -89,14 +89,18 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 
 		schema, ok := infoschema.SchemaByTable(table.Meta())
 		if !ok {
-			return result, errors.Errorf("no schema associated with table which tableID=%d found", tableID)
+			logutil.BgLogger().Warn("no schema associated with table found in infoschema", zap.Int64("tableID", tableID), zap.Error(err))
+			return result, nil
 		}
 		result.DbID = schema.ID
 		result.DbName = schema.Name.O
+	} else {
+		logutil.BgLogger().Warn("no table found in infoschema", zap.Int64("tableID", tableID), zap.Error(err))
 	}
 	if isRecordKey {
 		_, handle, err := tablecodec.DecodeRecordKey(key)
 		if err != nil {
+			logutil.BgLogger().Warn("decode record key failed", zap.Int64("tableID", tableID), zap.Error(err))
 			return result, errors.Errorf("cannot decode record key of table %d", tableID)
 		}
 		result.HandleType = handleType(handle)
@@ -106,7 +110,8 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 		// is index key
 		_, _, indexValues, err := tablecodec.DecodeIndexKey(key)
 		if err != nil {
-			return result, errors.Errorf("cannot decode index key of table %d", tableID)
+			logutil.BgLogger().Warn("cannot decode index key", zap.ByteString("key", key), zap.Error(err))
+			return result, nil
 		}
 		result.IndexID = indexID
 		if tableFound {
