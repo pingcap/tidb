@@ -1163,7 +1163,7 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	nameLower := strings.ToLower(name)
 	if namesMap[nameLower] {
 		if foreign {
-			return infoschema.ErrCannotAddForeign
+			return ErrFkDupName.GenWithStackByArgs(name)
 		}
 		return ErrDupKeyName.GenWithStack("duplicate key name %s", name)
 	}
@@ -5308,6 +5308,13 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	}
 	if t.Meta().TempTableType != model.TempTableNone {
 		return infoschema.ErrCannotAddForeign
+	}
+
+	// Check the uniqueness of the FK.
+	for _, fk := range t.Meta().ForeignKeys {
+		if fk.Name.L == fkName.L {
+			return ErrFkDupName.GenWithStackByArgs(fkName.O)
+		}
 	}
 
 	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols(), t.Meta())
