@@ -18,7 +18,7 @@ import (
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/uber-go/atomic"
+	"go.uber.org/atomic"
 )
 
 /*

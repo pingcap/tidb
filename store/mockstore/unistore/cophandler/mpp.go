@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/uber-go/atomic"
+	"go.uber.org/atomic"
 )
 
 const (
