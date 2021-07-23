@@ -14,13 +14,13 @@
 package fastrand
 
 import (
-	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
-	os.Exit(m.Run())
+	goleak.VerifyTestMain(m)
 }
