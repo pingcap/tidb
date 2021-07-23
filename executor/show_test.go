@@ -1392,4 +1392,10 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 	tk.MustExec("insert into t7 (j) values (14)")
 	tk.MustExec("insert into t7 (j) values (24)")
 	tk.MustQuery("select * from t7").Check(testkit.Rows("1 14", "2 24"))
+	expect = "CREATE TEMPORARY TABLE `t7` (\n" +
+		"  `i` int(11) NOT NULL AUTO_INCREMENT,\n" +
+		"  `j` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	tk.MustQuery("show create table t7").Check(testkit.Rows("t7 " + expect))
 }
