@@ -976,12 +976,18 @@ func (s *testPrepareSerialSuite) TestPrepareCacheWithJoinTable(c *C) {
 }
 
 func (s *testPlanSerialSuite) TestPlanCacheSnapshot(c *C) {
-	store, _, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
+<<<<<<< HEAD
 		store.Close()
+=======
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+>>>>>>> 591ebdd92... planner: fix goroutine leak problem in some unit tests (#26500)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
@@ -1055,11 +1061,12 @@ func (s *testPlanSerialSuite) TestIssue23671(c *C) {
 }
 
 func (s *testPlanSerialSuite) TestPlanCachePointGetAndTableDual(c *C) {
-	store, _, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
+		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
 	}()
@@ -1146,3 +1153,349 @@ func (s *testPlanSerialSuite) TestPlanCachePointGetAndTableDual(c *C) {
 	tk.MustQuery("execute s4 using @a4,@b4").Check(testkit.Rows("2 1 1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
+<<<<<<< HEAD
+=======
+
+func (s *testPlanSerialSuite) TestIssue23671(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t (a int, b int, index ab(a, b))")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+	tk.MustExec("prepare s1 from 'select * from t use index(ab) where a>=? and b>=? and b<=?'")
+	tk.MustExec("set @a=1, @b=1, @c=1")
+	tk.MustQuery("execute s1 using @a, @b, @c").Check(testkit.Rows("1 1"))
+	tk.MustExec("set @a=1, @b=1, @c=10")
+	tk.MustQuery("execute s1 using @a, @b, @c").Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func (s *testPlanSerialSuite) TestPartitionTable(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	// enable plan cache
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	// enable partition table dynamic mode
+	tk.MustExec("create database test_plan_cache")
+	tk.MustExec("use test_plan_cache")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	type testcase struct {
+		t1Create string
+		t2Create string
+		rowGener func() string
+		varGener func() string
+		query    string
+	}
+	randDateTime := func() string {
+		return fmt.Sprintf("%v-%v-%v %v:%v:%v",
+			1950+rand.Intn(100), 1+rand.Intn(12), 1+rand.Intn(28), // date
+			rand.Intn(24), rand.Intn(60), rand.Intn(60)) // time
+	}
+	randDate := func() string {
+		return fmt.Sprintf("%v-%v-%v", 1950+rand.Intn(100), 1+rand.Intn(12), 1+rand.Intn(28))
+	}
+	testcases := []testcase{
+		{ // hash partition + int
+			"create table t1(a int, b int) partition by hash(a) partitions 20",
+			"create table t2(a int, b int)",
+			func() string { return fmt.Sprintf("(%v, %v)", rand.Intn(100000000), rand.Intn(100000000)) },
+			func() string { return fmt.Sprintf("%v", rand.Intn(100000000)) },
+			`select * from %v where a > ?`,
+		},
+		{ // range partition + int
+			`create table t1(a int, b int) partition by range(a) (
+						partition p0 values less than (20000000),
+						partition p1 values less than (40000000),
+						partition p2 values less than (60000000),
+						partition p3 values less than (80000000),
+						partition p4 values less than (100000000))`,
+			`create table t2(a int, b int)`,
+			func() string { return fmt.Sprintf("(%v, %v)", rand.Intn(100000000), rand.Intn(100000000)) },
+			func() string { return fmt.Sprintf("%v", rand.Intn(100000000)) },
+			`select * from %v where a > ?`,
+		},
+		{ // range partition + varchar
+			`create table t1(a varchar(10), b varchar(10)) partition by range columns(a) (
+						partition p0 values less than ('200'),
+						partition p1 values less than ('400'),
+						partition p2 values less than ('600'),
+						partition p3 values less than ('800'),
+						partition p4 values less than ('9999'))`,
+			`create table t2(a varchar(10), b varchar(10))`,
+			func() string { return fmt.Sprintf(`("%v", "%v")`, rand.Intn(1000), rand.Intn(1000)) },
+			func() string { return fmt.Sprintf(`"%v"`, rand.Intn(1000)) },
+			`select * from %v where a > ?`,
+		},
+		{ // range partition + datetime
+			`create table t1(a datetime, b datetime) partition by range columns(a) (
+						partition p0 values less than ('1970-01-01 00:00:00'),
+						partition p1 values less than ('1990-01-01 00:00:00'),
+						partition p2 values less than ('2010-01-01 00:00:00'),
+						partition p3 values less than ('2030-01-01 00:00:00'),
+						partition p4 values less than ('2060-01-01 00:00:00'))`,
+			`create table t2(a datetime, b datetime)`,
+			func() string { return fmt.Sprintf(`("%v", "%v")`, randDateTime(), randDateTime()) },
+			func() string { return fmt.Sprintf(`"%v"`, randDateTime()) },
+			`select * from %v where a > ?`,
+		},
+		{ // range partition + date
+			`create table t1(a date, b date) partition by range columns(a) (
+						partition p0 values less than ('1970-01-01'),
+						partition p1 values less than ('1990-01-01'),
+						partition p2 values less than ('2010-01-01'),
+						partition p3 values less than ('2030-01-01'),
+						partition p4 values less than ('2060-01-01'))`,
+			`create table t2(a date, b date)`,
+			func() string { return fmt.Sprintf(`("%v", "%v")`, randDate(), randDate()) },
+			func() string { return fmt.Sprintf(`"%v"`, randDate()) },
+			`select * from %v where a > ?`,
+		},
+		{ // list partition + int
+			`create table t1(a int, b int) partition by list(a) (
+						partition p0 values in (0, 1, 2, 3, 4),
+						partition p1 values in (5, 6, 7, 8, 9),
+						partition p2 values in (10, 11, 12, 13, 14),
+						partition p3 values in (15, 16, 17, 18, 19))`,
+			`create table t2(a int, b int)`,
+			func() string { return fmt.Sprintf("(%v, %v)", rand.Intn(20), rand.Intn(20)) },
+			func() string { return fmt.Sprintf("%v", rand.Intn(20)) },
+			`select * from %v where a > ?`,
+		},
+	}
+	for _, tc := range testcases {
+		// create tables and insert some records
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec(tc.t1Create)
+		tk.MustExec(tc.t2Create)
+		vals := make([]string, 0, 2048)
+		for i := 0; i < 2048; i++ {
+			vals = append(vals, tc.rowGener())
+		}
+		tk.MustExec(fmt.Sprintf("insert into t1 values %s", strings.Join(vals, ",")))
+		tk.MustExec(fmt.Sprintf("insert into t2 values %s", strings.Join(vals, ",")))
+
+		// the first query, @last_plan_from_cache should be zero
+		tk.MustExec(fmt.Sprintf(`prepare stmt1 from "%s"`, fmt.Sprintf(tc.query, "t1")))
+		tk.MustExec(fmt.Sprintf(`prepare stmt2 from "%s"`, fmt.Sprintf(tc.query, "t2")))
+		tk.MustExec(fmt.Sprintf("set @a=%v", tc.varGener()))
+		result1 := tk.MustQuery("execute stmt1 using @a").Sort().Rows()
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		tk.MustQuery("execute stmt2 using @a").Sort().Check(result1)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+		for i := 0; i < 100; i++ {
+			tk.MustExec(fmt.Sprintf("set @a=%v", tc.varGener()))
+			result1 := tk.MustQuery("execute stmt1 using @a").Sort().Rows()
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			tk.MustQuery("execute stmt2 using @a").Sort().Check(result1)
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		}
+	}
+}
+
+func (s *testPlanSerialSuite) TestPartitionWithVariedDatasources(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+
+	// enable plan cache
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		err = store.Close()
+		c.Assert(err, IsNil)
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	// enable partition table dynamic mode
+	tk.MustExec("create database test_plan_cache2")
+	tk.MustExec("use test_plan_cache2")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	// prepare tables
+	tk.MustExec(`create table trangePK (a int primary key, b int) partition by range (a) (
+			partition p0 values less than (10000),
+			partition p1 values less than (20000),
+			partition p2 values less than (30000),
+			partition p3 values less than (40000))`)
+	tk.MustExec(`create table thashPK (a int primary key, b int) partition by hash (a) partitions 4`)
+	tk.MustExec(`create table tnormalPK (a int primary key, b int)`)
+	tk.MustExec(`create table trangeIdx (a int unique key, b int) partition by range (a) (
+			partition p0 values less than (10000),
+			partition p1 values less than (20000),
+			partition p2 values less than (30000),
+			partition p3 values less than (40000))`)
+	tk.MustExec(`create table thashIdx (a int unique key, b int) partition by hash (a) partitions 4`)
+	tk.MustExec(`create table tnormalIdx (a int unique key, b int)`)
+	uniqueVals := make(map[int]struct{})
+	vals := make([]string, 0, 1000)
+	for len(vals) < 1000 {
+		a := rand.Intn(40000)
+		if _, ok := uniqueVals[a]; ok {
+			continue
+		}
+		uniqueVals[a] = struct{}{}
+		b := rand.Intn(40000)
+		vals = append(vals, fmt.Sprintf("(%v, %v)", a, b))
+	}
+	for _, tbl := range []string{"trangePK", "thashPK", "tnormalPK", "trangeIdx", "thashIdx", "tnormalIdx"} {
+		tk.MustExec(fmt.Sprintf(`insert into %v values %v`, tbl, strings.Join(vals, ", ")))
+	}
+
+	// TableReader, PointGet on PK, BatchGet on PK
+	for _, tbl := range []string{`trangePK`, `thashPK`, `tnormalPK`} {
+		tk.MustExec(fmt.Sprintf(`prepare stmt%v_tablescan from 'select * from %v use index(primary) where a > ? and a < ?'`, tbl, tbl))
+		tk.MustExec(fmt.Sprintf(`prepare stmt%v_pointget from 'select * from %v use index(primary) where a = ?'`, tbl, tbl))
+		tk.MustExec(fmt.Sprintf(`prepare stmt%v_batchget from 'select * from %v use index(primary) where a in (?, ?, ?)'`, tbl, tbl))
+	}
+	for i := 0; i < 100; i++ {
+		mina, maxa := rand.Intn(40000), rand.Intn(40000)
+		if mina > maxa {
+			mina, maxa = maxa, mina
+		}
+		tk.MustExec(fmt.Sprintf(`set @mina=%v, @maxa=%v`, mina, maxa))
+		tk.MustExec(fmt.Sprintf(`set @pointa=%v`, rand.Intn(40000)))
+		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
+
+		var rscan, rpoint, rbatch [][]interface{}
+		for id, tbl := range []string{`trangePK`, `thashPK`, `tnormalPK`} {
+			scan := tk.MustQuery(fmt.Sprintf(`execute stmt%v_tablescan using @mina, @maxa`, tbl)).Sort()
+			if i > 0 {
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			}
+			if id == 0 {
+				rscan = scan.Rows()
+			} else {
+				scan.Check(rscan)
+			}
+
+			point := tk.MustQuery(fmt.Sprintf(`execute stmt%v_pointget using @pointa`, tbl)).Sort()
+			if tbl == `tnormalPK` && i > 0 {
+				// PlanCache cannot support PointGet now since we haven't relocated partition after rebuilding range.
+				// Please see Execute.rebuildRange for more details.
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			}
+			if id == 0 {
+				rpoint = point.Rows()
+			} else {
+				point.Check(rpoint)
+			}
+
+			batch := tk.MustQuery(fmt.Sprintf(`execute stmt%v_batchget using @a0, @a1, @a2`, tbl)).Sort()
+			if i > 0 {
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			}
+			if id == 0 {
+				rbatch = batch.Rows()
+			} else {
+				batch.Check(rbatch)
+			}
+		}
+	}
+
+	// IndexReader, IndexLookUp, PointGet on Idx, BatchGet on Idx
+	for _, tbl := range []string{"trangeIdx", "thashIdx", "tnormalIdx"} {
+		tk.MustExec(fmt.Sprintf(`prepare stmt%v_indexscan from 'select a from %v use index(a) where a > ? and a < ?'`, tbl, tbl))
+		tk.MustExec(fmt.Sprintf(`prepare stmt%v_indexlookup from 'select * from %v use index(a) where a > ? and a < ?'`, tbl, tbl))
+		tk.MustExec(fmt.Sprintf(`prepare stmt%v_pointget_idx from 'select * from %v use index(a) where a = ?'`, tbl, tbl))
+		tk.MustExec(fmt.Sprintf(`prepare stmt%v_batchget_idx from 'select * from %v use index(a) where a in (?, ?, ?)'`, tbl, tbl))
+	}
+	for i := 0; i < 100; i++ {
+		mina, maxa := rand.Intn(40000), rand.Intn(40000)
+		if mina > maxa {
+			mina, maxa = maxa, mina
+		}
+		tk.MustExec(fmt.Sprintf(`set @mina=%v, @maxa=%v`, mina, maxa))
+		tk.MustExec(fmt.Sprintf(`set @pointa=%v`, rand.Intn(40000)))
+		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
+
+		var rscan, rlookup, rpoint, rbatch [][]interface{}
+		for id, tbl := range []string{"trangeIdx", "thashIdx", "tnormalIdx"} {
+			scan := tk.MustQuery(fmt.Sprintf(`execute stmt%v_indexscan using @mina, @maxa`, tbl)).Sort()
+			if i > 0 {
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			}
+			if id == 0 {
+				rscan = scan.Rows()
+			} else {
+				scan.Check(rscan)
+			}
+
+			lookup := tk.MustQuery(fmt.Sprintf(`execute stmt%v_indexlookup using @mina, @maxa`, tbl)).Sort()
+			if i > 0 {
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			}
+			if id == 0 {
+				rlookup = lookup.Rows()
+			} else {
+				lookup.Check(rlookup)
+			}
+
+			point := tk.MustQuery(fmt.Sprintf(`execute stmt%v_pointget_idx using @pointa`, tbl)).Sort()
+			if tbl == `tnormalPK` && i > 0 {
+				// PlanCache cannot support PointGet now since we haven't relocated partition after rebuilding range.
+				// Please see Execute.rebuildRange for more details.
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+			}
+			if id == 0 {
+				rpoint = point.Rows()
+			} else {
+				point.Check(rpoint)
+			}
+
+			batch := tk.MustQuery(fmt.Sprintf(`execute stmt%v_batchget_idx using @a0, @a1, @a2`, tbl)).Sort()
+			if i > 0 {
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			}
+			if id == 0 {
+				rbatch = batch.Rows()
+			} else {
+				batch.Check(rbatch)
+			}
+		}
+	}
+}
+>>>>>>> 591ebdd92... planner: fix goroutine leak problem in some unit tests (#26500)
