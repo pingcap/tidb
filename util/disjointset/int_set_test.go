@@ -21,7 +21,7 @@ import (
 
 func TestIntDisjointSet(t *testing.T) {
 	set := NewIntSet(10)
-	assert.Equal(t, 10, len(set.parent))
+	assert.Len(t, set.parent, 10)
 	for i := range set.parent {
 		assert.Equal(t, i, set.parent[i])
 	}
