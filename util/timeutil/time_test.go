@@ -23,7 +23,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetTZNameFromFileName(t *testing.T) {
@@ -31,13 +31,13 @@ func TestGetTZNameFromFileName(t *testing.T) {
 
 	tz, err := inferTZNameFromFileName("/usr/share/zoneinfo/Asia/Shanghai")
 
-	assert.Nil(t, err)
-	assert.Equal(t, "Asia/Shanghai", tz)
+	require.NoError(t, err)
+	require.Equal(t, "Asia/Shanghai", tz)
 
 	tz, err = inferTZNameFromFileName("/usr/share/zoneinfo.default/Asia/Shanghai")
 
-	assert.Nil(t, err)
-	assert.Equal(t, "Asia/Shanghai", tz)
+	require.NoError(t, err)
+	require.Equal(t, "Asia/Shanghai", tz)
 }
 
 func TestLocal(t *testing.T) {
@@ -46,20 +46,20 @@ func TestLocal(t *testing.T) {
 	os.Setenv("TZ", "Asia/Shanghai")
 	systemTZ.Store(InferSystemTZ())
 	loc := SystemLocation()
-	assert.Equal(t, "Asia/Shanghai", systemTZ.Load())
-	assert.Equal(t, "Asia/Shanghai", loc.String())
+	require.Equal(t, "Asia/Shanghai", systemTZ.Load())
+	require.Equal(t, "Asia/Shanghai", loc.String())
 
 	os.Setenv("TZ", "UTC")
 	// reset systemTZ
 	systemTZ.Store(InferSystemTZ())
 	loc = SystemLocation()
-	assert.Equal(t, "UTC", loc.String())
+	require.Equal(t, "UTC", loc.String())
 
 	os.Setenv("TZ", "")
 	// reset systemTZ
 	systemTZ.Store(InferSystemTZ())
 	loc = SystemLocation()
-	assert.Equal(t, "UTC", loc.String())
+	require.Equal(t, "UTC", loc.String())
 	os.Unsetenv("TZ")
 }
 
@@ -73,15 +73,15 @@ func TestInferOneStepLinkForPath(t *testing.T) {
 	var err error
 	var link1 *os.File
 	link1, err = os.Create(filepath.Join(os.TempDir(), "testlink1"))
-	assert.Nil(t, err)
+	require.NoError(t, err)
 	err = os.Symlink(link1.Name(), filepath.Join(os.TempDir(), "testlink2"))
-	assert.Nil(t, err)
+	require.NoError(t, err)
 	err = os.Symlink(filepath.Join(os.TempDir(), "testlink2"), filepath.Join(os.TempDir(), "testlink3"))
-	assert.Nil(t, err)
+	require.NoError(t, err)
 	link2, err = inferOneStepLinkForPath(filepath.Join(os.TempDir(), "testlink3"))
-	assert.Nil(t, err)
-	assert.Equal(t, filepath.Join(os.TempDir(), "testlink2"), link2)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(os.TempDir(), "testlink2"), link2)
 	link3, err = filepath.EvalSymlinks(filepath.Join(os.TempDir(), "testlink3"))
-	assert.Nil(t, err)
-	assert.NotEqual(t, -1, strings.Index(link3, link1.Name()))
+	require.NoError(t, err)
+	require.NotEqual(t, -1, strings.Index(link3, link1.Name()))
 }
