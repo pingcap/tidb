@@ -24,8 +24,8 @@ Limit	10.00	root		offset:0, count:10
   │       ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t1, index:PRIMARY(id)	range: decided by [eq(test.city.id, test.city.id)], keep order:false
   │       └─Selection(Probe)	1.00	cop[tikv]		gt(test.city.province_id, 1), lt(test.city.province_id, 100)
   │         └─TableRowIDScan	1.00	cop[tikv]	table:t1	keep order:false
-  └─UnionScan(Probe)	536284.00	root		gt(test.city.province_id, 1), lt(test.city.province_id, 100), not(isnull(test.city.province_id))
-    └─TableReader	536284.00	root		data:Selection
-      └─Selection	536284.00	cop[tikv]		gt(test.city.province_id, 1), lt(test.city.province_id, 100), not(isnull(test.city.province_id))
+  └─UnionScan(Probe)	536040.03	root		gt(test.city.province_id, 1), lt(test.city.province_id, 100), not(isnull(test.city.province_id))
+    └─TableReader	536040.03	root		data:Selection
+      └─Selection	536040.03	cop[tikv]		gt(test.city.province_id, 1), lt(test.city.province_id, 100), not(isnull(test.city.province_id))
         └─TableFullScan	536284.00	cop[tikv]	table:t3	keep order:false
 commit;

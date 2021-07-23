@@ -264,7 +264,7 @@ func (t *Table) ColumnGreaterRowCount(sc *stmtctx.StatementContext, value types.
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
 		return float64(t.Count) / pseudoLessRate
 	}
-	return c.greaterRowCount(value)
+	return c.greaterRowCount(value) * c.GetIncreaseFactor(t.Count)
 }
 
 // ColumnLessRowCount estimates the row count where the column less than value. Note that null values are not counted.
@@ -273,7 +273,7 @@ func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Dat
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
 		return float64(t.Count) / pseudoLessRate
 	}
-	return c.lessRowCount(value)
+	return c.lessRowCount(value) * c.GetIncreaseFactor(t.Count)
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
@@ -294,7 +294,7 @@ func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.D
 	if a.IsNull() {
 		count += float64(c.NullCount)
 	}
-	return count, nil
+	return count * c.GetIncreaseFactor(t.Count), nil
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
@@ -308,6 +308,7 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 		return 0, err
 	}
 	result, err := c.equalRowCount(sc, value, encodedVal, t.ModifyCount)
+	result *= c.GetIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
 
