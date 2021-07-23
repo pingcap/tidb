@@ -14,20 +14,19 @@
 package fastrand
 
 import (
-	"fmt"
 	"math/rand"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRand(t *testing.T) {
 	t.Parallel()
 
 	x := Uint32N(1024)
-	assert.True(t, x < 1024)
+	require.Less(t, x, uint32(1024))
 	y := Uint64N(1 << 63)
-	assert.True(t, y < 1<<63)
+	require.Less(t, y, uint64(1<<63))
 
 	_ = Buf(20)
 	var arr [256]bool
@@ -41,8 +40,7 @@ func TestRand(t *testing.T) {
 			sum++
 		}
 	}
-	fmt.Println(sum)
-	assert.True(t, sum < 24)
+	require.Less(t, sum, 24)
 }
 
 func BenchmarkFastRand(b *testing.B) {
