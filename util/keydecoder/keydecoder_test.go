@@ -126,4 +126,44 @@ func TestDecodeKey(t *testing.T) {
 	assert.Equal(t, decodedKey.HandleType, HandleType(""))
 	assert.Equal(t, decodedKey.HandleValue, "")
 	assert.Equal(t, decodedKey.IsPartitionHandle, false)
+
+	// totally invalid key
+	key = []byte("this-is-a-totally-invalidkey")
+	decodedKey, err = DecodeKey(key, stubInfoschema)
+	assert.NotNil(t, err)
+	// "partly" invalid key, i.e. neither record nor index
+	key = []byte{
+		't',
+		// table id = 1
+		0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+	}
+	key = append(key, []byte("rest-part-is-invalid")...)
+	decodedKey, err = DecodeKey(key, stubInfoschema)
+	assert.NotNil(t, err)
+
+	// table cannot be found in infoschema
+	// this is possible when the schema have changed since when the key is get.
+	decodedKey, err = DecodeKey([]byte{
+		't',
+		// table id = 3
+		0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+		'_',
+		'r',
+		// int handle, value = 1
+		0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+	}, stubInfoschema)
+	// we should get as much infomation as we can
+	assert.Nil(t, err)
+	assert.Equal(t, decodedKey.TableID, int64(3))
+	assert.Equal(t, decodedKey.HandleType, IntHandle)
+	assert.Equal(t, decodedKey.HandleValue, "1")
+
+	// rest infomation are all default value, ie. omitted when got marshaled into json
+	assert.Equal(t, decodedKey.DbID, int64(0))
+	assert.Equal(t, decodedKey.DbName, "")
+	assert.Equal(t, decodedKey.TableName, "")
+	assert.Equal(t, decodedKey.IndexID, int64(0))
+	assert.Equal(t, decodedKey.IndexName, "")
+	assert.Equal(t, decodedKey.IsPartitionHandle, false)
+	assert.Nil(t, decodedKey.IndexValues)
 }

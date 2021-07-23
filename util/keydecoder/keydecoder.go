@@ -79,21 +79,21 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 	}
 	result.TableID = tableID
 
-	table, ok := infoschema.TableByID(tableID)
-	if !ok {
-		// The schema may have changed since when the key is get.
-		// In this case we just omit the table name but show the table ID.
-		return result, nil
-	}
-	result.TableName = table.Meta().Name.O
+	table, tableFound := infoschema.TableByID(tableID)
 
-	schema, ok := infoschema.SchemaByTable(table.Meta())
-	if !ok {
-		return result, errors.Errorf("no schema associated with table which tableID=%d found", tableID)
-	}
-	result.DbID = schema.ID
-	result.DbName = schema.Name.O
+	// The schema may have changed since when the key is get.
+	// Then we just omit the table name and show the table ID only.
+	// Otherwise, we can show the table name and table ID.
+	if tableFound {
+		result.TableName = table.Meta().Name.O
 
+		schema, ok := infoschema.SchemaByTable(table.Meta())
+		if !ok {
+			return result, errors.Errorf("no schema associated with table which tableID=%d found", tableID)
+		}
+		result.DbID = schema.ID
+		result.DbName = schema.Name.O
+	}
 	if isRecordKey {
 		_, handle, err := tablecodec.DecodeRecordKey(key)
 		if err != nil {
@@ -109,11 +109,13 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 			return result, errors.Errorf("cannot decode index key of table %d", tableID)
 		}
 		result.IndexID = indexID
-		for _, index := range table.Indices() {
-			if index.Meta().ID == indexID {
-				result.IndexName = index.Meta().Name.O
-				result.IndexValues = indexValues
-				break
+		if tableFound {
+			for _, index := range table.Indices() {
+				if index.Meta().ID == indexID {
+					result.IndexName = index.Meta().Name.O
+					result.IndexValues = indexValues
+					break
+				}
 			}
 		}
 	}
