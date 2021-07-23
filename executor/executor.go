@@ -929,8 +929,9 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				if len(e.partitionedTable) > 0 {
 					// Replace the table ID with partition ID.
 					// The partition ID is returned as an extra column from the table reader.
-					offset := e.tblID2PIDColumnIndex[id]
-					physicalID = row.GetInt64(offset)
+					if offset, ok := e.tblID2PIDColumnIndex[id]; ok {
+						physicalID = row.GetInt64(offset)
+					}
 				}
 
 				for _, col := range cols {
@@ -983,11 +984,12 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 		LockExpired:           &seVars.TxnCtx.LockExpire,
 		ResourceGroupTag:      resourcegrouptag.EncodeResourceGroupTag(sqlDigest, planDigest),
 		OnDeadlock: func(deadlock *tikverr.ErrDeadlock) {
-			// TODO: Support collecting retryable deadlocks according to the config.
-			if !deadlock.IsRetryable {
-				rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
-				deadlockhistory.GlobalDeadlockHistory.Push(rec)
+			cfg := config.GetGlobalConfig()
+			if deadlock.IsRetryable && !cfg.PessimisticTxn.DeadlockHistoryCollectRetryable {
+				return
 			}
+			rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
+			deadlockhistory.GlobalDeadlockHistory.Push(rec)
 		},
 	}
 }
@@ -1696,7 +1698,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			pprof.SetGoroutineLabels(goCtx)
 		}
 		if variable.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
-			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil)
+			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL)
 		}
 	}
 	// execute missed stmtID uses empty sql
@@ -1808,7 +1810,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevAffectedRows = -1
 	}
 	if globalConfig.EnableCollectExecutionInfo {
-		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+		// In ExplainFor case, RuntimeStatsColl should not be reset for reuse,
+		// because ExplainFor need to display the last statement information.
+		reuseObj := vars.StmtCtx.RuntimeStatsColl
+		if _, ok := s.(*ast.ExplainForStmt); ok {
+			reuseObj = nil
+		}
+		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
 	}
 
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)

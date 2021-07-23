@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"runtime/pprof"
 	"sort"
 	"strconv"
 	"sync"
@@ -122,10 +121,6 @@ func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.
 
 func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		if variable.TopSQLEnabled() {
-			//  Restore the goroutine label by using the original ctx after execution is finished.
-			defer pprof.SetGoroutineLabels(ctx)
-		}
 		stmt, err := exec.ParseWithParams(ctx, sql, params...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)

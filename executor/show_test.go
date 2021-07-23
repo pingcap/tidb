@@ -679,7 +679,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL,\n"+
 			"  `b` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin/*!90000 SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
 	))
 	tk.MustExec("drop table t")
 
@@ -1301,6 +1301,9 @@ func (s *testSuite5) TestShowVar(c *C) {
 	// Test Hidden tx_read_ts
 	res = tk.MustQuery("show variables like '%tx_read_ts'")
 	c.Check(res.Rows(), HasLen, 0)
+	// Test Hidden tidb_enable_streaming
+	res = tk.MustQuery("show variables like '%tidb_enable_streaming%';")
+	c.Check(res.Rows(), HasLen, 0)
 }
 
 func (s *testSuite5) TestIssue19507(c *C) {
@@ -1308,20 +1311,20 @@ func (s *testSuite5) TestIssue19507(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t2(a int primary key, b int unique, c int not null, unique index (c));")
 	tk.MustQuery("SHOW INDEX IN t2;").Check(
-		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL|YES",
-			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
-			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO"))
+		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|<nil>|YES",
+			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|<nil>|NO",
+			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|<nil>|NO"))
 
 	tk.MustExec("CREATE INDEX t2_b_c_index ON t2 (b, c);")
 	tk.MustExec("CREATE INDEX t2_c_b_index ON t2 (c, b);")
 	tk.MustQuery("SHOW INDEX IN t2;").Check(
-		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL|YES",
-			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
-			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO",
-			"t2|1|t2_b_c_index|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO",
-			"t2|1|t2_b_c_index|2|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
-			"t2|1|t2_c_b_index|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL|NO",
-			"t2|1|t2_c_b_index|2|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL|NO"))
+		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|<nil>|YES",
+			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|<nil>|NO",
+			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|<nil>|NO",
+			"t2|1|t2_b_c_index|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|<nil>|NO",
+			"t2|1|t2_b_c_index|2|c|A|0|<nil>|<nil>||BTREE|||YES|<nil>|NO",
+			"t2|1|t2_c_b_index|1|c|A|0|<nil>|<nil>||BTREE|||YES|<nil>|NO",
+			"t2|1|t2_c_b_index|2|b|A|0|<nil>|<nil>|YES|BTREE|||YES|<nil>|NO"))
 }
 
 // TestShowPerformanceSchema tests for Issue 19231
@@ -1331,8 +1334,8 @@ func (s *testSuite5) TestShowPerformanceSchema(c *C) {
 	// However, its not possible to create a new performance_schema table since its a special in memory table.
 	// Instead the test below uses the default index on the table.
 	tk.MustQuery("SHOW INDEX FROM performance_schema.events_statements_summary_by_digest").Check(
-		testkit.Rows("events_statements_summary_by_digest 0 SCHEMA_NAME 1 SCHEMA_NAME A 0 <nil> <nil> YES BTREE   YES NULL NO",
-			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES NULL NO"))
+		testkit.Rows("events_statements_summary_by_digest 0 SCHEMA_NAME 1 SCHEMA_NAME A 0 <nil> <nil> YES BTREE   YES <nil> NO",
+			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
 }
 
 func (s *testSuite5) TestShowTemporaryTable(c *C) {

@@ -248,6 +248,14 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
 func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
+	// Set the reorg attribute for cast value functionality.
+	if col.ChangeStateInfo != nil {
+		origin := ctx.GetSessionVars().StmtCtx.InReorgAttribute
+		ctx.GetSessionVars().StmtCtx.InReorgAttribute = true
+		defer func() {
+			ctx.GetSessionVars().StmtCtx.InReorgAttribute = origin
+		}()
+	}
 	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {

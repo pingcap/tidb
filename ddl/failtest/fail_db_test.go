@@ -380,7 +380,7 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
 	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), splitCount)
 
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
 	lastSetWorkerCnt := originDDLAddIndexWorkerCnt

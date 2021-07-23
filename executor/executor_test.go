@@ -358,6 +358,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 		"RESTRICTED_VARIABLES_ADMIN Server Admin ",
 		"RESTRICTED_USER_ADMIN Server Admin ",
 		"RESTRICTED_CONNECTION_ADMIN Server Admin ",
+		"RESTRICTED_REPLICA_WRITER_ADMIN Server Admin ",
 	))
 	c.Assert(len(tk.MustQuery("show table status").Rows()), Equals, 1)
 }
@@ -8293,45 +8294,6 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 		))
 }
 
-func (s *testSuite1) TestTemporaryTableNoPessimisticLock(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create global temporary table t (a int primary key, b int) on commit delete rows")
-	tk.MustExec("insert into t values (1, 1)")
-
-	// Do something on the temporary table, pessimistic transaction mode.
-	tk.MustExec("begin pessimistic")
-	tk.MustExec("insert into t values (2, 2)")
-	tk.MustExec("update t set b = b + 1 where a = 1")
-	tk.MustExec("delete from t where a > 1")
-	tk.MustQuery("select count(*) from t where b >= 2 for update")
-
-	// Get the temporary table ID.
-	schema := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
-	tbl, err := schema.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	meta := tbl.Meta()
-	c.Assert(meta.TempTableType, Equals, model.TempTableGlobal)
-
-	// Scan the table range to check there is no lock.
-	// It's better to use the rawkv client, but the txnkv client should also works.
-	// If there is a lock, the txnkv client should have reported the lock error.
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	seekKey := tablecodec.EncodeTablePrefix(meta.ID)
-	endKey := tablecodec.EncodeTablePrefix(meta.ID + 1)
-	scanner, err := txn.Iter(seekKey, endKey)
-	c.Assert(err, IsNil)
-	for scanner.Valid() {
-		// No lock written to TiKV here.
-		c.FailNow()
-	}
-
-	tk.MustExec("rollback")
-}
-
 func (s testSerialSuite) TestExprBlackListForEnum(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -8456,7 +8418,14 @@ func (s testSerialSuite) TestTemporaryTableNoNetwork(c *C) {
 	// Index lookup
 	tk.HasPlan("select id from tmp_t where a = 1", "IndexLookUp")
 	tk.MustQuery("select id from tmp_t where a = 1").Check(testkit.Rows("1"))
+	tk.MustExec("rollback")
 
+	// Pessimistic lock
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into tmp_t values (2, 2)")
+	tk.MustExec("update tmp_t set id = id + 1 where a = 1")
+	tk.MustExec("delete from tmp_t where a > 1")
+	tk.MustQuery("select count(*) from tmp_t where a >= 1 for update")
 	tk.MustExec("rollback")
 }
 
