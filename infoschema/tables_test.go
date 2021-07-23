@@ -1822,6 +1822,24 @@ func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
 	_ = tk.MustQuery("select * from information_schema.deadlocks")
 }
 
+func (s *testTableSuite) TestRegionLabel(c *C) {
+	// test the failpoint for testing
+	fpName := "github.com/pingcap/tidb/executor/mockOutputOfRegionLabel"
+	tk := s.newTestKitWithRoot(c)
+	tk.MustQuery("select * from information_schema.region_label").Check(testkit.Rows())
+
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	tk.MustQuery(`select * from information_schema.region_label`).Check(testkit.Rows(
+		`schema/test/test_label key-range "nomerge" 7480000000000000ff395f720000000000fa 7480000000000000ff3a5f720000000000fa`,
+	))
+
+	tk.MustQuery(`select rule_id, region_label from information_schema.region_label`).Check(testkit.Rows(
+		`schema/test/test_label "nomerge"`,
+	))
+}
+
 func (s *testClusterTableSuite) TestDataLockWaits(c *C) {
 	_, digest1 := parser.NormalizeDigest("select * from test_data_lock_waits for update")
 	_, digest2 := parser.NormalizeDigest("update test_data_lock_waits set f1=1 where id=2")
