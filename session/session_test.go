@@ -4357,7 +4357,7 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 
 	info = tk.Se.TxnInfo()
 	c.Assert(info.CurrentSQLDigest, Equals, "")
-	c.Assert(info.State, Equals, txninfo.TxnRunningNormal)
+	c.Assert(info.State, Equals, txninfo.TxnIdle)
 	c.Assert(info.BlockStartTime.Valid, IsFalse)
 	c.Assert(info.StartTS, Equals, startTS)
 	_, beginDigest := parser.NormalizeDigest("begin pessimistic;")
@@ -4424,6 +4424,22 @@ func (s *testTxnStateSerialSuite) TestEntriesCountAndSize(c *C) {
 	tk.MustExec("commit;")
 }
 
+func (s *testTxnStateSerialSuite) TestRunning(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1);")
+	tk.MustExec("begin pessimistic;")
+	failpoint.Enable("github.com/pingcap/tidb/session/mockStmtSlow", "sleep(100)")
+	go func() {
+		tk.MustExec("select * from t for update;")
+		tk.MustExec("commit;")
+	}()
+	time.Sleep(20 * time.Millisecond)
+	info := tk.Se.TxnInfo()
+	c.Assert(info.State, Equals, txninfo.TxnRunning)
+	failpoint.Disable("github.com/pingcap/tidb/session/mockStmtSlow")
+}
+
 func (s *testTxnStateSerialSuite) TestBlocked(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
@@ -4454,15 +4470,13 @@ func (s *testTxnStateSerialSuite) TestCommitting(c *C) {
 		tk2.MustExec("begin pessimistic")
 		c.Assert(tk2.Se.TxnInfo(), NotNil)
 		tk2.MustExec("select * from t where a = 2 for update;")
-		c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "sleep(200)"), IsNil)
-		defer func() {
-			c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit"), IsNil)
-		}()
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "pause"), IsNil)
 		tk2.MustExec("commit;")
 		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
 	c.Assert(tk2.Se.TxnInfo().State, Equals, txninfo.TxnCommitting)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit"), IsNil)
 	tk.MustExec("commit;")
 	<-ch
 }
@@ -4475,12 +4489,12 @@ func (s *testTxnStateSerialSuite) TestRollbacking(c *C) {
 	go func() {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into t(a) values (3);")
-		failpoint.Enable("github.com/pingcap/tidb/session/mockSlowRollback", "sleep(200)")
-		defer failpoint.Disable("github.com/pingcap/tidb/session/mockSlowRollback")
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockSlowRollback", "pause"), IsNil)
 		tk.MustExec("rollback;")
 		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockSlowRollback"), IsNil)
 	c.Assert(tk.Se.TxnInfo().State, Equals, txninfo.TxnRollingBack)
 	<-ch
 }
