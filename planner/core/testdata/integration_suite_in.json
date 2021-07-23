@@ -314,8 +314,11 @@
   {
     "name": "TestIsMatchProp",
     "cases": [
-      "select a, b, c from t where a > 3 and b = 4 order by a, c",
-      "select * from t where d = 1 and b = 2 order by c, a"
+      "select a, b, c from t1 where a > 3 and b = 4 order by a, c",
+      "select * from t2 where a = 1 and c = 2 order by b, d",
+      "select a, b, c from t1 where (a = 1 and b = 1 and c = 1) or (a = 1 and b = 1 and c = 2) order by c",
+      "select a, b, c from t1 where (a = 1 and b = 1 and c < 3) or (a = 1 and b = 1 and c > 6) order by c",
+      "select * from t2 where ((a = 1 and b = 1 and d < 3) or (a = 1 and b = 1 and d > 6)) and c = 3 order by d"
     ]
   }
 ]

@@ -516,7 +516,7 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 	// select * from t where d = 1 and b = 2 order by c, b, a;
 	// ```
 	// In the first two `SELECT` statements, `idx_a_b_c` matches the sort order. In the last two `SELECT` statements, `idx_d_c_b_a`
-	// matches the sort order. Hence, we use `path.EqualCols` to deal with the above situations.
+	// matches the sort order. Hence, we use `path.ConstantCols` to deal with the above situations.
 	if !prop.IsEmpty() && all && len(path.IdxCols) >= len(prop.SortItems) {
 		isMatchProp = true
 		i := 0
@@ -528,7 +528,7 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 					i++
 					break
 				}
-				if path.EqualCols == nil || !path.EqualCols[i] {
+				if path.ConstantCols == nil || !path.ConstantCols[i] {
 					break
 				}
 			}

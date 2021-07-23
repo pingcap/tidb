@@ -32,9 +32,9 @@ type AccessPath struct {
 	FullIdxColLens []int
 	IdxCols        []*expression.Column
 	IdxColLens     []int
-	// EqualCols indicates whether the column is constant under the given conditions for all index columns.
-	EqualCols []bool
-	Ranges    []*ranger.Range
+	// ConstantCols indicates whether the column is constant under the given conditions for all index columns.
+	ConstantCols []bool
+	Ranges       []*ranger.Range
 	// CountAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
 	// For index merge path, CountAfterAccess is the row count after partial paths and before we apply table filters.
 	CountAfterAccess float64
