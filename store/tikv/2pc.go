@@ -441,8 +441,13 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		//	zap.String("key", PrettyKeyPrint(key)),
 		//	zap.ByteString("value", value),
 		//	zap.Bool("assertExist", flags.HasAssertExist()),
-		//	zap.Bool("assertNotExist", flags.HasAssertNotExist()))
-		c.mutations.Push(op, isPessimistic, flags.HasAssertExist(), flags.HasAssertNotExist(), it.Handle())
+		//	zap.Bool("assertNotExist", flags.HasAssertNotExist()),
+		//	zap.Bool("amendEnable", c.txn.schemaAmender != nil))
+		mustExist, mustNotExist := flags.HasAssertExist(), flags.HasAssertNotExist()
+		if c.txn.schemaAmender != nil {
+			mustExist, mustNotExist = false, false
+		}
+		c.mutations.Push(op, isPessimistic, mustExist, mustNotExist, it.Handle())
 		size += len(key) + len(value)
 
 		if len(c.primaryKey) == 0 && op != pb.Op_CheckNotExists {
@@ -1113,6 +1118,15 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	err = c.prewriteMutations(bo, c.mutations)
 
 	if err != nil {
+		if strings.Contains(err.Error(), "assertion fail") {
+			ts, err1 := c.store.getTimestampWithRetry(retry.NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetScope())
+			if err1 == nil {
+				_, _, err2 := c.checkSchemaValid(ctx, ts, c.txn.schemaVer, false)
+				if err2 != nil {
+					err = err2
+				}
+			}
+		}
 		// TODO: Now we return an undetermined error as long as one of the prewrite
 		// RPCs fails. However, if there are multiple errors and some of the errors
 		// are not RPC failures, we can return the actual error instead of undetermined.
