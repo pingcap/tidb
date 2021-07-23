@@ -63,7 +63,9 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue           bool
+	IsDDLJobInQueue bool
+	// InReorgAttribute is indicated for cast function that the transition is a kind of reorg process.
+	InReorgAttribute          bool
 	InInsertStmt              bool
 	InUpdateStmt              bool
 	InDeleteStmt              bool

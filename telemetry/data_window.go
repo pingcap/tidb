@@ -24,7 +24,6 @@ import (
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 var (
@@ -69,10 +68,10 @@ type windowData struct {
 	SQLUsage       sqlUsageData       `json:"SQLUsage"`
 }
 
-type sqlType map[string]int64
+type sqlType map[string]uint64
 
 type sqlUsageData struct {
-	SQLTotal int64   `json:"total"`
+	SQLTotal uint64  `json:"total"`
 	SQLType  sqlType `json:"type"`
 }
 
@@ -96,8 +95,8 @@ var (
 	subWindowsLock    = sync.RWMutex{}
 )
 
-func getSQLSum(sqlTypeData *sqlType) int64 {
-	result := int64(0)
+func getSQLSum(sqlTypeData *sqlType) uint64 {
+	result := uint64(0)
 	for _, v := range *sqlTypeData {
 		result += v
 	}
@@ -106,12 +105,13 @@ func getSQLSum(sqlTypeData *sqlType) int64 {
 
 func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
 	ctx := context.TODO()
-	promQL := "sum(tidb_executor_statement_total{}) by (instance,type)"
+	promQL := "avg(tidb_executor_statement_total{}) by (type)"
 	result, err := querySQLMetric(ctx, timepoint, promQL)
 	if err != nil {
-		logutil.BgLogger().Warn("querySQLMetric got error")
+		analysisSQLUsage(result, SQLResult)
+	} else {
+		analysisSQLUsage(result, SQLResult)
 	}
-	anylisSQLUsage(result, SQLResult)
 	return nil
 }
 
@@ -149,7 +149,7 @@ func querySQLMetric(ctx context.Context, queryTime time.Time, promQL string) (re
 	return result, err
 }
 
-func anylisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
+func analysisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
 	if promResult == nil {
 		return
 	}
@@ -159,7 +159,7 @@ func anylisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
 		for _, m := range matrix {
 			v := m.Value
 			promLable := string(m.Metric[pmodel.LabelName("type")])
-			SQLResult.SQLType[promLable] = int64(float64(v))
+			SQLResult.SQLType[promLable] = uint64(v)
 		}
 	}
 }
@@ -188,10 +188,11 @@ func RotateSubWindow() {
 		},
 	}
 
-	if err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage); err != nil {
-		logutil.BgLogger().Error("Error exists when calling prometheus", zap.Error(err))
-
+	err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage)
+	if err != nil {
+		logutil.BgLogger().Info("Error exists when getting the SQL Metric.")
 	}
+
 	thisSubWindow.SQLUsage.SQLTotal = getSQLSum(&thisSubWindow.SQLUsage.SQLType)
 
 	subWindowsLock.Lock()

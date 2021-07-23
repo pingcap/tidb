@@ -379,9 +379,11 @@ func (s *testStaleTxnSuite) TestStalenessAndHistoryRead(c *C) {
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
 
 	// test snapshot mutex with txn
-	tk.MustExec("START TRANSACTION")
+	tk.MustExec(fmt.Sprintf(`START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'`, time2.Format("2006-1-2 15:04:05.000")))
 	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.StartTS, Equals, time2TS)
 	c.Assert(tk.Se.GetSessionVars().SnapshotInfoschema, IsNil)
+	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer2)
 	err := tk.ExecToErr(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
 	c.Assert(err, ErrorMatches, ".*Transaction characteristics can't be changed while a transaction is in progress")
 	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
@@ -950,12 +952,35 @@ func (s *testStaleTxnSuite) TestStaleReadTemporaryTable(c *C) {
 	}
 }
 
+func (s *testStaleTxnSuite) TestStaleReadFutureTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+
+	// Setting tx_read_ts to a time in the future will fail. (One day before the 2038 problem)
+	_, err := tk.Exec("start transaction read only as of timestamp '2038-01-18 03:14:07'")
+	c.Assert(err, ErrorMatches, "cannot set read timestamp to a future time")
+	// Transaction should not be started and read ts should not be set if check fails
+	c.Assert(tk.Se.GetSessionVars().InTxn(), IsFalse)
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
+
+	_, err = tk.Exec("set transaction read only as of timestamp '2038-01-18 03:14:07'")
+	c.Assert(err, ErrorMatches, "cannot set read timestamp to a future time")
+	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
+
+	_, err = tk.Exec("select * from t as of timestamp '2038-01-18 03:14:07'")
+	c.Assert(err, ErrorMatches, "cannot set read timestamp to a future time")
+}
+
 func (s *testStaleTxnSerialSuite) TestStaleReadPrepare(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
+
 	time.Sleep(2 * time.Second)
 	conf := *config.GetGlobalConfig()
 	oldConf := conf
