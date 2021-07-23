@@ -826,7 +826,7 @@ func (hg *Histogram) AvgCountPerNotNullValue(totalCount int64) float64 {
 
 func (hg *Histogram) outOfRange(val types.Datum) bool {
 	if hg.Len() == 0 {
-		return true
+		return false
 	}
 	return chunk.Compare(hg.Bounds.GetRow(0), 0, &val) > 0 ||
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
@@ -849,13 +849,8 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 // boundL  │   │histL         histR       boundR
 //         │   │
 //    lDatum  rDatum
-func (hg *Histogram) outOfRangeRowCount(sc *stmtctx.StatementContext, lDatum, rDatum *types.Datum, increaseCount int64) float64 {
+func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCount int64) float64 {
 	if hg.Len() == 0 {
-		return 0
-	}
-	// make sure l < r
-	cmp, err := lDatum.CompareDatum(sc, rDatum)
-	if err != nil || cmp >= 0 {
 		return 0
 	}
 
@@ -878,6 +873,10 @@ func (hg *Histogram) outOfRangeRowCount(sc *stmtctx.StatementContext, lDatum, rD
 	// Convert the range we want to estimate to scalar value(float64)
 	l := convertDatumToScalar(lDatum, commonPrefix)
 	r := convertDatumToScalar(rDatum, commonPrefix)
+	// make sure l < r
+	if l >= r {
+		return 0
+	}
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
@@ -888,16 +887,19 @@ func (hg *Histogram) outOfRangeRowCount(sc *stmtctx.StatementContext, lDatum, rD
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
-	actualL := l
-	actualR := r
 	leftPercent := float64(0)
 	rightPercent := float64(0)
+
+	// keep l and r unchanged, use actualL and actualR to calculate.
+	actualL := l
+	actualR := r
 	// Handling the out-of-range part on the left of the histogram range
-	if l < histL && r > boundL {
-		if l < boundL {
+	if actualL < histL && actualR > boundL {
+		// make sure boundL <= actualL < actualR <= histL
+		if actualL < boundL {
 			actualL = boundL
 		}
-		if r > histL {
+		if actualR > histL {
 			actualR = histL
 		}
 		// Calculate the percentage of "the shaded area" on the left side.
@@ -907,12 +909,13 @@ func (hg *Histogram) outOfRangeRowCount(sc *stmtctx.StatementContext, lDatum, rD
 	actualL = l
 	actualR = r
 	// Handling the out-of-range part on the right of the histogram range
-	if l < boundR && r > histR {
-		if l < histR {
+	if actualL < boundR && actualR > histR {
+		// make sure histR <= actualL < actualR <= boundR
+		if actualL < histR {
 			actualL = histR
 		}
-		if r > boundR {
-			r = boundR
+		if actualR > boundR {
+			actualR = boundR
 		}
 		// Calculate the percentage of "the shaded area" on the right side.
 		rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
@@ -1069,7 +1072,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, en
 		if c.Histogram.Bounds.NumRows() == 0 {
 			return 0.0, nil
 		}
-		if c.Histogram.NDV > 0 && c.outOfRange(val, encodedVal) {
+		if c.Histogram.NDV > 0 && c.outOfRange(val) {
 			return outOfRangeEQSelectivity(c.Histogram.NDV, tableRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 		}
 		if c.CMSketch != nil {
@@ -1181,7 +1184,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			continue
 		}
 
-		// case 3: it's a interval
+		// case 3: it's an interval
 		cnt := c.BetweenRowCount(sc, lowVal, highVal, lowEncoded, highEncoded)
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boundaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
@@ -1214,7 +1217,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		cnt *= c.GetIncreaseFactor(tableRowCount)
 
 		// handling the out-of-range part
-		if (c.outOfRange(lowVal, lowEncoded) && !lowVal.IsNull()) || c.outOfRange(highVal, highEncoded) {
+		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
 			if c.StatsVer < 2 {
 				cnt += outOfRangeEQSelectivity(outOfRangeBetweenRate, tableRowCount, int64(c.TotalRowCount())) * c.TotalRowCount()
 			} else {
@@ -1222,7 +1225,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 				if increaseCount < 0 {
 					increaseCount = 0
 				}
-				cnt += c.Histogram.outOfRangeRowCount(sc, &lowVal, &highVal, increaseCount)
+				cnt += c.Histogram.outOfRangeRowCount(&lowVal, &highVal, increaseCount)
 			}
 		}
 
@@ -1234,15 +1237,6 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		rowCount = 0
 	}
 	return rowCount, nil
-}
-
-func (c *Column) outOfRange(val types.Datum, encodedVal []byte) bool {
-	outOfHist := c.Histogram.outOfRange(val)
-	if !outOfHist {
-		return false
-	}
-	// Already out of hist.
-	return c.TopN.outOfRange(encodedVal)
 }
 
 // Index represents an index histogram.
@@ -1360,7 +1354,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, inde
 			}
 		}
 
-		// case 2: it's a interval
+		// case 2: it's an interval
 		// The final interval is [low, high)
 		if indexRange.LowExclude {
 			lb = kv.Key(lb).PrefixNext()
@@ -1402,7 +1396,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, inde
 				if increaseCount < 0 {
 					increaseCount = 0
 				}
-				totalCount += idx.Histogram.outOfRangeRowCount(sc, &l, &r, increaseCount)
+				totalCount += idx.Histogram.outOfRangeRowCount(&l, &r, increaseCount)
 			}
 		}
 	}
@@ -1651,21 +1645,13 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 }
 
 func (idx *Index) outOfRange(val types.Datum) bool {
-	outOfTopN := idx.TopN.outOfRange(val.GetBytes())
-	// The val is in TopN, return false.
-	if !outOfTopN {
+	if !idx.Histogram.outOfRange(val) {
 		return false
 	}
-
-	histEmpty := idx.Histogram.Len() == 0
-	// HistEmpty->Hist out of range.
-	if histEmpty {
-		return true
+	if idx.Histogram.Len() > 0 && matchPrefix(idx.Bounds.GetRow(0), 0, &val) {
+		return false
 	}
-	withInLowBoundOrPrefixMatch := chunk.Compare(idx.Bounds.GetRow(0), 0, &val) <= 0 ||
-		matchPrefix(idx.Bounds.GetRow(0), 0, &val)
-	withInHighBound := chunk.Compare(idx.Bounds.GetRow(idx.Bounds.NumRows()-1), 0, &val) >= 0
-	return !withInLowBoundOrPrefixMatch || !withInHighBound
+	return true
 }
 
 // matchPrefix checks whether ad is the prefix of value

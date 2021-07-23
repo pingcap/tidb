@@ -530,14 +530,6 @@ func (c *TopN) Num() int {
 	return len(c.TopN)
 }
 
-// outOfRange checks whether the the given value falls back in [TopN.LowestOne, TopN.HighestOne].
-func (c *TopN) outOfRange(val []byte) bool {
-	if c == nil || len(c.TopN) == 0 {
-		return true
-	}
-	return bytes.Compare(c.TopN[0].Encoded, val) > 0 || bytes.Compare(val, c.TopN[c.Num()-1].Encoded) > 0
-}
-
 // DecodedString returns the value with decoded result.
 func (c *TopN) DecodedString(ctx sessionctx.Context, colTypes []byte) (string, error) {
 	builder := &strings.Builder{}
