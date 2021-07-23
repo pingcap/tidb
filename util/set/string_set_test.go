@@ -33,9 +33,9 @@ func TestStringSet(t *testing.T) {
 		set.Insert(vals[i])
 		set.Insert(vals[i])
 	}
-	assert.Equal(set.Count(), len(vals))
+	assert.Equal(len(vals), set.Count())
 
-	assert.Equal(len(set), len(vals))
+	assert.Equal(len(vals), len(set))
 	for i := range vals {
 		assert.True(set.Exist(vals[i]))
 	}
@@ -51,14 +51,14 @@ func TestStringSet(t *testing.T) {
 	s1 := NewStringSet("1", "2", "3")
 	s2 := NewStringSet("4", "2", "3")
 	s3 := s1.Intersection(s2)
-	assert.Equal(s3, NewStringSet("2", "3"))
+	assert.Equal(NewStringSet("2", "3"), s3)
 
 	s4 := NewStringSet("4", "5", "3")
-	assert.Equal(s3.Intersection(s4), NewStringSet("3"))
+	assert.Equal(NewStringSet("3"), s3.Intersection(s4))
 
 	s5 := NewStringSet("4", "5")
-	assert.Equal(s3.Intersection(s5), NewStringSet())
+	assert.Equal(NewStringSet(), s3.Intersection(s5))
 
 	s6 := NewStringSet()
-	assert.Equal(s3.Intersection(s6), NewStringSet())
+	assert.Equal(NewStringSet(), s3.Intersection(s6))
 }

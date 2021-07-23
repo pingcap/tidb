@@ -32,9 +32,9 @@ func TestIntSet(t *testing.T) {
 		set.Insert(vals[i])
 		set.Insert(vals[i])
 	}
-	assert.Equal(set.Count(), len(vals))
+	assert.Equal(len(vals), set.Count())
 
-	assert.Equal(len(set), len(vals))
+	assert.Equal(len(vals), len(set))
 	for i := range vals {
 		assert.True(set.Exist(vals[i]))
 	}
@@ -56,7 +56,7 @@ func TestInt64Set(t *testing.T) {
 		set.Insert(vals[i])
 	}
 
-	assert.Equal(len(set), len(vals))
+	assert.Equal(len(vals), len(set))
 	for i := range vals {
 		assert.True(set.Exist(vals[i]))
 	}
