@@ -237,6 +237,12 @@ func (c *PlainMutations) Slice(from, to int) CommitterMutations {
 	if c.isPessimisticLock != nil {
 		res.isPessimisticLock = c.isPessimisticLock[from:to]
 	}
+	if c.isAssertExist != nil {
+		res.isAssertExist = c.isAssertExist[from:to]
+	}
+	if c.isAssertNotExist != nil {
+		res.isAssertNotExist = c.isAssertNotExist[from:to]
+	}
 	return &res
 }
 
@@ -324,6 +330,8 @@ type PlainMutation struct {
 	Key               []byte
 	Value             []byte
 	IsPessimisticLock bool
+	IsAssertExist     bool
+	IsAssertNotExist  bool
 }
 
 // MergeMutations append input mutations into current mutations.
@@ -332,6 +340,8 @@ func (c *PlainMutations) MergeMutations(mutations PlainMutations) {
 	c.keys = append(c.keys, mutations.keys...)
 	c.values = append(c.values, mutations.values...)
 	c.isPessimisticLock = append(c.isPessimisticLock, mutations.isPessimisticLock...)
+	c.isAssertExist = append(c.isAssertExist, mutations.isAssertExist...)
+	c.isAssertNotExist = append(c.isAssertNotExist, mutations.isAssertNotExist...)
 }
 
 // AppendMutation merges a single Mutation into the current mutations.
@@ -340,6 +350,8 @@ func (c *PlainMutations) AppendMutation(mutation PlainMutation) {
 	c.keys = append(c.keys, mutation.Key)
 	c.values = append(c.values, mutation.Value)
 	c.isPessimisticLock = append(c.isPessimisticLock, mutation.IsPessimisticLock)
+	c.isAssertExist = append(c.isAssertExist, mutation.IsAssertExist)
+	c.isAssertNotExist = append(c.isAssertNotExist, mutation.IsAssertNotExist)
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
