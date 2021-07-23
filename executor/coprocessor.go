@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // CoprocessorDAGHandler uses to handle cop dag request.
@@ -159,7 +160,7 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 		return nil, errors.Trace(err)
 	}
 	h.dagReq = dagReq
-	is := h.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+	is := h.sctx.GetInfoSchema().(infoschema.InfoSchema)
 	// Build physical plan.
 	bp := core.NewPBPlanBuilder(h.sctx, is, req.Ranges)
 	plan, err := bp.Build(dagReq.Executors)
@@ -168,7 +169,7 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 	}
 	plan = core.InjectExtraProjection(plan)
 	// Build executor.
-	b := newExecutorBuilder(h.sctx, is)
+	b := newExecutorBuilder(h.sctx, is, nil, 0, false, oracle.GlobalTxnScope)
 	return b.build(plan), nil
 }
 

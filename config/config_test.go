@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 
@@ -199,8 +200,10 @@ skip-register-to-dashboard = true
 deprecate-integer-display-length = true
 enable-enum-length-limit = false
 stores-refresh-interval = 30
+enable-forwarding = true
 [performance]
 txn-total-size-limit=2000
+tcp-no-delay = false
 [tikv-client]
 commit-timeout="41s"
 max-batch-size=128
@@ -227,6 +230,9 @@ group= "abc"
 zone= "dc-1"
 [security]
 spilled-file-encryption-method = "plaintext"
+[pessimistic-txn]
+deadlock-history-capacity = 123
+deadlock-history-collect-retryable = true
 `)
 
 	c.Assert(err, IsNil)
@@ -243,6 +249,7 @@ spilled-file-encryption-method = "plaintext"
 	// Test that the value will be overwritten by the config file.
 	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
 	c.Assert(conf.AlterPrimaryKey, Equals, true)
+	c.Assert(conf.Performance.TCPNoDelay, Equals, false)
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(conf.TiKVClient.AsyncCommit.KeysLimit, Equals, uint(123))
@@ -278,7 +285,10 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
 	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
 	c.Assert(conf.EnableEnumLengthLimit, Equals, false)
+	c.Assert(conf.EnableForwarding, Equals, true)
 	c.Assert(conf.StoresRefreshInterval, Equals, uint64(30))
+	c.Assert(conf.PessimisticTxn.DeadlockHistoryCapacity, Equals, uint(123))
+	c.Assert(conf.PessimisticTxn.DeadlockHistoryCollectRetryable, Equals, true)
 
 	_, err = f.WriteString(`
 [log.file]
@@ -419,6 +429,14 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	// is recycled when the reference count drops to 0.
 	c.Assert(os.Remove(certFile), IsNil)
 	c.Assert(os.Remove(keyFile), IsNil)
+
+	// test for config `toml` and `json` tag names
+	c1 := Config{}
+	st := reflect.TypeOf(c1)
+	for i := 0; i < st.NumField(); i++ {
+		field := st.Field(i)
+		c.Assert(field.Tag.Get("toml"), Equals, field.Tag.Get("json"))
+	}
 }
 
 func (s *testConfigSuite) TestOOMActionValid(c *C) {
@@ -584,5 +602,25 @@ func (s *testConfigSuite) TestSecurityValid(c *C) {
 	for _, tt := range tests {
 		c1.Security.SpilledFileEncryptionMethod = tt.spilledFileEncryptionMethod
 		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+	}
+}
+
+func (s *testConfigSuite) TestTcpNoDelay(c *C) {
+	c1 := NewConfig()
+	//check default value
+	c.Assert(c1.Performance.TCPNoDelay, Equals, true)
+}
+
+func (s *testConfigSuite) TestConfigExample(c *C) {
+	conf := NewConfig()
+	_, localFile, _, _ := runtime.Caller(0)
+	configFile := filepath.Join(filepath.Dir(localFile), "config.toml.example")
+	metaData, err := toml.DecodeFile(configFile, conf)
+	c.Assert(err, IsNil)
+	keys := metaData.Keys()
+	for _, key := range keys {
+		for _, s := range key {
+			c.Assert(ContainHiddenConfig(s), IsFalse)
+		}
 	}
 }

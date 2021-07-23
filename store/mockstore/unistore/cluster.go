@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
-	us "github.com/ngaut/unistore/tikv"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
+	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 type delayKey struct {
@@ -29,7 +29,7 @@ type delayKey struct {
 	regionID uint64
 }
 
-var _ cluster.Cluster = new(Cluster)
+var _ testutils.Cluster = new(Cluster)
 
 // Cluster simulates a TiKV cluster. It focuses on management and the change of
 // meta data. A Cluster mainly includes following 3 kinds of meta data:

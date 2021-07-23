@@ -261,7 +261,7 @@ a	b	c	e
 desc select * from t order by a+1;
 id	estRows	task	access object	operator info
 Projection_5	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e
-└─Projection_13	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e, EMPTY_NAME
+└─Projection_13	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e, plus(test.t.a, 1)
   └─IndexLookUp_12	10000.00	root		
     ├─IndexFullScan_10(Build)	10000.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	keep order:true, stats:pseudo
     └─TableRowIDScan_11(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -389,3 +389,66 @@ explain format = 'brief' select c0 from t0;
 id	estRows	task	access object	operator info
 TableReader	10000.00	root		data:TableFullScan
 └─TableFullScan	10000.00	cop[tikv]	table:t0	keep order:false, stats:pseudo
+ -- TableRead
+drop table if exists tbl1;
+create table tbl1 (id int unsigned not null auto_increment primary key, s int, index((md5(s))));
+insert into tbl1 (id) select null;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+ insert into tbl1 (id) select null from tbl1;
+update tbl1 set s=id%32;
+explain format = 'brief' select count(*) from tbl1 where md5(s) like '02e74f10e0327ad868d138f2b4fdd6f%';
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:count(Column#6)->Column#4
+└─IndexReader	1.00	root		index:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#6
+    └─IndexRangeScan	250.00	cop[tikv]	table:tbl1, index:expression_index(md5(`s`))	range:["02e74f10e0327ad868d138f2b4fdd6f","02e74f10e0327ad868d138f2b4fdd6g"), keep order:false, stats:pseudo
+select count(*) from tbl1 use index() where md5(s) like '02e74f10e0327ad868d138f2b4fdd6f%';
+count(*)
+64
+drop table if exists t;
+create table t(a int, b varchar(10), key((lower(b)), (a+1)), key((upper(b))));
+insert into t values (1, "A"), (2, "B"), (3, "C"), (4, "D"), (5, "E"), (6, "F");
+analyze table t;
+desc format = 'brief' select * from t where (lower(b) = "a" and a+1 = 2) or (lower(b) = "b" and a+1 = 5);
+id	estRows	task	access object	operator info
+Projection	1.00	root		test.t.a, test.t.b
+└─IndexLookUp	1.00	root		
+  ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:expression_index(lower(`b`), `a` + 1)	range:["a" 2,"a" 2], ["b" 5,"b" 5], keep order:false
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false
+desc format = 'brief' select * from t where not (lower(b) >= "a");
+id	estRows	task	access object	operator info
+Projection	0.00	root		test.t.a, test.t.b
+└─IndexLookUp	0.00	root		
+  ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:expression_index(lower(`b`), `a` + 1)	range:[-inf,"a"), keep order:false
+  └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false
+desc format = 'brief' select count(upper(b)) from t group by upper(b);
+id	estRows	task	access object	operator info
+StreamAgg	4.80	root		group by:upper(test.t.b), funcs:count(upper(test.t.b))->Column#7
+└─IndexReader	6.00	root		index:IndexFullScan
+  └─IndexFullScan	6.00	cop[tikv]	table:t, index:expression_index_2(upper(`b`))	keep order:true
+desc format = 'brief' select max(upper(b)) from t group by upper(b);
+id	estRows	task	access object	operator info
+StreamAgg	4.80	root		group by:upper(test.t.b), funcs:max(upper(test.t.b))->Column#7
+└─IndexReader	6.00	root		index:IndexFullScan
+  └─IndexFullScan	6.00	cop[tikv]	table:t, index:expression_index_2(upper(`b`))	keep order:true
+desc format = 'brief' select count(upper(b)) from t use index() group by upper(b);
+id	estRows	task	access object	operator info
+HashAgg	6.00	root		group by:Column#9, funcs:count(Column#8)->Column#7
+└─Projection	6.00	root		upper(test.t.b)->Column#8, upper(test.t.b)->Column#9
+  └─TableReader	6.00	root		data:TableFullScan
+    └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+desc format = 'brief' select max(upper(b)) from t use index() group by upper(b);
+id	estRows	task	access object	operator info
+HashAgg	6.00	root		group by:Column#9, funcs:max(Column#8)->Column#7
+└─Projection	6.00	root		upper(test.t.b)->Column#8, upper(test.t.b)->Column#9
+  └─TableReader	6.00	root		data:TableFullScan
+    └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false

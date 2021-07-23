@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"flag"
+	"fmt"
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
@@ -23,15 +24,16 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 var _ = SerialSuites(&testTableSampleSuite{})
 
 type testTableSampleSuite struct {
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	domain  *domain.Domain
 }
@@ -41,7 +43,7 @@ func (s *testTableSampleSuite) SetUpSuite(c *C) {
 	useMockTikv := *mockTikv
 	if useMockTikv {
 		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.WithClusterInspector(func(c testutils.Cluster) {
 				mockstore.BootstrapWithSingleStore(c)
 				s.cluster = c
 			}),
@@ -70,7 +72,7 @@ func (s *testTableSampleSuite) initSampleTest(c *C) *testkit.TestKit {
 func (s *testTableSampleSuite) TestTableSampleBasic(c *C) {
 	tk := s.initSampleTest(c)
 	tk.MustExec("create table t (a int);")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows())
 
 	tk.MustExec("insert into t values (0), (1000), (2000);")
@@ -118,9 +120,35 @@ func (s *testTableSampleSuite) TestTableSampleMultiRegions(c *C) {
 	tk.MustExec("drop table t2;")
 }
 
+func (s *testTableSampleSuite) TestTableSampleNoSplitTable(c *C) {
+	tk := s.initSampleTest(c)
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t1 (id int primary key);")
+	tk.MustExec("create table t2 (id int primary key);")
+	tk.MustExec("insert into t2 values(1);")
+	rows := tk.MustQuery("select * from t1 tablesample regions();").Rows()
+	rows2 := tk.MustQuery("select * from t2 tablesample regions();").Rows()
+	c.Assert(len(rows), Equals, 0)
+	c.Assert(len(rows2), Equals, 1)
+}
+
+func (s *testTableSampleSuite) TestTableSamplePlan(c *C) {
+	tk := s.initSampleTest(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bigint, b int default 10);")
+	tk.MustExec("split table t between (0) and (100000) regions 4;")
+	tk.MustExec("insert into t(a) values (1), (2), (3);")
+	rows := tk.MustQuery("explain analyze select a from t tablesample regions();").Rows()
+	c.Assert(len(rows), Equals, 2)
+	tableSample := fmt.Sprintf("%v", rows[1])
+	c.Assert(tableSample, Matches, ".*TableSample.*")
+}
+
 func (s *testTableSampleSuite) TestTableSampleSchema(c *C) {
 	tk := s.initSampleTest(c)
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	// Clustered index
 	tk.MustExec("create table t (a varchar(255) primary key, b bigint);")
 	tk.MustExec("insert into t values ('b', 100), ('y', 100);")

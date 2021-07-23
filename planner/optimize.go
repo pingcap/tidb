@@ -19,6 +19,7 @@ import (
 	"math"
 	"runtime/trace"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/cascades"
+	"github.com/pingcap/tidb/planner/core"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -43,7 +45,7 @@ import (
 )
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
-func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.StmtNode, error) {
+func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*plannercore.CachedPrepareStmt, error) {
 	var ok bool
 	execID := stmt.ExecID
 	if stmt.Name != "" {
@@ -56,7 +58,7 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.Stm
 		if !ok {
 			return nil, errors.Errorf("invalid CachedPrepareStmt type")
 		}
-		return preparedObj.PreparedAst.Stmt, nil
+		return preparedObj, nil
 	}
 	return nil, plannercore.ErrStmtNotFound
 }
@@ -64,12 +66,12 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.Stm
 // IsReadOnly check whether the ast.Node is a read only statement.
 func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
-		s, err := GetPreparedStmt(execStmt, vars)
+		prepareStmt, err := GetPreparedStmt(execStmt, vars)
 		if err != nil {
 			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
 			return false
 		}
-		return ast.IsReadOnly(s)
+		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt)
 	}
 	return ast.IsReadOnly(node)
 }
@@ -86,6 +88,20 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		defer func() {
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}()
+	}
+
+	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
+	stmtHints, warns := handleStmtHints(tableHints)
+	sessVars.StmtCtx.StmtHints = stmtHints
+	for _, warn := range warns {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+	}
+	warns = warns[:0]
+	for name, val := range stmtHints.SetVars {
+		err := variable.SetStmtVar(sessVars, name, val)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
 	}
 
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
@@ -105,20 +121,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	sctx.PrepareTSFuture(ctx)
-
-	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
-	stmtHints, warns := handleStmtHints(tableHints)
-	sessVars.StmtCtx.StmtHints = stmtHints
-	for _, warn := range warns {
-		sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
-	}
-	warns = warns[:0]
-	for name, val := range stmtHints.SetVars {
-		err := variable.SetStmtVar(sessVars, name, val)
-		if err != nil {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		}
-	}
 
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
@@ -219,13 +221,63 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return bestPlan, names, nil
 }
 
+func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil {
+		return true, nil
+	}
+	roles := sctx.GetSessionVars().ActiveRoles
+	// allow replication thread
+	// NOTE: it is required, whether SEM is enabled or not, only user with explicit RESTRICTED_REPLICA_WRITER_ADMIN granted can ignore the restriction, so we need to surpass the case that if SEM is not enabled, SUPER will has all privileges
+	if pm.HasExplicitlyGrantedDynamicPrivilege(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
+		return true, nil
+	}
+
+	switch node.(type) {
+	// allow change variables (otherwise can't unset read-only mode)
+	case *ast.SetStmt,
+		// allow analyze table
+		*ast.AnalyzeTableStmt,
+		*ast.UseStmt,
+		*ast.ShowStmt,
+		*ast.CreateBindingStmt,
+		*ast.DropBindingStmt,
+		*ast.PrepareStmt,
+		*ast.BeginStmt,
+		*ast.RollbackStmt:
+		return true, nil
+	case *ast.CommitStmt:
+		txn, err := sctx.Txn(true)
+		if err != nil {
+			return false, err
+		}
+		if !txn.IsReadOnly() {
+			return false, txn.Rollback()
+		}
+		return true, nil
+	}
+
+	vars := sctx.GetSessionVars()
+	return IsReadOnly(node, vars), nil
+}
+
+var planBuilderPool = sync.Pool{
+	New: func() interface{} {
+		return plannercore.NewPlanBuilder()
+	},
+}
+
 func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, float64, error) {
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
-	builder, _ := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
+
+	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+
+	builder.Init(sctx, is, hintProcessor)
 
 	// reset fields about rewrite
 	sctx.GetSessionVars().RewritePhaseInfo.Reset()
@@ -235,6 +287,18 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return nil, nil, 0, err
 	}
 	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
+
+	if execPlan, ok := p.(*plannercore.Execute); ok {
+		execID := execPlan.ExecID
+		if execPlan.Name != "" {
+			execID = sctx.GetSessionVars().PreparedStmtNameToID[execPlan.Name]
+		}
+		if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execID]; ok {
+			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
+				is = domain.GetDomain(sctx).InfoSchema()
+			}
+		}
+	}
 
 	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
 	activeRoles := sctx.GetSessionVars().ActiveRoles
@@ -249,6 +313,16 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	if err := plannercore.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
 		return nil, nil, 0, err
+	}
+
+	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() {
+		allowed, err := allowInReadOnlyMode(sctx, node)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		if !allowed {
+			return nil, nil, 0, errors.Trace(core.ErrSQLInReadOnlyMode)
+		}
 	}
 
 	// Handle the execute statement.
@@ -293,7 +367,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 			normalizeSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
 			normalizeSQL = plannercore.EraseLastSemicolonInSQL(normalizeSQL)
 			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash, nil
+			return x.Stmt, normalizeSQL, hash.String(), nil
 		case *ast.SetOprStmt:
 			plannercore.EraseLastSemicolon(x)
 			var normalizeExplainSQL string
@@ -309,7 +383,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 			}
 			normalizeSQL := normalizeExplainSQL[idx:]
 			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash, nil
+			return x.Stmt, normalizeSQL, hash.String(), nil
 		}
 	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 		plannercore.EraseLastSemicolon(x)
@@ -322,7 +396,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string)
 			return x, "", "", nil
 		}
 		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
-		return x, normalizedSQL, hash, nil
+		return x, normalizedSQL, hash.String(), nil
 	}
 	return nil, "", "", nil
 }
@@ -402,7 +476,11 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
 	defer trace.StartRegion(ctx, "Optimize").End()
 	var err error
-	builder, _ := plannercore.NewPlanBuilder(sctx, is, nil)
+
+	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+
+	builder.Init(sctx, is, nil)
 	p, err := builder.Build(ctx, execAst)
 	if err != nil {
 		return nil, err
@@ -556,4 +634,5 @@ func setFoundInBinding(sctx sessionctx.Context, opt bool) error {
 
 func init() {
 	plannercore.OptimizeAstNode = Optimize
+	plannercore.IsReadOnly = IsReadOnly
 }

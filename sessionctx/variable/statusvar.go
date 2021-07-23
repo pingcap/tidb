@@ -103,7 +103,6 @@ var tlsSupportedCiphers string
 
 // Taken from https://github.com/openssl/openssl/blob/c784a838e0947fcca761ee62def7d077dc06d37f/include/openssl/ssl.h#L141 .
 var tlsVersionString = map[uint16]string{
-	tls.VersionSSL30: "SSLv3",
 	tls.VersionTLS10: "TLSv1",
 	tls.VersionTLS11: "TLSv1.1",
 	tls.VersionTLS12: "TLSv1.2",
@@ -137,7 +136,11 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]interface{}, err
 		statusVars["Ssl_cipher_list"] = tlsSupportedCiphers
 		// tls.VerifyClientCertIfGiven == SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE
 		statusVars["Ssl_verify_mode"] = 0x01 | 0x04
-		statusVars["Ssl_version"] = tlsVersionString[vars.TLSConnectionState.Version]
+		if tlsVersion, tlsVersionKnown := tlsVersionString[vars.TLSConnectionState.Version]; tlsVersionKnown {
+			statusVars["Ssl_version"] = tlsVersion
+		} else {
+			statusVars["Ssl_version"] = "unknown_tls_version"
+		}
 	}
 
 	return statusVars, nil

@@ -16,8 +16,11 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -245,7 +248,8 @@ func (s *testSuite5) TestIndexJoinEnumSetIssue19233(c *C) {
 	tk.MustExec(`insert into p1 values('HOST_PORT');`)
 	tk.MustExec(`insert into p2 values('HOST_PORT');`)
 	for _, table := range []string{"p1", "p2"} {
-		for _, hint := range []string{"INL_HASH_JOIN", "INL_MERGE_JOIN", "INL_JOIN"} {
+		// INL_MERGE_JOIN do not support enum type. ref: https://github.com/pingcap/tidb/issues/24473
+		for _, hint := range []string{"INL_HASH_JOIN", "INL_JOIN"} {
 			sql := fmt.Sprintf(`select /*+ %s(%s) */ * from i, %s where i.objectType = %s.type;`, hint, table, table, table)
 			rows := tk.MustQuery(sql).Rows()
 			c.Assert(len(rows), Equals, 64)
@@ -272,4 +276,106 @@ func (s *testSuite5) TestIssue19411(c *C) {
 		"1 1",
 		"2 2"))
 	tk.MustExec("commit")
+}
+
+func (s *testSuite5) TestIssue23653(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key(c_str), unique key(c_int), unique key(c_str))")
+	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key(c_int, c_str(4)), key(c_int), unique key(c_str))")
+	tk.MustExec("insert into t1 values (1, 'cool buck'), (2, 'reverent keller')")
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustQuery("select /*+ inl_join(t2) */ * from t1, t2 where t1.c_str = t2.c_str and t1.c_int = t2.c_int and t1.c_int = 2").Check(testkit.Rows(
+		"2 reverent keller 2 reverent keller"))
+}
+
+func (s *testSuite5) TestIssue23656(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (c_int int, c_str varchar(40), primary key(c_int, c_str(4)))")
+	tk.MustExec("create table t2 like t1")
+	tk.MustExec("insert into t1 values (1, 'clever jang'), (2, 'blissful aryabhata')")
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustQuery("select /*+ inl_join(t2) */ * from t1 join t2 on t1.c_str = t2.c_str where t1.c_int = t2.c_int;").Check(testkit.Rows(
+		"1 clever jang 1 clever jang",
+		"2 blissful aryabhata 2 blissful aryabhata"))
+}
+
+func (s *testSuite5) TestIssue23722(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b char(10), c blob, primary key (c(5)) clustered);")
+	tk.MustExec("insert into t values (20301,'Charlie',x'7a');")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("20301 Charlie z"))
+	tk.MustQuery("select * from t where c in (select c from t where t.c >= 'a');").Check(testkit.Rows("20301 Charlie z"))
+
+	// Test lookup content exceeds primary key prefix.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b char(10), c varchar(255), primary key (c(5)) clustered);")
+	tk.MustExec("insert into t values (20301,'Charlie','aaaaaaa');")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("20301 Charlie aaaaaaa"))
+	tk.MustQuery("select * from t where c in (select c from t where t.c >= 'a');").Check(testkit.Rows("20301 Charlie aaaaaaa"))
+
+	// Test the original case.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`CREATE TABLE t (
+		col_15 decimal(49,3),
+		col_16 smallint(5),
+		col_17 char(118) CHARACTER SET utf8 COLLATE utf8_general_ci DEFAULT 'tLOOjbIXuuLKPFjkLo',
+		col_18 set('Alice','Bob','Charlie','David') NOT NULL,
+		col_19 tinyblob,
+		PRIMARY KEY (col_19(5),col_16) /*T![clustered_index] NONCLUSTERED */,
+		UNIQUE KEY idx_10 (col_19(5),col_16)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec("INSERT INTO `t` VALUES (38799.400,20301,'KETeFZhkoxnwMAhA','Charlie',x'7a7968584570705a647179714e56');")
+	tk.MustQuery("select  t.* from t where col_19 in  " +
+		"( select col_19 from t where t.col_18 <> 'David' and t.col_19 >= 'jDzNn' ) " +
+		"order by col_15 , col_16 , col_17 , col_18 , col_19;").Check(testkit.Rows("38799.400 20301 KETeFZhkoxnwMAhA Charlie zyhXEppZdqyqNV"))
+}
+
+func (s *testSuite5) TestIssue24547(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists a")
+	tk.MustExec("drop table if exists b")
+	tk.MustExec("CREATE TABLE `a` (\n  `v` varchar(100) DEFAULT NULL,\n  `k1` varchar(100) NOT NULL,\n  `k2` varchar(100) NOT NULL,\n  PRIMARY KEY (`k1`(3),`k2`(3)) /*T![clustered_index] CLUSTERED */,\n  KEY `kk2` (`k2`(3)),\n  UNIQUE KEY `uk1` (`v`)\n)")
+	tk.MustExec("CREATE TABLE `b` (\n  `v` varchar(100) DEFAULT NULL,\n  `k1` varchar(100) NOT NULL,\n  `k2` varchar(100) NOT NULL,\n  PRIMARY KEY (`k1`(3),`k2`(3)) /*T![clustered_index] CLUSTERED */,\n  KEY `kk2` (`k2`(3))\n)")
+	tk.MustExec("insert into a(v, k1, k2) values('1', '1', '1'), ('22', '22', '22'), ('333', '333', '333'), ('3444', '3444', '3444'), ('444', '444', '444')")
+	tk.MustExec("insert into b(v, k1, k2) values('1', '1', '1'), ('22', '22', '22'), ('333', '333', '333'), ('2333', '2333', '2333'), ('555', '555', '555')")
+	tk.MustExec("delete a from a inner join b on a.k1 = b.k1 and a.k2 = b.k2 where b.k2 <> '333'")
+}
+
+func (s *testSuite5) TestPartitionTableIndexJoinAndIndexReader(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec(`create table t (a int, b int, key(a)) partition by hash(a) partitions 4`)
+	tk.MustExec("create table tnormal (a int, b int, key(a), key(b))")
+	nRows := 512
+	values := make([]string, 0, nRows)
+	for i := 0; i < nRows; i++ {
+		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(nRows), rand.Intn(nRows)))
+	}
+	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
+	tk.MustExec(fmt.Sprintf("insert into tnormal values %v", strings.Join(values, ", ")))
+
+	randRange := func() (int, int) {
+		a, b := rand.Intn(nRows), rand.Intn(nRows)
+		if a > b {
+			return b, a
+		}
+		return a, b
+	}
+	for i := 0; i < nRows; i++ {
+		lb, rb := randRange()
+		cond := fmt.Sprintf("(t2.b between %v and %v)", lb, rb)
+		result := tk.MustQuery("select t1.a from tnormal t1, tnormal t2 where t1.a=t2.b and " + cond).Sort().Rows()
+		tk.MustQuery("select /*+ TIDB_INLJ(t1, t2) */ t1.a from t t1, t t2 where t1.a=t2.b and " + cond).Sort().Check(result)
+	}
 }

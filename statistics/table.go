@@ -62,6 +62,12 @@ type Table struct {
 	Version       uint64
 	Name          string
 	ExtendedStats *ExtendedStatsColl
+	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
+	// It is the schema version of the corresponding table. It is used to skip redundant
+	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
+	// and the schema of the table does not change, we don't need to load the stats for this
+	// table again.
+	TblInfoUpdateTS uint64
 }
 
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.
@@ -136,9 +142,10 @@ func (t *Table) Copy() *Table {
 		newHistColl.Indices[id] = idx
 	}
 	nt := &Table{
-		HistColl: newHistColl,
-		Version:  t.Version,
-		Name:     t.Name,
+		HistColl:        newHistColl,
+		Version:         t.Version,
+		Name:            t.Name,
+		TblInfoUpdateTS: t.TblInfoUpdateTS,
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
@@ -201,7 +208,7 @@ func (t *Table) ColumnByName(colName string) *Column {
 func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSketch, *TopN, *FMSketch) {
 	if isIndex {
 		idxStatsInfo := t.Indices[ID]
-		return int64(idxStatsInfo.TotalRowCount()), idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), nil
+		return int64(idxStatsInfo.TotalRowCount()), idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy()
 	}
 	colStatsInfo := t.Columns[ID]
 	return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy()
@@ -270,19 +277,24 @@ func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Dat
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
-func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) float64 {
+func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) (float64, error) {
 	c, ok := t.Columns[colID]
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
-		return float64(t.Count) / pseudoBetweenRate
+		return float64(t.Count) / pseudoBetweenRate, nil
 	}
-	count, err := c.BetweenRowCount(sc, a, b)
+	aEncoded, err := codec.EncodeKey(sc, nil, a)
 	if err != nil {
-		return 0
+		return 0, err
 	}
+	bEncoded, err := codec.EncodeKey(sc, nil, b)
+	if err != nil {
+		return 0, err
+	}
+	count := c.BetweenRowCount(sc, a, b, aEncoded, bEncoded)
 	if a.IsNull() {
 		count += float64(c.NullCount)
 	}
-	return count * c.GetIncreaseFactor(t.Count)
+	return count * c.GetIncreaseFactor(t.Count), nil
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
@@ -291,7 +303,11 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
 		return float64(t.Count) / pseudoEqualRate, nil
 	}
-	result, err := c.equalRowCount(sc, value, t.ModifyCount)
+	encodedVal, err := codec.EncodeKey(sc, nil, value)
+	if err != nil {
+		return 0, err
+	}
+	result, err := c.equalRowCount(sc, value, encodedVal, t.ModifyCount)
 	result *= c.GetIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }

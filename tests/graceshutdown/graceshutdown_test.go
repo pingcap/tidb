@@ -26,7 +26,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 var (
@@ -58,7 +59,7 @@ func (s *TestGracefulShutdownSuite) startTiDBWithoutPD(port int, statusPort int)
 		fmt.Sprintf("-P=%d", port),
 		fmt.Sprintf("--status=%d", statusPort),
 		fmt.Sprintf("--log-file=%s/tidb%d.log", *tmpPath, port))
-	log.Infof("starting tidb: %v", cmd)
+	log.Info("starting tidb", zap.Any("cmd", cmd))
 	err = cmd.Start()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -71,11 +72,11 @@ func (s *TestGracefulShutdownSuite) stopService(name string, cmd *exec.Cmd) (err
 	if err = cmd.Process.Signal(os.Interrupt); err != nil {
 		return errors.Trace(err)
 	}
-	log.Infof("service \"%s\" Interrupt", name)
+	log.Info("service Interrupt", zap.String("name", name))
 	if err = cmd.Wait(); err != nil {
 		return errors.Trace(err)
 	}
-	log.Infof("service \"%s\" stopped gracefully", name)
+	log.Info("service stopped gracefully", zap.String("name", name))
 	return nil
 }
 
@@ -87,30 +88,42 @@ func (s *TestGracefulShutdownSuite) connectTiDB(port int) (db *sql.DB, err error
 	for i := 0; i < 5; i++ {
 		db, err = sql.Open("mysql", dsn)
 		if err != nil {
-			log.Warnf("open addr %v failed, retry count %d err %v", addr, i, err)
+			log.Warn("open addr failed",
+				zap.String("addr", addr),
+				zap.Int("retry count", i),
+				zap.Error(err),
+			)
 			continue
 		}
 		err = db.Ping()
 		if err == nil {
 			break
 		}
-		log.Warnf("ping addr %v failed, retry count %d err %v", addr, i, err)
+		log.Warn("ping addr failed",
+			zap.String("addr", addr),
+			zap.Int("retry count", i),
+			zap.Error(err),
+		)
 
 		err = db.Close()
 		if err != nil {
-			log.Warnf("close db failed, retry count %d err %v", i, err)
+			log.Warn("close db failed", zap.Int("retry count", i), zap.Error(err))
 			break
 		}
 		time.Sleep(sleepTime)
 		sleepTime += sleepTime
 	}
 	if err != nil {
-		log.Errorf("connect to server addr %v failed %v, take time %v", addr, err, time.Since(startTime))
+		log.Error("connect to server addr failed",
+			zap.String("addr", addr),
+			zap.Duration("take time", time.Since(startTime)),
+			zap.Error(err),
+		)
 		return nil, errors.Trace(err)
 	}
 	db.SetMaxOpenConns(10)
 
-	log.Infof("connect to server %s ok", addr)
+	log.Info("connect to server ok", zap.String("addr", addr))
 	return db, nil
 }
 
@@ -121,7 +134,7 @@ func (s *TestGracefulShutdownSuite) TestGracefulShutdown(c *C) {
 
 	db, err := s.connectTiDB(port)
 	c.Assert(err, IsNil)
-	defer func(){
+	defer func() {
 		err := db.Close()
 		c.Assert(err, IsNil)
 	}()

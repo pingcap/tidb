@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -480,7 +480,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	affectedRows := h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
 
 	// if it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-	is := infoschema.GetInfoSchema(h.mu.ctx)
+	is := h.mu.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	if is == nil {
 		return false, errors.New("cannot get the information schema")
 	}
@@ -750,11 +750,11 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		return nil
 	}
 	var tbl *statistics.Table
-	if table.Meta().GetPartitionInfo() == nil || h.CurrentPruneMode() == variable.Dynamic {
-		tbl = h.GetTableStats(table.Meta())
-	} else {
-		tbl = h.GetPartitionStats(table.Meta(), physicalTableID)
+	// feedback for partition is not ready
+	if table.Meta().GetPartitionInfo() != nil {
+		return nil
 	}
+	tbl = h.GetTableStats(table.Meta())
 	var cms *statistics.CMSketch
 	var hist *statistics.Histogram
 	var topN *statistics.TopN
@@ -822,7 +822,8 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int64) error {
 	hist = statistics.UpdateHistogram(hist, q, int(statsVersion))
-	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0)
+	// feedback for partition is not ready.
+	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0, false)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
@@ -868,7 +869,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 	if !analyzed {
 		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
 		dur := time.Since(t)
-		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %vs", dur)
+		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %v", dur)
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {
@@ -975,7 +976,11 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 		return false
 	}
 	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio, start, end, time.Now()); needAnalyze {
-		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", sql), zap.String("reason", reason))
+		escaped, err := sqlexec.EscapeSQL(sql, params...)
+		if err != nil {
+			return false
+		}
+		logutil.BgLogger().Info("[stats] auto analyze triggered", zap.String("sql", escaped), zap.String("reason", reason))
 		tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 		h.execAutoAnalyze(tableStatsVer, sql, params...)
@@ -983,10 +988,16 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	}
 	for _, idx := range tblInfo.Indices {
 		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
-			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
+			sqlWithIdx := sql + "index %n"
+			paramsWithIdx := append(params, idx.Name.O)
+			escaped, err := sqlexec.EscapeSQL(sql, params...)
+			if err != nil {
+				return false
+			}
+			logutil.BgLogger().Info("[stats] auto analyze for unanalyzed", zap.String("sql", escaped))
 			tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			h.execAutoAnalyze(tableStatsVer, sql+" index %n", append(params, idx.Name.O)...)
+			h.execAutoAnalyze(tableStatsVer, sqlWithIdx, paramsWithIdx...)
 			return true
 		}
 	}

@@ -159,7 +159,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
-	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
+	_, err = se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'")
+	c.Assert(err, IsNil) // disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)
@@ -248,7 +249,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
-		core.Preprocess(se, stmt, s.is)
+		err = core.Preprocess(se, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: s.is}))
+		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
@@ -323,7 +325,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		// Make txn not read only.
 		txn, err := se.Txn(true)
 		c.Assert(err, IsNil)
-		txn.Set(kv.Key("AAA"), []byte("BBB"))
+		err = txn.Set(kv.Key("AAA"), []byte("BBB"))
+		c.Assert(err, IsNil)
 		se.StmtCommit()
 		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -345,8 +348,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	}()
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	se.Execute(context.Background(), "use test")
-	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'")
+	c.Assert(err, IsNil) // disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.SetHashAggFinalConcurrency(1)
@@ -422,7 +427,8 @@ func (s *testPlanSuite) TestAggEliminator(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
-	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
+	_, err = se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'")
+	c.Assert(err, IsNil) // disable only full group by
 	var input []string
 	var output []struct {
 		SQL  string
@@ -933,7 +939,7 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		p, _, err := planner.Optimize(ctx, tk.Se, stmt, is)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, comment)
 		planString := core.ToString(p)
 		s.testData.OnRecord(func() {
 			output[i].Best = planString
@@ -1421,7 +1427,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderSplitAvg(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		core.Preprocess(se, stmt, s.is)
+		err = core.Preprocess(se, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: s.is}))
+		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 
@@ -1692,4 +1699,56 @@ func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
 	// Currently its output is the same as the second test case in the testdata, which is `output[1]`. If this doesn't
 	// hold in the future, you may need to modify this.
 	tk.MustQuery("explain format = 'brief' select * from test.tt where a=1 and b=1").Check(testkit.Rows(output[1].Plan...))
+}
+
+func (s *testPlanSuite) TestEnumIndex(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(e enum('c','b','a',''), index idx(e))")
+	tk.MustExec("insert ignore into t values(0),(1),(2),(3),(4);")
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+		})
+		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testPlanSuite) TestPossibleProperties(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists student, sc")
+	tk.MustExec("create table student(id int primary key auto_increment, name varchar(4) not null)")
+	tk.MustExec("create table sc(id int primary key auto_increment, student_id int not null, course_id int not null, score int not null)")
+	tk.MustExec("insert into student values (1,'s1'), (2,'s2')")
+	tk.MustExec("insert into sc (student_id, course_id, score) values (1,1,59), (1,2,57), (1,3,76), (2,1,99), (2,2,100), (2,3,100)")
+	tk.MustQuery("select /*+ stream_agg() */ a.id, avg(b.score) as afs from student a join sc b on a.id = b.student_id where b.score < 60 group by a.id having count(b.course_id) >= 2").Check(testkit.Rows(
+		"1 58.0000",
+	))
 }

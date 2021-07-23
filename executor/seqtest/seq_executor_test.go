@@ -33,7 +33,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -52,14 +52,15 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func TestT(t *testing.T) {
@@ -80,7 +81,7 @@ var _ = SerialSuites(&seqTestSuite{})
 var _ = SerialSuites(&seqTestSuite1{})
 
 type seqTestSuite struct {
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	domain  *domain.Domain
 	*parser.Parser
@@ -95,7 +96,7 @@ func (s *seqTestSuite) SetUpSuite(c *C) {
 	if useMockTikv {
 		var err error
 		s.store, err = mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.WithClusterInspector(func(c testutils.Cluster) {
 				mockstore.BootstrapWithSingleStore(c)
 				s.cluster = c
 			}),
@@ -136,7 +137,8 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	s.cluster.SplitTable(tblID, N/2)
+	tableStart := tablecodec.GenTableRecordPrefix(tblID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), N/2)
 
 	ctx := context.Background()
 	for i := 0; i < N/2; i++ {
@@ -323,18 +325,18 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(`create index expr_idx on show_index ((id*2+1))`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
-		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
-		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|NULL",
-		"show_index|1|idx1|1|id|A|0|<nil>|<nil>||HASH| |YES|NULL",
-		"show_index|1|idx2|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL",
-		"show_index|1|idx3|1|id|A|0|<nil>|<nil>||HASH||idx|YES|NULL",
-		"show_index|1|idx4|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL",
-		"show_index|1|idx5|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL",
-		"show_index|1|idx6|1|id|A|0|<nil>|<nil>||HASH| |YES|NULL",
-		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
-		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
-		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|NULL",
-		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|(`id` * 2 + 1)",
+		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|YES",
+		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|<nil>|NO",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>||HASH||idx|YES|<nil>|NO",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
+		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
+		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|<nil>|NO",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|(`id` * 2 + 1)|NO",
 	))
 
 	// For show like with escape
@@ -848,12 +850,10 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	// Test for a table with auto_random primary key.
-	tk.MustExec("create table t3(id bigint primary key auto_random(5), c int)")
+	tk.MustExec("create table t3(id bigint primary key clustered auto_random(5), c int)")
 	// Start handle is 1.
 	r = tk.MustQuery(str + " t3 next_row_id")
 	r.Check(testkit.Rows("test1 t3 id 1 AUTO_RANDOM"))
@@ -967,7 +967,7 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 		atomic.StoreUint64(&kv.TxnTotalSizeLimit, originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5000)
+	atomic.StoreUint64(&kv.TxnTotalSizeLimit, 5500)
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1095,19 +1095,19 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 
 type checkPrioClient struct {
 	tikv.Client
-	priority pb.CommandPri
+	priority kvrpcpb.CommandPri
 	mu       struct {
 		sync.RWMutex
 		checkPrio bool
 	}
 }
 
-func (c *checkPrioClient) setCheckPriority(priority pb.CommandPri) {
+func (c *checkPrioClient) setCheckPriority(priority kvrpcpb.CommandPri) {
 	atomic.StoreInt32((*int32)(&c.priority), int32(priority))
 }
 
-func (c *checkPrioClient) getCheckPriority() pb.CommandPri {
-	return (pb.CommandPri)(atomic.LoadInt32((*int32)(&c.priority)))
+func (c *checkPrioClient) getCheckPriority() kvrpcpb.CommandPri {
+	return (kvrpcpb.CommandPri)(atomic.LoadInt32((*int32)(&c.priority)))
 }
 
 func (c *checkPrioClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
@@ -1174,11 +1174,11 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	cli.mu.checkPrio = true
 	cli.mu.Unlock()
 
-	cli.setCheckPriority(pb.CommandPri_High)
+	cli.setCheckPriority(kvrpcpb.CommandPri_High)
 	tk.MustQuery("select id from t where id = 1")
 	tk.MustQuery("select * from t1 where id = 1")
 
-	cli.setCheckPriority(pb.CommandPri_Normal)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Normal)
 	tk.MustQuery("select count(*) from t")
 	tk.MustExec("update t set id = 3")
 	tk.MustExec("delete from t")
@@ -1193,43 +1193,43 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 		conf.Log.ExpensiveThreshold = 0
 	})
 
-	cli.setCheckPriority(pb.CommandPri_High)
+	cli.setCheckPriority(kvrpcpb.CommandPri_High)
 	tk.MustQuery("select id from t where id = 1")
 	tk.MustQuery("select * from t1 where id = 1")
 	tk.MustExec("delete from t where id = 2")
 	tk.MustExec("update t set id = 2 where id = 1")
 
-	cli.setCheckPriority(pb.CommandPri_Low)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
 	tk.MustQuery("select count(*) from t")
 	tk.MustExec("delete from t")
 	tk.MustExec("insert into t values (3)")
 
 	// Test priority specified by SQL statement.
-	cli.setCheckPriority(pb.CommandPri_High)
+	cli.setCheckPriority(kvrpcpb.CommandPri_High)
 	tk.MustQuery("select HIGH_PRIORITY * from t")
 
-	cli.setCheckPriority(pb.CommandPri_Low)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
 	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
 
-	cli.setCheckPriority(pb.CommandPri_High)
+	cli.setCheckPriority(kvrpcpb.CommandPri_High)
 	tk.MustExec("set tidb_force_priority = 'HIGH_PRIORITY'")
 	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
 	tk.MustExec("update t set id = id + 1")
 	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
-	cli.setCheckPriority(pb.CommandPri_Low)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
 	tk.MustExec("set tidb_force_priority = 'LOW_PRIORITY'")
 	tk.MustQuery("select * from t").Check(testkit.Rows("4"))
 	tk.MustExec("update t set id = id + 1")
 	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
-	cli.setCheckPriority(pb.CommandPri_Normal)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Normal)
 	tk.MustExec("set tidb_force_priority = 'DELAYED'")
 	tk.MustQuery("select * from t").Check(testkit.Rows("5"))
 	tk.MustExec("update t set id = id + 1")
 	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
 
-	cli.setCheckPriority(pb.CommandPri_Low)
+	cli.setCheckPriority(kvrpcpb.CommandPri_Low)
 	tk.MustExec("set tidb_force_priority = 'NO_PRIORITY'")
 	tk.MustQuery("select * from t").Check(testkit.Rows("6"))
 	tk.MustExec("update t set id = id + 1")
@@ -1255,7 +1255,6 @@ func (s *seqTestSuite) TestShowForNewCollations(c *C) {
 		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
 		"utf8mb4_general_ci utf8mb4 45  Yes 1",
 		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
-		"utf8mb4_zh_pinyin_tidb_as_cs utf8mb4 2048  Yes 1",
 	)
 	tk.MustQuery("show collation").Check(expectRows)
 	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
@@ -1381,17 +1380,15 @@ func (s *seqTestSuite) TestInsertFromSelectConflictRetryAutoID(c *C) {
 func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 	tk.MustExec("create database if not exists auto_random_retry")
 	tk.MustExec("use auto_random_retry")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id bigint auto_random(3) primary key)")
+	tk.MustExec("create table t (id bigint auto_random(3) primary key clustered)")
 
 	extractMaskedOrderedHandles := func() []int64 {
 		handles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "auto_random_retry", "t")
 		c.Assert(err, IsNil)
-		return testutil.ConfigTestUtils.MaskSortHandles(handles, 3, mysql.TypeLong)
+		return testutil.MaskSortHandles(handles, 3, mysql.TypeLong)
 	}
 
 	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
@@ -1425,8 +1422,6 @@ func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 
 func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
 	tk.MustExec("drop table if exists t_recover_auto_rand")
@@ -1462,14 +1457,14 @@ func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
 	defer autoid.SetStep(stp)
 
 	// Check rebase auto_random id.
-	tk.MustExec("create table t_recover_auto_rand (a bigint auto_random(5) primary key);")
+	tk.MustExec("create table t_recover_auto_rand (a bigint auto_random(5) primary key clustered);")
 	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
 	tk.MustExec("drop table t_recover_auto_rand")
 	tk.MustExec("recover table t_recover_auto_rand")
 	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
 	hs, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_recover", "t_recover_auto_rand")
 	c.Assert(err, IsNil)
-	ordered := testutil.ConfigTestUtils.MaskSortHandles(hs, 5, mysql.TypeLong)
+	ordered := testutil.MaskSortHandles(hs, 5, mysql.TypeLong)
 
 	c.Assert(ordered, DeepEquals, []int64{1, 2, 3, autoRandIDStep + 1, autoRandIDStep + 2, autoRandIDStep + 3})
 }
@@ -1478,8 +1473,6 @@ func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	c.Assert(variable.GetMaxDeltaSchemaCount(), Equals, int64(variable.DefTiDBMaxDeltaSchemaCount))
-	gvc := domain.GetDomain(tk.Se).GetGlobalVarsCache()
-	gvc.Disable()
 
 	tk.MustExec("set @@global.tidb_max_delta_schema_count= -1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_max_delta_schema_count value: '-1'"))

@@ -255,15 +255,15 @@ func (b *PBPlanBuilder) pbToKill(e *tipb.Executor) (PhysicalPlan, error) {
 	return &PhysicalSimpleWrapper{Inner: simple}, nil
 }
 
-func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, PhysicalPlan) {
-	if p == nil {
-		return predicates, p
+func (b *PBPlanBuilder) predicatePushDown(physicalPlan PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, PhysicalPlan) {
+	if physicalPlan == nil {
+		return predicates, physicalPlan
 	}
-	switch p.(type) {
+	switch plan := physicalPlan.(type) {
 	case *PhysicalMemTable:
-		memTable := p.(*PhysicalMemTable)
+		memTable := plan
 		if memTable.Extractor == nil {
-			return predicates, p
+			return predicates, plan
 		}
 		names := make([]*types.FieldName, 0, len(memTable.Columns))
 		for _, col := range memTable.Columns {
@@ -284,8 +284,8 @@ func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expressio
 		predicates = memTable.Extractor.Extract(b.sctx, memTable.schema, names, predicates)
 		return predicates, memTable
 	case *PhysicalSelection:
-		selection := p.(*PhysicalSelection)
-		conditions, child := b.predicatePushDown(p.Children()[0], selection.Conditions)
+		selection := plan
+		conditions, child := b.predicatePushDown(plan.Children()[0], selection.Conditions)
 		if len(conditions) > 0 {
 			selection.Conditions = conditions
 			selection.SetChildren(child)
@@ -293,10 +293,10 @@ func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expressio
 		}
 		return predicates, child
 	default:
-		if children := p.Children(); len(children) > 0 {
+		if children := plan.Children(); len(children) > 0 {
 			_, child := b.predicatePushDown(children[0], nil)
-			p.SetChildren(child)
+			plan.SetChildren(child)
 		}
-		return predicates, p
+		return predicates, plan
 	}
 }

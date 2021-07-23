@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -28,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	goctx "golang.org/x/net/context"
 )
 
@@ -56,7 +57,7 @@ func (s *TestDDLSuite) checkAddColumn(c *C, rowID int64, defaultVal interface{},
 				// When insert a row with 3 columns, the third column value will be the first column value.
 				newInsertCount++
 			} else {
-				log.Fatalf("[checkAddColumn fail]invalid row: %v", data)
+				log.Fatal("[checkAddColumn fail]invalid row", zap.Any("row", data))
 			}
 		}
 
@@ -67,7 +68,7 @@ func (s *TestDDLSuite) checkAddColumn(c *C, rowID int64, defaultVal interface{},
 			} else if reflect.DeepEqual(col3Val, updatedVal) {
 				newUpdateCount++
 			} else {
-				log.Fatalf("[checkAddColumn fail]invalid row: %v", data)
+				log.Fatal("[checkAddColumn fail]invalid row", zap.Any("row", data))
 			}
 		}
 
@@ -102,7 +103,7 @@ func (s *TestDDLSuite) checkDropColumn(c *C, rowID int64, alterColumn *table.Col
 			// Check updated row.
 			updateCount++
 		} else {
-			log.Fatalf("[checkDropColumn fail]invalid row: %v", data)
+			log.Fatal("[checkDropColumn fail]invalid row", zap.Any("row", data))
 		}
 		return true, nil
 	})

@@ -15,12 +15,13 @@ package executor
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -53,16 +54,24 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	infoSchema := infoschema.GetInfoSchema(c.Ctx)
-	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema); err != nil {
+	ret := &plannercore.PreprocessorReturn{}
+	if err := plannercore.Preprocess(c.Ctx, stmtNode, plannercore.WithPreprocessorReturn(ret)); err != nil {
 		return nil, err
 	}
 	stmtNode = plannercore.TryAddExtraLimit(c.Ctx, stmtNode)
 
-	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
+	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, ret.InfoSchema)
 	if err != nil {
 		return nil, err
 	}
+
+	failpoint.Inject("assertStmtCtxIsStaleness", func(val failpoint.Value) {
+		expected := val.(bool)
+		got := c.Ctx.GetSessionVars().StmtCtx.IsStaleness
+		if got != expected {
+			panic(fmt.Sprintf("stmtctx isStaleness wrong, expected:%v, got:%v", expected, got))
+		}
+	})
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
 	var lowerPriority bool
@@ -71,13 +80,17 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 	return &ExecStmt{
 		GoCtx:         ctx,
-		InfoSchema:    infoSchema,
+		SnapshotTS:    ret.LastSnapshotTS,
+		IsStaleness:   ret.IsStaleness,
+		TxnScope:      ret.TxnScope,
+		InfoSchema:    ret.InfoSchema,
 		Plan:          finalPlan,
 		LowerPriority: lowerPriority,
 		Text:          stmtNode.Text(),
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
 		OutputNames:   names,
+		Ti:            &TelemetryInfo{},
 	}, nil
 }
 

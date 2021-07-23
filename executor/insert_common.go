@@ -28,20 +28,18 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -77,7 +75,7 @@ type InsertValues struct {
 	hasRefCols     bool
 	hasExtraHandle bool
 
-	// Fill the autoID lazily to datum. This is used for being compatible with JDBC using getGeneratedKeys().
+	// lazyFillAutoID indicates whatever had been filled the autoID lazily to datum. This is used for being compatible with JDBC using getGeneratedKeys().
 	// `insert|replace values` can guarantee consecutive autoID in a batch.
 	// Other statements like `insert select from` don't guarantee consecutive autoID.
 	// https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
@@ -88,7 +86,7 @@ type InsertValues struct {
 
 	stats *InsertRuntimeStat
 
-	// LoadData use two goroutines. One for generate batch data,
+	// isLoadData indicates whatever current goroutine is use for generating batch data. LoadData use two goroutines. One for generate batch data,
 	// The other one for commit task, which will invalid txn.
 	// We use mutex to protect routine from using invalid txn.
 	isLoadData bool
@@ -308,10 +306,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		if err1 != nil {
 			logutil.BgLogger().Debug("time truncated error", zap.Error(err1))
 		}
-		err = dbterror.ClassTable.NewStdErr(
-			errno.ErrTruncatedWrongValue,
-			mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil),
-		).GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
+		err = errTruncateWrongInsertValue.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 	} else if types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
@@ -348,7 +343,7 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 	e.evalBuffer.SetDatums(row...)
 	for i, expr := range list {
 		val, err := expr.Eval(e.evalBuffer.ToRow())
-		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
+		if err != nil {
 			return nil, err
 		}
 		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false, false)
@@ -436,6 +431,9 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	memUsageOfExtraCols := int64(0)
 	memTracker := e.memTracker
 	extraColsInSel := make([][]types.Datum, 0, chk.Capacity())
+	// In order to ensure the correctness of the `transaction write throughput` SLI statistics,
+	// just ignore the transaction which contain `insert|replace into ... select ... from ...` statement.
+	e.ctx.GetTxnWriteThroughputSLI().SetInvalid()
 	for {
 		err := Next(ctx, selectExec, chk)
 		if err != nil {
@@ -1046,7 +1044,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
 			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
-			defer snapshot.DelOption(kv.CollectRuntimeStats)
+			defer snapshot.SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
 	prefetchStart := time.Now()
@@ -1172,7 +1170,7 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 	}
 	if e.SnapshotRuntimeStats != nil {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
-		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+		newRs.SnapshotRuntimeStats = snapshotStats
 	}
 	if e.BasicRuntimeStats != nil {
 		basicStats := e.BasicRuntimeStats.Clone()
@@ -1190,7 +1188,7 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 	if tmp.SnapshotRuntimeStats != nil {
 		if e.SnapshotRuntimeStats == nil {
 			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
-			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+			e.SnapshotRuntimeStats = snapshotStats
 		} else {
 			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
 		}

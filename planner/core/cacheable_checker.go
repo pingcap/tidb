@@ -17,7 +17,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -133,7 +133,7 @@ func (checker *cacheableChecker) isPartitionTable(tn *ast.TableName) bool {
 		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
 		return false
 	}
-	if tb.Meta().Partition != nil {
+	if tb.Meta().GetPartitionInfo() != nil {
 		return true
 	}
 	return false

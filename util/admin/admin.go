@@ -316,6 +316,9 @@ const (
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Here we need check all indexes, includes invisible index
 	ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
+	defer func() {
+		ctx.GetSessionVars().OptimizerUseInvisibleIndexes = false
+	}()
 	// Add `` for some names like `table name`.
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	stmt, err := exec.ParseWithParams(context.Background(), "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
@@ -389,18 +392,18 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 				vals1[i] = colDefVal
 			}
 		}
-		isExist, h2, err := idx.Exist(sc, txn.GetUnionStore(), vals1, h1)
+		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
-			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record2, record1)
+			return false, ErrDataInConsistent.GenWithStackByArgs(record2, record1)
 		}
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if !isExist {
 			record := &RecordData{Handle: h1, Values: vals1}
-			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", nil, record)
+			return false, ErrDataInConsistent.GenWithStackByArgs(nil, record)
 		}
 
 		return true, nil

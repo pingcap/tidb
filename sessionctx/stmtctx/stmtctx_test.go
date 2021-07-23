@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func TestT(t *testing.T) {
@@ -39,7 +40,7 @@ func (s *stmtctxSuit) TestCopTasksDetails(c *C) {
 			CalleeAddress: fmt.Sprintf("%v", i+1),
 			BackoffSleep:  make(map[string]time.Duration),
 			BackoffTimes:  make(map[string]int),
-			TimeDetail: execdetails.TimeDetail{
+			TimeDetail: util.TimeDetail{
 				ProcessTime: time.Second * time.Duration(i+1),
 				WaitTime:    time.Millisecond * time.Duration(i+1),
 			},

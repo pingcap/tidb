@@ -31,6 +31,7 @@ import (
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -295,6 +296,10 @@ func (s *testSuite6) TestCreateView(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrNoSuchTable), IsTrue)
 	tk.MustExec("drop table test_v_nested")
 	tk.MustExec("drop view v_nested, v_nested2")
+
+	// Refer https://github.com/pingcap/tidb/issues/25876
+	err = tk.ExecToErr("create view v_stale as select * from source_table as of timestamp current_timestamp(3)")
+	c.Assert(terror.ErrorEqual(err, executor.ErrViewInvalid), IsTrue, Commentf("err %s", err))
 }
 
 func (s *testSuite6) TestViewRecursion(c *C) {
@@ -353,7 +358,10 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 	tk.MustExec("create view v as select distinct'" + strings.Repeat("a", 65) + "', " +
 		"max('" + strings.Repeat("b", 65) + "'), " +
 		"'cccccccccc', '" + strings.Repeat("d", 65) + "';")
-	resultCreateStmt := "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`, `name_exp_2`, `cccccccccc`, `name_exp_4`) AS SELECT DISTINCT _UTF8MB4'" + strings.Repeat("a", 65) + "',MAX(_UTF8MB4'" + strings.Repeat("b", 65) + "'),_UTF8MB4'cccccccccc',_UTF8MB4'" + strings.Repeat("d", 65) + "'"
+	resultCreateStmt := "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`, `name_exp_2`, `cccccccccc`, `name_exp_4`) AS " +
+		"SELECT DISTINCT _UTF8MB4'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' AS `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`," +
+		"MAX(_UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') AS `max('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')`," +
+		"_UTF8MB4'cccccccccc' AS `cccccccccc`,_UTF8MB4'ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd' AS `ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd`"
 	tk.MustQuery("select * from v")
 	tk.MustQuery("select name_exp_1, name_exp_2, cccccccccc, name_exp_4 from v")
 	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
@@ -365,7 +373,10 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 		"union select '" + strings.Repeat("c", 65) + "', " +
 		"count(distinct '" + strings.Repeat("b", 65) + "', " +
 		"'c');")
-	resultCreateStmt = "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`, `name_exp_2`) AS SELECT _UTF8MB4'a',_UTF8MB4'" + strings.Repeat("b", 65) + "' FROM `test`.`t` UNION SELECT _UTF8MB4'" + strings.Repeat("c", 65) + "',COUNT(DISTINCT _UTF8MB4'" + strings.Repeat("b", 65) + "', _UTF8MB4'c')"
+	resultCreateStmt = "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`, `name_exp_2`) AS " +
+		"SELECT _UTF8MB4'a' AS `a`,_UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' AS `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb` FROM `test`.`t` " +
+		"UNION SELECT _UTF8MB4'ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' AS `ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc`," +
+		"COUNT(DISTINCT _UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', _UTF8MB4'c') AS `count(distinct 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'c')`"
 	tk.MustQuery("select * from v")
 	tk.MustQuery("select a, name_exp_2 from v")
 	tk.MustQuery("show create view v").Check(testkit.Rows("v " + resultCreateStmt + "  "))
@@ -498,7 +509,7 @@ func (s *testSuite6) TestCreateDropView(c *C) {
 	tk.MustExec("create view v as select * from t_v1;")
 	tk.MustExec("create or replace view v  as select * from t_v2;")
 	tk.MustQuery("select * from information_schema.views where table_name ='v';").Check(
-		testkit.Rows("def test v SELECT `test`.`t_v2`.`a`,`test`.`t_v2`.`b` FROM `test`.`t_v2` CASCADED NO @ DEFINER utf8mb4 utf8mb4_bin"))
+		testkit.Rows("def test v SELECT `test`.`t_v2`.`a` AS `a`,`test`.`t_v2`.`b` AS `b` FROM `test`.`t_v2` CASCADED NO @ DEFINER utf8mb4 utf8mb4_bin"))
 }
 
 func (s *testSuite6) TestCreateDropIndex(c *C) {
@@ -621,7 +632,7 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 	c.Assert(err, NotNil)
 
 	_, err = tk.Exec("alter table mc modify column c2 varchar(8)")
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 	tk.MustExec("alter table mc modify column c2 varchar(11)")
 	tk.MustExec("alter table mc modify column c2 text(13)")
 	tk.MustExec("alter table mc modify column c2 text")
@@ -881,12 +892,17 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 	tk.MustExec("alter table auto shard_row_id_bits = 0")
 	tk.MustExec("drop table auto")
 
+	errMsg := "[ddl:8200]Unsupported shard_row_id_bits for table with primary key as row id"
+	tk.MustGetErrMsg("create table auto (id varchar(255) primary key clustered, b int) shard_row_id_bits = 4;", errMsg)
+	tk.MustExec("create table auto (id varchar(255) primary key clustered, b int) shard_row_id_bits = 0;")
+	tk.MustGetErrMsg("alter table auto shard_row_id_bits = 5;", errMsg)
+	tk.MustExec("alter table auto shard_row_id_bits = 0;")
+	tk.MustExec("drop table if exists auto;")
+
 	// After PR 10759, shard_row_id_bits is not supported with pk_is_handle tables.
-	err = tk.ExecToErr("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 4")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported shard_row_id_bits for table with primary key as row id")
+	tk.MustGetErrMsg("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 4", errMsg)
 	tk.MustExec("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 0")
-	err = tk.ExecToErr("alter table auto shard_row_id_bits = 5")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported shard_row_id_bits for table with primary key as row id")
+	tk.MustGetErrMsg("alter table auto shard_row_id_bits = 5", errMsg)
 	tk.MustExec("alter table auto shard_row_id_bits = 0")
 
 	// Hack an existing table with shard_row_id_bits and primary key as handle
@@ -953,14 +969,6 @@ type testAutoRandomSuite struct {
 	*baseTestSuite
 }
 
-func (s *testAutoRandomSuite) SetUpTest(c *C) {
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-}
-
-func (s *testAutoRandomSuite) TearDownTest(c *C) {
-	testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-}
-
 func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -977,7 +985,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
-	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
+	tk.MustExec("create table t (a bigint primary key clustered auto_random(15), b int)")
 	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t(b) values (?)", i)
 	}
@@ -993,7 +1001,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	}
 	c.Assert(allZero, IsFalse)
 	// Test non-shard-bits part of auto random id is monotonic increasing and continuous.
-	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 15, mysql.TypeLonglong)
+	orderedHandles := testutil.MaskSortHandles(allHandles, 15, mysql.TypeLonglong)
 	size := int64(len(allHandles))
 	for i := int64(1); i <= size; i++ {
 		c.Assert(i, Equals, orderedHandles[i-1])
@@ -1001,7 +1009,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 
 	// Test explicit insert.
 	autoRandBitsUpperBound := 2<<47 - 1
-	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
+	tk.MustExec("create table t (a bigint primary key clustered auto_random(15), b int)")
 	for i := -10; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i+autoRandBitsUpperBound, i))
 	}
@@ -1035,7 +1043,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 		tk.MustExec("insert into t(a, b) values (?, ?)", -i, i)
 	}
 	// orderedHandles should be [-100, -99, ..., -2, -1, 1, 2, ..., 99, 100]
-	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(extractAllHandles(), 15, mysql.TypeLonglong)
+	orderedHandles = testutil.MaskSortHandles(extractAllHandles(), 15, mysql.TypeLonglong)
 	size = int64(len(allHandles))
 	for i := int64(0); i < 100; i++ {
 		c.Assert(orderedHandles[i], Equals, i-100)
@@ -1106,7 +1114,7 @@ func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(allHandles), Equals, 5)
 	// Test non-shard-bits part of auto random id is monotonic increasing and continuous.
-	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	orderedHandles := testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	size := int64(len(allHandles))
 	for i := int64(0); i < size; i++ {
 		c.Assert(i+1000, Equals, orderedHandles[i])
@@ -1120,7 +1128,7 @@ func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
 	tk.MustExec("insert into alter_table_auto_random_option values(),(),(),(),()")
 	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "alter_table_auto_random_option")
 	c.Assert(err, IsNil)
-	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	size = int64(len(allHandles))
 	for i := int64(0); i < size; i++ {
 		c.Assert(orderedHandles[i], Equals, i+1)
@@ -1138,7 +1146,7 @@ func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
 	tk.MustExec("insert into alter_table_auto_random_option values(),(),(),(),()")
 	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "alter_table_auto_random_option")
 	c.Assert(err, IsNil)
-	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	size = int64(len(allHandles))
 	for i := int64(0); i < size; i++ {
 		c.Assert(orderedHandles[i], Equals, i+3000000)
@@ -1170,7 +1178,7 @@ func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
 	allHandles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
 	c.Assert(err, IsNil)
 	c.Assert(len(allHandles), Equals, 1)
-	orderedHandles := testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	orderedHandles := testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	c.Assert(orderedHandles[0], Equals, int64(1))
 	tk.MustExec("delete from t")
 
@@ -1181,7 +1189,7 @@ func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
 	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
 	c.Assert(err, IsNil)
 	c.Assert(len(allHandles), Equals, 1)
-	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	c.Assert(orderedHandles[0], Equals, int64(2))
 	tk.MustExec("delete from t")
 
@@ -1192,7 +1200,7 @@ func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
 	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t")
 	c.Assert(err, IsNil)
 	c.Assert(len(allHandles), Equals, 1)
-	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	c.Assert(orderedHandles[0], Equals, int64(3000000))
 	tk.MustExec("delete from t")
 
@@ -1206,7 +1214,7 @@ func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
 	allHandles, err = ddltestutil.ExtractAllTableHandles(tk.Se, "test", "t1")
 	c.Assert(err, IsNil)
 	c.Assert(len(allHandles), Equals, 1)
-	orderedHandles = testutil.ConfigTestUtils.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
+	orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
 	c.Assert(orderedHandles[0], Greater, int64(3000001))
 }
 
@@ -1230,21 +1238,21 @@ func (s *testSuite6) TestMaxHandleAddIndex(c *C) {
 func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	err := ddlutil.LoadDDLReorgVars(tk.Se)
+	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(1))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
 	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = invalid_val")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
 	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = -1")
@@ -1267,24 +1275,24 @@ func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 func (s *testSuite6) TestSetDDLReorgBatchSize(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	err := ddlutil.LoadDDLReorgVars(tk.Se)
+	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.DefTiDBDDLReorgBatchSize))
 
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '1'"))
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, variable.MinDDLReorgBatchSize)
 	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", variable.MaxDDLReorgBatchSize+1))
 	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '%d'", variable.MaxDDLReorgBatchSize+1)))
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, variable.MaxDDLReorgBatchSize)
 	_, err = tk.Exec("set @@global.tidb_ddl_reorg_batch_size = invalid_val")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(100))
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = -1")

@@ -268,8 +268,21 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	res.EqOrInCount = eqOrInCount
 	ranges, err = d.buildCNFIndexRange(tpSlice, eqOrInCount, accessConds)
 	if err != nil {
-		return res, err
+		return nil, err
 	}
+
+	// Though ranges are built from equal/in conditions, some range may not be a single point after UnionRanges in buildCNFIndexRange.
+	// In order to prepare for the following appendRanges2PointRanges, we set d.mergeConsecutive to false and call buildCNFIndexRange
+	// again to get pointRanges, in which each range must be a single point. If we use ranges rather than pointRanges when calling
+	// appendRanges2PointRanges, wrong ranges would be calculated as issue https://github.com/pingcap/tidb/issues/26029 describes.
+	mergeConsecutive := d.mergeConsecutive
+	d.mergeConsecutive = false
+	pointRanges, err := d.buildCNFIndexRange(tpSlice, eqOrInCount, accessConds)
+	if err != nil {
+		return nil, err
+	}
+	d.mergeConsecutive = mergeConsecutive
+
 	res.Ranges = ranges
 	res.AccessConds = accessConds
 	res.RemainedConds = filterConds
@@ -293,6 +306,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 			}
 			if len(pointRes.Ranges[0].LowVal) > eqOrInCount {
 				res = pointRes
+				pointRanges = pointRes.Ranges
 				eqOrInCount = len(res.Ranges[0].LowVal)
 				newConditions = newConditions[:0]
 				newConditions = append(newConditions, conditions[:offset]...)
@@ -314,7 +328,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 				return &DetachRangeResult{}, nil
 			}
 			if len(tailRes.AccessConds) > 0 {
-				res.Ranges = appendRanges2PointRanges(res.Ranges, tailRes.Ranges)
+				res.Ranges = appendRanges2PointRanges(pointRanges, tailRes.Ranges)
 				res.AccessConds = append(res.AccessConds, tailRes.AccessConds...)
 			}
 			res.RemainedConds = append(res.RemainedConds, tailRes.RemainedConds...)
@@ -505,6 +519,7 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			// All Intervals are single points
 			accesses[i] = points2EqOrInCond(sctx, points[i], cols[i])
 			newConditions = append(newConditions, accesses[i])
+			sctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 		}
 	}
 	for i, offset := range offsets {
@@ -517,6 +532,14 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			accesses = accesses[:i]
 			break
 		}
+
+		// Currently, if the access cond is on a prefix index, we will also add this cond to table filters.
+		// A possible optimization is that, if the value in the cond is shorter than the length of the prefix index, we don't
+		// need to add this cond to table filters.
+		// e.g. CREATE TABLE t(a varchar(10), index i(a(5)));  SELECT * FROM t USE INDEX i WHERE a > 'aaa';
+		// However, please notice that if you're implementing this, please (1) set StatementContext.OptimDependOnMutableConst to true,
+		// or (2) don't do this optimization when StatementContext.UseCache is true. That's because this plan is affected by
+		// flen of user variable, we cannot cache this plan.
 		if lengths[i] != types.UnspecifiedLength {
 			filters = append(filters, cond)
 		}

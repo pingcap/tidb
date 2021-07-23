@@ -16,6 +16,7 @@ package tables
 import (
 	"context"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -81,11 +82,15 @@ func (c *indexIter) Next() (indexData []types.Datum, h kv.Handle, err error) {
 
 // index is the data structure for index data in the KV store.
 type index struct {
-	idxInfo          *model.IndexInfo
-	tblInfo          *model.TableInfo
-	prefix           kv.Key
-	needRestoredData bool
-	phyTblID         int64
+	idxInfo  *model.IndexInfo
+	tblInfo  *model.TableInfo
+	prefix   kv.Key
+	phyTblID int64
+	// initNeedRestoreData is used to initialize `needRestoredData` in `index.Create()`.
+	// This routine cannot be done in `NewIndex()` because `needRestoreData` relies on `NewCollationEnabled()` and
+	// the collation global variable is initialized *after* `NewIndex()`.
+	initNeedRestoreData sync.Once
+	needRestoredData    bool
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
@@ -97,10 +102,6 @@ func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo
 		}
 	}
 	return false
-}
-
-func (c *index) checkNeedRestoredData() bool {
-	return NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 }
 
 // NewIndex builds a new Index object.
@@ -120,7 +121,6 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		prefix:   prefix,
 		phyTblID: physicalID,
 	}
-	index.needRestoredData = index.checkNeedRestoredData()
 	return index
 }
 
@@ -175,14 +175,16 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 
 	// save the key buffer to reuse.
 	writeBufs.IndexKeyBuf = key
+	c.initNeedRestoreData.Do(func() {
+		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
+	})
 	idxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, opt.Untouched, indexedValues, h, c.phyTblID, handleRestoreData)
 	if err != nil {
 		return nil, err
 	}
 
-	us := txn.GetUnionStore()
 	if !distinct || skipCheck || opt.Untouched {
-		err = us.GetMemBuffer().Set(key, idxVal)
+		err = txn.GetMemBuffer().Set(key, idxVal)
 		return nil, err
 	}
 
@@ -197,19 +199,22 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 
 	var value []byte
-	if sctx.GetSessionVars().LazyCheckKeyNotExists() {
-		value, err = us.GetMemBuffer().Get(ctx, key)
+	if c.tblInfo.TempTableType != model.TempTableNone {
+		// Always check key for temporary table because it does not write to TiKV
+		value, err = sctx.GetSessionVars().GetTemporaryTableTxnValue(ctx, txn, key)
+	} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
+		value, err = txn.GetMemBuffer().Get(ctx, key)
 	} else {
-		value, err = us.Get(ctx, key)
+		value, err = txn.Get(ctx, key)
 	}
 	if err != nil && !kv.IsErrNotFound(err) {
 		return nil, err
 	}
 	if err != nil || len(value) == 0 {
 		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
-			err = us.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
+			err = txn.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
 		} else {
-			err = us.GetMemBuffer().Set(key, idxVal)
+			err = txn.GetMemBuffer().Set(key, idxVal)
 		}
 		return nil, err
 	}
@@ -222,22 +227,22 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 }
 
 // Delete removes the entry for handle h and indexedValues from KV index.
-func (c *index) Delete(sc *stmtctx.StatementContext, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle) error {
+func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error {
 	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
 		return err
 	}
 	if distinct {
-		err = us.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+		err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
 	} else {
-		err = us.GetMemBuffer().Delete(key)
+		err = txn.GetMemBuffer().Delete(key)
 	}
 	return err
 }
 
 // Drop removes the KV index from store.
-func (c *index) Drop(us kv.UnionStore) error {
-	it, err := us.Iter(c.prefix, c.prefix.PrefixNext())
+func (c *index) Drop(txn kv.Transaction) error {
+	it, err := txn.Iter(c.prefix, c.prefix.PrefixNext())
 	if err != nil {
 		return err
 	}
@@ -248,7 +253,7 @@ func (c *index) Drop(us kv.UnionStore) error {
 		if !it.Key().HasPrefix(c.prefix) {
 			break
 		}
-		err := us.GetMemBuffer().Delete(it.Key())
+		err := txn.GetMemBuffer().Delete(it.Key())
 		if err != nil {
 			return err
 		}
@@ -294,13 +299,13 @@ func (c *index) SeekFirst(r kv.Retriever) (iter table.IndexIterator, err error) 
 	return &indexIter{it: it, idx: c, prefix: c.prefix, colInfos: colInfos, tps: tps}, nil
 }
 
-func (c *index) Exist(sc *stmtctx.StatementContext, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
+func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
 	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
 		return false, nil, err
 	}
 
-	value, err := us.Get(context.TODO(), key)
+	value, err := txn.Get(context.TODO(), key)
 	if kv.IsErrNotFound(err) {
 		return false, nil, nil
 	}

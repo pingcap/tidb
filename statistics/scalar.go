@@ -197,7 +197,7 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 			return nil
 		}
 		remaining = remaining + 1 - int64(exclude)
-		if remaining >= maxNumStep {
+		if remaining >= maxNumStep || remaining < 0 {
 			return nil
 		}
 		values := make([]types.Datum, 0, remaining)
@@ -215,7 +215,7 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 			return nil
 		}
 		remaining = remaining + 1 - uint64(exclude)
-		if remaining >= maxNumStep {
+		if remaining >= maxNumStep || remaining < 0 {
 			return nil
 		}
 		values := make([]types.Datum, 0, remaining)
@@ -233,7 +233,7 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		stepSize := int64(math.Pow10(int(types.MaxFsp-fsp))) * int64(time.Microsecond)
 		lowDur.Duration = lowDur.Duration.Round(time.Duration(stepSize))
 		remaining := int64(highDur.Duration-lowDur.Duration)/stepSize + 1 - int64(exclude)
-		if remaining >= maxNumStep {
+		if remaining <= 0 || remaining >= maxNumStep {
 			return nil
 		}
 		startValue := int64(lowDur.Duration)
@@ -265,7 +265,8 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 			stepSize = int64(math.Pow10(int(types.MaxFsp-fsp))) * int64(time.Microsecond)
 		}
 		remaining := int64(highTime.Sub(sc, &lowTime).Duration)/stepSize + 1 - int64(exclude)
-		if remaining >= maxNumStep {
+		// When `highTime` is much larger than `lowTime`, `remaining` may be overflowed to a negative value.
+		if remaining <= 0 || remaining >= maxNumStep {
 			return nil
 		}
 		startValue := lowTime

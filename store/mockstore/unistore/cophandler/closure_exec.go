@@ -20,8 +20,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ngaut/unistore/tikv/dbreader"
-	"github.com/ngaut/unistore/tikv/mvcc"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
@@ -32,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -77,6 +77,8 @@ func getExecutorListFromRootExec(rootExec *tipb.Executor) ([]*tipb.Executor, err
 			currentExec = currentExec.Limit.Child
 		case tipb.ExecType_TypeExchangeSender:
 			currentExec = currentExec.ExchangeSender.Child
+		case tipb.ExecType_TypeSelection:
+			currentExec = currentExec.Selection.Child
 		default:
 			return nil, errors.New("unsupported executor type " + currentExec.Tp.String())
 		}
@@ -122,15 +124,13 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 			outputFieldTypes = append(outputFieldTypes, originalOutputFieldTypes[idx])
 		}
 	} else {
-		for _, tp := range originalOutputFieldTypes {
-			outputFieldTypes = append(outputFieldTypes, tp)
-		}
+		outputFieldTypes = append(outputFieldTypes, originalOutputFieldTypes...)
 	}
 	if len(executors) == 1 {
 		ce.resultFieldType = outputFieldTypes
 		return nil
 	}
-	var err error = nil
+	var err error
 	if secondExec := executors[1]; secondExec.Tp == tipb.ExecType_TypeSelection {
 		ce.selectionCtx.conditions, err = convertToExprs(ce.sc, ce.fieldTps, secondExec.Selection.Conditions)
 		if err != nil {
@@ -739,7 +739,7 @@ type tableScanProcessor struct {
 
 func (e *tableScanProcessor) Process(key, value []byte) error {
 	if e.rowCount == e.limit {
-		return dbreader.ScanBreak
+		return dbreader.ErrScanBreak
 	}
 	e.rowCount++
 	e.curNdv++
@@ -761,7 +761,7 @@ type mockReaderScanProcessor struct {
 
 func (e *mockReaderScanProcessor) Process(key, value []byte) error {
 	if e.rowCount == e.limit {
-		return dbreader.ScanBreak
+		return dbreader.ErrScanBreak
 	}
 	e.rowCount++
 	err := e.mockReadScanProcessCore(key, value)
@@ -808,12 +808,12 @@ func (e *closureExecutor) processSelection(needCollectDetail bool) (gotRow bool,
 		if d.IsNull() {
 			gotRow = false
 		} else {
-			isBool, err := d.ToBool(e.sc)
-			isBool, err = expression.HandleOverflowOnSelection(e.sc, isBool, err)
+			isTrue, err := d.ToBool(e.sc)
+			isTrue, err = expression.HandleOverflowOnSelection(e.sc, isTrue, err)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
-			gotRow = isBool != 0
+			gotRow = isTrue != 0
 		}
 		if !gotRow {
 			if e.sc.WarningCount() > wc {
@@ -880,7 +880,7 @@ type indexScanProcessor struct {
 
 func (e *indexScanProcessor) Process(key, value []byte) error {
 	if e.rowCount == e.limit {
-		return dbreader.ScanBreak
+		return dbreader.ErrScanBreak
 	}
 	e.rowCount++
 	err := e.indexScanProcessCore(key, value)
@@ -978,7 +978,7 @@ func (e *selectionProcessor) Process(key, value []byte) error {
 		e.selectionCtx.execDetail.update(begin, gotRow)
 	}(time.Now())
 	if e.rowCount == e.limit {
-		return dbreader.ScanBreak
+		return dbreader.ErrScanBreak
 	}
 	err := e.processCore(key, value)
 	if err != nil {
@@ -1176,7 +1176,7 @@ func safeCopy(b []byte) []byte {
 	return append([]byte{}, b...)
 }
 
-func checkLock(lock mvcc.MvccLock, key []byte, startTS uint64, resolved []uint64) error {
+func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) error {
 	if isResolved(startTS, resolved) {
 		return nil
 	}

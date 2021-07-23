@@ -48,6 +48,7 @@ var (
 	errUnsupportedAlterTableWithValidation    = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER TABLE WITH VALIDATION is currently unsupported", nil))
 	errUnsupportedAlterTableWithoutValidation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER TABLE WITHOUT VALIDATION is currently unsupported", nil))
 	errUnsupportedAlterTableOption            = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("This type of ALTER TABLE is currently unsupported", nil))
+	errUnsupportedAlterReplicaForSysTable     = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("ALTER table replica for tables in system database is currently unsupported", nil))
 	errBlobKeyWithoutLength                   = dbterror.ClassDDL.NewStd(mysql.ErrBlobKeyWithoutLength)
 	errKeyPart0                               = dbterror.ClassDDL.NewStd(mysql.ErrKeyPart0)
 	errIncorrectPrefixKey                     = dbterror.ClassDDL.NewStd(mysql.ErrWrongSubKey)
@@ -111,8 +112,10 @@ var (
 	errUnsupportedIndexType                = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "index type"), nil))
 	errWindowInvalidWindowFuncUse          = dbterror.ClassDDL.NewStd(mysql.ErrWindowInvalidWindowFuncUse)
 
-	// ErrDupKeyName returns for duplicated key name
+	// ErrDupKeyName returns for duplicated key name.
 	ErrDupKeyName = dbterror.ClassDDL.NewStd(mysql.ErrDupKeyName)
+	// ErrFkDupName returns for duplicated FK name.
+	ErrFkDupName = dbterror.ClassDDL.NewStd(mysql.ErrFkDupName)
 	// ErrInvalidDDLState returns for invalid ddl model object state.
 	ErrInvalidDDLState = dbterror.ClassDDL.NewStdErr(mysql.ErrInvalidDDLState, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInvalidDDLState].Raw), nil))
 	// ErrUnsupportedModifyPrimaryKey returns an error when add or drop the primary key.
@@ -176,6 +179,8 @@ var (
 	ErrDropLastPartition = dbterror.ClassDDL.NewStd(mysql.ErrDropLastPartition)
 	// ErrTooManyPartitions returns too many partitions were defined.
 	ErrTooManyPartitions = dbterror.ClassDDL.NewStd(mysql.ErrTooManyPartitions)
+	// ErrPartitionConstDomain returns partition constant is out of partition function domain.
+	ErrPartitionConstDomain = dbterror.ClassDDL.NewStd(mysql.ErrPartitionConstDomain)
 	// ErrPartitionFunctionIsNotAllowed returns this partition function is not allowed.
 	ErrPartitionFunctionIsNotAllowed = dbterror.ClassDDL.NewStd(mysql.ErrPartitionFunctionIsNotAllowed)
 	// ErrPartitionFuncNotAllowed returns partition function returns the wrong type.
@@ -272,4 +277,14 @@ var (
 	ErrUnknownEngine = dbterror.ClassDDL.NewStd(mysql.ErrUnknownStorageEngine)
 
 	errExchangePartitionDisabled = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Exchange Partition is disabled, please set 'tidb_enable_exchange_partition' if you need to need to enable it", nil))
+
+	// ErrPartitionNoTemporary returns when partition at temporary mode
+	ErrPartitionNoTemporary = dbterror.ClassDDL.NewStd(mysql.ErrPartitionNoTemporary)
+
+	// ErrOptOnTemporaryTable returns when exec unsupported opt at temporary mode
+	ErrOptOnTemporaryTable = dbterror.ClassDDL.NewStd(mysql.ErrOptOnTemporaryTable)
+
+	errUnsupportedOnCommitPreserve      = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support ON COMMIT PRESERVE ROWS for now", nil))
+	errUnsupportedEngineTemporary       = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support this kind of engine for temporary table", nil))
+	errUnsupportedClusteredSecondaryKey = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil))
 )

@@ -31,24 +31,37 @@
       "select /*+ USE_INDEX(test.t, c_d_e) */ * from t",
       "select /*+ IGNORE_INDEX(t, c_d_e) */ c from t order by c",
       "select /*+ IGNORE_INDEX(test.t, c_d_e) */ c from t order by c",
+      "select /*+ FORCE_INDEX(t, c_d_e) */ * from t",
+      "select /*+ FORCE_INDEX(test.t, c_d_e) */ * from t",
       "select /*+ USE_INDEX(t, c_d_e) */ * from t t1",
       "select /*+ IGNORE_INDEX(t, c_d_e) */ t1.c from t t1 order by t1.c",
+      "select /*+ FORCE_INDEX(t, c_d_e) */ * from t t1",
       "select /*+ USE_INDEX(t1, c_d_e) */ * from t t1",
       "select /*+ IGNORE_INDEX(t1, c_d_e) */ t1.c from t t1 order by t1.c",
+      "select /*+ FORCE_INDEX(t1, c_d_e) */ * from t t1",
       "select /*+ USE_INDEX(t1, c_d_e), USE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
       "select /*+ IGNORE_INDEX(t1, c_d_e), IGNORE_INDEX(t2, f), HASH_JOIN(t1) */ * from t t1, t t2 where t1.a = t2.b",
+      "select /*+ FORCE_INDEX(t1, c_d_e), FORCE_INDEX(t2, f) */ * from t t1, t t2 where t1.a = t2.b",
       // test multiple indexes
       "select /*+ USE_INDEX(t, c_d_e, f, g) */ * from t order by f",
+      "select /*+ FORCE_INDEX(t, c_d_e, f, g) */ * from t order by f",
       // use TablePath when the hint only contains table.
       "select /*+ USE_INDEX(t) */ f from t where f > 10",
+      "select /*+ FORCE_INDEX(t) */ f from t where f > 10",
       // there will be a warning instead of error when index not exist
       "select /*+ USE_INDEX(t, no_such_index) */ * from t",
       "select /*+ IGNORE_INDEX(t, no_such_index) */ * from t",
+      "select /*+ FORCE_INDEX(t, no_such_index) */ * from t",
       // use both use_index and ignore_index, same as index hints in sql.
       "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, f) */ c from t order by c",
       "select /*+ USE_INDEX(t, f), IGNORE_INDEX(t, f) */ c from t order by c",
       "select /*+ USE_INDEX(t, c_d_e), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
-      "select /*+ USE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c"
+      "select /*+ USE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+      // use both force_index and ignore_index, same as index hints in sql.
+      "select /*+ FORCE_INDEX(t, c_d_e), IGNORE_INDEX(t, f) */ c from t order by c",
+      "select /*+ FORCE_INDEX(t, f), IGNORE_INDEX(t, f) */ c from t order by c",
+      "select /*+ FORCE_INDEX(t, c_d_e), IGNORE_INDEX(t, c_d_e) */ c from t order by c",
+      "select /*+ FORCE_INDEX(t, c_d_e, f), IGNORE_INDEX(t, c_d_e) */ c from t order by c"
     ]
   },
   {
@@ -675,6 +688,33 @@
       "select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a);",
       "select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);",
       "select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);"
+    ]
+  },
+  {
+    "name": "TestEnumIndex",
+    "cases": [
+      "select e from t where e = 'b'",
+      "select e from t where e != 'b'",
+      "select e from t where e > 'b'",
+      "select e from t where e >= 'b'",
+      "select e from t where e < 'b'",
+      "select e from t where e <= 'b'",
+      "select e from t where e = 2",
+      "select e from t where e != 2",
+      "select e from t where e > 2",
+      "select e from t where e >= 2",
+      "select e from t where e < 2",
+      "select e from t where e <= 2",
+
+      // Out of range
+      "select e from t where e > ''",
+      "select e from t where e > 'd'",
+      "select e from t where e > -1",
+      "select e from t where e > 5",
+
+      // zero-value
+      "select e from t where e = ''",
+      "select e from t where e != ''"
     ]
   }
 ]

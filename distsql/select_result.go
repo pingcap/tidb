@@ -31,8 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/copr"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -41,6 +40,9 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
+	tikvmetrics "github.com/tikv/client-go/v2/metrics"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
 )
 
@@ -56,18 +58,67 @@ var (
 var (
 	_ SelectResult = (*selectResult)(nil)
 	_ SelectResult = (*streamResult)(nil)
+	_ SelectResult = (*serialSelectResults)(nil)
 )
 
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
-	// Fetch fetches partial results from client.
-	Fetch(context.Context)
 	// NextRaw gets the next raw result.
 	NextRaw(context.Context) ([]byte, error)
 	// Next reads the data into chunk.
 	Next(context.Context, *chunk.Chunk) error
 	// Close closes the iterator.
 	Close() error
+}
+
+// NewSerialSelectResults create a SelectResult which will read each SelectResult serially.
+func NewSerialSelectResults(selectResults []SelectResult) SelectResult {
+	return &serialSelectResults{
+		selectResults: selectResults,
+		cur:           0,
+	}
+}
+
+// serialSelectResults reads each SelectResult serially
+type serialSelectResults struct {
+	selectResults []SelectResult
+	cur           int
+}
+
+func (ssr *serialSelectResults) NextRaw(ctx context.Context) ([]byte, error) {
+	for ssr.cur < len(ssr.selectResults) {
+		resultSubset, err := ssr.selectResults[ssr.cur].NextRaw(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if len(resultSubset) > 0 {
+			return resultSubset, nil
+		}
+		ssr.cur++ // move to the next SelectResult
+	}
+	return nil, nil
+}
+
+func (ssr *serialSelectResults) Next(ctx context.Context, chk *chunk.Chunk) error {
+	for ssr.cur < len(ssr.selectResults) {
+		if err := ssr.selectResults[ssr.cur].Next(ctx, chk); err != nil {
+			return err
+		}
+		if chk.NumRows() > 0 {
+			return nil
+		}
+		ssr.cur++ // move to the next SelectResult
+	}
+	return nil
+}
+
+func (ssr *serialSelectResults) Close() (err error) {
+	for _, r := range ssr.selectResults {
+		if rerr := r.Close(); rerr != nil {
+			err = rerr
+		}
+	}
+	return
 }
 
 type selectResult struct {
@@ -102,10 +153,38 @@ type selectResult struct {
 	stats *selectResultRuntimeStats
 }
 
-func (r *selectResult) Fetch(ctx context.Context) {
-}
-
 func (r *selectResult) fetchResp(ctx context.Context) error {
+	defer func() {
+		if r.stats != nil {
+			coprCacheHistogramHit.Observe(float64(r.stats.CoprCacheHitNum))
+			coprCacheHistogramMiss.Observe(float64(len(r.stats.copRespTime) - int(r.stats.CoprCacheHitNum)))
+			// Ignore internal sql.
+			if !r.ctx.GetSessionVars().InRestrictedSQL && len(r.stats.copRespTime) > 0 {
+				ratio := float64(r.stats.CoprCacheHitNum) / float64(len(r.stats.copRespTime))
+				if ratio >= 1 {
+					telemetry.CurrentCoprCacheHitRatioGTE100Count.Inc()
+				}
+				if ratio >= 0.8 {
+					telemetry.CurrentCoprCacheHitRatioGTE80Count.Inc()
+				}
+				if ratio >= 0.4 {
+					telemetry.CurrentCoprCacheHitRatioGTE40Count.Inc()
+				}
+				if ratio >= 0.2 {
+					telemetry.CurrentCoprCacheHitRatioGTE20Count.Inc()
+				}
+				if ratio >= 0.1 {
+					telemetry.CurrentCoprCacheHitRatioGTE10Count.Inc()
+				}
+				if ratio >= 0.01 {
+					telemetry.CurrentCoprCacheHitRatioGTE1Count.Inc()
+				}
+				if ratio >= 0 {
+					telemetry.CurrentCoprCacheHitRatioGTE0Count.Inc()
+				}
+			}
+		}
+	}()
 	for {
 		r.respChkIdx = 0
 		startTime := time.Now()
@@ -166,10 +245,6 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if len(r.selectResp.Chunks) != 0 {
 			break
 		}
-	}
-	if r.stats != nil {
-		coprCacheHistogramHit.Observe(float64(r.stats.CoprCacheHitNum))
-		coprCacheHistogramMiss.Observe(float64(len(r.stats.copRespTime) - int(r.stats.CoprCacheHitNum)))
 	}
 	return nil
 }
@@ -267,13 +342,13 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	if r.rootPlanID <= 0 || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
 		return
 	}
-	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-		logutil.Logger(ctx).Error("invalid cop task execution summaries length",
-			zap.Int("expected", len(r.copPlanIDs)),
-			zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
 
-		return
+	if copStats.ScanDetail != nil {
+		readKeys := copStats.ScanDetail.ProcessedKeys
+		readTime := copStats.TimeDetail.KvReadWallTimeMs.Seconds()
+		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime)
 	}
+
 	if r.stats == nil {
 		id := r.rootPlanID
 		r.stats = &selectResultRuntimeStats{
@@ -288,12 +363,49 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
 	}
 
-	for i, detail := range r.selectResp.GetExecutionSummaries() {
+	// If hasExecutor is true, it means the summary is returned from TiFlash.
+	hasExecutor := false
+	for _, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
-			planID := r.copPlanIDs[i]
-			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-				RecordOneCopTask(planID, r.storeType.Name(), callee, detail)
+			if detail.ExecutorId != nil {
+				hasExecutor = true
+			}
+			break
+		}
+	}
+	if hasExecutor {
+		var recorededPlanIDs = make(map[int]int)
+		for i, detail := range r.selectResp.GetExecutionSummaries() {
+			if detail != nil && detail.TimeProcessedNs != nil &&
+				detail.NumProducedRows != nil && detail.NumIterations != nil {
+				planID := r.copPlanIDs[i]
+				recorededPlanIDs[r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+					RecordOneCopTask(planID, r.storeType.Name(), callee, detail)] = 0
+			}
+		}
+		num := uint64(0)
+		dummySummary := &tipb.ExecutorExecutionSummary{TimeProcessedNs: &num, NumProducedRows: &num, NumIterations: &num, ExecutorId: nil}
+		for _, planID := range r.copPlanIDs {
+			if _, ok := recorededPlanIDs[planID]; !ok {
+				r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneCopTask(planID, r.storeType.Name(), callee, dummySummary)
+			}
+		}
+	} else {
+		// For cop task cases, we still need this protection.
+		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
+			logutil.Logger(ctx).Error("invalid cop task execution summaries length",
+				zap.Int("expected", len(r.copPlanIDs)),
+				zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
+			return
+		}
+		for i, detail := range r.selectResp.GetExecutionSummaries() {
+			if detail != nil && detail.TimeProcessedNs != nil &&
+				detail.NumProducedRows != nil && detail.NumIterations != nil {
+				planID := r.copPlanIDs[i]
+				r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+					RecordOneCopTask(planID, r.storeType.Name(), callee, detail)
+			}
 		}
 	}
 }

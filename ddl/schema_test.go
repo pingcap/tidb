@@ -139,7 +139,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	ctx := testNewContext(d)
-	dbInfo := testSchemaInfo(c, d, "test")
+	dbInfo := testSchemaInfo(c, d, "test_schema")
 
 	// create a database.
 	job := testCreateSchema(c, ctx, d, dbInfo)
@@ -228,7 +228,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	// d2 must not be owner.
 	d2.ownerManager.RetireOwner()
 
-	dbInfo := testSchemaInfo(c, d2, "test")
+	dbInfo := testSchemaInfo(c, d2, "test_schema")
 	testCreateSchema(c, ctx, d2, dbInfo)
 	testCheckSchemaState(c, d2, dbInfo, model.StatePublic)
 

@@ -18,12 +18,10 @@ import (
 	"math"
 	"os"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	us "github.com/ngaut/unistore/tikv"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -33,9 +31,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
 )
@@ -52,13 +50,10 @@ type RPCClient struct {
 	rawHandler *rawHandler
 	persistent bool
 	closed     int32
-
-	// rpcCli uses to redirects RPC request to TiDB rpc server, It is only use for test.
-	// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
-	// sync.Once uses to avoid concurrency initialize rpcCli.
-	sync.Once
-	rpcCli Client
 }
+
+// UnistoreRPCClientSendHook exports for test.
+var UnistoreRPCClientSendHook func(*tikvrpc.Request)
 
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
@@ -68,9 +63,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	})
 
-	if req.StoreTp == kv.TiDB {
-		return c.redirectRequestToRPCServer(ctx, addr, req, timeout)
-	}
+	failpoint.Inject("unistoreRPCClientSendHook", func(val failpoint.Value) {
+		if val.(bool) && UnistoreRPCClientSendHook != nil {
+			UnistoreRPCClientSendHook(req)
+		}
+	})
 
 	select {
 	case <-ctx.Done():
@@ -83,7 +80,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, context.Canceled
 	}
 
-	storeID, err := c.usSvr.GetStoreIdByAddr(addr)
+	storeID, err := c.usSvr.GetStoreIDByAddr(addr)
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +114,8 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		failpoint.Inject("rpcPrewriteResult", func(val failpoint.Value) {
 			if val != nil {
 				switch val.(string) {
+				case "timeout":
+					failpoint.Return(nil, errors.New("timeout"))
 				case "notLeader":
 					failpoint.Return(&tikvrpc.Response{
 						Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
@@ -240,6 +239,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		})
 		resp.Resp, err = c.handleBatchCop(ctx, req.BatchCop(), timeout)
 	case tikvrpc.CmdMPPConn:
+		failpoint.Inject("mppConnTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(nil, errors.New("rpc error"))
+			}
+		})
 		resp.Resp, err = c.handleEstablishMPPConnection(ctx, req.EstablishMPPConn(), timeout, storeID)
 	case tikvrpc.CmdMPPTask:
 		failpoint.Inject("mppDispatchTimeout", func(val failpoint.Value) {
@@ -258,13 +262,16 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdDebugGetRegionProperties:
 		resp.Resp, err = c.handleDebugGetRegionProperties(ctx, req.DebugGetRegionProperties())
 		return resp, err
+	case tikvrpc.CmdStoreSafeTS:
+		resp.Resp, err = c.usSvr.GetStoreSafeTS(ctx, req.StoreSafeTS())
+		return resp, err
 	default:
 		err = errors.Errorf("not support this request type %v", req.Type)
 	}
 	if err != nil {
 		return nil, err
 	}
-	var regErr *errorpb.Error = nil
+	var regErr *errorpb.Error
 	if req.Type != tikvrpc.CmdBatchCop && req.Type != tikvrpc.CmdMPPConn && req.Type != tikvrpc.CmdMPPTask {
 		regErr, err = resp.GetRegionError()
 	}
@@ -294,10 +301,15 @@ func (c *RPCClient) handleCopStream(ctx context.Context, req *coprocessor.Reques
 
 func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.EstablishMPPConnectionRequest, timeout time.Duration, storeID uint64) (*tikvrpc.MPPStreamResponse, error) {
 	mockServer := new(mockMPPConnectStreamServer)
-	err := c.usSvr.EstablishMPPConnectionWithStoreId(r, mockServer, storeID)
+	err := c.usSvr.EstablishMPPConnectionWithStoreID(r, mockServer, storeID)
 	if err != nil {
 		return nil, err
 	}
+	failpoint.Inject("establishMppConnectionErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("rpc error"))
+		}
+	})
 	var mockClient = mockMPPConnectionClient{mppResponses: mockServer.mppResponses, idx: 0, ctx: ctx, targetTask: r.ReceiverMeta}
 	streamResp := &tikvrpc.MPPStreamResponse{Tikv_EstablishMPPConnectionClient: &mockClient}
 	_, cancel := context.WithCancel(ctx)
@@ -314,7 +326,7 @@ func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.Est
 }
 
 func (c *RPCClient) handleDispatchMPPTask(ctx context.Context, r *mpp.DispatchTaskRequest, storeID uint64) (*mpp.DispatchTaskResponse, error) {
-	return c.usSvr.DispatchMPPTaskWithStoreId(ctx, r, storeID)
+	return c.usSvr.DispatchMPPTaskWithStoreID(ctx, r, storeID)
 }
 
 func (c *RPCClient) handleBatchCop(ctx context.Context, r *coprocessor.BatchRequest, timeout time.Duration) (*tikvrpc.BatchCopStreamResponse, error) {
@@ -378,36 +390,11 @@ type Client interface {
 	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
 }
 
-// GRPCClientFactory is the GRPC client factory.
-// Use global variable to avoid circle import.
-// TODO: remove this global variable.
-var GRPCClientFactory func() Client
-
-// redirectRequestToRPCServer redirects RPC request to TiDB rpc server, It is only use for test.
-// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
-func (c *RPCClient) redirectRequestToRPCServer(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
-	c.Once.Do(func() {
-		if GRPCClientFactory != nil {
-			c.rpcCli = GRPCClientFactory()
-		}
-	})
-	if c.rpcCli == nil {
-		return nil, errors.Errorf("GRPCClientFactory is nil")
-	}
-	return c.rpcCli.SendRequest(ctx, addr, req, timeout)
-}
-
 // Close closes RPCClient and cleanup temporal resources.
 func (c *RPCClient) Close() error {
 	atomic.StoreInt32(&c.closed, 1)
 	if c.usSvr != nil {
 		c.usSvr.Stop()
-	}
-	if c.rpcCli != nil {
-		err := c.rpcCli.Close()
-		if err != nil {
-			return err
-		}
 	}
 	if !c.persistent && c.path != "" {
 		err := os.RemoveAll(c.path)
@@ -454,7 +441,7 @@ func (mock *mockBatchCopClient) Recv() (*coprocessor.BatchResponse, error) {
 	if mock.idx < len(mock.batchResponses) {
 		ret := mock.batchResponses[mock.idx]
 		mock.idx++
-		var err error = nil
+		var err error
 		if len(ret.OtherError) > 0 {
 			err = errors.New(ret.OtherError)
 			ret = nil

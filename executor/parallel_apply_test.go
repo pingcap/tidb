@@ -20,7 +20,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -42,7 +44,6 @@ func checkApplyPlan(c *C, tk *testkit.TestKit, sql string, parallel int) {
 		}
 	}
 	c.Assert(containApply, IsTrue)
-	return
 }
 
 func (s *testSuite) TestParallelApply(c *C) {
@@ -421,7 +422,7 @@ func (s *testSerialSuite) TestApplyWithOtherFeatures(c *C) {
 	core.SetPreparedPlanCache(orgEnable)
 
 	// cluster index
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t, t2")
 	tk.MustExec("create table t(a int, b int, c int, primary key(a, b))")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a, c))")
@@ -429,7 +430,7 @@ func (s *testSerialSuite) TestApplyWithOtherFeatures(c *C) {
 	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
 	sql = "select * from t where (select min(t2.b) from t2 where t2.a > t.a) > 0"
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 	// partitioning table
 	tk.MustExec("drop table if exists t1, t2")
@@ -569,6 +570,10 @@ func (s *testSuite) TestApplyCacheRatio(c *C) {
 }
 
 func (s *testSuite) TestApplyGoroutinePanic(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("race detected, skip it temporarily and fix it before 20210619")
+	}
+
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 	tk.MustExec("drop table if exists t1, t2")
@@ -595,4 +600,15 @@ func (s *testSuite) TestApplyGoroutinePanic(c *C) {
 		c.Assert(err, NotNil) // verify errors are not be ignored
 		c.Assert(failpoint.Disable(panicPath), IsNil)
 	}
+}
+
+func (s *testSuite) TestIssue24930(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustQuery(`select case when t1.a is null
+    then (select t2.a from t2 where t2.a = t1.a limit 1) else t1.a end a
+	from t1 where t1.a=1 order by a limit 1`).Check(testkit.Rows()) // can return an empty result instead of hanging forever
 }

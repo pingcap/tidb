@@ -255,15 +255,12 @@ func (decoder *ChunkDecoder) tryAppendHandleColumn(colIdx int, col *ColInfo, han
 	}
 	for i, id := range decoder.handleColIDs {
 		if col.ID == id {
-			if types.CommonHandleNeedRestoredData(col.Ft) {
+			if types.NeedRestoredData(col.Ft) {
 				return false
 			}
 			coder := codec.NewDecoder(chk, decoder.loc)
 			_, err := coder.DecodeOne(handle.EncodedCol(i), colIdx, col.Ft)
-			if err != nil {
-				return false
-			}
-			return true
+			return err == nil
 		}
 	}
 	return false
@@ -426,7 +423,7 @@ func (decoder *BytesDecoder) tryDecodeHandle(values [][]byte, offset int, col *C
 	if handle == nil {
 		return false
 	}
-	if types.CommonHandleNeedRestoredData(col.Ft) {
+	if types.NeedRestoredData(col.Ft) {
 		return false
 	}
 	if col.IsPKHandle || col.ID == model.ExtraHandleID {

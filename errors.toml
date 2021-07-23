@@ -8,7 +8,7 @@ TiDB admin check table failed.
 
 ["admin:8223"]
 error = '''
-data isn't equal
+index:%#v != record:%#v
 '''
 
 ["admin:8224"]
@@ -193,7 +193,7 @@ View's SELECT contains a '%s' clause
 
 ["ddl:1353"]
 error = '''
-View's SELECT and view's field list have different column counts
+In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
 '''
 
 ["ddl:1481"]
@@ -261,6 +261,16 @@ error = '''
 Duplicate partition name %-.192s
 '''
 
+["ddl:1562"]
+error = '''
+Cannot create temporary table with partitions
+'''
+
+["ddl:1563"]
+error = '''
+Partition constant is out of partition function domain
+'''
+
 ["ddl:1564"]
 error = '''
 This partition function is not allowed
@@ -304,6 +314,11 @@ Found a row that does not match the partition
 ["ddl:1740"]
 error = '''
 Table to exchange with partition has foreign key references: '%-.64s'
+'''
+
+["ddl:1826"]
+error = '''
+Duplicate foreign key constraint name '%s'
 '''
 
 ["ddl:1846"]
@@ -389,6 +404,11 @@ error = '''
 ["ddl:4139"]
 error = '''
 Unknown SEQUENCE: '%-.300s'
+'''
+
+["ddl:8006"]
+error = '''
+`%s` is unsupported on temporary tables.
 '''
 
 ["ddl:8200"]
@@ -486,9 +506,19 @@ error = '''
 %-.128s command denied to user '%-.48s'@'%-.64s' for table '%-.64s'
 '''
 
+["executor:1144"]
+error = '''
+Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used
+'''
+
 ["executor:1213"]
 error = '''
 Deadlock found when trying to get lock; try restarting transaction
+'''
+
+["executor:1221"]
+error = '''
+Incorrect usage of %s and %s
 '''
 
 ["executor:1242"]
@@ -509,6 +539,11 @@ Query execution was interrupted
 ["executor:1347"]
 error = '''
 '%-.192s.%-.192s' is not %s
+'''
+
+["executor:1356"]
+error = '''
+View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
 '''
 
 ["executor:1390"]
@@ -534,6 +569,26 @@ Transaction characteristics can't be changed while a transaction is in progress
 ["executor:1827"]
 error = '''
 The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.
+'''
+
+["executor:3523"]
+error = '''
+Unknown authorization ID %.256s
+'''
+
+["executor:3619"]
+error = '''
+Illegal privilege level specified for %s
+'''
+
+["executor:3636"]
+error = '''
+Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_depth to a larger value
+'''
+
+["executor:3929"]
+error = '''
+Dynamic privilege '%s' is not registered with the server.
 '''
 
 ["executor:8003"]
@@ -594,6 +649,16 @@ Import failed: %s
 ["executor:8127"]
 error = '''
 Export failed: %s
+'''
+
+["executor:8133"]
+error = '''
+handle %#v, index:%#v != record:%#v
+'''
+
+["executor:8134"]
+error = '''
+col %s, handle %#v, index:%#v != record:%#v, compare err:%#v
 '''
 
 ["executor:8212"]
@@ -921,6 +986,11 @@ error = '''
 EXPLAIN/SHOW can not be issued; lacking privileges for underlying table
 '''
 
+["planner:1352"]
+error = '''
+View's SELECT refers to a temporary table '%-.192s'
+'''
+
 ["planner:1356"]
 error = '''
 View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
@@ -929,6 +999,11 @@ View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) o
 ["planner:1462"]
 error = '''
 `%-.192s`.`%-.192s` contains view recursion
+'''
+
+["planner:1562"]
+error = '''
+Cannot create temporary table with partitions
 '''
 
 ["planner:1706"]
@@ -949,6 +1024,11 @@ Unknown EXPLAIN format name: '%s'
 ["planner:1815"]
 error = '''
 Internal : %s
+'''
+
+["planner:1836"]
+error = '''
+Running in read-only mode
 '''
 
 ["planner:3029"]
@@ -984,6 +1064,31 @@ Hint %s is ignored as conflicting/duplicated.
 ["planner:3128"]
 error = '''
 Unresolved name '%s' for %s hint
+'''
+
+["planner:3573"]
+error = '''
+Recursive Common Table Expression '%s' should contain a UNION
+'''
+
+["planner:3574"]
+error = '''
+Recursive Common Table Expression '%s' should have one or more non-recursive query blocks followed by one or more recursive ones
+'''
+
+["planner:3575"]
+error = '''
+Recursive Common Table Expression '%s' can contain neither aggregation nor window functions in recursive query block
+'''
+
+["planner:3576"]
+error = '''
+In recursive query block of Recursive Common Table Expression '%s', the recursive table must neither be in the right argument of a LEFT JOIN, nor be forced to be non-first with join order hints
+'''
+
+["planner:3577"]
+error = '''
+In recursive query block of Recursive Common Table Expression '%s', the recursive table must be referenced only once, and not in any subquery
 '''
 
 ["planner:3579"]
@@ -1076,6 +1181,16 @@ error = '''
 Variable '%s' cannot be set using SET_VAR hint.
 '''
 
+["planner:8006"]
+error = '''
+`%s` is unsupported on temporary tables.
+'''
+
+["planner:8007"]
+error = '''
+`drop global temporary table` can only drop global temporary table
+'''
+
 ["planner:8108"]
 error = '''
 Unsupported type %T
@@ -1108,7 +1223,7 @@ Schema has changed
 
 ["planner:8121"]
 error = '''
-privilege check fail
+privilege check for '%s' fail
 '''
 
 ["planner:8122"]
@@ -1119,6 +1234,16 @@ Wildcard fields without any table name appears in wrong place
 ["planner:8123"]
 error = '''
 In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by
+'''
+
+["planner:8132"]
+error = '''
+Feature '%s' is not supported when security enhanced mode is enabled
+'''
+
+["planner:8135"]
+error = '''
+invalid as of timestamp: %s
 '''
 
 ["privilege:1141"]
@@ -1251,6 +1376,11 @@ error = '''
 Unknown SEQUENCE: '%-.300s'
 '''
 
+["schema:8003"]
+error = '''
+TiDB admin check table failed.
+'''
+
 ["schema:8020"]
 error = '''
 Table '%s' was locked in %s by %v
@@ -1289,6 +1419,11 @@ Column '%-.192s' cannot be null
 ["table:1054"]
 error = '''
 Unknown column '%-.192s' in '%-.192s'
+'''
+
+["table:1114"]
+error = '''
+The table '%-.192s' is full
 '''
 
 ["table:1192"]
@@ -1594,6 +1729,11 @@ Variable '%-.64s' can't be set to the value of '%-.200s'
 ["variable:1232"]
 error = '''
 Incorrect argument type to variable '%-.64s'
+'''
+
+["variable:1235"]
+error = '''
+function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions
 '''
 
 ["variable:1238"]

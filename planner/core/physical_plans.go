@@ -14,6 +14,8 @@
 package core
 
 import (
+	"fmt"
+	"strconv"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -28,8 +30,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -107,7 +111,10 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 		} else if chCnt == 1 {
 			curPlan = curPlan.Children()[0]
 		} else {
-			join := curPlan.(*PhysicalHashJoin)
+			join, ok := curPlan.(*PhysicalHashJoin)
+			if !ok {
+				return nil
+			}
 			curPlan = join.children[1-join.globalChildIndex]
 		}
 	}
@@ -465,6 +472,8 @@ type PhysicalTableScan struct {
 	IsGlobalRead bool
 
 	// The table scan may be a partition, rather than a real table.
+	// TODO: clean up this field. After we support dynamic partitioning, table scan
+	// works on the whole partition table, and `isPartition` is not used.
 	isPartition bool
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
@@ -517,6 +526,35 @@ func (ts *PhysicalTableScan) ExtractCorrelatedCols() []*expression.CorrelatedCol
 // IsPartition returns true and partition ID if it's actually a partition.
 func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 	return ts.isPartition, ts.physicalTableID
+}
+
+// ResolveCorrelatedColumns resolves the correlated columns in range access
+func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) {
+	access := ts.AccessCondition
+	if ts.Table.IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(ts.Table)
+		idxCols, idxColLens := expression.IndexInfo2PrefixCols(ts.Columns, ts.Schema().Columns, pkIdx)
+		for _, cond := range access {
+			newCond, err := expression.SubstituteCorCol2Constant(cond)
+			if err != nil {
+				return nil, err
+			}
+			access = append(access, newCond)
+		}
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ts.SCtx(), access, idxCols, idxColLens)
+		if err != nil {
+			return nil, err
+		}
+		ts.Ranges = res.Ranges
+	} else {
+		var err error
+		pkTP := ts.Table.GetPkColInfo().FieldType
+		ts.Ranges, err = ranger.BuildTableRange(access, ts.SCtx().GetSessionVars().StmtCtx, &pkTP)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return ts.Ranges, nil
 }
 
 // ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
@@ -728,6 +766,7 @@ type PhysicalHashJoin struct {
 	// on which store the join executes.
 	storeTp          kv.StoreType
 	globalChildIndex int
+	mppShuffleJoin   bool
 }
 
 // Clone implements PhysicalPlan interface.
@@ -851,8 +890,24 @@ type PhysicalMergeJoin struct {
 type PhysicalExchangeReceiver struct {
 	basePhysicalPlan
 
-	Tasks   []*kv.MPPTask
-	ChildPf *Fragment
+	Tasks []*kv.MPPTask
+	frags []*Fragment
+}
+
+// Clone implment PhysicalPlan interface.
+func (p *PhysicalExchangeReceiver) Clone() (PhysicalPlan, error) {
+	np := new(PhysicalExchangeReceiver)
+	base, err := p.basePhysicalPlan.cloneWithSelf(np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.basePhysicalPlan = *base
+	return np, nil
+}
+
+// GetExchangeSender return the connected sender of this receiver. We assume that its child must be a receiver.
+func (p *PhysicalExchangeReceiver) GetExchangeSender() *PhysicalExchangeSender {
+	return p.children[0].(*PhysicalExchangeSender)
 }
 
 // PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing,
@@ -862,10 +917,21 @@ type PhysicalExchangeSender struct {
 	TargetTasks  []*kv.MPPTask
 	ExchangeType tipb.ExchangeType
 	HashCols     []*expression.Column
-	// Tasks is the mpp task for current PhysicalExchangeSender
+	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks []*kv.MPPTask
+}
 
-	Fragment *Fragment
+// Clone implment PhysicalPlan interface.
+func (p *PhysicalExchangeSender) Clone() (PhysicalPlan, error) {
+	np := new(PhysicalExchangeSender)
+	base, err := p.basePhysicalPlan.cloneWithSelf(np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.basePhysicalPlan = *base
+	np.ExchangeType = p.ExchangeType
+	np.HashCols = p.HashCols
+	return np, nil
 }
 
 // Clone implements PhysicalPlan interface.
@@ -876,9 +942,7 @@ func (p *PhysicalMergeJoin) Clone() (PhysicalPlan, error) {
 		return nil, err
 	}
 	cloned.basePhysicalJoin = *base
-	for _, cf := range p.CompareFuncs {
-		cloned.CompareFuncs = append(cloned.CompareFuncs, cf)
-	}
+	cloned.CompareFuncs = append(cloned.CompareFuncs, p.CompareFuncs...)
 	cloned.Desc = p.Desc
 	return cloned, nil
 }
@@ -891,6 +955,7 @@ type PhysicalLock struct {
 
 	TblID2Handle     map[int64][]HandleCols
 	PartitionedTable []table.PartitionedTable
+	ExtraPIDInfo     extraPIDInfo
 }
 
 // PhysicalLimit is the physical operator of Limit.
@@ -916,6 +981,19 @@ func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 // PhysicalUnionAll is the physical operator of UnionAll.
 type PhysicalUnionAll struct {
 	physicalSchemaProducer
+
+	mpp bool
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalUnionAll) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalUnionAll)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	return cloned, nil
 }
 
 // AggMppRunMode defines the running mode of aggregation in MPP
@@ -930,14 +1008,17 @@ const (
 	Mpp2Phase
 	// MppTiDB runs agg on TiDB (and a partial agg on TiFlash if in 2 phase agg)
 	MppTiDB
+	// MppScalar also has 2 phases. The second phase runs in a single task.
+	MppScalar
 )
 
 type basePhysicalAgg struct {
 	physicalSchemaProducer
 
-	AggFuncs     []*aggregation.AggFuncDesc
-	GroupByItems []expression.Expression
-	MppRunMode   AggMppRunMode
+	AggFuncs         []*aggregation.AggFuncDesc
+	GroupByItems     []expression.Expression
+	MppRunMode       AggMppRunMode
+	MppPartitionCols []*expression.Column
 }
 
 func (p *basePhysicalAgg) isFinalAgg() bool {
@@ -972,7 +1053,7 @@ func (p *basePhysicalAgg) numDistinctFunc() (num int) {
 	return
 }
 
-func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
+func (p *basePhysicalAgg) getAggFuncCostFactor(isMPP bool) (factor float64) {
 	factor = 0.0
 	for _, agg := range p.AggFuncs {
 		if fac, ok := aggFuncFactor[agg.Name]; ok {
@@ -982,7 +1063,15 @@ func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
 		}
 	}
 	if factor == 0 {
-		factor = 1.0
+		if isMPP {
+			// The default factor 1.0 will lead to 1-phase agg in pseudo stats settings.
+			// But in mpp cases, 2-phase is more usual. So we change this factor.
+			// TODO: This is still a little tricky and might cause regression. We should
+			// calibrate these factors and polish our cost model in the future.
+			factor = aggFuncFactor[ast.AggFuncFirstRow]
+		} else {
+			factor = 1.0
+		}
 	}
 	return
 }
@@ -1324,4 +1413,84 @@ func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt
 		FullSchema: fullSchema,
 		Partitions: pt,
 	}
+}
+
+// PhysicalCTE is for CTE.
+type PhysicalCTE struct {
+	physicalSchemaProducer
+
+	SeedPlan  PhysicalPlan
+	RecurPlan PhysicalPlan
+	CTE       *CTEClass
+	cteAsName model.CIStr
+}
+
+// PhysicalCTETable is for CTE table.
+type PhysicalCTETable struct {
+	physicalSchemaProducer
+
+	IDForStorage int
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4PhysicalPlan(p.SeedPlan)
+	if p.RecurPlan != nil {
+		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(p.RecurPlan)...)
+	}
+	return corCols
+}
+
+// AccessObject implements physicalScan interface.
+func (p *PhysicalCTE) AccessObject(normalized bool) string {
+	return fmt.Sprintf("CTE:%s", p.cteAsName.L)
+}
+
+// OperatorInfo implements dataAccesser interface.
+func (p *PhysicalCTE) OperatorInfo(normalized bool) string {
+	return fmt.Sprintf("data:%s", (*CTEDefinition)(p).ExplainID())
+}
+
+// ExplainInfo implements Plan interface.
+func (p *PhysicalCTE) ExplainInfo() string {
+	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
+}
+
+// ExplainID overrides the ExplainID.
+func (p *PhysicalCTE) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
+			return p.TP()
+		}
+		return p.TP() + "_" + strconv.Itoa(p.id)
+	})
+}
+
+// ExplainInfo overrides the ExplainInfo
+func (p *PhysicalCTETable) ExplainInfo() string {
+	return "Scan on CTE_" + strconv.Itoa(p.IDForStorage)
+}
+
+// CTEDefinition is CTE definition for explain.
+type CTEDefinition PhysicalCTE
+
+// ExplainInfo overrides the ExplainInfo
+func (p *CTEDefinition) ExplainInfo() string {
+	var res string
+	if p.RecurPlan != nil {
+		res = "Recursive CTE"
+	} else {
+		res = "Non-Recursive CTE"
+	}
+	if p.CTE.HasLimit {
+		res += fmt.Sprintf(", limit(offset:%v, count:%v)", p.CTE.LimitBeg, p.CTE.LimitEnd-p.CTE.LimitBeg)
+	}
+	return res
+}
+
+// ExplainID overrides the ExplainID.
+func (p *CTEDefinition) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
+	})
 }

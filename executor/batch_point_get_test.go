@@ -20,9 +20,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -155,6 +157,16 @@ func (s *testBatchPointGetSuite) TestIssue18843(c *C) {
 	tk.MustQuery("select * from t18843 where f is null").Check(testkit.Rows("2 <nil>"))
 }
 
+func (s *testBatchPointGetSuite) TestIssue24562(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ttt")
+	tk.MustExec("create table ttt(a enum(\"a\",\"b\",\"c\",\"d\"), primary key(a));")
+	tk.MustExec("insert into ttt values(1)")
+	tk.MustQuery("select * from ttt where ttt.a in (\"1\",\"b\")").Check(testkit.Rows())
+	tk.MustQuery("select * from ttt where ttt.a in (1,\"b\")").Check(testkit.Rows("a"))
+}
+
 func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -177,7 +189,7 @@ func (s *testBatchPointGetSuite) TestBatchPointGetLockExistKey(c *C) {
 
 		errCh <- tk1.ExecToErr("use test")
 		errCh <- tk2.ExecToErr("use test")
-		tk1.Se.GetSessionVars().EnableClusteredIndex = false
+		tk1.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 		errCh <- tk1.ExecToErr(fmt.Sprintf("drop table if exists %s", tableName))
 		errCh <- tk1.ExecToErr(fmt.Sprintf("create table %s(id int, v int, k int, %s key0(id, v))", tableName, key))
@@ -308,4 +320,43 @@ func (s *testBatchPointGetSuite) TestBatchPointGetLockExistKey(c *C) {
 	for err := range errCh {
 		c.Assert(err, IsNil)
 	}
+}
+
+func (s *testBatchPointGetSuite) TestPointGetForTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("create global temporary table t1 (id int primary key, val int) on commit delete rows")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (1,1)")
+	tk.MustQuery("explain format = 'brief' select * from t1 where id in (1, 2, 3)").
+		Check(testkit.Rows("Batch_Point_Get 3.00 root table:t1 handle:[1 2 3], keep order:false, desc:false"))
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"), IsNil)
+	}()
+
+	// Batch point get.
+	tk.MustQuery("select * from t1 where id in (1, 2, 3)").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t1 where id in (2, 3)").Check(testkit.Rows())
+
+	// Point get.
+	tk.MustQuery("select * from t1 where id = 1").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t1 where id = 2").Check(testkit.Rows())
+}
+
+func (s *testBatchPointGetSuite) TestBatchPointGetIssue25167(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	defer func() {
+		tk.MustExec("drop table if exists t")
+	}()
+	time.Sleep(50 * time.Millisecond)
+	tk.MustExec("set @a=(select current_timestamp(3))")
+	tk.MustExec("insert into t values (1)")
+	tk.MustQuery("select * from t as of timestamp @a where a in (1,2,3)").Check(testkit.Rows())
 }

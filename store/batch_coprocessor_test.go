@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 type testBatchCopSuite struct {
@@ -40,7 +40,7 @@ var _ = SerialSuites(&testBatchCopSuite{})
 
 func newStoreWithBootstrap(tiflashNum int) (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
 			tiflashIdx := 0
@@ -102,6 +102,7 @@ func (s *testBatchCopSuite) TestStoreErr(c *C) {
 	c.Assert(err, IsNil)
 	tk.MustExec("insert into t values(1,0)")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_allow_mpp=OFF")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopCancelled", "1*return(true)"), IsNil)
 
@@ -137,6 +138,7 @@ func (s *testBatchCopSuite) TestStoreSwitchPeer(c *C) {
 	c.Assert(err, IsNil)
 	tk.MustExec("insert into t values(1,0)")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_allow_mpp=OFF")
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"), IsNil)
 

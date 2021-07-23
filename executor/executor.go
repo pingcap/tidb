@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
 	"strings"
@@ -28,6 +29,8 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -47,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	tikvutil "github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -55,10 +57,17 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/topsql"
+	tikverr "github.com/tikv/client-go/v2/error"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikv"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -426,10 +435,10 @@ type ShowDDLJobsExec struct {
 
 	jobNumber int
 	is        infoschema.InfoSchema
-	done      bool
 }
 
 // DDLJobRetriever retrieve the DDLJobs.
+// nolint:structcheck
 type DDLJobRetriever struct {
 	runningJobs    []*model.Job
 	historyJobIter *meta.LastJobIterator
@@ -881,31 +890,22 @@ type SelectLockExec struct {
 	Lock *ast.SelectLockInfo
 	keys []kv.Key
 
-	tblID2Handle     map[int64][]plannercore.HandleCols
+	tblID2Handle map[int64][]plannercore.HandleCols
+
+	// All the partition tables in the children of this executor.
 	partitionedTable []table.PartitionedTable
 
-	// tblID2Table is cached to reduce cost.
-	tblID2Table map[int64]table.PartitionedTable
+	// When SelectLock work on the partition table, we need the partition ID
+	// instead of table ID to calculate the lock KV. In that case, partition ID is store as an
+	// extra column in the chunk row.
+	// tblID2PIDColumnIndex stores the column index in the chunk row. The children may be join
+	// of multiple tables, so the map struct is used.
+	tblID2PIDColumnIndex map[int64]int
 }
 
 // Open implements the Executor Open interface.
 func (e *SelectLockExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
-
-	if len(e.tblID2Handle) > 0 && len(e.partitionedTable) > 0 {
-		e.tblID2Table = make(map[int64]table.PartitionedTable, len(e.partitionedTable))
-		for id := range e.tblID2Handle {
-			for _, p := range e.partitionedTable {
-				if id == p.Meta().ID {
-					e.tblID2Table[id] = p
-				}
-			}
-		}
-	}
-
-	return nil
+	return e.baseExecutor.Open(ctx)
 }
 
 // Next implements the Executor Next interface.
@@ -923,15 +923,15 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if req.NumRows() > 0 {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+
 			for id, cols := range e.tblID2Handle {
 				physicalID := id
-				if pt, ok := e.tblID2Table[id]; ok {
-					// On a partitioned table, we have to use physical ID to encode the lock key!
-					p, err := pt.GetPartitionByRow(e.ctx, row.GetDatumRow(e.base().retFieldTypes))
-					if err != nil {
-						return err
+				if len(e.partitionedTable) > 0 {
+					// Replace the table ID with partition ID.
+					// The partition ID is returned as an extra column from the table reader.
+					if offset, ok := e.tblID2PIDColumnIndex[id]; ok {
+						physicalID = row.GetInt64(offset)
 					}
-					physicalID = p.GetPhysicalID()
 				}
 
 				for _, col := range cols {
@@ -947,7 +947,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	lockWaitTime := e.ctx.GetSessionVars().LockWaitTimeout
 	if e.Lock.LockType == ast.SelectLockForUpdateNoWait {
-		lockWaitTime = kv.LockNoWait
+		lockWaitTime = tikv.LockNoWait
 	} else if e.Lock.LockType == ast.SelectLockForUpdateWaitN {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
 	}
@@ -967,8 +967,13 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
 }
 
-func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
-	return &kv.LockCtx{
+func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.LockCtx {
+	var planDigest *parser.Digest
+	_, sqlDigest := seVars.StmtCtx.SQLDigest()
+	if variable.TopSQLEnabled() {
+		_, planDigest = seVars.StmtCtx.GetPlanDigest()
+	}
+	return &tikvstore.LockCtx{
 		Killed:                &seVars.Killed,
 		ForUpdateTS:           seVars.TxnCtx.GetForUpdateTS(),
 		LockWaitTime:          lockWaitTime,
@@ -977,6 +982,15 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
 		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
 		LockExpired:           &seVars.TxnCtx.LockExpire,
+		ResourceGroupTag:      resourcegrouptag.EncodeResourceGroupTag(sqlDigest, planDigest),
+		OnDeadlock: func(deadlock *tikverr.ErrDeadlock) {
+			cfg := config.GetGlobalConfig()
+			if deadlock.IsRetryable && !cfg.PessimisticTxn.DeadlockHistoryCollectRetryable {
+				return
+			}
+			rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
+			deadlockhistory.GlobalDeadlockHistory.Push(rec)
+		},
 	}
 }
 
@@ -984,8 +998,9 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 // waitTime means the lock operation will wait in milliseconds if target key is already
 // locked by others. used for (select for update nowait) situation
 // except 0 means alwaysWait 1 means nowait
-func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
-	sctx := se.GetSessionVars().StmtCtx
+func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.LockCtx, keys ...kv.Key) error {
+	sessVars := se.GetSessionVars()
+	sctx := sessVars.StmtCtx
 	if !sctx.InUpdateStmt && !sctx.InDeleteStmt {
 		atomic.StoreUint32(&se.GetSessionVars().TxnCtx.ForUpdate, 1)
 	}
@@ -994,13 +1009,33 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx,
 	if err != nil {
 		return err
 	}
-	var lockKeyStats *execdetails.LockKeysDetails
-	ctx = context.WithValue(ctx, execdetails.LockKeysDetailCtxKey, &lockKeyStats)
+
+	// Skip the temporary table keys.
+	keys = filterTemporaryTableKeys(sessVars, keys)
+
+	var lockKeyStats *tikvutil.LockKeysDetails
+	ctx = context.WithValue(ctx, tikvutil.LockKeysDetailCtxKey, &lockKeyStats)
 	err = txn.LockKeys(tikvutil.SetSessionID(ctx, se.GetSessionVars().ConnectionID), lockCtx, keys...)
 	if lockKeyStats != nil {
 		sctx.MergeLockKeysExecDetails(lockKeyStats)
 	}
 	return err
+}
+
+func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Key {
+	txnCtx := vars.TxnCtx
+	if txnCtx == nil || txnCtx.TemporaryTables == nil {
+		return keys
+	}
+
+	newKeys := keys[:0:len(keys)]
+	for _, key := range keys {
+		tblID := tablecodec.DecodeTableID(key)
+		if _, ok := txnCtx.TemporaryTables[tblID]; !ok {
+			newKeys = append(newKeys, key)
+		}
+	}
+	return newKeys
 }
 
 // LimitExec represents limit executor
@@ -1215,6 +1250,11 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	failpoint.Inject("mockSelectionExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("mock SelectionExec.baseExecutor.Open returned error"))
+		}
+	})
 	return e.open(ctx)
 }
 
@@ -1234,8 +1274,10 @@ func (e *SelectionExec) open(ctx context.Context) error {
 
 // Close implements plannercore.Plan Close interface.
 func (e *SelectionExec) Close() error {
-	e.memTracker.Consume(-e.childResult.MemoryUsage())
-	e.childResult = nil
+	if e.childResult != nil {
+		e.memTracker.Consume(-e.childResult.MemoryUsage())
+		e.childResult = nil
+	}
 	e.selected = nil
 	return e.baseExecutor.Close()
 }
@@ -1250,12 +1292,14 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	for {
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			if !e.selected[e.inputRow.Idx()] {
-				continue
-			}
 			if req.IsFull() {
 				return nil
 			}
+
+			if !e.selected[e.inputRow.Idx()] {
+				continue
+			}
+
 			req.AppendRow(e.inputRow)
 		}
 		mSize := e.childResult.MemoryUsage()
@@ -1441,6 +1485,12 @@ type UnionExec struct {
 	results     []*chunk.Chunk
 	wg          sync.WaitGroup
 	initialized bool
+	mu          struct {
+		*sync.Mutex
+		maxOpenedChildID int
+	}
+
+	childInFlightForTest int32
 }
 
 // unionWorkerResult stores the result for a union worker.
@@ -1460,12 +1510,11 @@ func (e *UnionExec) waitAllFinished() {
 
 // Open implements the Executor Open interface.
 func (e *UnionExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
 	e.stopFetchData.Store(false)
 	e.initialized = false
 	e.finished = make(chan struct{})
+	e.mu.Mutex = &sync.Mutex{}
+	e.mu.maxOpenedChildID = -1
 	return nil
 }
 
@@ -1511,6 +1560,19 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 		e.wg.Done()
 	}()
 	for childID := range e.childIDChan {
+		e.mu.Lock()
+		if childID > e.mu.maxOpenedChildID {
+			e.mu.maxOpenedChildID = childID
+		}
+		e.mu.Unlock()
+		if err := e.children[childID].Open(ctx); err != nil {
+			result.err = err
+			e.stopFetchData.Store(true)
+			e.resultPool <- result
+		}
+		failpoint.Inject("issue21441", func() {
+			atomic.AddInt32(&e.childInFlightForTest, 1)
+		})
 		for {
 			if e.stopFetchData.Load().(bool) {
 				return
@@ -1525,12 +1587,20 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 				e.resourcePools[workerID] <- result.chk
 				break
 			}
+			failpoint.Inject("issue21441", func() {
+				if int(atomic.LoadInt32(&e.childInFlightForTest)) > e.concurrency {
+					panic("the count of child in flight is larger than e.concurrency unexpectedly")
+				}
+			})
 			e.resultPool <- result
 			if result.err != nil {
 				e.stopFetchData.Store(true)
 				return
 			}
 		}
+		failpoint.Inject("issue21441", func() {
+			atomic.AddInt32(&e.childInFlightForTest, -1)
+		})
 	}
 }
 
@@ -1549,6 +1619,10 @@ func (e *UnionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return errors.Trace(result.err)
 	}
 
+	if result.chk.NumCols() != req.NumCols() {
+		return errors.Errorf("Internal error: UnionExec chunk column count mismatch, req: %d, result: %d",
+			req.NumCols(), result.chk.NumCols())
+	}
 	req.SwapColumns(result.chk)
 	result.src <- result.chk
 	return nil
@@ -1569,7 +1643,15 @@ func (e *UnionExec) Close() error {
 		for range e.childIDChan {
 		}
 	}
-	return e.baseExecutor.Close()
+	// We do not need to acquire the e.mu.Lock since all the resultPuller can be
+	// promised to exit when reaching here (e.childIDChan been closed).
+	var firstErr error
+	for i := 0; i <= e.mu.maxOpenedChildID; i++ {
+		if err := e.children[i].Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // ResetContextOfStmt resets the StmtContext and session variables.
@@ -1577,11 +1659,14 @@ func (e *UnionExec) Close() error {
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
 	sc := &stmtctx.StatementContext{
-		TimeZone:    vars.Location(),
-		MemTracker:  memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
-		DiskTracker: disk.NewTracker(memory.LabelForSQLText, -1),
-		TaskID:      stmtctx.AllocateTaskID(),
+		TimeZone:      vars.Location(),
+		TaskID:        stmtctx.AllocateTaskID(),
+		CTEStorageMap: map[int]*CTEStorages{},
+		IsStaleness:   false,
 	}
+
+	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
+	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
 	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
@@ -1600,16 +1685,27 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.MemTracker.SetActionOnExceed(action)
 	}
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
-		s, err = planner.GetPreparedStmt(execStmt, vars)
+		prepareStmt, err := planner.GetPreparedStmt(execStmt, vars)
 		if err != nil {
-			return
+			return err
+		}
+		s = prepareStmt.PreparedAst.Stmt
+		sc.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
+		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.
+		goCtx := context.Background()
+		if variable.EnablePProfSQLCPU.Load() && len(prepareStmt.NormalizedSQL) > 0 {
+			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", util.QueryStrForLog(prepareStmt.NormalizedSQL)))
+			pprof.SetGoroutineLabels(goCtx)
+		}
+		if variable.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
+			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL)
 		}
 	}
 	// execute missed stmtID uses empty sql
 	sc.OriginalSQL = s.Text()
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
-		sc.IgnoreExplainIDSuffix = (strings.ToLower(explainStmt.Format) == ast.ExplainFormatBrief)
+		sc.IgnoreExplainIDSuffix = (strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief)
 		s = explainStmt.Stmt
 	}
 	if _, ok := s.(*ast.ExplainForStmt); ok {
@@ -1645,12 +1741,16 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
-		// Make sure the sql_mode is strict when checking column default value.
 		sc.InCreateOrAlterStmt = true
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || sc.AllowInvalidDate
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true
-		sc.TruncateAsWarning = !vars.StrictSQLMode
+		// With IGNORE or LOCAL, data-interpretation errors become warnings and the load operation continues,
+		// even if the SQL mode is restrictive. For details: https://dev.mysql.com/doc/refman/8.0/en/load-data.html
+		// TODO: since TiDB only support the LOCAL by now, so the TruncateAsWarning are always true here.
+		sc.TruncateAsWarning = true
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		sc.IgnoreNoPartition = true
@@ -1710,7 +1810,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevAffectedRows = -1
 	}
 	if globalConfig.EnableCollectExecutionInfo {
-		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+		// In ExplainFor case, RuntimeStatsColl should not be reset for reuse,
+		// because ExplainFor need to display the last statement information.
+		reuseObj := vars.StmtCtx.RuntimeStatsColl
+		if _, ok := s.(*ast.ExplainForStmt); ok {
+			reuseObj = nil
+		}
+		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
 	}
 
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
@@ -1766,4 +1872,10 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 		req.SetCol(idx, virCols.Column(i))
 	}
 	return nil
+}
+
+func setResourceGroupTagForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
+	if snapshot != nil && variable.TopSQLEnabled() {
+		snapshot.SetOption(kv.ResourceGroupTag, sc.GetResourceGroupTag())
+	}
 }

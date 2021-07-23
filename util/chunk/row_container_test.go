@@ -113,6 +113,28 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 	rc.actionSpill.WaitForTest()
 	c.Assert(err, check.IsNil)
 	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, true)
+
+	// Read
+	resChk, err := rc.GetChunk(0)
+	c.Assert(err, check.IsNil)
+	c.Assert(resChk.NumRows(), check.Equals, chk.NumRows())
+	for rowIdx := 0; rowIdx < resChk.NumRows(); rowIdx++ {
+		c.Assert(resChk.GetRow(rowIdx).GetDatumRow(fields), check.DeepEquals, chk.GetRow(rowIdx).GetDatumRow(fields))
+	}
+	// Write again
+	err = rc.Add(chk)
+	rc.actionSpill.WaitForTest()
+	c.Assert(err, check.IsNil)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, true)
+
+	// Read
+	resChk, err = rc.GetChunk(2)
+	c.Assert(err, check.IsNil)
+	c.Assert(resChk.NumRows(), check.Equals, chk.NumRows())
+	for rowIdx := 0; rowIdx < resChk.NumRows(); rowIdx++ {
+		c.Assert(resChk.GetRow(rowIdx).GetDatumRow(fields), check.DeepEquals, chk.GetRow(rowIdx).GetDatumRow(fields))
+	}
+
 	err = rc.Reset()
 	c.Assert(err, check.IsNil)
 }

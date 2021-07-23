@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/telemetry"
+	"github.com/pingcap/tidb/util/testkit"
 	"go.etcd.io/etcd/integration"
 )
 
@@ -144,4 +145,39 @@ func (s *testSuite) Test03Report(c *C) {
 	c.Assert(jsonParsed.Path("is_error").Data().(bool), Equals, true)
 	c.Assert(jsonParsed.Path("error_msg").Data().(string), Equals, "telemetry is disabled")
 	c.Assert(jsonParsed.Path("is_request_sent").Data().(bool), Equals, false)
+}
+
+func (s *testSuite) TestCTEPreviewAndReport(c *C) {
+	config.GetGlobalConfig().EnableTelemetry = true
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("with cte as (select 1) select * from cte")
+	tk.MustExec("with recursive cte as (select 1) select * from cte")
+	tk.MustExec("with recursive cte(n) as (select 1 union select * from cte where n < 5) select * from cte")
+	tk.MustExec("select 1")
+
+	res, err := telemetry.PreviewUsageData(s.se, s.etcdCluster.RandClient())
+	c.Assert(err, IsNil)
+
+	jsonParsed, err := gabs.ParseJSON([]byte(res))
+	c.Assert(err, IsNil)
+
+	c.Assert(int(jsonParsed.Path("featureUsage.cte.nonRecursiveCTEUsed").Data().(float64)), Equals, 2)
+	c.Assert(int(jsonParsed.Path("featureUsage.cte.recursiveUsed").Data().(float64)), Equals, 1)
+	// TODO: Fix this case. If run this test singly, the result is 2. But if run the whole test, the result is 4.
+	//c.Assert(int(jsonParsed.Path("featureUsage.cte.nonCTEUsed").Data().(float64)), Equals, 2)
+
+	err = telemetry.ReportUsageData(s.se, s.etcdCluster.RandClient())
+	c.Assert(err, IsNil)
+
+	res, err = telemetry.PreviewUsageData(s.se, s.etcdCluster.RandClient())
+	c.Assert(err, IsNil)
+
+	jsonParsed, err = gabs.ParseJSON([]byte(res))
+	c.Assert(err, IsNil)
+
+	c.Assert(int(jsonParsed.Path("featureUsage.cte.nonRecursiveCTEUsed").Data().(float64)), Equals, 0)
+	c.Assert(int(jsonParsed.Path("featureUsage.cte.recursiveUsed").Data().(float64)), Equals, 0)
+	c.Assert(int(jsonParsed.Path("featureUsage.cte.nonCTEUsed").Data().(float64)), Equals, 0)
 }

@@ -56,7 +56,6 @@ func (m concurrentMap) Insert(key uint64, value *entry) {
 		shard.items[key] = value
 	}
 	shard.Unlock()
-	return
 }
 
 // UpsertCb : Callback to return new element to be inserted into the map

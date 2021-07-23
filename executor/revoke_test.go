@@ -19,6 +19,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -82,7 +84,7 @@ func (s *testSuite1) TestRevokeTableScope(c *C) {
 
 	// Make sure all the table privs for new user is Y.
 	res := tk.MustQuery(`SELECT Table_priv FROM mysql.tables_priv WHERE User="testTblRevoke" and host="localhost" and db="test" and Table_name="test1"`)
-	res.Check(testkit.Rows("Select,Insert,Update,Delete,Create,Drop,Index,Alter"))
+	res.Check(testkit.Rows("Select,Insert,Update,Delete,Create,Drop,Index,Alter,Create View,Show View"))
 
 	// Revoke each priv from the user.
 	for _, v := range mysql.AllTablePrivs {
@@ -92,8 +94,16 @@ func (s *testSuite1) TestRevokeTableScope(c *C) {
 		c.Assert(rows, HasLen, 1)
 		row := rows[0]
 		c.Assert(row, HasLen, 1)
-		p := fmt.Sprintf("%v", row[0])
-		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Equals, -1)
+
+		op := v.SetString()
+		found := false
+		for _, p := range executor.SetFromString(fmt.Sprintf("%s", row[0])) {
+			if op == p {
+				found = true
+				break
+			}
+		}
+		c.Assert(found, IsFalse, Commentf("%s", mysql.Priv2SetStr[v]))
 	}
 
 	// Revoke all table scope privs.
@@ -142,4 +152,44 @@ func (s *testSuite1) TestRevokeColumnScope(c *C) {
 	}
 	tk.MustExec("REVOKE ALL(c2) ON test3 FROM 'testCol1Revoke'@'localhost'")
 	tk.MustQuery(`SELECT Column_priv FROM mysql.Columns_priv WHERE User="testCol1Revoke" and host="localhost" and db="test" and Table_name="test3"`).Check(testkit.Rows(""))
+}
+
+func (s *testSuite1) TestRevokeDynamicPrivs(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("DROP USER if exists dyn")
+	tk.MustExec("create user dyn")
+
+	tk.MustExec("GRANT BACKUP_Admin ON *.* TO dyn") // grant one priv
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % BACKUP_ADMIN N"))
+
+	// try revoking only on test.* - should fail:
+	_, err := tk.Exec("REVOKE BACKUP_Admin,system_variables_admin ON test.* FROM dyn")
+	c.Assert(terror.ErrorEqual(err, executor.ErrIllegalPrivilegeLevel), IsTrue)
+
+	// privs should still be intact:
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % BACKUP_ADMIN N"))
+	// with correct usage, the privilege is revoked
+	tk.MustExec("REVOKE BACKUP_Admin ON *.* FROM dyn")
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows())
+
+	// Revoke bogus is a warning in MySQL
+	tk.MustExec("REVOKE bogus ON *.* FROM dyn")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 3929 Dynamic privilege 'BOGUS' is not registered with the server."))
+
+	// grant and revoke two dynamic privileges at once.
+	tk.MustExec("GRANT BACKUP_ADMIN, SYSTEM_VARIABLES_ADMIN ON *.* TO dyn")
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % BACKUP_ADMIN N", "dyn % SYSTEM_VARIABLES_ADMIN N"))
+	tk.MustExec("REVOKE BACKUP_ADMIN, SYSTEM_VARIABLES_ADMIN ON *.* FROM dyn")
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows())
+
+	// revoke a combination of dynamic + non-dynamic
+	tk.MustExec("GRANT BACKUP_ADMIN, SYSTEM_VARIABLES_ADMIN, SELECT, INSERT ON *.* TO dyn")
+	tk.MustExec("REVOKE BACKUP_ADMIN, SYSTEM_VARIABLES_ADMIN, SELECT, INSERT ON *.* FROM dyn")
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows())
+
+	// revoke grant option from privileges
+	tk.MustExec("GRANT BACKUP_ADMIN, SYSTEM_VARIABLES_ADMIN, SELECT ON *.* TO dyn WITH GRANT OPTION")
+	tk.MustExec("REVOKE BACKUP_ADMIN, SELECT, GRANT OPTION ON *.* FROM dyn")
+	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE `Host` = '%' AND `User` = 'dyn' ORDER BY user,host,priv,with_grant_option").Check(testkit.Rows("dyn % SYSTEM_VARIABLES_ADMIN Y"))
 }

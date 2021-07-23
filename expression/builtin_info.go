@@ -218,16 +218,15 @@ func (b *builtinCurrentRoleSig) Clone() builtinFunc {
 }
 
 // evalString evals a builtinCurrentUserSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
-func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (string, bool, error) {
+// See https://dev.mysql.com/doc/refman/8.0/en/information-functions.html#function_current-role
+func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil || data.ActiveRoles == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
 	if len(data.ActiveRoles) == 0 {
-		return "", false, nil
+		return "NONE", false, nil
 	}
-	res := ""
 	sortedRes := make([]string, 0, 10)
 	for _, r := range data.ActiveRoles {
 		sortedRes = append(sortedRes, r.String())
@@ -847,7 +846,7 @@ func (b *builtinNextValSig) evalInt(row chunk.Row) (int64, bool, error) {
 		db = b.ctx.GetSessionVars().CurrentDB
 	}
 	// Check the tableName valid.
-	sequence, err := b.ctx.GetSessionVars().TxnCtx.InfoSchema.(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
+	sequence, err := b.ctx.GetInfoSchema().(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
 	if err != nil {
 		return 0, false, err
 	}
@@ -903,7 +902,7 @@ func (b *builtinLastValSig) evalInt(row chunk.Row) (int64, bool, error) {
 		db = b.ctx.GetSessionVars().CurrentDB
 	}
 	// Check the tableName valid.
-	sequence, err := b.ctx.GetSessionVars().TxnCtx.InfoSchema.(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
+	sequence, err := b.ctx.GetInfoSchema().(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
 	if err != nil {
 		return 0, false, err
 	}
@@ -953,7 +952,7 @@ func (b *builtinSetValSig) evalInt(row chunk.Row) (int64, bool, error) {
 		db = b.ctx.GetSessionVars().CurrentDB
 	}
 	// Check the tableName valid.
-	sequence, err := b.ctx.GetSessionVars().TxnCtx.InfoSchema.(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
+	sequence, err := b.ctx.GetInfoSchema().(util.SequenceSchema).SequenceByName(model.NewCIStr(db), model.NewCIStr(seq))
 	if err != nil {
 		return 0, false, err
 	}

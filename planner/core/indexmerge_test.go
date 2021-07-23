@@ -90,8 +90,9 @@ func (s *testIndexMergeSuite) TestIndexMergePathGeneration(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tc)
 		stmt, err := s.ParseOneStmt(tc, "", "")
 		c.Assert(err, IsNil, comment)
-		Preprocess(s.ctx, stmt, s.is)
-		builder, _ := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		err = Preprocess(s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
+		c.Assert(err, IsNil)
+		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
 			s.testdata.OnRecord(func() {

@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -31,18 +32,17 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -266,6 +266,9 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			continue
 		}
 		tableInfo := table.Meta()
+		if oldTbl, ok := oldCache.tables[physicalID]; ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+			continue
+		}
 		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
@@ -280,6 +283,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl.Count = count
 		tbl.ModifyCount = modifyCount
 		tbl.Name = getFullTableName(is, tableInfo)
+		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
 	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion))
@@ -316,8 +320,8 @@ type GlobalStats struct {
 	Fms   []*statistics.FMSketch
 }
 
-// MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
+// MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
+func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, physicalID int64, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
 	// get the partition table IDs
 	h.mu.Lock()
 	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
@@ -327,6 +331,11 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		return
 	}
 	globalTableInfo := globalTable.Meta()
+	return h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, idxID)
+}
+
+// MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableInfo.
+func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo, isIndex int, idxID int64) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	partitionIDs := make([]int64, 0, partitionNum)
 	for i := 0; i < partitionNum; i++ {
@@ -360,7 +369,6 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		allTopN[i] = make([]*statistics.TopN, 0, partitionNum)
 		allFms[i] = make([]*statistics.FMSketch, 0, partitionNum)
 	}
-	statsVer := sc.GetSessionVars().AnalyzeVersion
 
 	for _, partitionID := range partitionIDs {
 		h.mu.Lock()
@@ -392,10 +400,6 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 			}
 			err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
 			return
-		}
-		statistics.CheckAnalyzeVerOnTable(partitionStats, &statsVer)
-		if statsVer != statistics.Version2 { // global-stats only support stats-ver2
-			return nil, fmt.Errorf("[stats]: some partition level statistics are not in statistics version 2, please set tidb_analyze_version to 2 and analyze the this table")
 		}
 		for i := 0; i < globalStats.Num; i++ {
 			ID := tableInfo.Columns[i].ID
@@ -431,7 +435,10 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 		// Because after merging TopN, some numbers will be left.
 		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
 		var popedTopN []statistics.TopNMeta
-		globalStats.TopN[i], popedTopN = statistics.MergeTopN(allTopN[i], uint32(opts[ast.AnalyzeOptNumTopN]))
+		globalStats.TopN[i], popedTopN, allHg[i], err = statistics.MergePartTopN2GlobalTopN(sc.GetSessionVars().StmtCtx, sc.GetSessionVars().AnalyzeVersion, allTopN[i], uint32(opts[ast.AnalyzeOptNumTopN]), allHg[i], isIndex == 1)
+		if err != nil {
+			return
+		}
 
 		// Merge histogram
 		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], popedTopN, int64(opts[ast.AnalyzeOptNumBuckets]), isIndex == 1)
@@ -439,35 +446,23 @@ func (h *Handle) MergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 			return
 		}
 
-		// Update NDV of global-level stats
-		if isIndex == 0 {
-			// For the column stats, we should merge the FMSketch first. And use the FMSketch to calculate the new NDV.
-			// merge FMSketch
-			globalStats.Fms[i] = allFms[i][0].Copy()
-			for j := 1; j < partitionNum; j++ {
-				globalStats.Fms[i].MergeFMSketch(allFms[i][j])
-			}
-
-			// update the NDV
-			globalStatsNDV := globalStats.Fms[i].NDV()
-			if globalStatsNDV > globalStats.Count {
-				globalStatsNDV = globalStats.Count
-			}
-			globalStats.Hg[i].NDV = globalStatsNDV
-		} else {
-			// For the index stats, we get the final NDV by accumulating the NDV of each bucket in the index histogram.
-			globalStatsNDV := int64(0)
-			for _, bucket := range globalStats.Hg[i].Buckets {
-				globalStatsNDV += bucket.NDV
-			}
-			globalStats.Hg[i].NDV = globalStatsNDV
-
-			// hg.NDV still includes TopN although TopN is not included by hg.Buckets
-			// TODO: remove the line below after fixing the meaning of hg.NDV
-			if globalStats.TopN[i] != nil { // if analyze with 0 topN, topN is nil here
-				globalStats.Hg[i].NDV += int64(len(globalStats.TopN[i].TopN))
-			}
+		// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
+		for j := range globalStats.Hg[i].Buckets {
+			globalStats.Hg[i].Buckets[j].NDV = 0
 		}
+
+		// Update NDV of global-level stats
+		globalStats.Fms[i] = allFms[i][0].Copy()
+		for j := 1; j < partitionNum; j++ {
+			globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+		}
+
+		// update the NDV
+		globalStatsNDV := globalStats.Fms[i].NDV()
+		if globalStatsNDV > globalStats.Count {
+			globalStatsNDV = globalStats.Count
+		}
+		globalStats.Hg[i].NDV = globalStatsNDV
 	}
 	return
 }
@@ -559,7 +554,6 @@ func (sc statsCache) initMemoryUsage() {
 		sum += tb.MemoryUsage()
 	}
 	sc.memUsage = sum
-	return
 }
 
 // update updates the statistics table cache using copy on write.
@@ -689,13 +683,16 @@ func (h *Handle) FlushStats() {
 }
 
 func (h *Handle) cmSketchAndTopNFromStorage(reader *statsReader, tblID int64, isIndex, histID int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
-	rows, _, err := reader.read("select cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
-	if err != nil || len(rows) == 0 {
-		return nil, nil, err
-	}
 	topNRows, _, err := reader.read("select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil {
 		return nil, nil, err
+	}
+	rows, _, err := reader.read("select cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(rows) == 0 {
+		return statistics.DecodeCMSketchAndTopN(nil, topNRows)
 	}
 	return statistics.DecodeCMSketchAndTopN(rows[0].GetBytes(0), topNRows)
 }
@@ -735,7 +732,11 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 			if err != nil {
 				return errors.Trace(err)
 			}
-			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag}
+			fmSketch, err := h.fmSketchFromStorage(reader, table.PhysicalID, 1, histID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fmSketch, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag}
 			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
 		}
 		break
@@ -904,13 +905,16 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 }
 
 func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics.Table, physicalID int64, loadAll bool) (*statistics.Table, error) {
+	failpoint.Inject("injectExtStatsLoadErr", func() {
+		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))
+	})
 	lastVersion := uint64(0)
 	if table.ExtendedStats != nil && !loadAll {
 		lastVersion = table.ExtendedStats.LastUpdateVersion
 	} else {
 		table.ExtendedStats = statistics.NewExtendedStatsColl()
 	}
-	rows, _, err := reader.read("select name, status, type, column_ids, stats, version from mysql.stats_extended where table_id = %? and status in (%?, %?) and version > %?", physicalID, StatsStatusAnalyzed, StatsStatusDeleted, lastVersion)
+	rows, _, err := reader.read("select name, status, type, column_ids, stats, version from mysql.stats_extended where table_id = %? and status in (%?, %?, %?) and version > %?", physicalID, StatsStatusInited, StatsStatusAnalyzed, StatsStatusDeleted, lastVersion)
 	if err != nil || len(rows) == 0 {
 		return table, nil
 	}
@@ -918,7 +922,7 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 		lastVersion = mathutil.MaxUint64(lastVersion, row.GetUint64(5))
 		name := row.GetString(0)
 		status := uint8(row.GetInt64(1))
-		if status == StatsStatusDeleted {
+		if status == StatsStatusDeleted || status == StatsStatusInited {
 			delete(table.ExtendedStats.Stats, name)
 		} else {
 			item := &statistics.ExtendedStatsItem{
@@ -949,13 +953,197 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 	return table, nil
 }
 
-// SaveStatsToStorage saves the stats to storage.
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, isAnalyzed int64) (err error) {
+// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
+func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (int64, int64, error) {
+	reader, err := h.getStatsReader(0)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() {
+		err1 := h.releaseStatsReader(reader)
+		if err1 != nil && err == nil {
+			err = err1
+		}
+	}()
+	rows, _, err := reader.read("select count, modify_count from mysql.stats_meta where table_id = %?", tableID)
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(rows) == 0 {
+		return 0, 0, nil
+	}
+	count := int64(rows[0].GetUint64(0))
+	modifyCount := rows[0].GetInt64(1)
+	return count, modifyCount, nil
+}
+
+// SaveTableStatsToStorage saves the stats of a table to storage.
+func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, needDumpFMS bool) (err error) {
+	tableID := results.TableID.GetStatisticsID()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(ctx, "begin")
+	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = finishTransaction(context.Background(), exec, err)
+	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	version := txn.StartTS()
+	// 1. Save mysql.stats_meta.
+	var rs sqlexec.RecordSet
+	// Lock this row to prevent writing of concurrent analyze.
+	rs, err = exec.ExecuteInternal(ctx, "select snapshot, count, modify_count from mysql.stats_meta where table_id = %? for update", tableID)
+	if err != nil {
+		return err
+	}
+	var rows []chunk.Row
+	rows, err = sqlexec.DrainRecordSet(ctx, rs, h.mu.ctx.GetSessionVars().MaxChunkSize)
+	if err != nil {
+		return err
+	}
+	var curCnt, curModifyCnt int64
+	if len(rows) > 0 {
+		snapshot := rows[0].GetUint64(0)
+		// A newer version analyze result has been written, so skip this writing.
+		if snapshot >= results.Snapshot && results.StatsVer == statistics.Version2 {
+			return nil
+		}
+		curCnt = int64(rows[0].GetUint64(1))
+		curModifyCnt = rows[0].GetInt64(2)
+	}
+	if len(rows) == 0 || results.StatsVer != statistics.Version2 {
+		if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)", version, tableID, results.Count, results.Snapshot); err != nil {
+			return err
+		}
+	} else {
+		modifyCnt := curModifyCnt - results.BaseModifyCnt
+		if modifyCnt < 0 {
+			modifyCnt = 0
+		}
+		cnt := curCnt + results.Count - results.BaseCount
+		if cnt < 0 {
+			cnt = 0
+		}
+		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?", version, modifyCnt, cnt, results.Snapshot, tableID); err != nil {
+			return err
+		}
+	}
+	// 2. Save histograms.
+	for _, result := range results.Ars {
+		for i, hg := range result.Hist {
+			// It's normal virtual column, skip it.
+			if hg == nil {
+				continue
+			}
+			var cms *statistics.CMSketch
+			if results.StatsVer != statistics.Version2 {
+				cms = result.Cms[i]
+			}
+			cmSketch, err := statistics.EncodeCMSketchWithoutTopN(cms)
+			if err != nil {
+				return err
+			}
+			fmSketch, err := statistics.EncodeFMSketch(result.Fms[i])
+			if err != nil {
+				return err
+			}
+			// Delete outdated data
+			if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
+				return err
+			}
+			if topN := result.TopNs[i]; topN != nil {
+				for _, meta := range topN.TopN {
+					if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, meta.Encoded, meta.Count); err != nil {
+						return err
+					}
+				}
+			}
+			if _, err := exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
+				return err
+			}
+			if fmSketch != nil && needDumpFMS {
+				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, fmSketch); err != nil {
+					return err
+				}
+			}
+			if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
+				tableID, result.IsIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, results.StatsVer, statistics.AnalyzeFlag, hg.Correlation); err != nil {
+				return err
+			}
+			if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
+				return err
+			}
+			sc := h.mu.ctx.GetSessionVars().StmtCtx
+			var lastAnalyzePos []byte
+			for j := range hg.Buckets {
+				count := hg.Buckets[j].Count
+				if j > 0 {
+					count -= hg.Buckets[j-1].Count
+				}
+				var upperBound types.Datum
+				upperBound, err = hg.GetUpper(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+				if err != nil {
+					return err
+				}
+				if j == len(hg.Buckets)-1 {
+					lastAnalyzePos = upperBound.GetBytes()
+				}
+				var lowerBound types.Datum
+				lowerBound, err = hg.GetLower(j).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
+				if err != nil {
+					return err
+				}
+				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values(%?, %?, %?, %?, %?, %?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, j, count, hg.Buckets[j].Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), hg.Buckets[j].NDV); err != nil {
+					return err
+				}
+			}
+			if len(lastAnalyzePos) > 0 {
+				if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, result.IsIndex, hg.ID); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	// 3. Save extended statistics.
+	extStats := results.ExtStats
+	if extStats == nil || len(extStats.Stats) == 0 {
+		return nil
+	}
+	var bytes []byte
+	var statsStr string
+	for name, item := range extStats.Stats {
+		bytes, err = json.Marshal(item.ColIDs)
+		if err != nil {
+			return err
+		}
+		strColIDs := string(bytes)
+		switch item.Tp {
+		case ast.StatsTypeCardinality, ast.StatsTypeCorrelation:
+			statsStr = fmt.Sprintf("%f", item.ScalarVals)
+		case ast.StatsTypeDependency:
+			statsStr = item.StringVals
+		}
+		if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_extended values (%?, %?, %?, %?, %?, %?, %?)", name, item.Tp, tableID, strColIDs, statsStr, version, StatsStatusAnalyzed); err != nil {
+			return err
+		}
+	}
+	return
+}
+
+// SaveStatsToStorage saves the stats to storage.
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, isAnalyzed int64, needDumpFMS bool) (err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ctx := context.TODO()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -996,7 +1184,10 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 			}
 		}
 	}
-	if fmSketch != nil {
+	if _, err := exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
+		return err
+	}
+	if fmSketch != nil && needDumpFMS {
 		if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", tableID, isIndex, hg.ID, fmSketch); err != nil {
 			return err
 		}
@@ -1103,18 +1294,20 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 }
 
 func (h *Handle) columnCountFromStorage(reader *statsReader, tableID, colID, statsVer int64) (int64, error) {
+	count := int64(0)
 	rows, _, err := reader.read("select sum(count) from mysql.stats_buckets where table_id = %? and is_index = 0 and hist_id = %?", tableID, colID)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if rows[0].IsNull(0) {
-		return 0, nil
+	// If there doesn't exist any buckets, the SQL will return NULL. So we only use the result if it's not NULL.
+	if !rows[0].IsNull(0) {
+		count, err = rows[0].GetMyDecimal(0).ToInt()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
 	}
-	count, err := rows[0].GetMyDecimal(0).ToInt()
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if statsVer == statistics.Version2 {
+
+	if statsVer >= statistics.Version2 {
 		// Before stats ver 2, histogram represents all data in this column.
 		// In stats ver 2, histogram + TopN represent all data in this column.
 		// So we need to add TopN total count here.
@@ -1222,6 +1415,7 @@ const (
 
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
 func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
+	sort.Slice(colIDs, func(i, j int) bool { return colIDs[i] < colIDs[j] })
 	bytes, err := json.Marshal(colIDs)
 	if err != nil {
 		return errors.Trace(err)
@@ -1229,7 +1423,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 	strColIDs := string(bytes)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	ctx := context.TODO()
+	ctx := context.Background()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
@@ -1238,17 +1432,46 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
+	// No need to use `exec.ExecuteInternal` since we have acquired the lock.
+	rows, _, err := h.execRestrictedSQL(ctx, "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)", tableID, StatsStatusInited, StatsStatusAnalyzed)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, row := range rows {
+		currStatsName := row.GetString(0)
+		currTp := row.GetInt64(1)
+		currStrColIDs := row.GetString(2)
+		if currStatsName == statsName {
+			if ifNotExists {
+				return nil
+			}
+			return errors.Errorf("extended statistics '%s' for the specified table already exists", statsName)
+		}
+		if tp == int(currTp) && currStrColIDs == strColIDs {
+			return errors.Errorf("extended statistics '%s' with same type on same columns already exists", statsName)
+		}
+	}
+	// Remove the existing 'deleted' records.
+	if _, err = exec.ExecuteInternal(ctx, "DELETE FROM mysql.stats_extended WHERE name = %? and table_id = %?", statsName, tableID); err != nil {
+		return err
+	}
+	// Remove the cache item, which is necessary for cases like a cluster with 3 tidb instances, e.g, a, b and c.
+	// If tidb-a executes `alter table drop stats_extended` to mark the record as 'deleted', and before this operation
+	// is synchronized to other tidb instances, tidb-b executes `alter table add stats_extended`, which would delete
+	// the record from the table, tidb-b should delete the cached item synchronously. While for tidb-c, it has to wait for
+	// next `Update()` to remove the cached item then.
+	h.removeExtendedStatsItem(tableID, statsName)
 	txn, err := h.mu.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	version := txn.StartTS()
 	const sql = "INSERT INTO mysql.stats_extended(name, type, table_id, column_ids, version, status) VALUES (%?, %?, %?, %?, %?, %?)"
-	_, err = exec.ExecuteInternal(ctx, sql, statsName, tp, tableID, strColIDs, version, StatsStatusInited)
-	// Key exists, but `if not exists` is specified, so we ignore this error.
-	if kv.ErrKeyExists.Equal(err) && ifNotExists {
-		err = nil
+	if _, err = exec.ExecuteInternal(ctx, sql, statsName, tp, tableID, strColIDs, version, StatsStatusInited); err != nil {
+		return err
 	}
+	// Bump version in `mysql.stats_meta` to trigger stats cache refresh.
+	_, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID)
 	return
 }
 
@@ -1321,11 +1544,17 @@ func (h *Handle) removeExtendedStatsItem(tableID int64, statsName string) {
 
 // ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
 func (h *Handle) ReloadExtendedStatistics() error {
-	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-		reader, err := h.getStatsReader(0)
-		if err != nil {
-			return err
+	reader, err := h.getStatsReader(0)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err1 := h.releaseStatsReader(reader)
+		if err1 != nil && err == nil {
+			err = err1
 		}
+	}()
+	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
 		oldCache := h.statsCache.Load().(statsCache)
 		tables := make([]*statistics.Table, 0, len(oldCache.tables))
 		for physicalID, tbl := range oldCache.tables {
@@ -1334,10 +1563,6 @@ func (h *Handle) ReloadExtendedStatistics() error {
 				return err
 			}
 			tables = append(tables, t)
-		}
-		err = h.releaseStatsReader(reader)
-		if err != nil {
-			return err
 		}
 		if h.updateStatsCache(oldCache.update(tables, nil, oldCache.version)) {
 			return nil
@@ -1403,14 +1628,15 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 	}
 	// samplesX and samplesY are in order of handle, i.e, their SampleItem.Ordinals are in order.
 	samplesX := collectors[colOffsets[0]].Samples
-	if len(samplesX) == 0 {
-		return nil
-	}
 	// We would modify Ordinal of samplesY, so we make a deep copy.
 	samplesY := statistics.CopySampleItems(collectors[colOffsets[1]].Samples)
-	sampleNum := len(samplesX)
+	sampleNum := mathutil.Min(len(samplesX), len(samplesY))
 	if sampleNum == 1 {
-		item.ScalarVals = float64(1)
+		item.ScalarVals = 1
+		return item
+	}
+	if sampleNum <= 0 {
+		item.ScalarVals = 0
 		return item
 	}
 	h.mu.Lock()
@@ -1421,18 +1647,21 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 	if err != nil {
 		return nil
 	}
-	samplesYInXOrder := make([]*statistics.SampleItem, sampleNum)
+	samplesYInXOrder := make([]*statistics.SampleItem, 0, sampleNum)
 	for i, itemX := range samplesX {
+		if itemX.Ordinal >= len(samplesY) {
+			continue
+		}
 		itemY := samplesY[itemX.Ordinal]
 		itemY.Ordinal = i
-		samplesYInXOrder[i] = itemY
+		samplesYInXOrder = append(samplesYInXOrder, itemY)
 	}
 	samplesYInYOrder, err := statistics.SortSampleItems(sc, samplesYInXOrder)
 	if err != nil {
 		return nil
 	}
 	var corrXYSum float64
-	for i := 1; i < sampleNum; i++ {
+	for i := 1; i < len(samplesYInYOrder); i++ {
 		corrXYSum += float64(i) * float64(samplesYInYOrder[i].Ordinal)
 	}
 	// X means the ordinal of the item in original sequence, Y means the oridnal of the item in the

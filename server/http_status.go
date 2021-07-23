@@ -21,7 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
@@ -124,6 +125,11 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/schema/{db}", schemaHandler{tikvHandlerTool})
 	router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandlerTool})
 	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}", valueHandler{})
+
+	router.Handle("/schema_storage", schemaStorageHandler{tikvHandlerTool}).Name("Schema Storage")
+	router.Handle("/schema_storage/{db}", schemaStorageHandler{tikvHandlerTool})
+	router.Handle("/schema_storage/{db}/{table}", schemaStorageHandler{tikvHandlerTool})
+
 	router.Handle("/ddl/history", ddlHistoryJobHandler{tikvHandlerTool}).Name("DDL_History")
 	router.Handle("/ddl/owner/resign", ddlResignOwnerHandler{tikvHandlerTool.Store.(kv.Storage)}).Name("DDL_Owner_Resign")
 
@@ -153,10 +159,11 @@ func (s *Server) startHTTPServer() {
 	}
 
 	// HTTP path for get MVCC info
-	router.Handle("/mvcc/key/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByClusteredKey})
+	router.Handle("/mvcc/key/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByKey})
 	router.Handle("/mvcc/key/{db}/{table}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByKey})
 	router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})
 	router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
+	router.Handle("/mvcc/index/{db}/{table}/{index}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 	router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 
 	// HTTP path for generate metric profile.
@@ -183,7 +190,7 @@ func (s *Server) startHTTPServer() {
 
 	serverMux.HandleFunc("/debug/pprof/", pprof.Index)
 	serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	serverMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	serverMux.HandleFunc("/debug/pprof/profile", tracecpu.ProfileHTTPHandler)
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
@@ -192,7 +199,7 @@ func (s *Server) startHTTPServer() {
 			_, err := w.Write([]byte(strconv.Itoa(util.GetGOGC())))
 			terror.Log(err)
 		case http.MethodPost:
-			body, err := ioutil.ReadAll(r.Body)
+			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				terror.Log(err)
 				return
@@ -250,7 +257,7 @@ func (s *Server) startHTTPServer() {
 			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "profile", err))
 			return
 		}
-		if err := rpprof.StartCPUProfile(fw); err != nil {
+		if err := tracecpu.StartCPUProfile(fw); err != nil {
 			serveError(w, http.StatusInternalServerError,
 				fmt.Sprintf("Could not enable CPU profiling: %s", err))
 			return
@@ -260,7 +267,11 @@ func (s *Server) startHTTPServer() {
 			sec = 10
 		}
 		sleepWithCtx(r.Context(), time.Duration(sec)*time.Second)
-		rpprof.StopCPUProfile()
+		err = tracecpu.StopCPUProfile()
+		if err != nil {
+			serveError(w, http.StatusInternalServerError, fmt.Sprintf("Create zipped %s fail: %v", "config", err))
+			return
+		}
 
 		// dump config
 		fw, err = zw.Create("config")
@@ -300,6 +311,9 @@ func (s *Server) startHTTPServer() {
 
 		router.Handle("/test/{mod}/{op}", &testHandler{tikvHandlerTool, 0})
 	})
+
+	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.
+	router.Handle("/test/ddl/hook", &ddlHookHandler{tikvHandlerTool.Store.(kv.Storage)})
 
 	var (
 		httpRouterPage bytes.Buffer

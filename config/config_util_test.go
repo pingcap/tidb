@@ -16,14 +16,12 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
 
 	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/failpoint"
 )
 
 func (s *testConfigSuite) TestCloneConf(c *C) {
@@ -101,7 +99,7 @@ func (s *testConfigSuite) TestAtomicWriteConfig(c *C) {
 	conf.Performance.PseudoEstimateRatio = 3.45
 	c.Assert(atomicWriteConfig(conf, confPath), IsNil)
 
-	content, err := ioutil.ReadFile(confPath)
+	content, err := os.ReadFile(confPath)
 	c.Assert(err, IsNil)
 	dconf, err := decodeConfig(string(content))
 	c.Assert(err, IsNil)
@@ -114,7 +112,7 @@ func (s *testConfigSuite) TestAtomicWriteConfig(c *C) {
 	conf.Performance.PseudoEstimateRatio = 54.3
 	c.Assert(atomicWriteConfig(conf, confPath), IsNil)
 
-	content, err = ioutil.ReadFile(confPath)
+	content, err = os.ReadFile(confPath)
 	c.Assert(err, IsNil)
 	dconf, err = decodeConfig(string(content))
 	c.Assert(err, IsNil)
@@ -168,22 +166,4 @@ engines = ["tikv", "tiflash", "tidb"]
 	c.Assert(toJSONStr(flatMap["log.level"]), Equals, `"info"`)
 	c.Assert(toJSONStr(flatMap["log.format"]), Equals, `"text"`)
 	c.Assert(toJSONStr(flatMap["isolation-read.engines"]), Equals, `["tikv","tiflash","tidb"]`)
-}
-
-func (s *testConfigSuite) TestTxnScopeValue(c *C) {
-	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("bj")`)
-	isGlobal, v := GetTxnScopeFromConfig()
-	c.Assert(isGlobal, IsFalse)
-	c.Assert(v, Equals, "bj")
-	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
-	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("")`)
-	isGlobal, v = GetTxnScopeFromConfig()
-	c.Assert(isGlobal, IsTrue)
-	c.Assert(v, Equals, "global")
-	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
-	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("global")`)
-	isGlobal, v = GetTxnScopeFromConfig()
-	c.Assert(isGlobal, IsFalse)
-	c.Assert(v, Equals, "global")
-	failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
 }

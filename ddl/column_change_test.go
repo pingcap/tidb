@@ -47,15 +47,18 @@ type testColumnChangeSuite struct {
 func (s *testColumnChangeSuite) SetUpSuite(c *C) {
 	SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	s.store = testCreateStore(c, "test_column_change")
-	s.dbInfo = &model.DBInfo{
-		Name: model.NewCIStr("test_column_change"),
-		ID:   1,
-	}
-	err := kv.RunInNewTxn(context.Background(), s.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		return errors.Trace(t.CreateDatabase(s.dbInfo))
-	})
-	c.Check(err, IsNil)
+	d := testNewDDLAndStart(
+		context.Background(),
+		c,
+		WithStore(s.store),
+		WithLease(testLease),
+	)
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
+	s.dbInfo = testSchemaInfo(c, d, "test_index_change")
+	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
 }
 
 func (s *testColumnChangeSuite) TearDownSuite(c *C) {

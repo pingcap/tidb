@@ -852,8 +852,14 @@ const (
 	ErrInvalidEncryptionOption                               = 3184
 	ErrTooLongValueForType                                   = 3505
 	ErrPKIndexCantBeInvisible                                = 3522
+	ErrGrantRole                                             = 3523
 	ErrRoleNotGranted                                        = 3530
 	ErrLockAcquireFailAndNoWaitSet                           = 3572
+	ErrCTERecursiveRequiresUnion                             = 3573
+	ErrCTERecursiveRequiresNonRecursiveFirst                 = 3574
+	ErrCTERecursiveForbidsAggregation                        = 3575
+	ErrCTERecursiveForbiddenJoinOrder                        = 3576
+	ErrInvalidRequiresSingleReference                        = 3577
 	ErrWindowNoSuchWindow                                    = 3579
 	ErrWindowCircularityInWindowGraph                        = 3580
 	ErrWindowNoChildPartitioning                             = 3581
@@ -875,6 +881,8 @@ const (
 	ErrWindowNoGroupOrderUnused                              = 3597
 	ErrWindowExplainJSON                                     = 3598
 	ErrWindowFunctionIgnoresFrame                            = 3599
+	ErrIllegalPrivilegeLevel                                 = 3619
+	ErrCTEMaxRecursionDepth                                  = 3636
 	ErrNotHintUpdatable                                      = 3637
 	ErrDataTruncatedFunctionalIndex                          = 3751
 	ErrDataOutOfRangeFunctionalIndex                         = 3752
@@ -896,6 +904,7 @@ const (
 	ErrJSONValueOutOfRangeForFuncIndex                       = 3904
 	ErrFunctionalIndexDataIsTooLong                          = 3907
 	ErrFunctionalIndexNotApplicable                          = 3909
+	ErrDynamicPrivilegeNotRegistered                         = 3929
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
 	ErrWrongPartitionTypeExpectedSystemTime = 4113
@@ -913,6 +922,8 @@ const (
 	ErrAdminCheckTable                     = 8003
 	ErrTxnTooLarge                         = 8004
 	ErrWriteConflictInTiDB                 = 8005
+	ErrOptOnTemporaryTable                 = 8006
+	ErrDropTableOnTemporaryTable           = 8007
 	ErrUnsupportedReloadPlugin             = 8018
 	ErrUnsupportedReloadPluginVar          = 8019
 	ErrTableLocked                         = 8020
@@ -992,6 +1003,10 @@ const (
 	ErrJSONObjectKeyTooLong                = 8129
 	ErrMultiStatementDisabled              = 8130
 	ErrPartitionStatsMissing               = 8131
+	ErrNotSupportedWithSem                 = 8132
+	ErrDataInConsistentExtraIndex          = 8133
+	ErrDataInConsistentMisMatchIndex       = 8134
+	ErrAsOf                                = 8135
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

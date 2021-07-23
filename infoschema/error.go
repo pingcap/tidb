@@ -69,4 +69,6 @@ var (
 	ErrTableLocked = dbterror.ClassSchema.NewStd(mysql.ErrTableLocked)
 	// ErrWrongObject returns when the table/view/sequence is not the expected object.
 	ErrWrongObject = dbterror.ClassSchema.NewStd(mysql.ErrWrongObject)
+	// ErrAdminCheckTable returns when the check table in temporary mode.
+	ErrAdminCheckTable = dbterror.ClassSchema.NewStd(mysql.ErrAdminCheckTable)
 )

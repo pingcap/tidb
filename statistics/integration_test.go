@@ -13,6 +13,9 @@
 package statistics_test
 
 import (
+	"math"
+	"strconv"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -94,14 +97,16 @@ func (s *testIntegrationSuite) TestChangeVerTo2Behavior(c *C) {
 	}
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	tk.MustExec("analyze table t index idx")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
+		"Warning 1105 The version 2 would collect all statistics not only the selected indexes"))
 	c.Assert(h.Update(is), IsNil)
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
 		c.Assert(idx.StatsVer, Equals, int64(2))
 	}
 	tk.MustExec("analyze table t index")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
+		"Warning 1105 The version 2 would collect all statistics not only the selected indexes"))
 	c.Assert(h.Update(is), IsNil)
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
@@ -181,8 +186,8 @@ func (s *testIntegrationSuite) TestIncAnalyzeOnVer2(c *C) {
 	tk.MustExec("analyze incremental table t index idx with 2 topn")
 	// After analyze, there's two val in hist.
 	tk.MustQuery("show stats_buckets where table_name = 't' and column_name = 'idx'").Check(testkit.Rows(
-		"test t  idx 1 0 2 2 1 1 1",
-		"test t  idx 1 1 3 0 2 4 1",
+		"test t  idx 1 0 2 2 1 1 0",
+		"test t  idx 1 1 3 1 3 3 0",
 	))
 	// Two val in topn.
 	tk.MustQuery("show stats_topn where table_name = 't' and column_name = 'idx'").Check(testkit.Rows(
@@ -318,4 +323,86 @@ func (s *testIntegrationSuite) TestGlobalStats(c *C) {
 	tk.MustQuery("explain format = 'brief' select * from t;").Check(testkit.Rows(
 		"TableReader 6.00 root partition:all data:TableFullScan",
 		"└─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
+}
+
+func (s *testIntegrationSuite) TestNULLOnFullSampling(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec("create table t(a int, index idx(a))")
+	tk.MustExec("insert into t values(1), (1), (1), (2), (2), (3), (4), (null), (null), (null)")
+	var (
+		input  []string
+		output [][]string
+	)
+	tk.MustExec("analyze table t with 2 topn")
+	is := s.do.InfoSchema()
+	tblT, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	h := s.do.StatsHandle()
+	c.Assert(h.Update(is), IsNil)
+	statsTblT := h.GetTableStats(tblT.Meta())
+	// Check the null count is 3.
+	for _, col := range statsTblT.Columns {
+		c.Assert(col.NullCount, Equals, int64(3))
+	}
+
+	s.testData.GetTestCases(c, &input, &output)
+	// Check the topn and buckets contains no null values.
+	for i := 0; i < len(input); i++ {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+		})
+		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
+}
+
+func (s *testIntegrationSuite) TestAnalyzeSnapshot(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1), (1), (1)")
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("select count, snapshot from mysql.stats_meta").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "3")
+	s1Str := rows[0][1].(string)
+	s1, err := strconv.ParseUint(s1Str, 10, 64)
+	c.Assert(err, IsNil)
+	c.Assert(s1 < math.MaxUint64, IsTrue)
+	tk.MustExec("insert into t values(1), (1), (1)")
+	tk.MustExec("analyze table t")
+	rows = tk.MustQuery("select count, snapshot from mysql.stats_meta").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "6")
+	s2Str := rows[0][1].(string)
+	s2, err := strconv.ParseUint(s2Str, 10, 64)
+	c.Assert(err, IsNil)
+	c.Assert(s2 < math.MaxUint64, IsTrue)
+	c.Assert(s2 > s1, IsTrue)
+}
+
+func (s *testIntegrationSuite) TestHistogramsWithSameTxnTS(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec("create table t(a int, index(a))")
+	tk.MustExec("insert into t values(1), (1), (1)")
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("select version from mysql.stats_meta").Rows()
+	c.Assert(len(rows), Equals, 1)
+	v1 := rows[0][0].(string)
+	rows = tk.MustQuery("select version from mysql.stats_histograms").Rows()
+	c.Assert(len(rows), Equals, 2)
+	v2 := rows[0][0].(string)
+	c.Assert(v2, Equals, v1)
+	v3 := rows[1][0].(string)
+	c.Assert(v3, Equals, v2)
 }

@@ -29,13 +29,13 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -49,7 +49,6 @@ type SplitIndexRegionExec struct {
 	lower          []types.Datum
 	upper          []types.Datum
 	num            int
-	handleCols     core.HandleCols
 	valueLists     [][]types.Datum
 	splitIdxKeys   [][]byte
 
@@ -616,8 +615,8 @@ type regionMeta struct {
 	start           string
 	end             string
 	scattering      bool
-	writtenBytes    int64
-	readBytes       int64
+	writtenBytes    uint64
+	readBytes       uint64
 	approximateSize int64
 	approximateKeys int64
 }

@@ -22,9 +22,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -142,7 +144,8 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows())
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Se, stmtID, []types.Datum{types.NewDatum(1)})
+		stmt, _, _, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Se, stmtID,
+			tk.Se.GetInfoSchema().(infoschema.InfoSchema), 0, []types.Datum{types.NewDatum(1)})
 		c.Assert(err, IsNil)
 		c.Assert(stmt.OriginText(), Equals, query)
 
@@ -490,14 +493,14 @@ func (s *seqTestSuite) TestPreparedInsert(c *C) {
 			err = counter.Write(pb)
 			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(3))
+			c.Check(hit, Equals, float64(2))
 		}
 		tk.MustExec(`set @a=3; execute stmt_insert_select using @a;`)
 		if flag {
 			err = counter.Write(pb)
 			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(4))
+			c.Check(hit, Equals, float64(2))
 		}
 
 		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 101)
@@ -541,21 +544,21 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 			err = counter.Write(pb)
 			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(2))
+			c.Check(hit, Equals, float64(0))
 		}
 		tk.MustExec(`set @a=2,@b=200; execute stmt_update using @b,@a;`)
 		if flag {
 			err = counter.Write(pb)
 			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(3))
+			c.Check(hit, Equals, float64(1))
 		}
 		tk.MustExec(`set @a=3,@b=300; execute stmt_update using @b,@a;`)
 		if flag {
 			err = counter.Write(pb)
 			c.Assert(err, IsNil)
 			hit := pb.GetCounter().GetValue()
-			c.Check(hit, Equals, float64(4))
+			c.Check(hit, Equals, float64(2))
 		}
 
 		result := tk.MustQuery("select id, c1 from prepare_test where id = ?", 1)
@@ -565,6 +568,30 @@ func (s *seqTestSuite) TestPreparedUpdate(c *C) {
 		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 3)
 		result.Check(testkit.Rows("3 303"))
 	}
+}
+
+func (s *seqTestSuite) TestIssue21884(c *C) {
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists prepare_test")
+	tk.MustExec("create table prepare_test(a bigint primary key, status bigint, last_update_time datetime)")
+	tk.MustExec("insert into prepare_test values (100, 0, '2020-12-18 20:00:00')")
+	tk.MustExec("prepare stmt from 'update prepare_test set status = ?, last_update_time = now() where a = 100'")
+	tk.MustExec("set @status = 1")
+	tk.MustExec("execute stmt using @status")
+	updateTime := tk.MustQuery("select last_update_time from prepare_test").Rows()[0][0]
+	// Sleep 1 second to make sure `last_update_time` is updated.
+	time.Sleep(1 * time.Second)
+	tk.MustExec("execute stmt using @status")
+	newUpdateTime := tk.MustQuery("select last_update_time from prepare_test").Rows()[0][0]
+	c.Assert(updateTime == newUpdateTime, IsFalse)
 }
 
 func (s *seqTestSuite) TestPreparedDelete(c *C) {
@@ -770,6 +797,10 @@ func (s *seqTestSuite) TestPreparedIssue8644(c *C) {
 // mockSessionManager is a mocked session manager which is used for test.
 type mockSessionManager1 struct {
 	Se session.Session
+}
+
+func (msm *mockSessionManager1) ShowTxnList() []*txninfo.TxnInfo {
+	panic("unimplemented!")
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.

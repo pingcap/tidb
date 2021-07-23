@@ -18,8 +18,8 @@ package main
 import (
 	"bytes"
 	"go/format"
-	"io/ioutil"
 	"log"
+	"os"
 	"path/filepath"
 	"text/template"
 
@@ -112,7 +112,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.
 	beforeWarns := sc.WarningCount()
 
 	for j := 0; j < l-1; j+=2 {
-		bufWhen, err := b.bufAllocator.get(types.ETInt, n)
+		bufWhen, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -128,7 +128,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.
 		whens[j/2] = bufWhen
 		whensSlice[j/2] = bufWhen.Int64s()
 
-		bufThen, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
+		bufThen, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -150,7 +150,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.
 	// else clause -> args[l-1]
 	// If case clause has else clause, l%2 == 1.
 	if l%2==1 {
-		bufElse, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
+		bufElse, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -268,7 +268,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Ch
 	if err := b.args[0].VecEval{{ .TypeName }}(b.ctx, input, result); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -292,7 +292,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Ch
 		}
 	}
 	{{ else }}
-	buf0, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -300,7 +300,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Ch
 	if err := b.args[0].VecEval{{ .TypeName }}(b.ctx, input, buf0); err != nil {
 		return err
 	}
-	buf1, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -379,7 +379,7 @@ func (b *builtinIf{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(input *chunk.C
 
 func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETInt, n)
+	buf0, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -392,7 +392,7 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Chunk,
 {{- if .Fixed }}
 	err = b.args[1].VecEval{{ .TypeName }}(b.ctx, input, result)
 {{- else }}
-	buf1, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
+	buf1, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -407,7 +407,7 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Chunk,
       	return b.fallbackEval{{ .TypeName }}(input, result)
    	}
 	
-	buf2, err := b.bufAllocator.get(types.ET{{ .ETName }}, n)
+	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -636,7 +636,7 @@ func generateDotGo(fileName string) error {
 		log.Println("[Warn]", fileName+": gofmt failed", err)
 		data = w.Bytes() // write original data for debugging
 	}
-	return ioutil.WriteFile(fileName, data, 0644)
+	return os.WriteFile(fileName, data, 0644)
 }
 
 func generateTestDotGo(fileName string) error {
@@ -650,7 +650,7 @@ func generateTestDotGo(fileName string) error {
 		log.Println("[Warn]", fileName+": gofmt failed", err)
 		data = w.Bytes() // write original data for debugging
 	}
-	return ioutil.WriteFile(fileName, data, 0644)
+	return os.WriteFile(fileName, data, 0644)
 }
 
 // generateOneFile generate one xxx.go file and the associated xxx_test.go file.

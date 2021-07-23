@@ -13,13 +13,22 @@
 
 package executor
 
-import "strings"
+import (
+	"strings"
+)
 
-func setFromString(value string) []string {
+// SetFromString constructs a slice of strings from a comma separated string.
+// It is assumed that there is no duplicated entry. You could use addToSet to maintain this property.
+// It is exported for tests. I HOPE YOU KNOW WHAT YOU ARE DOING.
+func SetFromString(value string) []string {
 	if len(value) == 0 {
 		return nil
 	}
 	return strings.Split(value, ",")
+}
+
+func setToString(set []string) string {
+	return strings.Join(set, ",")
 }
 
 // addToSet add a value to the set, e.g:

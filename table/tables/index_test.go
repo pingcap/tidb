@@ -104,15 +104,15 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(h.IntValue(), Equals, int64(1))
 	it.Close()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	exist, _, err := index.Exist(sc, txn.GetUnionStore(), values, kv.IntHandle(100))
+	exist, _, err := index.Exist(sc, txn, values, kv.IntHandle(100))
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsFalse)
 
-	exist, _, err = index.Exist(sc, txn.GetUnionStore(), values, kv.IntHandle(1))
+	exist, _, err = index.Exist(sc, txn, values, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsTrue)
 
-	err = index.Delete(sc, txn.GetUnionStore(), values, kv.IntHandle(1))
+	err = index.Delete(sc, txn, values, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 
 	it, err = index.SeekFirst(txn)
@@ -132,7 +132,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(hit, IsFalse)
 
-	err = index.Drop(txn.GetUnionStore())
+	err = index.Drop(txn)
 	c.Assert(err, IsNil)
 
 	it, hit, err = index.Seek(sc, txn, values)
@@ -194,12 +194,12 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(h.IntValue(), Equals, int64(1))
 	it.Close()
 
-	exist, h, err = index.Exist(sc, txn.GetUnionStore(), values, kv.IntHandle(1))
+	exist, h, err = index.Exist(sc, txn, values, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 	c.Assert(h.IntValue(), Equals, int64(1))
 	c.Assert(exist, IsTrue)
 
-	exist, h, err = index.Exist(sc, txn.GetUnionStore(), values, kv.IntHandle(2))
+	exist, h, err = index.Exist(sc, txn, values, kv.IntHandle(2))
 	c.Assert(err, NotNil)
 	c.Assert(h.IntValue(), Equals, int64(1))
 	c.Assert(exist, IsTrue)

@@ -267,10 +267,6 @@ type LogicalProjection struct {
 
 	Exprs []expression.Expression
 
-	// calculateGenCols indicates the projection is for calculating generated columns.
-	// In *UPDATE*, we should know this to tell different projections.
-	calculateGenCols bool
-
 	// CalculateNoDelay indicates this Projection is the root Plan and should be
 	// calculated without delay and will not return any result to client.
 	// Currently it is "true" only when the current sql query is a "DO" statement.
@@ -455,6 +451,7 @@ type LogicalMemTable struct {
 	Extractor MemTablePredicateExtractor
 	DBName    model.CIStr
 	TableInfo *model.TableInfo
+	Columns   []*model.ColumnInfo
 	// QueryTimeRange is used to specify the time range for metrics summary tables and inspection tables
 	// e.g: select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary;
 	//      select /*+ time_range('2020-02-02 12:10:00', '2020-02-02 13:00:00') */ from metrics_summary_by_label;
@@ -463,7 +460,7 @@ type LogicalMemTable struct {
 	QueryTimeRange QueryTimeRange
 }
 
-// LogicalUnionScan is only used in non read-only txn.
+// LogicalUnionScan is used in non read-only txn or for scanning a local temporary table whose snapshot data is located in memory.
 type LogicalUnionScan struct {
 	baseLogicalPlan
 
@@ -839,6 +836,10 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 			if !alreadyHandle {
 				path.IdxCols = append(path.IdxCols, handleCol)
 				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+				// Also updates the map that maps the index id to its prefix column ids.
+				if len(ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID]) == len(path.Index.Columns) {
+					ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID] = append(ds.tableStats.HistColl.Idx2ColumnIDs[path.Index.ID], handleCol.UniqueID)
+				}
 			}
 		}
 	}
@@ -1025,6 +1026,16 @@ type LogicalLimit struct {
 	limitHints limitHintInfo
 }
 
+// extraPIDInfo is used by SelectLock on partitioned table, the TableReader need
+// to return the partition id column.
+// Because SelectLock has to used that partition id to encode the lock key.
+// the child of SelectLock may be Join, so that table can be multiple extra PID columns.
+// fields are for each of the table, and TblIDs are the corresponding table IDs.
+type extraPIDInfo struct {
+	Columns []*expression.Column
+	TblIDs  []int64
+}
+
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
 	baseLogicalPlan
@@ -1032,6 +1043,9 @@ type LogicalLock struct {
 	Lock             *ast.SelectLockInfo
 	tblID2Handle     map[int64][]HandleCols
 	partitionedTable []table.PartitionedTable
+	// extraPIDInfo is used when it works on partition table, the child executor
+	// need to return an extra partition ID column in the chunk row.
+	extraPIDInfo
 }
 
 // WindowFrame represents a window function frame.
@@ -1172,4 +1186,53 @@ type LogicalShowDDLJobs struct {
 	logicalSchemaProducer
 
 	JobNumber int64
+}
+
+// CTEClass holds the information and plan for a CTE. Most of the fields in this struct are the same as cteInfo.
+// But the cteInfo is used when building the plan, and CTEClass is used also for building the executor.
+type CTEClass struct {
+	// The union between seed part and recursive part is DISTINCT or DISTINCT ALL.
+	IsDistinct bool
+	// seedPartLogicalPlan and recursivePartLogicalPlan are the logical plans for the seed part and recursive part of this CTE.
+	seedPartLogicalPlan      LogicalPlan
+	recursivePartLogicalPlan LogicalPlan
+	// seedPartPhysicalPlan and recursivePartPhysicalPlan are the physical plans for the seed part and recursive part of this CTE.
+	seedPartPhysicalPlan      PhysicalPlan
+	recursivePartPhysicalPlan PhysicalPlan
+	// cteTask is the physical plan for this CTE, is a wrapper of the PhysicalCTE.
+	cteTask task
+	// storageID for this CTE.
+	IDForStorage int
+	// optFlag is the optFlag for the whole CTE.
+	optFlag  uint64
+	HasLimit bool
+	LimitBeg uint64
+	LimitEnd uint64
+}
+
+// LogicalCTE is for CTE.
+type LogicalCTE struct {
+	logicalSchemaProducer
+
+	cte       *CTEClass
+	cteAsName model.CIStr
+	seedStat  *property.StatsInfo
+}
+
+// LogicalCTETable is for CTE table
+type LogicalCTETable struct {
+	logicalSchemaProducer
+
+	seedStat     *property.StatsInfo
+	name         string
+	idForStorage int
+}
+
+// ExtractCorrelatedCols implements LogicalPlan interface.
+func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4LogicalPlan(p.cte.seedPartLogicalPlan)
+	if p.cte.recursivePartLogicalPlan != nil {
+		corCols = append(corCols, ExtractCorrelatedCols4LogicalPlan(p.cte.recursivePartLogicalPlan)...)
+	}
+	return corCols
 }

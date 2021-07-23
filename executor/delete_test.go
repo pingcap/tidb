@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -82,7 +83,7 @@ func (s *testSuite8) TestDeleteLockKey(c *C) {
 			tk1, tk2 := testkit.NewTestKit(c, s.store), testkit.NewTestKit(c, s.store)
 			tk1.MustExec("use test")
 			tk2.MustExec("use test")
-			tk1.Se.GetSessionVars().EnableClusteredIndex = false
+			tk1.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 			tk1.MustExec(t.ddl)
 			tk1.MustExec(t.pre)
 			tk1.MustExec("begin pessimistic")

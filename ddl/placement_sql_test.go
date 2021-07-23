@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testDBSuite1) TestAlterTableAlterPartition(c *C) {
+func (s *testDBSuite6) TestAlterTableAlterPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -76,6 +76,12 @@ add placement policy
 	constraints='["+   zone   =   sh  ",     "- zone = bj    "]'
 	role=follower
 	replicas=3`)
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints="{'+zone=sh': 1}"
+	role=follower`)
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
@@ -129,7 +135,7 @@ drop placement policy
 	_, err = tk.Exec(`alter table t1 alter partition p0
 drop placement policy
 	role=follower`)
-	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, ".*no rule of such role to drop.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -142,7 +148,7 @@ add placement policy
 add placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*ROLE is not specified.*")
+	c.Assert(err, ErrorMatches, ".*the ROLE field is not specified.*")
 
 	// multiple statements
 	_, err = tk.Exec(`alter table t1 alter partition p0
@@ -202,7 +208,7 @@ drop placement policy
 	role=leader,
 drop placement policy
 	role=leader`)
-	c.Assert(err, NotNil)
+	c.Assert(err, ErrorMatches, ".*no rule of such role to drop.*")
 
 	s.dom.InfoSchema().SetBundle(bundle)
 	_, err = tk.Exec(`alter table t1 alter partition p0
@@ -219,14 +225,14 @@ drop placement policy
 add placement policy
 	role=follower
 	constraints='[]'`)
-	c.Assert(err, ErrorMatches, ".*array CONSTRAINTS should be with a positive REPLICAS.*")
+	c.Assert(err, ErrorMatches, ".*label constraints with invalid REPLICAS: should be positive.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints=',,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, "(?s).*constraint is neither an array of string, nor a string-to-number map.*")
+	c.Assert(err, ErrorMatches, "(?s).*invalid label constraints format: .* or any yaml compatible representation.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -239,14 +245,14 @@ add placement policy
 	constraints='[,,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, "(?s).*constraint is neither an array of string, nor a string-to-number map.*")
+	c.Assert(err, ErrorMatches, "(?s).*invalid label constraints format: .* or any yaml compatible representation.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{,,,'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, "(?s).*constraint is neither an array of string, nor a string-to-number map.*")
+	c.Assert(err, ErrorMatches, "(?s).*invalid label constraints format: .* or any yaml compatible representation.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -261,67 +267,6 @@ add placement policy
 	role=leader`)
 	c.Assert(err, ErrorMatches, ".*should be larger or equal to the number of total replicas.*")
 
-	// checkPlacementSpecConstraint
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='[",,,"]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+    "]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	// unknown operation
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["0000"]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	// without =
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+000"]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	// empty key
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+ =zone1"]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+  =   z"]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	// empty value
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+zone="]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+z  =   "]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
 	_, err = tk.Exec(`alter table t1 alter partition p
 add placement policy
 	constraints='["+zone=sh"]'
@@ -334,7 +279,7 @@ add placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": -1}'
 	role=follower
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*count should be positive.*")
+	c.Assert(err, ErrorMatches, ".*label constraints in map syntax have invalid replicas: count of labels.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -342,14 +287,6 @@ add placement policy
 	role=leader
 	replicas=0`)
 	c.Assert(err, ErrorMatches, ".*Invalid placement option REPLICAS, it is not allowed to be 0.*")
-
-	// ban tiflash
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+zone=sh", "+engine=tiflash"]'
-	role=follower
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*unsupported label.*")
 
 	// invalid partition
 	tk.MustExec("drop table if exists t1")
@@ -367,7 +304,7 @@ add placement policy
 	_, err = tk.Exec(`alter table t_part_pk_id alter partition p0 add placement policy constraints='["+host=store1"]' role=leader;`)
 	c.Assert(err, IsNil)
 	_, err = tk.Exec(`alter table t_part_pk_id alter partition p0 add placement policy constraints='["+host=store1"]' role=leader replicas=3;`)
-	c.Assert(err, ErrorMatches, ".*replicas can only be 1 when the role is leader")
+	c.Assert(err, ErrorMatches, ".*REPLICAS must be 1 if ROLE=leader.*")
 	tk.MustExec("drop table t_part_pk_id")
 }
 
@@ -473,7 +410,7 @@ PARTITION BY RANGE (c) (
 						GroupID: groupID,
 						Role:    placement.Leader,
 						Count:   1,
-						LabelConstraints: []placement.LabelConstraint{
+						Constraints: []placement.Constraint{
 							{
 								Key:    placement.DCLabelKey,
 								Op:     placement.In,
@@ -492,7 +429,7 @@ PARTITION BY RANGE (c) (
 						GroupID: groupID,
 						Role:    placement.Follower,
 						Count:   3,
-						LabelConstraints: []placement.LabelConstraint{
+						Constraints: []placement.Constraint{
 							{
 								Key:    placement.DCLabelKey,
 								Op:     placement.In,
@@ -566,12 +503,13 @@ PARTITION BY RANGE (c) (
 
 	for _, testcase := range testCases {
 		c.Log(testcase.name)
-		failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope",
+		failpoint.Enable("tikvclient/injectTxnScope",
 			fmt.Sprintf(`return("%v")`, testcase.zone))
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
 		tk.MustExec("use test")
+		tk.MustExec("set global tidb_enable_local_txn = on;")
 		tk.MustExec(fmt.Sprintf("set @@txn_scope = %v", testcase.txnScope))
 		if testcase.disableAutoCommit {
 			tk.MustExec("set @@autocommit = 0")
@@ -587,7 +525,8 @@ PARTITION BY RANGE (c) (
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Matches, testcase.err.Error())
 		}
-		failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+		tk.MustExec("set global tidb_enable_local_txn = off;")
+		failpoint.Disable("tikvclient/injectTxnScope")
 	}
 }
 
@@ -688,7 +627,7 @@ PARTITION BY RANGE (c) (
 				GroupID: groupID,
 				Role:    placement.Leader,
 				Count:   1,
-				LabelConstraints: []placement.LabelConstraint{
+				Constraints: []placement.Constraint{
 					{
 						Key:    placement.DCLabelKey,
 						Op:     placement.In,
@@ -698,8 +637,8 @@ PARTITION BY RANGE (c) (
 			},
 		},
 	}
-	failpoint.Enable("github.com/pingcap/tidb/config/injectTxnScope", `return("bj")`)
-	defer failpoint.Disable("github.com/pingcap/tidb/config/injectTxnScope")
+	failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`)
+	defer failpoint.Disable("tikvclient/injectTxnScope")
 	dbInfo := testGetSchemaByName(c, tk.Se, "test")
 	tk2 := testkit.NewTestKit(c, s.store)
 	var chkErr error
@@ -719,8 +658,10 @@ PARTITION BY RANGE (c) (
 						s.dom.InfoSchema().SetBundle(bundle)
 						done = true
 						tk2.MustExec("use test")
+						tk.MustExec("set global tidb_enable_local_txn = on;")
 						tk2.MustExec("set @@txn_scope=local")
 						_, chkErr = tk2.Exec("insert into t1 (c) values (1);")
+						tk.MustExec("set global tidb_enable_local_txn = off;")
 					}
 				}
 				return hook

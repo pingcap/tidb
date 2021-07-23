@@ -94,7 +94,7 @@ type Meta struct {
 // If the current Meta needs to handle a job, jobListKey is the type of the job's list.
 func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
-	txn.SetOption(kv.SyncLog, true)
+	txn.SetOption(kv.SyncLog, struct{}{})
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
 	listKey := DefaultJobListKey
 	if len(jobListKeys) != 0 {
@@ -449,6 +449,15 @@ func (m *Meta) DropTableOrView(dbID int64, tblID int64, delAutoID bool) error {
 		if err := m.txn.HDel(dbKey, m.autoRandomTableIDKey(tblID)); err != nil {
 			return errors.Trace(err)
 		}
+	}
+	return nil
+}
+
+// CleanAutoID is used to delete the auto-id of specific table.
+func (m *Meta) CleanAutoID(dbID, tblID int64) error {
+	dbKey := m.dbKey(dbID)
+	if err := m.txn.HDel(dbKey, m.autoTableIDKey(tblID)); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }

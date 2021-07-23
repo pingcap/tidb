@@ -29,12 +29,10 @@ func HeapProfileForGlobalMemTracker(d time.Duration) {
 	t := time.NewTicker(d)
 	defer t.Stop()
 	for {
-		select {
-		case <-t.C:
-			err := heapProfileForGlobalMemTracker()
-			if err != nil {
-				log.Warn("profile memory into tracker failed", zap.Error(err))
-			}
+		<-t.C
+		err := heapProfileForGlobalMemTracker()
+		if err != nil {
+			log.Warn("profile memory into tracker failed", zap.Error(err))
 		}
 	}
 }

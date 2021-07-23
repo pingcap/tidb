@@ -102,7 +102,7 @@ type DDL interface {
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, keyType ast.IndexKeyType, indexName model.CIStr,
 		columnNames []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error
 	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr, ifExists bool) error
-	AlterTable(ctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
+	AlterTable(ctx context.Context, sctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
 	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
 	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident, isAlterTable bool) error
 	RenameTables(ctx sessionctx.Context, oldTableIdent, newTableIdent []ast.Ident, isAlterTable bool) error
@@ -163,12 +163,14 @@ type DDL interface {
 	OwnerManager() owner.Manager
 	// GetID gets the ddl ID.
 	GetID() string
-	// GetTableMaxRowID gets the max row ID of a normal table or a partition.
+	// GetTableMaxHandle gets the max row ID of a normal table or a partition.
 	GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
 	// GetHook gets the hook. It's exported for testing.
 	GetHook() Callback
+	// SetHook sets the hook.
+	SetHook(h Callback)
 }
 
 type limitJobTask struct {
@@ -200,7 +202,7 @@ type ddlCtx struct {
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
-	infoHandle   *infoschema.Handle
+	infoCache    *infoschema.InfoCache
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
@@ -280,6 +282,15 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
+	// TODO: make store and infoCache explicit arguments
+	// these two should be ensured to exist
+	if opt.Store == nil {
+		panic("store should not be nil")
+	}
+	if opt.InfoCache == nil {
+		panic("infoCache should not be nil")
+	}
+
 	ddlCtx := &ddlCtx{
 		uuid:         id,
 		store:        opt.Store,
@@ -288,7 +299,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		binlogCli:    binloginfo.GetPumpsClient(),
-		infoHandle:   opt.InfoHandle,
+		infoCache:    opt.InfoCache,
 		tableLockCkr: deadLockCkr,
 		etcdCli:      opt.EtcdCli,
 	}
@@ -409,7 +420,7 @@ func (d *ddl) GetLease() time.Duration {
 // Please don't use this function, it is used by TestParallelDDLBeforeRunDDLJob to intercept the calling of d.infoHandle.Get(), use d.infoHandle.Get() instead.
 // Otherwise, the TestParallelDDLBeforeRunDDLJob will hang up forever.
 func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema {
-	is := d.infoHandle.Get()
+	is := d.infoCache.GetLatest()
 
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -592,6 +603,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		}
 
 		if historyJob.Error != nil {
+			logutil.BgLogger().Info("[ddl] DDL job is failed", zap.Int64("jobID", jobID))
 			return errors.Trace(historyJob.Error)
 		}
 		// Only for JobStateCancelled job which is adding columns or drop columns.
@@ -624,6 +636,14 @@ func (d *ddl) GetHook() Callback {
 	return d.mu.hook
 }
 
+// SetHook set the customized hook.
+func (d *ddl) SetHook(h Callback) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.mu.hook = h
+}
+
 func (d *ddl) startCleanDeadTableLock() {
 	defer func() {
 		goutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
@@ -638,10 +658,7 @@ func (d *ddl) startCleanDeadTableLock() {
 			if !d.ownerManager.IsOwner() {
 				continue
 			}
-			if d.infoHandle == nil || !d.infoHandle.IsValid() {
-				continue
-			}
-			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoHandle.Get().AllSchemas())
+			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoCache.GetLatest().AllSchemas())
 			if err != nil {
 				logutil.BgLogger().Info("[ddl] get dead table lock failed.", zap.Error(err))
 				continue
@@ -666,6 +683,17 @@ type RecoverInfo struct {
 	SnapshotTS    uint64
 	CurAutoIncID  int64
 	CurAutoRandID int64
+}
+
+// delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.
+// It should be called before any DDL that could break data consistency.
+// This provides a safe window for async commit and 1PC to commit with an old schema.
+func delayForAsyncCommit() {
+	cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
+	duration := cfg.SafeWindow + cfg.AllowedClockDrift
+	logutil.BgLogger().Info("sleep before DDL finishes to make async commit and 1PC safe",
+		zap.Duration("duration", duration))
+	time.Sleep(duration)
 }
 
 var (

@@ -38,10 +38,9 @@ type CorrelatedColumn struct {
 
 // Clone implements Expression interface.
 func (col *CorrelatedColumn) Clone() Expression {
-	var d types.Datum
 	return &CorrelatedColumn{
 		Column: col.Column,
-		Data:   &d,
+		Data:   col.Data,
 	}
 }
 
@@ -327,6 +326,10 @@ const columnPrefix = "Column#"
 
 // String implements Stringer interface.
 func (col *Column) String() string {
+	if col.IsHidden {
+		// A hidden column must be a virtual generated column, we should output its expression.
+		return col.VirtualExpr.String()
+	}
 	if col.OrigName != "" {
 		return col.OrigName
 	}

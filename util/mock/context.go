@@ -26,13 +26,14 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var _ sessionctx.Context = (*Context)(nil)
@@ -56,14 +57,6 @@ type wrapTxn struct {
 
 func (txn *wrapTxn) Valid() bool {
 	return txn.Transaction != nil && txn.Transaction.Valid()
-}
-
-// GetUnionStore implements GetUnionStore
-func (txn *wrapTxn) GetUnionStore() kv.UnionStore {
-	if txn.Transaction == nil {
-		return nil
-	}
-	return txn.Transaction.GetUnionStore()
 }
 
 func (txn *wrapTxn) CacheTableInfo(id int64, info *model.TableInfo) {
@@ -151,6 +144,25 @@ func (c *Context) GetMPPClient() kv.MPPClient {
 	return c.Store.GetMPPClient()
 }
 
+// GetInfoSchema implements sessionctx.Context GetInfoSchema interface.
+func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
+	vars := c.GetSessionVars()
+	if snap, ok := vars.SnapshotInfoschema.(sessionctx.InfoschemaMetaVersion); ok {
+		return snap
+	}
+	if vars.TxnCtx != nil && vars.InTxn() {
+		if is, ok := vars.TxnCtx.InfoSchema.(sessionctx.InfoschemaMetaVersion); ok {
+			return is
+		}
+	}
+	return nil
+}
+
+// GetBuiltinFunctionUsage implements sessionctx.Context GetBuiltinFunctionUsage interface.
+func (c *Context) GetBuiltinFunctionUsage() map[string]uint32 {
+	return make(map[string]uint32)
+}
+
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (c *Context) GetGlobalSysVar(ctx sessionctx.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)
@@ -195,6 +207,11 @@ func (c *Context) NewTxn(context.Context) error {
 	return nil
 }
 
+// NewStaleTxnWithStartTS implements the sessionctx.Context interface.
+func (c *Context) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error {
+	return c.NewTxn(ctx)
+}
+
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn(ctx))
@@ -211,18 +228,13 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithOption(kv.TransactionOption{}.SetTxnScope(oracle.GlobalTxnScope).SetStartTs(startTS))
+		txn, err := c.Store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(kv.GlobalTxnScope).SetStartTS(startTS))
 		if err != nil {
 			return errors.Trace(err)
 		}
 		c.txn.Transaction = txn
 	}
 	return nil
-}
-
-// NewTxnWithStalenessOption implements the sessionctx.Context interface.
-func (c *Context) NewTxnWithStalenessOption(ctx context.Context, option sessionctx.StalenessTxnOption) error {
-	return c.NewTxn(ctx)
 }
 
 // GetStore gets the store of session.
@@ -255,6 +267,11 @@ func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
 // StoreIndexUsage strores the index usage information.
 func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
+
+// GetTxnWriteThroughputSLI implements the sessionctx.Context interface.
+func (c *Context) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
+	return &sli.TxnWriteThroughputSLI{}
+}
 
 // StmtCommit implements the sessionctx.Context interface.
 func (c *Context) StmtCommit() {}

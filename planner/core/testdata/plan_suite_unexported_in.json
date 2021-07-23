@@ -378,7 +378,13 @@
       "select count(1) from (select count(1), a as b from t group by a) tt group by b",
       "select a, count(b) from t group by a",
       "select a, count(distinct a, b) from t group by a",
-      "select a, approx_count_distinct(a, b) from t group by a"
+      "select a, approx_count_distinct(a, b) from t group by a",
+      // Test issue23436
+      "select count(distinct a) from t",
+      "select count(distinct a), sum(distinct a) from t",
+      "select count(distinct a), sum(distinct f) from t",
+      "select count(distinct e) from t",
+      "select count(distinct f), avg(b) from t"
     ]
   },
   {

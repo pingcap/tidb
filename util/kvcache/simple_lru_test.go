@@ -58,29 +58,47 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 	maxMem, err := memory.MemTotal()
 	c.Assert(err, IsNil)
 
-	lru := NewSimpleLRUCache(3, 0, maxMem)
-	c.Assert(lru.capacity, Equals, uint(3))
+	lruMaxMem := NewSimpleLRUCache(3, 0, maxMem)
+	lruZeroQuota := NewSimpleLRUCache(3, 0, 0)
+	c.Assert(lruMaxMem.capacity, Equals, uint(3))
+	c.Assert(lruZeroQuota.capacity, Equals, uint(3))
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]int64, 5)
+	maxMemDroppedKv := make(map[Key]Value)
+	zeroQuotaDroppedKv := make(map[Key]Value)
 
+	// test onEvict function
+	lruMaxMem.SetOnEvict(func(key Key, value Value) {
+		maxMemDroppedKv[key] = value
+	})
+	// test onEvict function on 0 value of quota
+	lruZeroQuota.SetOnEvict(func(key Key, value Value) {
+		zeroQuotaDroppedKv[key] = value
+	})
 	for i := 0; i < 5; i++ {
 		keys[i] = newMockHashKey(int64(i))
 		vals[i] = int64(i)
-		lru.Put(keys[i], vals[i])
+		lruMaxMem.Put(keys[i], vals[i])
+		lruZeroQuota.Put(keys[i], vals[i])
 	}
-	c.Assert(lru.size, Equals, lru.capacity)
-	c.Assert(lru.size, Equals, uint(3))
+	c.Assert(lruMaxMem.size, Equals, lruMaxMem.capacity)
+	c.Assert(lruZeroQuota.size, Equals, lruZeroQuota.capacity)
+	c.Assert(lruMaxMem.size, Equals, uint(3))
+	c.Assert(lruZeroQuota.size, Equals, lruMaxMem.size)
 
 	// test for non-existent elements
+	c.Assert(len(maxMemDroppedKv), Equals, 2)
 	for i := 0; i < 2; i++ {
-		element, exists := lru.elements[string(keys[i].Hash())]
+		element, exists := lruMaxMem.elements[string(keys[i].Hash())]
 		c.Assert(exists, IsFalse)
 		c.Assert(element, IsNil)
+		c.Assert(maxMemDroppedKv[keys[i]], Equals, vals[i])
+		c.Assert(zeroQuotaDroppedKv[keys[i]], Equals, vals[i])
 	}
 
 	// test for existent elements
-	root := lru.cache.Front()
+	root := lruMaxMem.cache.Front()
 	c.Assert(root, NotNil)
 	for i := 4; i >= 2; i-- {
 		entry, ok := root.Value.(*cacheEntry)
@@ -92,7 +110,7 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 		c.Assert(key, NotNil)
 		c.Assert(key, Equals, keys[i])
 
-		element, exists := lru.elements[string(keys[i].Hash())]
+		element, exists := lruMaxMem.elements[string(keys[i].Hash())]
 		c.Assert(exists, IsTrue)
 		c.Assert(element, NotNil)
 		c.Assert(element, Equals, root)
@@ -104,6 +122,7 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 
 		root = root.Next()
 	}
+
 	// test for end of double-linked list
 	c.Assert(root, IsNil)
 }

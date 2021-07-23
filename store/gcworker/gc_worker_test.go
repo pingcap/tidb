@@ -38,23 +38,23 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/oracle/oracles"
+	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	pd "github.com/tikv/pd/client"
 )
 
 func TestT(t *testing.T) {
+	tikv.EnableFailpoints()
 	TestingT(t)
 }
 
 type testGCWorkerSuite struct {
 	store      kv.Storage
 	tikvStore  tikv.Storage
-	cluster    cluster.Cluster
+	cluster    testutils.Cluster
 	oracle     *oracles.MockOracle
 	gcWorker   *GCWorker
 	dom        *domain.Domain
@@ -80,7 +80,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 
 	store, err := mockstore.NewMockStore(
 		mockstore.WithStoreType(mockstore.MockTiKV),
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			s.initRegion.storeIDs, s.initRegion.peerIDs, s.initRegion.regionID, _ = mockstore.BootstrapWithMultiStores(c, 3)
 			s.cluster = c
 		}),
@@ -138,7 +138,7 @@ func (s *testGCWorkerSuite) mustGetNone(c *C, key string, ts uint64) {
 	if err != nil {
 		// Unistore's gc is based on compaction filter.
 		// So skip the error check if err == nil.
-		c.Assert(err, Equals, kv.ErrNotExist)
+		c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 	}
 }
 
@@ -258,10 +258,10 @@ func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 		strconv.FormatUint(now, 10))
 	c.Assert(err, IsNil)
 	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "b"),
-		strconv.FormatUint(now-oracle.EncodeTSO(20000), 10))
+		strconv.FormatUint(now-oracle.ComposeTS(20000, 0), 10))
 	c.Assert(err, IsNil)
-	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now-oracle.EncodeTSO(10000))
-	c.Assert(sp, Equals, now-oracle.EncodeTSO(20000))
+	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now-oracle.ComposeTS(10000, 0))
+	c.Assert(sp, Equals, now-oracle.ComposeTS(20000, 0)-1)
 }
 
 func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
@@ -412,7 +412,7 @@ func (s *testGCWorkerSuite) TestStatusVars(c *C) {
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	ctx := context.Background()
-	bo := tikv.NewBackofferWithVars(ctx, tikv.GcOneRegionMaxBackoff, nil)
+	bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
 	loc, err := s.tikvStore.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
@@ -423,23 +423,23 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	c.Assert(err, IsNil)
 	s.checkCollected(c, p)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")`), IsNil)
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/tikvStoreSendReqResult"), IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("GCNotLeader")`), IsNil)
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr.GetNotLeader(), NotNil)
 	c.Assert(err, IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/tikvStoreSendReqResult"), IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("GCServerIsBusy")`), IsNil)
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/tikvStoreSendReqResult"), IsNil)
 }
 
 func (s *testGCWorkerSuite) TestGetGCConcurrency(c *C) {
@@ -487,30 +487,28 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
-	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
+	useDistributedGC := s.gcWorker.checkUseDistributedGC()
 	c.Assert(useDistributedGC, Equals, true)
 	// Now the row must be set to the default value.
 	str, err := s.gcWorker.loadValueFromSysTable(gcModeKey)
 	c.Assert(err, IsNil)
 	c.Assert(str, Equals, gcModeDistributed)
 
+	// Central mode is deprecated in v5.0.
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
 	c.Assert(err, IsNil)
-	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	useDistributedGC = s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)
-	c.Assert(useDistributedGC, Equals, false)
+	c.Assert(useDistributedGC, Equals, true)
 
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeDistributed)
 	c.Assert(err, IsNil)
-	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
+	useDistributedGC = s.gcWorker.checkUseDistributedGC()
 	c.Assert(useDistributedGC, Equals, true)
 
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, "invalid_mode")
 	c.Assert(err, IsNil)
-	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
+	useDistributedGC = s.gcWorker.checkUseDistributedGC()
 	c.Assert(useDistributedGC, Equals, true)
 }
 
@@ -871,10 +869,10 @@ func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestResolveLockRangeInfine(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry", "return(true)"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/invalidCacheAndRetry", "return(true)"), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff", "return(1)"), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/invalidCacheAndRetry"), IsNil)
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff"), IsNil)
 	}()
 	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte{0}, []byte{1})
@@ -941,10 +939,10 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 		if regionID.GetID() == s.initRegion.regionID && *firstAccessRef {
 			*firstAccessRef = false
 			// merge region2 into region1 and return EpochNotMatch error.
-			mCluster := s.cluster.(*mocktikv.Cluster)
+			mCluster := s.cluster.(*testutils.MockCluster)
 			mCluster.Merge(s.initRegion.regionID, region2)
 			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
-			err := s.tikvStore.GetRegionCache().OnRegionEpochNotMatch(
+			_, err := s.tikvStore.GetRegionCache().OnRegionEpochNotMatch(
 				tikv.NewNoopBackoff(context.Background()),
 				&tikv.RPCContext{Region: regionID, Store: &tikv.Store{}},
 				[]*metapb.Region{regionMeta})
@@ -987,11 +985,10 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	gcSafePointCacheInterval = 0
 
 	// Test distributed mode
-	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
+	useDistributedGC := s.gcWorker.checkUseDistributedGC()
 	c.Assert(useDistributedGC, IsTrue)
 	safePoint := s.mustAllocTs(c)
-	err = s.gcWorker.runGCJob(context.Background(), safePoint, 1)
+	err := s.gcWorker.runGCJob(context.Background(), safePoint, 1)
 	c.Assert(err, IsNil)
 
 	pdSafePoint := s.mustGetSafePointFromPd(c)
@@ -1004,12 +1001,11 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	err = s.gcWorker.runGCJob(context.Background(), safePoint-1, 1)
 	c.Assert(err, NotNil)
 
-	// Test central mode
+	// Central mode is deprecated in v5.0, fallback to distributed mode if it's set.
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
 	c.Assert(err, IsNil)
-	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
-	c.Assert(useDistributedGC, IsFalse)
+	useDistributedGC = s.gcWorker.checkUseDistributedGC()
+	c.Assert(useDistributedGC, IsTrue)
 
 	p := s.createGCProbe(c, "k1")
 	safePoint = s.mustAllocTs(c)
@@ -1590,5 +1586,54 @@ func (s *testGCWorkerSuite) TestGCPlacementRules(c *C) {
 	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
 	pid, err := s.gcWorker.doGCPlacementRules(dr)
 	c.Assert(pid, Equals, int64(1))
+	c.Assert(err, IsNil)
+}
+
+func (s *testGCWorkerSuite) TestGCWithPendingTxn(c *C) {
+	ctx := context.Background()
+	gcSafePointCacheInterval = 0
+	err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
+	c.Assert(err, IsNil)
+
+	k1 := []byte("tk1")
+	v1 := []byte("v1")
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.SetOption(kv.Pessimistic, true)
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
+
+	// Lock the key.
+	err = txn.Set(k1, v1)
+	c.Assert(err, IsNil)
+	err = txn.LockKeys(ctx, lockCtx, k1)
+	c.Assert(err, IsNil)
+
+	// Prepare to run gc with txn's startTS as the safepoint ts.
+	spkv := s.tikvStore.GetSafePointKV()
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(txn.StartTS(), 10))
+	c.Assert(err, IsNil)
+	s.mustSetTiDBServiceSafePoint(c, txn.StartTS(), txn.StartTS())
+	veryLong := gcDefaultLifeTime * 100
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
+	c.Assert(err, IsNil)
+	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
+	s.oracle.AddOffset(time.Minute * 10)
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
+	c.Assert(err, IsNil)
+
+	// Trigger the tick let the gc job start.
+	err = s.gcWorker.leaderTick(ctx)
+	c.Assert(err, IsNil)
+	// Wait for GC finish
+	select {
+	case err = <-s.gcWorker.done:
+		s.gcWorker.gcIsRunning = false
+		break
+	case <-time.After(time.Second * 10):
+		err = errors.New("receive from s.gcWorker.done timeout")
+	}
+	c.Assert(err, IsNil)
+
+	err = txn.Commit(ctx)
 	c.Assert(err, IsNil)
 }

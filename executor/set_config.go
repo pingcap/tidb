@@ -17,7 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -143,7 +143,7 @@ func (s *SetConfigExec) doRequest(url string) (retErr error) {
 	if resp.StatusCode == http.StatusOK {
 		return nil
 	} else if resp.StatusCode >= 400 && resp.StatusCode < 600 {
-		message, err := ioutil.ReadAll(resp.Body)
+		message, err := io.ReadAll(resp.Body)
 		if err != nil {
 			return err
 		}

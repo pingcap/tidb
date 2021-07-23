@@ -301,5 +301,6 @@ func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)
 	// do not panic
-	DecodeCMSketchAndTopN([]byte{}, rows)
+	_, _, err = DecodeCMSketchAndTopN([]byte{}, rows)
+	c.Assert(err, IsNil)
 }

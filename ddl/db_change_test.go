@@ -494,10 +494,10 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1265]Data truncated for column 'c2' at row 1")
 	failAlterTableSQL1 := "alter table t change c2 c2 enum('N') DEFAULT 'N'"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL1)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: the number of enum column's elements is less than the original: 2, and tidb_enable_change_column_type is false")
+	c.Assert(err, IsNil)
 	failAlterTableSQL2 := "alter table t change c2 c2 int default 0"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL2)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type int(11) not match origin enum('N','Y'), and tidb_enable_change_column_type is false")
+	c.Assert(err, IsNil)
 	alterTableSQL := "alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'"
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
@@ -575,21 +575,11 @@ func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithUniqIdx(c 
 
 // TestWriteReorgForModifyColumnWithPKIsHandle tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithPKIsHandle(c *C) {
-	modifyColumnSQL := "alter table tt change column c cc tinyint unsigned not null default 1 first"
-	enableChangeColumnType := s.se.GetSessionVars().EnableChangeColumnType
-	s.se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		s.se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-		config.RestoreFunc()()
-	}()
-
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = false
-	})
+	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
 
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), `create table tt (a int not null, b int default 1, c int not null default 0, unique index idx(c), primary key idx1(a), index idx2(a, c))`)
+	_, err = s.se.Execute(context.Background(), `create table tt (a int not null, b int default 1, c int not null default 0, unique index idx(c), primary key idx1(a) clustered, index idx2(a, c))`)
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into tt (a, c) values(-1, -11)")
 	c.Assert(err, IsNil)
@@ -643,12 +633,6 @@ func (s *serialTestStateChangeSuite) TestDeleteOnlyForModifyColumnWithoutDefault
 }
 
 func (s *serialTestStateChangeSuite) testModifyColumn(c *C, state model.SchemaState, modifyColumnSQL string, idx idxType) {
-	enableChangeColumnType := s.se.GetSessionVars().EnableChangeColumnType
-	s.se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		s.se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-	}()
-
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	switch idx {
@@ -747,6 +731,28 @@ func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
 }
 
+// TestDeleteOnlyForDropColumnWithIndexes test for delete data when a middle-state column with indexes in it.
+func (s *testStateChangeSuite) TestDeleteOnlyForDropColumnWithIndexes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	sqls := make([]sqlWithErr, 2)
+	sqls[0] = sqlWithErr{"delete from t1", nil}
+	sqls[1] = sqlWithErr{"delete from t1 where b=1", errors.Errorf("[planner:1054]Unknown column 'b' in 'where clause'")}
+	prepare := func() {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("create table t1(a int key, b int, c int, index idx(b));")
+		tk.MustExec("insert into t1 values(1,1,1);")
+	}
+	prepare()
+	dropColumnSQL := "alter table t1 drop column b"
+	query := &expectQuery{sql: "select * from t1;", rows: []string{}}
+	s.runTestInSchemaState(c, model.StateWriteOnly, true, dropColumnSQL, sqls, query)
+	prepare()
+	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
+	prepare()
+	s.runTestInSchemaState(c, model.StateDeleteReorganization, true, dropColumnSQL, sqls, query)
+}
+
 // TestDeleteOnlyForDropExpressionIndex tests for deleting data when the hidden column is delete-only state.
 func (s *serialTestStateChangeSuite) TestDeleteOnlyForDropExpressionIndex(c *C) {
 	originalVal := config.GetGlobalConfig().Experimental.AllowsExpressionIndex
@@ -798,12 +804,12 @@ func (s *testStateChangeSuite) TestWriteOnlyForDropColumn(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	sqls := make([]sqlWithErr, 2)
+	sqls := make([]sqlWithErr, 3)
 	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
-	sqls[1] = sqlWithErr{"update t t1, tt t2 set t1.c1='5', t1.c3='2020-03-01', t2.c1='10' where t1.c4=t2.c4",
+	sqls[1] = sqlWithErr{"update t set c1='5', c3='2020-03-01' where c4 = 8;", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+	sqls[2] = sqlWithErr{"update t t1, tt t2 set t1.c1='5', t1.c3='2020-03-01', t2.c1='10' where t1.c4=t2.c4",
 		errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
-	// TODO: Fix the case of sqls[2].
-	// sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+	sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'where clause'")}
 	dropColumnSQL := "alter table t drop column c3"
 	query := &expectQuery{sql: "select * from t;", rows: []string{"a N 8"}}
 	s.runTestInSchemaState(c, model.StateWriteOnly, false, dropColumnSQL, sqls, query)
@@ -821,12 +827,11 @@ func (s *testStateChangeSuite) TestWriteOnlyForDropColumns(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	sqls := make([]sqlWithErr, 2)
-	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+	sqls := make([]sqlWithErr, 3)
+	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c1' in 'field list'")}
 	sqls[1] = sqlWithErr{"update t t1, t_drop_columns t2 set t1.c1='5', t1.c3='2020-03-01', t2.c1='10' where t1.c4=t2.c4",
-		errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
-	// TODO: Fix the case of sqls[2].
-	// sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+		errors.New("[planner:1054]Unknown column 'c1' in 'field list'")}
+	sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'where clause'")}
 	dropColumnsSQL := "alter table t drop column c3, drop column c1"
 	query := &expectQuery{sql: "select * from t;", rows: []string{"N 8"}}
 	s.runTestInSchemaState(c, model.StateWriteOnly, false, dropColumnsSQL, sqls, query)
@@ -868,9 +873,9 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 			return
 		}
 		for _, sqlWithErr := range sqlWithErrs {
-			_, err = se.Execute(context.Background(), sqlWithErr.sql)
-			if !terror.ErrorEqual(err, sqlWithErr.expectErr) {
-				checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err)
+			_, err1 := se.Execute(context.Background(), sqlWithErr.sql)
+			if !terror.ErrorEqual(err1, sqlWithErr.expectErr) {
+				checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err1)
 				break
 			}
 		}
@@ -935,7 +940,7 @@ func (s *testStateChangeSuiteBase) CheckResult(tk *testkit.TestKit, sql string, 
 }
 
 func (s *testStateChangeSuite) TestShowIndex(c *C) {
-	_, err := s.se.Execute(context.Background(), `create table t(c1 int primary key, c2 int)`)
+	_, err := s.se.Execute(context.Background(), `create table t(c1 int primary key nonclustered, c2 int)`)
 	c.Assert(err, IsNil)
 	defer func() {
 		_, err := s.se.Execute(context.Background(), "drop table t")
@@ -959,7 +964,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 				checkErr = err1
 				break
 			}
-			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES NULL"))
+			checkErr = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO"))
 		}
 	}
 
@@ -974,8 +979,8 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	result, err := s.execQuery(tk, showIndexSQL)
 	c.Assert(err, IsNil)
 	err = checkResult(result, testkit.Rows(
-		"t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES NULL",
-		"t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE   YES NULL",
+		"t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO",
+		"t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE   YES <nil> NO",
 	))
 	c.Assert(err, IsNil)
 	d.(ddl.DDLForTest).SetHook(originalCallback)
@@ -1003,8 +1008,52 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	result, err = s.execQuery(tk, "show index from tr;")
 	c.Assert(err, IsNil)
-	err = checkResult(result, testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE   YES NULL"))
+	err = checkResult(result, testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
 	c.Assert(err, IsNil)
+
+	_, err = s.se.Execute(context.Background(), "drop table if exists tr")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table tr(id int primary key clustered, v int, key vv(v))")
+	c.Assert(err, IsNil)
+	result, err = s.execQuery(tk, "show index from tr")
+	c.Assert(err, IsNil)
+	c.Assert(checkResult(result, testkit.Rows("tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> YES", "tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO")), IsNil)
+	result, err = s.execQuery(tk, "select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name")
+	c.Assert(err, IsNil)
+	c.Assert(checkResult(result, testkit.Rows("PRIMARY YES", "vv NO")), IsNil)
+
+	_, err = s.se.Execute(context.Background(), "drop table if exists tr")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table tr(id int primary key nonclustered, v int, key vv(v))")
+	c.Assert(err, IsNil)
+	result, err = s.execQuery(tk, "show index from tr")
+	c.Assert(err, IsNil)
+	c.Assert(checkResult(result, testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO")), IsNil)
+	result, err = s.execQuery(tk, "select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name")
+	c.Assert(err, IsNil)
+	c.Assert(checkResult(result, testkit.Rows("PRIMARY NO", "vv NO")), IsNil)
+
+	_, err = s.se.Execute(context.Background(), "drop table if exists tr")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table tr(id char(100) primary key clustered, v int, key vv(v))")
+	c.Assert(err, IsNil)
+	result, err = s.execQuery(tk, "show index from tr")
+	c.Assert(err, IsNil)
+	c.Assert(checkResult(result, testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> YES")), IsNil)
+	result, err = s.execQuery(tk, "select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name")
+	c.Assert(err, IsNil)
+	c.Assert(checkResult(result, testkit.Rows("PRIMARY YES", "vv NO")), IsNil)
+
+	_, err = s.se.Execute(context.Background(), "drop table if exists tr")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table tr(id char(100) primary key nonclustered, v int, key vv(v))")
+	c.Assert(err, IsNil)
+	result, err = s.execQuery(tk, "show index from tr")
+	c.Assert(err, IsNil)
+	c.Assert(checkResult(result, testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO")), IsNil)
+	result, err = s.execQuery(tk, "select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name")
+	c.Assert(err, IsNil)
+	c.Assert(checkResult(result, testkit.Rows("PRIMARY NO", "vv NO")), IsNil)
 }
 
 func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
@@ -1018,25 +1067,24 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
 
-func (s *serialTestStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.AlterPrimaryKey = true
-	})
-
-	_, err := s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 1")
-	c.Assert(err, IsNil)
-	defer func() {
-		_, err = s.se.Execute(context.Background(), "set global tidb_enable_change_column_type = 0")
+func (s *testStateChangeSuite) TestParallelAddGeneratedColumnAndAlterModifyColumn(c *C) {
+	sql1 := "ALTER TABLE t ADD COLUMN f INT GENERATED ALWAYS AS(a+1);"
+	sql2 := "ALTER TABLE t MODIFY COLUMN a tinyint;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
+		_, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
-	}()
-	domain.GetDomain(s.se).GetGlobalVarsCache().Disable()
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
 
-	sql1 := "ALTER TABLE t ADD PRIMARY KEY (b);"
+func (s *testStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C) {
+	sql1 := "ALTER TABLE t ADD PRIMARY KEY (b) NONCLUSTERED;"
 	sql2 := "ALTER TABLE t MODIFY COLUMN b tinyint;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true and this column has primary key flag")
+		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: this column has primary key flag")
 		_, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
 	}
@@ -1689,12 +1737,6 @@ func (s *serialTestStateChangeSuite) TestModifyColumnTypeArgs(c *C) {
 	tk.MustExec("drop table if exists t_modify_column_args")
 	tk.MustExec("create table t_modify_column_args(a int, unique(a))")
 
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-	}()
-
 	_, err := tk.Exec("alter table t_modify_column_args modify column a tinyint")
 	c.Assert(err, NotNil)
 	// error goes like `mock update version and tableInfo error,jobID=xx`
@@ -1733,4 +1775,118 @@ func (s *serialTestStateChangeSuite) TestModifyColumnTypeArgs(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(changingCol, IsNil)
 	c.Assert(changingIdxs, IsNil)
+}
+
+func (s *testStateChangeSuite) TestWriteReorgForColumnTypeChange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec(`CREATE TABLE t_ctc (
+  a DOUBLE NULL DEFAULT '1.732088511183121',
+  c char(30) NOT NULL,
+  KEY idx (a,c)
+) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='…comment';
+`)
+	defer func() {
+		tk.MustExec("drop table t_ctc")
+	}()
+
+	sqls := make([]sqlWithErr, 2)
+	sqls[0] = sqlWithErr{"INSERT INTO t_ctc SET c = 'zr36f7ywjquj1curxh9gyrwnx', a = '1.9897043136824033';", nil}
+	sqls[1] = sqlWithErr{"DELETE FROM t_ctc;", nil}
+	dropColumnsSQL := "alter table t_ctc change column a ddd TIME NULL DEFAULT '18:21:32' AFTER c;"
+	query := &expectQuery{sql: "admin check table t_ctc;", rows: nil}
+	s.runTestInSchemaState(c, model.StateWriteReorganization, false, dropColumnsSQL, sqls, query)
+}
+
+func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
+	originalVal := config.GetGlobalConfig().Experimental.AllowsExpressionIndex
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	defer func() {
+		config.GetGlobalConfig().Experimental.AllowsExpressionIndex = originalVal
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int default 0, b int default 0)")
+	defer func() {
+		tk.MustExec("drop table t")
+	}()
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test_db_state")
+
+	var checkErr error
+	d := s.dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &ddl.TestDDLCallback{}
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		err := originalCallback.OnChanged(nil)
+		c.Assert(err, IsNil)
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, checkErr = tk1.Exec("insert into t values (5, 5)")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t set b = 6")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("update t set b = 7 where a = 1")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t where b = 4")
+			if checkErr != nil {
+				return
+			}
+			// (1, 7), (2, 2), (3, 3), (5, 5), (0, 6)
+		case model.StateWriteOnly:
+			_, checkErr = tk1.Exec("insert into t values (8, 8)")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t set b = 9")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("update t set b = 7 where a = 2")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t where b = 3")
+			if checkErr != nil {
+				return
+			}
+			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
+		case model.StateWriteReorganization:
+			_, checkErr = tk1.Exec("insert into t values (10, 10)")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t set b = 11")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("update t set b = 7 where a = 5")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t where b = 6")
+			if checkErr != nil {
+				return
+			}
+			// (1, 7), (2, 7), (5, 7), (8, 8), (0, 9), (10, 10), (10, 10), (0, 11), (0, 11)
+		}
+	}
+
+	d.(ddl.DDLForTest).SetHook(callback)
+	tk.MustExec("alter table t add index idx((b+1))")
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10", "10 10"))
 }

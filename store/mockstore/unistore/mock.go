@@ -14,12 +14,11 @@
 package unistore
 
 import (
-	"io/ioutil"
 	"os"
 
-	usconf "github.com/ngaut/unistore/config"
-	ussvr "github.com/ngaut/unistore/server"
 	"github.com/pingcap/errors"
+	usconf "github.com/pingcap/tidb/store/mockstore/unistore/config"
+	ussvr "github.com/pingcap/tidb/store/mockstore/unistore/server"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -28,7 +27,7 @@ func New(path string) (*RPCClient, pd.Client, *Cluster, error) {
 	persistent := true
 	if path == "" {
 		var err error
-		if path, err = ioutil.TempDir("", "tidb-unistore-temp"); err != nil {
+		if path, err = os.MkdirTemp("", "tidb-unistore-temp"); err != nil {
 			return nil, nil, nil, err
 		}
 		persistent = false

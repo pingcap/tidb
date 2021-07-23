@@ -49,24 +49,6 @@ type toBeCheckedRow struct {
 	ignored bool
 }
 
-// encodeNewRow encodes a new row to value.
-func encodeNewRow(ctx sessionctx.Context, t table.Table, row []types.Datum) ([]byte, error) {
-	colIDs := make([]int64, 0, len(row))
-	skimmedRow := make([]types.Datum, 0, len(row))
-	for _, col := range t.Cols() {
-		if !tables.CanSkip(t.Meta(), col, &row[col.Offset]) {
-			colIDs = append(colIDs, col.ID)
-			skimmedRow = append(skimmedRow, row[col.Offset])
-		}
-	}
-	sctx, rd := ctx.GetSessionVars().StmtCtx, &ctx.GetSessionVars().RowEncoder
-	newRowValue, err := tablecodec.EncodeRow(sctx, skimmedRow, colIDs, nil, nil, rd)
-	if err != nil {
-		return nil, err
-	}
-	return newRowValue, nil
-}
-
 // getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
 // which need to be checked whether they are duplicate keys.
 func getKeysNeedCheck(ctx context.Context, sctx sessionctx.Context, t table.Table, rows [][]types.Datum) ([]toBeCheckedRow, error) {
@@ -116,7 +98,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	if p, ok := t.(table.PartitionedTable); ok {
 		t, err = p.GetPartitionByRow(ctx, row)
 		if err != nil {
-			if terr, ok := errors.Cause(err).(*terror.Error); ctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+			if terr, ok := errors.Cause(err).(*terror.Error); ctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				result = append(result, toBeCheckedRow{ignored: true})
 				return result, nil

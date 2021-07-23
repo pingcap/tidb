@@ -47,8 +47,6 @@ type TraceExec struct {
 	exhausted bool
 	// stmtNode is the real query ast tree and it is used for building real query's plan.
 	stmtNode ast.StmtNode
-	// rootTrace represents root span which is father of all other span.
-	rootTrace opentracing.Span
 
 	builder *executorBuilder
 	format  string
@@ -173,7 +171,7 @@ func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Rec
 
 func dfsTree(t *appdash.Trace, prefix string, isLast bool, chk *chunk.Chunk) {
 	var newPrefix, suffix string
-	if len(prefix) == 0 {
+	if prefix == "" {
 		newPrefix = prefix + "  "
 	} else {
 		if !isLast {

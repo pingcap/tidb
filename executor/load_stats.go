@@ -86,5 +86,5 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 	if h == nil {
 		return errors.New("Load Stats: handle is nil")
 	}
-	return h.LoadStatsFromJSON(infoschema.GetInfoSchema(e.Ctx), jsonTbl)
+	return h.LoadStatsFromJSON(e.Ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl)
 }
