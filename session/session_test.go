@@ -5211,7 +5211,7 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 		tk.MustQuery("select * from tmp1").Check(testkit.Rows(expect...))
 	}
 
-	assertExecSql := func(sql string, verify func(err error)) {
+	assertExecSQL := func(sql string, verify func(err error)) {
 		_, err := tk.Exec(sql)
 		if err != nil {
 			assertModifiedRecords([]string{})
@@ -5225,26 +5225,26 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 		// update records in txn and records are inserted in txn
 		tk.MustExec("begin")
 		insertRecords(idList)
-		assertExecSql(sql, verify)
+		assertExecSQL(sql, verify)
 		tk.MustExec("rollback")
 		tk.MustQuery("select * from tmp1").Check(testkit.Rows())
 
 		// update records out of txn
 		insertRecords(idList)
-		assertExecSql(sql, verify)
+		assertExecSQL(sql, verify)
 		tk.MustExec("delete from tmp1")
 
 		// update records in txn and rollback
 		insertRecords(idList)
 		tk.MustExec("begin")
-		assertExecSql(sql, verify)
+		assertExecSQL(sql, verify)
 		tk.MustExec("rollback")
 		assertModifiedRecords([]string{})
 
 		// update records in txn and commit
 		tk.MustExec("begin")
 		var e error
-		assertExecSql(sql, func(err error) {
+		assertExecSQL(sql, func(err error) {
 			e = err
 			verify(err)
 		})
