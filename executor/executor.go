@@ -66,7 +66,6 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/tikv"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -947,7 +946,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	lockWaitTime := e.ctx.GetSessionVars().LockWaitTimeout
 	if e.Lock.LockType == ast.SelectLockForUpdateNoWait {
-		lockWaitTime = tikv.LockNoWait
+		lockWaitTime = tikvstore.LockNoWait
 	} else if e.Lock.LockType == ast.SelectLockForUpdateWaitN {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
 	}
@@ -973,25 +972,22 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *tikvstore.Loc
 	if variable.TopSQLEnabled() {
 		_, planDigest = seVars.StmtCtx.GetPlanDigest()
 	}
-	return &tikvstore.LockCtx{
-		Killed:                &seVars.Killed,
-		ForUpdateTS:           seVars.TxnCtx.GetForUpdateTS(),
-		LockWaitTime:          lockWaitTime,
-		WaitStartTime:         seVars.StmtCtx.GetLockWaitStartTime(),
-		PessimisticLockWaited: &seVars.StmtCtx.PessimisticLockWaited,
-		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
-		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
-		LockExpired:           &seVars.TxnCtx.LockExpire,
-		ResourceGroupTag:      resourcegrouptag.EncodeResourceGroupTag(sqlDigest, planDigest),
-		OnDeadlock: func(deadlock *tikverr.ErrDeadlock) {
-			cfg := config.GetGlobalConfig()
-			if deadlock.IsRetryable && !cfg.PessimisticTxn.DeadlockHistoryCollectRetryable {
-				return
-			}
-			rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
-			deadlockhistory.GlobalDeadlockHistory.Push(rec)
-		},
+	lockCtx := tikvstore.NewLockCtx(seVars.TxnCtx.GetForUpdateTS(), lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
+	lockCtx.Killed = &seVars.Killed
+	lockCtx.PessimisticLockWaited = &seVars.StmtCtx.PessimisticLockWaited
+	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
+	lockCtx.LockKeysCount = &seVars.StmtCtx.LockKeysCount
+	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
+	lockCtx.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(sqlDigest, planDigest)
+	lockCtx.OnDeadlock = func(deadlock *tikverr.ErrDeadlock) {
+		cfg := config.GetGlobalConfig()
+		if deadlock.IsRetryable && !cfg.PessimisticTxn.DeadlockHistoryCollectRetryable {
+			return
+		}
+		rec := deadlockhistory.ErrDeadlockToDeadlockRecord(deadlock)
+		deadlockhistory.GlobalDeadlockHistory.Push(rec)
 	}
+	return lockCtx
 }
 
 // doLockKeys is the main entry for pessimistic lock keys
