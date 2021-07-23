@@ -14,13 +14,10 @@
 package plancodec
 
 import (
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/stretchr/testify/require"
+	"testing"
 )
-
-var _ = Suite(&testPlanCodecSuite{})
-
-type testPlanCodecSuite struct{}
 
 type encodeTaskTypeCase struct {
 	IsRoot     bool
@@ -29,7 +26,8 @@ type encodeTaskTypeCase struct {
 	DecodedStr string
 }
 
-func (s *testPlanCodecSuite) TestEncodeTaskType(c *C) {
+func TestEncodeTaskType(t *testing.T) {
+	t.Parallel()
 	cases := []encodeTaskTypeCase{
 		{true, kv.UnSpecified, "0", "root"},
 		{false, kv.TiKV, "1_0", "cop[tikv]"},
@@ -37,22 +35,24 @@ func (s *testPlanCodecSuite) TestEncodeTaskType(c *C) {
 		{false, kv.TiDB, "1_2", "cop[tidb]"},
 	}
 	for _, cas := range cases {
-		c.Assert(EncodeTaskType(cas.IsRoot, cas.StoreType), Equals, cas.EncodedStr)
+		require.Equal(t, EncodeTaskType(cas.IsRoot, cas.StoreType), cas.EncodedStr)
 		str, err := decodeTaskType(cas.EncodedStr)
-		c.Assert(err, IsNil)
-		c.Assert(str, Equals, cas.DecodedStr)
+		require.NoError(t, err)
+		require.Equal(t, str, cas.DecodedStr)
 	}
 
 	str, err := decodeTaskType("1")
-	c.Assert(err, IsNil)
-	c.Assert(str, Equals, "cop")
+	require.NoError(t, err)
+	require.Equal(t, str, "cop")
 
 	_, err = decodeTaskType("1_x")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
-func (s *testPlanCodecSuite) TestDecodeDiscardPlan(c *C) {
+func TestDecodeDiscardPlan(t *testing.T) {
+	t.Parallel()
+
 	plan, err := DecodePlan(PlanDiscardedEncoded)
-	c.Assert(err, IsNil)
-	c.Assert(plan, DeepEquals, planDiscardedDecoded)
+	require.NoError(t, err)
+	require.Equal(t, plan, planDiscardedDecoded)
 }
