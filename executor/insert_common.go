@@ -120,7 +120,7 @@ func (e *InsertValues) exec(_ context.Context, _ [][]types.Datum) error {
 // See https://dev.mysql.com/doc/refman/5.7/en/insert.html
 func (e *InsertValues) initInsertColumns() error {
 	var cols []*table.Column
-	var missingColName string
+	var missingColIdx int
 	var err error
 
 	tableCols := e.Table.Cols()
@@ -129,11 +129,12 @@ func (e *InsertValues) initInsertColumns() error {
 		// Process `set` type column.
 		columns := make([]string, 0, len(e.SetList))
 		for _, v := range e.SetList {
-			columns = append(columns, v.ColName.O)
+			columns = append(columns, v.ColName.L)
 		}
-		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if missingColName != "" {
-			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
+		cols, missingColIdx = table.FindColumns(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if missingColIdx >= 0 {
+			return errors.Errorf("INSERT INTO %s: unknown column %s",
+				e.Table.Meta().Name.O, e.SetList[missingColIdx].ColName.O)
 		}
 		if len(cols) == 0 {
 			return errors.Errorf("INSERT INTO %s: empty column", e.Table.Meta().Name.O)
@@ -142,11 +143,12 @@ func (e *InsertValues) initInsertColumns() error {
 		// Process `name` type column.
 		columns := make([]string, 0, len(e.Columns))
 		for _, v := range e.Columns {
-			columns = append(columns, v.Name.O)
+			columns = append(columns, v.Name.L)
 		}
-		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if missingColName != "" {
-			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
+		cols, missingColIdx = table.FindColumns(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if missingColIdx >= 0 {
+			return errors.Errorf("INSERT INTO %s: unknown column %s",
+				e.Table.Meta().Name.O, e.Columns[missingColIdx].Name.O)
 		}
 	} else {
 		// If e.Columns are empty, use all columns instead.
