@@ -146,6 +146,7 @@ type readConnCtx struct {
 func (m *mppIterator) prepare(ctx context.Context) ([]string, []*readConnCtx) {
 	var blockAddrs []string
 	var readConns []*readConnCtx
+	var tmpMu sync.Mutex
 	for _, task := range m.tasks {
 		if atomic.LoadUint32(&m.closed) == 1 {
 			break
@@ -166,17 +167,19 @@ func (m *mppIterator) prepare(ctx context.Context) ([]string, []*readConnCtx) {
 				m.wg.Done()
 			}()
 			stream, err := m.handleDispatchReq(ctx, bo, mppTask)
+			tmpMu.Lock()
+			defer tmpMu.Unlock()
 			if err != nil {
-				m.mu.Lock()
+				if len(blockAddrs) > 0 && (errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled) {
+					// it might be cancelled by others
+					return
+				}
 				blockAddr := mppTask.Meta.GetAddress()
 				blockAddrs = append(blockAddrs, blockAddr)
 				logutil.BgLogger().Warn("mpp request meet error", zap.Uint64("ts", m.startTs), zap.Int64("task id", mppTask.ID), zap.String("store address", blockAddr), zap.Error(err))
-				m.mu.Unlock()
 				m.cancelMppTasks()
 			} else if stream != nil {
-				m.mu.Lock()
 				readConns = append(readConns, &readConnCtx{bo, stream, mppTask})
-				m.mu.Unlock()
 			}
 		}(task)
 	}
@@ -490,7 +493,7 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 func (m *mppIterator) run(conns []*readConnCtx) {
 	m.wg.Add(len(conns))
 	for _, conn := range conns {
-		go func (ctx *readConnCtx) {
+		go func(ctx *readConnCtx) {
 			defer func() {
 				m.wg.Done()
 			}()
