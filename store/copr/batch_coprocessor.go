@@ -139,6 +139,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *tikv.KVStore, originalTas
 				for _, blockAddr := range blockAddrs {
 					if blockAddr == s.GetAddr() {
 						logutil.BgLogger().Warn("forbid store because of failure at time", zap.String("store address", blockAddr))
+						return
 					}
 				}
 				aliveReq := tikvrpc.NewRequest(tikvrpc.CmdMPPAlive, &mpp.IsAliveRequest{}, kvrpcpb.Context{})

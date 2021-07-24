@@ -16,6 +16,7 @@ package copr
 import (
 	"context"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -170,7 +171,7 @@ func (m *mppIterator) prepare(ctx context.Context) ([]string, []*readConnCtx) {
 			tmpMu.Lock()
 			defer tmpMu.Unlock()
 			if err != nil {
-				if len(blockAddrs) > 0 && (errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled) {
+				if len(blockAddrs) > 0 && (errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled || strings.Contains(err.Error(), "cancel")) {
 					// it might be cancelled by others
 					return
 				}
