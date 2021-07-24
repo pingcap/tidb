@@ -928,7 +928,7 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 			for i, opt := range opts {
 				err2 := opt()
 				if err2 != nil {
-					checkErr = errors.Errorf("opts[%d] assert fails", i)
+					checkErr = errors.Errorf("opts[%d] assert fails, errs = %v", i, err2)
 					break
 				}
 			}
