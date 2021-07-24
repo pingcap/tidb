@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/parser/mysql"
 	"strconv"
 	"strings"
 	"sync"
@@ -751,6 +752,56 @@ func (s *testStateChangeSuite) TestDeleteOnlyForDropColumnWithIndexes(c *C) {
 	s.runTestInSchemaState(c, model.StateDeleteReorganization, true, dropColumnSQL, sqls, query)
 }
 
+// Solve issue#25462
+// TestUpdateForDropColumnWithIndexes test for updating data in the middle state of dropping column with indexes in it.
+func (s *testStateChangeSuite) TestUpdateForDropColumnWithIndexes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	sqls := make([]sqlWithErr, 2)
+	sqls[0] = sqlWithErr{"update t1 set b='18'", nil}
+	sqls[1] = sqlWithErr{"update t1 set b='18' where a=123", errors.Errorf("[planner:1054]Unknown column 'a' in 'where clause'")}
+	// drop column with a single index.
+	prepare := func() {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("CREATE TABLE t1 (a int, b int, index(a))")
+		tk.MustExec("insert into t1 set a = 123")
+	}
+	tkOpt := testkit.NewTestKit(c, s.store)
+	tkOpt.MustExec("use test_db_state")
+	checkOpt := func() error {
+		tbl := testGetTableByName(c, tkOpt.Se, "test_db_state", "t1")
+		m := tbl.Meta()
+		if m.Columns[len(m.Columns)-1].Name.L != "a" {
+			return errors.New("drop column with indexes assert offset fail")
+		}
+		if !mysql.HasDropColumnWithIndexFlag(m.Columns[len(m.Columns)-1].Flag) {
+			return errors.New("drop column with indexes assert flag fail")
+		}
+		return nil
+	}
+	prepare()
+	dropColumnSQL := "alter table t1 drop column a"
+	query := &expectQuery{sql: "select * from t1;", rows: []string{"18"}}
+	s.runTestInSchemaState(c, model.StateWriteOnly, true, dropColumnSQL, sqls, query, checkOpt)
+	prepare()
+	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnSQL, sqls, query, checkOpt)
+	prepare()
+	s.runTestInSchemaState(c, model.StateDeleteReorganization, true, dropColumnSQL, sqls, query, checkOpt)
+	// drop column with multi indexes.
+	prepare = func() {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("CREATE TABLE t1 (x int, a int, b int, index idx0(a), index idx1(a), index idx2(b))")
+		tk.MustExec("insert into t1 set a = 123")
+	}
+	query = &expectQuery{sql: "select * from t1;", rows: []string{"<nil> 18"}}
+	prepare()
+	s.runTestInSchemaState(c, model.StateWriteOnly, true, dropColumnSQL, sqls, query, checkOpt)
+	prepare()
+	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnSQL, sqls, query, checkOpt)
+	prepare()
+	s.runTestInSchemaState(c, model.StateDeleteReorganization, true, dropColumnSQL, sqls, query, checkOpt)
+}
+
 // TestDeleteOnlyForDropExpressionIndex tests for deleting data when the hidden column is delete-only state.
 func (s *serialTestStateChangeSuite) TestDeleteOnlyForDropExpressionIndex(c *C) {
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
@@ -829,8 +880,10 @@ func (s *testStateChangeSuite) TestWriteOnlyForDropColumns(c *C) {
 	s.runTestInSchemaState(c, model.StateWriteOnly, false, dropColumnsSQL, sqls, query)
 }
 
+type checkOpt func() error
+
 func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.SchemaState, isOnJobUpdated bool, alterTableSQL string,
-	sqlWithErrs []sqlWithErr, expectQuery *expectQuery) {
+	sqlWithErrs []sqlWithErr, expectQuery *expectQuery, opts ...checkOpt) {
 	_, err := s.se.Execute(context.Background(), `create table t (
 	 	c1 varchar(64),
 	 	c2 enum('N','Y') not null default 'N',
@@ -869,6 +922,15 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 			if !terror.ErrorEqual(err1, sqlWithErr.expectErr) {
 				checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err1)
 				break
+			}
+		}
+		if checkErr == nil && opts != nil {
+			for i, opt := range opts {
+				err2 := opt()
+				if err2 != nil {
+					checkErr = errors.Errorf("opts[%d] assert fails", i)
+					break
+				}
 			}
 		}
 	}

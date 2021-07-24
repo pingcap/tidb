@@ -455,8 +455,23 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction,
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
 		}
+		// when drop column with a index with it, the column and index will perform a combined schema change.
+		// column:   write-only  ->  delete-only  -> delete-reorg
+		// index:    write-only  ->  delete-only  -> delete-reorg
+		//
+		// under the latter two states, the update statement will not the fetch old column data up and write it
+		// back because drop column is not allowed to be cancelled in these states. But the state-combined index
+		// require the old column data to build the index key to conduct the delete operation. (update statement
+		// can only see the writable columns)
+		//
+		// Since drop column ddl can't be cancelled after stepping in these stage, previously we won't fulfil
+		// corresponding state column datum when we insert a record, hence, we shouldn't have to  clean the index
+		// record for it as well, which will be clean after the ddl is finished. Otherwise, we need to fetch
+		// delete-only/delete-reorg column's data up in update statement and remove the old index record here,
+		// which is not that elegant.
 		for _, ic := range idx.Meta().Columns {
-			if !touched[ic.Offset] {
+			// delete-only index column doesn't exist in the touched array.
+			if mysql.HasDropColumnWithIndexFlag(t.Columns[ic.Offset].Flag) || !touched[ic.Offset] {
 				continue
 			}
 			oldVs, err := idx.FetchValues(oldData, nil)

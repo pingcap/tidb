@@ -113,6 +113,23 @@ func adjustColumnInfoInDropColumn(tblInfo *model.TableInfo, offset int) {
 	tblInfo.Columns = newCols
 }
 
+func adjustIndexColumnInDropColumn(colInfo *model.ColumnInfo, tblInfo *model.TableInfo) {
+	// Check whether it's drop column with index with it.
+	if len(listIndicesWithColumn(colInfo.Name.L, tblInfo.Indices)) == 0 {
+		return
+	}
+	colInfo.Flag |= mysql.DropColumnIndexFlag
+	columnNameOffsetMap := make(map[string]int, len(tblInfo.Columns))
+	for _, one := range tblInfo.Columns {
+		columnNameOffsetMap[one.Name.L] = one.Offset
+	}
+	for i, one := range tblInfo.Indices {
+		for j, idxC := range one.Columns {
+			tblInfo.Indices[i].Columns[j].Offset = columnNameOffsetMap[idxC.Name.L]
+		}
+	}
+}
+
 func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *ast.ColumnPosition) (*model.ColumnInfo, *ast.ColumnPosition, int, error) {
 	// Check column name duplicate.
 	cols := tblInfo.Columns
@@ -545,6 +562,9 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 func checkDropColumnForStatePublic(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) (err error) {
 	// Set this column's offset to the last and reset all following columns' offsets.
 	adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
+	// Since the offset has changed due to the move of being-dropped column.
+	// We should also adjust the offset of index column here.
+	adjustIndexColumnInDropColumn(colInfo, tblInfo)
 	// When the dropping column has not-null flag and it hasn't the default value, we can backfill the column value like "add column".
 	// NOTE: If the state of StateWriteOnly can be rollbacked, we'd better reconsider the original default value.
 	// And we need consider the column without not-null flag.
