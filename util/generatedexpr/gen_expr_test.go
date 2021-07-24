@@ -14,15 +14,14 @@
 package generatedexpr
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/parser/ast"
+	_ "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testGenExprSuite{})
-
-type testGenExprSuite struct{}
-
-func (s *testGenExprSuite) TestParseExpression(c *C) {
+func TestParseExpression(t *testing.T) {
 	tests := []struct {
 		input   string
 		output  string
@@ -30,13 +29,15 @@ func (s *testGenExprSuite) TestParseExpression(c *C) {
 	}{
 		{"json_extract(a, '$.a')", "json_extract", true},
 	}
-	for _, tt := range tests {
-		node, err := ParseExpression(tt.input)
-		if tt.success {
-			fc := node.(*ast.FuncCallExpr)
-			c.Assert(fc.FnName.L, Equals, tt.output)
-		} else {
-			c.Assert(err, NotNil)
-		}
+	for _, test := range tests {
+		t.Run(test.input, func(t *testing.T) {
+			node, err := ParseExpression(test.input)
+			if test.success {
+				fc := node.(*ast.FuncCallExpr)
+				require.Equal(t, test.output, fc.FnName.L)
+			} else {
+				require.Error(t, err)
+			}
+		})
 	}
 }
