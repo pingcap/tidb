@@ -29,11 +29,14 @@ import (
 )
 
 // DispatchMPPTasks dispathes all tasks and returns an iterator.
-func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int) (SelectResult, error) {
-	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks)
+func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int) (SelectResult, []string, error) {
+	resp, blockAddrs := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks)
+	if len(blockAddrs) > 0 {
+		return nil, blockAddrs, nil
+	}
 	if resp == nil {
 		err := errors.New("client returns nil response")
-		return nil, err
+		return nil, nil, err
 	}
 
 	encodeType := tipb.EncodeType_TypeDefault
@@ -52,7 +55,7 @@ func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.
 		copPlanIDs: planIDs,
 		rootPlanID: rootID,
 		storeType:  kv.TiFlash,
-	}, nil
+	}, nil, nil
 
 }
 

@@ -76,10 +76,10 @@ type MPPDispatchRequest struct {
 type MPPClient interface {
 	// ConstructMPPTasks schedules task for a plan fragment.
 	// TODO:: This interface will be refined after we support more executors.
-	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest) ([]MPPTaskMeta, error)
+	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, []string) ([]MPPTaskMeta, error)
 
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
-	DispatchMPPTasks(context.Context, *Variables, []*MPPDispatchRequest) Response
+	DispatchMPPTasks(context.Context, *Variables, []*MPPDispatchRequest) (Response, []string)
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.

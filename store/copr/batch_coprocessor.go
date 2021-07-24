@@ -102,7 +102,7 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 // 2. for the remaining regions:
 //    if there is only 1 available store, then put the region to the related store
 //    otherwise, use a greedy algorithm to put it into the store with highest weight
-func balanceBatchCopTask(ctx context.Context, kvStore *tikv.KVStore, originalTasks []*batchCopTask, isMPP bool) []*batchCopTask {
+func balanceBatchCopTask(ctx context.Context, kvStore *tikv.KVStore, originalTasks []*batchCopTask, isMPP bool, blockAddrs []string) []*batchCopTask {
 	if len(originalTasks) <= 1 {
 		return originalTasks
 	}
@@ -136,6 +136,11 @@ func balanceBatchCopTask(ctx context.Context, kvStore *tikv.KVStore, originalTas
 			go func(idx int) {
 				defer wg.Done()
 				s := stores[idx]
+				for _, blockAddr := range blockAddrs {
+					if blockAddr == s.GetAddr() {
+						logutil.BgLogger().Warn("forbid store because of failure at time", zap.String("store address", blockAddr))
+					}
+				}
 				aliveReq := tikvrpc.NewRequest(tikvrpc.CmdMPPAlive, &mpp.IsAliveRequest{}, kvrpcpb.Context{})
 				aliveReq.StoreTp = kv.TiFlash
 				alive := false
@@ -291,7 +296,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *tikv.KVStore, originalTas
 	return ret
 }
 
-func buildBatchCopTasks(bo *tikv.Backoffer, store *tikv.KVStore, ranges *tikv.KeyRanges, storeType kv.StoreType, isMPP bool) ([]*batchCopTask, error) {
+func buildBatchCopTasks(bo *tikv.Backoffer, store *tikv.KVStore, ranges *tikv.KeyRanges, storeType kv.StoreType, isMPP bool, blockAddrs []string) ([]*batchCopTask, error) {
 	cache := store.GetRegionCache()
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
@@ -366,7 +371,7 @@ func buildBatchCopTasks(bo *tikv.Backoffer, store *tikv.KVStore, ranges *tikv.Ke
 			}
 			logutil.BgLogger().Debug(msg)
 		}
-		batchTasks = balanceBatchCopTask(bo.GetCtx(), store, batchTasks, isMPP)
+		batchTasks = balanceBatchCopTask(bo.GetCtx(), store, batchTasks, isMPP, blockAddrs)
 		if log.GetLevel() <= zap.DebugLevel {
 			msg := "After region balance:"
 			for _, task := range batchTasks {
@@ -392,7 +397,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTs)
 	bo := tikv.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	tasks, err := buildBatchCopTasks(bo, c.store.KVStore, tikv.NewKeyRanges(req.KeyRanges), req.StoreType, false)
+	tasks, err := buildBatchCopTasks(bo, c.store.KVStore, tikv.NewKeyRanges(req.KeyRanges), req.StoreType, false, nil)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -533,7 +538,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backo
 			ranges = append(ranges, *ran)
 		})
 	}
-	return buildBatchCopTasks(bo, b.store, tikv.NewKeyRanges(ranges), b.req.StoreType, false)
+	return buildBatchCopTasks(bo, b.store, tikv.NewKeyRanges(ranges), b.req.StoreType, false, nil)
 }
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {

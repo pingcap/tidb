@@ -55,13 +55,13 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 }
 
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
-func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest) ([]kv.MPPTaskMeta, error) {
+func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, blockAddrs []string) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTS)
 	bo := tikv.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	if req.KeyRanges == nil {
 		return c.selectAllTiFlashStore(), nil
 	}
-	tasks, err := buildBatchCopTasks(bo, c.store, tikv.NewKeyRanges(req.KeyRanges), kv.TiFlash, true)
+	tasks, err := buildBatchCopTasks(bo, c.store, tikv.NewKeyRanges(req.KeyRanges), kv.TiFlash, true, blockAddrs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -137,7 +137,15 @@ type mppIterator struct {
 	mu sync.Mutex
 }
 
-func (m *mppIterator) run(ctx context.Context) {
+type readConnCtx struct {
+	bo     *tikv.Backoffer
+	stream *tikvrpc.MPPStreamResponse
+	req    *kv.MPPDispatchRequest
+}
+
+func (m *mppIterator) prepare(ctx context.Context) ([]string, []*readConnCtx) {
+	var blockAddrs []string
+	var readConns []*readConnCtx
 	for _, task := range m.tasks {
 		if atomic.LoadUint32(&m.closed) == 1 {
 			break
@@ -157,11 +165,24 @@ func (m *mppIterator) run(ctx context.Context) {
 			defer func() {
 				m.wg.Done()
 			}()
-			m.handleDispatchReq(ctx, bo, mppTask)
+			stream, err := m.handleDispatchReq(ctx, bo, mppTask)
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if err != nil {
+				blockAddr := mppTask.Meta.GetAddress()
+				blockAddrs = append(blockAddrs, blockAddr)
+				logutil.BgLogger().Warn("mpp request meet error", zap.Uint64("ts", m.startTs), zap.Int64("task id", mppTask.ID), zap.String("store address", blockAddr), zap.Error(err))
+				m.cancelMppTasks()
+				return
+			}
+			if stream != nil {
+				readConns = append(readConns, &readConnCtx{bo, stream, mppTask})
+				return
+			}
 		}(task)
 	}
 	m.wg.Wait()
-	close(m.respChan)
+	return blockAddrs, readConns
 }
 
 func (m *mppIterator) sendError(err error) {
@@ -181,7 +202,7 @@ func (m *mppIterator) sendToRespCh(resp *mppResponse) (exit bool) {
 // TODO:: Consider that which way is better:
 // - dispatch all tasks at once, and connect tasks at second.
 // - dispatch tasks and establish connection at the same time.
-func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer, req *kv.MPPDispatchRequest) {
+func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer, req *kv.MPPDispatchRequest) (*tikvrpc.MPPStreamResponse, error) {
 	var regionInfos []*coprocessor.RegionInfo
 	originalTask, ok := req.Meta.(*batchCopTask)
 	if ok {
@@ -244,23 +265,20 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 
 	if retry {
 		logutil.BgLogger().Warn("mpp dispatch meet error and retrying", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
-		m.handleDispatchReq(ctx, bo, req)
-		return
+		return m.handleDispatchReq(ctx, bo, req)
 	}
 
 	if err != nil {
 		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 		// we return timeout to trigger tikv's fallback
-		m.sendError(tikv.ErrTiFlashServerTimeout)
-		return
+		return nil, tikv.ErrTiFlashServerTimeout
 	}
 
 	realResp := rpcResp.Resp.(*mpp.DispatchTaskResponse)
 
 	if realResp.Error != nil {
 		logutil.BgLogger().Error("mpp dispatch response meet error", zap.String("error", realResp.Error.Msg), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
-		m.sendError(errors.New(realResp.Error.Msg))
-		return
+		return nil, errors.New(realResp.Error.Msg)
 	}
 	for _, retry := range realResp.RetryRegions {
 		id := tikv.NewRegionVerID(retry.Id, retry.RegionEpoch.ConfVer, retry.RegionEpoch.Version)
@@ -270,15 +288,14 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *tikv.Backoffer,
 	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
 		if val.(bool) && !req.IsRoot {
 			time.Sleep(1 * time.Second)
-			m.sendError(tikv.ErrTiFlashServerTimeout)
-			return
+			failpoint.Return(nil, tikv.ErrTiFlashServerTimeout)
 		}
 	})
 	if !req.IsRoot {
-		return
+		return nil, nil
 	}
 
-	m.establishMPPConns(bo, req, taskMeta)
+	return m.establishMPPConns(bo, req, taskMeta)
 }
 
 // NOTE: We do not retry here, because retry is helpless when errors result from TiFlash or Network. If errors occur, the execution on TiFlash will finally stop after some minutes.
@@ -314,7 +331,7 @@ func (m *mppIterator) cancelMppTasks() {
 	}
 }
 
-func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta) {
+func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta) (*tikvrpc.MPPStreamResponse, error) {
 	connReq := &mpp.EstablishMPPConnectionRequest{
 		SenderMeta: taskMeta,
 		ReceiverMeta: &mpp.TaskMeta{
@@ -336,21 +353,29 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 		if err != nil {
 			logutil.BgLogger().Warn("establish mpp connection meet error and cannot retry", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 			// we return timeout to trigger tikv's fallback
-			m.sendError(tikv.ErrTiFlashServerTimeout)
-			return
+			return nil, tikv.ErrTiFlashServerTimeout
+
 		}
-		m.establishMPPConns(bo, req, taskMeta)
-		return
+		return m.establishMPPConns(bo, req, taskMeta)
 	}
 
 	stream := rpcResp.Resp.(*tikvrpc.MPPStreamResponse)
-	defer stream.Close()
 
 	resp := stream.MPPDataPacket
 	if resp == nil {
-		return
+		return nil, nil
 	}
 
+	if resp.Error != nil {
+		return nil, errors.New(resp.Error.Msg)
+	}
+
+	return stream, nil
+}
+
+func (m *mppIterator) readMPPConn(bo *tikv.Backoffer, stream *tikvrpc.MPPStreamResponse, req *kv.MPPDispatchRequest) {
+	defer stream.Close()
+	resp := stream.MPPDataPacket
 	for {
 		err := m.handleMPPStreamResponse(bo, resp, req)
 		if err != nil {
@@ -366,9 +391,9 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 
 			if err1 := bo.Backoff(tikv.BoTiKVRPC, errors.Errorf("recv stream response error: %v", err)); err1 != nil {
 				if errors.Cause(err) == context.Canceled {
-					logutil.BgLogger().Info("stream recv timeout", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
+					logutil.BgLogger().Info("stream recv timeout", zap.Error(err), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID))
 				} else {
-					logutil.BgLogger().Info("stream unknown error", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
+					logutil.BgLogger().Info("stream unknown error", zap.Error(err), zap.Uint64("timestamp", req.StartTs), zap.Int64("task", req.ID))
 				}
 			}
 			m.sendError(tikv.ErrTiFlashServerTimeout)
@@ -463,8 +488,22 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return resp, nil
 }
 
+func (m *mppIterator) run(conns []*readConnCtx) {
+	m.wg.Add(len(conns))
+	for _, conn := range conns {
+		go func (ctx *readConnCtx) {
+			defer func() {
+				m.wg.Done()
+			}()
+			m.readMPPConn(ctx.bo, ctx.stream, ctx.req)
+		}(conn)
+	}
+	m.wg.Wait()
+	close(m.respChan)
+}
+
 // DispatchMPPTasks dispatches all the mpp task and waits for the responses.
-func (c *MPPClient) DispatchMPPTasks(ctx context.Context, vars *kv.Variables, dispatchReqs []*kv.MPPDispatchRequest) kv.Response {
+func (c *MPPClient) DispatchMPPTasks(ctx context.Context, vars *kv.Variables, dispatchReqs []*kv.MPPDispatchRequest) (kv.Response, []string) {
 	ctxChild, cancelFunc := context.WithCancel(ctx)
 	iter := &mppIterator{
 		store:      c.store,
@@ -475,6 +514,10 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, vars *kv.Variables, di
 		startTs:    dispatchReqs[0].StartTs,
 		vars:       vars,
 	}
-	go iter.run(ctxChild)
-	return iter
+	blocks, conns := iter.prepare(ctxChild)
+	if len(blocks) > 0 {
+		return nil, blocks
+	}
+	go iter.run(conns)
+	return iter, nil
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -102,24 +103,36 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := e.originalPlan.(*plannercore.PhysicalExchangeSender)
 	planIDs := collectPlanIDS(e.originalPlan, nil)
-	frags, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender, e.is)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, frag := range frags {
-		err = e.appendMPPDispatchReq(frag)
+	var blockAddrs []string
+	maxTryTimes := 3
+	for i := 0; i < maxTryTimes; i++ {
+		e.mppReqs = nil
+		frags, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender, e.is, blockAddrs)
 		if err != nil {
 			return errors.Trace(err)
 		}
-	}
-	failpoint.Inject("checkTotalMPPTasks", func(val failpoint.Value) {
-		if val.(int) != len(e.mppReqs) {
-			failpoint.Return(errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(e.mppReqs)))
+		for _, frag := range frags {
+			err = e.appendMPPDispatchReq(frag)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
-	})
-	e.respIter, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id)
-	if err != nil {
-		return errors.Trace(err)
+		failpoint.Inject("checkTotalMPPTasks", func(val failpoint.Value) {
+			if val.(int) != len(e.mppReqs) {
+				failpoint.Return(errors.Errorf("The number of tasks is not right, expect %d tasks but actually there are %d tasks", val.(int), len(e.mppReqs)))
+			}
+		})
+		e.respIter, blockAddrs, err = distsql.DispatchMPPTasks(ctx, e.ctx, e.mppReqs, e.retFieldTypes, planIDs, e.id)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(blockAddrs) > 0 && i < maxTryTimes-1 {
+			logutil.BgLogger().Warn("mpp request has to retry because of error", zap.Uint64("ts", e.startTS), zap.Strings("block addresses", blockAddrs))
+			continue
+		} else if len(blockAddrs) > 0 {
+			return tikv.ErrTiFlashServerTimeout
+		}
+		break
 	}
 	e.respIter.Fetch(ctx)
 	return nil

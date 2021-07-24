@@ -51,20 +51,22 @@ type tasksAndFrags struct {
 }
 
 type mppTaskGenerator struct {
-	ctx     sessionctx.Context
-	startTS uint64
-	is      infoschema.InfoSchema
-	frags   []*Fragment
-	cache   map[int]tasksAndFrags
+	ctx        sessionctx.Context
+	startTS    uint64
+	is         infoschema.InfoSchema
+	frags      []*Fragment
+	cache      map[int]tasksAndFrags
+	blockAddrs []string
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema) ([]*Fragment, error) {
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, is infoschema.InfoSchema, blockAddrs []string) ([]*Fragment, error) {
 	g := &mppTaskGenerator{
-		ctx:     ctx,
-		startTS: startTs,
-		is:      is,
-		cache:   make(map[int]tasksAndFrags),
+		ctx:        ctx,
+		startTS:    startTs,
+		is:         is,
+		cache:      make(map[int]tasksAndFrags),
+		blockAddrs: blockAddrs,
 	}
 	return g.generateMPPTasks(sender)
 }
@@ -346,7 +348,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 
 func (e *mppTaskGenerator) constructMPPTasksForSinglePartitionTable(ctx context.Context, kvRanges []kv.KeyRange, tableID int64) ([]*kv.MPPTask, error) {
 	req := &kv.MPPBuildTasksRequest{KeyRanges: kvRanges}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req)
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, e.blockAddrs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
