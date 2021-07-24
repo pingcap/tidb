@@ -171,12 +171,12 @@ func (m *mppIterator) prepare(ctx context.Context) ([]string, []*readConnCtx) {
 				blockAddr := mppTask.Meta.GetAddress()
 				blockAddrs = append(blockAddrs, blockAddr)
 				logutil.BgLogger().Warn("mpp request meet error", zap.Uint64("ts", m.startTs), zap.Int64("task id", mppTask.ID), zap.String("store address", blockAddr), zap.Error(err))
-				defer m.mu.Unlock()
+				m.mu.Unlock()
 				m.cancelMppTasks()
 			} else if stream != nil {
 				m.mu.Lock()
 				readConns = append(readConns, &readConnCtx{bo, stream, mppTask})
-				defer m.mu.Unlock()
+				m.mu.Unlock()
 			}
 		}(task)
 	}
