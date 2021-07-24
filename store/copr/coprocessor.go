@@ -52,6 +52,7 @@ var coprCacheHistogramEvict = tidbmetrics.DistSQLCoprCacheHistogram.WithLabelVal
 const (
 	copBuildTaskMaxBackoff = 5000
 	copNextMaxBackoff      = 20000
+	copMPPReqBackoff 	   = 8000
 )
 
 // CopClient is coprocessor client.

@@ -160,24 +160,23 @@ func (m *mppIterator) prepare(ctx context.Context) ([]string, []*readConnCtx) {
 			break
 		}
 		m.wg.Add(1)
-		bo := tikv.NewBackoffer(ctx, copNextMaxBackoff)
+		bo := tikv.NewBackoffer(ctx, copMPPReqBackoff)
 		go func(mppTask *kv.MPPDispatchRequest) {
 			defer func() {
 				m.wg.Done()
 			}()
 			stream, err := m.handleDispatchReq(ctx, bo, mppTask)
-			m.mu.Lock()
-			defer m.mu.Unlock()
 			if err != nil {
+				m.mu.Lock()
 				blockAddr := mppTask.Meta.GetAddress()
 				blockAddrs = append(blockAddrs, blockAddr)
 				logutil.BgLogger().Warn("mpp request meet error", zap.Uint64("ts", m.startTs), zap.Int64("task id", mppTask.ID), zap.String("store address", blockAddr), zap.Error(err))
+				defer m.mu.Unlock()
 				m.cancelMppTasks()
-				return
-			}
-			if stream != nil {
+			} else if stream != nil {
+				m.mu.Lock()
 				readConns = append(readConns, &readConnCtx{bo, stream, mppTask})
-				return
+				defer m.mu.Unlock()
 			}
 		}(task)
 	}
