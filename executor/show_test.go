@@ -1396,6 +1396,6 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 		"  `i` int(11) NOT NULL AUTO_INCREMENT,\n" +
 		"  `j` int(11) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2]"
 	tk.MustQuery("show create table t7").Check(testkit.Rows("t7 " + expect))
 }
