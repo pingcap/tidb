@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -60,7 +61,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 const (
@@ -85,7 +86,7 @@ const defaultBatchSize = 1024
 const defaultReorgBatchSize = 256
 
 type testDBSuite struct {
-	cluster    cluster.Cluster
+	cluster    testutils.Cluster
 	store      kv.Storage
 	dom        *domain.Domain
 	schemaName string
@@ -106,7 +107,7 @@ func setUpSuite(s *testDBSuite, c *C) {
 	ddl.SetWaitTimeWhenErrorOccurred(0)
 
 	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
@@ -293,6 +294,7 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 
 // TestAddPrimaryKeyRollback1 is used to test scenarios that will roll back when a duplicate primary key is encountered.
 func (s *testDBSuite8) TestAddPrimaryKeyRollback1(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210705")
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
@@ -318,6 +320,75 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
+func (s *testSerialDBSuite) TestWriteReorgForColumnTypeChangeOnAmendTxn(c *C) {
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test_db")
+	tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = ON;")
+	defer func() {
+		tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = OFF;")
+	}()
+
+	d := s.dom.DDL()
+	originalHook := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalHook)
+	testInsertOnModifyColumn := func(sql string, startColState, commitColState model.SchemaState, retStrs []string, retErr error) {
+		tk := testkit.NewTestKit(c, s.store)
+		tk.MustExec("use test_db")
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("create table t1 (c1 int, c2 int, c3 int, unique key(c1))")
+		tk.MustExec("insert into t1 values (20, 20, 20);")
+
+		var checkErr error
+		tk1 := testkit.NewTestKit(c, s.store)
+		hook := &ddl.TestDDLCallback{Do: s.dom}
+		times := 0
+		hook.OnJobUpdatedExported = func(job *model.Job) {
+			if job.Type != model.ActionModifyColumn || checkErr != nil ||
+				(job.SchemaState != startColState && job.SchemaState != commitColState) {
+				return
+			}
+
+			if job.SchemaState == startColState {
+				tk1.MustExec("use test_db")
+				tk1.MustExec("begin pessimistic;")
+				tk1.MustExec("insert into t1 values(101, 102, 103)")
+				return
+			}
+			if times == 0 {
+				_, checkErr = tk1.Exec("commit;")
+			}
+			times++
+		}
+		d.(ddl.DDLForTest).SetHook(hook)
+
+		tk.MustExec(sql)
+		if retErr == nil {
+			c.Assert(checkErr, IsNil)
+		} else {
+			c.Assert(strings.Contains(checkErr.Error(), retErr.Error()), IsTrue)
+		}
+		tk.MustQuery("select * from t1;").Check(testkit.Rows(retStrs...))
+
+		tk.MustExec("admin check table t1")
+	}
+
+	// Testing it needs reorg data.
+	ddlStatement := "alter table t1 change column c2 cc smallint;"
+	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StateWriteReorganization, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+	testInsertOnModifyColumn(ddlStatement, model.StateDeleteOnly, model.StateWriteReorganization, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StateWriteReorganization, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StatePublic, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+	testInsertOnModifyColumn(ddlStatement, model.StateDeleteOnly, model.StatePublic, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StatePublic, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+
+	// Testing it needs not reorg data. This case only have two state: none, public.
+	ddlStatement = "alter table t1 change column c2 cc bigint;"
+	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StateWriteReorganization, []string{"20 20 20"}, nil)
+	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StateWriteReorganization, []string{"20 20 20"}, nil)
+	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StatePublic, []string{"20 20 20", "101 102 103"}, nil)
+	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StatePublic, []string{"20 20 20"}, nil)
+}
+
 func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
@@ -339,22 +410,43 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	ctx.Store = s.store
 	times := 0
 	hook.OnJobUpdatedExported = func(job *model.Job) {
-		if job.SchemaState == model.StateDeleteOnly {
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("delete from t1 where c1 = 40;")
+		if checkErr != nil {
+			return
 		}
-		if checkErr == nil && job.SchemaState == model.StateWriteReorganization && times == 0 {
-			currJob = job
-			times++
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, checkErr = tk1.Exec("insert into t1 values (6, 3, 3) on duplicate key update c1 = 10")
+			if checkErr == nil {
+				_, checkErr = tk1.Exec("update t1 set c1 = 7 where c2=6;")
+			}
+			if checkErr == nil {
+				_, checkErr = tk1.Exec("delete from t1 where c1 = 40;")
+			}
+		case model.StateWriteOnly:
+			_, checkErr = tk1.Exec("insert into t1 values (2, 2, 2)")
+			if checkErr == nil {
+				_, checkErr = tk1.Exec("update t1 set c1 = 3 where c2 = 80")
+			}
+		case model.StateWriteReorganization:
+			if checkErr == nil && job.SchemaState == model.StateWriteReorganization && times == 0 {
+				_, checkErr = tk1.Exec("insert into t1 values (4, 4, 4)")
+				if checkErr != nil {
+					return
+				}
+				_, checkErr = tk1.Exec("update t1 set c1 = 5 where c2 = 80")
+				if checkErr != nil {
+					return
+				}
+				currJob = job
+				times++
+			}
 		}
 	}
 	d.(ddl.DDLForTest).SetHook(hook)
 
 	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
 	c.Assert(checkErr, IsNil)
-	tk.MustQuery("select * from t1;").Check(testkit.Rows("20 20 20", "80 80 80", "160 160 160"))
+	tk.MustQuery("select * from t1 order by c1;").Check(testkit.Rows("2 2 2", "4 4 4", "5 80 80", "10 3 3", "20 20 20", "160 160 160"))
 
 	// Check whether the reorg information is cleaned up.
 	err := ctx.NewTxn(context.Background())
@@ -3032,6 +3124,25 @@ func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	tk.MustExec("drop table if exists t1,t2,t3,t4;")
 }
 
+func (s *testDBSuite2) TestDuplicateForeignKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	// Foreign table.
+	tk.MustExec("create table t(id int key)")
+	// Create target table with duplicate fk.
+	tk.MustGetErrCode("create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`), CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`))", mysql.ErrFkDupName)
+	tk.MustGetErrCode("create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`), CONSTRAINT `fk_aaA` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`))", mysql.ErrFkDupName)
+
+	tk.MustExec("create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`))")
+	// Alter target table with duplicate fk.
+	tk.MustGetErrCode("alter table t1 add CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`)", mysql.ErrFkDupName)
+	tk.MustGetErrCode("alter table t1 add CONSTRAINT `fk_aAa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`)", mysql.ErrFkDupName)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+}
+
 func (s *testDBSuite2) TestTemporaryTableForeignKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3989,7 +4100,7 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 	s.mustExec(tk, c, "drop table t1")
 }
 
-func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
+func (s *testSerialDBSuite) TestModifyColumnReorgInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
@@ -4139,15 +4250,58 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk.MustExec("create table tt (a varchar(10));")
 	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustExec("alter table tt change a a varchar(5);")
-	c2 := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
-	c.Assert(c2.FieldType.Flen, Equals, 5)
+	mvc := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(mvc.FieldType.Flen, Equals, 5)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a varchar(4);", "[types:1406]Data Too Long, field len 4, data len 5")
 	tk.MustExec("alter table tt change a a varchar(100);")
+	tk.MustQuery("select length(a) from tt").Check(testkit.Rows("3", "5"))
+
+	// char to char
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt (a char(10));")
+	tk.MustExec("insert into tt values ('111'),('10000');")
+	tk.MustExec("alter table tt change a a char(5);")
+	mc := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(mc.FieldType.Flen, Equals, 5)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1406]Data Too Long, field len 4, data len 5")
+	tk.MustExec("alter table tt change a a char(100);")
+	tk.MustQuery("select length(a) from tt").Check(testkit.Rows("3", "5"))
+
+	// binary to binary
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt (a binary(10));")
+	tk.MustExec("insert into tt values ('111'),('10000');")
+	tk.MustGetErrMsg("alter table tt change a a binary(5);", "[types:1406]Data Too Long, field len 5, data len 10")
+	mb := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(mb.FieldType.Flen, Equals, 10)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00", "10000\x00\x00\x00\x00\x00"))
+	tk.MustGetErrMsg("alter table tt change a a binary(4);", "[types:1406]Data Too Long, field len 4, data len 10")
+	tk.MustExec("alter table tt change a a binary(12);")
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00\x00\x00", "10000\x00\x00\x00\x00\x00\x00\x00"))
+	tk.MustQuery("select length(a) from tt").Check(testkit.Rows("12", "12"))
+
+	// varbinary to varbinary
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt (a varbinary(10));")
+	tk.MustExec("insert into tt values ('111'),('10000');")
+	tk.MustExec("alter table tt change a a varbinary(5);")
+	mvb := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(mvb.FieldType.Flen, Equals, 5)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+	tk.MustGetErrMsg("alter table tt change a a varbinary(4);", "[types:1406]Data Too Long, field len 4, data len 5")
+	tk.MustExec("alter table tt change a a varbinary(12);")
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+	tk.MustQuery("select length(a) from tt").Check(testkit.Rows("3", "5"))
 
 	// varchar to char
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt (a varchar(10));")
+	tk.MustExec("insert into tt values ('111'),('10000');")
+
 	tk.MustExec("alter table tt change a a char(10);")
-	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c2 := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeString)
 	c.Assert(c2.FieldType.Flen, Equals, 10)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
@@ -5339,13 +5493,19 @@ func (s *testSerialDBSuite) TestSetTableFlashReplicaForSystemTable(c *C) {
 	memOrSysDB := []string{"MySQL", "INFORMATION_SCHEMA", "PERFORMANCE_SCHEMA", "METRICS_SCHEMA"}
 	for _, db := range memOrSysDB {
 		tk.MustExec("use " + db)
+		tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil)
 		rows := tk.MustQuery("show tables").Rows()
 		for i := 0; i < len(rows); i++ {
 			sysTables = append(sysTables, rows[i][0].(string))
 		}
 		for _, one := range sysTables {
 			_, err := tk.Exec(fmt.Sprintf("alter table `%s` set tiflash replica 1", one))
-			c.Assert(err.Error(), Equals, "[ddl:8200]ALTER table replica for tables in system database is currently unsupported")
+			if db == "MySQL" {
+				c.Assert(err.Error(), Equals, "[ddl:8200]ALTER table replica for tables in system database is currently unsupported")
+			} else {
+				c.Assert(err.Error(), Equals, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)))
+			}
+
 		}
 		sysTables = sysTables[:0]
 	}

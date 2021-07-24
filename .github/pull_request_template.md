@@ -20,26 +20,28 @@ What's Changed:
 
 How it Works:
 
-### Related changes
-
-- PR to update `pingcap/docs`/`pingcap/docs-cn`:
-- Need to cherry-pick to the release branch
-
 ### Check List <!--REMOVE the items that are not applicable-->
 
 Tests <!-- At least one of them must be included. -->
 
-- Unit test
-- Integration test
-- Manual test (add detailed scripts or steps below)
-- No code
+- [ ] Unit test
+- [ ] Integration test
+- [ ] Manual test (add detailed scripts or steps below)
+- [ ] No code
 
 Side effects
 
-- Performance regression
-    - Consumes more CPU
-    - Consumes more MEM
-- Breaking backward compatibility
+- [ ] Performance regression: Consumes more CPU
+- [ ] Performance regression: Consumes more Memory
+- [ ] Breaking backward compatibility
+
+Documentation
+
+- [ ] Affects user behaviors
+- [ ] Contains syntax changes
+- [ ] Contains variable changes
+- [ ] Contains experimental features
+- [ ] Changes MySQL compatibility
 
 ### Release note <!-- bugfixes or new feature need a release note -->
 

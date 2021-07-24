@@ -80,6 +80,16 @@ func FindCol(cols []*Column, name string) *Column {
 	return nil
 }
 
+// FindColLowerCase finds column in cols by name. It assumes the name is lowercase.
+func FindColLowerCase(cols []*Column, name string) *Column {
+	for _, col := range cols {
+		if col.Name.L == name {
+			return col
+		}
+	}
+	return nil
+}
+
 // ToColumn converts a *model.ColumnInfo to *Column.
 func ToColumn(col *model.ColumnInfo) *Column {
 	return &Column{
@@ -91,7 +101,8 @@ func ToColumn(col *model.ColumnInfo) *Column {
 
 // FindCols finds columns in cols by names.
 // If pkIsHandle is false and name is ExtraHandleName, the extra handle column will be added.
-// If any columns don't match, return nil and the first missing column's name
+// If any columns don't match, return nil and the first missing column's name.
+// Please consider FindColumns() first for a better performance.
 func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, string) {
 	var rcols []*Column
 	for _, name := range names {
@@ -109,6 +120,26 @@ func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, strin
 	}
 
 	return rcols, ""
+}
+
+// FindColumns finds columns in cols by names with a better performance than FindCols().
+// It assumes names are lowercase.
+func FindColumns(cols []*Column, names []string, pkIsHandle bool) (foundCols []*Column, missingOffset int) {
+	var rcols []*Column
+	for i, name := range names {
+		col := FindColLowerCase(cols, name)
+		if col != nil {
+			rcols = append(rcols, col)
+		} else if name == model.ExtraHandleName.L && !pkIsHandle {
+			col := &Column{}
+			col.ColumnInfo = model.NewExtraHandleColInfo()
+			col.ColumnInfo.Offset = len(cols)
+			rcols = append(rcols, col)
+		} else {
+			return nil, i
+		}
+	}
+	return rcols, -1
 }
 
 // FindOnUpdateCols finds columns which have OnUpdateNow flag.
@@ -139,19 +170,26 @@ func truncateTrailingSpaces(v *types.Datum) {
 	v.SetString(str, v.Collation())
 }
 
-func handleWrongASCIIValue(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
+func handleWrongCharsetValue(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
 	sc := ctx.GetSessionVars().StmtCtx
-	err := ErrTruncatedWrongValueForField.FastGen("incorrect ascii value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
-	logutil.BgLogger().Error("incorrect ASCII value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
-	truncateVal := types.NewStringDatum(str[:i])
-	err = sc.HandleTruncate(err)
-	return truncateVal, err
-}
 
-func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
-	sc := ctx.GetSessionVars().StmtCtx
-	err := ErrTruncatedWrongValueForField.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
-	logutil.BgLogger().Error("incorrect UTF-8 value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
+	var strval strings.Builder
+	for j := 0; j < 6; j++ {
+		if len(str) > (i + j) {
+			if str[i+j] > unicode.MaxASCII {
+				fmt.Fprintf(&strval, "\\x%X", str[i+j])
+			} else {
+				strval.WriteRune(rune(str[i+j]))
+			}
+		}
+	}
+	if len(str) > i+6 {
+		strval.WriteString(`...`)
+	}
+
+	// TODO: Add 'at row %d'
+	err := ErrTruncatedWrongValueForField.FastGen("Incorrect string value '%s' for column '%s'", strval.String(), col.Name)
+	logutil.BgLogger().Error("incorrect string value", zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
 	// Truncate to valid utf8 string.
 	truncateVal := types.NewStringDatum(str[:i])
 	err = sc.HandleTruncate(err)
@@ -241,6 +279,14 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
 func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
+	// Set the reorg attribute for cast value functionality.
+	if col.ChangeStateInfo != nil {
+		origin := ctx.GetSessionVars().StmtCtx.InReorgAttribute
+		ctx.GetSessionVars().StmtCtx.InReorgAttribute = true
+		defer func() {
+			ctx.GetSessionVars().StmtCtx.InReorgAttribute = origin
+		}()
+	}
 	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {
@@ -280,7 +326,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		str := casted.GetString()
 		for i := 0; i < len(str); i++ {
 			if str[i] > unicode.MaxASCII {
-				casted, err = handleWrongASCIIValue(ctx, col, &casted, str, i)
+				casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
 				break
 			}
 		}
@@ -307,11 +353,11 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 				w = width
 				continue
 			}
-			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
+			casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
 			break
 		} else if width > 3 && doMB4CharCheck {
 			// Handle non-BMP characters.
-			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
+			casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
 			break
 		}
 		w = width

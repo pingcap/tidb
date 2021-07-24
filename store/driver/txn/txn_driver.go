@@ -176,6 +176,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	case kv.ResourceGroupTag:
 		txn.KVTxn.SetResourceGroupTag(val.([]byte))
+	case kv.KVFilter:
+		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
 	}
 }
 

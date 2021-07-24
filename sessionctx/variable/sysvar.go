@@ -80,6 +80,7 @@ const (
 )
 
 // SysVar is for system variable.
+// All the fields of SysVar should be READ ONLY after created.
 type SysVar struct {
 	// Scope is for whether can be changed or not
 	Scope ScopeFlag
@@ -325,9 +326,9 @@ func (sv *SysVar) checkTimeSystemVar(value string, vars *SessionVars) (string, e
 	var t time.Time
 	var err error
 	if len(value) <= len(localDayTimeFormat) {
-		t, err = time.ParseInLocation(localDayTimeFormat, value, vars.TimeZone)
+		t, err = time.ParseInLocation(localDayTimeFormat, value, vars.Location())
 	} else {
-		t, err = time.ParseInLocation(FullDayTimeFormat, value, vars.TimeZone)
+		t, err = time.ParseInLocation(FullDayTimeFormat, value, vars.Location())
 	}
 	if err != nil {
 		return "", err
@@ -556,30 +557,24 @@ func UnregisterSysVar(name string) {
 	sysVarsLock.Unlock()
 }
 
-// Clone deep copies the sysvar struct to avoid a race
-func (sv *SysVar) Clone() *SysVar {
-	dst := *sv
-	return &dst
-}
-
 // GetSysVar returns sys var info for name as key.
 func GetSysVar(name string) *SysVar {
 	name = strings.ToLower(name)
 	sysVarsLock.RLock()
 	defer sysVarsLock.RUnlock()
-	if sysVars[name] == nil {
-		return nil
-	}
-	return sysVars[name].Clone()
+
+	return sysVars[name]
 }
 
-// SetSysVar sets a sysvar. This will not propagate to the cluster, so it should only be
+// SetSysVar sets a sysvar. In fact, SysVar is immutable.
+// SetSysVar is implemented by register a new SysVar with the same name again.
+// This will not propagate to the cluster, so it should only be
 // used for instance scoped AUTO variables such as system_time_zone.
 func SetSysVar(name string, value string) {
-	name = strings.ToLower(name)
-	sysVarsLock.Lock()
-	defer sysVarsLock.Unlock()
-	sysVars[name].Value = value
+	old := GetSysVar(name)
+	tmp := *old
+	tmp.Value = value
+	RegisterSysVar(&tmp)
 }
 
 // GetSysVars deep copies the sysVars list under a RWLock
@@ -588,7 +583,8 @@ func GetSysVars() map[string]*SysVar {
 	defer sysVarsLock.RUnlock()
 	copy := make(map[string]*SysVar, len(sysVars))
 	for name, sv := range sysVars {
-		copy[name] = sv.Clone()
+		tmp := *sv
+		copy[name] = &tmp
 	}
 	return copy
 }
@@ -679,9 +675,6 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
 	{Scope: ScopeSession, Name: Timestamp, Value: "", skipInit: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetFilesystem, Value: "binary", skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		return checkCharacterSet(normalizedValue, CharacterSetFilesystem)
-	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationDatabase, Value: mysql.DefaultCollationName, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCollation(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {
@@ -810,18 +803,33 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
 
 	/* TiDB specific variables */
-	// TODO: TiDBTxnScope is hidden because local txn feature is not done.
-	{Scope: ScopeSession, Name: TiDBTxnScope, skipInit: true, Hidden: true, Value: func() string {
-		if isGlobal, _ := config.GetTxnScopeFromConfig(); isGlobal {
-			return kv.GlobalTxnScope
+	{Scope: ScopeGlobal, Name: TiDBEnableLocalTxn, Value: BoolToOnOff(DefTiDBEnableLocalTxn), Hidden: true, Type: TypeBool, GetSession: func(sv *SessionVars) (string, error) {
+		return BoolToOnOff(EnableLocalTxn.Load()), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		oldVal := EnableLocalTxn.Load()
+		newVal := TiDBOptOn(val)
+		// Make sure the TxnScope is always Global when disable the Local Txn.
+		// ON -> OFF
+		if oldVal && !newVal {
+			s.TxnScope = kv.NewGlobalTxnScopeVar()
 		}
-		return kv.LocalTxnScope
-	}(), SetSession: func(s *SessionVars, val string) error {
+		EnableLocalTxn.Store(newVal)
+		return nil
+	}},
+	// TODO: TiDBTxnScope is hidden because local txn feature is not done.
+	{Scope: ScopeSession, Name: TiDBTxnScope, skipInit: true, Hidden: true, Value: kv.GlobalTxnScope, SetSession: func(s *SessionVars, val string) error {
 		switch val {
 		case kv.GlobalTxnScope:
 			s.TxnScope = kv.NewGlobalTxnScopeVar()
 		case kv.LocalTxnScope:
-			s.TxnScope = kv.GetTxnScopeVar()
+			if !EnableLocalTxn.Load() {
+				return ErrWrongValueForVar.GenWithStack("@@txn_scope can not be set to local when tidb_enable_local_txn is off")
+			}
+			txnScope := config.GetTxnScopeFromConfig()
+			if txnScope == kv.GlobalTxnScope {
+				return ErrWrongValueForVar.GenWithStack("@@txn_scope can not be set to local when zone label is empty or \"global\"")
+			}
+			s.TxnScope = kv.NewLocalTxnScopeVar(txnScope)
 		default:
 			return ErrWrongValueForVar.GenWithStack("@@txn_scope value should be global or local")
 		}
@@ -1094,7 +1102,8 @@ var defaultSysVars = []*SysVar{
 		appendDeprecationWarning(vars, TiDBMemQuotaIndexLookupJoin, TiDBMemQuotaQuery)
 		return normalizedValue, nil
 	}},
-	{Scope: ScopeSession, Name: TiDBEnableStreaming, Value: Off, Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+	// Deprecated: tidb_enable_streaming
+	{Scope: ScopeSession, Name: TiDBEnableStreaming, Value: Off, Type: TypeBool, skipInit: true, Hidden: true, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStreaming = TiDBOptOn(val)
 		return nil
 	}},
@@ -1113,7 +1122,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableTablePartition = val
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBEnableListTablePartition, Value: Off, Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableListTablePartition, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableListTablePartition = TiDBOptOn(val)
 		return nil
 	}},
@@ -1606,7 +1615,8 @@ var defaultSysVars = []*SysVar{
 		errors.RedactLogEnabled.Store(s.EnableRedactLog)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt64, AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal, Name: TiDBRestrictedReadOnly, Value: BoolToOnOff(DefTiDBRestrictedReadOnly), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 		return nil
 	}},
@@ -1741,6 +1751,12 @@ var defaultSysVars = []*SysVar{
 
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableGlobalTemporaryTable, Value: BoolToOnOff(DefTiDBEnableGlobalTemporaryTable), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableGlobalTemporaryTable = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: SkipNameResolve, Value: Off, Type: TypeBool},
+	{Scope: ScopeGlobal, Name: DefaultAuthPlugin, Value: mysql.AuthNativePassword, Type: TypeEnum, PossibleValues: []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableOrderedResultMode, Value: BoolToOnOff(DefTiDBEnableOrderedResultMode), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableStableResultMode = TiDBOptOn(val)
 		return nil
 	}},
 }
@@ -2021,6 +2037,8 @@ const (
 	SystemTimeZone = "system_time_zone"
 	// CTEMaxRecursionDepth is the name of 'cte_max_recursion_depth' system variable.
 	CTEMaxRecursionDepth = "cte_max_recursion_depth"
+	// DefaultAuthPlugin is the name of 'default_authentication_plugin' system variable.
+	DefaultAuthPlugin = "default_authentication_plugin"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

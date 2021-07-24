@@ -62,7 +62,7 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 		assertScope := val.(string)
 		if len(assertScope) > 0 {
 			if builder.IsStaleness && assertScope != builder.TxnScope {
-				panic("batch point get staleness option fail")
+				panic("request builder get staleness option fail")
 			}
 		}
 	})
@@ -634,7 +634,7 @@ func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSc
 	if !ok {
 		return true
 	}
-	leaderDC, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+	leaderDC, ok := bundle.GetLeaderDC(placement.DCLabelKey)
 	if !ok {
 		return true
 	}

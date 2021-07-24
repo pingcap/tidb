@@ -135,7 +135,7 @@ const (
 	// tidb_disable_txn_auto_retry disables transaction auto retry.
 	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
 
-	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
+	// Deprecated: tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
 
 	// tidb_enable_chunk_rpc enables TiDB to use Chunk format for coprocessor requests.
@@ -504,6 +504,9 @@ const (
 	// TiDBRedactLog indicates that whether redact log.
 	TiDBRedactLog = "tidb_redact_log"
 
+	// TiDBRestrictedReadOnly is meant for the cloud admin to toggle the cluster read only
+	TiDBRestrictedReadOnly = "tidb_restricted_read_only"
+
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
@@ -562,6 +565,11 @@ const (
 	TiDBTopSQLReportIntervalSeconds = "tidb_top_sql_report_interval_seconds"
 	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
 	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
+	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
+	TiDBEnableLocalTxn = "tidb_enable_local_txn"
+
+	// TiDBEnableOrderedResultMode indicates if stabilize query results.
+	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
 )
 
 // TiDB vars that have only global scope
@@ -693,6 +701,7 @@ const (
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = ClusteredIndexDefModeIntOnly
 	DefTiDBRedactLog                   = false
+	DefTiDBRestrictedReadOnly          = false
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableParallelApply         = false
@@ -710,11 +719,13 @@ const (
 	DefTiDBTopSQLEnable                = false
 	DefTiDBTopSQLAgentAddress          = ""
 	DefTiDBTopSQLPrecisionSeconds      = 1
-	DefTiDBTopSQLMaxStatementCount     = 2000
+	DefTiDBTopSQLMaxStatementCount     = 200
 	DefTiDBTopSQLMaxCollect            = 10000
 	DefTiDBTopSQLReportIntervalSeconds = 60
 	DefTiDBEnableGlobalTemporaryTable  = false
 	DefTMPTableSize                    = 16777216
+	DefTiDBEnableLocalTxn              = false
+	DefTiDBEnableOrderedResultMode     = false
 )
 
 // Process global variables.
@@ -747,6 +758,8 @@ var (
 		MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
 		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 	}
+	EnableLocalTxn     = atomic.NewBool(DefTiDBEnableLocalTxn)
+	RestrictedReadOnly = atomic.NewBool(DefTiDBRestrictedReadOnly)
 )
 
 // TopSQL is the variable for control top sql feature.

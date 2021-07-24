@@ -24,17 +24,18 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/tikv/client-go/v2/mockstore"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
+	tikv.EnableFailpoints()
 	TestingT(t)
 }
 
 var (
-	pdAddrs = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	pdAddrs  = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	withTiKV = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 )
 
 // NewTestStore creates a kv.Storage for testing purpose.
@@ -43,7 +44,7 @@ func NewTestStore(c *C) kv.Storage {
 		flag.Parse()
 	}
 
-	if *mockstore.WithTiKV {
+	if *withTiKV {
 		var d TiKVDriver
 		store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 		c.Assert(err, IsNil)
@@ -78,6 +79,3 @@ func clearStorage(store kv.Storage) error {
 	}
 	return txn.Commit(context.Background())
 }
-
-// OneByOneSuite is a suite, When with-tikv flag is true, there is only one storage, so the test suite have to run one by one.
-type OneByOneSuite = mockstore.OneByOneSuite

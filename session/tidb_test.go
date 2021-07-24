@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestT(t *testing.T) {
@@ -46,6 +47,7 @@ func TestT(t *testing.T) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
+	tikv.EnableFailpoints()
 	TestingT(t)
 }
 
