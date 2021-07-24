@@ -1028,11 +1028,12 @@ func (s *testPrepareSerialSuite) TestPrepareCacheWithJoinTable(c *C) {
 }
 
 func (s *testPlanSerialSuite) TestPlanCacheSnapshot(c *C) {
-	store, _, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
+		dom.Close()
 		err = store.Close()
 		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
@@ -1079,11 +1080,12 @@ func (s *testPlanSerialSuite) TestPlanCacheSnapshot(c *C) {
 }
 
 func (s *testPlanSerialSuite) TestPlanCachePointGetAndTableDual(c *C) {
-	store, _, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
+		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
 	}()
@@ -1172,11 +1174,12 @@ func (s *testPlanSerialSuite) TestPlanCachePointGetAndTableDual(c *C) {
 }
 
 func (s *testPlanSerialSuite) TestIssue23671(c *C) {
-	store, _, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
+		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
 	}()
