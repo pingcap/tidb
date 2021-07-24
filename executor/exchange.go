@@ -78,6 +78,7 @@ func (e *ExchangeReceiverFullMerge) Next(ctx context.Context, req *chunk.Chunk) 
 			close(e.inputs[chosen])
 			// remove channel.
 			e.sendSelectCases = append(e.sendSelectCases[:chosen], e.sendSelectCases[chosen+1:]...)
+			e.inputs = append(e.inputs[:chosen], e.inputs[chosen+1:]...)
 			continue
 		}
 		break
