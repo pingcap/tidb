@@ -1076,3 +1076,94 @@ func (s *testEvaluatorSuite) TestJSONPretty(c *C) {
 		}
 	}
 }
+
+func (s *testEvaluatorSuite) TestJSONMergePatch(c *C) {
+	fc := funcs[ast.JSONMergePatch]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+	}{
+		// RFC 7396 document: https://datatracker.ietf.org/doc/html/rfc7396
+		// RFC 7396 Example Test Cases
+		{[]interface{}{`{"a":"b"}`, `{"a":"c"}`}, `{"a": "c"}`, true},
+		{[]interface{}{`{"a":"b"}`, `{"b":"c"}`}, `{"a": "b","b": "c"}`, true},
+		{[]interface{}{`{"a":"b"}`, `{"a":null}`}, `{}`, true},
+		{[]interface{}{`{"a":"b", "b":"c"}`, `{"a":null}`}, `{"b": "c"}`, true},
+		{[]interface{}{`{"a":["b"]}`, `{"a":"c"}`}, `{"a": "c"}`, true},
+		{[]interface{}{`{"a":"c"}`, `{"a":["b"]}`}, `{"a": ["b"]}`, true},
+		{[]interface{}{`{"a":{"b":"c"}}`, `{"a":{"b":"d","c":null}}`}, `{"a": {"b": "d"}}`, true},
+		{[]interface{}{`{"a":[{"b":"c"}]}`, `{"a": [1]}`}, `{"a": [1]}`, true},
+		{[]interface{}{`["a","b"]`, `["c","d"]`}, `["c", "d"]`, true},
+		{[]interface{}{`{"a":"b"}`, `["c"]`}, `["c"]`, true},
+		{[]interface{}{`{"a":"foo"}`, `null`}, `null`, true},
+		{[]interface{}{`{"a":"foo"}`, `"bar"`}, `"bar"`, true},
+		{[]interface{}{`{"e":null}`, `{"a":1}`}, `{"e": null,"a": 1}`, true},
+		{[]interface{}{`[1,2]`, `{"a":"b","c":null}`}, `{"a":"b"}`, true},
+		{[]interface{}{`{}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb": {}}}`, true},
+		// RFC 7396 Example Document
+		{[]interface{}{`{"title":"Goodbye!","author":{"givenName":"John","familyName":"Doe"},"tags":["example","sample"],"content":"This will be unchanged"}`, `{"title":"Hello!","phoneNumber":"+01-123-456-7890","author":{"familyName":null},"tags":["example"]}`}, `{"title":"Hello!","author":{"givenName":"John"},"tags":["example"],"content":"This will be unchanged","phoneNumber":"+01-123-456-7890"}`, true},
+
+		// From mysql Example Test Cases
+		{[]interface{}{nil, `null`, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true},
+		{[]interface{}{`null`, nil, `[1,2,3]`, `{"a":1}`}, `{"a": 1}`, true},
+		{[]interface{}{`null`, `[1,2,3]`, nil, `{"a":1}`}, nil, true},
+		{[]interface{}{`null`, `[1,2,3]`, `{"a":1}`, nil}, nil, true},
+
+		{[]interface{}{nil, `null`, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true},
+		{[]interface{}{`null`, nil, `{"a":1}`, `[1,2,3]`}, `[1,2,3]`, true},
+		{[]interface{}{`null`, `{"a":1}`, nil, `[1,2,3]`}, `[1,2,3]`, true},
+		{[]interface{}{`null`, `{"a":1}`, `[1,2,3]`, nil}, nil, true},
+
+		{[]interface{}{nil, `null`, `{"a":1}`, `true`}, `true`, true},
+		{[]interface{}{`null`, nil, `{"a":1}`, `true`}, `true`, true},
+		{[]interface{}{`null`, `{"a":1}`, nil, `true`}, `true`, true},
+		{[]interface{}{`null`, `{"a":1}`, `true`, nil}, nil, true},
+
+		// non-object last item
+		{[]interface{}{"true", "false", "[]", "{}", "null"}, "null", true},
+		{[]interface{}{"false", "[]", "{}", "null", "true"}, "true", true},
+		{[]interface{}{"true", "[]", "{}", "null", "false"}, "false", true},
+		{[]interface{}{"true", "false", "{}", "null", "[]"}, "[]", true},
+		{[]interface{}{"true", "false", "{}", "null", "1"}, "1", true},
+		{[]interface{}{"true", "false", "{}", "null", "1.8"}, "1.8", true},
+		{[]interface{}{"true", "false", "{}", "null", `"112"`}, `"112"`, true},
+
+		{[]interface{}{`{"a":"foo"}`, nil}, nil, true},
+		{[]interface{}{nil, `{"a":"foo"}`}, nil, true},
+		{[]interface{}{`{"a":"foo"}`, `false`}, `false`, true},
+		{[]interface{}{`{"a":"foo"}`, `123`}, `123`, true},
+		{[]interface{}{`{"a":"foo"}`, `123.1`}, `123.1`, true},
+		{[]interface{}{`{"a":"foo"}`, `[1,2,3]`}, `[1,2,3]`, true},
+		{[]interface{}{`null`, `{"a":1}`}, `{"a":1}`, true},
+		{[]interface{}{`{"a":1}`, `null`}, `null`, true},
+		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"b":"123"}`, `{"c":1}`}, `{"b":"123","c":1}`, true},
+		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `{"c":1}`}, `{"c":1}`, true},
+		{[]interface{}{`{"a":"foo"}`, `{"a":null}`, `true`}, `true`, true},
+		{[]interface{}{`{"a":"foo"}`, `{"d":1}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb":{}},"d":1}`, true},
+
+		// Invalid json text
+		{[]interface{}{`{"a":1}`, `[1]}`}, nil, false},
+		{[]interface{}{`{{"a":1}`, `[1]`, `null`}, nil, false},
+		{[]interface{}{`{"a":1}`, `jjj`, `null`}, nil, false},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if t.success {
+			c.Assert(err, IsNil)
+
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
+			} else {
+				j, e := json.ParseBinaryFromString(t.expected.(string))
+				c.Assert(e, IsNil)
+				c.Assert(d.GetMysqlJSON().String(), Equals, j.String())
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+}

@@ -2079,7 +2079,7 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *C) {
 				}
 				rows.Close()
 				dbt.Check(newErrors, Equals, errors)
-				dbt.Check(newWarnings, Equals, warnings)
+				dbt.Check(newWarnings, Equals, warnings, Commentf("source=information_schema.%s code=%d statement=%s", tbl, test.errCode, test.stmt))
 			}
 		}
 

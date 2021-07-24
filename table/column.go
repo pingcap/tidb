@@ -80,6 +80,16 @@ func FindCol(cols []*Column, name string) *Column {
 	return nil
 }
 
+// FindColLowerCase finds column in cols by name. It assumes the name is lowercase.
+func FindColLowerCase(cols []*Column, name string) *Column {
+	for _, col := range cols {
+		if col.Name.L == name {
+			return col
+		}
+	}
+	return nil
+}
+
 // ToColumn converts a *model.ColumnInfo to *Column.
 func ToColumn(col *model.ColumnInfo) *Column {
 	return &Column{
@@ -91,7 +101,8 @@ func ToColumn(col *model.ColumnInfo) *Column {
 
 // FindCols finds columns in cols by names.
 // If pkIsHandle is false and name is ExtraHandleName, the extra handle column will be added.
-// If any columns don't match, return nil and the first missing column's name
+// If any columns don't match, return nil and the first missing column's name.
+// Please consider FindColumns() first for a better performance.
 func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, string) {
 	var rcols []*Column
 	for _, name := range names {
@@ -109,6 +120,26 @@ func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, strin
 	}
 
 	return rcols, ""
+}
+
+// FindColumns finds columns in cols by names with a better performance than FindCols().
+// It assumes names are lowercase.
+func FindColumns(cols []*Column, names []string, pkIsHandle bool) (foundCols []*Column, missingOffset int) {
+	var rcols []*Column
+	for i, name := range names {
+		col := FindColLowerCase(cols, name)
+		if col != nil {
+			rcols = append(rcols, col)
+		} else if name == model.ExtraHandleName.L && !pkIsHandle {
+			col := &Column{}
+			col.ColumnInfo = model.NewExtraHandleColInfo()
+			col.ColumnInfo.Offset = len(cols)
+			rcols = append(rcols, col)
+		} else {
+			return nil, i
+		}
+	}
+	return rcols, -1
 }
 
 // FindOnUpdateCols finds columns which have OnUpdateNow flag.
@@ -248,6 +279,14 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
 func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
+	// Set the reorg attribute for cast value functionality.
+	if col.ChangeStateInfo != nil {
+		origin := ctx.GetSessionVars().StmtCtx.InReorgAttribute
+		ctx.GetSessionVars().StmtCtx.InReorgAttribute = true
+		defer func() {
+			ctx.GetSessionVars().StmtCtx.InReorgAttribute = origin
+		}()
+	}
 	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {

@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"runtime/pprof"
 	"sort"
 	"strconv"
 	"sync"
@@ -122,10 +121,6 @@ func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.
 
 func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		if variable.TopSQLEnabled() {
-			//  Restore the goroutine label by using the original ctx after execution is finished.
-			defer pprof.SetGoroutineLabels(ctx)
-		}
 		stmt, err := exec.ParseWithParams(ctx, sql, params...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -910,6 +905,9 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 }
 
 func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics.Table, physicalID int64, loadAll bool) (*statistics.Table, error) {
+	failpoint.Inject("injectExtStatsLoadErr", func() {
+		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))
+	})
 	lastVersion := uint64(0)
 	if table.ExtendedStats != nil && !loadAll {
 		lastVersion = table.ExtendedStats.LastUpdateVersion
@@ -1546,11 +1544,17 @@ func (h *Handle) removeExtendedStatsItem(tableID int64, statsName string) {
 
 // ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
 func (h *Handle) ReloadExtendedStatistics() error {
-	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-		reader, err := h.getStatsReader(0)
-		if err != nil {
-			return err
+	reader, err := h.getStatsReader(0)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err1 := h.releaseStatsReader(reader)
+		if err1 != nil && err == nil {
+			err = err1
 		}
+	}()
+	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
 		oldCache := h.statsCache.Load().(statsCache)
 		tables := make([]*statistics.Table, 0, len(oldCache.tables))
 		for physicalID, tbl := range oldCache.tables {
@@ -1559,10 +1563,6 @@ func (h *Handle) ReloadExtendedStatistics() error {
 				return err
 			}
 			tables = append(tables, t)
-		}
-		err = h.releaseStatsReader(reader)
-		if err != nil {
-			return err
 		}
 		if h.updateStatsCache(oldCache.update(tables, nil, oldCache.version)) {
 			return nil
