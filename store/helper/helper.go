@@ -42,6 +42,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
 )
 
@@ -65,7 +66,7 @@ type Storage interface {
 	GetMemCache() kv.MemManager
 	GetRegionCache() *tikv.RegionCache
 	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
-	GetLockResolver() *tikv.LockResolver
+	GetLockResolver() *txnlock.LockResolver
 	GetSafePointKV() tikv.SafePointKV
 	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
 	SetOracle(oracle oracle.Oracle)
