@@ -2359,6 +2359,50 @@
           "            └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t.id",
           "              └─TableFullScan 10000.00 batchCop[tiflash] table:B keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "desc format = 'brief' select count(distinct value) from t",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#4",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.t.value)->Column#4",
+          "      └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "          └─HashAgg 1.00 batchCop[tiflash]  group by:test.t.value, ",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select count(distinct x ) from (select count(distinct value) x from t) t",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct Column#4)->Column#5",
+          "      └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "          └─HashAgg 1.00 batchCop[tiflash]  group by:Column#4, ",
+          "            └─Projection 1.00 batchCop[tiflash]  Column#4",
+          "              └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.t.value)->Column#4",
+          "                └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "                  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "                    └─HashAgg 1.00 batchCop[tiflash]  group by:test.t.value, ",
+          "                      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select count(distinct value), count(value), avg(value) from t",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#4, Column#5, div(Column#6, cast(case(eq(Column#7, 0), 1, Column#7), decimal(20,0) BINARY))->Column#6",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.t.value)->Column#4, funcs:sum(Column#8)->Column#5, funcs:sum(Column#9)->Column#7, funcs:sum(Column#10)->Column#6",
+          "      └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "          └─HashAgg 1.00 batchCop[tiflash]  group by:test.t.value, funcs:count(test.t.value)->Column#8, funcs:count(test.t.value)->Column#9, funcs:sum(test.t.value)->Column#10",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
       }
     ]
   },

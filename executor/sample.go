@@ -153,7 +153,7 @@ func (s *tableRegionSampler) pickRanges(count int) ([]kv.KeyRange, error) {
 }
 
 func (s *tableRegionSampler) writeChunkFromRanges(ranges []kv.KeyRange, req *chunk.Chunk) error {
-	decLoc, sysLoc := s.ctx.GetSessionVars().TimeZone, time.UTC
+	decLoc, sysLoc := s.ctx.GetSessionVars().Location(), time.UTC
 	cols, decColMap, err := s.buildSampleColAndDecodeColMap()
 	if err != nil {
 		return err

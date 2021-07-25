@@ -51,6 +51,7 @@ func (t *TxStructure) encodeStringDataKey(key []byte) kv.Key {
 	return codec.EncodeUint(ek, uint64(StringData))
 }
 
+// nolint:unused
 func (t *TxStructure) encodeHashMetaKey(key []byte) kv.Key {
 	ek := make([]byte, 0, len(t.prefix)+codec.EncodedBytesLength(len(key))+8)
 	ek = append(ek, t.prefix...)

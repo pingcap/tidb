@@ -1071,7 +1071,7 @@ func (s *testSuite3) TestInsertFloatOverflow(c *C) {
 	tk.MustExec("drop table if exists t,t1")
 }
 
-// There is a potential issue in MySQL: when the value of auto_increment_offset is greater
+// TestAutoIDIncrementAndOffset There is a potential issue in MySQL: when the value of auto_increment_offset is greater
 // than that of auto_increment_increment, the value of auto_increment_offset is ignored
 // (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
 // This issue is a flaw of the implementation of MySQL and it doesn't exist in TiDB.
@@ -1571,7 +1571,7 @@ func combination(items []string) func() []string {
 	}
 }
 
-// See https://github.com/pingcap/tidb/issues/24582
+// TestDuplicatedEntryErr See https://github.com/pingcap/tidb/issues/24582
 func (s *testSuite10) TestDuplicatedEntryErr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

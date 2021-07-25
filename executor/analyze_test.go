@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -240,6 +240,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 }
 
 func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
+	_ = checkHistogram
 	c.Skip("unstable, skip it and fix it before 20210618")
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
@@ -288,9 +289,9 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 }
 
 func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
-	var cls cluster.Cluster
+	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cls = c
 		}),
@@ -341,13 +342,20 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	}
 	opts := make(map[ast.AnalyzeOptionType]uint64)
 	opts[ast.AnalyzeOptNumSamples] = 20
+	// Get a start_ts later than the above inserts.
+	tk.MustExec("begin")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	ts := txn.StartTS()
+	tk.MustExec("commit")
 	mockExec := &executor.AnalyzeTestFastExec{
 		Ctx:         tk.Se.(sessionctx.Context),
 		HandleCols:  handleCols,
 		ColsInfo:    colsInfo,
 		IdxsInfo:    indicesInfo,
 		Concurrency: 1,
-		TableID: core.AnalyzeTableID{
+		Snapshot:    ts,
+		TableID: statistics.AnalyzeTableID{
 			PartitionID: -1,
 			TableID:     tbl.(table.PhysicalTable).GetPhysicalID(),
 		},
@@ -388,9 +396,10 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 }
 
 func (s *testFastAnalyze) TestFastAnalyze(c *C) {
-	var cls cluster.Cluster
+	c.Skip("Skip this unstable test(#25782) and bring it back before 2021-07-29.")
+	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cls = c
 		}),
@@ -599,6 +608,7 @@ func (s *testSuite1) TestAnalyzeIncrementalStreaming(c *C) {
 	s.testAnalyzeIncremental(tk, c)
 }
 
+// nolint:unused
 func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -618,13 +628,13 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	// Test analyze incremental with feedback.
 	tk.MustExec("insert into t values (3,3)")
 	oriProbability := statistics.FeedbackProbability.Load()
-	oriMinLogCount := handle.MinLogScanCount
+	oriMinLogCount := handle.MinLogScanCount.Load()
 	defer func() {
 		statistics.FeedbackProbability.Store(oriProbability)
-		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogScanCount.Store(oriMinLogCount)
 	}()
 	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount = 0
+	handle.MinLogScanCount.Store(0)
 	is := s.dom.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -706,9 +716,9 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 		return cli
 	}
 
-	var cls cluster.Cluster
+	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cls = c
 		}),
@@ -1055,4 +1065,50 @@ func (s *testSerialSuite2) TestAnalyzeSamplingWorkPanic(c *C) {
 	err = tk.ExecToErr("analyze table t")
 	c.Assert(err, NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeSamplingMergeWorkerPanic"), IsNil)
+}
+
+func (s *testSuite10) TestSnapshotAnalyze(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index index_a(a))")
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	tid := tblInfo.ID
+	tk.MustExec("insert into t values(1),(1),(1)")
+	tk.MustExec("begin")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	startTS1 := txn.StartTS()
+	tk.MustExec("commit")
+	tk.MustExec("insert into t values(2),(2),(2)")
+	tk.MustExec("begin")
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	startTS2 := txn.StartTS()
+	tk.MustExec("commit")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS1)), IsNil)
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "3")
+	s1Str := rows[0][1].(string)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS2)), IsNil)
+	tk.MustExec("analyze table t")
+	rows = tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "6")
+	s2Str := rows[0][1].(string)
+	c.Assert(s1Str != s2Str, IsTrue)
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS1)), IsNil)
+	tk.MustExec("analyze table t")
+	rows = tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "6")
+	s3Str := rows[0][1].(string)
+	c.Assert(s3Str, Equals, s2Str)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"), IsNil)
 }

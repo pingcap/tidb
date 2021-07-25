@@ -203,7 +203,7 @@ func (s *testPlanSerialSuite) TestPrepareCacheDeferredFunction(c *C) {
 		stmt, err := s.ParseOneStmt(sql1, "", "")
 		c.Check(err, IsNil)
 		is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
-		builder, _ := core.NewPlanBuilder(tk.Se, is, &hint.BlockHintProcessor{})
+		builder, _ := core.NewPlanBuilder().Init(tk.Se, is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Check(err, IsNil)
 		execPlan, ok := p.(*core.Execute)
@@ -345,6 +345,7 @@ func (s *testPrepareSerialSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) 
 	tk.MustQuery("execute stmt").Sort().Check(testkit.Rows("partner1", "partner2", "partner3", "partner4"))
 }
 
+// nolint:unused
 func readGaugeInt(g prometheus.Gauge) int {
 	ch := make(chan prometheus.Metric, 1)
 	g.Collect(ch)
@@ -1027,11 +1028,12 @@ func (s *testPrepareSerialSuite) TestPrepareCacheWithJoinTable(c *C) {
 }
 
 func (s *testPlanSerialSuite) TestPlanCacheSnapshot(c *C) {
-	store, _, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
+		dom.Close()
 		err = store.Close()
 		c.Assert(err, IsNil)
 		core.SetPreparedPlanCache(orgEnable)
@@ -1078,11 +1080,12 @@ func (s *testPlanSerialSuite) TestPlanCacheSnapshot(c *C) {
 }
 
 func (s *testPlanSerialSuite) TestPlanCachePointGetAndTableDual(c *C) {
-	store, _, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
+		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
 	}()
@@ -1171,11 +1174,12 @@ func (s *testPlanSerialSuite) TestPlanCachePointGetAndTableDual(c *C) {
 }
 
 func (s *testPlanSerialSuite) TestIssue23671(c *C) {
-	store, _, err := newStoreWithBootstrap()
+	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
+		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
 	}()

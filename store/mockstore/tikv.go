@@ -18,20 +18,20 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
-	"github.com/tikv/client-go/v2/mockstore/mocktikv"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
 // newMockTikvStore creates a mocked tikv store, the path is the file path to store the data.
 // If path is an empty string, a memory storage will be created.
 func newMockTikvStore(opt *mockOptions) (kv.Storage, error) {
-	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient(opt.path, mockcopr.NewCoprRPCHandler())
+	client, cluster, pdClient, err := testutils.NewMockTiKV(opt.path, mockcopr.NewCoprRPCHandler())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	opt.clusterInspector(cluster)
 
-	kvstore, err := tikv.NewTestTiKVStore(client, pdClient, opt.clientHijacker, opt.pdClientHijacker, opt.txnLocalLatches)
+	kvstore, err := tikv.NewTestTiKVStore(newClientRedirector(client), pdClient, opt.clientHijacker, opt.pdClientHijacker, opt.txnLocalLatches)
 	if err != nil {
 		return nil, err
 	}

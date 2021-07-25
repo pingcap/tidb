@@ -116,6 +116,7 @@ func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (
 }
 
 // MustNewCommonHandle create a common handle with given values.
+// todo: `mustNewCommonHandle` function in `keydecoder_test.go` and `key_test.go` should be replaced with this function after this mod migrate to testify
 func MustNewCommonHandle(c *check.C, values ...interface{}) kv.Handle {
 	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
 	c.Assert(err, check.IsNil)
