@@ -107,6 +107,15 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 		}
 	}
 
+	if err = Next(ctx, e.probeSideExec, e.probeSideResult); err != nil {
+		return err
+	}
+
+	if e.probeSideResult.NumRows() == 0 {
+		req.SwapColumns(e.resChk)
+		return nil
+	}
+
 	// construct hash table
 	if !e.hashTblDone {
 		if err = e.buildHashTable(ctx); err != nil {
@@ -117,19 +126,20 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 
 	// probe hash table
 	for {
+		if err = e.doJoinWork(e.probeSideResult, e.resChk); err != nil {
+			return err
+		}
+
+		if e.resChk.IsFull() {
+			req.SwapColumns(e.resChk)
+			break
+		}
+
 		if err = Next(ctx, e.probeSideExec, e.probeSideResult); err != nil {
 			return err
 		}
 
 		if e.probeSideResult.NumRows() == 0 {
-			req.SwapColumns(e.resChk)
-			break
-		}
-
-		if err = e.doJoinWork(e.probeSideResult, e.resChk); err != nil {
-			return err
-		}
-		if e.resChk.IsFull() {
 			req.SwapColumns(e.resChk)
 			break
 		}
