@@ -10,11 +10,12 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package linux
+package linux_test
 
 import (
 	"testing"
 
+	. "github.com/pingcap/tidb/util/sys/linux"
 	"github.com/stretchr/testify/require"
 )
 
