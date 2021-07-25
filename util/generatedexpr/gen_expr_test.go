@@ -17,27 +17,15 @@ import (
 	"testing"
 
 	"github.com/pingcap/parser/ast"
-	_ "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/stretchr/testify/require"
+
+	_ "github.com/pingcap/tidb/types/parser_driver"
 )
 
 func TestParseExpression(t *testing.T) {
-	tests := []struct {
-		input   string
-		output  string
-		success bool
-	}{
-		{"json_extract(a, '$.a')", "json_extract", true},
-	}
-	for _, test := range tests {
-		t.Run(test.input, func(t *testing.T) {
-			node, err := ParseExpression(test.input)
-			if test.success {
-				fc := node.(*ast.FuncCallExpr)
-				require.Equal(t, test.output, fc.FnName.L)
-			} else {
-				require.Error(t, err)
-			}
-		})
-	}
+	t.Parallel()
+
+	node, err := ParseExpression("json_extract(a, '$.a')")
+	require.NoError(t, err)
+	require.Equal(t, "json_extract", node.(*ast.FuncCallExpr).FnName.L)
 }
