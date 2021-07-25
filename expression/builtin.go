@@ -95,7 +95,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	}
 	derivedCharset, derivedCollate := DeriveCollationFromExprs(ctx, args...)
 	bf := baseBuiltinFunc{
-		bufAllocator:           newLocalSliceBuffer(len(args)),
+		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
 		childrenReversedOnce:   new(sync.Once),
 
@@ -246,7 +246,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		fieldType.Flag |= mysql.IsBooleanFlag
 	}
 	bf = baseBuiltinFunc{
-		bufAllocator:           newLocalSliceBuffer(len(args)),
+		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
 		childrenReversedOnce:   new(sync.Once),
 
@@ -266,7 +266,7 @@ func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
 	bf := baseBuiltinFunc{
-		bufAllocator:           newLocalSliceBuffer(len(args)),
+		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
 		childrenReversedOnce:   new(sync.Once),
 
@@ -417,7 +417,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.ctx = from.ctx
 	b.tp = from.tp
 	b.pbCode = from.pbCode
-	b.bufAllocator = newLocalSliceBuffer(len(b.args))
+	b.bufAllocator = newLocalColumnPool()
 	b.childrenVectorizedOnce = new(sync.Once)
 	b.childrenReversedOnce = new(sync.Once)
 	b.ctor = from.ctor

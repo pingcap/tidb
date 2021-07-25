@@ -15,20 +15,17 @@ package json
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testJSONFuncSuite{})
+func TestDecodeEscapedUnicode(t *testing.T) {
+	t.Parallel()
 
-type testJSONFuncSuite struct{}
-
-func (s *testJSONFuncSuite) TestDecodeEscapedUnicode(c *C) {
-	c.Parallel()
 	in := "597d"
 	r, size, err := decodeEscapedUnicode([]byte(in))
-	c.Assert(string(r[:]), Equals, "好\x00")
-	c.Assert(size, Equals, 3)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	require.Equal(t, "好\x00", string(r[:]))
+	require.Equal(t, 3, size)
 }
 
 func BenchmarkDecodeEscapedUnicode(b *testing.B) {
