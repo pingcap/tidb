@@ -686,6 +686,8 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	if cmpAsDatetime {
 		tp = types.ETDatetime
+		// length of "yyyy-MM-dd HH:mm:ss.123456"
+		bf.tp.Flen = 26
 	}
 	switch tp {
 	case types.ETInt:
