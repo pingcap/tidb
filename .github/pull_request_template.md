@@ -45,4 +45,7 @@ Documentation
 
 ### Release note <!-- bugfixes or new feature need a release note -->
 
-- <!-- Please write a release note here to describe the change you made when it is released to the users of TiDB. If your PR doesn't involve any change to TiDB(like test enhancements, RFC proposals...), you can write `No release note`. -->
+```release-note
+Please add a release note, or a 'None' if it is not needed.
+If you don't think this PR needs a release note then fill it with None.
+```
