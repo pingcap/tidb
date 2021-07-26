@@ -74,23 +74,24 @@ func TestCodecKey(t *testing.T) {
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	for i, datums := range table {
+		comments := []interface{}{"%d %v", i, datums}
 		b, err := EncodeKey(sc, nil, datums.Input...)
-		require.NoError(t, err, "%d %v", i, datums)
+		require.NoError(t, err, comments...)
 
 		args, err := Decode(b, 1)
-		require.NoError(t, err)
-		require.Equal(t, datums.Expect, args)
+		require.NoError(t, err, comments...)
+		require.Equal(t, datums.Expect, args, comments...)
 
 		b, err = EncodeValue(sc, nil, datums.Input...)
-		require.NoError(t, err)
+		require.NoError(t, err, comments...)
 
 		size, err := estimateValuesSize(sc, datums.Input)
-		require.NoError(t, err)
-		require.Len(t, b, size)
+		require.NoError(t, err, comments...)
+		require.Len(t, b, size, comments...)
 
 		args, err = Decode(b, 1)
-		require.NoError(t, err)
-		require.Equal(t, datums.Expect, args)
+		require.NoError(t, err, comments...)
+		require.Equal(t, datums.Expect, args, comments...)
 	}
 
 	var raw types.Datum
