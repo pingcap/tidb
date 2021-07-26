@@ -16,22 +16,11 @@ package stringutil
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-var _ = Suite(&testStringUtilSuite{})
-
-type testStringUtilSuite struct {
-}
-
-func (s *testStringUtilSuite) TestUnquote(c *C) {
-	defer testleak.AfterTest(c)()
+func TestUnquote(t *testing.T) {
+	t.Parallel()
 	table := []struct {
 		str    string
 		expect string
@@ -65,20 +54,19 @@ func (s *testStringUtilSuite) TestUnquote(c *C) {
 		{"\"\\a\x18èàø»\x05\"", "a\x18èàø»\x05", true},
 	}
 
-	for _, t := range table {
-		x, err := Unquote(t.str)
-		c.Assert(x, Equals, t.expect)
-		comment := Commentf("source %v", t.str)
-		if t.ok {
-			c.Assert(err, IsNil, comment)
+	for _, v := range table {
+		x, err := Unquote(v.str)
+		require.Equal(t, v.expect, x)
+		if v.ok {
+			require.Nil(t, err)
 		} else {
-			c.Assert(err, NotNil, comment)
+			require.NotNil(t, err)
 		}
 	}
 }
 
-func (s *testStringUtilSuite) TestPatternMatch(c *C) {
-	defer testleak.AfterTest(c)()
+func TestPatternMatch(t *testing.T) {
+	t.Parallel()
 	tbl := []struct {
 		pattern string
 		input   string
@@ -117,12 +105,12 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 	for _, v := range tbl {
 		patChars, patTypes := CompilePattern(v.pattern, v.escape)
 		match := DoMatch(v.input, patChars, patTypes)
-		c.Assert(match, Equals, v.match, Commentf("%v", v))
+		require.Equal(t, v.match, match)
 	}
 }
 
-func (s *testStringUtilSuite) TestCompileLike2Regexp(c *C) {
-	defer testleak.AfterTest(c)()
+func TestCompileLike2Regexp(t *testing.T) {
+	t.Parallel()
 	tbl := []struct {
 		pattern string
 		regexp  string
@@ -145,12 +133,12 @@ func (s *testStringUtilSuite) TestCompileLike2Regexp(c *C) {
 	}
 	for _, v := range tbl {
 		result := CompileLike2Regexp(v.pattern)
-		c.Assert(result, Equals, v.regexp, Commentf("%v", v))
+		require.Equal(t, v.regexp, result)
 	}
 }
 
-func (s *testStringUtilSuite) TestIsExactMatch(c *C) {
-	defer testleak.AfterTest(c)()
+func TestIsExactMatch(t *testing.T) {
+	t.Parallel()
 	tbl := []struct {
 		pattern    string
 		escape     byte
@@ -173,12 +161,12 @@ func (s *testStringUtilSuite) TestIsExactMatch(c *C) {
 	}
 	for _, v := range tbl {
 		_, patTypes := CompilePattern(v.pattern, v.escape)
-		c.Assert(IsExactMatch(patTypes), Equals, v.exactMatch, Commentf("%v", v))
+		require.Equal(t, v.exactMatch, IsExactMatch(patTypes))
 	}
 }
 
-func (s *testStringUtilSuite) TestBuildStringFromLabels(c *C) {
-	defer testleak.AfterTest(c)()
+func TestBuildStringFromLabels(t *testing.T) {
+	t.Parallel()
 	testcases := []struct {
 		name     string
 		labels   map[string]string
@@ -206,8 +194,7 @@ func (s *testStringUtilSuite) TestBuildStringFromLabels(c *C) {
 		},
 	}
 	for _, testcase := range testcases {
-		c.Log(testcase.name)
-		c.Assert(BuildStringFromLabels(testcase.labels), Equals, testcase.expected)
+		require.Equal(t, testcase.expected, BuildStringFromLabels(testcase.labels))
 	}
 }
 
