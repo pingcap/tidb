@@ -41,8 +41,10 @@ type ExchangeReceiver struct {
 type ExchangeReceiverFullMerge struct {
 	ExchangeReceiver
 
-	inputs          []chan *chunk.Chunk
-	sendSelectCases []reflect.SelectCase
+	chkChs          []chan *chunk.Chunk
+	resChs          []chan *chunk.Chunk
+	chanSize        int
+	recvSelectCases []reflect.SelectCase
 }
 
 func (e *ExchangeReceiverFullMerge) Open(ctx context.Context) error {
@@ -53,42 +55,56 @@ func (e *ExchangeReceiverFullMerge) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	e.sendSelectCases = make([]reflect.SelectCase, len(e.inputs))
-	for i := 0; i < len(e.inputs); i++ {
-		e.sendSelectCases[i] = reflect.SelectCase{Dir: reflect.SelectSend, Chan: reflect.ValueOf(e.inputs[i])}
+	e.recvSelectCases = make([]reflect.SelectCase, len(e.resChs))
+	for i, ch := range e.resChs {
+		e.recvSelectCases[i] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)}
 	}
-	// e.inputs should already be setup when building executor.
+	for i := 0; i < len(e.chkChs); i++ {
+		for j := 0; j < e.chanSize; j++ {
+			chk := newFirstChunk(e.children[i])
+			e.chkChs[i] <- chk
+		}
+	}
 	return nil
 }
 
 func (e *ExchangeReceiverFullMerge) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	for i := 0; i < len(e.sendSelectCases); i++ {
-		e.sendSelectCases[i].Send = reflect.ValueOf(req)
-	}
 	for {
-		if len(e.sendSelectCases) == 0 {
+		if len(e.recvSelectCases) == 0 {
 			break
 		}
 
-		chosen, _, _ := reflect.Select(e.sendSelectCases)
+		chosen, value, ok := reflect.Select(e.recvSelectCases)
 
-		tmp := <-e.inputs[chosen]
-		if tmp == nil {
-			close(e.inputs[chosen])
-			// remove channel.
-			e.sendSelectCases = append(e.sendSelectCases[:chosen], e.sendSelectCases[chosen+1:]...)
-			e.inputs = append(e.inputs[:chosen], e.inputs[chosen+1:]...)
-			continue
+		if ok {
+			tmpChk := value.Interface().(*chunk.Chunk)
+			req.SwapColumns(tmpChk)
+			e.chkChs[chosen] <- tmpChk
+			break
 		}
-		break
+		e.recvSelectCases = append(e.recvSelectCases[:chosen], e.recvSelectCases[chosen+1:]...)
+		clearChan(e.chkChs[chosen])
+		close(e.chkChs[chosen])
+		e.chkChs = append(e.chkChs[:chosen], e.chkChs[chosen+1:]...)
 	}
 	return nil
 }
 
+func clearChan(ch chan *chunk.Chunk) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
+	}
+}
+
 func (e *ExchangeReceiverFullMerge) Close() error {
-	e.inputs = nil
-	e.sendSelectCases = nil
+	e.resChs = nil
+	e.chkChs = nil
+	e.recvSelectCases = nil
 	return e.baseExecutor.Close()
 }
 
@@ -139,8 +155,8 @@ func (e *ExchangeSenderBroadcast) Close() error {
 type ExchangeSenderPassThrough struct {
 	ExchangeSender
 
-	output      chan *chunk.Chunk
-	childResult *chunk.Chunk
+	resCh chan *chunk.Chunk
+	chkCh chan *chunk.Chunk
 }
 
 func (e *ExchangeSenderPassThrough) Open(ctx context.Context) error {
@@ -148,27 +164,26 @@ func (e *ExchangeSenderPassThrough) Open(ctx context.Context) error {
 		return nil
 	}
 	e.opened = true
-	e.childResult = newFirstChunk(e)
 	return e.baseExecutor.Open(ctx)
 }
 
 func (e *ExchangeSenderPassThrough) Next(ctx context.Context, req *chunk.Chunk) error {
-	if err := Next(ctx, e.children[0], e.childResult); err != nil {
+	chk := <-e.chkCh
+	if err := Next(ctx, e.children[0], chk); err != nil {
 		return err
 	}
-	if e.childResult.NumRows() == 0 {
-		_ = <-e.output
-		e.output <- nil
+	if chk.NumRows() == 0 {
+		close(e.resCh)
 		// TODO: another way
 		return errors.New("sender pass through done")
 	}
-	chk := <-e.output
-	chk.SwapColumns(e.childResult)
-	e.output <- chk
+	e.resCh <- chk
 	return nil
 }
 
 func (e *ExchangeSenderPassThrough) Close() error {
+	e.resCh = nil
+	e.chkCh = nil
 	return e.baseExecutor.Close()
 }
 

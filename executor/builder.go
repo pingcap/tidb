@@ -1155,9 +1155,12 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	concurrency := b.ctx.GetSessionVars().HashJoinConcurrency()
 
 	// setup channels
-	mergeChs := make([]chan *chunk.Chunk, 0, concurrency)
+	chanSize := 5
+	mergeResourceChs := make([]chan *chunk.Chunk, 0, concurrency)
+	mergeResultChs := make([]chan *chunk.Chunk, 0, concurrency)
 	for i := 0; i < concurrency; i++ {
-		mergeChs = append(mergeChs, make(chan *chunk.Chunk))
+		mergeResourceChs = append(mergeResourceChs, make(chan *chunk.Chunk, chanSize))
+		mergeResultChs = append(mergeResultChs, make(chan *chunk.Chunk, chanSize))
 	}
 
 	// build hashjoins
@@ -1185,7 +1188,8 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			},
 		}
 		execID++
-		mergeSender.output = mergeChs[i]
+		mergeSender.resCh = mergeResultChs[i]
+		mergeSender.chkCh = mergeResourceChs[i]
 		mergeSenders = append(mergeSenders, mergeSender)
 	}
 
@@ -1193,10 +1197,11 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		ExchangeReceiver: ExchangeReceiver{
 			baseExecutor: newBaseExecutor(b.ctx, mergeSenders[0].base().schema, execID, mergeSenders...),
 		},
-		inputs: make([]chan *chunk.Chunk, concurrency),
+		resChs:   mergeResultChs,
+		chkChs:   mergeResourceChs,
+		chanSize: chanSize,
 	}
 	execID++
-	copy(mergeReceiver.inputs, mergeChs)
 
 	// build exchange broadcast for hash join
 	depth, err := b.getHashJoinDepth(hashJoins[0])
@@ -1216,7 +1221,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			return nil
 		}
 	}
-	if err := b.addExchangeRandom(allHashJoins[len(allHashJoins)-1], concurrency, &execID); err != nil {
+	if err := b.addExchangeRandom(allHashJoins[len(allHashJoins)-1], chanSize, concurrency, &execID); err != nil {
 		b.err = err
 		return nil
 	}
@@ -1291,7 +1296,7 @@ func (b *executorBuilder) addExchangeBroadcast(hashJoins []*NonParallelHashJoinE
 	*execID++
 
 	for i := 0; i < concurrency; i++ {
-		broadcastSender.outputs = append(broadcastSender.outputs, make(chan *chunk.Chunk, 5))
+		broadcastSender.outputs = append(broadcastSender.outputs, make(chan *chunk.Chunk, 1))
 	}
 
 	for i := 0; i < concurrency; i++ {
@@ -1314,7 +1319,7 @@ func (b *executorBuilder) addExchangeBroadcast(hashJoins []*NonParallelHashJoinE
 	return nil
 }
 
-func (b *executorBuilder) addExchangeRandom(hashJoins []*NonParallelHashJoinExec, concurrency int, execID *int) error {
+func (b *executorBuilder) addExchangeRandom(hashJoins []*NonParallelHashJoinExec, chanSize int, concurrency int, execID *int) error {
 	var exec Executor
 	exec = hashJoins[0].probeSideExec
 	randomSender := &ExchangeSenderRandom{
@@ -1326,7 +1331,7 @@ func (b *executorBuilder) addExchangeRandom(hashJoins []*NonParallelHashJoinExec
 	*execID++
 
 	for i := 0; i < concurrency; i++ {
-		randomSender.outputs = append(randomSender.outputs, make(chan *chunk.Chunk, 3))
+		randomSender.outputs = append(randomSender.outputs, make(chan *chunk.Chunk, chanSize))
 	}
 
 	for i := 0; i < concurrency; i++ {
