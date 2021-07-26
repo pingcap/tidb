@@ -418,7 +418,7 @@ CREATE PLACEMENT POLICY p1 FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-e
 CREATE PLACEMENT POLICY p2 FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:1}";
 ```
 
-This is because p2 explicitly requires a follower count of 1 per region, whereas p2 allows for 2 in any of the above (see "Schedule Property" above for an explanation).
+This is because p2 explicitly requires a follower count of 1 per region, whereas p1 allows for 2 in any of the above (see "Schedule Property" above for an explanation).
 
 This is useful in the case that you want to ensure that `FOLLOWERS=2` exists in any of a list of zones:
 
