@@ -627,13 +627,13 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	// Test analyze incremental with feedback.
 	tk.MustExec("insert into t values (3,3)")
 	oriProbability := statistics.FeedbackProbability.Load()
-	oriMinLogCount := handle.MinLogScanCount
+	oriMinLogCount := handle.MinLogScanCount.Load()
 	defer func() {
 		statistics.FeedbackProbability.Store(oriProbability)
-		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogScanCount.Store(oriMinLogCount)
 	}()
 	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount = 0
+	handle.MinLogScanCount.Store(0)
 	is := s.dom.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
