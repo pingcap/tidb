@@ -71,17 +71,14 @@ func TestFrac(t *testing.T) {
 		{types.NewDecFromFloatForTest(0.03)},
 	}
 	for _, v := range inputs {
-		testFrac(t, v.Input)
+		var datum types.Datum
+		datum.SetMysqlDecimal(v.Input)
+
+		b, err := EncodeDecimal([]byte{}, datum.GetMysqlDecimal(), datum.Length(), datum.Frac())
+		require.NoError(t, err)
+
+		_, dec, _, _, err := DecodeDecimal(b)
+		require.NoError(t, err)
+		require.Equal(t, v.Input.String(), dec.String())
 	}
-}
-
-func testFrac(t *testing.T, v *types.MyDecimal) {
-	var d1 types.Datum
-	d1.SetMysqlDecimal(v)
-
-	b, err := EncodeDecimal([]byte{}, d1.GetMysqlDecimal(), d1.Length(), d1.Frac())
-	require.NoError(t, err)
-	_, dec, _, _, err := DecodeDecimal(b)
-	require.NoError(t, err)
-	require.Equal(t, v.String(), dec.String())
 }
