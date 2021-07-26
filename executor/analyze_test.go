@@ -592,7 +592,6 @@ func (s *testSuite1) TestAnalyzeIndex(c *C) {
 }
 
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210622")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_version = 1")
@@ -646,6 +645,7 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
 	c.Assert(h.HandleUpdateStats(is), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 3 0 2 2147483647 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
 	tblStats := h.GetTableStats(tblInfo)
 	val, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(3))
@@ -655,6 +655,7 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	c.Assert(statistics.IsAnalyzed(tblStats.Columns[tblInfo.Columns[0].ID].Flag), IsFalse)
 
 	tk.MustExec("analyze incremental table t index")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  a 0 2 3 1 3 3 0",
 		"test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0", "test t  idx 1 2 3 1 3 3 0"))
 	tblStats = h.GetTableStats(tblInfo)
@@ -670,12 +671,15 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 		partition p2 values less than (30)
 	);`)
 	tk.MustExec("analyze incremental table t index")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows())
 	tk.MustExec("insert into t values (1,1)")
 	tk.MustExec("analyze incremental table t index")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 idx 1 0 1 1 1 1 0"))
 	tk.MustExec("insert into t values (2,2)")
 	tk.MustExec("analyze incremental table t index")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 a 0 1 2 1 2 2 0", "test t p0 idx 1 0 1 1 1 1 0", "test t p0 idx 1 1 2 1 2 2 0"))
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec("insert into t values (11,11)")
