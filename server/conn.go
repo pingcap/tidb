@@ -1618,13 +1618,13 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 }
 
 // handlePlanRecreator dose the export/import work for reproducing sql queries.
-func (cc *clientConn) handlePlanRecreator(ctx context.Context, planRecreatorInfo interface{}) error {
+func (cc *clientConn) handlePlanRecreator(ctx context.Context, planRecreatorInfo interface{}) (interface{}, error) {
 	switch planRecreatorInfo.(type) {
 	case *executor.PlanRecreatorSingleInfo:
 		info := planRecreatorInfo.(*executor.PlanRecreatorSingleInfo)
 		return info.Process()
 	}
-	return errors.New("plan recreator: not supporting info type")
+	return nil, errors.New("plan recreator: not supporting info type")
 }
 
 // handleQuery executes the sql query string and writes result set or result ok to the client.
@@ -1894,8 +1894,12 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 	if planRecreator != nil {
 		handled = true
 		defer cc.ctx.SetValue(executor.PlanRecreatorVarKey, nil)
-		if err := cc.handlePlanRecreator(ctx, planRecreator); err != nil {
+		token, err := cc.handlePlanRecreator(ctx, planRecreator)
+		if err != nil {
 			return handled, err
+		}
+		if token != nil {
+			return handled, cc.writeOkWith(ctx, token.(string), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
 		}
 	}
 

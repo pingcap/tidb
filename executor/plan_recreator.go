@@ -16,6 +16,8 @@ package executor
 import (
 	"archive/zip"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/BurntSushi/toml"
@@ -31,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"math/rand"
 	"os"
 	"strings"
 	"time"
@@ -62,6 +65,16 @@ type tableNamePair struct {
 type tableNameExtractor struct {
 	curDB string
 	names map[tableNamePair]struct{}
+}
+
+type fileInfo struct {
+	StartTime time.Time
+	Token     [16]byte
+}
+
+type fileList struct {
+	FileInfo map[string]fileInfo
+	TokenMap map[[16]byte]string
 }
 
 func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
@@ -130,20 +143,20 @@ func (e *PlanRecreatorSingleExec) Open(ctx context.Context) error {
 }
 
 // Process dose the export/import work for reproducing sql queries.
-func (e *PlanRecreatorSingleInfo) Process() error {
+func (e *PlanRecreatorSingleInfo) Process() (interface{}, error) {
 	// TODO: plan recreator load will be developed later
 	if e.Load {
-		return nil
+		return nil, nil
 	} else {
 		return e.dumpSingle()
 	}
 }
 
-func (e *PlanRecreatorSingleInfo) dumpSingle() error {
+func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 	// Create path
 	err := os.MkdirAll(recreatorPath, os.ModePerm)
 	if err != nil {
-		return errors.New("Plan Recreator: cannot create plan recreator path.")
+		return nil, errors.New("Plan Recreator: cannot create plan recreator path.")
 	}
 
 	// Create zip file
@@ -151,25 +164,30 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() error {
 	fileName := fmt.Sprintf("recreator_single_%v.zip", startTime.UnixNano())
 	zf, err := os.Create(recreatorPath + "/" + fileName)
 	if err != nil {
-		return errors.New("Plan Recreator: cannot create zip file.")
+		return nil, errors.New("Plan Recreator: cannot create zip file.")
 	}
 	val := e.Ctx.Value(PlanRecreatorFileList)
 	if val == nil {
-		e.Ctx.SetValue(PlanRecreatorFileList, make(map[string]time.Time))
+		e.Ctx.SetValue(PlanRecreatorFileList, fileList{FileInfo: make(map[string]fileInfo), TokenMap: make(map[[16]byte]string)})
 	} else {
-		// clean outdated files
-		Flist := val.(map[string]time.Time)
+		// Clean outdated files
+		Flist := val.(fileList).FileInfo
+		TList := val.(fileList).TokenMap
 		for k, v := range Flist {
-			if time.Since(v).Minutes() > remainedInterval {
+			if time.Since(v.StartTime).Minutes() > remainedInterval {
 				err := os.Remove(recreatorPath + "/" + k)
 				if err != nil {
 					logutil.BgLogger().Warn(fmt.Sprintf("Cleaning outdated file %s failed.", k))
 				}
 				delete(Flist, k)
+				delete(TList, v.Token)
 			}
 		}
 	}
-	e.Ctx.Value(PlanRecreatorFileList).(map[string]time.Time)[fileName] = startTime
+	// Generate Token
+	token := md5.Sum([]byte(fmt.Sprintf("%s%d", fileName, rand.Int63())))
+	e.Ctx.Value(PlanRecreatorFileList).(fileList).FileInfo[fileName] = fileInfo{StartTime: startTime, Token: token}
+	e.Ctx.Value(PlanRecreatorFileList).(fileList).TokenMap[token] = fileName
 
 	// Create zip writer
 	zw := zip.NewWriter(zf)
@@ -187,20 +205,20 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() error {
 	// Dump config
 	cf, err := zw.Create("config.toml")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := toml.NewEncoder(cf).Encode(config.GetGlobalConfig()); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Dump meta
 	mt, err := zw.Create("meta.txt")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	_, err = mt.Write([]byte(printer.GetTiDBInfo()))
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Retrieve current DB
@@ -211,26 +229,26 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() error {
 	// Retrieve all tables
 	pairs, err := extractTableNames(e.ExecStmt, dbName.L)
 	if err != nil {
-		return errors.New(fmt.Sprintf("Plan Recreator: invalid SQL text, err: %v", err))
+		return nil, errors.New(fmt.Sprintf("Plan Recreator: invalid SQL text, err: %v", err))
 	}
 
 	// Dump stats
 	for pair := range pairs {
 		jsonTbl, err := getStatsForTable(do, pair)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		statsFw, err := zw.Create(fmt.Sprintf("stats/%v.%v.json", pair.DBName, pair.TableName))
 		if err != nil {
-			return err
+			return nil, err
 		}
 		data, err := json.Marshal(jsonTbl)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		_, err = statsFw.Write(data)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -238,7 +256,7 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() error {
 	for pair := range pairs {
 		err = getShowCreateTable(pair, zw, e.Ctx)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -249,27 +267,27 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() error {
 		defer recordSets[0].Close()
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
 	if err != nil {
-		return err
+		return nil, err
 	}
 	vf, err := zw.Create("variables.toml")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, row := range sRows {
 		varMap[row[0]] = row[1]
 	}
 	if err := toml.NewEncoder(vf).Encode(varMap); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Dump sql
 	sql, err := zw.Create("sqls.sql")
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	sql.Write([]byte(e.ExecStmt.Text()))
 
@@ -280,15 +298,15 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() error {
 		defer recordSets[0].Close()
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	sRows, err = resultSetToStringSlice(context.Background(), recordSets[0])
 	if err != nil {
-		return err
+		return nil, err
 	}
 	bf, err := zw.Create("bindings.sql")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, row := range sRows {
 		fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
@@ -299,13 +317,13 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() error {
 		// Explain analyze
 		recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain analyze %s", e.ExecStmt.Text()))
 		if err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		// Explain
 		recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain %s", e.ExecStmt.Text()))
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if len(recordSets) > 0 {
@@ -313,16 +331,16 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() error {
 	}
 	sRows, err = resultSetToStringSlice(context.Background(), recordSets[0])
 	if err != nil {
-		return err
+		return nil, err
 	}
 	fw, err := zw.Create("explain.txt")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for _, row := range sRows {
 		fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
 	}
-	return nil
+	return hex.EncodeToString(token[:]), nil
 }
 
 func extractTableNames(ExecStmt ast.StmtNode, curDB string) (map[tableNamePair]struct{}, error) {
