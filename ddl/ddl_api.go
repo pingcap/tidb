@@ -6035,14 +6035,12 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 	err = rule.ApplyAttributesSpec(spec.AttributesSpec)
 	if err != nil {
 		var sb strings.Builder
-		sb.Reset()
-
 		restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreKeyWordLowercase|format.RestoreNameBackQuotes, &sb)
 
 		if e := spec.Restore(restoreCtx); e != nil {
-			return ErrInvalidAttributesSpec.GenWithStackByArgs("", err)
+			return ErrInvalidAttributesSpec.GenWithStackByArgs(sb.String(), err)
 		}
-		return ErrInvalidAttributesSpec.GenWithStackByArgs(sb.String(), err)
+		return ErrInvalidAttributesSpec.GenWithStackByArgs("", err)
 	}
 
 	rule.ResetTable(meta.ID, schema.Name.L, meta.Name.L)

@@ -53,9 +53,8 @@ func (t *testLabelSuite) TestNew(c *C) {
 	}
 
 	for _, t := range tests {
-		c.Log(t.name)
 		label := NewLabel(t.input)
-		c.Assert(label, DeepEquals, t.label)
+		c.Assert(label, DeepEquals, t.label, Commentf("%s", t.name))
 	}
 }
 
@@ -82,9 +81,8 @@ func (t *testLabelSuite) TestRestore(c *C) {
 	})
 
 	for _, t := range tests {
-		c.Log(t.name)
 		output := t.input.Restore()
-		c.Assert(output, Equals, t.output)
+		c.Assert(output, Equals, t.output, Commentf("%s", t.name))
 	}
 }
 
@@ -146,9 +144,8 @@ func (t *testLabelsSuite) TestAdd(c *C) {
 	})
 
 	for _, t := range tests {
-		c.Log(t.name)
 		t.labels.Add(t.label)
-		c.Assert(t.labels[len(t.labels)-1], DeepEquals, t.label)
+		c.Assert(t.labels[len(t.labels)-1], DeepEquals, t.label, Commentf("%s", t.name))
 	}
 }
 
@@ -194,8 +191,7 @@ func (t *testLabelsSuite) TestRestore(c *C) {
 	})
 
 	for _, t := range tests {
-		c.Log(t.name)
 		res := t.input.Restore()
-		c.Assert(res, Equals, t.output)
+		c.Assert(res, Equals, t.output, Commentf("%s", t.name))
 	}
 }

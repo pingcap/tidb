@@ -17,6 +17,11 @@ import (
 	"strings"
 )
 
+const (
+	dbKey    = "db"
+	tableKey = "table"
+)
+
 // Label is used to describe attributes
 type Label struct {
 	Key   string `json:"key,omitempty"`
@@ -41,7 +46,7 @@ func (labels *Labels) Restore() string {
 	var sb strings.Builder
 	for i, label := range *labels {
 		switch label.Key {
-		case "db", "table", "partition":
+		case dbKey, tableKey:
 			continue
 		default:
 		}
