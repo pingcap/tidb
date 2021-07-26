@@ -1130,8 +1130,8 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 	case KindMysqlTime:
 		t, err = d.GetMysqlTime().Convert(sc, target.Tp)
 		if err != nil {
-			ret.SetMysqlTime(t)
-			return ret, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, t.String()))
+			ret.SetMysqlTime(ZeroTimestamp)
+			return ret, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimestampStr, t.String()))
 		}
 		t, err = t.RoundFrac(sc, fsp)
 	case KindMysqlDuration:
