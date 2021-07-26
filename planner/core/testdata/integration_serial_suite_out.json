@@ -2581,18 +2581,21 @@
       {
         "SQL": "desc format = 'brief' select * from t join t t1 on t.id = t1.id order by t.value % 100 limit 1",
         "Plan": [
-          "Projection 1.00 root  test.t.id, test.t.value, test.t.id, test.t.value",
-          "└─TopN 1.00 root  Column#7, offset:0, count:1",
-          "  └─Projection 12487.50 root  test.t.id, test.t.value, test.t.id, test.t.value, mod(test.t.value, 100)->Column#7",
-          "    └─TableReader 12487.50 root  data:ExchangeSender",
-          "      └─ExchangeSender 12487.50 cop[tiflash]  ExchangeType: PassThrough",
-          "        └─HashJoin 12487.50 cop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]",
-          "          ├─ExchangeReceiver(Build) 9990.00 cop[tiflash]  ",
-          "          │ └─ExchangeSender 9990.00 cop[tiflash]  ExchangeType: Broadcast",
-          "          │   └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "          │     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "          └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "            └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo"
+          "[Projection 1.00 root  test.t.id, test.t.value, test.t.id, test.t.value]",
+          "[└─TopN 1.00 root  Column#8, offset:0, count:1]",
+          "[  └─Projection 1.00 root  test.t.id, test.t.value, test.t.id, test.t.value, mod(test.t.value, 100)->Column#8]",
+          "[    └─TableReader 1.00 root  data:ExchangeSender]",
+          "[      └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough]",
+          "[        └─Projection 1.00 batchCop[tiflash]  test.t.id, test.t.value, test.t.id, test.t.value]",
+          "[          └─TopN 1.00 batchCop[tiflash]  Column#7, offset:0, count:1]",
+          "[            └─Projection 12487.50 batchCop[tiflash]  test.t.id, test.t.value, test.t.id, test.t.value, mod(test.t.value, 100)->Column#7]",
+          "[              └─HashJoin 12487.50 batchCop[tiflash]  inner join, equal:[eq(test.t.id, test.t.id)]]",
+          "[                ├─ExchangeReceiver(Build) 9990.00 batchCop[tiflash]  ]",
+          "[                │ └─ExchangeSender 9990.00 batchCop[tiflash]  ExchangeType: Broadcast]",
+          "[                │   └─Selection 9990.00 batchCop[tiflash]  not(isnull(test.t.id))]",
+          "[                │     └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo]",
+          "[                └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.t.id))]",
+          "[                  └─TableFullScan 10000.00 batchCop[tiflash] table:t1 keep order:false, stats:pseudo]"
         ]
       },
       {
