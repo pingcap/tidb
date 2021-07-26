@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
+	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
@@ -78,6 +79,9 @@ type memtableRetriever struct {
 
 // retrieve implements the infoschemaRetriever interface
 func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.table.Name.O == infoschema.TableClusterInfo && !hasPriv(sctx, mysql.ProcessPriv) {
+		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
 	if e.retrieved {
 		return nil, nil
 	}
@@ -94,11 +98,11 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableStatistics:
 			e.setDataForStatistics(sctx, dbs)
 		case infoschema.TableTables:
-			err = e.setDataFromTables(sctx, dbs)
+			err = e.setDataFromTables(ctx, sctx, dbs)
 		case infoschema.TableSequences:
 			e.setDataFromSequences(sctx, dbs)
 		case infoschema.TablePartitions:
-			err = e.setDataFromPartitions(sctx, dbs)
+			err = e.setDataFromPartitions(ctx, sctx, dbs)
 		case infoschema.TableClusterInfo:
 			err = e.dataForTiDBClusterInfo(sctx)
 		case infoschema.TableAnalyzeStatus:
@@ -143,13 +147,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.dataForTableTiFlashReplica(sctx, dbs)
 		case infoschema.TableTiKVStoreStatus:
 			err = e.dataForTiKVStoreStatus(sctx)
-		case infoschema.TableStatementsSummary,
-			infoschema.TableStatementsSummaryHistory,
-			infoschema.TableStatementsSummaryEvicted,
-			infoschema.ClusterTableStatementsSummary,
-			infoschema.ClusterTableStatementsSummaryHistory,
+		case infoschema.TableStatementsSummaryEvicted,
 			infoschema.ClusterTableStatementsSummaryEvicted:
-			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
+			err = e.setDataForStatementsSummaryEvicted(sctx)
 		case infoschema.TablePlacementPolicy:
 			err = e.setDataForPlacementPolicy(sctx)
 		case infoschema.TableClientErrorsSummaryGlobal,
@@ -188,13 +188,13 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 	return adjustColumns(ret, e.columns, e.table), nil
 }
 
-func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), "select table_id, count from mysql.stats_meta")
+func getRowCountAllTable(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, error) {
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(ctx, "select table_id, count from mysql.stats_meta")
 	if err != nil {
 		return nil, err
 	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return nil, err
 	}
@@ -213,13 +213,13 @@ type tableHistID struct {
 	histID  int64
 }
 
-func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]uint64, error) {
-	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
+func getColLengthAllTables(ctx context.Context, sctx sessionctx.Context) (map[tableHistID]uint64, error) {
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(ctx, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
 	if err != nil {
 		return nil, err
 	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +282,7 @@ var tableStatsCache = &statsCache{}
 // TableStatsCacheExpiry is the expiry time for table stats cache.
 var TableStatsCacheExpiry = 3 * time.Second
 
-func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
+func (c *statsCache) get(ctx context.Context, sctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
 	c.mu.RLock()
 	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
 		tableRows, colLength := c.tableRows, c.colLength
@@ -296,11 +296,11 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 	if time.Since(c.modifyTime) < TableStatsCacheExpiry {
 		return c.tableRows, c.colLength, nil
 	}
-	tableRows, err := getRowCountAllTable(ctx)
+	tableRows, err := getRowCountAllTable(ctx, sctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	colLength, err := getColLengthAllTables(ctx)
+	colLength, err := getColLengthAllTables(ctx, sctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -318,6 +318,24 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 		return 0, err
 	}
 	return tbl.Allocators(ctx).Get(autoid.RowIDAllocType).Base() + 1, nil
+}
+
+func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
+	pm := privilege.GetPrivilegeManager(ctx)
+	if pm == nil {
+		// internal session created with createSession doesn't has the PrivilegeManager. For most experienced cases before,
+		// we use it like this:
+		// ```
+		// checker := privilege.GetPrivilegeManager(ctx)
+		// if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+		//	  continue
+		// }
+		// do something.
+		// ```
+		// So once the privilege manager is nil, it's a signature of internal sql, so just passing the checker through.
+		return true
+	}
+	return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
 }
 
 func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) {
@@ -449,13 +467,13 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 	e.rows = append(e.rows, rows...)
 }
 
-func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []*model.DBInfo) error {
-	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
+func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
+	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx, sctx)
 	if err != nil {
 		return err
 	}
 
-	checker := privilege.GetPrivilegeManager(ctx)
+	checker := privilege.GetPrivilegeManager(sctx)
 
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
@@ -473,7 +491,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				continue
 			}
 
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 			pkType := "NONCLUSTERED"
@@ -484,7 +502,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				var autoIncID interface{}
 				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
 				if hasAutoIncID {
-					autoIncID, err = getAutoIncrementID(ctx, schema, table)
+					autoIncID, err = getAutoIncrementID(sctx, schema, table)
 					if err != nil {
 						return err
 					}
@@ -696,17 +714,17 @@ func calcCharOctLength(lenInChar int, cs string) int {
 	return lenInBytes
 }
 
-func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) error {
-	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
+func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
+	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx, sctx)
 	if err != nil {
 		return err
 	}
-	checker := privilege.GetPrivilegeManager(ctx)
+	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
 	createTimeTp := mysql.TypeDatetime
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
-			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
 				continue
 			}
 			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
@@ -1021,40 +1039,6 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 	return nil
 }
 
-func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
-	}
-	return false
-}
-
-func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
-	if !hasPriv(ctx, mysql.ProcessPriv) {
-		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
-	}
-	waits, err := ctx.GetStore().GetLockWaits()
-	if err != nil {
-		return err
-	}
-	for _, wait := range waits {
-		var digestStr interface{}
-		digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
-		if err != nil {
-			logutil.BgLogger().Warn("failed to decode resource group tag", zap.Error(err))
-			digestStr = nil
-		} else {
-			digestStr = hex.EncodeToString(digest)
-		}
-		e.rows = append(e.rows, types.MakeDatums(
-			hex.EncodeToString(wait.Key),
-			wait.Txn,
-			wait.WaitForTxn,
-			digestStr,
-		))
-	}
-	return nil
-}
-
 // DDLJobsReaderExec executes DDLJobs information retrieving.
 type DDLJobsReaderExec struct {
 	baseExecutor
@@ -1259,7 +1243,8 @@ func (e *memtableRetriever) setDataForProcessList(ctx sessionctx.Context) {
 
 func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
 	pm := privilege.GetPrivilegeManager(ctx)
-	e.rows = pm.UserPrivilegesTable()
+	// The results depend on the user querying the information.
+	e.rows = pm.UserPrivilegesTable(ctx.GetSessionVars().ActiveRoles, ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
 }
 
 func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) {
@@ -1416,8 +1401,8 @@ func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo,
 	}
 	row[9].SetInt64(region.Epoch.ConfVer)
 	row[10].SetInt64(region.Epoch.Version)
-	row[11].SetInt64(region.WrittenBytes)
-	row[12].SetInt64(region.ReadBytes)
+	row[11].SetUint64(region.WrittenBytes)
+	row[12].SetUint64(region.ReadBytes)
 	row[13].SetInt64(region.ApproximateSize)
 	row[14].SetInt64(region.ApproximateKeys)
 	if region.ReplicationStatus != nil {
@@ -1661,19 +1646,33 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 		}
 	}
 
+	// Privilege checker.
+	checker := func(db, table string) bool {
+		if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+			return pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, db, table, "", mysql.AllPrivMask)
+		}
+		return true
+	}
+
 	// Extract the tables to the initialTable.
 	for _, DB := range databases {
 		// The user didn't specified the table, extract all tables of this db to initialTable.
 		if len(tables) == 0 {
 			tbs := is.SchemaTables(model.NewCIStr(DB))
 			for _, tb := range tbs {
-				e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+				// For every db.table, check it's privileges.
+				if checker(DB, tb.Meta().Name.L) {
+					e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+				}
 			}
 		} else {
 			// The user specified the table, extract the specified tables of this db to initialTable.
 			for tb := range tables {
 				if tb, err := is.TableByName(model.NewCIStr(DB), model.NewCIStr(tb)); err == nil {
-					e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+					// For every db.table, check it's privileges.
+					if checker(DB, tb.Meta().Name.L) {
+						e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+					}
 				}
 			}
 		}
@@ -1907,27 +1906,13 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 	e.rows = rows
 }
 
-func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, tableName string) error {
-	user := ctx.GetSessionVars().User
-	isSuper := false
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
+func (e *memtableRetriever) setDataForStatementsSummaryEvicted(ctx sessionctx.Context) error {
+	if !hasPriv(ctx, mysql.ProcessPriv) {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
-	switch tableName {
-	case infoschema.TableStatementsSummary,
-		infoschema.ClusterTableStatementsSummary:
-		e.rows = stmtsummary.StmtSummaryByDigestMap.ToCurrentDatum(user, isSuper)
-	case infoschema.TableStatementsSummaryHistory,
-		infoschema.ClusterTableStatementsSummaryHistory:
-		e.rows = stmtsummary.StmtSummaryByDigestMap.ToHistoryDatum(user, isSuper)
-	case infoschema.TableStatementsSummaryEvicted,
-		infoschema.ClusterTableStatementsSummaryEvicted:
-		e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
-	}
-	switch tableName {
-	case infoschema.ClusterTableStatementsSummary,
-		infoschema.ClusterTableStatementsSummaryHistory,
-		infoschema.ClusterTableStatementsSummaryEvicted:
+	e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
+	switch e.table.Name.O {
+	case infoschema.ClusterTableStatementsSummaryEvicted:
 		rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
 		if err != nil {
 			return err
@@ -1942,12 +1927,12 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	var rows [][]types.Datum
 	for _, bundle := range is.RuleBundles() {
-		id, err := placement.ObjectIDFromGroupID(bundle.ID)
+		id, err := bundle.ObjectID()
 		if err != nil {
+			if err == placement.ErrInvalidBundleIDFormat {
+				continue
+			}
 			return errors.Wrapf(err, "Restore bundle %s failed", bundle.ID)
-		}
-		if id == 0 {
-			continue
 		}
 		// Currently, only partitions have placement rules.
 		var tbName, dbName, ptName string
@@ -2095,8 +2080,8 @@ func (e *memtableRetriever) setDataForDeadlock(ctx sessionctx.Context) error {
 	if !hasPriv(ctx, mysql.ProcessPriv) {
 		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
-
-	e.rows = deadlockhistory.GlobalDeadlockHistory.GetAllDatum()
+	infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	e.rows = deadlockhistory.GlobalDeadlockHistory.GetAllDatum(infoSchema)
 	return nil
 }
 
@@ -2111,6 +2096,90 @@ func (e *memtableRetriever) setDataForClusterDeadlock(ctx sessionctx.Context) er
 	}
 	e.rows = rows
 	return nil
+}
+
+func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
+	if !hasPriv(ctx, mysql.ProcessPriv) {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
+	waits, err := ctx.GetStore().GetLockWaits()
+	if err != nil {
+		return err
+	}
+	for _, wait := range waits {
+		var digestStr interface{}
+		digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to decode resource group tag", zap.Error(err))
+			digestStr = nil
+		} else {
+			digestStr = hex.EncodeToString(digest)
+		}
+		infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
+		var decodedKeyStr interface{} = nil
+		decodedKey, err := keydecoder.DecodeKey(wait.Key, infoSchema)
+		if err == nil {
+			decodedKeyBytes, err := json.Marshal(decodedKey)
+			if err != nil {
+				logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
+			} else {
+				decodedKeyStr = string(decodedKeyBytes)
+			}
+		} else {
+			logutil.BgLogger().Warn("decode key failed", zap.Error(err))
+		}
+		e.rows = append(e.rows, types.MakeDatums(
+			strings.ToUpper(hex.EncodeToString(wait.Key)),
+			decodedKeyStr,
+			wait.Txn,
+			wait.WaitForTxn,
+			digestStr,
+		))
+	}
+	return nil
+}
+
+type stmtSummaryTableRetriever struct {
+	dummyCloser
+	table     *model.TableInfo
+	columns   []*model.ColumnInfo
+	retrieved bool
+}
+
+// retrieve implements the infoschemaRetriever interface
+func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.retrieved {
+		return nil, nil
+	}
+	e.retrieved = true
+	user := sctx.GetSessionVars().User
+	isSuper := false
+	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
+	}
+
+	var err error
+	var instanceAddr string
+	switch e.table.Name.O {
+	case infoschema.ClusterTableStatementsSummary,
+		infoschema.ClusterTableStatementsSummaryHistory:
+		instanceAddr, err = infoschema.GetInstanceAddr(sctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	reader := stmtsummary.NewStmtSummaryReader(user, isSuper, e.columns, instanceAddr)
+	var rows [][]types.Datum
+	switch e.table.Name.O {
+	case infoschema.TableStatementsSummary,
+		infoschema.ClusterTableStatementsSummary:
+		rows = reader.GetStmtSummaryCurrentRows()
+	case infoschema.TableStatementsSummaryHistory,
+		infoschema.ClusterTableStatementsSummaryHistory:
+		rows = reader.GetStmtSummaryHistoryRows()
+	}
+
+	return rows, nil
 }
 
 type hugeMemTableRetriever struct {
@@ -2154,6 +2223,9 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 }
 
 func adjustColumns(input [][]types.Datum, outColumns []*model.ColumnInfo, table *model.TableInfo) [][]types.Datum {
+	if table.Name.O == infoschema.TableStatementsSummary {
+		return input
+	}
 	if len(outColumns) == len(table.Columns) {
 		return input
 	}

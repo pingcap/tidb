@@ -634,7 +634,7 @@ func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSc
 	if !ok {
 		return true
 	}
-	leaderDC, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+	leaderDC, ok := bundle.GetLeaderDC(placement.DCLabelKey)
 	if !ok {
 		return true
 	}

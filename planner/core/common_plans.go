@@ -271,6 +271,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		if err != nil {
 			return errors.Trace(err)
 		}
+		sctx.GetSessionVars().StmtCtx.IsStaleness = true
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
@@ -1000,7 +1001,7 @@ type Explain struct {
 func GetExplainRowsForPlan(plan Plan) (rows [][]string) {
 	explain := &Explain{
 		TargetPlan: plan,
-		Format:     ast.ExplainFormatROW,
+		Format:     types.ExplainFormatROW,
 		Analyze:    false,
 	}
 	if err := explain.RenderResult(); err != nil {
@@ -1013,17 +1014,20 @@ func GetExplainRowsForPlan(plan Plan) (rows [][]string) {
 func (e *Explain) prepareSchema() error {
 	var fieldNames []string
 	format := strings.ToLower(e.Format)
-
+	if format == types.ExplainFormatTraditional {
+		format = types.ExplainFormatROW
+		e.Format = types.ExplainFormatROW
+	}
 	switch {
-	case (format == ast.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == ast.ExplainFormatBrief):
+	case (format == types.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == types.ExplainFormatBrief):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
-	case format == ast.ExplainFormatVerbose:
+	case format == types.ExplainFormatVerbose:
 		fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
-	case format == ast.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
+	case format == types.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
-	case format == ast.ExplainFormatDOT:
+	case format == types.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
-	case format == ast.ExplainFormatHint:
+	case format == types.ExplainFormatHint:
 		fieldNames = []string{"hint"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
@@ -1048,7 +1052,7 @@ func (e *Explain) RenderResult() error {
 		return nil
 	}
 	switch strings.ToLower(e.Format) {
-	case ast.ExplainFormatROW, ast.ExplainFormatBrief, ast.ExplainFormatVerbose:
+	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose:
 		if e.Rows == nil || e.Analyze {
 			e.explainedPlans = map[int]bool{}
 			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
@@ -1060,11 +1064,11 @@ func (e *Explain) RenderResult() error {
 				return err
 			}
 		}
-	case ast.ExplainFormatDOT:
+	case types.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
 			e.prepareDotInfo(physicalPlan)
 		}
-	case ast.ExplainFormatHint:
+	case types.ExplainFormatHint:
 		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
 		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
@@ -1217,7 +1221,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 	if runtimeStatsColl.ExistsRootStats(explainID) {
 		rootStats := runtimeStatsColl.GetRootStats(explainID)
 		analyzeInfo = rootStats.String()
-		actRows = fmt.Sprint(rootStats.GetActRows())
+		actRows = strconv.FormatInt(rootStats.GetActRows(), 10)
 	} else {
 		actRows = "0"
 	}
@@ -1262,7 +1266,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
 	} else {
 		row = []string{id, estRows}
-		if e.Format == ast.ExplainFormatVerbose {
+		if e.Format == types.ExplainFormatVerbose {
 			row = append(row, estCost)
 		}
 		row = append(row, taskType, accessObject, operatorInfo)
@@ -1359,7 +1363,7 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 	buffer.WriteString("}\n")
 
 	for _, cop := range copTasks {
-		e.prepareTaskDot(cop.(PhysicalPlan), "cop", buffer)
+		e.prepareTaskDot(cop, "cop", buffer)
 	}
 
 	for i := range pipelines {

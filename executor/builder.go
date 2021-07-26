@@ -389,10 +389,10 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 
 	colNames := make([]string, 0, len(is.IdxCols))
 	for i := range is.IdxCols {
-		colNames = append(colNames, is.Columns[i].Name.O)
+		colNames = append(colNames, is.Columns[i].Name.L)
 	}
-	if cols, missingColName := table.FindCols(e.table.Cols(), colNames, true); missingColName != "" {
-		b.err = plannercore.ErrUnknownColumn.GenWithStack("Unknown column %s", missingColName)
+	if cols, missingColOffset := table.FindColumns(e.table.Cols(), colNames, true); missingColOffset >= 0 {
+		b.err = plannercore.ErrUnknownColumn.GenWithStack("Unknown column %s", is.Columns[missingColOffset].Name.O)
 	} else {
 		e.idxTblCols = cols
 	}
@@ -627,6 +627,20 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		tblID2Handle:     v.TblID2Handle,
 		partitionedTable: v.PartitionedTable,
 	}
+
+	// filter out temporary tables because they do not store any record in tikv and should not write any lock
+	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	for tblID := range e.tblID2Handle {
+		tblInfo, ok := is.TableByID(tblID)
+		if !ok {
+			b.err = errors.Errorf("Can not get table %d", tblID)
+		}
+
+		if tblInfo.Meta().TempTableType != model.TempTableNone {
+			delete(e.tblID2Handle, tblID)
+		}
+	}
+
 	if len(e.partitionedTable) > 0 {
 		schema := v.Schema()
 		e.tblID2PIDColumnIndex = make(map[int64]int)
@@ -970,7 +984,7 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 	}
 	if v.Analyze {
 		if b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
-			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 		}
 		explainExec.analyzeExec = b.build(v.TargetPlan)
 	}
@@ -1572,11 +1586,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableTiFlashReplica),
 			strings.ToLower(infoschema.TableTiDBServersInfo),
 			strings.ToLower(infoschema.TableTiKVStoreStatus),
-			strings.ToLower(infoschema.TableStatementsSummary),
-			strings.ToLower(infoschema.TableStatementsSummaryHistory),
 			strings.ToLower(infoschema.TableStatementsSummaryEvicted),
-			strings.ToLower(infoschema.ClusterTableStatementsSummary),
-			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryEvicted),
 			strings.ToLower(infoschema.TablePlacementPolicy),
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
@@ -1591,6 +1601,18 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &memtableRetriever{
+					table:   v.Table,
+					columns: v.Columns,
+				},
+			}
+		case strings.ToLower(infoschema.TableStatementsSummary),
+			strings.ToLower(infoschema.TableStatementsSummaryHistory),
+			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
+			strings.ToLower(infoschema.ClusterTableStatementsSummary):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				table:        v.Table,
+				retriever: &stmtSummaryTableRetriever{
 					table:   v.Table,
 					columns: v.Columns,
 				},
@@ -2125,6 +2147,18 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+	count, modifyCount, err := statsHandle.StatsMetaCountAndModifyCount(task.TableID.GetStatisticsID())
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	failpoint.Inject("injectBaseCount", func(val failpoint.Value) {
+		count = int64(val.(int))
+	})
+	failpoint.Inject("injectBaseModifyCount", func(val failpoint.Value) {
+		modifyCount = int64(val.(int))
+	})
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2146,6 +2180,8 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		indexes:                 availableIdx,
 		AnalyzeInfo:             task.AnalyzeInfo,
 		schemaForVirtualColEval: schemaForVirtualColEval,
+		baseCount:               count,
+		baseModifyCnt:           modifyCount,
 	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
@@ -4149,7 +4185,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 		chk.AppendDatum(i, &d)
 		return nil
 	}
-	return rowcodec.NewChunkDecoder(reqCols, pkCols, defVal, ctx.GetSessionVars().TimeZone)
+	return rowcodec.NewChunkDecoder(reqCols, pkCols, defVal, ctx.GetSessionVars().Location())
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
@@ -4182,6 +4218,13 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		partTblID:    plan.PartTblID,
 		columns:      plan.Columns,
 	}
+
+	if plan.TblInfo.TempTableType != model.TempTableNone {
+		// Temporary table should not do any lock operations
+		e.lock = false
+		e.waitTime = 0
+	}
+
 	if e.lock {
 		b.hasLock = true
 	}
@@ -4334,17 +4377,23 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) Executor {
 		return nil
 	}
 
-	// 2. Build iterInTbl.
+	// 2. Build tables to store intermediate results.
 	chkSize := b.ctx.GetSessionVars().MaxChunkSize
 	tps := seedExec.base().retFieldTypes
-	iterOutTbl := cteutil.NewStorageRowContainer(tps, chkSize)
-	if err := iterOutTbl.OpenAndRef(); err != nil {
-		b.err = err
-		return nil
-	}
-
 	var resTbl cteutil.Storage
 	var iterInTbl cteutil.Storage
+	var iterOutTbl cteutil.Storage
+
+	if v.RecurPlan != nil {
+		// For non-recursive CTE, the result will be put into resTbl directly.
+		// So no need to build iterOutTbl.
+		iterOutTbl := cteutil.NewStorageRowContainer(tps, chkSize)
+		if err := iterOutTbl.OpenAndRef(); err != nil {
+			b.err = err
+			return nil
+		}
+	}
+
 	storageMap, ok := b.ctx.GetSessionVars().StmtCtx.CTEStorageMap.(map[int]*CTEStorages)
 	if !ok {
 		b.err = errors.New("type assertion for CTEStorageMap failed")

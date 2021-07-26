@@ -33,7 +33,7 @@ func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
 	sr.rootPlanID = 1234
 	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "a"}}, 0)
 
-	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 	t := uint64(1)
 	sr.selectResp = &tipb.SelectResponse{
 		ExecutionSummaries: []*tipb.ExecutorExecutionSummary{

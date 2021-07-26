@@ -12,18 +12,3 @@
 // limitations under the License.
 
 package util_test
-
-import (
-	. "github.com/pingcap/check"
-)
-
-var _ = Suite(&testProcessInfoSuite{})
-
-type testProcessInfoSuite struct {
-}
-
-func (s *testProcessInfoSuite) SetUpSuite(c *C) {
-}
-
-func (s *testProcessInfoSuite) TearDownSuite(c *C) {
-}

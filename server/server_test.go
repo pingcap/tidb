@@ -131,14 +131,9 @@ func (cli *testServerClient) runTests(c *C, overrider configOverrider, tests ...
 		c.Assert(err, IsNil)
 	}()
 
-	_, err = db.Exec("DROP TABLE IF EXISTS test")
-	c.Assert(err, IsNil)
-
 	dbt := &DBTest{c, db}
 	for _, test := range tests {
 		test(dbt)
-		// fixed query error
-		_, _ = dbt.db.Exec("DROP TABLE IF EXISTS test")
 	}
 }
 
@@ -2084,7 +2079,7 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *C) {
 				}
 				rows.Close()
 				dbt.Check(newErrors, Equals, errors)
-				dbt.Check(newWarnings, Equals, warnings)
+				dbt.Check(newWarnings, Equals, warnings, Commentf("source=information_schema.%s code=%d statement=%s", tbl, test.errCode, test.stmt))
 			}
 		}
 

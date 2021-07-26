@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 func TestT(t *testing.T) {
@@ -62,7 +62,7 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	domain  *domain.Domain
 	*parser.Parser
@@ -115,7 +115,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 	useMockTikv := *mockTikv
 	if useMockTikv {
 		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.WithClusterInspector(func(c testutils.Cluster) {
 				mockstore.BootstrapWithSingleStore(c)
 				s.cluster = c
 			}),

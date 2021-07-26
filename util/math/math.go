@@ -49,11 +49,6 @@ func StrLenOfInt64Fast(x int64) int {
 	return size + StrLenOfUint64Fast(uint64(Abs(x)))
 }
 
-// Log2 is used for export purposes
-func Log2(x float64) float64 {
-	return math.Log2(x)
-}
-
 // IsFinite reports whether f is neither NaN nor an infinity.
 func IsFinite(f float64) bool {
 	return !math.IsNaN(f - f)

@@ -468,7 +468,7 @@ func (e *maxMin4UintSliding) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		if isNull {
 			continue
 		}
-		err = p.deque.Enqueue(uint64(i)+e.start, input)
+		err = p.deque.Enqueue(uint64(i)+e.start, uint64(input))
 		if err != nil {
 			return 0, err
 		}
