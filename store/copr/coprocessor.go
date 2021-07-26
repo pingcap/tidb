@@ -405,7 +405,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
 			respChan:        it.respChan,
 			finishCh:        it.finishCh,
 			vars:            it.vars,
-			kvclient:        tikv.NewClientHelper(it.store.store, &it.resolvedLocks, false),
+			kvclient:        tikv.NewClientHelper(it.store.store, &it.resolvedLocks, true),
 			memTracker:      it.memTracker,
 			replicaReadSeed: it.replicaReadSeed,
 			actionOnExceed:  it.actionOnExceed,
