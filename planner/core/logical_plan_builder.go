@@ -1266,6 +1266,12 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 
 // unionJoinFieldType finds the type which can carry the given types in Union.
 func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
+	// We ignore the pure NULL type.
+	if a.Tp == mysql.TypeNull {
+		return b
+	} else if b.Tp == mysql.TypeNull {
+		return a
+	}
 	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
 	// This logic will be intelligible when it is associated with the buildProjection4Union logic.
 	if resultTp.Tp == mysql.TypeNewDecimal {
