@@ -1579,7 +1579,10 @@
           "  └─IndexReader 1.25 root  index:IndexFullScan",
           "    └─IndexFullScan 1.25 cop[tikv] table:tn, index:a(a, b, c, d) keep order:true, stats:pseudo"
         ],
-        "Warning": null
+        "Warning": [
+          "Scalar function 'mod'(signature: ModIntSignedSigned) can not be pushed to storage layer",
+          "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
+        ]
       },
       {
         "SQL": "select /*+ LIMIT_TO_COP() */ a from tn where a > 10 limit 1",
