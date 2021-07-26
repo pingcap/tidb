@@ -1282,13 +1282,13 @@ func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
 	dbt.mustExec("insert t2 values (unhex('f09f8c80'));")
 
-	// test tidb_deadlock_history_capacity
+	// test deadlock_history_capacity
 	deadlockhistory.GlobalDeadlockHistory.Resize(10)
 	for i := 0; i < 10; i++ {
 		deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
 	}
 	form = make(url.Values)
-	form.Set("tidb_deadlock_history_capacity", "5")
+	form.Set("deadlock_history_capacity", "5")
 	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 5)
@@ -1299,13 +1299,31 @@ func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(7))
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[4].ID, Equals, uint64(11))
 	form = make(url.Values)
-	form.Set("tidb_deadlock_history_capacity", "6")
+	form.Set("deadlock_history_capacity", "6")
 	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
 	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 6)
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(7))
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[5].ID, Equals, uint64(12))
+
+	// test deadlock_history_collect_retryable
+	form = make(url.Values)
+	form.Set("deadlock_history_collect_retryable", "true")
+	resp, err = ts.formStatus("/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(config.GetGlobalConfig().PessimisticTxn.DeadlockHistoryCollectRetryable, IsTrue)
+	form = make(url.Values)
+	form.Set("deadlock_history_collect_retryable", "false")
+	resp, err = ts.formStatus("/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(config.GetGlobalConfig().PessimisticTxn.DeadlockHistoryCollectRetryable, IsFalse)
+	form = make(url.Values)
+	form.Set("deadlock_history_collect_retryable", "123")
+	resp, err = ts.formStatus("/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, 400)
+
 	// restore original value.
 	config.GetGlobalConfig().CheckMb4ValueInUTF8 = true
 }
