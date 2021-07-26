@@ -326,6 +326,19 @@ func (la *LogicalAggregation) HasDistinct() bool {
 	return false
 }
 
+// HasCompleteModeAgg shows whether LogicalAggregation has functions with CompleteMode.
+func (la *LogicalAggregation) HasCompleteModeAgg() bool {
+	// not all of the AggFunctions has the same AggMode
+	// for example: when cascades planner on, after PushAggDownGather transformed,
+	// some aggFunctions are CompleteMode, and the others are FinalMode
+	for _, aggFunc := range la.AggFuncs {
+		if aggFunc.Mode == aggregation.CompleteMode {
+			return true
+		}
+	}
+	return false
+}
+
 // CopyAggHints copies the aggHints from another LogicalAggregation.
 func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
 	// TODO: Copy the hint may make the un-applicable hint throw the
@@ -391,6 +404,7 @@ func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
 type LogicalSelection struct {
 	baseLogicalPlan
 
+	// Conditions represents a list of AND conditions.
 	// Originally the WHERE or ON condition is parsed into a single expression,
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
@@ -495,12 +509,13 @@ type DataSource struct {
 	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
 	possibleAccessPaths []*util.AccessPath
 
+	// isPartition represents whether the data source is a partition.
 	// The data source may be a partition, rather than a real table.
 	isPartition     bool
 	physicalTableID int64
 	partitionNames  []model.CIStr
 
-	// handleCol represents the handle column for the datasource, either the
+	// handleCols represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
 	// handleCol *expression.Column
 	handleCols HandleCols
@@ -558,7 +573,7 @@ type LogicalTableScan struct {
 // LogicalIndexScan is the logical index scan operator for TiKV.
 type LogicalIndexScan struct {
 	logicalSchemaProducer
-	// DataSource should be read-only here.
+	// Source should be read-only here.
 	Source       *DataSource
 	IsDoubleRead bool
 
@@ -1191,7 +1206,7 @@ type LogicalShowDDLJobs struct {
 // CTEClass holds the information and plan for a CTE. Most of the fields in this struct are the same as cteInfo.
 // But the cteInfo is used when building the plan, and CTEClass is used also for building the executor.
 type CTEClass struct {
-	// The union between seed part and recursive part is DISTINCT or DISTINCT ALL.
+	// IsDistinct represents the union between seed part and recursive part is DISTINCT or DISTINCT ALL.
 	IsDistinct bool
 	// seedPartLogicalPlan and recursivePartLogicalPlan are the logical plans for the seed part and recursive part of this CTE.
 	seedPartLogicalPlan      LogicalPlan
@@ -1201,7 +1216,7 @@ type CTEClass struct {
 	recursivePartPhysicalPlan PhysicalPlan
 	// cteTask is the physical plan for this CTE, is a wrapper of the PhysicalCTE.
 	cteTask task
-	// storageID for this CTE.
+	// IDForStorage represents the storageID for this CTE.
 	IDForStorage int
 	// optFlag is the optFlag for the whole CTE.
 	optFlag  uint64
