@@ -193,6 +193,35 @@ func (s *Server) startHTTPServer() {
 	serverMux.HandleFunc("/debug/pprof/profile", tracecpu.ProfileHTTPHandler)
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	ballast := make([]byte, 0)
+	serverMux.HandleFunc("/debug/ballast-object-sz", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, err := w.Write([]byte(strconv.Itoa(len(ballast))))
+			terror.Log(err)
+		case http.MethodPost:
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				terror.Log(err)
+				return
+			}
+			newSz, err := strconv.Atoi(string(body))
+			if err != nil || newSz < 0 {
+				w.WriteHeader(http.StatusBadRequest)
+				var errStr string
+				if err != nil {
+					errStr = err.Error()
+				} else {
+					errStr = fmt.Sprintf("input new sz cannot smaller than zero: %d", newSz)
+				}
+				if _, err := w.Write([]byte(errStr)); err != nil {
+					terror.Log(err)
+				}
+				return
+			}
+			ballast = make([]byte, newSz)
+		}
+	})
 	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
