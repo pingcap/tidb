@@ -8710,20 +8710,6 @@ func (s *testSuite) TestEmptyTableSampleTemporaryTable(c *C) {
 	rs.Check(testkit.Rows())
 	tk.MustExec("commit")
 }
-<<<<<<< HEAD
-=======
-
-func (s *testSuite) TestIssue25506(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tbl_3, tbl_23")
-	tk.MustExec("create table tbl_3 (col_15 bit(20))")
-	tk.MustExec("insert into tbl_3 values (0xFFFF)")
-	tk.MustExec("insert into tbl_3 values (0xFF)")
-	tk.MustExec("create table tbl_23 (col_15 bit(15))")
-	tk.MustExec("insert into tbl_23 values (0xF)")
-	tk.MustQuery("(select col_15 from tbl_23) union all (select col_15 from tbl_3 for update) order by col_15").Check(testkit.Rows("\x00\x00\x0F", "\x00\x00\xFF", "\x00\xFF\xFF"))
-}
 
 func (s *testSuite) TestIssue26532(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -8733,4 +8719,3 @@ func (s *testSuite) TestIssue26532(c *C) {
 	tk.MustQuery("select greatest(\"2020-01-01 01:01:01\" ,\"2019-01-01 01:01:01\" )union select null;").Sort().Check(testkit.Rows("2020-01-01 01:01:01", "<nil>"))
 	tk.MustQuery("select least(\"2020-01-01 01:01:01\" , \"2019-01-01 01:01:01\" )union select null;").Sort().Check(testkit.Rows("2019-01-01 01:01:01", "<nil>"))
 }
->>>>>>> dd2fadb19... expression, executor: fix type infer for greatest/leastest(datetime) (#26533)
