@@ -74,6 +74,7 @@ func init() {
 		"testPlanSerialSuite.TestPartitionWithVariedDatasources",
 		"testPrivilegeSuite.TestSecurityEnhancedModeInfoschema",
 		"HTTPHandlerTestSuite.TestZipInfoForSQL",
+		"HTTPHandlerTestSuite.TestBinlogRecover",
 		"ConnTestSuite.TestConnExecutionTimeout",
 		"ConnTestSuite.TestTiFlashFallback",
 		"tidbTestTopSQLSuite.TestTopSQLCPUProfile",
@@ -88,6 +89,12 @@ func init() {
 		"testBatchCopSuite.TestStoreSwitchPeer",
 		"testSequenceSuite.TestSequenceFunction",
 		"testSuiteP2.TestUnion",
+		"testVectorizeSuite1.TestVectorizedBuiltinTimeFuncGenerated",
+		"testSuiteJoin3.TestVectorizedShuffleMergeJoin",
+		"testSuite1.TestClusterIndexAnalyze",
+		"testSuiteJoin3.TestVectorizedMergeJoin",
+		"testFastAnalyze.TestAnalyzeFastSample",
+		"testBypassSuite.TestLatch",
 	}
 	for _, v := range tmp {
 		allowList[v] = struct{}{}
@@ -136,7 +143,7 @@ func main() {
 			os.Exit(-2)
 		}
 
-		if dur > 3*time.Second {
+		if dur > 4*time.Second {
 			if inAllowList(line[:offset]) {
 				continue
 			}
