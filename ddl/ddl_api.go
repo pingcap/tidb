@@ -1163,7 +1163,7 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	nameLower := strings.ToLower(name)
 	if namesMap[nameLower] {
 		if foreign {
-			return infoschema.ErrCannotAddForeign
+			return ErrFkDupName.GenWithStackByArgs(name)
 		}
 		return ErrDupKeyName.GenWithStack("duplicate key name %s", name)
 	}
@@ -3575,8 +3575,16 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg 
 		return true, "conversion between char and varchar string needs reorganization"
 	}
 
-	if toFlen > 0 && toFlen < originFlen {
-		return true, fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
+	if toFlen > 0 && toFlen != originFlen {
+		if toFlen < originFlen {
+			return true, fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
+		}
+
+		// Due to the behavior of padding \x00 at binary type, we need to reorg when binary length changed
+		isBinaryType := func(tp *types.FieldType) bool { return tp.Tp == mysql.TypeString && types.IsBinaryStr(tp) }
+		if isBinaryType(origin) && isBinaryType(to) {
+			return true, "can't change binary types of different length"
+		}
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
 		return true, fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
@@ -5300,6 +5308,13 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	}
 	if t.Meta().TempTableType != model.TempTableNone {
 		return infoschema.ErrCannotAddForeign
+	}
+
+	// Check the uniqueness of the FK.
+	for _, fk := range t.Meta().ForeignKeys {
+		if fk.Name.L == fkName.L {
+			return ErrFkDupName.GenWithStackByArgs(fkName.O)
+		}
 	}
 
 	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols(), t.Meta())
