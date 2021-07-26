@@ -56,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
-	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
@@ -2065,46 +2064,46 @@ func (e *memtableRetriever) setDataForClusterDeadlock(ctx sessionctx.Context) er
 	return nil
 }
 
-func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
-	if !hasPriv(ctx, mysql.ProcessPriv) {
-		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
-	}
-	waits, err := ctx.GetStore().GetLockWaits()
-	if err != nil {
-		return err
-	}
-	for _, wait := range waits {
-		var digestStr interface{}
-		digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
-		if err != nil {
-			logutil.BgLogger().Warn("failed to decode resource group tag", zap.Error(err))
-			digestStr = nil
-		} else {
-			digestStr = hex.EncodeToString(digest)
-		}
-		infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
-		var decodedKeyStr interface{} = nil
-		decodedKey, err := keydecoder.DecodeKey(wait.Key, infoSchema)
-		if err == nil {
-			decodedKeyBytes, err := json.Marshal(decodedKey)
-			if err != nil {
-				logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
-			} else {
-				decodedKeyStr = string(decodedKeyBytes)
-			}
-		} else {
-			logutil.BgLogger().Warn("decode key failed", zap.Error(err))
-		}
-		e.rows = append(e.rows, types.MakeDatums(
-			strings.ToUpper(hex.EncodeToString(wait.Key)),
-			decodedKeyStr,
-			wait.Txn,
-			wait.WaitForTxn,
-			digestStr,
-		))
-	}
-	return nil
-}
+//func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
+//	if !hasPriv(ctx, mysql.ProcessPriv) {
+//		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+//	}
+//	waits, err := ctx.GetStore().GetLockWaits()
+//	if err != nil {
+//		return err
+//	}
+//	for _, wait := range waits {
+//		var digestStr interface{}
+//		digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
+//		if err != nil {
+//			logutil.BgLogger().Warn("failed to decode resource group tag", zap.Error(err))
+//			digestStr = nil
+//		} else {
+//			digestStr = hex.EncodeToString(digest)
+//		}
+//		infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
+//		var decodedKeyStr interface{} = nil
+//		decodedKey, err := keydecoder.DecodeKey(wait.Key, infoSchema)
+//		if err == nil {
+//			decodedKeyBytes, err := json.Marshal(decodedKey)
+//			if err != nil {
+//				logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
+//			} else {
+//				decodedKeyStr = string(decodedKeyBytes)
+//			}
+//		} else {
+//			logutil.BgLogger().Warn("decode key failed", zap.Error(err))
+//		}
+//		e.rows = append(e.rows, types.MakeDatums(
+//			strings.ToUpper(hex.EncodeToString(wait.Key)),
+//			decodedKeyStr,
+//			wait.Txn,
+//			wait.WaitForTxn,
+//			digestStr,
+//		))
+//	}
+//	return nil
+//}
 
 type stmtSummaryTableRetriever struct {
 	dummyCloser
@@ -2270,6 +2269,10 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 	}
 
 	if !r.initialized {
+		if !hasPriv(sctx, mysql.ProcessPriv) {
+			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		}
+
 		r.initialized = true
 		var err error
 		r.lockWaits, err = sctx.GetStore().GetLockWaits()
@@ -2289,7 +2292,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 		var needDigest bool
 		var needSQLText bool
 		for _, c := range r.columns {
-			if c.Name.O == infoschema.DataLockWaitsColumnSQLDigestText || c.Name.O == infoschema.DataLockWaitsColumnSQLDigest {
+			if c.Name.O == infoschema.DataLockWaitsColumnSQLDigestText {
 				needSQLText = true
 			} else if c.Name.O == infoschema.DataLockWaitsColumnSQLDigest {
 				needDigest = true
@@ -2298,7 +2301,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 
 		var digests []string
 		if needDigest || needSQLText {
-			digests = make([]string, 0, end-start)
+			digests = make([]string, end-start)
 			for i, lockWait := range r.lockWaits {
 				digest, err := resourcegrouptag.DecodeResourceGroupTag(lockWait.ResourceGroupTag)
 				if err != nil {
@@ -2316,9 +2319,12 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 				sqlRetriever.SQLDigestsMap[digest] = ""
 			}
 			err := sqlRetriever.RetrieveGlobal(ctx, sctx)
-			return errors.Trace(err)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 
+		res = make([][]types.Datum, 0, end-start)
 		for rowIdx, lockWait := range r.lockWaits[start:end] {
 			row := make([]types.Datum, 0, len(r.columns))
 
@@ -2333,7 +2339,12 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 				case infoschema.DataLockWaitsColumnSQLDigest:
 					row = append(row, types.NewDatum(digests[rowIdx]))
 				case infoschema.DataLockWaitsColumnSQLDigestText:
-					row = append(row, types.NewDatum(sqlRetriever.SQLDigestsMap[digests[rowIdx]]))
+					text := sqlRetriever.SQLDigestsMap[digests[rowIdx]]
+					if len(text) > 0 {
+						row = append(row, types.NewDatum(text))
+					} else {
+						row = append(row, types.NewDatum(nil))
+					}
 				default:
 					row = append(row, types.NewDatum(nil))
 				}
