@@ -291,7 +291,8 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) erro
 		infoschema.ClusterTableStatementsSummary,
 		infoschema.ClusterTableStatementsSummaryHistory,
 		infoschema.ClusterTableSlowLog,
-		infoschema.TableTiDBTrx:
+		infoschema.TableTiDBTrx,
+		infoschema.TableDataLockWaits:
 	default:
 		return nil
 	}

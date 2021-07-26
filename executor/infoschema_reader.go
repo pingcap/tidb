@@ -30,6 +30,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -160,8 +161,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForDeadlock(sctx)
 		case infoschema.ClusterTableDeadlocks:
 			err = e.setDataForClusterDeadlock(sctx)
-		case infoschema.TableDataLockWaits:
-			err = e.setDataForTableDataLockWaits(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -1033,33 +1032,6 @@ func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
 		return true
 	}
 	return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
-}
-
-func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
-	if !hasPriv(ctx, mysql.ProcessPriv) {
-		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
-	}
-	waits, err := ctx.GetStore().GetLockWaits()
-	if err != nil {
-		return err
-	}
-	for _, wait := range waits {
-		var digestStr interface{}
-		digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
-		if err != nil {
-			logutil.BgLogger().Warn("failed to decode resource group tag", zap.Error(err))
-			digestStr = nil
-		} else {
-			digestStr = hex.EncodeToString(digest)
-		}
-		e.rows = append(e.rows, types.MakeDatums(
-			hex.EncodeToString(wait.Key),
-			wait.Txn,
-			wait.WaitForTxn,
-			digestStr,
-		))
-	}
-	return nil
 }
 
 // DDLJobsReaderExec executes DDLJobs information retrieving.
@@ -2225,6 +2197,103 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 					row = append(row, e.txnInfo[i].ToDatum(c.Name.O))
 				}
 			}
+			res = append(res, row)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return res, nil
+}
+
+type dataLockWaitsTableRetriever struct {
+	dummyCloser
+	batchRetrieverHelper
+	table       *model.TableInfo
+	columns     []*model.ColumnInfo
+	lockWaits   []*deadlock.WaitForEntry
+	initialized bool
+}
+
+func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if r.retrieved {
+		return nil, nil
+	}
+
+	if !r.initialized {
+		r.initialized = true
+		var err error
+		r.lockWaits, err = sctx.GetStore().GetLockWaits()
+		if err != nil {
+			r.retrieved = true
+			return nil, err
+		}
+
+		r.batchRetrieverHelper.totalRows = len(r.lockWaits)
+		r.batchRetrieverHelper.batchSize = 1024
+	}
+
+	var res [][]types.Datum
+
+	err := r.nextBatch(func(start, end int) error {
+		// Before getting rows, collect the SQL digests that needs to be retrieved first.
+		var needDigest bool
+		var needSQLText bool
+		for _, c := range r.columns {
+			if c.Name.O == infoschema.DataLockWaitsColumnSQLDigestText || c.Name.O == infoschema.DataLockWaitsColumnSQLDigest {
+				needSQLText = true
+			} else if c.Name.O == infoschema.DataLockWaitsColumnSQLDigest {
+				needDigest = true
+			}
+		}
+
+		var digests []string
+		if needDigest || needSQLText {
+			digests = make([]string, 0, end-start)
+			for i, lockWait := range r.lockWaits {
+				digest, err := resourcegrouptag.DecodeResourceGroupTag(lockWait.ResourceGroupTag)
+				if err != nil {
+					logutil.BgLogger().Warn("failed to decode resource group tag", zap.Error(err))
+				} else {
+					digests[i] = hex.EncodeToString(digest)
+				}
+			}
+		}
+
+		var sqlRetriever *SQLDigestTextRetriever
+		if needSQLText {
+			sqlRetriever = NewSQLDigestTextRetriever()
+			for _, digest := range digests {
+				sqlRetriever.SQLDigestsMap[digest] = ""
+			}
+			err := sqlRetriever.RetrieveGlobal(ctx, sctx)
+			return errors.Trace(err)
+		}
+
+		for rowIdx, lockWait := range r.lockWaits[start:end] {
+			row := make([]types.Datum, 0, len(r.columns))
+
+			for _, col := range r.columns {
+				switch col.Name.O {
+				case infoschema.DataLockWaitsColumnKey:
+					row = append(row, types.NewDatum(strings.ToUpper(hex.EncodeToString(lockWait.Key))))
+				case infoschema.DataLockWaitsColumnTrxID:
+					row = append(row, types.NewDatum(lockWait.Txn))
+				case infoschema.DataLockWaitsColumnCurrentHoldingTrxID:
+					row = append(row, types.NewDatum(lockWait.WaitForTxn))
+				case infoschema.DataLockWaitsColumnSQLDigest:
+					row = append(row, types.NewDatum(digests[rowIdx]))
+				case infoschema.DataLockWaitsColumnSQLDigestText:
+					row = append(row, types.NewDatum(sqlRetriever.SQLDigestsMap[digests[rowIdx]]))
+				default:
+					row = append(row, types.NewDatum(nil))
+				}
+			}
+
 			res = append(res, row)
 		}
 

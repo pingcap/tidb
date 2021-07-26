@@ -1748,17 +1748,17 @@ func (s *testDataLockWaitSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testDataLockWaitSuite) TestDataLockWait(c *C) {
+func (s *testDataLockWaitSuite) TestDataLockWaits(c *C) {
 	_, digest1 := parser.NormalizeDigest("select * from t1 for update;")
 	_, digest2 := parser.NormalizeDigest("update t1 set f1=1 where id=2;")
 	keyHex1 := hex.EncodeToString([]byte("a"))
 	keyHex2 := hex.EncodeToString([]byte("b"))
 	tk := s.newTestKitWithRoot(c)
 	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS;").
-		Check(testkit.Rows(keyHex1+" 1 2 "+digest1.String(), keyHex2+" 4 5 "+digest2.String()))
+		Check(testkit.Rows(keyHex1+" 1 2 "+digest1.String()+" <nil>", keyHex2+" 4 5 "+digest2.String()+" <nil>"))
 }
 
-func (s *testDataLockWaitSuite) TestDataLockPrivilege(c *C) {
+func (s *testDataLockWaitSuite) TestDataLockWaitsPrivilege(c *C) {
 	tk := s.newTestKitWithRoot(c)
 	tk.MustExec("create user 'testuser'@'localhost'")
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
