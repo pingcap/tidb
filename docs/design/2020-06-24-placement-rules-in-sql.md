@@ -1,7 +1,7 @@
 # Defining placement rules in SQL
 
 - Author(s):     [djshow832](https://github.com/djshow832) (Ming Zhang), [morgo](https://github.com/morgo) (Morgan Tocker)
-- Last updated:  2021-07-19
+- Last updated:  2021-07-26
 - Discussion at: https://docs.google.com/document/d/18Kdhi90dv33muF9k_VAIccNLeGf-DdQyUc8JlWF9Gok
 
 ## Table of Contents
@@ -71,6 +71,8 @@ Using a `PLACEMENT POLICY` will be recommended for compliance requirements, sinc
 
 Both syntaxes are considered [`table_option`](https://dev.mysql.com/doc/refman/8.0/en/alter-table.html)s, and available in both `CREATE TABLE` and `ALTER TABLE` contexts.
 
+The two methods **are mutually exclusive**. Specifying both in a `CREATE`/`ALTER` statement will result in an error. Specifying a `PLACEMENT POLICY` on a table with direct assignment options will clear those options.
+
 #### Direct Assignment
 
 Creating a new table with directly assigned constraints. The leader is in `us-east-1` region, the followers are in `us-east-1` and `us-east-2`:
@@ -79,7 +81,7 @@ Creating a new table with directly assigned constraints. The leader is in `us-ea
 CREATE TABLE t1 (
 	id INT NOT NULL PRIMARY KEY,
 	b VARCHAR(100)
-) PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2";
+) PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2";
 ```
 
 In this context, "REGION" and "REGIONS" are syntactic sugar which map to the label `region`. The following labels have special reserved words (the plural is used in contexts such as followers where multiple is possible):
@@ -95,7 +97,7 @@ To use additional labels not in this list, see "Advanced Placement" below.
 Creating a new `PLACEMENT POLICY`:
 
 ```sql
-CREATE PLACEMENT POLICY `standardplacement` PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2"
+CREATE PLACEMENT POLICY `standardplacement` PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"
 ```
 
 Creating a new table with the `PLACEMENT POLICY` assigned:
@@ -126,10 +128,11 @@ Behavior notes:
 - It is possible to update the definition of a placement policy with `ALTER PLACEMENT POLICY x LEADER_CONSTRAINTS="[+region=us-east-1]" FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,+region=us-east-2:1}";` This is modeled on the statement `ALTER VIEW` (where the view needs to be redefined). When `ALTER PLACEMENT POLICY x` is executed, all tables that use this placement policy will need to be updated in PD.
 - The statement `DROP PLACEMENT POLICY` should execute without error. If any partitions currently use this policy, they will be converted to the policy used by the table they belong to. If any tables use this policy, they will be converted to the policy used by the database they belong to. If any databases use this policy, they will be converted to the default placement policy. This is modeled on the behavior of dropping a `ROLE` that might be assigned to users.
 - The statement `RENAME PLACEMENT POLICY x TO y` renames a placement policy. The `SHOW CREATE TABLE` output of all databases, tables and partitions that used this placement policy should be updated to the new name.
+- You can not use **both** a placement policy and direct assignment. If you alter specify both in a `CREATE TABLE` or `ALTER TABLE` an error will be returned. If you specify a `PLACEMENT POLICY` in an `ALTER TABLE` statement, it will unset other placement options ({FOLLOWERS,VOTERS,LEARNERS}=N, {FOLLOWER,VOTER,LEARNER}_CONSTRAINTS, CONSTRAINTS, PRIMARY_REGION, REGIONS, SCHEDULE).
 
 #### Advanced Placement
 
-The syntax `PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2"` is the recommended syntax for users, but it only works for supported labels.
+The syntax `PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"` is the recommended syntax for users, but it only works for supported labels.
 Consider the case where a user wants to allocate placement based on the label `disk`. Using constraints is required:
 
 ```sql
@@ -139,7 +142,7 @@ ALTER PLACEMENT POLICY `standardplacement` CONSTRAINTS="[+disk=ssd]";
 The following two placement policies are considered equal:
 
 ```sql
-CREATE PLACEMENT POLICY `standardplacement1` PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4;
+CREATE PLACEMENT POLICY `standardplacement1` PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4;
 CREATE PLACEMENT POLICY `standardplacement2` LEADER_CONSTRAINTS="[+region=us-east-1]"  FOLLOWERS_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=4;
 ```
 
@@ -262,6 +265,14 @@ SHOW CREATE TABLE t3;
 CREATE TABLE `t3` (
   `a` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement]  PLACEMENT POLICY=`acdc` */;
+
+ALTER TABLE t3 PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2,us-west-1,us-west-2";
+SHOW CREATE TABLE t3;
+-->
+CREATE TABLE `t3` (
+  `a` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2,us-west-1,us-west-2" */;
+
 ```
 
 This helps ensure the highest level of compatibility between both TiDB versions and MySQL.
@@ -323,7 +334,7 @@ The only way to judge whether it’s adding a TiFlash replica is to check the la
 The roles `FOLLOWERS`, `LEARNERS` and `VOTERS` also support an optional count in *list* format. For example:
 
 ```sql
-CREATE PLACEMENT POLICY `standardplacement1` PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4;
+CREATE PLACEMENT POLICY `standardplacement1` PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4;
 CREATE PLACEMENT POLICY `standardplacement2` LEADER_CONSTRAINTS="[+region=us-east-1]"  FOLLOWERS_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=4;
 ```
 
@@ -361,7 +372,7 @@ Some common applications might be to increase the replica count on system or def
 When using either the syntactic sugar or list format for placement rules, PD is free to schedule followers/leaders/voters wherever it decides. For example:
 
 ```sql
-CREATE PLACEMENT POLICY `standardplacement1` PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4;
+CREATE PLACEMENT POLICY `standardplacement1` PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4;
 CREATE PLACEMENT POLICY `standardplacement2` LEADER_CONSTRAINTS="[+region=us-east-1]"  FOLLOWERS_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=4;
 ```
 
@@ -371,14 +382,13 @@ CREATE PLACEMENT POLICY `standardplacement2` LEADER_CONSTRAINTS="[+region=us-eas
 To address the ambiguity the concept of a "schedule" is introduced, which is the name for a strategy that PD uses to determine where to place instances. For an example:
 
 ```sql
-CREATE PLACEMENT POLICY `standardplacement1` PRIMARY REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4 SCHEDULE=SURVIVE_REGION_FAILURE();
+CREATE PLACEMENT POLICY `standardplacement1` PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4 SCHEDULE="EVEN";
 ```
 
 The following `SCHEDULE` options are available:
 
-* `BALANCED()`: This is the default schedule. Followers will be balanced on leader balance per store. So if there are 15 stores in `us-east-1` and 5 stores in `us-east-2`, you can expect that approximately 3:1 followers will be placed in `us-east-1` to `us-east-2`.
-* `SURVIVE_REGION_FAILURE()`: Followers will be balanced based on the value of the "region" label. So for example if `us-east-1` has 15 stores and `us-east-2` has 5, it doesn't matter. 2 stores will be placed in each.
-* `LOCALITY_IN_PRIMARY_REGION()`: As many followers as required to achieve quorum will be placed in the primary region. The remaining followers will use an approximately `BALANCED()` schedule.
+* `EVEN`: Followers will be balanced based on the value of the "region" label. So for example if `us-east-1` has 15 stores and `us-east-2` has 5, it doesn't matter. 2 stores will be placed in each. This is recommended for increased fault tolerance.
+* `MAJORITY_IN_PRIMARY`: As many followers as required to achieve quorum will be placed in the primary region. The remaining followers will be scheduled in the remaining secondary regions.
 
 #### Key range configuration
 
@@ -395,6 +405,7 @@ When placement policies are specified, they should be validated for correctness:
 1. The `FOLLOWERS` count should respect raft quorum expectations. The default is `2` (which creates raft groups of 3). If the number is odd, it could lead to split brain scenarios, so a warning should be issued. Warnings should also be issued for a count less than 2 (this might be useful for development environments, so an error is not returned)
 2. A policy that is impossible based on the current topology (region=us-east-1 and followers=2, but there is only 1 store in us-east-1) should be a warning. This allows for some transitional topologies.
 3. If the constraints are specified as a dictionary, specifying the count (i.e. `FOLLOWERS=n`) is prohibited.
+4. Specifying both direct placement rules (`{FOLLOWERS,VOTERS,LEARNERS}=N, {FOLLOWER,VOTER,LEARNER}_CONSTRAINTS, CONSTRAINTS, PRIMARY_REGION, REGIONS, SCHEDULE`) and a `PLACEMENT POLICY` is prohibited.
 
 #### Skipping Policy Validation
 
@@ -484,7 +495,18 @@ ALTER TABLE t1 PLACEMENT POLICY=default;
 ALTER TABLE t1 PARTITION partition_name PLACEMENT POLICY=default;
 ```
 
-In this case the default rules will apply to placement, and the output from `SHOW CREATE TABLE t1` should show no placement information (including any of the _table_options_ from direct placement).
+In this case the default rules will apply to placement, and the output from `SHOW CREATE TABLE t1` should show no placement information. Thus, setting `PLACEMENT POLICY=default` must reset the following `table_options`:
+- `FOLLOWERS=n`
+- `VOTERS=n`
+- `LEARNERS=n`
+- `PRIMARY REGION`
+- `REGIONS`
+- `SCHEDULE`
+- `CONSTRAINTS`
+- `FOLLOWER_CONSTRAINTS`
+- `VOTER_CONSTRAINTS`
+- `LEARNER_CONSTRAINTS`
+- `PLACEMENT POLICY`
 
 For a more complex rule using partitions, consider the following example:
 
@@ -911,8 +933,8 @@ CockroachDB does not look to have something directly comparable to `PLACEMENT PO
 ### Known Limitations
 
 - In this proposal, placement policies are global-level and not specific to a database. This simplifies the configuration, but makes it restrictive for multi-tenant scenarios where a schema-per-tenant is provided. This is because creating or modifying placement policies requires a privilege which is cluster scoped (`PLACEMENT_ADMIN`). The limitation is that "tenants" will be able to `CREATE TABLE (..) PLACEMENT POLICY=x`, but they will not be able to `CREATE PLACEMENT POLICY x` or `ALTER PLACEMENT POLICY x`
-
 - Complex scenarios may exist where there is not a column in the current table which can be used to partition the table into different regions, but instead there is a column which is a foreign key to another table from which this information can be determined. In this scenario, the user will be required to "denormalize" the usage and move the parent_id into the child table so geo-partitioning is possible.
+- Because direct assignment and `PLACEMENT POLICY` are mutually exclusive, it results in some scenarios where users that just want to make one small change on a placement policy need to create a new policy. This is intentional to limit the risk of misconfiguration.
 
 ## Unresolved Questions
 
@@ -960,7 +982,7 @@ This specific semantic will be the hardest to implement because of the other dep
 
 ## Changelog
 
-* 2021-07-19:
+* 2021-07-26:
   - Converted proposal to use the new template for technical designs.
   - Removed the syntax `ALTER TABLE t1 ADD PLACEMENT POLICY` due to ambiguity in some cases, and risk of misconfiguration for compliance cases.
   - Added `CREATE PLACEMENT POLICY` syntax.
