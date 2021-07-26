@@ -987,9 +987,9 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	c.Assert(util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}), IsFalse)
 	c.Assert(util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}), IsTrue)
 
-	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert")
+	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert", true)
 	c.Assert(err, NotNil)
-	_, _, err = util.LoadTLSCertificates("wrong ca", "/tmp/server-key.pem", "/tmp/server-cert.pem")
+	_, _, err = util.LoadTLSCertificates("wrong ca", "/tmp/server-key.pem", "/tmp/server-cert.pem", true)
 	c.Assert(err, NotNil)
 }
 

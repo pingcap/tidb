@@ -192,8 +192,11 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		clients:           make(map[uint64]*clientConn),
 		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
 	}
+	s.capability = defaultCapability
 	setTxnScope()
-	tlsConfig, autoReload, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+	setSystemTimeZoneVariable()
+
+	tlsConfig, autoReload, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert, s.cfg.Security.AutoTLS)
 
 	// Automatically reload auto-generated certificates.
 	// The certificates are re-created every 30 days and are valid for 90 days.
@@ -201,7 +204,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		go func() {
 			for range time.Tick(time.Hour * 24 * 30) { // 30 days
 				logutil.BgLogger().Info("Rotating automatically created TLS Certificates")
-				tlsConfig, _, err = util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+				tlsConfig, _, err = util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert, s.cfg.Security.AutoTLS)
 				if err != nil {
 					logutil.BgLogger().Warn("TLS Certificate rotation failed", zap.Error(err))
 				}
@@ -221,9 +224,6 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		return nil, errSecureTransportRequired.FastGenByArgs()
 	}
 
-	setSystemTimeZoneVariable()
-
-	s.capability = defaultCapability
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}

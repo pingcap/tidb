@@ -1533,6 +1533,7 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 			variable.GetSysVar("ssl_ca").Value,
 			variable.GetSysVar("ssl_key").Value,
 			variable.GetSysVar("ssl_cert").Value,
+			config.GetGlobalConfig().Security.AutoTLS,
 		)
 		if err != nil {
 			if !s.NoRollbackOnError || config.GetGlobalConfig().Security.RequireSecureTransport {
