@@ -14,40 +14,45 @@
 package telemetry
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testClusterHardwareSuite{})
-
-type testClusterHardwareSuite struct{}
-
-func (s *testClusterHardwareSuite) TestNormalizeDiskName(c *C) {
-	c.Parallel()
-
-	c.Assert(normalizeDiskName("/dev/sdb"), Equals, "sdb")
-	c.Assert(normalizeDiskName("sda"), Equals, "sda")
+func TestNormalizeDiskName(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, "sdb", normalizeDiskName("/dev/sdb"))
+	require.Equal(t, "sda", normalizeDiskName("sda"))
 }
 
-func (s *testClusterHardwareSuite) TestIsNormalizedDiskNameAllowed(c *C) {
-	c.Parallel()
-
-	passList := []string{"disk1s4", "rootfs", "devtmpfs", "sda", "sda1", "sdb", "sdb3", "sdc", "nvme0", "nvme0n1", "nvme0n1p0", "md127", "mdisk1s4"}
-	for _, n := range passList {
-		c.Assert(isNormalizedDiskNameAllowed(n), Equals, true)
-	}
-
-	failList := []string{"foo", "/rootfs", "asmdisk01p1"}
-	for _, n := range failList {
-		c.Assert(isNormalizedDiskNameAllowed(n), Equals, false)
-	}
+func TestIsNormalizedDiskNameAllowed(t *testing.T) {
+	t.Parallel()
+	require.True(t, isNormalizedDiskNameAllowed("disk1s4"))
+	require.True(t, isNormalizedDiskNameAllowed("rootfs"))
+	require.True(t, isNormalizedDiskNameAllowed("sda"))
+	require.True(t, isNormalizedDiskNameAllowed("sda1"))
+	require.True(t, isNormalizedDiskNameAllowed("sdb"))
+	require.True(t, isNormalizedDiskNameAllowed("sdb3"))
+	require.True(t, isNormalizedDiskNameAllowed("sdc"))
+	require.True(t, isNormalizedDiskNameAllowed("nvme0"))
+	require.True(t, isNormalizedDiskNameAllowed("nvme0n1"))
+	require.True(t, isNormalizedDiskNameAllowed("nvme0n1p0"))
+	require.True(t, isNormalizedDiskNameAllowed("md127"))
+	require.True(t, isNormalizedDiskNameAllowed("mdisk1s4"))
 }
 
-func (s *testClusterHardwareSuite) TestNormalizeFieldName(c *C) {
-	c.Parallel()
+func TestIsNormalizedDiskNameNotAllowed(t *testing.T) {
+	t.Parallel()
+	require.False(t, isNormalizedDiskNameAllowed("foo"))
+	require.False(t, isNormalizedDiskNameAllowed("/rootfs"))
+	require.False(t, isNormalizedDiskNameAllowed("asmdisk01p1"))
+}
 
-	c.Assert(normalizeFieldName("deviceName"), Equals, "deviceName")
-	c.Assert(normalizeFieldName("device-name"), Equals, "deviceName")
-	c.Assert(normalizeFieldName("device_name"), Equals, "deviceName")
-	c.Assert(normalizeFieldName("l1-cache-size"), Equals, "l1CacheSize")
-	c.Assert(normalizeFieldName("free-percent"), Equals, "freePercent")
+func TestNormalizeFieldName(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, "deviceName", normalizeFieldName("deviceName"))
+	require.Equal(t, "deviceName", normalizeFieldName("device-name"))
+	require.Equal(t, "deviceName", normalizeFieldName("device_name"))
+	require.Equal(t, "l1CacheSize", normalizeFieldName("l1-cache-size"))
+	require.Equal(t, "freePercent", normalizeFieldName("free-percent"))
 }
