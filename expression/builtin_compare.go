@@ -467,8 +467,6 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	if cmpAsDatetime {
 		tp = types.ETDatetime
-		// length of "yyyy-MM-dd HH:mm:ss.123456"
-		bf.tp.Flen = 26
 	}
 	switch tp {
 	case types.ETInt:
@@ -487,7 +485,21 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinGreatestTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
 	}
+	sig.getRetTp().Flen, sig.getRetTp().Decimal = fixFlenAndDecimalForGreatestAndLeast(args)
 	return sig, nil
+}
+
+func fixFlenAndDecimalForGreatestAndLeast(args []Expression) (flen, decimal int) {
+	for _, arg := range args {
+		argFlen, argDecimal := arg.GetType().Flen, arg.GetType().Decimal
+		if argFlen > flen {
+			flen = argFlen
+		}
+		if argDecimal > decimal {
+			decimal = argDecimal
+		}
+	}
+	return flen, decimal
 }
 
 type builtinGreatestIntSig struct {
@@ -686,8 +698,6 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	if cmpAsDatetime {
 		tp = types.ETDatetime
-		// length of "yyyy-MM-dd HH:mm:ss.123456"
-		bf.tp.Flen = 26
 	}
 	switch tp {
 	case types.ETInt:
@@ -706,6 +716,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLeastTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastTime)
 	}
+	sig.getRetTp().Flen, sig.getRetTp().Decimal = fixFlenAndDecimalForGreatestAndLeast(args)
 	return sig, nil
 }
 
