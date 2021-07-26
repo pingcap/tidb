@@ -589,9 +589,6 @@ func GetSysVars() map[string]*SysVar {
 	return copy
 }
 
-// PluginVarNames is global plugin var names set.
-var PluginVarNames []string
-
 func init() {
 	sysVars = make(map[string]*SysVar)
 	for _, v := range defaultSysVars {
