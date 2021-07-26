@@ -421,7 +421,7 @@ func handleAnalyzeFullSamplingReq(
 		colGroups = append(colGroups, colOffsets)
 	}
 	colReq := analyzeReq.ColReq
-	builder := &statistics.RowSampleBuilder{
+	builder := &statistics.ReservoirRowSampleBuilder{
 		Sc:              sc,
 		RecordSet:       e,
 		ColsFieldType:   fts,
