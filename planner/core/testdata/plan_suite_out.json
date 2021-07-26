@@ -1572,7 +1572,7 @@
         "Warning": null
       },
       {
-        "SQL": "select /*+ LIMIT_TO_COP() */ a from tn where div(a, 2) order by a limit 1",
+        "SQL": "select /*+ LIMIT_TO_COP() */ a from tn where a div 2 order by a limit 1",
         "Plan": [
           "Limit 1.00 root  offset:0, count:1",
           "└─Selection 1.00 root  div(test.tn.a, 2)",
