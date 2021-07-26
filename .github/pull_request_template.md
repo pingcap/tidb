@@ -46,6 +46,6 @@ Documentation
 ### Release note <!-- bugfixes or new feature need a release note -->
 
 ```release-note
-Please add a release note.
+Please add a release note, or a 'None' if it is not needed.
 If you don't think this PR needs a release note then fill it with None.
 ```
