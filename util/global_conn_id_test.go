@@ -22,28 +22,20 @@ import (
 	"testing"
 
 	"github.com/cznic/mathutil"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util"
+	"github.com/stretchr/testify/assert"
 )
 
-var _ = Suite(&testGlobalConnIDSuite{})
+func TestGlobalConnIDParse(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
 
-type testGlobalConnIDSuite struct {
-}
-
-func (s *testGlobalConnIDSuite) SetUpSuite(c *C) {
-}
-
-func (s *testGlobalConnIDSuite) TearDownSuite(c *C) {
-}
-
-func (s *testGlobalConnIDSuite) TestParse(c *C) {
 	connID := util.GlobalConnID{
 		Is64bits:    true,
 		ServerID:    1001,
 		LocalConnID: 123,
 	}
-	c.Assert(connID.ID(), Equals, (uint64(1001)<<41)|(uint64(123)<<1)|1)
+	assert.Equal((uint64(1001)<<41)|(uint64(123)<<1)|1, connID.ID())
 
 	var (
 		err         error
@@ -52,37 +44,40 @@ func (s *testGlobalConnIDSuite) TestParse(c *C) {
 
 	// exceeds int64
 	_, _, err = util.ParseGlobalConnID(0x80000000_00000321)
-	c.Assert(err, NotNil)
+	assert.NotNil(err)
 
 	// 64bits truncated
 	_, isTruncated, err = util.ParseGlobalConnID(101)
-	c.Assert(err, IsNil)
-	c.Assert(isTruncated, IsTrue)
+	assert.Nil(err)
+	assert.True(isTruncated)
 
 	// 64bits
 	id1 := (uint64(1001) << 41) | (uint64(123) << 1) | 1
 	connID1, isTruncated, err := util.ParseGlobalConnID(id1)
-	c.Assert(err, IsNil)
-	c.Assert(isTruncated, IsFalse)
-	c.Assert(connID1.ServerID, Equals, uint64(1001))
-	c.Assert(connID1.LocalConnID, Equals, uint64(123))
-	c.Assert(connID1.Is64bits, IsTrue)
+	assert.Nil(err)
+	assert.False(isTruncated)
+	assert.Equal(uint64(1001), connID1.ServerID)
+	assert.Equal(uint64(123), connID1.LocalConnID)
+	assert.True(connID1.Is64bits)
 
 	// exceeds uint32
 	_, _, err = util.ParseGlobalConnID(0x1_00000320)
-	c.Assert(err, NotNil)
+	assert.NotNil(err)
 
 	// 32bits
 	id2 := (uint64(2002) << 21) | (uint64(321) << 1)
 	connID2, isTruncated, err := util.ParseGlobalConnID(id2)
-	c.Assert(err, IsNil)
-	c.Assert(isTruncated, IsFalse)
-	c.Assert(connID2.ServerID, Equals, uint64(2002))
-	c.Assert(connID2.LocalConnID, Equals, uint64(321))
-	c.Assert(connID2.Is64bits, IsFalse)
+	assert.Nil(err)
+	assert.False(isTruncated)
+	assert.Equal(uint64(2002), connID2.ServerID)
+	assert.Equal(uint64(321), connID2.LocalConnID)
+	assert.False(connID2.Is64bits)
 }
 
-func (s *testGlobalConnIDSuite) TestAutoIncPool(c *C) {
+func TestGlobalConnIDAutoIncPool(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+
 	const SizeInBits uint32 = 8
 	const Size uint64 = 1 << SizeInBits
 	const TryCnt = 4
@@ -95,41 +90,44 @@ func (s *testGlobalConnIDSuite) TestAutoIncPool(c *C) {
 	)
 
 	pool.InitExt(SizeInBits, true, TryCnt)
-	c.Assert(pool.Len(), Equals, 0)
+	assert.Equal(0, pool.Len())
 
 	// get all.
 	for i = 1; i < Size; i++ {
 		val, ok = pool.Get()
-		c.Assert(ok, IsTrue)
-		c.Assert(val, Equals, i)
+		assert.True(ok)
+		assert.Equal(i, val)
 	}
 	val, ok = pool.Get()
-	c.Assert(ok, IsTrue)
-	c.Assert(val, Equals, uint64(0)) // wrap around to 0
-	c.Assert(pool.Len(), Equals, int(Size))
+	assert.True(ok)
+	assert.Equal(uint64(0), val) // wrap around to 0
+	assert.Equal(int(Size), pool.Len())
 
 	_, ok = pool.Get() // exhausted. try TryCnt times, lastID is added to 0+TryCnt.
-	c.Assert(ok, IsFalse)
+	assert.False(ok)
 
 	nextVal := uint64(TryCnt + 1)
 	pool.Put(nextVal)
 	val, ok = pool.Get()
-	c.Assert(ok, IsTrue)
-	c.Assert(val, Equals, nextVal)
+	assert.True(ok)
+	assert.Equal(nextVal, val)
 
 	nextVal += TryCnt - 1
 	pool.Put(nextVal)
 	val, ok = pool.Get()
-	c.Assert(ok, IsTrue)
-	c.Assert(val, Equals, nextVal)
+	assert.True(ok)
+	assert.Equal(nextVal, val)
 
 	nextVal += TryCnt + 1
 	pool.Put(nextVal)
 	_, ok = pool.Get()
-	c.Assert(ok, IsFalse)
+	assert.False(ok)
 }
 
-func (s *testGlobalConnIDSuite) TestLockFreePoolBasic(c *C) {
+func TestGlobalConnIDLockFreePoolBasic(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+
 	const SizeInBits uint32 = 8
 	const Size uint64 = 1<<SizeInBits - 1
 
@@ -141,39 +139,42 @@ func (s *testGlobalConnIDSuite) TestLockFreePoolBasic(c *C) {
 	)
 
 	pool.InitExt(SizeInBits, math.MaxUint32)
-	c.Assert(pool.Len(), Equals, int(Size))
+	assert.Equal(int(Size), pool.Len())
 
 	// get all.
 	for i = 1; i <= Size; i++ {
 		val, ok = pool.Get()
-		c.Assert(ok, IsTrue)
-		c.Assert(val, Equals, i)
+		assert.True(ok)
+		assert.Equal(i, val)
 	}
 	_, ok = pool.Get()
-	c.Assert(ok, IsFalse)
-	c.Assert(pool.Len(), Equals, 0)
+	assert.False(ok)
+	assert.Equal(0, pool.Len())
 
 	// put to full.
 	for i = 1; i <= Size; i++ {
 		ok = pool.Put(i)
-		c.Assert(ok, IsTrue)
+		assert.True(ok)
 	}
 	ok = pool.Put(0)
-	c.Assert(ok, IsFalse)
-	c.Assert(pool.Len(), Equals, int(Size))
+	assert.False(ok)
+	assert.Equal(int(Size), pool.Len())
 
 	// get all.
 	for i = 1; i <= Size; i++ {
 		val, ok = pool.Get()
-		c.Assert(ok, IsTrue)
-		c.Assert(val, Equals, i)
+		assert.True(ok)
+		assert.Equal(i, val)
 	}
 	_, ok = pool.Get()
-	c.Assert(ok, IsFalse)
-	c.Assert(pool.Len(), Equals, 0)
+	assert.False(ok)
+	assert.Equal(0, pool.Len())
 }
 
-func (s *testGlobalConnIDSuite) TestLockFreePoolInitEmpty(c *C) {
+func TestGlobalConnIDLockFreePoolInitEmpty(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+
 	const SizeInBits uint32 = 8
 	const Size uint64 = 1<<SizeInBits - 1
 
@@ -185,26 +186,26 @@ func (s *testGlobalConnIDSuite) TestLockFreePoolInitEmpty(c *C) {
 	)
 
 	pool.InitExt(SizeInBits, 0)
-	c.Assert(pool.Len(), Equals, 0)
+	assert.Equal(0, pool.Len())
 
 	// put to full.
 	for i = 1; i <= Size; i++ {
 		ok = pool.Put(i)
-		c.Assert(ok, IsTrue)
+		assert.True(ok)
 	}
 	ok = pool.Put(0)
-	c.Assert(ok, IsFalse)
-	c.Assert(pool.Len(), Equals, int(Size))
+	assert.False(ok)
+	assert.Equal(int(Size), pool.Len())
 
 	// get all.
 	for i = 1; i <= Size; i++ {
 		val, ok = pool.Get()
-		c.Assert(ok, IsTrue)
-		c.Assert(val, Equals, i)
+		assert.True(ok)
+		assert.Equal(i, val)
 	}
 	_, ok = pool.Get()
-	c.Assert(ok, IsFalse)
-	c.Assert(pool.Len(), Equals, 0)
+	assert.False(ok)
+	assert.Equal(0, pool.Len())
 }
 
 var _ util.IDPool = (*LockBasedCircularPool)(nil)
@@ -400,7 +401,10 @@ func testLockBasedPoolConcurrency(poolSizeInBits uint32, producers int, consumer
 	return expected, atomic.LoadInt64(&total)
 }
 
-func (s *testGlobalConnIDSuite) TestLockFreePoolBasicConcurrencySafety(c *C) {
+func TestGlobalConnIDLockFreePoolBasicConcurrencySafety(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+
 	var (
 		expected int64
 		actual   int64
@@ -416,14 +420,16 @@ func (s *testGlobalConnIDSuite) TestLockFreePoolBasicConcurrencySafety(c *C) {
 	)
 
 	expected, actual = testLockFreePoolConcurrency(sizeInBits, fillCount, producers, consumers, requests, 0)
-	c.Assert(actual, Equals, expected)
+	assert.Equal(expected, actual)
 
 	// test overflow of head & tail
 	expected, actual = testLockFreePoolConcurrency(sizeInBits, fillCount, producers, consumers, requests, headPos)
-	c.Assert(actual, Equals, expected)
+	assert.Equal(expected, actual)
 }
 
-func (s *testGlobalConnIDSuite) TestLockBasedPoolConcurrencySafety(c *C) {
+func TestGlobalConnIDLockBasedPoolConcurrencySafety(t *testing.T) {
+	t.Parallel()
+
 	var (
 		expected int64
 		actual   int64
@@ -437,7 +443,7 @@ func (s *testGlobalConnIDSuite) TestLockBasedPoolConcurrencySafety(c *C) {
 	)
 
 	expected, actual = testLockBasedPoolConcurrency(sizeInBits, producers, consumers, requests)
-	c.Assert(actual, Equals, expected)
+	assert.Equal(t, expected, actual)
 }
 
 type poolConcurrencyTestCase struct {
@@ -453,7 +459,9 @@ func (ta poolConcurrencyTestCase) String() string {
 		1<<ta.sizeInBits, ta.fillCount, ta.producers, ta.consumers, ta.requests)
 }
 
-func (s *testGlobalConnIDSuite) TestLockFreePoolConcurrencySafety(c *C) {
+func TestGlobalConnIDLockFreePoolConcurrencySafety(t *testing.T) {
+	t.Parallel()
+
 	const (
 		poolSizeInBits = 16
 		requests       = 1 << 20
@@ -476,7 +484,7 @@ func (s *testGlobalConnIDSuite) TestLockFreePoolConcurrencySafety(c *C) {
 
 	for i, ca := range cases {
 		expected, actual := testLockFreePoolConcurrency(ca.sizeInBits, ca.fillCount, ca.producers, ca.consumers, requests, 0)
-		c.Assert(actual, Equals, expected, Commentf("case #%v: %v", i+1, ca))
+		assert.Equalf(t, expected, actual, "case #%v: %v", i+1, ca)
 	}
 }
 
