@@ -15,12 +15,15 @@ package deadlockhistory
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -145,16 +148,14 @@ func (d *DeadlockHistory) getAll() []*DeadlockRecord {
 
 // GetAllDatum gets all collected deadlock events, and make it into datum that matches the definition of the table
 // `INFORMATION_SCHEMA.DEADLOCKS`.
-func (d *DeadlockHistory) GetAllDatum() [][]types.Datum {
+func (d *DeadlockHistory) GetAllDatum(infoschema infoschema.InfoSchema) [][]types.Datum {
 	records := d.GetAll()
 	rowsCount := 0
 	for _, rec := range records {
 		rowsCount += len(rec.WaitChain)
 	}
-
 	rows := make([][]types.Datum, 0, rowsCount)
-
-	row := make([]interface{}, 7)
+	row := make([]interface{}, 8)
 	for _, rec := range records {
 		row[0] = rec.ID
 		row[1] = types.NewTime(types.FromGoTime(rec.OccurTime), mysql.TypeTimestamp, types.MaxFsp)
@@ -169,13 +170,23 @@ func (d *DeadlockHistory) GetAllDatum() [][]types.Datum {
 			}
 
 			row[5] = nil
+			row[6] = nil
 			if len(item.Key) > 0 {
 				row[5] = strings.ToUpper(hex.EncodeToString(item.Key))
+				decodedKey, err := keydecoder.DecodeKey(item.Key, infoschema)
+				if err == nil {
+					decodedKeyJSON, err := json.Marshal(decodedKey)
+					if err != nil {
+						logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
+					} else {
+						row[6] = string(decodedKeyJSON)
+					}
+				} else {
+					logutil.BgLogger().Warn("decode key failed", zap.Error(err))
+				}
 			}
 
-			row[6] = item.TxnHoldingLock
-
-			// TODO: Implement the ALL_SQL_DIGESTS column for the deadlock table.
+			row[7] = item.TxnHoldingLock
 
 			rows = append(rows, types.MakeDatums(row...))
 		}

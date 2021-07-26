@@ -4030,3 +4030,11 @@ func (s *testIntegrationSerialSuite) TestLimitPushDown(c *C) {
 		`  └─TopN 1.00 cop[tikv]  test.t.a:desc, offset:0, count:11`,
 		`    └─TableFullScan 1.00 cop[tikv] table:t keep order:false`))
 }
+
+func (s *testIntegrationSuite) TestIssue26559(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a timestamp, b datetime);")
+	tk.MustExec("insert into t values('2020-07-29 09:07:01', '2020-07-27 16:57:36');")
+	tk.MustQuery("select greatest(a, b) from t union select null;").Sort().Check(testkit.Rows("2020-07-29 09:07:01", "<nil>"))
+}

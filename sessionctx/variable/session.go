@@ -745,7 +745,6 @@ type SessionVars struct {
 	PlannerSelectBlockAsName []ast.HintTable
 
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
-	// negative value means nowait, 0 means default behavior, others means actual wait time
 	LockWaitTimeout int64
 
 	// MetricSchemaStep indicates the step when query metric schema.
