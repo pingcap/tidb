@@ -2150,6 +2150,7 @@ func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionct
 	return rows, nil
 }
 
+// tidbTrxTableRetriever is the memtable retriever for the TIDB_TRX and CLUSTER_TIDB_TRX table.
 type tidbTrxTableRetriever struct {
 	dummyCloser
 	batchRetrieverHelper
@@ -2190,6 +2191,7 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 		e.batchRetrieverHelper.batchSize = 1024
 	}
 
+	// The current TiDB node's address is needed by the CLUSTER_TIDB_TRX table.
 	var err error
 	var instanceAddr string
 	switch e.table.Name.O {
@@ -2225,6 +2227,7 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 
 		res = make([][]types.Datum, 0, end-start)
 
+		// Calculate rows.
 		for i := start; i < end; i++ {
 			row := make([]types.Datum, 0, len(e.columns))
 			for _, c := range e.columns {
