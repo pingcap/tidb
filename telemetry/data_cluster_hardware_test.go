@@ -20,6 +20,8 @@ import (
 )
 
 func TestNormalizeDiskName(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		diskName string
 		expected string
@@ -30,13 +32,14 @@ func TestNormalizeDiskName(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.diskName, func(t *testing.T) {
-			t.Parallel()
 			require.Equal(t, test.expected, normalizeDiskName(test.diskName))
 		})
 	}
 }
 
 func TestIsNormalizedDiskNameAllowed(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		diskName string
 	}{
@@ -56,13 +59,14 @@ func TestIsNormalizedDiskNameAllowed(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.diskName, func(t *testing.T) {
-			t.Parallel()
 			require.True(t, isNormalizedDiskNameAllowed(test.diskName))
 		})
 	}
 }
 
 func TestIsNormalizedDiskNameNotAllowed(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		diskName string
 	}{
@@ -73,13 +77,14 @@ func TestIsNormalizedDiskNameNotAllowed(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.diskName, func(t *testing.T) {
-			t.Parallel()
 			require.False(t, isNormalizedDiskNameAllowed(test.diskName))
 		})
 	}
 }
 
 func TestNormalizeFieldName(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		fileName string
 		expected string
@@ -93,7 +98,6 @@ func TestNormalizeFieldName(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.fileName, func(t *testing.T) {
-			t.Parallel()
 			require.Equal(t, test.expected, normalizeFieldName(test.fileName))
 		})
 	}
