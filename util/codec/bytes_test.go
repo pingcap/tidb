@@ -20,6 +20,8 @@ import (
 )
 
 func TestFastSlowFastReverse(t *testing.T) {
+	t.Parallel()
+
 	if !supportsUnaligned {
 		return
 	}
