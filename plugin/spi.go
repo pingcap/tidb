@@ -17,8 +17,6 @@ import (
 	"context"
 	"reflect"
 	"unsafe"
-
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 const (
@@ -36,7 +34,6 @@ type Manifest struct {
 	RequireVersion map[string]uint16
 	License        string
 	BuildTime      string
-	SysVars        map[string]*variable.SysVar
 	// Validate defines the validate logic for plugin.
 	// returns error will stop load plugin process and TiDB startup.
 	Validate func(ctx context.Context, manifest *Manifest) error
