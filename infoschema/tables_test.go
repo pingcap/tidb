@@ -1755,7 +1755,7 @@ func (s *testDataLockWaitSuite) TestDataLockWaits(c *C) {
 	keyHex2 := hex.EncodeToString([]byte("b"))
 	tk := s.newTestKitWithRoot(c)
 	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS;").
-		Check(testkit.Rows(keyHex1+" 1 2 "+digest1.String()+" <nil>", keyHex2+" 4 5 "+digest2.String()+" <nil>"))
+		Check(testkit.Rows(keyHex1+" <nil> 1 2 "+digest1.String()+" <nil>", keyHex2+" <nil> 4 5 "+digest2.String()+" <nil>"))
 }
 
 func (s *testDataLockWaitSuite) TestDataLockWaitsPrivilege(c *C) {

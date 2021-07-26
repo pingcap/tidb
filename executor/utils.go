@@ -60,7 +60,7 @@ func deleteFromSet(set []string, value string) []string {
 }
 
 // SQLDigestTextRetriever is used to find the normalized SQL statement text by SQL digests in statements_summary table.
-// It's exported for text purposes.
+// It's exported for test purposes.
 type SQLDigestTextRetriever struct {
 	// SQLDigestsMap is the place to put the digests that's requested for getting SQL text and also the place to put
 	// the query result.
@@ -96,11 +96,11 @@ func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues [
 	return res, nil
 }
 
-// runQuery runs query to the system tables to fetch normalized SQL texts corresponding to given SQL digests, if
-// `inValues` is given, or all digest -> SQL mappings otherwise. If `queryGlobal` is false, it queries
-// information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it queries the
-// cluster version of these two tables.
-func (r *SQLDigestTextRetriever) runQuery(ctx context.Context, sctx sessionctx.Context, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
+// runFetchDigestQuery runs query to the system tables to fetch the kv mapping of SQL digests and normalized SQL texts
+// of the given SQL digests, if `inValues` is given, or all these mappings otherwise. If `queryGlobal` is false, it
+// queries information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it
+// queries the cluster version of these two tables.
+func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx sessionctx.Context, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
 	// If mock data is set, query the mock data instead of the real statements_summary tables.
 	if !queryGlobal && r.mockLocalData != nil {
 		return r.runMockQuery(r.mockLocalData, inValues)
@@ -142,7 +142,7 @@ func (r *SQLDigestTextRetriever) runQuery(ctx context.Context, sctx sessionctx.C
 	return res, nil
 }
 
-func (r *SQLDigestTextRetriever) updateWithQueryResult(queryResult map[string]string) {
+func (r *SQLDigestTextRetriever) updateDigestInfo(queryResult map[string]string) {
 	for digest, text := range r.SQLDigestsMap {
 		if len(text) > 0 {
 			// The text of this digest is already known
@@ -168,7 +168,7 @@ func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx session
 			inValues = append(inValues, key)
 		}
 		var err error
-		queryResult, err = r.runQuery(ctx, sctx, false, inValues)
+		queryResult, err = r.runFetchDigestQuery(ctx, sctx, false, inValues)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -179,13 +179,13 @@ func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx session
 		}
 	} else {
 		var err error
-		queryResult, err = r.runQuery(ctx, sctx, false, nil)
+		queryResult, err = r.runFetchDigestQuery(ctx, sctx, false, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	r.updateWithQueryResult(queryResult)
+	r.updateDigestInfo(queryResult)
 	return nil
 }
 
@@ -209,28 +209,34 @@ func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx sessio
 
 	var queryResult map[string]string
 	if len(r.SQLDigestsMap) <= r.fetchAllLimit {
-		queryResult, err = r.runQuery(ctx, sctx, true, unknownDigests)
+		queryResult, err = r.runFetchDigestQuery(ctx, sctx, true, unknownDigests)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	} else {
-		queryResult, err = r.runQuery(ctx, sctx, true, nil)
+		queryResult, err = r.runFetchDigestQuery(ctx, sctx, true, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	r.updateWithQueryResult(queryResult)
+	r.updateDigestInfo(queryResult)
 	return nil
 }
 
+// batchRetrieverHelper is a helper for batch returning data with known total rows. This helps implementing memtable
+// retrievers of some information_schema tables. Initialize `batchSize` and `totalRows` fields to use it.
 type batchRetrieverHelper struct {
-	retrieved    bool
+	// When retrieved is true, it means retrieving is finished.
+	retrieved bool
+	// The index that the retrieving process has been done up to (exclusive).
 	retrievedIdx int
 	batchSize    int
 	totalRows    int
 }
 
+// nextBatch calculates the index range of the next batch. If there is such a non-empty range, the `retrieveRange` func
+// will be invoked and the range [start, end) is passed to it. Returns error if `retrieveRange` returns error.
 func (b *batchRetrieverHelper) nextBatch(retrieveRange func(start, end int) error) error {
 	if b.retrieved {
 		return nil

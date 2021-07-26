@@ -177,6 +177,8 @@ const (
 const (
 	// DataLockWaitsColumnKey is the name of the KEY column of the DATA_LOCK_WAITS table.
 	DataLockWaitsColumnKey = "KEY"
+	// DataLockWaitsColumnKeyInfo is the name of the KEY_INFO column of the DATA_LOCK_WAITS table.
+	DataLockWaitsColumnKeyInfo = "KEY_INFO"
 	// DataLockWaitsColumnTrxID is the name of the TRX_ID column of the DATA_LOCK_WAITS table.
 	DataLockWaitsColumnTrxID = "TRX_ID"
 	// DataLockWaitsColumnCurrentHoldingTrxID is the name of the CURRENT_HOLDING_TRX_ID column of the DATA_LOCK_WAITS table.
@@ -1393,13 +1395,13 @@ var tableDeadlocksCols = []columnInfo{
 	{name: "TRY_LOCK_TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction ID (start ts) of the transaction that's trying to acquire the lock"},
 	{name: "CURRENT_SQL_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "The digest of the SQL that's being blocked"},
 	{name: "KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The key on which a transaction is waiting for another"},
+	{name: "KEY_INFO", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, comment: "Information of the key"},
 	{name: "TRX_HOLDING_LOCK", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction ID (start ts) of the transaction that's currently holding the lock"},
-	// TODO: Implement the ALL_SQL_DIGESTS column
-	// {name: "ALL_SQL_DIGESTS", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "A list of the digests of SQL statements that the transaction has executed"},
 }
 
 var tableDataLockWaitsCols = []columnInfo{
 	{name: DataLockWaitsColumnKey, tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, comment: "The key that's being waiting on"},
+	{name: DataLockWaitsColumnKeyInfo, tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, comment: "Information of the key"},
 	{name: DataLockWaitsColumnTrxID, tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Current transaction that's waiting for the lock"},
 	{name: DataLockWaitsColumnCurrentHoldingTrxID, tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction that's holding the lock and blocks the current transaction"},
 	{name: DataLockWaitsColumnSQLDigest, tp: mysql.TypeVarchar, size: 64, comment: "Digest of the SQL that's trying to acquire the lock"},
