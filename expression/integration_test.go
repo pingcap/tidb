@@ -10013,3 +10013,13 @@ func (s *testIntegrationSuite) TestTimestampIssue25093(c *C) {
 	tk.MustQuery("select timestamp(0.9999999) from t;").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select timestamp(101.234) from t;").Check(testkit.Rows("2000-01-01 00:00:00.000"))
 }
+
+func (s *testIntegrationSuite) TestIssue24953(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tbl_0,tbl_9;")
+	tk.MustExec("CREATE TABLE `tbl_9` (\n  `col_54` mediumint NOT NULL DEFAULT '2412996',\n  `col_55` int NOT NULL,\n  `col_56` bigint unsigned NOT NULL,\n  `col_57` varchar(108) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,\n  PRIMARY KEY (`col_57`(3),`col_55`,`col_56`,`col_54`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `tbl_0` (\n  `col_76` bigint(20) unsigned DEFAULT NULL,\n  `col_1` time NOT NULL DEFAULT '13:11:28',\n  `col_2` datetime DEFAULT '1990-07-29 00:00:00',\n  `col_3` date NOT NULL DEFAULT '1976-09-16',\n  `col_4` date DEFAULT NULL,\n  `col_143` varbinary(208) DEFAULT 'lXRTXUkTeWaJ',\n  KEY `idx_0` (`col_2`,`col_1`,`col_76`,`col_4`,`col_3`),\n  PRIMARY KEY (`col_1`,`col_3`) /*T![clustered_index] NONCLUSTERED */,\n  KEY `idx_2` (`col_1`,`col_4`,`col_76`,`col_3`),\n  KEY `idx_3` (`col_4`,`col_76`,`col_3`,`col_2`,`col_1`),\n  UNIQUE KEY `idx_4` (`col_76`,`col_3`,`col_1`,`col_4`),\n  KEY `idx_5` (`col_3`,`col_4`,`col_76`,`col_2`),\n  KEY `idx_6` (`col_2`),\n  KEY `idx_7` (`col_76`,`col_3`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into tbl_9 values (-5765442,-597990898,384599625723370089,\"ZdfkUJiHcOfi\");")
+	tk.MustQuery("(select col_76,col_1,col_143,col_2 from tbl_0) union (select   col_54,col_57,col_55,col_56 from tbl_9);").Check(testkit.Rows("-5765442 ZdfkUJiHcOfi -597990898 384599625723370089"))
+}
