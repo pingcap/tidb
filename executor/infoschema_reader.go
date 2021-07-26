@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
+	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
@@ -2064,47 +2065,6 @@ func (e *memtableRetriever) setDataForClusterDeadlock(ctx sessionctx.Context) er
 	return nil
 }
 
-//func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
-//	if !hasPriv(ctx, mysql.ProcessPriv) {
-//		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
-//	}
-//	waits, err := ctx.GetStore().GetLockWaits()
-//	if err != nil {
-//		return err
-//	}
-//	for _, wait := range waits {
-//		var digestStr interface{}
-//		digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
-//		if err != nil {
-//			logutil.BgLogger().Warn("failed to decode resource group tag", zap.Error(err))
-//			digestStr = nil
-//		} else {
-//			digestStr = hex.EncodeToString(digest)
-//		}
-//		infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
-//		var decodedKeyStr interface{} = nil
-//		decodedKey, err := keydecoder.DecodeKey(wait.Key, infoSchema)
-//		if err == nil {
-//			decodedKeyBytes, err := json.Marshal(decodedKey)
-//			if err != nil {
-//				logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
-//			} else {
-//				decodedKeyStr = string(decodedKeyBytes)
-//			}
-//		} else {
-//			logutil.BgLogger().Warn("decode key failed", zap.Error(err))
-//		}
-//		e.rows = append(e.rows, types.MakeDatums(
-//			strings.ToUpper(hex.EncodeToString(wait.Key)),
-//			decodedKeyStr,
-//			wait.Txn,
-//			wait.WaitForTxn,
-//			digestStr,
-//		))
-//	}
-//	return nil
-//}
-
 type stmtSummaryTableRetriever struct {
 	dummyCloser
 	table     *model.TableInfo
@@ -2332,6 +2292,21 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 				switch col.Name.O {
 				case infoschema.DataLockWaitsColumnKey:
 					row = append(row, types.NewDatum(strings.ToUpper(hex.EncodeToString(lockWait.Key))))
+				case infoschema.DataLockWaitsColumnKeyInfo:
+					infoSchema := sctx.GetInfoSchema().(infoschema.InfoSchema)
+					var decodedKeyStr interface{} = nil
+					decodedKey, err := keydecoder.DecodeKey(lockWait.Key, infoSchema)
+					if err == nil {
+						decodedKeyBytes, err := json.Marshal(decodedKey)
+						if err != nil {
+							logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
+						} else {
+							decodedKeyStr = string(decodedKeyBytes)
+						}
+					} else {
+						logutil.BgLogger().Warn("decode key failed", zap.Error(err))
+					}
+					row = append(row, types.NewDatum(decodedKeyStr))
 				case infoschema.DataLockWaitsColumnTrxID:
 					row = append(row, types.NewDatum(lockWait.Txn))
 				case infoschema.DataLockWaitsColumnCurrentHoldingTrxID:
