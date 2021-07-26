@@ -562,7 +562,7 @@ func TestTime(t *testing.T) {
 		err = rawTime.FromPackedUint(v[0].GetUint64())
 		require.NoError(t, err)
 
-		require.Equal(t, types.NewDatum(rawTime), m)
+		require.Equal(t, m, types.NewDatum(rawTime))
 	}
 
 	tblCmp := []struct {
@@ -904,7 +904,7 @@ func TestCut(t *testing.T) {
 
 			ed, err1 := EncodeKey(sc, nil, e)
 			require.NoError(t, err1)
-			require.Equalf(t, d, ed, "%d:%d %#v", i, j, e)
+			require.Equalf(t, ed, d, "%d:%d %#v", i, j, e)
 		}
 		require.Len(t, b, 0)
 	}
@@ -921,7 +921,7 @@ func TestCut(t *testing.T) {
 
 			ed, err1 := EncodeValue(sc, nil, e)
 			require.NoError(t, err1)
-			require.Equalf(t, d, ed, "%d:%d %#v", i, j, e)
+			require.Equalf(t, ed, d, "%d:%d %#v", i, j, e)
 		}
 		require.Len(t, b, 0)
 	}
