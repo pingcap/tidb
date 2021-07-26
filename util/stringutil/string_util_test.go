@@ -58,9 +58,9 @@ func TestUnquote(t *testing.T) {
 		x, err := Unquote(v.str)
 		require.Equal(t, v.expect, x)
 		if v.ok {
-			require.Nil(t, err)
+			require.Nilf(t, err, "%v", v)
 		} else {
-			require.NotNil(t, err)
+			require.NotNilf(t, err, "%v", v)
 		}
 	}
 }
@@ -105,7 +105,7 @@ func TestPatternMatch(t *testing.T) {
 	for _, v := range tbl {
 		patChars, patTypes := CompilePattern(v.pattern, v.escape)
 		match := DoMatch(v.input, patChars, patTypes)
-		require.Equal(t, v.match, match)
+		require.Equalf(t, v.match, match, "%v", v)
 	}
 }
 
@@ -133,7 +133,7 @@ func TestCompileLike2Regexp(t *testing.T) {
 	}
 	for _, v := range tbl {
 		result := CompileLike2Regexp(v.pattern)
-		require.Equal(t, v.regexp, result)
+		require.Equalf(t, v.regexp, result, "%v", v)
 	}
 }
 
@@ -161,13 +161,13 @@ func TestIsExactMatch(t *testing.T) {
 	}
 	for _, v := range tbl {
 		_, patTypes := CompilePattern(v.pattern, v.escape)
-		require.Equal(t, v.exactMatch, IsExactMatch(patTypes))
+		require.Equalf(t, v.exactMatch, IsExactMatch(patTypes), "%v", v)
 	}
 }
 
 func TestBuildStringFromLabels(t *testing.T) {
 	t.Parallel()
-	testcases := []struct {
+	tbl := []struct {
 		name     string
 		labels   map[string]string
 		expected string
@@ -193,8 +193,8 @@ func TestBuildStringFromLabels(t *testing.T) {
 			expected: "aaa=bbb,ccc=ddd",
 		},
 	}
-	for _, testcase := range testcases {
-		require.Equal(t, testcase.expected, BuildStringFromLabels(testcase.labels))
+	for _, v := range tbl {
+		require.Equalf(t, v.expected, BuildStringFromLabels(v.labels), "%v", v)
 	}
 }
 
