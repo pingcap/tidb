@@ -42,6 +42,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
 )
 
@@ -65,7 +66,7 @@ type Storage interface {
 	GetMemCache() kv.MemManager
 	GetRegionCache() *tikv.RegionCache
 	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
-	GetLockResolver() *tikv.LockResolver
+	GetLockResolver() *txnlock.LockResolver
 	GetSafePointKV() tikv.SafePointKV
 	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
 	SetOracle(oracle oracle.Oracle)
@@ -222,35 +223,9 @@ func (h *Helper) ScrapeHotInfo(rw string, allSchemas []*model.DBInfo) ([]HotTabl
 
 // FetchHotRegion fetches the hot region information from PD's http api.
 func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
-	etcd, ok := h.Store.(kv.EtcdBackend)
-	if !ok {
-		return nil, errors.WithStack(errors.New("not implemented"))
-	}
-	pdHosts, err := etcd.EtcdAddrs()
-	if err != nil {
-		return nil, err
-	}
-	if len(pdHosts) == 0 {
-		return nil, errors.New("pd unavailable")
-	}
-	req, err := http.NewRequest("GET", util.InternalHTTPSchema()+"://"+pdHosts[0]+rw, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	resp, err := util.InternalHTTPClient().Do(req)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer func() {
-		err = resp.Body.Close()
-		if err != nil {
-			logutil.BgLogger().Error("close body failed", zap.Error(err))
-		}
-	}()
 	var regionResp StoreHotRegionInfos
-	err = json.NewDecoder(resp.Body).Decode(&regionResp)
-	if err != nil {
-		return nil, errors.Trace(err)
+	if err := h.requestPD("GET", rw, nil, &regionResp); err != nil {
+		return nil, err
 	}
 	metricCnt := 0
 	for _, hotRegions := range regionResp.AsLeader {
@@ -777,9 +752,19 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 		return errors.New("pd unavailable")
 	}
 	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", util.InternalHTTPSchema()+"://"+pdHosts[0]+uri))
-	req, err := http.NewRequest(method, util.InternalHTTPSchema()+"://"+pdHosts[0]+uri, body)
+	req := new(http.Request)
+	for _, host := range pdHosts {
+		req, err = http.NewRequest(method, util.InternalHTTPSchema()+"://"+host+uri, body)
+		if err != nil {
+			// Try to request from another PD node when some nodes may down.
+			if strings.Contains(err.Error(), "connection refused") {
+				continue
+			}
+			return errors.Trace(err)
+		}
+	}
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
@@ -851,37 +836,9 @@ type StoreDetailStat struct {
 
 // GetStoresStat gets the TiKV store information by accessing PD's api.
 func (h *Helper) GetStoresStat() (*StoresStat, error) {
-	etcd, ok := h.Store.(kv.EtcdBackend)
-	if !ok {
-		return nil, errors.WithStack(errors.New("not implemented"))
-	}
-	pdHosts, err := etcd.EtcdAddrs()
-	if err != nil {
-		return nil, err
-	}
-	if len(pdHosts) == 0 {
-		return nil, errors.New("pd unavailable")
-	}
-	req, err := http.NewRequest("GET", util.InternalHTTPSchema()+"://"+pdHosts[0]+pdapi.Stores, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	resp, err := util.InternalHTTPClient().Do(req)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer func() {
-		err = resp.Body.Close()
-		if err != nil {
-			logutil.BgLogger().Error("close body failed", zap.Error(err))
-		}
-	}()
 	var storesStat StoresStat
-	err = json.NewDecoder(resp.Body).Decode(&storesStat)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &storesStat, nil
+	err := h.requestPD("GET", pdapi.Stores, nil, &storesStat)
+	return &storesStat, err
 }
 
 // GetPDAddr return the PD Address.
