@@ -607,6 +607,8 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
 			warning := ErrInternal.GenWithStack(errMsg)
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		} else {
+			ds.ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have set a hint to read table `" + hintTbl.tblName.O + "` from TiKV.")
 		}
 	}
 	if hintTbl := hintInfo.ifPreferTiFlash(alias); hintTbl != nil {
@@ -1348,6 +1350,10 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 		b.optFlag |= flagEliminateProjection
 		proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
 		proj.SetSchema(u.schema.Clone())
+		// reset the schema type to make the "not null" flag right.
+		for i, expr := range exprs {
+			proj.schema.Columns[i].RetType = expr.GetType()
+		}
 		proj.SetChildren(child)
 		u.children[childID] = proj
 	}
@@ -2676,7 +2682,7 @@ func checkColFuncDepend(
 			Name:   colInfo.Name,
 		}
 		pIdx, err := expression.FindFieldName(p.OutputNames(), pkName)
-		if err != nil {
+		if err != nil || pIdx < 0 {
 			primaryFuncDepend = false
 			break
 		}
@@ -2813,7 +2819,7 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 					continue
 				}
 			}
-			checkExprInGroupByOrIsSingleValue(p, item.Expr, offset, ErrExprInOrderBy, gbyOrSingleValueColNames, gbyExprs, notInGbyOrSingleValueColNames)
+			checkExprInGroupByOrIsSingleValue(p, getInnerFromParenthesesAndUnaryPlus(item.Expr), offset, ErrExprInOrderBy, gbyOrSingleValueColNames, gbyExprs, notInGbyOrSingleValueColNames)
 		}
 	}
 	if len(notInGbyOrSingleValueColNames) == 0 {

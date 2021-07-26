@@ -47,7 +47,15 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	// TiDBOptBCJ is used to enable/disable broadcast join in MPP mode
 	TiDBOptBCJ = "tidb_opt_broadcast_join"
+
+	// TiDBOptCartesianBCJ is used to disable/enable broadcast cartesian join in MPP mode
+	TiDBOptCartesianBCJ = "tidb_opt_broadcast_cartesian_join"
+
+	// TiDBOptMPPOuterJoinFixedBuildSide is set to true, then in MPP plan, always use inner table as build side for out join
+	TiDBOptMPPOuterJoinFixedBuildSide = "tidb_opt_mpp_outer_join_fixed_build_side"
+
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
@@ -291,7 +299,16 @@ const (
 	// The default value is 0
 	TiDBAllowBatchCop = "tidb_allow_batch_cop"
 
+	// TiDBAllowMPPExecution means if we should use mpp way to execute query or not.
+	// Default value is `true`, means to be determined by the optimizer.
+	// Value set to `false` means never use mpp.
 	TiDBAllowMPPExecution = "tidb_allow_mpp"
+
+	// TiDBEnforceMPPExecution means if we should enforce mpp way to execute query or not.
+	// Default value is `false`, means to be determined by variable `tidb_allow_mpp`.
+	// Value set to `true` means enforce use mpp.
+	// Note if you want to set `tidb_enforce_mpp` to `true`, you must set `tidb_allow_mpp` to `true` first.
+	TiDBEnforceMPPExecution = "tidb_enforce_mpp"
 
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
 	TiDBInitChunkSize = "tidb_init_chunk_size"
@@ -529,6 +546,9 @@ const (
 	// TiDBAllowFallbackToTiKV indicates the engine types whose unavailability triggers fallback to TiKV.
 	// Now we only support TiFlash.
 	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
+
+	// TiDBEnableStableResultMode indicates if stabilize query results.
+	TiDBEnableStableResultMode = "tidb_enable_stable_result_mode"
 )
 
 // TiDB vars that have only global scope
@@ -566,6 +586,8 @@ const (
 	DefSkipASCIICheck                  = false
 	DefOptAggPushDown                  = false
 	DefOptBCJ                          = false
+	DefOptCartesianBCJ                 = 1
+	DefOptMPPOuterJoinFixedBuildSide   = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
@@ -610,6 +632,7 @@ const (
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
 	DefTiDBAllowMPPExecution           = true
+	DefTiDBEnforceMPPExecution         = false
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -669,6 +692,7 @@ const (
 	DefTiDBEnableIndexMergeJoin        = false
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
+	DefTiDBEnableStableResultMode      = false
 )
 
 // Process global variables.
