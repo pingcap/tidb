@@ -103,10 +103,11 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 // 2. for the remaining regions:
 //    if there is only 1 available store, then put the region to the related store
 //    otherwise, use a greedy algorithm to put it into the store with highest weight
-func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, isMPP bool) []*batchCopTask {
+func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []*batchCopTask, blockAddrs map[string]time.Time, ttl time.Duration) []*batchCopTask {
 	if len(originalTasks) <= 1 {
 		return originalTasks
 	}
+	isMPP := blockAddrs != nil
 	cache := kvStore.GetRegionCache()
 	storeTaskMap := make(map[uint64]*batchCopTask)
 	// storeCandidateRegionMap stores all the possible store->region map. Its content is
@@ -133,25 +134,48 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 		var wg sync.WaitGroup
 		var mu sync.Mutex
 		wg.Add(len(stores))
+		cur := time.Now()
 		for i := range stores {
 			go func(idx int) {
 				defer wg.Done()
 				s := stores[idx]
 				aliveReq := tikvrpc.NewRequest(tikvrpc.CmdMPPAlive, &mpp.IsAliveRequest{}, kvrpcpb.Context{})
 				aliveReq.StoreTp = tikvrpc.TiFlash
+				inBlock := false
+				mu.Lock()
+				if last, ok := blockAddrs[s.GetAddr()]; ok && cur.Sub(last) < ttl {
+					logutil.BgLogger().Warn("Cannot detect store's availability by blockAddrs", zap.String("store address", s.GetAddr()), zap.Time("last fail", last))
+					inBlock = true
+					if cur.Sub(last) < 100*time.Millisecond {
+						mu.Unlock()
+						return
+					}
+				}
+				mu.Unlock()
 				alive := false
-				resp, err := kvStore.GetTiKVClient().SendRequest(ctx, s.GetAddr(), aliveReq, 3*time.Second)
+				toFresh := false
+				resp, err := kvStore.GetTiKVClient().SendRequest(ctx, s.GetAddr(), aliveReq, 2*time.Second)
 				if err != nil {
 					logutil.BgLogger().Warn("Cannot detect store's availability", zap.String("store address", s.GetAddr()), zap.String("err message", err.Error()))
+					toFresh = true
 				} else {
 					rpcResp := resp.Resp.(*mpp.IsAliveResponse)
 					if rpcResp.Available {
 						alive = true
+						if inBlock {
+							alive = false
+						}
 					} else {
 						logutil.BgLogger().Warn("Cannot detect store's availability", zap.String("store address", s.GetAddr()))
+						toFresh = true
 					}
 				}
 				if !alive {
+					if toFresh {
+						mu.Lock()
+						blockAddrs[s.GetAddr()] = cur
+						mu.Unlock()
+					}
 					return
 				}
 
@@ -292,7 +316,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 	return ret
 }
 
-func buildBatchCopTasks(bo *Backoffer, store *kvStore, ranges *KeyRanges, storeType kv.StoreType, isMPP bool) ([]*batchCopTask, error) {
+func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges, storeType kv.StoreType, blockAddrs map[string]time.Time, ttl time.Duration) ([]*batchCopTask, error) {
 	cache := store.GetRegionCache()
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
@@ -367,7 +391,7 @@ func buildBatchCopTasks(bo *Backoffer, store *kvStore, ranges *KeyRanges, storeT
 			}
 			logutil.BgLogger().Debug(msg)
 		}
-		batchTasks = balanceBatchCopTask(bo.GetCtx(), store, batchTasks, isMPP)
+		batchTasks = balanceBatchCopTask(bo.GetCtx(), store, batchTasks, blockAddrs, ttl)
 		if log.GetLevel() <= zap.DebugLevel {
 			msg := "After region balance:"
 			for _, task := range batchTasks {
@@ -394,7 +418,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildBatchCopTasks(bo, c.store.kvStore, ranges, req.StoreType, false)
+	tasks, err := buildBatchCopTasks(bo, c.store.kvStore, ranges, req.StoreType, nil, 0)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -528,19 +552,19 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 }
 
 // Merge all ranges and request again.
-func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
+func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Backoffer, batchTask *batchCopTask) ([]*batchCopTask, error) {
 	var ranges []kv.KeyRange
 	for _, ri := range batchTask.regionInfos {
 		ri.Ranges.Do(func(ran *kv.KeyRange) {
 			ranges = append(ranges, *ran)
 		})
 	}
-	return buildBatchCopTasks(bo, b.store, NewKeyRanges(ranges), b.req.StoreType, false)
+	return buildBatchCopTasks(bo, b.store, NewKeyRanges(ranges), b.req.StoreType, nil, 0)
 }
 
 const readTimeoutUltraLong = 3600 * time.Second // For requests that may scan many regions for tiflash.
 
-func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
+func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
 	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient())
 	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.regionInfos))
 	for _, ri := range task.regionInfos {
