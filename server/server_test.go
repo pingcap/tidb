@@ -57,6 +57,11 @@ func TestT(t *testing.T) {
 	if !reflect.DeepEqual(defaultConfig, globalConfig) {
 		t.Fatalf("%#v != %#v\n", defaultConfig, globalConfig)
 	}
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
 	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
