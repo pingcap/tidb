@@ -20,39 +20,81 @@ import (
 )
 
 func TestNormalizeDiskName(t *testing.T) {
-	t.Parallel()
-	require.Equal(t, "sdb", normalizeDiskName("/dev/sdb"))
-	require.Equal(t, "sda", normalizeDiskName("sda"))
+	tests := []struct {
+		diskName string
+		expected string
+	}{
+		{"/dev/sdb", "sdb"},
+		{"sda", "sda"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.diskName, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, test.expected, normalizeDiskName(test.diskName))
+		})
+	}
 }
 
 func TestIsNormalizedDiskNameAllowed(t *testing.T) {
-	t.Parallel()
-	require.True(t, isNormalizedDiskNameAllowed("disk1s4"))
-	require.True(t, isNormalizedDiskNameAllowed("rootfs"))
-	require.True(t, isNormalizedDiskNameAllowed("sda"))
-	require.True(t, isNormalizedDiskNameAllowed("sda1"))
-	require.True(t, isNormalizedDiskNameAllowed("sdb"))
-	require.True(t, isNormalizedDiskNameAllowed("sdb3"))
-	require.True(t, isNormalizedDiskNameAllowed("sdc"))
-	require.True(t, isNormalizedDiskNameAllowed("nvme0"))
-	require.True(t, isNormalizedDiskNameAllowed("nvme0n1"))
-	require.True(t, isNormalizedDiskNameAllowed("nvme0n1p0"))
-	require.True(t, isNormalizedDiskNameAllowed("md127"))
-	require.True(t, isNormalizedDiskNameAllowed("mdisk1s4"))
+	tests := []struct {
+		diskName string
+	}{
+		{"disk1s4"},
+		{"rootfs"},
+		{"sda"},
+		{"sda1"},
+		{"sdb"},
+		{"sdb3"},
+		{"sdc"},
+		{"nvme0"},
+		{"nvme0n1"},
+		{"nvme0n1p0"},
+		{"md127"},
+		{"mdisk1s4"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.diskName, func(t *testing.T) {
+			t.Parallel()
+			require.True(t, isNormalizedDiskNameAllowed(test.diskName))
+		})
+	}
 }
 
 func TestIsNormalizedDiskNameNotAllowed(t *testing.T) {
-	t.Parallel()
-	require.False(t, isNormalizedDiskNameAllowed("foo"))
-	require.False(t, isNormalizedDiskNameAllowed("/rootfs"))
-	require.False(t, isNormalizedDiskNameAllowed("asmdisk01p1"))
+	tests := []struct {
+		diskName string
+	}{
+		{"foo"},
+		{"/rootfs"},
+		{"asmdisk01p1"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.diskName, func(t *testing.T) {
+			t.Parallel()
+			require.False(t, isNormalizedDiskNameAllowed(test.diskName))
+		})
+	}
 }
 
 func TestNormalizeFieldName(t *testing.T) {
-	t.Parallel()
-	require.Equal(t, "deviceName", normalizeFieldName("deviceName"))
-	require.Equal(t, "deviceName", normalizeFieldName("device-name"))
-	require.Equal(t, "deviceName", normalizeFieldName("device_name"))
-	require.Equal(t, "l1CacheSize", normalizeFieldName("l1-cache-size"))
-	require.Equal(t, "freePercent", normalizeFieldName("free-percent"))
+	tests := []struct {
+		fileName string
+		expected string
+	}{
+		{"deviceName", "deviceName"},
+		{"device-name", "deviceName"},
+		{"device_name", "deviceName"},
+		{"l1-cache-size", "l1CacheSize"},
+		{"free-percent", "freePercent"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.fileName, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, test.expected, normalizeFieldName(test.fileName))
+		})
+	}
 }
