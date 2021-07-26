@@ -90,7 +90,7 @@ func (s *pkgTestSuite) TestBatchRetrieverHelper(c *C) {
 		c.Assert(err, IsNil)
 	}
 	c.Assert(rangeStarts, DeepEquals, []int{0})
-	c.Assert(rangeStarts, DeepEquals, []int{10})
+	c.Assert(rangeEnds, DeepEquals, []int{10})
 }
 
 func (s *pkgTestSuite) TestSQLDigestTextRetriever(c *C) {
