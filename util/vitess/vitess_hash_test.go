@@ -20,14 +20,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/stretchr/testify/require"
 )
 
 func TestVitessHash(t *testing.T) {
 	t.Parallel()
-
-	defer testleak.AfterTestT(t)()
 
 	hashed, err := HashUint64(30375298039)
 	require.NoError(t, err)
