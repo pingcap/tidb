@@ -230,7 +230,7 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 	//
 	// |              | NZD               | NZD|ST  | ELSE              | ELSE|ST  |
 	// | ------------ | ----------------- | ------- | ----------------- | -------- |
-	// | `0000-00-01` | Trucate + Warning | Error   | Trucate + Warning | Error    |
+	// | `0000-00-01` | Truncate + Warning| Error   | Truncate + Warning| Error    |
 	// | `0000-00-00` | Success + Warning | Error   | Success           | Success  |
 	//
 	// * **NZD**: NO_ZERO_DATE_MODE
