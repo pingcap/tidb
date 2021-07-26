@@ -402,7 +402,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 		finishCh:     make(chan struct{}),
 		vars:         vars,
 		memTracker:   req.MemTracker,
-		ClientHelper: tikv.NewClientHelper(c.store.KVStore, util.NewTSSet(5)),
+		ClientHelper: tikv.NewClientHelper(c.store.KVStore, util.NewTSSet(5), false),
 		rpcCancel:    tikv.NewRPCanceller(),
 	}
 	ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)

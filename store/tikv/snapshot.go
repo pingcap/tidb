@@ -264,7 +264,7 @@ func (s *tikvSnapshot) batchGetKeysByRegions(bo *Backoffer, keys [][]byte, colle
 }
 
 func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, collectF func(k, v []byte)) error {
-	cli := NewClientHelper(s.store, s.resolvedLocks)
+	cli := NewClientHelper(s.store, s.resolvedLocks, false)
 	s.mu.RLock()
 	if s.mu.stats != nil {
 		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
@@ -417,7 +417,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		}
 	})
 
-	cli := NewClientHelper(s.store, s.resolvedLocks)
+	cli := NewClientHelper(s.store, s.resolvedLocks, true)
 
 	isStaleness := false
 	var matchStoreLabels []*metapb.StoreLabel
