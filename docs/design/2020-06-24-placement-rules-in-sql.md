@@ -194,7 +194,7 @@ To simplify the procedure, a `SHOW PLACEMENT` statement is provided to summarize
 The statement is in such a format:
 
 ```sql
-SHOW PLACEMENT FOR [{DATABASE | SCHEMA} schema_name] [TABLE table_name] [PARTITION partition_name];
+SHOW PLACEMENT FOR [{DATABASE | SCHEMA} schema_name] [TABLE table_name [PARTITION partition_name]];
 ```
 
 TiDB will automatically find the effective rule based on the rule priorities.
@@ -429,7 +429,7 @@ CREATE PLACEMENT POLICY p1 FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-e
 CREATE PLACEMENT POLICY p2 FOLLOWER_CONSTRAINTS="{+region=us-east-1:1,-region=us-east-2:1}";
 ```
 
-This is because p2 explicitly requires a follower count of 1 per region, whereas p2 allows for 2 in any of the above (see "Schedule Property" above for an explanation).
+This is because p2 explicitly requires a follower count of 1 per region, whereas p1 allows for 2 in any of the above (see "Schedule Property" above for an explanation).
 
 This is useful in the case that you want to ensure that `FOLLOWERS=2` exists in any of a list of zones:
 
@@ -833,7 +833,7 @@ PLACEMENT POLICY='companystandardpolicy';
 
 ### Optimization: Multi-tenancy / control of shared resources
 
-This example is similar to latest data on SSD. The customer has a large TiDB Cluster with several workloads that are running on it. They might want to reduce the blast radius of individual users impacting eac-hother, and potentially improve QoS.
+This example is similar to latest data on SSD. The customer has a large TiDB Cluster with several workloads that are running on it. They might want to reduce the blast radius of individual users impacting each-other, and potentially improve QoS.
 
 Assuming a `schema` per tenant, it is easy to create a set of "resource pools". Each pool is a label, which contains a set of tikv-servers (with sufficient capacity, and nodes to provide high availability still):
 
@@ -995,4 +995,3 @@ This specific semantic will be the hardest to implement because of the other dep
   - Use defaults for `count` of each role, and `ROLE_CONSTRAINTS` syntax.
   - Added `SCHEDULE` property
   - Removed further ambiguous cases such as count when using dictionary syntax.
-
