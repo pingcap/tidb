@@ -481,7 +481,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETString:
 		sig = &builtinGreatestStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
-	case types.ETDatetime, types.ETTiexecutor / executor_test.gomestamp:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinGreatestTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
 	}
