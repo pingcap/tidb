@@ -14,10 +14,9 @@
 package collate
 
 import (
-	"reflect"
+	"fmt"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,15 +33,15 @@ type keyTable struct {
 
 func testCompareTable(tables []compareTable, collate string, t *testing.T) {
 	for i, table := range tables {
-		comment := Commentf("%d %v %v", i, table.Left, table.Right)
+		comment := fmt.Sprintf("%d %v %v", i, table.Left, table.Right)
 		require.Equal(t, table.Expect, GetCollator(collate).Compare(table.Left, table.Right), comment)
 	}
 }
 
 func testKeyTable(tables []keyTable, collate string, t *testing.T) {
 	for i, table := range tables {
-		comment := Commentf("%d %s", i, table.Str)
-		require.True(t, reflect.DeepEqual(GetCollator(collate).Key(table.Str), table.Expect), comment)
+		comment := fmt.Sprintf("%d %s", i, table.Str)
+		require.Equal(t, GetCollator(collate).Key(table.Str), table.Expect, comment)
 	}
 }
 
