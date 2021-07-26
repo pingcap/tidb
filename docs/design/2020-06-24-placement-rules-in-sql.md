@@ -811,7 +811,7 @@ PLACEMENT POLICY='companystandardpolicy';
 
 ### Optimization: Multi-tenancy / control of shared resources
 
-This example is similar to latest data on SSD. The customer has a large TiDB Cluster with several workloads that are running on it. They might want to reduce the blast radius of individual users impacting eac-hother, and potentially improve QoS.
+This example is similar to latest data on SSD. The customer has a large TiDB Cluster with several workloads that are running on it. They might want to reduce the blast radius of individual users impacting each-other, and potentially improve QoS.
 
 Assuming a `schema` per tenant, it is easy to create a set of "resource pools". Each pool is a label, which contains a set of tikv-servers (with sufficient capacity, and nodes to provide high availability still):
 
