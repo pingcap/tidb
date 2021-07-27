@@ -387,9 +387,9 @@ func (s *testStatsSuite) TestOutOfRangeEstimation(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int)")
+	testKit.MustExec("create table t(a int unsigned)")
 	for i := 0; i < 3000; i++ {
-		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5)) // [0, 600)
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
 	}
 	testKit.MustExec("analyze table t with 2000 samples")
 
@@ -399,7 +399,7 @@ func (s *testStatsSuite) TestOutOfRangeEstimation(c *C) {
 	statsTbl := h.GetTableStats(table.Meta())
 	sc := &stmtctx.StatementContext{}
 	col := statsTbl.Columns[table.Meta().Columns[0].ID]
-	count, err := col.GetColumnRowCount(sc, getRange(600, 600), statsTbl.Count, false)
+	count, err := col.GetColumnRowCount(sc, getRange(900, 900), statsTbl.Count, false)
 	c.Assert(err, IsNil)
 	// Because the ANALYZE collect data by random sampling, so the result is not an accurate value.
 	// so we use a range here.
