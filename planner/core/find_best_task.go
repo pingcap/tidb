@@ -525,7 +525,7 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 					i++
 					break
 				}
-				if path.ConstCols == nil || !path.ConstCols[i] {
+				if path.ConstCols == nil || i >= len(path.ConstCols) || !path.ConstCols[i] {
 					break
 				}
 			}
