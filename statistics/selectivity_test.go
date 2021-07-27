@@ -260,7 +260,7 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		{
 			exprs:                    "a >= 1 and b > 1 and a < 2",
 			selectivity:              0.01783264746,
-			selectivityAfterIncrease: 0.01801783264,
+			selectivityAfterIncrease: 0.01851851852,
 		},
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
@@ -280,12 +280,12 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		{
 			exprs:                    "b > 1",
 			selectivity:              0.96296296296,
-			selectivityAfterIncrease: 0.97296296296,
+			selectivityAfterIncrease: 1,
 		},
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
 			selectivity:              0,
-			selectivityAfterIncrease: 0.00003239205,
+			selectivityAfterIncrease: 0.00008258847,
 		},
 		{
 			exprs:                    longExpr,
