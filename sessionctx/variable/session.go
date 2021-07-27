@@ -529,6 +529,9 @@ type SessionVars struct {
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
 
+	// EnableCorrelationAdjustment is used to indicate if correlation adjustment is enabled.
+	EnableCorrelationAdjustment bool
+
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
 
@@ -1002,6 +1005,11 @@ func NewSessionVars() *SessionVars {
 		DDLReorgPriority:            kv.PriorityLow,
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
 		preferRangeScan:             DefOptPreferRangeScan,
+<<<<<<< HEAD
+=======
+		EnableCorrelationAdjustment: DefOptEnableCorrelationAdjustment,
+		LimitPushDownThreshold:      DefOptLimitPushDownThreshold,
+>>>>>>> 51c48d2fa... planner: update the correlation adjustment rule of Limit/TopN for TableScan (#26445)
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		CPUFactor:                   DefOptCPUFactor,
