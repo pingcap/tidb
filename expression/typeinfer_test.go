@@ -776,7 +776,7 @@ func (s *testInferTypeSuite) createTestCase4ArithmeticFuncs() []typeInferTestCas
 		{"c_decimal MOD c_udecimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 10, 3},
 		{"c_datetime MOD c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 22, 3},
 		{"c_bigint_d MOD c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 20, 3},
-		{"c_double_d MOD c_decimal", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
+		{"c_double_d MOD c_decimal", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 23, types.UnspecifiedLength},
 		{"c_double_d MOD c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 		{"c_double_d MOD c_enum", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 	}
