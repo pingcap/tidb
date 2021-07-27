@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,31 +14,11 @@
 package systimemon
 
 import (
-	"sync/atomic"
 	"testing"
-	"time"
 
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testbridge"
 )
 
-func TestSystimeMonitor(t *testing.T) {
-	t.Parallel()
-	var jumpForward int32
-
-	trigged := false
-	go StartMonitor(
-		func() time.Time {
-			if !trigged {
-				trigged = true
-				return time.Now()
-			}
-
-			return time.Now().Add(-2 * time.Second)
-		}, func() {
-			atomic.StoreInt32(&jumpForward, 1)
-		}, func() {})
-
-	time.Sleep(1 * time.Second)
-
-	require.Equal(t, int32(1), atomic.LoadInt32(&jumpForward), "should detect time error")
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
 }
