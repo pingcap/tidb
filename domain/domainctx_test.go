@@ -17,18 +17,20 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDomain(t *testing.T) {
+	t.Parallel()
+
 	ctx := mock.NewContext()
-	assert.NotEqual(t, "", domainKey.String())
+	require.NotEqual(t, "", domainKey.String())
 
 	BindDomain(ctx, nil)
 	v := GetDomain(ctx)
-	assert.Nil(t, v)
+	require.Nil(t, v)
 
 	ctx.ClearValue(domainKey)
 	v = GetDomain(ctx)
-	assert.Nil(t, v)
+	require.Nil(t, v)
 }
