@@ -1972,7 +1972,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 }
 
 func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
-	if !prop.IsEmpty() {
+	if !prop.IsEmpty() && !prop.CanAddEnforcer {
 		return invalidTask, 1, nil
 	}
 	// The physical plan has been build when derive stats.
@@ -1983,6 +1983,9 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 		cst += p.cte.recursivePartPhysicalPlan.Cost()
 	}
 	t = &rootTask{pcte, cst, false}
+	if prop.CanAddEnforcer {
+		t = enforceProperty(prop, t, p.basePlan.ctx)
+	}
 	return t, 1, nil
 }
 
