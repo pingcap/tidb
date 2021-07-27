@@ -16,7 +16,6 @@ package tikv
 
 import (
 	"context"
-	"go.uber.org/zap"
 	"io"
 	"math"
 	"runtime/trace"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/connectivity"
@@ -354,6 +354,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, errors.Trace(err)
 	}
 
+	metrics.TiKVRecycleConnDuration.Observe(float64(time.Since(start)))
 	if ctx.Value("isMeta") == true {
 		duration := time.Since(start)
 		startTs := ctx.Value(txnStartKey)

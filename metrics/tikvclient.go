@@ -180,6 +180,14 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 34), // 1ns ~ 8s
 			Help:      "batch wait resp duration",
 		})
+	TiKVRecycleConnDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "recycle_conn_duration",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 34), // 1ns ~ 8s
+			Help:      "recycle conn duration",
+		})
 	TiKVBatchSendLatency = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
