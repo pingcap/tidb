@@ -16,6 +16,7 @@ package kv
 import (
 	"bytes"
 	"errors"
+	"github.com/pingcap/tidb/util/testkit"
 	"testing"
 	"time"
 
@@ -130,7 +131,7 @@ func TestHandle(t *testing.T) {
 	assert.Equal(t, -1, ih.Compare(ih2))
 	assert.Equal(t, "100", ih.String())
 
-	ch := mustNewCommonHandle(t, 100, "abc")
+	ch := testkit.MustNewCommonHandle(t, 100, "abc")
 	assert.False(t, ch.IsInt())
 
 	ch2 := ch.Next()
@@ -183,7 +184,7 @@ func TestHandleMap(t *testing.T) {
 	assert.False(t, ok)
 	assert.Nil(t, v)
 
-	ch := mustNewCommonHandle(t, 100, "abc")
+	ch := testkit.MustNewCommonHandle(t, 100, "abc")
 	m.Set(ch, "a")
 	v, ok = m.Get(ch)
 	assert.True(t, ok)
@@ -195,9 +196,9 @@ func TestHandleMap(t *testing.T) {
 	assert.Nil(t, v)
 
 	m.Set(ch, "a")
-	ch2 := mustNewCommonHandle(t, 101, "abc")
+	ch2 := testkit.MustNewCommonHandle(t, 101, "abc")
 	m.Set(ch2, "b")
-	ch3 := mustNewCommonHandle(t, 99, "def")
+	ch3 := testkit.MustNewCommonHandle(t, 99, "def")
 	m.Set(ch3, "c")
 	assert.Equal(t, 3, m.Len())
 
@@ -218,16 +219,6 @@ func TestHandleMap(t *testing.T) {
 	})
 
 	assert.Equal(t, 2, cnt)
-}
-
-func mustNewCommonHandle(t *testing.T, values ...interface{}) *CommonHandle {
-	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
-	require.Nil(t, err)
-
-	ch, err := NewCommonHandle(encoded)
-	require.Nil(t, err)
-
-	return ch
 }
 
 func BenchmarkIsPoint(b *testing.B) {
