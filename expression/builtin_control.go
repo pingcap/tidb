@@ -187,11 +187,11 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	fieldTp.Decimal, fieldTp.Flen = decimal, flen
 	if fieldTp.EvalType().IsStringKind() && !isBinaryStr {
 		fieldTp.Charset, fieldTp.Collate = DeriveCollationFromExprs(ctx, args...)
-		if fieldTp.Collate == "binary" {
+		if fieldTp.Charset == charset.CharsetBin && fieldTp.Collate == charset.CollationBin {
 			fieldTp.Charset, fieldTp.Collate = charset.GetDefaultCharsetAndCollate()
 		}
 	} else {
-		fieldTp.Charset, fieldTp.Collate = "binary", "binary"
+		fieldTp.Charset, fieldTp.Collate = charset.CharsetBin, charset.CollationBin
 	}
 	if isBinaryFlag {
 		fieldTp.Flag |= mysql.BinaryFlag
