@@ -190,6 +190,8 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		if fieldTp.Collate == "binary" {
 			fieldTp.Charset, fieldTp.Collate = charset.GetDefaultCharsetAndCollate()
 		}
+	} else {
+		fieldTp.Charset, fieldTp.Collate = "binary", "binary"
 	}
 	if isBinaryFlag {
 		fieldTp.Flag |= mysql.BinaryFlag
