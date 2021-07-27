@@ -58,6 +58,9 @@ func TestT(t *testing.T) {
 		t.Fatalf("%#v != %#v\n", defaultConfig, globalConfig)
 	}
 
+	// AsyncCommit will make DDL wait 2.5s before changing to the next state.
+	// In the testing environment, there is no correctness issue. Waiting is unnecessary, it just makes CI slow.
+	// So set the config to avoid that.
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
