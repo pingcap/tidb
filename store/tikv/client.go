@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"context"
+	"go.uber.org/zap"
 	"io"
 	"math"
 	"runtime/trace"
@@ -351,6 +352,12 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	connArray, err := c.getConnArray(addr, enableBatch)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if ctx.Value("isMeta") == true {
+		duration := time.Since(start)
+		startTs := ctx.Value(txnStartKey)
+		logutil.Logger(ctx).Info("load meta SendRequest", zap.Reflect("startTs", startTs), zap.Duration("recycle conn", duration))
 	}
 
 	// TiDB RPC server supports batch RPC, but batch connection will send heart beat, It's not necessary since

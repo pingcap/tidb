@@ -14,6 +14,7 @@
 package structure
 
 import (
+	"bytes"
 	"context"
 	"strconv"
 
@@ -33,7 +34,12 @@ func (t *TxStructure) Set(key []byte, value []byte) error {
 // Get gets the string value of a key.
 func (t *TxStructure) Get(key []byte) ([]byte, error) {
 	ek := t.encodeStringDataKey(key)
-	value, err := t.reader.Get(context.TODO(), ek)
+	ctx := context.TODO()
+	isMeta := bytes.Equal([]byte("SchemaVersionKey"), key)
+	if isMeta {
+		ctx = context.WithValue(ctx, "isMeta", true)
+	}
+	value, err := t.reader.Get(ctx, ek)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}

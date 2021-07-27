@@ -154,6 +154,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVBatchPendingRequests)
 	prometheus.MustRegister(TiKVBatchRequests)
 	prometheus.MustRegister(TiKVBatchWaitDuration)
+	prometheus.MustRegister(TiKVBatchWaitRespDuration)
 	prometheus.MustRegister(TiKVBatchSendLatency)
 	prometheus.MustRegister(TiKvBatchWaitOverLoad)
 	prometheus.MustRegister(TiKVBatchClientUnavailable)
