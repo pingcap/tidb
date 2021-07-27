@@ -14,7 +14,6 @@
 package decoder_test
 
 import (
-	"github.com/pingcap/tidb/util/testkit"
 	"testing"
 	"time"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/stretchr/testify/require"
 )
 
