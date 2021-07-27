@@ -1136,6 +1136,8 @@ func NewSessionVars() *SessionVars {
 		enableChunkRPC = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableChunkRPC, enableChunkRPC))
+	// instance level variable should fulfil the initial session variable.
+	terror.Log(vars.SetSystemVar(TiDBStoreLimit, strconv.FormatInt(tikvstore.StoreLimit.Load(), 10)))
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
 		case kv.TiFlash.Name():
