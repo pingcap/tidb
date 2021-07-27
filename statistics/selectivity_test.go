@@ -391,7 +391,7 @@ func (s *testStatsSuite) TestOutOfRangeEstimation(c *C) {
 	for i := 0; i < 3000; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5)) // [0, 600)
 	}
-	testKit.MustExec("analyze table t with 1000 samples")
+	testKit.MustExec("analyze table t with 2000 samples")
 
 	h := s.do.StatsHandle()
 	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -403,8 +403,8 @@ func (s *testStatsSuite) TestOutOfRangeEstimation(c *C) {
 	c.Assert(err, IsNil)
 	// Because the ANALYZE collect data by random sampling, so the result is not an accurate value.
 	// so we use a range here.
-	c.Assert(count < 4.5, IsTrue)
-	c.Assert(count > 3.5, IsTrue)
+	c.Assert(count < 5.5, IsTrue, Commentf("expected: around 5.0, got: %v", count))
+	c.Assert(count > 4.5, IsTrue, Commentf("expected: around 5.0, got: %v", count))
 
 	var input []struct {
 		Start int64
@@ -425,8 +425,8 @@ func (s *testStatsSuite) TestOutOfRangeEstimation(c *C) {
 			output[i].End = ran.End
 			output[i].Count = count
 		})
-		c.Assert(count < output[i].Count*1.2, IsTrue)
-		c.Assert(count > output[i].Count*0.8, IsTrue)
+		c.Assert(count < output[i].Count*1.2, IsTrue, Commentf("for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count))
+		c.Assert(count > output[i].Count*0.8, IsTrue, Commentf("for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count))
 	}
 }
 
