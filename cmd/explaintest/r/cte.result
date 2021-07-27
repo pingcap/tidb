@@ -408,7 +408,7 @@ c1	c1
 2	2
 2	2
 2	2
-// No Sort on CTE. Because tpk.c1 is pk.
+// Sort should not exist, because tpk.c1 is pk. Not the best plan for now(#25674).
 explain with cte1 as (select c1 from tpk) select /*+ MERGE_JOIN(dt1, dt2) */ * from tpk dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 id	estRows	task	access object	operator info
 MergeJoin_24	10000.00	root		inner join, left key:test.tpk.c1, right key:test.tpk.c1
@@ -425,7 +425,7 @@ c1	c1
 1	1
 2	2
 3	3
-// No Sort on CTE. Because we have order by in CTE definition.
+// Sort should not exist, because we have order by in CTE definition. Not the best plan for now(#25674).
 explain with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 id	estRows	task	access object	operator info
 MergeJoin_30	10000.00	root		inner join, left key:test.t1.c1, right key:test.t1.c1
@@ -522,7 +522,7 @@ c1	c1
 2	2
 2	2
 2	2
-// No sort in CTE definition. Because tpk is ordered.
+// Sort should not exist, because tpk is ordered. Not the best plan for now(#25674).
 explain with cte1 as (select c1 from tpk order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 id	estRows	task	access object	operator info
 MergeJoin_32	10000.00	root		inner join, left key:test.t1.c1, right key:test.tpk.c1
