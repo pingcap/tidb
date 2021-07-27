@@ -151,7 +151,13 @@ func (m *mppIterator) run(ctx context.Context) {
 		}
 		m.mu.Unlock()
 		m.wg.Add(1)
-		bo := backoff.NewBackoffer(ctx, copNextMaxBackoff)
+		boMaxSleep := copNextMaxBackoff
+		failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
+			if value.(bool) {
+				boMaxSleep = 2
+			}
+		})
+		bo := backoff.NewBackoffer(ctx, boMaxSleep)
 		go func(mppTask *kv.MPPDispatchRequest) {
 			defer func() {
 				m.wg.Done()
