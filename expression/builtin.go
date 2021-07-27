@@ -128,13 +128,7 @@ func CheckIllegalMixCollation(funcName string, args []Expression, evalType types
 }
 
 func illegalMixCollationErr(funcName string, args []Expression) error {
-	if funClass, ok := funcs[funcName]; ok {
-		if opClass, ok := funClass.(operatorClass); ok {
-			var opNameBuilder strings.Builder
-			opClass.getOpcode().Format(&opNameBuilder)
-			funcName = opNameBuilder.String()
-		}
-	}
+	funcName = GetDisplayName(funcName)
 
 	switch len(args) {
 	case 2:
@@ -915,6 +909,19 @@ var funcs = map[string]functionClass{
 func IsFunctionSupported(name string) bool {
 	_, ok := funcs[name]
 	return ok
+}
+
+// GetDisplayName translate a function name to its display name
+func GetDisplayName(name string) string {
+	if funClass, ok := funcs[name]; ok {
+		if opClass, ok := funClass.(operatorClass); ok {
+			var opNameBuilder strings.Builder
+			opClass.getOpcode().Format(&opNameBuilder)
+			return opNameBuilder.String()
+		}
+	}
+
+	return name
 }
 
 // GetBuiltinList returns a list of builtin functions
