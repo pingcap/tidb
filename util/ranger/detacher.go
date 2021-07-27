@@ -557,6 +557,8 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			accesses[i] = points2EqOrInCond(sctx, points[i], cols[i])
 			newConditions = append(newConditions, accesses[i])
 			if f, ok := accesses[i].(*expression.ScalarFunction); ok && f.FuncName.L == ast.EQ {
+				// Actually the constant column value may not be mutable. Here we assume it is mutable to keep it simple.
+				// Maybe we can improve it later.
 				columnValues[i] = &valueInfo{mutable: true}
 			}
 			sctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
@@ -690,7 +692,10 @@ type valueInfo struct {
 }
 
 func isSameValue(sc *stmtctx.StatementContext, lhs, rhs *valueInfo) (bool, error) {
-	// We assume `lhs` and `rhs` are not the same when either `lhs` or `rhs` is mutable. Maybe we can improve it later.
+	// We assume `lhs` and `rhs` are not the same when either `lhs` or `rhs` is mutable to keep it simple. If we consider
+	// mutable valueInfo, we need to set `sc.OptimDependOnMutableConst = true`, which makes the plan not able to be cached.
+	// On the other hand, the equal condition may not be used for optimization. Hence we simply regard mutable valueInfos different
+	// from others. Maybe we can improve it later.
 	// TODO: is `lhs.value.Kind() != rhs.value.Kind()` necessary?
 	if lhs == nil || rhs == nil || lhs.mutable || rhs.mutable || lhs.value.Kind() != rhs.value.Kind() {
 		return false, nil

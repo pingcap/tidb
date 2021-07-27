@@ -675,10 +675,10 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 		path.EqCondCount = res.EqCondCount
 		path.EqOrInCondCount = res.EqOrInCount
 		path.IsDNFCond = res.IsDNFCond
-		path.ConstantCols = make([]bool, len(path.IdxCols))
+		path.ConstCols = make([]bool, len(path.IdxCols))
 		if res.ColumnValues != nil {
-			for i := range path.ConstantCols {
-				path.ConstantCols[i] = res.ColumnValues[i] != nil
+			for i := range path.ConstCols {
+				path.ConstCols[i] = res.ColumnValues[i] != nil
 			}
 		}
 		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
@@ -860,10 +860,10 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 		path.EqCondCount = res.EqCondCount
 		path.EqOrInCondCount = res.EqOrInCount
 		path.IsDNFCond = res.IsDNFCond
-		path.ConstantCols = make([]bool, len(path.IdxCols))
+		path.ConstCols = make([]bool, len(path.IdxCols))
 		if res.ColumnValues != nil {
-			for i := range path.ConstantCols {
-				path.ConstantCols[i] = res.ColumnValues[i] != nil
+			for i := range path.ConstCols {
+				path.ConstCols[i] = res.ColumnValues[i] != nil
 			}
 		}
 		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
