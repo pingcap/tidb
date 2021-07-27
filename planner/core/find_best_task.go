@@ -1876,7 +1876,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		rowCount = math.Min(path.CountAfterAccess, prop.ExpectedCnt/selectivity)
 
 		// adjust rowCount according to correlation
-		count, ok, _ := ds.crossEstimateTableRowCount(path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
+		count, ok, corr := ds.crossEstimateTableRowCount(path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
 		if ok {
 			// TODO: actually, before using this count as the estimated row count of table scan, we need additionally
 			// check if count < row_count(first_region | last_region), and use the larger one since we build one copTask
@@ -1889,6 +1889,10 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 			// to reduce risks of correlation adjustment, it's only allowed to update the upper bound to
 			// prevent it from under-estimating TableScan's row count.
 			rowCount = math.Max(rowCount, count)
+		} else if abs := math.Abs(corr); abs < 1 {
+			correlationFactor := math.Pow(1-abs, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))
+			// crease rowCount by corrFactor but use CounterAfterAccess as its upper bound
+			rowCount = math.Min(path.CountAfterAccess, rowCount / correlationFactor)
 		}
 	}
 	// We need NDV of columns since it may be used in cost estimation of join. Precisely speaking,

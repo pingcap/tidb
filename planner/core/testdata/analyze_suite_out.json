@@ -182,11 +182,10 @@
           "explain format = 'brief' SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
         ],
         "Plan": [
-          "Limit 1.00 root  offset:0, count:1",
-          "└─TableReader 1.00 root  data:Limit",
-          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
-          "    └─Selection 1.00 cop[tikv]  eq(test.t.b, 2)",
-          "      └─TableFullScan 4.17 cop[tikv] table:t keep order:true"
+          "TopN 1.00 root  test.t.a, offset:0, count:1",
+          "└─IndexReader 1.00 root  index:TopN",
+          "  └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
+          "    └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false"
         ]
       },
       {
