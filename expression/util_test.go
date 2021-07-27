@@ -455,6 +455,8 @@ type MockExpr struct {
 	i   interface{}
 }
 
+func (m *MockExpr) PropagateType() {}
+
 func (m *MockExpr) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }

@@ -222,7 +222,7 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	return false
 }
 
-// propagateType implements Expression interface.
+// PropagateType implements TypePropagater interface.
 func (col *Column) PropagateType() {}
 
 // VecEvalInt evaluates this expression in a vectorized manner.
