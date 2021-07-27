@@ -1088,3 +1088,58 @@ func (p *LogicalWindow) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 	}
 	return extracted
 }
+<<<<<<< HEAD
+=======
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+	if p.stats != nil {
+		return p.stats, nil
+	}
+
+	var err error
+	if p.cte.seedPartPhysicalPlan == nil {
+		p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
+		if err != nil {
+			return nil, err
+		}
+	}
+	resStat := p.cte.seedPartPhysicalPlan.Stats()
+	// Changing the pointer so that seedStat in LogicalCTETable can get the new stat.
+	*p.seedStat = *resStat
+	p.stats = &property.StatsInfo{
+		RowCount: resStat.RowCount,
+		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
+	}
+	for i, col := range selfSchema.Columns {
+		p.stats.ColNDVs[col.UniqueID] += resStat.ColNDVs[p.cte.seedPartLogicalPlan.Schema().Columns[i].UniqueID]
+	}
+	if p.cte.recursivePartLogicalPlan != nil {
+		if p.cte.recursivePartPhysicalPlan == nil {
+			p.cte.recursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
+			if err != nil {
+				return nil, err
+			}
+		}
+		recurStat := p.cte.recursivePartPhysicalPlan.Stats()
+		for i, col := range selfSchema.Columns {
+			p.stats.ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
+		}
+		if p.cte.IsDistinct {
+			p.stats.RowCount = getColsNDV(p.schema.Columns, p.schema, p.stats)
+		} else {
+			p.stats.RowCount += recurStat.RowCount
+		}
+	}
+	return p.stats, nil
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalCTETable) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+	if p.stats != nil {
+		return p.stats, nil
+	}
+	p.stats = p.seedStat
+	return p.stats, nil
+}
+>>>>>>> 4a0ead8f0... planner: only build the same CTE once (#26454)

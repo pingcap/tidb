@@ -3568,6 +3568,82 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	return statsTbl
 }
 
+<<<<<<< HEAD
+=======
+func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
+	for i := len(b.outerCTEs) - 1; i >= 0; i-- {
+		cte := b.outerCTEs[i]
+		if cte.def.Name.L == tn.Name.L {
+			if cte.isBuilding {
+				if cte.nonRecursive {
+					// Can't see this CTE, try outer definition.
+					continue
+				}
+
+				// Building the recursive part.
+				cte.useRecursive = true
+				if cte.seedLP == nil {
+					return nil, ErrCTERecursiveRequiresNonRecursiveFirst.FastGenByArgs(tn.Name.String())
+				}
+
+				if cte.enterSubquery || cte.recursiveRef {
+					return nil, ErrInvalidRequiresSingleReference.FastGenByArgs(tn.Name.String())
+				}
+
+				cte.recursiveRef = true
+				p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID, seedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
+				p.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
+				p.SetOutputNames(cte.seedLP.OutputNames())
+				return p, nil
+			}
+
+			b.handleHelper.pushMap(nil)
+
+			hasLimit := false
+			limitBeg := uint64(0)
+			limitEnd := uint64(0)
+			if cte.limitLP != nil {
+				hasLimit = true
+				switch x := cte.limitLP.(type) {
+				case *LogicalLimit:
+					limitBeg = x.Offset
+					limitEnd = x.Offset + x.Count
+				case *LogicalTableDual:
+					// Beg and End will both be 0.
+				default:
+					return nil, errors.Errorf("invalid type for limit plan: %v", cte.limitLP)
+				}
+			}
+
+			if cte.cteClass == nil {
+				cte.cteClass = &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP,
+					recursivePartLogicalPlan: cte.recurLP, IDForStorage: cte.storageID,
+					optFlag: cte.optFlag, HasLimit: hasLimit, LimitBeg: limitBeg,
+					LimitEnd: limitEnd}
+			}
+			var p LogicalPlan
+			lp := LogicalCTE{cteAsName: tn.Name, cte: cte.cteClass, seedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
+			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
+			p = lp
+			p.SetOutputNames(cte.seedLP.OutputNames())
+			if len(asName.String()) > 0 {
+				lp.cteAsName = *asName
+				var on types.NameSlice
+				for _, name := range p.OutputNames() {
+					cpOn := *name
+					cpOn.TblName = *asName
+					on = append(on, &cpOn)
+				}
+				p.SetOutputNames(on)
+			}
+			return p, nil
+		}
+	}
+
+	return nil, nil
+}
+
+>>>>>>> 4a0ead8f0... planner: only build the same CTE once (#26454)
 func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
 	dbName := tn.Schema
 	sessionVars := b.ctx.GetSessionVars()

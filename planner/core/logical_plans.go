@@ -1173,3 +1173,53 @@ type LogicalShowDDLJobs struct {
 
 	JobNumber int64
 }
+<<<<<<< HEAD
+=======
+
+// CTEClass holds the information and plan for a CTE. Most of the fields in this struct are the same as cteInfo.
+// But the cteInfo is used when building the plan, and CTEClass is used also for building the executor.
+type CTEClass struct {
+	// The union between seed part and recursive part is DISTINCT or DISTINCT ALL.
+	IsDistinct bool
+	// seedPartLogicalPlan and recursivePartLogicalPlan are the logical plans for the seed part and recursive part of this CTE.
+	seedPartLogicalPlan      LogicalPlan
+	recursivePartLogicalPlan LogicalPlan
+	// seedPartPhysicalPlan and recursivePartPhysicalPlan are the physical plans for the seed part and recursive part of this CTE.
+	seedPartPhysicalPlan      PhysicalPlan
+	recursivePartPhysicalPlan PhysicalPlan
+	// storageID for this CTE.
+	IDForStorage int
+	// optFlag is the optFlag for the whole CTE.
+	optFlag  uint64
+	HasLimit bool
+	LimitBeg uint64
+	LimitEnd uint64
+}
+
+// LogicalCTE is for CTE.
+type LogicalCTE struct {
+	logicalSchemaProducer
+
+	cte       *CTEClass
+	cteAsName model.CIStr
+	seedStat  *property.StatsInfo
+}
+
+// LogicalCTETable is for CTE table
+type LogicalCTETable struct {
+	logicalSchemaProducer
+
+	seedStat     *property.StatsInfo
+	name         string
+	idForStorage int
+}
+
+// ExtractCorrelatedCols implements LogicalPlan interface.
+func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := ExtractCorrelatedCols4LogicalPlan(p.cte.seedPartLogicalPlan)
+	if p.cte.recursivePartLogicalPlan != nil {
+		corCols = append(corCols, ExtractCorrelatedCols4LogicalPlan(p.cte.recursivePartLogicalPlan)...)
+	}
+	return corCols
+}
+>>>>>>> 4a0ead8f0... planner: only build the same CTE once (#26454)
