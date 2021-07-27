@@ -98,11 +98,11 @@ func (s *testRuleReorderResultsSerial) TestClusteredIndex(c *C) {
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b))")
-	tk.MustQuery("explain select * from t limit 10").Check(testkit.Rows(
-		"TopN_7 10.00 root  test.t.a, test.t.b, test.t.c, offset:0, count:10",
-		"└─TableReader_16 10.00 root  data:TopN_15",
-		"  └─TopN_15 10.00 cop[tikv]  test.t.a, test.t.b, test.t.c, offset:0, count:10",
-		"    └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format=brief select * from t limit 10").Check(testkit.Rows(
+		"TopN 10.00 root  test.t.a, test.t.b, test.t.c, offset:0, count:10",
+		"└─TableReader 10.00 root  data:TopN",
+		"  └─TopN 10.00 cop[tikv]  test.t.a, test.t.b, test.t.c, offset:0, count:10",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
 }
 
