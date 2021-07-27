@@ -16,6 +16,8 @@ package tables
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"io"
 	"sync"
 	"time"
@@ -155,6 +157,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	writeBufs := vars.GetWriteStmtBufs()
 	skipCheck := vars.StmtCtx.BatchCheck
 	key, distinct, err := c.GenIndexKey(vars.StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
+	logutil.BgLogger().Warn("index.create", zap.ByteString("key", key))
 	if err != nil {
 		return nil, err
 	}
