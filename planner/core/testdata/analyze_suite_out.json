@@ -463,8 +463,9 @@
         "Plan": [
           "Projection 5.95 root  test.t.c, test.t.b",
           "└─TopN 5.95 root  test.t.b, offset:0, count:6",
-          "  └─IndexReader 5.95 root  index:IndexRangeScan",
-          "    └─IndexRangeScan 5.95 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+          "  └─IndexReader 5.95 root  index:TopN",
+          "    └─TopN 5.95 cop[tikv]  test.t.b, offset:0, count:6",
+          "      └─IndexRangeScan 5.95 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
         ]
       }
     ]
