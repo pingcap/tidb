@@ -873,6 +873,18 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCou
 	// Convert the range we want to estimate to scalar value(float64)
 	l := convertDatumToScalar(lDatum, commonPrefix)
 	r := convertDatumToScalar(rDatum, commonPrefix)
+	// If this is an unsigned column, we need to make sure values are not negative.
+	// Normal negative value should have become 0. But this still might happen when met MinNotNull here.
+	// Maybe it's better to do this transformation in the ranger like the normal negative value.
+	if mysql.HasUnsignedFlag(hg.Tp.Flag) {
+		if l < 0 {
+			l = 0
+		}
+		if r < 0 {
+			r = 0
+		}
+	}
+
 	// make sure l < r
 	if l >= r {
 		return 0

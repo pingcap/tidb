@@ -80,6 +80,10 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 			return 0
 		}
 		return convertBytesToScalar(bytes[commonPfxLen:])
+	case types.KindMinNotNull:
+		return -math.MaxFloat64
+	case types.KindMaxValue:
+		return math.MaxFloat64
 	default:
 		// do not know how to convert
 		return 0
