@@ -14,7 +14,6 @@
 package decoder_test
 
 import (
-	"github.com/pingcap/tidb/util/codec"
 	"testing"
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/rowcodec"
