@@ -154,6 +154,8 @@ func (s *testEvaluatorSuite) TestDisplayName(c *C) {
 	c.Assert(GetDisplayName(ast.EQ), Equals, "=")
 	c.Assert(GetDisplayName(ast.NullEQ), Equals, "<=>")
 	c.Assert(GetDisplayName(ast.IsTruthWithoutNull), Equals, "IS TRUE")
+	c.Assert(GetDisplayName("abs"), Equals, "abs")
+	c.Assert(GetDisplayName("other_unknown_func"), Equals, "other_unknown_func")
 }
 
 // newFunctionForTest creates a new ScalarFunction using funcName and arguments,
