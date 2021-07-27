@@ -95,6 +95,7 @@ func init() {
 		"testSuiteJoin3.TestVectorizedMergeJoin",
 		"testFastAnalyze.TestAnalyzeFastSample",
 		"testBypassSuite.TestLatch",
+		"testIntegrationSuite2.TestPartitionCancelAddPrimaryKey",
 	}
 	for _, v := range tmp {
 		allowList[v] = struct{}{}
