@@ -18,11 +18,13 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/terror"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestSchemaCheckerSimple(t *testing.T) {
+	t.Parallel()
+
 	lease := 5 * time.Millisecond
 	validator := NewSchemaValidator(lease, nil)
 	checker := &SchemaChecker{SchemaValidator: validator}
@@ -35,35 +37,35 @@ func TestSchemaCheckerSimple(t *testing.T) {
 	// checker's schema version is the same as the current schema version.
 	checker.schemaVer = 4
 	_, err := checker.Check(ts)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// checker's schema version is less than the current schema version, and it doesn't exist in validator's items.
 	// checker's related table ID isn't in validator's changed table IDs.
 	checker.schemaVer = 2
 	checker.relatedTableIDs = []int64{3}
 	_, err = checker.Check(ts)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// The checker's schema version isn't in validator's items.
 	checker.schemaVer = 1
 	checker.relatedTableIDs = []int64{3}
 	_, err = checker.Check(ts)
-	assert.True(t, terror.ErrorEqual(err, ErrInfoSchemaChanged))
+	require.True(t, terror.ErrorEqual(err, ErrInfoSchemaChanged))
 
 	// checker's related table ID is in validator's changed table IDs.
 	checker.relatedTableIDs = []int64{2}
 	_, err = checker.Check(ts)
-	assert.True(t, terror.ErrorEqual(err, ErrInfoSchemaChanged))
+	require.True(t, terror.ErrorEqual(err, ErrInfoSchemaChanged))
 
 	// validator's latest schema version is expired.
 	time.Sleep(lease + time.Microsecond)
 	checker.schemaVer = 4
 	checker.relatedTableIDs = []int64{3}
 	_, err = checker.Check(ts)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Use checker.SchemaValidator.Check instead of checker.Check here because backoff make CI slow.
 	nowTS := uint64(time.Now().UnixNano())
 	_, result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs)
-	assert.Equal(t, ResultUnknown, result)
+	require.Equal(t, ResultUnknown, result)
 }
