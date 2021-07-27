@@ -324,6 +324,12 @@ func EncodeOldRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int6
 	return codec.EncodeValue(sc, valBuf, values...)
 }
 
+func Flatten(sc *stmtctx.StatementContext, data types.Datum) (types.Datum, error) {
+	var ret types.Datum
+	err := flatten(sc, data, &ret)
+	return ret, err
+}
+
 func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) error {
 	switch data.Kind() {
 	case types.KindMysqlTime:
