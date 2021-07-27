@@ -2044,26 +2044,28 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 }
 
 func pushLimitOrTopNForcibly(p LogicalPlan) bool {
-	var preferPushDown, meetThreshold bool
+	var meetThreshold bool
+	var preferPushDown *bool
 	switch lp := p.(type) {
 	case *LogicalTopN:
-		preferPushDown = lp.limitHints.preferLimitToCop
+		preferPushDown = &lp.limitHints.preferLimitToCop
 		meetThreshold = lp.Count+lp.Offset <= uint64(lp.ctx.GetSessionVars().LimitPushDownThreshold)
 	case *LogicalLimit:
-		preferPushDown = lp.limitHints.preferLimitToCop
+		preferPushDown = &lp.limitHints.preferLimitToCop
 		meetThreshold = true // always push Limit down in this case since it has no side effect
 	default:
 		return false
 	}
 
-	if preferPushDown || meetThreshold {
+	if *preferPushDown || meetThreshold {
 		if p.canPushToCop(kv.TiKV) {
 			return true
 		}
-		if preferPushDown {
+		if *preferPushDown {
 			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
 			warning := ErrInternal.GenWithStack(errMsg)
 			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+			*preferPushDown = false
 		}
 	}
 
