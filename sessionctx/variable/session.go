@@ -526,6 +526,9 @@ type SessionVars struct {
 	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	BroadcastJoinThresholdCount int64
 
+	// LimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
+	LimitPushDownThreshold int64
+
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
 
@@ -1002,6 +1005,7 @@ func NewSessionVars() *SessionVars {
 		DDLReorgPriority:            kv.PriorityLow,
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
 		preferRangeScan:             DefOptPreferRangeScan,
+		LimitPushDownThreshold:      DefOptLimitPushDownThreshold,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		CPUFactor:                   DefOptCPUFactor,

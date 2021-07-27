@@ -68,7 +68,12 @@ func (s *testRuleStabilizeResultsSerial) TestPlanCache(c *C) {
 func (s *testRuleStabilizeResultsSerial) TestSQLBinding(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+<<<<<<< HEAD:planner/core/rule_stabilize_results_test.go
 	tk.MustExec("set tidb_enable_stable_result_mode=1")
+=======
+	tk.MustExec("set tidb_enable_ordered_result_mode=1")
+	tk.MustExec("set tidb_opt_limit_push_down_threshold=0")
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550):planner/core/rule_result_reorder_test.go
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int, key(b))")
 	tk.MustQuery("explain select * from t where a > 0 limit 1").Check(testkit.Rows(
@@ -87,7 +92,26 @@ func (s *testRuleStabilizeResultsSerial) TestSQLBinding(c *C) {
 		"  └─TableRowIDScan_16(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 }
 
+<<<<<<< HEAD:planner/core/rule_stabilize_results_test.go
 type testRuleStabilizeResults struct {
+=======
+func (s *testRuleReorderResultsSerial) TestClusteredIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_ordered_result_mode=1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b))")
+	tk.MustQuery("explain format=brief select * from t limit 10").Check(testkit.Rows(
+		"TopN 10.00 root  test.t.a, test.t.b, test.t.c, offset:0, count:10",
+		"└─TableReader 10.00 root  data:TopN",
+		"  └─TopN 10.00 cop[tikv]  test.t.a, test.t.b, test.t.c, offset:0, count:10",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
+}
+
+type testRuleReorderResults struct {
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550):planner/core/rule_result_reorder_test.go
 	store kv.Storage
 	dom   *domain.Domain
 
@@ -125,7 +149,12 @@ func (s *testRuleStabilizeResults) runTestData(c *C, tk *testkit.TestKit, name s
 func (s *testRuleStabilizeResults) TestStableResultMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+<<<<<<< HEAD:planner/core/rule_stabilize_results_test.go
 	tk.MustExec("set tidb_enable_stable_result_mode=1")
+=======
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
+	tk.MustExec("set tidb_enable_ordered_result_mode=1")
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550):planner/core/rule_result_reorder_test.go
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int, key(b))")
 	s.runTestData(c, tk, "TestStableResultMode")

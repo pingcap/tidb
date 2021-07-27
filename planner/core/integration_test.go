@@ -397,6 +397,60 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 	}
 }
 
+<<<<<<< HEAD
+=======
+func (s *testIntegrationSerialSuite) TestVerboseExplain(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("create table t3(a int, b int, index c(b))")
+	tk.MustExec("insert into t1 values(1,2)")
+	tk.MustExec("insert into t1 values(3,4)")
+	tk.MustExec("insert into t1 values(5,6)")
+	tk.MustExec("insert into t2 values(1,2)")
+	tk.MustExec("insert into t2 values(3,4)")
+	tk.MustExec("insert into t2 values(5,6)")
+	tk.MustExec("insert into t3 values(1,2)")
+	tk.MustExec("insert into t3 values(3,4)")
+	tk.MustExec("insert into t3 values(5,6)")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t3")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t1" || tblInfo.Name.L == "t2" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550)
 func (s *testIntegrationSerialSuite) TestPushDownToTiFlashWithKeepOrder(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1129,6 +1183,7 @@ func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 	{
 		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 		tk.MustExec("use test")
+		tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));")
 		tk.MustExec("insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5)")
@@ -3533,7 +3588,80 @@ func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
 	}
 }
 
+<<<<<<< HEAD
 func (s *testIntegrationSuite) TestIssue23839(c *C) {
+=======
+func (s *testIntegrationSerialSuite) TestSelectIgnoreTemporaryTableInView(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (c int, d int)")
+	tk.MustExec("create view v1 as select * from t1 order by a")
+	tk.MustExec("create view v2 as select * from ((select * from t1) union (select * from t2)) as tt order by a, b")
+	tk.MustExec("create view v3 as select * from v1 order by a")
+	tk.MustExec("create view v4 as select * from t1, t2 where t1.a = t2.c order by a, b")
+	tk.MustExec("create view v5 as select * from (select * from t1) as t1 order by a")
+
+	tk.MustExec("insert into t1 values (1, 2), (3, 4)")
+	tk.MustExec("insert into t2 values (3, 5), (6, 7)")
+
+	tk.MustExec("create temporary table t1 (a int, b int)")
+	tk.MustExec("create temporary table t2 (c int, d int)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+
+	tk.MustQuery("select * from v1").Check(testkit.Rows("1 2", "3 4"))
+	tk.MustQuery("select * from v2").Check(testkit.Rows("1 2", "3 4", "3 5", "6 7"))
+	tk.MustQuery("select * from v3").Check(testkit.Rows("1 2", "3 4"))
+	tk.MustQuery("select * from v4").Check(testkit.Rows("3 4 3 5"))
+	tk.MustQuery("select * from v5").Check(testkit.Rows("1 2", "3 4"))
+
+}
+
+func (s *testIntegrationSerialSuite) TestIssue26250(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tp (id int primary key) partition by range (id) (partition p0 values less than (100));")
+	tk.MustExec("create table tn (id int primary key);")
+	tk.MustExec("insert into tp values(1),(2);")
+	tk.MustExec("insert into tn values(1),(2);")
+	tk.MustQuery("select * from tp,tn where tp.id=tn.id and tn.id=1 for update;").Check(testkit.Rows("1 1"))
+}
+
+func (s *testIntegrationSerialSuite) TestCTESelfJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(t1a int, t1b int, t1c int)")
+	tk.MustExec("create table t2(t2a int, t2b int, t2c int)")
+	tk.MustExec("create table t3(t3a int, t3b int, t3c int)")
+	tk.MustExec(`
+		with inv as
+		(select t1a , t3a, sum(t2c)
+			from t1, t2, t3
+			where t2a = t1a
+				and t2b = t3b
+				and t3c = 1998
+			group by t1a, t3a)
+		select inv1.t1a, inv2.t3a
+		from inv inv1, inv inv2
+		where inv1.t1a = inv2.t1a
+			and inv1.t3a = 4
+			and inv2.t3a = 4+1`)
+}
+
+// https://github.com/pingcap/tidb/issues/26214
+func (s *testIntegrationSerialSuite) TestIssue26214(c *C) {
+	originalVal := config.GetGlobalConfig().Experimental.AllowsExpressionIndex
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	defer func() {
+		config.GetGlobalConfig().Experimental.AllowsExpressionIndex = originalVal
+	}()
+
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists BB")
@@ -3550,6 +3678,40 @@ func (s *testIntegrationSuite) TestIssue23839(c *C) {
 		"	PRIMARY KEY (`pk`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2000001")
 	tk.Exec("explain SELECT OUTR . col2 AS X FROM (SELECT INNR . col1 as col1, SUM( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR2 INNER JOIN (SELECT INNR . col1 as col1, MAX( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR ON OUTR2.col1 = OUTR.col1 GROUP BY OUTR . col1, OUTR2 . col1 HAVING X <> 'b'")
+}
+
+func (s *testIntegrationSerialSuite) TestLimitPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustExec(`analyze table t`)
+
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
+	tk.MustQuery(`explain format=brief select a from t order by a desc limit 10`).Check(testkit.Rows(
+		`TopN 1.00 root  test.t.a:desc, offset:0, count:10`,
+		`└─TableReader 1.00 root  data:TableFullScan`,
+		`  └─TableFullScan 1.00 cop[tikv] table:t keep order:false`))
+
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold=10`)
+	tk.MustQuery(`explain format=brief select a from t order by a desc limit 10`).Check(testkit.Rows(
+		`TopN 1.00 root  test.t.a:desc, offset:0, count:10`,
+		`└─TableReader 1.00 root  data:TopN`,
+		`  └─TopN 1.00 cop[tikv]  test.t.a:desc, offset:0, count:10`,
+		`    └─TableFullScan 1.00 cop[tikv] table:t keep order:false`))
+
+	tk.MustQuery(`explain format=brief select a from t order by a desc limit 11`).Check(testkit.Rows(
+		`TopN 1.00 root  test.t.a:desc, offset:0, count:11`,
+		`└─TableReader 1.00 root  data:TableFullScan`,
+		`  └─TableFullScan 1.00 cop[tikv] table:t keep order:false`))
+
+	tk.MustQuery(`explain format=brief select /*+ limit_to_cop() */ a from t order by a desc limit 11`).Check(testkit.Rows(
+		`TopN 1.00 root  test.t.a:desc, offset:0, count:11`,
+		`└─TableReader 1.00 root  data:TopN`,
+		`  └─TopN 1.00 cop[tikv]  test.t.a:desc, offset:0, count:11`,
+		`    └─TableFullScan 1.00 cop[tikv] table:t keep order:false`))
 }
 
 func (s *testIntegrationSuite) TestIssue26559(c *C) {

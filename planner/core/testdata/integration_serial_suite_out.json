@@ -45,6 +45,185 @@
     ]
   },
   {
+<<<<<<< HEAD
+=======
+    "Name": "TestVerboseExplain",
+    "Cases": [
+      {
+        "SQL": "explain format = 'verbose' select count(*) from t3",
+        "Plan": [
+          "StreamAgg_20 1.00 137.00 root  funcs:count(Column#9)->Column#4",
+          "└─TableReader_21 1.00 9.68 root  data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 12.68 cop[tikv]  funcs:count(1)->Column#9",
+          "    └─TableFullScan_18 3.00 128.00 cop[tikv] table:t3 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select count(*) from t2",
+        "Plan": [
+          "StreamAgg_25 1.00 69.50 root  funcs:count(Column#7)->Column#4",
+          "└─TableReader_26 1.00 5.17 root  data:StreamAgg_9",
+          "  └─StreamAgg_9 1.00 8.18 batchCop[tiflash]  funcs:count(1)->Column#7",
+          "    └─TableFullScan_24 3.00 60.50 batchCop[tiflash] table:t2 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select * from t3 order by a",
+        "Plan": [
+          "Sort_4 3.00 45.85 root  test.t3.a",
+          "└─TableReader_8 3.00 11.78 root  data:TableFullScan_7",
+          "  └─TableFullScan_7 3.00 128.00 cop[tikv] table:t3 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select * from t3 order by b",
+        "Plan": [
+          "Sort_4 3.00 45.85 root  test.t3.b",
+          "└─TableReader_8 3.00 11.78 root  data:TableFullScan_7",
+          "  └─TableFullScan_7 3.00 128.00 cop[tikv] table:t3 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select * from t3 order by a limit 1",
+        "Plan": [
+          "TopN_7 1.00 13.22 root  test.t3.a, offset:0, count:1",
+          "└─TableReader_16 1.00 10.22 root  data:TopN_15",
+          "  └─TopN_15 1.00 0.00 cop[tikv]  test.t3.a, offset:0, count:1",
+          "    └─TableFullScan_14 3.00 128.00 cop[tikv] table:t3 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select * from t3 order by b limit 1",
+        "Plan": [
+          "TopN_7 1.00 13.22 root  test.t3.b, offset:0, count:1",
+          "└─TableReader_16 1.00 10.22 root  data:TopN_15",
+          "  └─TopN_15 1.00 0.00 cop[tikv]  test.t3.b, offset:0, count:1",
+          "    └─TableFullScan_14 3.00 128.00 cop[tikv] table:t3 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select count(*) from t2 group by a",
+        "Plan": [
+          "TableReader_24 3.00 3.33 root  data:ExchangeSender_23",
+          "└─ExchangeSender_23 3.00 77.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection_22 3.00 0.00 batchCop[tiflash]  Column#4",
+          "    └─HashAgg_8 3.00 77.00 batchCop[tiflash]  group by:test.t2.a, funcs:count(1)->Column#4",
+          "      └─ExchangeReceiver_21 3.00 68.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender_20 3.00 68.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: test.t2.a",
+          "          └─TableFullScan_19 3.00 65.00 batchCop[tiflash] table:t2 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select count(*) from t3 where b = 0",
+        "Plan": [
+          "StreamAgg_10 1.00 1.33 root  funcs:count(1)->Column#4",
+          "└─IndexReader_15 0.00 1.33 root  index:IndexRangeScan_14",
+          "  └─IndexRangeScan_14 0.00 20.00 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select /*+ use_index(t3, c) */ count(a) from t3 where b = 0",
+        "Plan": [
+          "StreamAgg_10 1.00 19.33 root  funcs:count(test.t3.a)->Column#4",
+          "└─IndexLookUp_17 0.00 19.33 root  ",
+          "  ├─IndexRangeScan_15(Build) 0.00 20.00 cop[tikv] table:t3, index:c(b) range:[0,0], keep order:false",
+          "  └─TableRowIDScan_16(Probe) 0.00 20.00 cop[tikv] table:t3 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select count(*) from t2 where a = 0",
+        "Plan": [
+          "StreamAgg_11 1.00 4.93 root  funcs:count(1)->Column#4",
+          "└─TableReader_23 0.00 4.93 root  data:Selection_22",
+          "  └─Selection_22 0.00 74.00 cop[tiflash]  eq(test.t2.a, 0)",
+          "    └─TableFullScan_21 3.00 65.00 cop[tiflash] table:t2 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select count(*) from t3 t join t3 on t.a = t3.b",
+        "Plan": [
+          "StreamAgg_10 1.00 60.22 root  funcs:count(1)->Column#7",
+          "└─HashJoin_40 3.00 51.22 root  inner join, equal:[eq(test.t3.a, test.t3.b)]",
+          "  ├─IndexReader_28(Build) 3.00 11.66 root  index:IndexFullScan_27",
+          "  │ └─IndexFullScan_27 3.00 150.50 cop[tikv] table:t3, index:c(b) keep order:false",
+          "  └─TableReader_26(Probe) 3.00 10.76 root  data:Selection_25",
+          "    └─Selection_25 3.00 137.00 cop[tikv]  not(isnull(test.t3.a))",
+          "      └─TableFullScan_24 3.00 128.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a",
+        "Plan": [
+          "StreamAgg_12 1.00 18.93 root  funcs:count(1)->Column#7",
+          "└─TableReader_44 3.00 9.93 root  data:ExchangeSender_43",
+          "  └─ExchangeSender_43 3.00 235.38 cop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashJoin_40 3.00 235.38 cop[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "      ├─ExchangeReceiver_19(Build) 3.00 77.00 cop[tiflash]  ",
+          "      │ └─ExchangeSender_18 3.00 77.00 cop[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Selection_17 3.00 74.00 cop[tiflash]  not(isnull(test.t1.a))",
+          "      │     └─TableFullScan_16 3.00 65.00 cop[tiflash] table:t1 keep order:false",
+          "      └─Selection_21(Probe) 3.00 74.00 cop[tiflash]  not(isnull(test.t2.a))",
+          "        └─TableFullScan_20 3.00 65.00 cop[tiflash] table:t2 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
+        "Plan": [
+          "StreamAgg_15 1.00 60.60 root  funcs:count(1)->Column#10",
+          "└─HashJoin_65 3.00 51.60 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+          "  ├─IndexReader_53(Build) 3.00 11.66 root  index:IndexFullScan_52",
+          "  │ └─IndexFullScan_52 3.00 150.50 cop[tikv] table:t3, index:c(b) keep order:false",
+          "  └─TableReader_39(Probe) 3.00 11.14 root  data:ExchangeSender_38",
+          "    └─ExchangeSender_38 3.00 264.38 cop[tiflash]  ExchangeType: PassThrough",
+          "      └─HashJoin_29 3.00 264.38 cop[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "        ├─ExchangeReceiver_35(Build) 3.00 106.00 cop[tiflash]  ",
+          "        │ └─ExchangeSender_34 3.00 106.00 cop[tiflash]  ExchangeType: Broadcast",
+          "        │   └─Selection_33 3.00 103.00 cop[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "        │     └─TableFullScan_32 3.00 94.00 cop[tiflash] table:t1 keep order:false",
+          "        └─Selection_37(Probe) 3.00 74.00 cop[tiflash]  not(isnull(test.t2.a))",
+          "          └─TableFullScan_36 3.00 65.00 cop[tiflash] table:t2 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select (2) in (select count(*) from t1) from (select t.b < (select t.b from t2 limit 1 )  from t3 t) t",
+        "Plan": [
+          "HashJoin_19 3.00 127.40 root  CARTESIAN left outer semi join",
+          "├─Selection_39(Build) 0.80 11.18 root  eq(2, Column#18)",
+          "│ └─StreamAgg_60 1.00 69.50 root  funcs:count(Column#32)->Column#18",
+          "│   └─TableReader_61 1.00 5.17 root  data:StreamAgg_44",
+          "│     └─StreamAgg_44 1.00 8.18 batchCop[tiflash]  funcs:count(1)->Column#32",
+          "│       └─TableFullScan_59 3.00 60.50 batchCop[tiflash] table:t1 keep order:false",
+          "└─Projection_20(Probe) 3.00 95.82 root  1->Column#28",
+          "  └─Apply_22 3.00 76.02 root  CARTESIAN left outer join",
+          "    ├─TableReader_24(Build) 3.00 10.16 root  data:TableFullScan_23",
+          "    │ └─TableFullScan_23 3.00 128.00 cop[tikv] table:t keep order:false",
+          "    └─Projection_27(Probe) 1.00 21.95 root  1->Column#26",
+          "      └─Limit_30 1.00 3.35 root  offset:0, count:1",
+          "        └─TableReader_38 1.00 3.35 root  data:ExchangeSender_37",
+          "          └─ExchangeSender_37 1.00 79.50 cop[tiflash]  ExchangeType: PassThrough",
+          "            └─Limit_36 1.00 79.50 cop[tiflash]  offset:0, count:1",
+          "              └─TableFullScan_35 1.00 79.50 cop[tiflash] table:t2 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select /*+ merge_join(t1) */ count(*) from t1 join t2 on t1.a = t2.a",
+        "Plan": [
+          "StreamAgg_11 1.00 59.65 root  funcs:count(1)->Column#7",
+          "└─MergeJoin_29 3.00 50.65 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "  ├─Sort_27(Build) 3.00 20.83 root  test.t2.a",
+          "  │ └─TableReader_26 3.00 6.56 root  data:Selection_25",
+          "  │   └─Selection_25 3.00 74.00 cop[tiflash]  not(isnull(test.t2.a))",
+          "  │     └─TableFullScan_24 3.00 65.00 cop[tiflash] table:t2 keep order:false",
+          "  └─Sort_20(Probe) 3.00 20.83 root  test.t1.a",
+          "    └─TableReader_19 3.00 6.56 root  data:Selection_18",
+          "      └─Selection_18 3.00 74.00 cop[tiflash]  not(isnull(test.t1.a))",
+          "        └─TableFullScan_17 3.00 65.00 cop[tiflash] table:t1 keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550)
     "Name": "TestPushDownToTiFlashWithKeepOrder",
     "Cases": [
       {
