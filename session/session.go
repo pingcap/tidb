@@ -2490,9 +2490,8 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	cfg := config.GetGlobalConfig()
 	if len(cfg.Plugin.Load) > 0 {
 		err := plugin.Load(context.Background(), plugin.Config{
-			Plugins:        strings.Split(cfg.Plugin.Load, ","),
-			PluginDir:      cfg.Plugin.Dir,
-			PluginVarNames: &variable.PluginVarNames,
+			Plugins:   strings.Split(cfg.Plugin.Load, ","),
+			PluginDir: cfg.Plugin.Dir,
 		})
 		if err != nil {
 			return nil, err
