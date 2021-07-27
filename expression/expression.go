@@ -94,6 +94,8 @@ type ReverseExpr interface {
 }
 
 // TypePropagater propagates the type information to the `expr`.
+// Note: For now, we only propagate type for the function CastDecimalAsDouble.
+//
 // e.g.
 // > create table t(a decimal(9, 8));
 // > insert into t values(5.04600000)
