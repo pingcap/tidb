@@ -379,6 +379,10 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 				// Put the response only if the request is not canceled.
 				entry.res <- responses[i]
 			}
+			// Omit locks here to avoid affecting normal logic.
+			if atomic.LoadUint64(&entry.startTs) != 0 {
+				logutil.BgLogger().Info("load meta batchRecvLoop", zap.Uint64("startTs", atomic.LoadUint64(&entry.startTs)))
+			}
 			c.batched.Delete(requestID)
 		}
 
@@ -388,7 +392,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 			atomic.StoreUint64(tikvTransportLayerLoad, transportLayerLoad)
 		}
 		endTime := time.Now()
-		if endTime.Sub(startTime) > 3*time.Second {
+		if endTime.Sub(startTime) > 5*time.Second {
 			logutil.BgLogger().Info("batch receive too long", zap.Duration("recv_time", afterRecvTime.Sub(startTime)),
 				zap.Duration("resp_time", endTime.Sub(afterRecvTime)), zap.Int("resp_num", len(responses)))
 		}
@@ -425,6 +429,7 @@ type batchCommandsEntry struct {
 
 	// canceled indicated the request is canceled or not.
 	canceled int32
+	startTs  uint64
 	err      error
 }
 
@@ -612,12 +617,19 @@ func sendBatchRequest(
 	req *tikvpb.BatchCommandsRequest_Request,
 	timeout time.Duration,
 ) (*tikvrpc.Response, error) {
+	isMeta := ctx.Value("isMeta")
+	var startTs uint64
+	v := ctx.Value(txnStartKey)
+	if isMeta == true && v != nil {
+		startTs = v.(uint64)
+	}
 	entry := &batchCommandsEntry{
 		ctx:      ctx,
 		req:      req,
 		res:      make(chan *tikvpb.BatchCommandsResponse_Response, 1),
 		canceled: 0,
 		err:      nil,
+		startTs:  startTs,
 	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -633,17 +645,14 @@ func sendBatchRequest(
 		return nil, errors.SuspendStack(errors.Annotate(context.DeadlineExceeded, "wait sendLoop"))
 	}
 	metrics.TiKVBatchWaitDuration.Observe(float64(time.Since(start)))
-	isMeta := ctx.Value("isMeta")
 	if isMeta == true {
 		duration := time.Since(start)
-		startTs := ctx.Value(txnStartKey)
-		logutil.Logger(ctx).Info("load meta sendBatchRequest", zap.Reflect("startTs", startTs), zap.Duration("send request", duration))
+		logutil.Logger(ctx).Info("load meta sendBatchRequest", zap.Uint64("startTs", startTs), zap.Duration("send request", duration))
 	}
 	defer func(start time.Time) {
 		duration := time.Since(start)
 		if isMeta == true {
-			startTs := ctx.Value(txnStartKey)
-			logutil.Logger(ctx).Info("load meta sendBatchRequest", zap.Reflect("startTs", startTs), zap.Duration("wait response", duration))
+			logutil.Logger(ctx).Info("load meta sendBatchRequest", zap.Uint64("startTs", startTs), zap.Duration("wait response", duration))
 		}
 		metrics.TiKVBatchWaitRespDuration.Observe(float64(duration))
 	}(time.Now())
