@@ -1972,7 +1972,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 }
 
 func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
-	if !prop.IsEmpty() {
+	if !prop.IsEmpty() && !prop.CanAddEnforcer {
 		return invalidTask, 1, nil
 	}
 	if p.cte.cteTask != nil {
@@ -1987,7 +1987,13 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 		cst += p.cte.recursivePartPhysicalPlan.Cost()
 	}
 	t = &rootTask{pcte, cst, false}
+<<<<<<< HEAD
 	p.cte.cteTask = t
+=======
+	if prop.CanAddEnforcer {
+		t = enforceProperty(prop, t, p.basePlan.ctx)
+	}
+>>>>>>> 57d704bff... planner: fix CTE bug when MergeJoin is used (#25514)
 	return t, 1, nil
 }
 
