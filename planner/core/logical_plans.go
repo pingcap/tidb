@@ -1198,8 +1198,6 @@ type CTEClass struct {
 	// seedPartPhysicalPlan and recursivePartPhysicalPlan are the physical plans for the seed part and recursive part of this CTE.
 	seedPartPhysicalPlan      PhysicalPlan
 	recursivePartPhysicalPlan PhysicalPlan
-	// cteTask is the physical plan for this CTE, is a wrapper of the PhysicalCTE.
-	cteTask task
 	// storageID for this CTE.
 	IDForStorage int
 	// optFlag is the optFlag for the whole CTE.
