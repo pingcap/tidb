@@ -72,7 +72,7 @@ func interestingGoroutines() (gs []string) {
 			return true
 		}
 		for _, ident := range ignoreList {
-			if strings.Contains(stack, ident) {
+			if strings.Contains(strings.ToLower(stack), strings.ToLower(ident)) {
 				return true
 			}
 		}
