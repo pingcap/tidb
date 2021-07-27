@@ -218,7 +218,7 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	name = strings.ToLower(name)
 	sysVar := GetSysVar(name)
 	if sysVar == nil {
-		return ErrUnknownSystemVar
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	sVal, err := sysVar.Validate(vars, value, ScopeSession)
 	if err != nil {
