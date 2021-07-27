@@ -340,6 +340,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 	}()
 
 	for {
+		startTime := time.Now()
 		resp, err := c.recv()
 		if err != nil {
 			if c.isStopped() {
@@ -358,6 +359,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 			metrics.TiKVBatchClientUnavailable.Observe(time.Since(now).Seconds())
 			continue
 		}
+		afterRecvTime := time.Now()
 
 		responses := resp.GetResponses()
 		for i, requestID := range resp.GetRequestIds() {
@@ -377,6 +379,10 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 				// Put the response only if the request is not canceled.
 				entry.res <- responses[i]
 			}
+			// Omit locks here to avoid affecting normal logic.
+			if atomic.LoadUint64(&entry.startTs) != 0 {
+				logutil.BgLogger().Info("load meta batchRecvLoop", zap.Uint64("startTs", atomic.LoadUint64(&entry.startTs)))
+			}
 			c.batched.Delete(requestID)
 		}
 
@@ -384,6 +390,11 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 		if transportLayerLoad > 0.0 && cfg.MaxBatchWaitTime > 0 {
 			// We need to consider TiKV load only if batch-wait strategy is enabled.
 			atomic.StoreUint64(tikvTransportLayerLoad, transportLayerLoad)
+		}
+		endTime := time.Now()
+		if endTime.Sub(startTime) > 5*time.Second {
+			logutil.BgLogger().Info("batch receive too long", zap.Duration("recv_time", afterRecvTime.Sub(startTime)),
+				zap.Duration("resp_time", endTime.Sub(afterRecvTime)), zap.Int("resp_num", len(responses)))
 		}
 	}
 }
@@ -418,6 +429,7 @@ type batchCommandsEntry struct {
 
 	// canceled indicated the request is canceled or not.
 	canceled int32
+	startTs  uint64
 	err      error
 }
 
@@ -605,12 +617,19 @@ func sendBatchRequest(
 	req *tikvpb.BatchCommandsRequest_Request,
 	timeout time.Duration,
 ) (*tikvrpc.Response, error) {
+	isMeta := ctx.Value("isMeta")
+	var startTs uint64
+	v := ctx.Value(txnStartKey)
+	if isMeta == true && v != nil {
+		startTs = v.(uint64)
+	}
 	entry := &batchCommandsEntry{
 		ctx:      ctx,
 		req:      req,
 		res:      make(chan *tikvpb.BatchCommandsResponse_Response, 1),
 		canceled: 0,
 		err:      nil,
+		startTs:  startTs,
 	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -626,6 +645,17 @@ func sendBatchRequest(
 		return nil, errors.SuspendStack(errors.Annotate(context.DeadlineExceeded, "wait sendLoop"))
 	}
 	metrics.TiKVBatchWaitDuration.Observe(float64(time.Since(start)))
+	if isMeta == true {
+		duration := time.Since(start)
+		logutil.Logger(ctx).Info("load meta sendBatchRequest", zap.Uint64("startTs", startTs), zap.Duration("send request", duration))
+	}
+	defer func(start time.Time) {
+		duration := time.Since(start)
+		if isMeta == true {
+			logutil.Logger(ctx).Info("load meta sendBatchRequest", zap.Uint64("startTs", startTs), zap.Duration("wait response", duration))
+		}
+		metrics.TiKVBatchWaitRespDuration.Observe(float64(duration))
+	}(time.Now())
 
 	select {
 	case res, ok := <-entry.res:
@@ -637,8 +667,16 @@ func sendBatchRequest(
 		atomic.StoreInt32(&entry.canceled, 1)
 		logutil.BgLogger().Warn("wait response is cancelled",
 			zap.String("to", addr), zap.String("cause", ctx.Err().Error()))
+		if isMeta == true {
+			startTs := ctx.Value(txnStartKey)
+			logutil.Logger(ctx).Info("load meta wait response canceled", zap.Reflect("startTs", startTs))
+		}
 		return nil, errors.Trace(ctx.Err())
 	case <-timer.C:
+		if isMeta == true {
+			startTs := ctx.Value(txnStartKey)
+			logutil.Logger(ctx).Info("load meta wait response timeout", zap.Reflect("startTs", startTs))
+		}
 		return nil, errors.SuspendStack(errors.Annotate(context.DeadlineExceeded, "wait recvLoop"))
 	}
 }

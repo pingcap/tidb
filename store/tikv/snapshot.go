@@ -350,9 +350,20 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	}(time.Now())
 
 	ctx = context.WithValue(ctx, txnStartKey, s.version.Ver)
+	isMeta := ctx.Value("isMeta")
+	var start time.Time
+	if isMeta == true {
+		start = time.Now()
+		logutil.Logger(ctx).Info("load meta start", zap.Reflect("startTs", s.version.Ver))
+	}
 	bo := NewBackofferWithVars(ctx, getMaxBackoff, s.vars)
 	val, err := s.get(ctx, bo, k)
 	s.recordBackoffInfo(bo)
+	if isMeta == true {
+		duration := time.Since(start)
+		logutil.Logger(ctx).Info("load meta end", zap.Reflect("startTs", s.version.Ver), zap.Duration("duration", duration),
+			zap.String("backoff", bo.String()), zap.Bool("tooLong", duration > 5*time.Second))
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -412,11 +423,20 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			TaskId:       s.mu.taskID,
 		})
 	s.mu.RUnlock()
-	for {
+	isMeta := ctx.Value("isMeta")
+	startTs := ctx.Value(txnStartKey)
+	i := 0
+	for ; ; i++ {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+
+		if isMeta == true {
+			logutil.Logger(ctx).Info("load meta tikvSnapshot", zap.Reflect("startTs", startTs), zap.Int("time", i),
+				zap.String("backoff", bo.String()))
+		}
+
 		resp, _, _, err := cli.SendReqCtx(bo, req, loc.Region, readTimeoutShort, kv.TiKV, "")
 		if err != nil {
 			return nil, errors.Trace(err)
