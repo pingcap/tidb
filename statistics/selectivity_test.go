@@ -260,7 +260,7 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		{
 			exprs:                    "a >= 1 and b > 1 and a < 2",
 			selectivity:              0.01783264746,
-			selectivityAfterIncrease: 0.01803635116,
+			selectivityAfterIncrease: 0.01801783264,
 		},
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
@@ -280,12 +280,12 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		{
 			exprs:                    "b > 1",
 			selectivity:              0.96296296296,
-			selectivityAfterIncrease: 0.97396296296,
+			selectivityAfterIncrease: 0.97296296296,
 		},
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
 			selectivity:              0,
-			selectivityAfterIncrease: 0.00003333788,
+			selectivityAfterIncrease: 0.00003239205,
 		},
 		{
 			exprs:                    longExpr,
@@ -461,11 +461,11 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 
 	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, 30))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 2.3000000000000003)
+	c.Assert(count, Equals, 7.2)
 
 	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, math.MaxInt64))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 2.3000000000000003)
+	c.Assert(count, Equals, 7.2)
 
 	idxID := table.Meta().Indices[0].ID
 	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(30, 30))

@@ -921,11 +921,15 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCou
 		rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 	}
 
-	totalPercent := leftPercent + rightPercent
+	totalPercent := leftPercent*0.5 + rightPercent*0.5
 	if totalPercent > 1 {
 		totalPercent = 1
 	}
-	return totalPercent * float64(increaseCount)
+	rowCount := totalPercent * hg.notNullCount()
+	if rowCount > float64(increaseCount) {
+		return float64(increaseCount)
+	}
+	return rowCount
 }
 
 // Copy deep copies the histogram.
@@ -1218,15 +1222,11 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 
 		// handling the out-of-range part
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
-			if c.StatsVer < 2 {
-				cnt += outOfRangeEQSelectivity(outOfRangeBetweenRate, tableRowCount, int64(c.TotalRowCount())) * c.TotalRowCount()
-			} else {
-				increaseCount := tableRowCount - int64(c.TotalRowCount())
-				if increaseCount < 0 {
-					increaseCount = 0
-				}
-				cnt += c.Histogram.outOfRangeRowCount(&lowVal, &highVal, increaseCount)
+			increaseCount := tableRowCount - int64(c.TotalRowCount())
+			if increaseCount < 0 {
+				increaseCount = 0
 			}
+			cnt += c.Histogram.outOfRangeRowCount(&lowVal, &highVal, increaseCount)
 		}
 
 		rowCount += cnt
