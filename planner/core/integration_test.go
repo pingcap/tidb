@@ -3983,6 +3983,59 @@ func (s *testIntegrationSerialSuite) TestIssue26250(c *C) {
 	tk.MustQuery("select * from tp,tn where tp.id=tn.id and tn.id=1 for update;").Check(testkit.Rows("1 1"))
 }
 
+func (s *testIntegrationSuite) TestCorrelationAdjustment4Limit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (pk int primary key auto_increment, year int, c varchar(256), index idx_year(year))")
+
+	insertWithYear := func(n, year int) {
+		for i := 0; i < n; i++ {
+			tk.MustExec(fmt.Sprintf("insert into t (year, c) values (%v, space(256))", year))
+		}
+	}
+	insertWithYear(10, 2000)
+	insertWithYear(10, 2001)
+	insertWithYear(10, 2002)
+	tk.MustExec("analyze table t")
+
+	// case 1
+	tk.MustExec("set @@tidb_opt_enable_correlation_adjustment = false")
+	// the estRow for TableFullScan is under-estimated since we have to scan through 2000 and 2001 to access 2002,
+	// but the formula(LimitNum / Selectivity) based on uniform-assumption cannot consider this factor.
+	tk.MustQuery("explain format=brief select * from t use index(primary) where year=2002 limit 1").Check(testkit.Rows(
+		"Limit 1.00 root  offset:0, count:1",
+		"└─TableReader 1.00 root  data:Limit",
+		"  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+		"    └─Selection 1.00 cop[tikv]  eq(test.t.year, 2002)",
+		"      └─TableFullScan 3.00 cop[tikv] table:t keep order:false"))
+
+	// case 2: after enabling correlation adjustment, this factor can be considered.
+	tk.MustExec("set @@tidb_opt_enable_correlation_adjustment = true")
+	tk.MustQuery("explain format=brief select * from t use index(primary) where year=2002 limit 1").Check(testkit.Rows(
+		"Limit 1.00 root  offset:0, count:1",
+		"└─TableReader 1.00 root  data:Limit",
+		"  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+		"    └─Selection 1.00 cop[tikv]  eq(test.t.year, 2002)",
+		"      └─TableFullScan 21.00 cop[tikv] table:t keep order:false"))
+
+	tk.MustExec("truncate table t")
+	for y := 2000; y <= 2050; y++ {
+		insertWithYear(2, y)
+	}
+	tk.MustExec("analyze table t")
+
+	// case 3: correlation adjustment is only allowed to update the upper-bound, so estRow = max(1/selectivity, adjustedCount);
+	// 1/sel = 1/(1/NDV) is around 50, adjustedCount is 1 since the first row can meet the requirement `year=2000`;
+	// in this case the estRow is over-estimated, but it's safer that can avoid to convert IndexScan to TableScan incorrectly in some cases.
+	tk.MustQuery("explain format=brief select * from t use index(primary) where year=2000 limit 1").Check(testkit.Rows(
+		"Limit 1.00 root  offset:0, count:1",
+		"└─TableReader 1.00 root  data:Limit",
+		"  └─Limit 1.00 cop[tikv]  offset:0, count:1",
+		"    └─Selection 1.00 cop[tikv]  eq(test.t.year, 2000)",
+		"      └─TableFullScan 51.00 cop[tikv] table:t keep order:false"))
+}
+
 func (s *testIntegrationSerialSuite) TestCTESelfJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

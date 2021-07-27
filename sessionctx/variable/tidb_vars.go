@@ -233,6 +233,9 @@ const (
 	// tidb_opt_prefer_range_scan is used to enable/disable the optimizer to always prefer range scan over table scan, ignoring their costs.
 	TiDBOptPreferRangeScan = "tidb_opt_prefer_range_scan"
 
+	// tidb_opt_enable_correlation_adjustment is used to indicates if enable correlation adjustment.
+	TiDBOptEnableCorrelationAdjustment = "tidb_opt_enable_correlation_adjustment"
+
 	// tidb_opt_limit_push_down_threshold determines if push Limit or TopN down to TiKV forcibly.
 	TiDBOptLimitPushDownThreshold = "tidb_opt_limit_push_down_threshold"
 
@@ -615,6 +618,7 @@ const (
 	DefOptCartesianBCJ                 = 1
 	DefOptMPPOuterJoinFixedBuildSide   = false
 	DefOptWriteRowID                   = false
+	DefOptEnableCorrelationAdjustment  = true
 	DefOptLimitPushDownThreshold       = 100
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
