@@ -71,7 +71,8 @@ func TestInfo(t *testing.T) {
 	dom := NewDomain(mockStore, ddlLease, 0, 0, mockFactory)
 	defer func() {
 		dom.Close()
-		_ = s.Close()
+		err := s.Close()
+		require.NoError(t, err)
 	}()
 
 	client := cluster.RandClient()
