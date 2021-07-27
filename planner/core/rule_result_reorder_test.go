@@ -69,6 +69,7 @@ func (s *testRuleReorderResultsSerial) TestSQLBinding(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
+	tk.MustExec("set tidb_opt_limit_push_down_threshold=0")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int, key(b))")
 	tk.MustQuery("explain select * from t where a > 0 limit 1").Check(testkit.Rows(
@@ -79,12 +80,36 @@ func (s *testRuleReorderResultsSerial) TestSQLBinding(c *C) {
 
 	tk.MustExec("create session binding for select * from t where a>0 limit 1 using select * from t use index(b) where a>0 limit 1")
 	tk.MustQuery("explain select * from t where a > 0 limit 1").Check(testkit.Rows(
+<<<<<<< HEAD
 		"TopN_9 1.00 root  test.t.a:asc, offset:0, count:1",
 		"└─IndexLookUp_18 1.00 root  ",
 		"  ├─TopN_17(Build) 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
 		"  │ └─Selection_16 3333.33 cop[tikv]  gt(test.t.a, 0)",
 		"  │   └─IndexFullScan_14 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
 		"  └─TableRowIDScan_15(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+=======
+		"TopN_9 1.00 root  test.t.a, offset:0, count:1",
+		"└─IndexLookUp_19 1.00 root  ",
+		"  ├─TopN_18(Build) 1.00 cop[tikv]  test.t.a, offset:0, count:1",
+		"  │ └─Selection_17 3333.33 cop[tikv]  gt(test.t.a, 0)",
+		"  │   └─IndexFullScan_15 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_16(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+}
+
+func (s *testRuleReorderResultsSerial) TestClusteredIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_ordered_result_mode=1")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b))")
+	tk.MustQuery("explain format=brief select * from t limit 10").Check(testkit.Rows(
+		"TopN 10.00 root  test.t.a, test.t.b, test.t.c, offset:0, count:10",
+		"└─TableReader 10.00 root  data:TopN",
+		"  └─TopN 10.00 cop[tikv]  test.t.a, test.t.b, test.t.c, offset:0, count:10",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOff
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550)
 }
 
 type testRuleReorderResults struct {
@@ -125,6 +150,7 @@ func (s *testRuleReorderResults) runTestData(c *C, tk *testkit.TestKit, name str
 func (s *testRuleReorderResults) TestOrderedResultMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int, key(b))")

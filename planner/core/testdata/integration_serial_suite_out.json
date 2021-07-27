@@ -118,6 +118,7 @@
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t,d2_t,d3_t), broadcast_join_local(d2_t) */ count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
         "Plan": [
+<<<<<<< HEAD
           "StreamAgg_29 1.00 root  funcs:count(Column#19)->Column#17",
           "└─TableReader_30 1.00 root  data:StreamAgg_13",
           "  └─StreamAgg_13 1.00 batchCop[tiflash]  funcs:count(1)->Column#19",
@@ -132,6 +133,24 @@
           "          │ └─TableFullScan_20 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
           "          └─Selection_19(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
           "            └─TableFullScan_18 8.00 batchCop[tiflash] table:fact_t keep order:false, global read"
+=======
+          "HashJoin_19 3.00 127.40 root  CARTESIAN left outer semi join",
+          "├─Selection_39(Build) 0.80 11.18 root  eq(2, Column#18)",
+          "│ └─StreamAgg_60 1.00 69.50 root  funcs:count(Column#32)->Column#18",
+          "│   └─TableReader_61 1.00 5.17 root  data:StreamAgg_44",
+          "│     └─StreamAgg_44 1.00 8.18 batchCop[tiflash]  funcs:count(1)->Column#32",
+          "│       └─TableFullScan_59 3.00 60.50 batchCop[tiflash] table:t1 keep order:false",
+          "└─Projection_20(Probe) 3.00 95.82 root  1->Column#28",
+          "  └─Apply_22 3.00 76.02 root  CARTESIAN left outer join",
+          "    ├─TableReader_24(Build) 3.00 10.16 root  data:TableFullScan_23",
+          "    │ └─TableFullScan_23 3.00 128.00 cop[tikv] table:t keep order:false",
+          "    └─Projection_27(Probe) 1.00 21.95 root  1->Column#26",
+          "      └─Limit_30 1.00 3.35 root  offset:0, count:1",
+          "        └─TableReader_38 1.00 3.35 root  data:ExchangeSender_37",
+          "          └─ExchangeSender_37 1.00 79.50 cop[tiflash]  ExchangeType: PassThrough",
+          "            └─Limit_36 1.00 79.50 cop[tiflash]  offset:0, count:1",
+          "              └─TableFullScan_35 1.00 79.50 cop[tiflash] table:t2 keep order:false"
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550)
         ]
       },
       {

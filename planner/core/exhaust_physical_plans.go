@@ -1660,17 +1660,44 @@ func (lt *LogicalTopN) canPushToCop() bool {
 	return ok
 }
 
+<<<<<<< HEAD
 func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
 	if lt.limitHints.preferLimitToCop {
 		if !lt.canPushToCop() {
+=======
+func pushLimitOrTopNForcibly(p LogicalPlan) bool {
+	var meetThreshold bool
+	var preferPushDown *bool
+	switch lp := p.(type) {
+	case *LogicalTopN:
+		preferPushDown = &lp.limitHints.preferLimitToCop
+		meetThreshold = lp.Count+lp.Offset <= uint64(lp.ctx.GetSessionVars().LimitPushDownThreshold)
+	case *LogicalLimit:
+		preferPushDown = &lp.limitHints.preferLimitToCop
+		meetThreshold = true // always push Limit down in this case since it has no side effect
+	default:
+		return false
+	}
+
+	if *preferPushDown || meetThreshold {
+		if p.canPushToCop(kv.TiKV) {
+			return true
+		}
+		if *preferPushDown {
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550)
 			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
 			warning := ErrInternal.GenWithStack(errMsg)
-			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-			lt.limitHints.preferLimitToCop = false
+			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+			*preferPushDown = false
 		}
 	}
+
+	return false
+}
+
+func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
-	if !lt.limitHints.preferLimitToCop {
+	if !pushLimitOrTopNForcibly(lt) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
@@ -1692,6 +1719,7 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 		return nil
 	}
 
+<<<<<<< HEAD
 	if lt.limitHints.preferLimitToCop {
 		if !lt.canPushToCop() {
 			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
@@ -1701,8 +1729,10 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 		}
 	}
 
+=======
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550)
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
-	if !lt.limitHints.preferLimitToCop {
+	if !pushLimitOrTopNForcibly(lt) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
@@ -1801,9 +1831,64 @@ func (la *LogicalAggregation) canPushToCop() bool {
 	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
 	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
 
+<<<<<<< HEAD
 	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
 	_, ok := la.children[0].(*DataSource)
 	return ok && !la.noCopPushDown
+=======
+func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bool) bool {
+	ret := true
+	for _, ch := range p.children {
+		switch c := ch.(type) {
+		case *DataSource:
+			validDs := false
+			for _, path := range c.possibleAccessPaths {
+				if path.StoreType == storeTp {
+					validDs = true
+				}
+			}
+			ret = ret && validDs
+
+			_, isTopN := p.self.(*LogicalTopN)
+			_, isLimit := p.self.(*LogicalLimit)
+			if (isTopN || isLimit) && len(c.indexMergeHints) != 0 {
+				return false // TopN and Limit cannot be pushed down to IndexMerge
+			}
+		case *LogicalUnionAll:
+			if storeTp == kv.TiFlash {
+				ret = ret && c.canPushToCopImpl(storeTp, true)
+			} else {
+				return false
+			}
+		case *LogicalProjection:
+			if storeTp == kv.TiFlash {
+				ret = ret && c.canPushToCopImpl(storeTp, considerDual)
+			} else {
+				return false
+			}
+		case *LogicalTableDual:
+			return storeTp == kv.TiFlash && considerDual
+		case *LogicalAggregation, *LogicalSelection, *LogicalJoin:
+			if storeTp == kv.TiFlash {
+				ret = ret && c.canPushToCop(storeTp)
+			} else {
+				return false
+			}
+		// These operators can be partially push down to TiFlash, so we don't raise warning for them.
+		case *LogicalLimit, *LogicalTopN:
+			return false
+		default:
+			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+				"MPP mode may be blocked because operator `" + c.TP() + "` is not supported now.")
+			return false
+		}
+	}
+	return ret
+}
+
+func (la *LogicalAggregation) canPushToCop(storeTp kv.StoreType) bool {
+	return la.baseLogicalPlan.canPushToCop(storeTp) && !la.noCopPushDown
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550)
 }
 
 func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -2033,6 +2118,7 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 	if !prop.IsEmpty() {
 		return nil, true
 	}
+<<<<<<< HEAD
 	if p.limitHints.preferLimitToCop {
 		if !p.canPushToCop() {
 			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
@@ -2041,9 +2127,11 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 			p.limitHints.preferLimitToCop = false
 		}
 	}
+=======
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550)
 
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
-	if !p.limitHints.preferLimitToCop {
+	if !pushLimitOrTopNForcibly(p) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))

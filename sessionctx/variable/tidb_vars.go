@@ -206,6 +206,15 @@ const (
 	// tidb_opt_insubquery_to_join_and_agg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
 
+<<<<<<< HEAD
+=======
+	// tidb_opt_prefer_range_scan is used to enable/disable the optimizer to always prefer range scan over table scan, ignoring their costs.
+	TiDBOptPreferRangeScan = "tidb_opt_prefer_range_scan"
+
+	// tidb_opt_limit_push_down_threshold determines if push Limit or TopN down to TiKV forcibly.
+	TiDBOptLimitPushDownThreshold = "tidb_opt_limit_push_down_threshold"
+
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550)
 	// tidb_opt_correlation_threshold is a guard to enable row count estimation using column order correlation.
 	TiDBOptCorrelationThreshold = "tidb_opt_correlation_threshold"
 
@@ -460,6 +469,7 @@ const (
 	DefOptAggPushDown                  = false
 	DefOptBCJ                          = false
 	DefOptWriteRowID                   = false
+	DefOptLimitPushDownThreshold       = 100
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
 	DefOptCPUFactor                    = 3.0

@@ -440,6 +440,20 @@ type SessionVars struct {
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
+<<<<<<< HEAD
+=======
+	// BroadcastJoinThresholdSize is used to limit the size of smaller table.
+	// It's unit is bytes, if the size of small table is larger than it, we will not use bcj.
+	BroadcastJoinThresholdSize int64
+
+	// BroadcastJoinThresholdCount is used to limit the total count of smaller table.
+	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
+	BroadcastJoinThresholdCount int64
+
+	// LimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
+	LimitPushDownThreshold int64
+
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550)
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
 
@@ -736,6 +750,11 @@ func NewSessionVars() *SessionVars {
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:            kv.PriorityLow,
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
+<<<<<<< HEAD
+=======
+		preferRangeScan:             DefOptPreferRangeScan,
+		LimitPushDownThreshold:      DefOptLimitPushDownThreshold,
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550)
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		CPUFactor:                   DefOptCPUFactor,

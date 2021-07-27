@@ -356,6 +356,61 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+<<<<<<< HEAD
+=======
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestVerboseExplain(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("create table t3(a int, b int, index c(b))")
+	tk.MustExec("insert into t1 values(1,2)")
+	tk.MustExec("insert into t1 values(3,4)")
+	tk.MustExec("insert into t1 values(5,6)")
+	tk.MustExec("insert into t2 values(1,2)")
+	tk.MustExec("insert into t2 values(3,4)")
+	tk.MustExec("insert into t2 values(5,6)")
+	tk.MustExec("insert into t3 values(1,2)")
+	tk.MustExec("insert into t3 values(3,4)")
+	tk.MustExec("insert into t3 values(5,6)")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t3")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t1" || tblInfo.Name.L == "t2" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550)
 
 	var input []string
 	var output []struct {
@@ -950,12 +1005,43 @@ func (s *testIntegrationSuite) TestIndexHintWarning(c *C) {
 				output[i].Warnings[j] = warns[j].Err.Error()
 			}
 		})
+<<<<<<< HEAD
 		tk.MustQuery(tt)
 		warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 		c.Assert(len(warns), Equals, len(output[i].Warnings))
 		for j := range warns {
 			c.Assert(warns[j].Level, Equals, stmtctx.WarnLevelWarning)
 			c.Assert(warns[j].Err.Error(), Equals, output[i].Warnings[j])
+=======
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	{
+		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
+		tk.MustExec("use test")
+		tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));")
+		tk.MustExec("insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5)")
+		tk.MustExec("analyze table t")
+
+		var input []string
+		var output []struct {
+			SQL    string
+			Result []string
+		}
+		s.testData.GetTestCases(c, &input, &output)
+		for i, tt := range input {
+			s.testData.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			})
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550)
 		}
 	}
 }
@@ -2088,6 +2174,334 @@ func (s *testIntegrationSuite) TestIssue23846(c *C) {
 	tk.MustQuery("select * from t where a=0x00A4EEF4FA55D6706ED5").Check(testkit.Rows("\x00\xa4\xee\xf4\xfaU\xd6pn\xd5")) // not empty
 }
 
+<<<<<<< HEAD
+=======
+func (s *testIntegrationSuite) TestIssue23839(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists BB")
+	tk.MustExec("CREATE TABLE `BB` (\n" +
+		"	`col_int` int(11) DEFAULT NULL,\n" +
+		"	`col_varchar_10` varchar(10) DEFAULT NULL,\n" +
+		"	`pk` int(11) NOT NULL AUTO_INCREMENT,\n" +
+		"	`col_int_not_null` int(11) NOT NULL,\n" +
+		"	`col_decimal` decimal(10,0) DEFAULT NULL,\n" +
+		"	`col_datetime` datetime DEFAULT NULL,\n" +
+		"	`col_decimal_not_null` decimal(10,0) NOT NULL,\n" +
+		"	`col_datetime_not_null` datetime NOT NULL,\n" +
+		"	`col_varchar_10_not_null` varchar(10) NOT NULL,\n" +
+		"	PRIMARY KEY (`pk`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2000001")
+	tk.Exec("explain SELECT OUTR . col2 AS X FROM (SELECT INNR . col1 as col1, SUM( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR2 INNER JOIN (SELECT INNR . col1 as col1, MAX( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR ON OUTR2.col1 = OUTR.col1 GROUP BY OUTR . col1, OUTR2 . col1 HAVING X <> 'b'")
+}
+
+// https://github.com/pingcap/tidb/issues/24095
+func (s *testIntegrationSuite) TestIssue24095(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int, value decimal(10,5));")
+	tk.MustExec("desc format = 'brief' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestIssue24281(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists member, agent, deposit, view_member_agents")
+	tk.MustExec("create table member(login varchar(50) NOT NULL, agent_login varchar(100) DEFAULT NULL, PRIMARY KEY(login))")
+	tk.MustExec("create table agent(login varchar(50) NOT NULL, data varchar(100) DEFAULT NULL, share_login varchar(50) NOT NULL, PRIMARY KEY(login))")
+	tk.MustExec("create table deposit(id varchar(50) NOT NULL, member_login varchar(50) NOT NULL, transfer_amount int NOT NULL, PRIMARY KEY(id), KEY midx(member_login, transfer_amount))")
+	tk.MustExec("create definer='root'@'localhost' view view_member_agents (member, share_login) as select m.login as member, a.share_login AS share_login from member as m join agent as a on m.agent_login = a.login")
+
+	tk.MustExec(" select s.member_login as v1, SUM(s.transfer_amount) AS v2 " +
+		"FROM deposit AS s " +
+		"JOIN view_member_agents AS v ON s.member_login = v.member " +
+		"WHERE 1 = 1 AND v.share_login = 'somevalue' " +
+		"GROUP BY s.member_login " +
+		"UNION select 1 as v1, 2 as v2")
+}
+
+func (s *testIntegrationSuite) TestIssue25799(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`create table t1 (a float default null, b smallint(6) DEFAULT NULL)`)
+	tk.MustExec(`insert into t1 values (1, 1)`)
+	tk.MustExec(`create table t2 (a float default null, b tinyint(4) DEFAULT NULL, key b (b))`)
+	tk.MustExec(`insert into t2 values (null, 1)`)
+	tk.HasPlan(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`, `IndexJoin`)
+	tk.MustQuery(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestLimitWindowColPrune(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustQuery("select count(a) f1, row_number() over (order by count(a)) as f2 from t limit 1").Check(testkit.Rows("1 1"))
+}
+
+func (s *testIntegrationSuite) TestIncrementalAnalyzeStatsVer2(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int, index idx_b(b))")
+	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("analyze table t")
+	is := tk.Se.GetInfoSchema().(infoschema.InfoSchema)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+	rows := tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d and is_index = 1", tblID)).Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "3")
+	tk.MustExec("insert into t values(4,4),(5,5),(6,6)")
+	tk.MustExec("analyze incremental table t index idx_b")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 2)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "The version 2 would collect all statistics not only the selected indexes")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[1].Err.Error(), Equals, "The version 2 stats would ignore the INCREMENTAL keyword and do full sampling")
+	rows = tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d and is_index = 1", tblID)).Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "6")
+}
+
+func (s *testIntegrationSuite) TestConflictReadFromStorage(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (
+					a int, b int, c varchar(20),
+					primary key(a), key(b), key(c)
+				) partition by range columns(a) (
+					partition p0 values less than(6),
+					partition p1 values less than(11),
+					partition p2 values less than(16));`)
+	tk.MustExec(`insert into t values (1,1,"1"), (2,2,"2"), (8,8,"8"), (11,11,"11"), (15,15,"15")`)
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	tk.MustQuery(`explain select /*+ read_from_storage(tikv[t partition(p0)], tiflash[t partition(p1, p2)]) */ * from t`)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Storage hints are conflict, you can only specify one storage type of table test.t"))
+	tk.MustQuery(`explain select /*+ read_from_storage(tikv[t], tiflash[t]) */ * from t`)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Storage hints are conflict, you can only specify one storage type of table test.t"))
+}
+
+// TestSequenceAsDataSource is used to test https://github.com/pingcap/tidb/issues/24383.
+func (s *testIntegrationSuite) TestSequenceAsDataSource(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop sequence if exists s1, s2")
+	tk.MustExec("create sequence s1")
+	tk.MustExec("create sequence s2")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestIssue25300(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a char(65) collate utf8_unicode_ci, b text collate utf8_general_ci not null);`)
+	tk.MustExec(`insert into t values ('a', 'A');`)
+	tk.MustExec(`insert into t values ('b', 'B');`)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t);`, mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode(`(select 'a' collate utf8mb4_unicode_ci) union (select 'b' collate utf8mb4_general_ci);`, mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t) union all select 'a';`, mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a';`, mysql.ErrCantAggregate3collations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a' except select 'd';`, mysql.ErrCantAggregate3collations)
+}
+
+func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ts")
+	tk.MustExec("create table ts (col_char_64 char(64), col_varchar_64_not_null varchar(64) not null, col_varchar_key varchar(1), id int primary key, col_varchar_64 varchar(64),col_char_64_not_null char(64) not null);")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "ts" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec(" set @@tidb_allow_mpp=1;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestSelectIgnoreTemporaryTableInView(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (c int, d int)")
+	tk.MustExec("create view v1 as select * from t1 order by a")
+	tk.MustExec("create view v2 as select * from ((select * from t1) union (select * from t2)) as tt order by a, b")
+	tk.MustExec("create view v3 as select * from v1 order by a")
+	tk.MustExec("create view v4 as select * from t1, t2 where t1.a = t2.c order by a, b")
+	tk.MustExec("create view v5 as select * from (select * from t1) as t1 order by a")
+
+	tk.MustExec("insert into t1 values (1, 2), (3, 4)")
+	tk.MustExec("insert into t2 values (3, 5), (6, 7)")
+
+	tk.MustExec("create temporary table t1 (a int, b int)")
+	tk.MustExec("create temporary table t2 (c int, d int)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+
+	tk.MustQuery("select * from v1").Check(testkit.Rows("1 2", "3 4"))
+	tk.MustQuery("select * from v2").Check(testkit.Rows("1 2", "3 4", "3 5", "6 7"))
+	tk.MustQuery("select * from v3").Check(testkit.Rows("1 2", "3 4"))
+	tk.MustQuery("select * from v4").Check(testkit.Rows("3 4 3 5"))
+	tk.MustQuery("select * from v5").Check(testkit.Rows("1 2", "3 4"))
+
+}
+
+func (s *testIntegrationSerialSuite) TestIssue26250(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tp (id int primary key) partition by range (id) (partition p0 values less than (100));")
+	tk.MustExec("create table tn (id int primary key);")
+	tk.MustExec("insert into tp values(1),(2);")
+	tk.MustExec("insert into tn values(1),(2);")
+	tk.MustQuery("select * from tp,tn where tp.id=tn.id and tn.id=1 for update;").Check(testkit.Rows("1 1"))
+}
+
+func (s *testIntegrationSerialSuite) TestCTESelfJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(t1a int, t1b int, t1c int)")
+	tk.MustExec("create table t2(t2a int, t2b int, t2c int)")
+	tk.MustExec("create table t3(t3a int, t3b int, t3c int)")
+	tk.MustExec(`
+		with inv as
+		(select t1a , t3a, sum(t2c)
+			from t1, t2, t3
+			where t2a = t1a
+				and t2b = t3b
+				and t3c = 1998
+			group by t1a, t3a)
+		select inv1.t1a, inv2.t3a
+		from inv inv1, inv inv2
+		where inv1.t1a = inv2.t1a
+			and inv1.t3a = 4
+			and inv2.t3a = 4+1`)
+}
+
+// https://github.com/pingcap/tidb/issues/26214
+func (s *testIntegrationSerialSuite) TestIssue26214(c *C) {
+	originalVal := config.GetGlobalConfig().Experimental.AllowsExpressionIndex
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	defer func() {
+		config.GetGlobalConfig().Experimental.AllowsExpressionIndex = originalVal
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table `t` (`a` int(11) default null, `b` int(11) default null, `c` int(11) default null, key `expression_index` ((case when `a` < 0 then 1 else 2 end)))")
+	_, err := tk.Exec("select * from t  where case when a < 0 then 1 else 2 end <= 1 order by 4;")
+	c.Assert(core.ErrUnknownColumn.Equal(err), IsTrue)
+}
+
+func (s *testIntegrationSerialSuite) TestLimitPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustExec(`analyze table t`)
+
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
+	tk.MustQuery(`explain format=brief select a from t order by a desc limit 10`).Check(testkit.Rows(
+		`TopN 1.00 root  test.t.a:desc, offset:0, count:10`,
+		`└─TableReader 1.00 root  data:TableFullScan`,
+		`  └─TableFullScan 1.00 cop[tikv] table:t keep order:false`))
+
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold=10`)
+	tk.MustQuery(`explain format=brief select a from t order by a desc limit 10`).Check(testkit.Rows(
+		`TopN 1.00 root  test.t.a:desc, offset:0, count:10`,
+		`└─TableReader 1.00 root  data:TopN`,
+		`  └─TopN 1.00 cop[tikv]  test.t.a:desc, offset:0, count:10`,
+		`    └─TableFullScan 1.00 cop[tikv] table:t keep order:false`))
+
+	tk.MustQuery(`explain format=brief select a from t order by a desc limit 11`).Check(testkit.Rows(
+		`TopN 1.00 root  test.t.a:desc, offset:0, count:11`,
+		`└─TableReader 1.00 root  data:TableFullScan`,
+		`  └─TableFullScan 1.00 cop[tikv] table:t keep order:false`))
+
+	tk.MustQuery(`explain format=brief select /*+ limit_to_cop() */ a from t order by a desc limit 11`).Check(testkit.Rows(
+		`TopN 1.00 root  test.t.a:desc, offset:0, count:11`,
+		`└─TableReader 1.00 root  data:TopN`,
+		`  └─TopN 1.00 cop[tikv]  test.t.a:desc, offset:0, count:11`,
+		`    └─TableFullScan 1.00 cop[tikv] table:t keep order:false`))
+}
+
+>>>>>>> e0dbe7ae8... planner: push TopN down when N is less than a specific variable (#26550)
 func (s *testIntegrationSuite) TestIssue26559(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
