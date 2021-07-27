@@ -151,6 +151,38 @@ func (*testSysVarSuite) TestIntValidation(c *C) {
 	c.Assert(val, Equals, "-1")
 }
 
+func (*testSysVarSuite) TestUintValidation(c *C) {
+	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "123", Type: TypeUnsigned, MinValue: 10, MaxValue: 300, AllowAutoValue: true}
+	vars := NewSessionVars()
+
+	_, err := sv.Validate(vars, "oN", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'")
+
+	_, err = sv.Validate(vars, "", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'")
+
+	_, err = sv.Validate(vars, "301", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '301'")
+
+	_, err = sv.Validate(vars, "-301", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '-301'")
+
+	_, err = sv.Validate(vars, "-ERR", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '-ERR'")
+
+	_, err = sv.Validate(vars, "5", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '5'")
+
+	val, err := sv.Validate(vars, "300", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "300")
+
+	// out of range but permitted due to auto value
+	val, err = sv.Validate(vars, "-1", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "-1")
+}
+
 func (*testSysVarSuite) TestEnumValidation(c *C) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	vars := NewSessionVars()
@@ -466,7 +498,6 @@ func (*testSysVarSuite) TestIsNoop(c *C) {
 }
 
 func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
-	c.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
 	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
 	// Eventually these should be changed to use getters so that the switch
 	// statement in GetSessionOnlySysVars can be removed.
@@ -506,13 +537,6 @@ func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBMemoryUsageAlarmRatio)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()))
-
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBConfig)
-	c.Assert(err, IsNil)
-	conf := config.GetGlobalConfig()
-	j, err := json.MarshalIndent(conf, "", "\t")
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, config.HideConfig(string(j)))
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBForcePriority)
 	c.Assert(err, IsNil)
@@ -594,4 +618,21 @@ func (*testSysVarSuite) TestDefaultValuesAreSettable(c *C) {
 			c.Assert(err, IsNil)
 		}
 	}
+}
+
+func (*testSysVarSuite) TestSecureAuth(c *C) {
+	sv := GetSysVar(SecureAuth)
+	vars := NewSessionVars()
+	_, err := sv.Validate(vars, "OFF", ScopeGlobal)
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'secure_auth' can't be set to the value of 'OFF'")
+	val, err := sv.Validate(vars, "ON", ScopeGlobal)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "ON")
+}
+
+func (*testSysVarSuite) TestValidateWithRelaxedValidation(c *C) {
+	sv := GetSysVar(SecureAuth)
+	vars := NewSessionVars()
+	val := sv.ValidateWithRelaxedValidation(vars, "1", ScopeGlobal)
+	c.Assert(val, Equals, "ON")
 }
