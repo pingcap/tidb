@@ -2208,6 +2208,7 @@ type TemporaryTableSnapshotReader struct {
 	memBuffer kv.MemBuffer
 }
 
+// Get gets the value for key k from snapshot.
 func (s *TemporaryTableSnapshotReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	if s.memBuffer == nil {
 		return nil, kv.ErrNotExist
@@ -2239,6 +2240,7 @@ type TemporaryTableTxnReader struct {
 	snapshot  *TemporaryTableSnapshotReader
 }
 
+// Get gets the value for key k from txn.
 func (s *TemporaryTableTxnReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	v, err := s.memBuffer.Get(ctx, k)
 	if err == nil {
