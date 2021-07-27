@@ -41,9 +41,9 @@ func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
 		return nil, err
 	}
 	return &mockStorage{
-		KVStore:   tikvStore,
-		Store:     coprStore,
-		memCache:  kv.NewCacheDB(),
+		KVStore:  tikvStore,
+		Store:    coprStore,
+		memCache: kv.NewCacheDB(),
 	}, nil
 }
 

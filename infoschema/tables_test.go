@@ -1737,8 +1737,8 @@ func (s *testClusterTableSuite) TestDataLockWaits(c *C) {
 	tk.MustExec("select * from test_data_lock_waits for update")
 
 	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS").Check(testkit.Rows(
-			keyHex1+" <nil> 1 2 "+digest1.String()+" select * from `test_data_lock_waits` for update",
-			keyHex2+" <nil> 4 5 "+digest2.String()+" <nil>"))
+		keyHex1+" <nil> 1 2 "+digest1.String()+" select * from `test_data_lock_waits` for update",
+		keyHex2+" <nil> 4 5 "+digest2.String()+" <nil>"))
 }
 
 func (s *testClusterTableSuite) TestDataLockWaitsPrivilege(c *C) {
