@@ -177,6 +177,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	var bestPlanAmongHints plannercore.Plan
 	originHints := hint.CollectHint(stmtNode)
 	// Try to find the best binding.
+	foundInBinding := false
 	for _, binding := range bindRecord.Bindings {
 		if binding.Status != bindinfo.Using {
 			continue
@@ -201,6 +202,13 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			}
 			bestCostAmongHints = cost
 			bestPlanAmongHints = plan
+			foundInBinding = true
+		}
+	}
+	if !foundInBinding {
+		err = setFoundInBinding(sctx, foundInBinding)
+		if err != nil {
+			return nil, nil, err
 		}
 	}
 	// 1. If it is a select query.
@@ -427,17 +435,20 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 }
 
 func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
-	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	err := sessionHandle.DropBindRecord(bindRecord.OriginalSQL, bindRecord.Db, &bindRecord.Bindings[0])
-	if err != nil {
-		logutil.Logger(ctx).Info("drop session bindings failed")
-	}
 	if level == metrics.ScopeSession {
+		sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		err := sessionHandle.DropBindRecord(bindRecord.OriginalSQL, bindRecord.Db, &bindRecord.Bindings[0])
+		if err != nil {
+			logutil.Logger(ctx).Info("drop session bindings failed")
+		}
 		return
 	}
 
 	globalHandle := domain.GetDomain(sctx).BindHandle()
-	globalHandle.AddDropInvalidBindTask(&bindRecord)
+	err := globalHandle.DropBindRecord(bindRecord.OriginalSQL, bindRecord.Db, &bindRecord.Bindings[0])
+	if err != nil {
+		logutil.Logger(ctx).Info("drop global bindings failed")
+	}
 }
 
 func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinfo.BindRecord, stmtNode ast.StmtNode, planHint string) {

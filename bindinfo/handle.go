@@ -177,7 +177,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 }
 
 // CreateBindRecord creates a BindRecord to the storage and the cache.
-// It replaces all the exists bindings for the same normalized SQL.
+// It will set all the exists bindings' status for the same normalized SQL to non-priority using.
 func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecord) (err error) {
 	err = record.prepareHints(sctx)
 	if err != nil {
@@ -225,15 +225,24 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 
 	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 
+	// TODO (Reminiscent): Need to check whether the length of record.Binding is equal to one and the status of the newBinding is using.
+	// TODO (Reminiscent): Need to handle the situation that the newBinding.BindSQL is a empty string.
+	newBinding := record.Bindings[0]
 	if oldRecord != nil {
 		for _, binding := range oldRecord.Bindings {
 			updateTs := now.String()
-			if binding.BindSQL == "" {
-				_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
-					deleted, updateTs, record.OriginalSQL, updateTs)
+			if binding.BindSQL == newBinding.BindSQL {
+				_, err = exec.ExecuteInternal(context.TODO(), `DELETE FROM mysql.bind_info WHERE original_sql = %? AND bind_sql = %? AND update_time < %?`, record.OriginalSQL, binding.BindSQL, updateTs)
 			} else {
-				_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %?`,
-					deleted, updateTs, record.OriginalSQL, updateTs, binding.BindSQL)
+				if binding.Status == Using {
+					if binding.BindSQL == "" {
+						_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql != %?`,
+							NonPriorityUsing, updateTs, record.OriginalSQL, updateTs, newBinding.BindSQL)
+					} else {
+						_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %?`,
+							NonPriorityUsing, updateTs, record.OriginalSQL, updateTs, binding.BindSQL)
+					}
+				}
 			}
 			if err != nil {
 				return err
@@ -361,21 +370,37 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 		h.sctx.Unlock()
 		h.bindInfo.Unlock()
 	}()
-	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN PESSIMISTIC")
+	exec, _ := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), "BEGIN PESSIMISTIC")
 	if err != nil {
 		return err
 	}
-	var deleteRows int
+	_, _, err = exec.ExecRestrictedStmt(context.Background(), stmt)
+	if err != nil {
+		return err
+	}
+
+	var (
+		updateHash       string
+		updateBindRecord *BindRecord
+		updateRows       int
+		updateRow        chunk.Row
+	)
 	defer func() {
 		if err != nil {
-			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
+			stmt, err1 := exec.ParseWithParams(context.TODO(), "ROLLBACK")
 			terror.Log(err1)
+			_, _, err2 := exec.ExecRestrictedStmt(context.Background(), stmt)
+			terror.Log(err2)
 			return
 		}
 
-		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
-		if err != nil || deleteRows == 0 {
+		stmt, err = exec.ParseWithParams(context.TODO(), "COMMIT")
+		if err != nil {
+			return
+		}
+		_, _, err = exec.ExecRestrictedStmt(context.Background(), stmt)
+		if err != nil {
 			return
 		}
 
@@ -384,6 +409,15 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 			record.Bindings = append(record.Bindings, *binding)
 		}
 		h.removeBindRecord(parser.DigestNormalized(originalSQL).String(), record)
+
+		if updateRows == 1 {
+			updateHash, updateBindRecord, err = h.newBindRecord(updateRow)
+			if err != nil {
+				logutil.BgLogger().Debug("[sql-bind] failed to generate bind record from data row", zap.Error(err))
+				return
+			}
+			h.appendBindRecord(updateHash, updateBindRecord)
+		}
 	}()
 
 	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
@@ -394,15 +428,51 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 	updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
 
 	if binding == nil {
-		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
+		stmt, err = exec.ParseWithParams(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
 			deleted, updateTs, originalSQL, updateTs)
+		if err != nil {
+			return err
+		}
+		_, _, err = exec.ExecRestrictedStmt(context.Background(), stmt)
 	} else {
-		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %?`,
+		stmt, err = exec.ParseWithParams(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %?`,
 			deleted, updateTs, originalSQL, updateTs, binding.BindSQL)
+		if err != nil {
+			return err
+		}
+		_, _, err = exec.ExecRestrictedStmt(context.Background(), stmt)
 	}
 
-	deleteRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())
-	return err
+	// deleteRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())
+	if err != nil || binding == nil {
+		return err
+	}
+
+	stmt, err = exec.ParseWithParams(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? 
+		WHERE update_time < %? and status = %? and original_sql = %? and source = %?
+		ORDER BY update_time, create_time limit 1`,
+		Using, updateTs, updateTs, NonPriorityUsing, originalSQL, Manual)
+	if err != nil {
+		return err
+	}
+	_, _, err = exec.ExecRestrictedStmt(context.Background(), stmt)
+	if err != nil {
+		return err
+	}
+
+	stmt, err = exec.ParseWithParams(context.TODO(), `
+		SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source
+		FROM mysql.bind_info WHERE update_time = %? and original_sql = %? and status = %? and source = %?`,
+		updateTs, originalSQL, Using, Manual)
+	if err != nil {
+		return err
+	}
+	rows, _, err := exec.ExecRestrictedStmt(context.Background(), stmt)
+	updateRows = len(rows)
+	if updateRows != 0 {
+		updateRow = rows[0]
+	}
+	return
 }
 
 // lockBindInfoTable simulates `LOCK TABLE mysql.bind_info WRITE` by acquiring a pessimistic lock on a

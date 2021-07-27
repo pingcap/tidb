@@ -1889,9 +1889,8 @@ func (s *testSuite) TestReCreateBind(c *C) {
 	c.Assert(rows[0][3], Equals, "using")
 
 	rows = tk.MustQuery("select original_sql, status from mysql.bind_info").Rows()
-	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[0][1], Equals, "deleted")
-	c.Assert(rows[1][1], Equals, "using")
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][1], Equals, "using")
 }
 
 func (s *testSuite) TestDMLIndexHintBind(c *C) {

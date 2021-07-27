@@ -27,6 +27,8 @@ import (
 const (
 	// Using is the bind info's in use status.
 	Using = "using"
+	// NonPriorityUsing is the bind info's in valid status but not priority use status.
+	NonPriorityUsing = "non-priority using"
 	// deleted is the bind info's deleted status.
 	deleted = "deleted"
 	// Invalid is the bind info's invalid status.
