@@ -595,3 +595,27 @@ func (*testSysVarSuite) TestDefaultValuesAreSettable(c *C) {
 		}
 	}
 }
+
+// This tests that sysvars are logically correct with getter and setter functions.
+// i.e. it doesn't make sense to have a SetSession function on a variable that is only globally scoped.
+func (*testSysVarSuite) TestSettersandGetters(c *C) {
+	for _, sv := range GetSysVars() {
+		if !sv.HasSessionScope() {
+			// There are some historial exceptions where global variables are loaded into the session.
+			// Please don't add to this list, the behavior is not MySQL compatible.
+			switch sv.Name {
+			case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize, TiDBEnableAlterPlacement,
+				TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
+				TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
+				TiDBEnableTelemetry, TiDBEnablePointGetCache:
+				continue
+			}
+			c.Assert(sv.SetSession, IsNil)
+			c.Assert(sv.GetSession, IsNil)
+		}
+		if !sv.HasGlobalScope() {
+			c.Assert(sv.SetGlobal, IsNil)
+			c.Assert(sv.GetGlobal, IsNil)
+		}
+	}
+}
