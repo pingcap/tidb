@@ -426,7 +426,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 	isMeta := ctx.Value("isMeta")
 	startTs := ctx.Value(txnStartKey)
 	i := 0
-	for {
+	for ; ; i++ {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
