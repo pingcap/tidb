@@ -416,6 +416,7 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 func (s *testIntegrationSerialSuite) TestVerboseExplain(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("create table t2(a int, b int)")
@@ -1235,6 +1236,7 @@ func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 	{
 		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 		tk.MustExec("use test")
+		tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));")
 		tk.MustExec("insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5)")
@@ -3992,13 +3994,13 @@ func (s *testIntegrationSerialSuite) TestCTESelfJoin(c *C) {
 		with inv as
 		(select t1a , t3a, sum(t2c)
 			from t1, t2, t3
-			where t2a = t1a  
+			where t2a = t1a
 				and t2b = t3b
 				and t3c = 1998
 			group by t1a, t3a)
 		select inv1.t1a, inv2.t3a
 		from inv inv1, inv inv2
-		where inv1.t1a = inv2.t1a  
+		where inv1.t1a = inv2.t1a
 			and inv1.t3a = 4
 			and inv2.t3a = 4+1`)
 }

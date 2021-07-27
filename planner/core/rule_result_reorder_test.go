@@ -144,6 +144,7 @@ func (s *testRuleReorderResults) runTestData(c *C, tk *testkit.TestKit, name str
 func (s *testRuleReorderResults) TestOrderedResultMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 	tk.MustExec("set tidb_enable_ordered_result_mode=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int, key(b))")
