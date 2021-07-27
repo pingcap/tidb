@@ -14,7 +14,6 @@
 package keydecoder_test
 
 import (
-	"github.com/pingcap/tidb/util/testkit"
 	"testing"
 
 	"github.com/pingcap/parser/model"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	. "github.com/pingcap/tidb/util/keydecoder"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/stretchr/testify/assert"
 )
 
