@@ -15,6 +15,7 @@ package expression
 
 import (
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -186,6 +187,9 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	fieldTp.Decimal, fieldTp.Flen = decimal, flen
 	if fieldTp.EvalType().IsStringKind() && !isBinaryStr {
 		fieldTp.Charset, fieldTp.Collate = DeriveCollationFromExprs(ctx, args...)
+		if fieldTp.Collate == "binary" {
+			fieldTp.Charset, fieldTp.Collate = charset.GetDefaultCharsetAndCollate()
+		}
 	}
 	if isBinaryFlag {
 		fieldTp.Flag |= mysql.BinaryFlag
