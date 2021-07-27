@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	. "github.com/pingcap/tidb/util/keydecoder"
-	"github.com/pingcap/tidb/util/testkit"
 	"github.com/stretchr/testify/assert"
 )
 
