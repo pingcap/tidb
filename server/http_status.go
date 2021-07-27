@@ -212,7 +212,7 @@ func (s *Server) startHTTPServer() {
 				if err != nil {
 					errStr = err.Error()
 				} else {
-					errStr = fmt.Sprintf("input new sz cannot smaller than zero: %d", newSz)
+					errStr = fmt.Sprintf("the input new sz cannot be negative: %d", newSz)
 				}
 				if _, err := w.Write([]byte(errStr)); err != nil {
 					terror.Log(err)
