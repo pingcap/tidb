@@ -1683,6 +1683,9 @@ func (rs *execStmtResult) Close() error {
 	if err := resetCTEStorageMap(se); err != nil {
 		return finishStmt(context.Background(), se, err, rs.sql)
 	}
+	if err := resetBroadcastHT(se); err != nil {
+		return finishStmt(context.Background(), se, err, rs.sql)
+	}
 	if err := rs.RecordSet.Close(); err != nil {
 		return finishStmt(context.Background(), se, err, rs.sql)
 	}
@@ -1713,6 +1716,19 @@ func resetCTEStorageMap(se *session) error {
 		}
 	}
 	se.GetSessionVars().StmtCtx.CTEStorageMap = nil
+	return nil
+}
+
+func resetBroadcastHT(se *session) error {
+	htSlice, ok := se.GetSessionVars().StmtCtx.BroadcastHT.([]*executor.HashRowContainer)
+	if !ok {
+		panic("unexpected htSlice")
+	}
+	for _, ht := range htSlice {
+		if err := ht.Close(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

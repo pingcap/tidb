@@ -171,6 +171,7 @@ type StatementContext struct {
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
+	BroadcastHT   interface{}
 }
 
 // StmtHints are SessionVars related sql hints.

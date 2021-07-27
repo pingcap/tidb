@@ -265,7 +265,7 @@ type ExchangeSenderBroadcastHT struct {
 	ExchangeSender
 
 	outputs []chan *chunk.Chunk
-	ht      *hashRowContainer
+	ht      *HashRowContainer
 
 	buildSideEstCount float64
 	buildKeys         []*expression.Column
@@ -296,6 +296,11 @@ func (e *ExchangeSenderBroadcastHT) Open(ctx context.Context) error {
 	}
 	e.ht = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
 	e.childResult = newFirstChunk(e)
+	htSlice, ok := e.ctx.GetSessionVars().StmtCtx.BroadcastHT.([]*HashRowContainer)
+	if !ok {
+		panic("unexpected htSlice")
+	}
+	htSlice = append(htSlice, e.ht)
 	return e.baseExecutor.Open(ctx)
 }
 
@@ -346,8 +351,8 @@ func (e *ExchangeReceiverPassThroughHT) Open(ctx context.Context) error {
 func (e *ExchangeReceiverPassThroughHT) Next(ctx context.Context, req *chunk.Chunk) error {
 	chk, ok := <-e.input
 	if ok {
-		htPtr := (*hashRowContainer)(unsafe.Pointer(chk))
-		reqPtr := (**hashRowContainer)(unsafe.Pointer(req))
+		htPtr := (*HashRowContainer)(unsafe.Pointer(chk))
+		reqPtr := (**HashRowContainer)(unsafe.Pointer(req))
 		*reqPtr = htPtr
 	}
 	return nil

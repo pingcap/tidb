@@ -236,7 +236,41 @@ func (e *NonParallelHashJoinExec) joinMatchedRows(iter chunk.Iterator, probeRow 
 }
 
 func (e *NonParallelHashJoinExec) Close() error {
-	return e.HashJoinExec.Close()
+	close(e.closeCh)
+	e.finished.Store(true)
+	if e.prepared {
+		if e.buildFinished != nil {
+			for range e.buildFinished {
+			}
+		}
+		if e.joinResultCh != nil {
+			for range e.joinResultCh {
+			}
+		}
+		if e.probeChkResourceCh != nil {
+			close(e.probeChkResourceCh)
+			for range e.probeChkResourceCh {
+			}
+		}
+		for i := range e.probeResultChs {
+			for range e.probeResultChs[i] {
+			}
+		}
+		for i := range e.joinChkResourceCh {
+			close(e.joinChkResourceCh[i])
+			for range e.joinChkResourceCh[i] {
+			}
+		}
+		e.probeChkResourceCh = nil
+		e.joinChkResourceCh = nil
+	}
+	e.outerMatchedStatus = e.outerMatchedStatus[:0]
+
+	if e.stats != nil && e.rowContainer != nil {
+		e.stats.hashStat = e.rowContainer.stat
+	}
+	err := e.baseExecutor.Close()
+	return err
 }
 
 // HashJoinExec implements the hash join algorithm.
@@ -255,7 +289,7 @@ type HashJoinExec struct {
 
 	// concurrency is the number of partition, build and join workers.
 	concurrency   uint
-	rowContainer  *hashRowContainer
+	rowContainer  *HashRowContainer
 	buildFinished chan error
 
 	// closeCh add a lock for closing executor.
