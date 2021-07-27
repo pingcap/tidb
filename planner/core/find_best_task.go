@@ -1095,8 +1095,13 @@ func convertRangeFromExpectedCnt(ranges []*ranger.Range, rangeCounts []float64, 
 // `select * from tbl where a = 1 order by pk limit 1`
 // if order of column `a` is strictly correlated with column `pk`, the row count of table scan should be:
 // `1 + row_count(a < 1 or a is null)`
+<<<<<<< HEAD
 func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
 	if ds.statisticTable.Pseudo || len(path.TableFilters) == 0 {
+=======
+func (ds *DataSource) crossEstimateTableRowCount(path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
+	if ds.statisticTable.Pseudo || len(path.TableFilters) == 0 || !ds.ctx.GetSessionVars().EnableCorrelationAdjustment {
+>>>>>>> 51c48d2fa... planner: update the correlation adjustment rule of Limit/TopN for TableScan (#26445)
 		return 0, false, 0
 	}
 	col, corr := getMostCorrColFromExprs(path.TableFilters, ds.statisticTable, ds.ctx.GetSessionVars().CorrelationThreshold)
@@ -1149,6 +1154,66 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, expectedCnt f
 	return scanCount, true, 0
 }
 
+<<<<<<< HEAD
+=======
+// crossEstimateIndexRowCount estimates row count of index scan using histogram of another column which is in TableFilters/IndexFilters
+// and has high order correlation with the first index column. For example, if the query is like:
+// `select * from tbl where a = 1 order by b limit 1`
+// if order of column `a` is strictly correlated with column `b`, the row count of IndexScan(b) should be:
+// `1 + row_count(a < 1 or a is null)`
+func (ds *DataSource) crossEstimateIndexRowCount(path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
+	filtersLen := len(path.TableFilters) + len(path.IndexFilters)
+	sessVars := ds.ctx.GetSessionVars()
+	if ds.statisticTable.Pseudo || filtersLen == 0 || !sessVars.EnableExtendedStats || !ds.ctx.GetSessionVars().EnableCorrelationAdjustment {
+		return 0, false, 0
+	}
+	col, corr := getMostCorrCol4Index(path, ds.statisticTable, sessVars.CorrelationThreshold)
+	filters := make([]expression.Expression, 0, filtersLen)
+	filters = append(filters, path.TableFilters...)
+	filters = append(filters, path.IndexFilters...)
+	return ds.crossEstimateRowCount(path, filters, col, corr, expectedCnt, desc)
+}
+
+// getMostCorrCol4Index checks if column in the condition is correlated enough with the first index column. If the condition
+// contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
+func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
+	if histColl.ExtendedStats == nil || len(histColl.ExtendedStats.Stats) == 0 {
+		return nil, 0
+	}
+	var cols []*expression.Column
+	cols = expression.ExtractColumnsFromExpressions(cols, path.TableFilters, nil)
+	cols = expression.ExtractColumnsFromExpressions(cols, path.IndexFilters, nil)
+	if len(cols) == 0 {
+		return nil, 0
+	}
+	colSet := set.NewInt64Set()
+	var corr float64
+	var corrCol *expression.Column
+	for _, col := range cols {
+		if colSet.Exist(col.UniqueID) {
+			continue
+		}
+		colSet.Insert(col.UniqueID)
+		curCorr := float64(0)
+		for _, item := range histColl.ExtendedStats.Stats {
+			if (col.ID == item.ColIDs[0] && path.FullIdxCols[0].ID == item.ColIDs[1]) ||
+				(col.ID == item.ColIDs[1] && path.FullIdxCols[0].ID == item.ColIDs[0]) {
+				curCorr = item.ScalarVals
+				break
+			}
+		}
+		if corrCol == nil || math.Abs(corr) < math.Abs(curCorr) {
+			corrCol = col
+			corr = curCorr
+		}
+	}
+	if len(colSet) == 1 && math.Abs(corr) >= threshold {
+		return corrCol, corr
+	}
+	return nil, corr
+}
+
+>>>>>>> 51c48d2fa... planner: update the correlation adjustment rule of Limit/TopN for TableScan (#26445)
 // GetPhysicalScan returns PhysicalTableScan for the LogicalTableScan.
 func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *property.StatsInfo) *PhysicalTableScan {
 	ds := s.Source
@@ -1412,7 +1477,14 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	}
 	rowCount := path.CountAfterAccess
 	if prop.ExpectedCnt < ds.stats.RowCount {
+<<<<<<< HEAD
 		count, ok, corr := ds.crossEstimateRowCount(path, prop.ExpectedCnt, isMatchProp && prop.Items[0].Desc)
+=======
+		selectivity := ds.stats.RowCount / path.CountAfterAccess
+		uniformEst := math.Min(path.CountAfterAccess, prop.ExpectedCnt/selectivity)
+
+		corrEst, ok, corr := ds.crossEstimateTableRowCount(path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
+>>>>>>> 51c48d2fa... planner: update the correlation adjustment rule of Limit/TopN for TableScan (#26445)
 		if ok {
 			// TODO: actually, before using this count as the estimated row count of table scan, we need additionally
 			// check if count < row_count(first_region | last_region), and use the larger one since we build one copTask
@@ -1421,11 +1493,20 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 			// to get the row count in a region, but that result contains MVCC old version rows, so it is not that accurate.
 			// Considering that when this scenario happens, the execution time is close between IndexScan and TableScan,
 			// we do not add this check temporarily.
+<<<<<<< HEAD
 			rowCount = count
 		} else if corr < 1 {
 			correlationFactor := math.Pow(1-corr, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))
 			selectivity := ds.stats.RowCount / rowCount
 			rowCount = math.Min(prop.ExpectedCnt/selectivity/correlationFactor, rowCount)
+=======
+
+			// to reduce risks of correlation adjustment, use the maximum between uniformEst and corrEst
+			rowCount = math.Max(uniformEst, corrEst)
+		} else if abs := math.Abs(corr); abs < 1 {
+			correlationFactor := math.Pow(1-abs, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))
+			rowCount = math.Min(path.CountAfterAccess, uniformEst/correlationFactor)
+>>>>>>> 51c48d2fa... planner: update the correlation adjustment rule of Limit/TopN for TableScan (#26445)
 		}
 	}
 	// We need NDV of columns since it may be used in cost estimation of join. Precisely speaking,
