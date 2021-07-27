@@ -403,14 +403,9 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		// fallthrough to snapshot get.
 	}
 
-	// Global temporary table is always empty, so no need to send the request.
-	if e.tblInfo.TempTableType == model.TempTableGlobal {
-		return nil, nil
-	}
-
 	// Local temporary table always get snapshot value from session
 	if e.tblInfo.TempTableType == model.TempTableLocal {
-		return e.ctx.GetSessionVars().GetTemporaryTableSnapshotValue(ctx, key)
+		return e.ctx.GetSessionVars().TemporaryTableSnapshotReader(e.tblInfo).Get(ctx, key)
 	}
 
 	lock := e.tblInfo.Lock
