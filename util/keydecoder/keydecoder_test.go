@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package keydecoder
+package keydecoder_test
 
 import (
 	"github.com/pingcap/tidb/util/testkit"
@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	. "github.com/pingcap/tidb/util/keydecoder"
 	"github.com/stretchr/testify/assert"
 )
 
