@@ -2237,6 +2237,12 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 				}
 			}
 			ret = ret && validDs
+
+			_, isTopN := p.self.(*LogicalTopN)
+			_, isLimit := p.self.(*LogicalLimit)
+			if (isTopN || isLimit) && len(c.indexMergeHints) != 0 {
+				return false // TopN and Limit cannot be pushed down to IndexMerge
+			}
 		case *LogicalUnionAll:
 			if storeTp == kv.TiFlash {
 				ret = ret && c.canPushToCopImpl(storeTp, true)
