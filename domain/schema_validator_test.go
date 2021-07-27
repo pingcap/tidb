@@ -26,6 +26,13 @@ import (
 )
 
 func TestSchemaValidator(t *testing.T) {
+	t.Parallel()
+	t.Run("general", testSchemaValidatorGeneral)
+	t.Run("enqueue", testEnqueue)
+	t.Run("enqueueActionType", testEnqueueActionType)
+}
+
+func testSchemaValidatorGeneral(t *testing.T) {
 	lease := 10 * time.Millisecond
 	leaseGrantCh := make(chan leaseGrantItem)
 	oracleCh := make(chan uint64)
@@ -47,7 +54,10 @@ func TestSchemaValidator(t *testing.T) {
 
 	// Take a lease, check it's valid.
 	item := <-leaseGrantCh
-	validator.Update(item.leaseGrantTS, item.oldVer, item.schemaVer,
+	validator.Update(
+		item.leaseGrantTS,
+		item.oldVer,
+		item.schemaVer,
 		&tikv.RelatedSchemaChange{PhyTblIDS: []int64{10}, ActionTypes: []uint64{10}})
 	_, valid := validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
 	require.Equal(t, ResultSucc, valid)
@@ -64,9 +74,7 @@ func TestSchemaValidator(t *testing.T) {
 	// Increase the current time by 2 leases, check schema is invalid.
 	ts := uint64(time.Now().Add(2 * lease).UnixNano()) // Make sure that ts has timed out a lease.
 	_, valid = validator.Check(ts, item.schemaVer, []int64{10})
-	require.Equalf(t, ResultUnknown, valid,
-		"validator latest schema ver %v, time %v, item schema ver %v, ts %v",
-		validator.latestSchemaVer, validator.latestSchemaExpire, 0, oracle.GetTimeFromTS(ts))
+	require.Equalf(t, ResultUnknown, valid, "validator latest schema ver %v, time %v, item schema ver %v, ts %v", validator.latestSchemaVer, validator.latestSchemaExpire, 0, oracle.GetTimeFromTS(ts))
 
 	// Make sure newItem's version is greater than item.schema.
 	newItem := getGreaterVersionItem(t, lease, leaseGrantCh, item.schemaVer)
@@ -103,7 +111,7 @@ func TestSchemaValidator(t *testing.T) {
 	wg.Wait()
 }
 
-func TestEnqueue(t *testing.T) {
+func testEnqueue(t *testing.T) {
 	lease := 10 * time.Millisecond
 	originalCnt := variable.GetMaxDeltaSchemaCount()
 	defer variable.SetMaxDeltaSchemaCount(originalCnt)
@@ -162,7 +170,7 @@ func TestEnqueue(t *testing.T) {
 	require.Equal(t, ret[1:], validator.deltaSchemaInfos)
 }
 
-func TestEnqueueActionType(t *testing.T) {
+func testEnqueueActionType(t *testing.T) {
 	lease := 10 * time.Millisecond
 	originalCnt := variable.GetMaxDeltaSchemaCount()
 	defer variable.SetMaxDeltaSchemaCount(originalCnt)
