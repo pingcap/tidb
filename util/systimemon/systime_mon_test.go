@@ -14,31 +14,29 @@
 package systimemon
 
 import (
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 )
 
 func TestSystimeMonitor(t *testing.T) {
 	t.Parallel()
-	var jumpForward int32
 
-	trigged := false
+	errTriggered := atomic.NewBool(false)
+	nowTriggered := atomic.NewBool(false)
 	go StartMonitor(
 		func() time.Time {
-			if !trigged {
-				trigged = true
+			if !nowTriggered.Load() {
+				nowTriggered.Store(true)
 				return time.Now()
 			}
 
 			return time.Now().Add(-2 * time.Second)
 		}, func() {
-			atomic.StoreInt32(&jumpForward, 1)
+			errTriggered.Store(true)
 		}, func() {})
 
-	time.Sleep(1 * time.Second)
-
-	require.Equal(t, int32(1), atomic.LoadInt32(&jumpForward), "should detect time error")
+	require.Eventually(t, errTriggered.Load, time.Second, 10*time.Millisecond)
 }
