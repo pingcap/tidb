@@ -14,6 +14,7 @@
 package decoder_test
 
 import (
+	"github.com/pingcap/tidb/util/testkit"
 	"testing"
 	"time"
 
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -197,7 +197,7 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 		require.Nil(t, err)
 		require.NotNil(t, bs)
 
-		r, err := de.DecodeAndEvalRowWithMap(ctx, MustNewCommonHandle(t, 100, "abc"), bs, time.UTC, timeZoneIn8, nil)
+		r, err := de.DecodeAndEvalRowWithMap(ctx, testkit.MustNewCommonHandle(t, 100, "abc"), bs, time.UTC, timeZoneIn8, nil)
 		require.Nil(t, err)
 
 		for i, col := range cols {
@@ -208,13 +208,4 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 			require.Equal(t, 0, equal)
 		}
 	}
-}
-
-// TODO: local copy of testutil.MustNewCommonHandle，should use function in testutil after it migrate to testify
-func MustNewCommonHandle(t *testing.T, values ...interface{}) kv.Handle {
-	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
-	require.Nil(t, err)
-	ch, err := kv.NewCommonHandle(encoded)
-	require.Nil(t, err)
-	return ch
 }
