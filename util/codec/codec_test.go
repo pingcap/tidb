@@ -15,6 +15,7 @@ package codec
 
 import (
 	"bytes"
+	"fmt"
 	"hash"
 	"hash/crc32"
 	"hash/fnv"
@@ -74,24 +75,24 @@ func TestCodecKey(t *testing.T) {
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	for i, datums := range table {
-		comments := []interface{}{"%d %v", i, datums}
+		comment := fmt.Sprintf("%d %v", i, datums)
 		b, err := EncodeKey(sc, nil, datums.Input...)
-		require.NoError(t, err, comments...)
+		require.NoError(t, err, comment)
 
 		args, err := Decode(b, 1)
-		require.NoError(t, err, comments...)
-		require.Equal(t, datums.Expect, args, comments...)
+		require.NoError(t, err, comment)
+		require.Equal(t, datums.Expect, args, comment)
 
 		b, err = EncodeValue(sc, nil, datums.Input...)
-		require.NoError(t, err, comments...)
+		require.NoError(t, err, comment)
 
 		size, err := estimateValuesSize(sc, datums.Input)
-		require.NoError(t, err, comments...)
-		require.Len(t, b, size, comments...)
+		require.NoError(t, err, comment)
+		require.Len(t, b, size, comment)
 
 		args, err = Decode(b, 1)
-		require.NoError(t, err, comments...)
-		require.Equal(t, datums.Expect, args, comments...)
+		require.NoError(t, err, comment)
+		require.Equal(t, datums.Expect, args, comment)
 	}
 
 	var raw types.Datum
