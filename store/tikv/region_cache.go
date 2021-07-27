@@ -1544,17 +1544,17 @@ func (c *RegionCache) PDClient() pd.Client {
 	return c.pdClient
 }
 
-// GetTiFlashStoreAddrs returns addresses of all tiflash nodes.
-func (c *RegionCache) GetTiFlashStoreAddrs() []string {
+// GetTiFlashStores returns information of all tiflash nodes.
+func (c *RegionCache) GetTiFlashStores() []*Store {
 	c.storeMu.RLock()
 	defer c.storeMu.RUnlock()
-	var addrs []string
+	var stores []*Store
 	for _, s := range c.storeMu.stores {
 		if s.storeType == TiFlash {
-			addrs = append(addrs, s.addr)
+			stores = append(stores, s)
 		}
 	}
-	return addrs
+	return stores
 }
 
 // btreeItem is BTree's Item that uses []byte to compare.
@@ -1853,6 +1853,21 @@ const (
 	// The store is a tombstone. Should invalidate the region if tries to access it.
 	tombstone
 )
+
+// IsTiFlash returns true if the storeType is TiFlash
+func (s *Store) IsTiFlash() bool {
+	return s.storeType == TiFlash
+}
+
+// StoreID returns storeID.
+func (s *Store) StoreID() uint64 {
+	return s.storeID
+}
+
+// GetAddr returns address of store.
+func (s *Store) GetAddr() string {
+	return s.addr
+}
 
 // initResolve resolves the address of the store that never resolved and returns an
 // empty string if it's a tombstone.

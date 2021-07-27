@@ -501,11 +501,19 @@ type SessionVars struct {
 	AllowWriteRowID bool
 
 	// AllowBatchCop means if we should send batch coprocessor to TiFlash. Default value is 1, means to use batch cop in case of aggregation and join.
-	// If value is set to 2 , which means to force to send batch cop for any query. Value is set to 0 means never use batch cop.
+	// Value set to 2 means to force to send batch cop for any query. Value set to 0 means never use batch cop.
 	AllowBatchCop int
 
-	// AllowMPPExecution will prefer using mpp way to execute a query.
-	AllowMPPExecution bool
+	// allowMPPExecution means if we should use mpp way to execute query.
+	// Default value is `true`, means to be determined by the optimizer.
+	// Value set to `false` means never use mpp.
+	allowMPPExecution bool
+
+	// enforceMPPExecution means if we should enforce mpp way to execute query.
+	// Default value is `false`, means to be determined by variable `allowMPPExecution`.
+	// Value set to `true` means enforce use mpp.
+	// Note if you want to set `enforceMPPExecution` to `true`, you must set `allowMPPExecution` to `true` first.
+	enforceMPPExecution bool
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
@@ -850,6 +858,25 @@ func (s *SessionVars) AllocMPPTaskID(startTS uint64) int64 {
 	return 1
 }
 
+// IsMPPAllowed returns whether mpp execution is allowed.
+func (s *SessionVars) IsMPPAllowed() bool {
+	return s.allowMPPExecution
+}
+
+// IsMPPEnforced returns whether mpp execution is enforced.
+func (s *SessionVars) IsMPPEnforced() bool {
+	return s.allowMPPExecution && s.enforceMPPExecution
+}
+
+// RaiseWarningWhenMPPEnforced will raise a warning when mpp mode is enforced and executing explain statement.
+// TODO: Confirm whether this function will be inlined and
+// omit the overhead of string construction when calling with false condition.
+func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
+	if s.IsMPPEnforced() && s.StmtCtx.InExplainStmt {
+		s.StmtCtx.AppendWarning(errors.New(warning))
+	}
+}
+
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
 func (s *SessionVars) CheckAndGetTxnScope() string {
 	if s.InRestrictedSQL {
@@ -1077,7 +1104,8 @@ func NewSessionVars() *SessionVars {
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
-	vars.AllowMPPExecution = DefTiDBAllowMPPExecution
+	vars.allowMPPExecution = DefTiDBAllowMPPExecution
+	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
@@ -1501,7 +1529,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBAllowBatchCop:
 		s.AllowBatchCop = int(tidbOptInt64(val, DefTiDBAllowBatchCop))
 	case TiDBAllowMPPExecution:
-		s.AllowMPPExecution = TiDBOptOn(val)
+		s.allowMPPExecution = TiDBOptOn(val)
+	case TiDBEnforceMPPExecution:
+		s.enforceMPPExecution = TiDBOptOn(val)
 	case TiDBIndexLookupSize:
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:
