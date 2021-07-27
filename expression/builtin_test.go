@@ -150,6 +150,12 @@ func (s *testEvaluatorSuite) TestLock(c *C) {
 	c.Assert(v.GetInt64(), Equals, int64(1))
 }
 
+func (s *testEvaluatorSuite) TestDisplayName(c *C) {
+	c.Assert(GetDisplayName(ast.EQ), Equals, "=")
+	c.Assert(GetDisplayName(ast.NullEQ), Equals, "<=>")
+	c.Assert(GetDisplayName(ast.IsTruthWithoutNull), Equals, "IS TRUE")
+}
+
 // newFunctionForTest creates a new ScalarFunction using funcName and arguments,
 // it is different from expression.NewFunction which needs an additional retType argument.
 func newFunctionForTest(ctx sessionctx.Context, funcName string, args ...Expression) (Expression, error) {
