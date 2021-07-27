@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/admin"
@@ -229,6 +230,9 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 	var err error
 	if len(s.TableToTables) == 1 {
 		oldIdent := ast.Ident{Schema: s.TableToTables[0].OldTable.Schema, Name: s.TableToTables[0].OldTable.Name}
+		if _, ok := e.getLocalTemporaryTable(oldIdent.Schema, oldIdent.Name); ok {
+			return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
+		}
 		newIdent := ast.Ident{Schema: s.TableToTables[0].NewTable.Schema, Name: s.TableToTables[0].NewTable.Name}
 		err = domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent, isAlterTable)
 	} else {
@@ -236,6 +240,9 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 		newIdents := make([]ast.Ident, 0, len(s.TableToTables))
 		for _, tables := range s.TableToTables {
 			oldIdent := ast.Ident{Schema: tables.OldTable.Schema, Name: tables.OldTable.Name}
+			if _, ok := e.getLocalTemporaryTable(oldIdent.Schema, oldIdent.Name); ok {
+				return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
+			}
 			newIdent := ast.Ident{Schema: tables.NewTable.Schema, Name: tables.NewTable.Name}
 			oldIdents = append(oldIdents, oldIdent)
 			newIdents = append(newIdents, newIdent)
@@ -356,6 +363,10 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	if _, ok := e.getLocalTemporaryTable(ident.Schema, ident.Name); ok {
+		return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("CREATE INDEX")
+	}
+
 	err := domain.GetDomain(e.ctx).DDL().CreateIndex(e.ctx, ident, s.KeyType, model.NewCIStr(s.IndexName),
 		s.IndexPartSpecifications, s.IndexOption, s.IfNotExists)
 	return err
@@ -429,6 +440,15 @@ func (e *DDLExec) executeDropView(s *ast.DropTableStmt) error {
 
 func (e *DDLExec) executeDropSequence(s *ast.DropSequenceStmt) error {
 	return e.dropTableObject(s.Sequences, sequenceObject, s.IfExists)
+}
+
+func (e *DDLExec) getLocalTemporaryTable(schema model.CIStr, table model.CIStr) (table.Table, bool) {
+	temporaryTables := e.ctx.GetSessionVars().LocalTemporaryTables
+	if temporaryTables == nil {
+		return nil, false
+	}
+
+	return temporaryTables.(*infoschema.LocalTemporaryTables).TableByName(schema, table)
 }
 
 // dropTableObject actually applies to `tableObject`, `viewObject` and `sequenceObject`.
@@ -526,6 +546,10 @@ func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*model.TableInfo) e
 
 func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	if _, ok := e.getLocalTemporaryTable(ti.Schema, ti.Name); ok {
+		return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("DROP INDEX")
+	}
+
 	err := domain.GetDomain(e.ctx).DDL().DropIndex(e.ctx, ti, model.NewCIStr(s.IndexName), s.IfExists)
 	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && s.IfExists {
 		err = nil
@@ -535,6 +559,10 @@ func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 
 func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	if _, ok := e.getLocalTemporaryTable(ti.Schema, ti.Name); ok {
+		return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE")
+	}
+
 	err := domain.GetDomain(e.ctx).DDL().AlterTable(ctx, e.ctx, ti, s.Specs)
 	return err
 }
@@ -763,6 +791,12 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 }
 
 func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
+	for _, tb := range s.TableLocks {
+		if _, ok := e.getLocalTemporaryTable(tb.Table.Schema, tb.Table.Name); ok {
+			return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("LOCK TABLES")
+		}
+	}
+
 	if !config.TableLockEnabled() {
 		return nil
 	}
@@ -778,10 +812,18 @@ func (e *DDLExec) executeUnlockTables(_ *ast.UnlockTablesStmt) error {
 }
 
 func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
+	for _, tb := range s.Tables {
+		if _, ok := e.getLocalTemporaryTable(tb.Schema, tb.Name); ok {
+			return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ADMIN CLEANUP TABLE LOCK")
+		}
+	}
 	return domain.GetDomain(e.ctx).DDL().CleanupTableLock(e.ctx, s.Tables)
 }
 
 func (e *DDLExec) executeRepairTable(s *ast.RepairTableStmt) error {
+	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
+		return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ADMIN REPAIR TABLE")
+	}
 	return domain.GetDomain(e.ctx).DDL().RepairTable(e.ctx, s.Table, s.CreateStmt)
 }
 
