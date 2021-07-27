@@ -27,10 +27,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -40,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -48,6 +45,8 @@ import (
 )
 
 func TestInfo(t *testing.T) {
+	t.Parallel()
+
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
@@ -155,7 +154,8 @@ func TestInfo(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/infosync/FailPlacement"))
 }
 
-func TestT(t *testing.T) {
+func TestDomain(t *testing.T) {
+	t.Parallel()
 
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -277,34 +277,34 @@ func TestT(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 
 	result := dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2})
-	assert.Len(t, result, 2)
-	assert.Equal(t, "bbb", result[0].SQL)
-	assert.Equal(t, 3*time.Second, result[0].Duration)
-	assert.Equal(t, "ccc", result[1].SQL)
-	assert.Equal(t, 2*time.Second, result[1].Duration)
+	require.Len(t, result, 2)
+	require.Equal(t, "bbb", result[0].SQL)
+	require.Equal(t, 3*time.Second, result[0].Duration)
+	require.Equal(t, "ccc", result[1].SQL)
+	require.Equal(t, 2*time.Second, result[1].Duration)
 
 	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2, Kind: ast.ShowSlowKindInternal})
-	assert.Len(t, result, 1)
-	assert.Equal(t, "aaa", result[0].SQL)
-	assert.Equal(t, time.Second, result[0].Duration)
-	assert.True(t, result[0].Internal)
+	require.Len(t, result, 1)
+	require.Equal(t, "aaa", result[0].SQL)
+	require.Equal(t, time.Second, result[0].Duration)
+	require.True(t, result[0].Internal)
 
 	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 4, Kind: ast.ShowSlowKindAll})
-	assert.Len(t, result, 3)
-	assert.Equal(t, "bbb", result[0].SQL)
-	assert.Equal(t, 3*time.Second, result[0].Duration)
-	assert.Equal(t, "ccc", result[1].SQL)
-	assert.Equal(t, 2*time.Second, result[1].Duration)
-	assert.Equal(t, "aaa", result[2].SQL)
-	assert.Equal(t, time.Second, result[2].Duration)
-	assert.True(t, result[2].Internal)
+	require.Len(t, result, 3)
+	require.Equal(t, "bbb", result[0].SQL)
+	require.Equal(t, 3*time.Second, result[0].Duration)
+	require.Equal(t, "ccc", result[1].SQL)
+	require.Equal(t, 2*time.Second, result[1].Duration)
+	require.Equal(t, "aaa", result[2].SQL)
+	require.Equal(t, time.Second, result[2].Duration)
+	require.True(t, result[2].Internal)
 
 	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowRecent, Count: 2})
-	assert.Len(t, result, 2)
-	assert.Equal(t, "ccc", result[0].SQL)
-	assert.Equal(t, 2*time.Second, result[0].Duration)
-	assert.Equal(t, "bbb", result[1].SQL)
-	assert.Equal(t, 3*time.Second, result[1].Duration)
+	require.Len(t, result, 2)
+	require.Equal(t, "ccc", result[0].SQL)
+	require.Equal(t, 2*time.Second, result[0].Duration)
+	require.Equal(t, "bbb", result[1].SQL)
+	require.Equal(t, 3*time.Second, result[1].Duration)
 
 	metrics.PanicCounter.Reset()
 	// Since the stats lease is 0 now, so create a new ticker will panic.
@@ -369,37 +369,6 @@ func TestT(t *testing.T) {
 	dom.Close()
 	isClose = dom.isClose()
 	require.True(t, isClose)
-}
-
-func TestSessionPool(t *testing.T) {
-
-	f := func() (pools.Resource, error) { return &testResource{}, nil }
-	pool := newSessionPool(1, f)
-	tr, err := pool.Get()
-	require.NoError(t, err)
-	tr1, err := pool.Get()
-	require.NoError(t, err)
-	pool.Put(tr)
-	// Capacity is 1, so tr1 is closed.
-	pool.Put(tr1)
-	require.Equal(t, 1, tr1.(*testResource).status)
-	pool.Close()
-	pool.Close()
-	pool.Put(tr1)
-
-	tr, err = pool.Get()
-	require.Error(t, err)
-	require.Equal(t, "session pool closed", err.Error())
-	require.Nil(t, tr)
-}
-
-func TestErrorCode(t *testing.T) {
-	assert.Equal(t, errno.ErrInfoSchemaExpired, int(terror.ToSQLError(ErrInfoSchemaExpired).Code))
-	assert.Equal(t, errno.ErrInfoSchemaChanged, int(terror.ToSQLError(ErrInfoSchemaChanged).Code))
-}
-
-func TestServerIDConstant(t *testing.T) {
-	require.Less(t, lostConnectionToPDTimeout, serverIDTTL)
 }
 
 // ETCD use ip:port as unix socket address, however this address is invalid on windows.
@@ -471,9 +440,3 @@ func (msm *mockSessionManager) UpdateTLSConfig(*tls.Config) {}
 func (msm *mockSessionManager) ServerID() uint64 {
 	return 1
 }
-
-type testResource struct {
-	status int
-}
-
-func (tr *testResource) Close() { tr.status = 1 }

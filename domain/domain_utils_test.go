@@ -16,21 +16,18 @@ package domain
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/stretchr/testify/require"
 )
 
-func TestDomainCtx(t *testing.T) {
+func TestErrorCode(t *testing.T) {
 	t.Parallel()
+	require.Equal(t, errno.ErrInfoSchemaExpired, int(terror.ToSQLError(ErrInfoSchemaExpired).Code))
+	require.Equal(t, errno.ErrInfoSchemaChanged, int(terror.ToSQLError(ErrInfoSchemaChanged).Code))
+}
 
-	ctx := mock.NewContext()
-	require.NotEqual(t, "", domainKey.String())
-
-	BindDomain(ctx, nil)
-	v := GetDomain(ctx)
-	require.Nil(t, v)
-
-	ctx.ClearValue(domainKey)
-	v = GetDomain(ctx)
-	require.Nil(t, v)
+func TestServerIDConstant(t *testing.T) {
+	t.Parallel()
+	require.Less(t, lostConnectionToPDTimeout, serverIDTTL)
 }
