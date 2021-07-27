@@ -1011,6 +1011,25 @@ type builtinCastDecimalAsRealSig struct {
 	baseBuiltinCastFunc
 }
 
+func (b *builtinCastDecimalAsRealSig) PropagateType() {
+	expr := b.args[0]
+	expr.GetType().Flen, expr.GetType().Decimal = setDataTypeDouble(expr.GetType().Decimal)
+}
+
+func setDataTypeDouble(srcDecimal int) (flen, decimal int) {
+	decimal = mysql.NotFixedDec
+	flen = floatLength(srcDecimal, decimal)
+	return
+}
+
+func floatLength(srcDecimal int, decimalPar int) int {
+	const dblDIG = 15
+	if srcDecimal != mysql.NotFixedDec {
+		return dblDIG + 2 + decimalPar
+	}
+	return dblDIG + 8
+}
+
 func (b *builtinCastDecimalAsRealSig) Clone() builtinFunc {
 	newSig := &builtinCastDecimalAsRealSig{}
 	newSig.cloneFrom(&b.baseBuiltinCastFunc)
@@ -1829,6 +1848,7 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 		RetType:  tp,
 		Function: f,
 	}
+	res.PropagateType()
 	// We do not fold CAST if the eval type of this scalar function is ETJson
 	// since we may reset the flag of the field type of CastAsJson later which
 	// would affect the evaluation of it.

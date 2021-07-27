@@ -47,6 +47,11 @@ type ScalarFunction struct {
 	hashcode []byte
 }
 
+// PropagateType implement the Expression interface.
+func (sf *ScalarFunction) PropagateType() {
+	sf.Function.PropagateType()
+}
+
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	return sf.Function.vecEvalInt(input, result)

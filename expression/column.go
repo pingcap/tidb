@@ -222,6 +222,9 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	return false
 }
 
+// propagateType implements Expression interface.
+func (col *Column) PropagateType() {}
+
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (col *Column) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	if col.RetType.Hybrid() {

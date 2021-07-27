@@ -451,11 +451,11 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	args := b.args[1:]
-	key, err := arg0.ToHashKey()
-	if err != nil {
-		return 0, true, err
-	}
 	if len(b.hashSet) != 0 {
+		key, err := arg0.ToHashKey()
+		if err != nil {
+			return 0, true, err
+		}
 		if b.hashSet.Exist(string(key)) {
 			return 1, false, nil
 		}
