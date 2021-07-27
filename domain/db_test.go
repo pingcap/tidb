@@ -20,37 +20,39 @@ import (
 
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIntegration(t *testing.T) {
+	t.Parallel()
+
 	store, err := mockstore.NewMockStore()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}()
 
 	session.SetSchemaLease(50 * time.Millisecond)
 
 	domain, err := session.BootstrapSession(store)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	defer domain.Close()
 
 	// for NotifyUpdatePrivilege
 	createRoleSQL := `CREATE ROLE 'test'@'localhost';`
 	se, err := session.CreateSession4Test(store)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), createRoleSQL)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// for BindHandle
 	_, err = se.Execute(context.Background(), "use test")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "drop table if exists t")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "create table t(i int, s varchar(20), index index_t(i, s))")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
