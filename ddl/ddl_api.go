@@ -6031,7 +6031,7 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 	}
 	meta := tb.Meta()
 
-	rule := &label.Rule{}
+	rule := label.NewRule()
 	err = rule.ApplyAttributesSpec(spec.AttributesSpec)
 	if err != nil {
 		var sb strings.Builder

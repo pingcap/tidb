@@ -24,8 +24,12 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// IDPrefix is the prefix for label rule ID.
-const IDPrefix = "schema"
+const (
+	// IDPrefix is the prefix for label rule ID.
+	IDPrefix = "schema"
+
+	ruleType = "key-range"
+)
 
 var (
 	// TableIDFormat is the format of the label rule ID for a table.
@@ -39,6 +43,11 @@ type Rule struct {
 	Labels   Labels      `json:"labels"`
 	RuleType string      `json:"rule_type"`
 	Rule     interface{} `json:"rule"`
+}
+
+// NewRule creates a rule.
+func NewRule() *Rule {
+	return &Rule{}
 }
 
 // ApplyAttributesSpec will transfer attributes defined in AttributesSpec to the labels.
@@ -65,7 +74,7 @@ func (r *Rule) String() string {
 
 // Clone clones a rule.
 func (r *Rule) Clone() *Rule {
-	newRule := &Rule{}
+	newRule := NewRule()
 	*newRule = *r
 	return newRule
 }
@@ -78,7 +87,7 @@ func (r *Rule) ResetTable(id int64, dbName, tableName string) *Rule {
 		{Key: "table", Value: tableName},
 	}...)
 
-	r.RuleType = "key-range"
+	r.RuleType = ruleType
 	r.Rule = map[string]string{
 		"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id))),
 		"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id+1))),

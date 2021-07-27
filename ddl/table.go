@@ -1121,7 +1121,7 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 }
 
 func onAlterTableAttributes(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	rule := &label.Rule{}
+	rule := label.NewRule()
 	err = job.DecodeArgs(&rule)
 	if err != nil {
 		job.State = model.JobStateCancelled
