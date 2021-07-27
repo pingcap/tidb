@@ -438,6 +438,10 @@ type isTrueOrFalseFunctionClass struct {
 	keepNull bool
 }
 
+func (c *isTrueOrFalseFunctionClass) getOpcode() opcode.Op {
+	return c.op
+}
+
 func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err

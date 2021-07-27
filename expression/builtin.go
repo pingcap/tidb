@@ -128,6 +128,14 @@ func CheckIllegalMixCollation(funcName string, args []Expression, evalType types
 }
 
 func illegalMixCollationErr(funcName string, args []Expression) error {
+	if funClass, ok := funcs[funcName]; ok {
+		if opClass, ok := funClass.(operatorClass); ok {
+			var opNameBuilder strings.Builder
+			opClass.getOpcode().Format(&opNameBuilder)
+			funcName = opNameBuilder.String()
+		}
+	}
+
 	switch len(args) {
 	case 2:
 		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], funcName)
@@ -580,6 +588,14 @@ type functionClass interface {
 	getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error)
 	// verifyArgsByCount verifies the count of parameters.
 	verifyArgsByCount(l int) error
+}
+
+// operatorClass is the interface for a operator extended from functionClass
+type operatorClass interface {
+	functionClass
+
+	// getOpcode gets the opcode of a operator
+	getOpcode() opcode.Op
 }
 
 // funcs holds all registered builtin functions. When new function is added,
