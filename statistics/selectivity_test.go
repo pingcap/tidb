@@ -265,12 +265,12 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
 			selectivity:              0.00617283950,
-			selectivityAfterIncrease: 0.00619135802,
+			selectivityAfterIncrease: 0.00617283950,
 		},
 		{
 			exprs:                    "a >= 1 and c >= 1 and a < 2",
 			selectivity:              0.01234567901,
-			selectivityAfterIncrease: 0.01236419753,
+			selectivityAfterIncrease: 0.01234567901,
 		},
 		{
 			exprs:                    "d = 0 and e = 1",
@@ -285,7 +285,7 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
 			selectivity:              0,
-			selectivityAfterIncrease: 0.00008258847,
+			selectivityAfterIncrease: 0,
 		},
 		{
 			exprs:                    longExpr,
@@ -474,7 +474,7 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 
 	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(9, 30))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 2.1)
+	c.Assert(count, Equals, 7.0)
 
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values (null, null)")

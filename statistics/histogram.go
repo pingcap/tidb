@@ -1399,17 +1399,14 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, inde
 
 		// If the current table row count has changed, we should scale the row count accordingly.
 		totalCount *= idx.GetIncreaseFactor(tableRowCount)
+
 		// handling the out-of-range part
 		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
-			if idx.StatsVer < 2 {
-				totalCount += outOfRangeEQSelectivity(outOfRangeBetweenRate, tableRowCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
-			} else {
-				increaseCount := tableRowCount - int64(idx.TotalRowCount())
-				if increaseCount < 0 {
-					increaseCount = 0
-				}
-				totalCount += idx.Histogram.outOfRangeRowCount(&l, &r, increaseCount)
+			increaseCount := tableRowCount - int64(idx.TotalRowCount())
+			if increaseCount < 0 {
+				increaseCount = 0
 			}
+			totalCount += idx.Histogram.outOfRangeRowCount(&l, &r, increaseCount)
 		}
 	}
 	if totalCount > float64(tableRowCount) {
