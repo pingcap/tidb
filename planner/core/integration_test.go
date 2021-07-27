@@ -1448,6 +1448,9 @@ func (s *testIntegrationSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("create table t(a int, b int, unique index i_a (a) invisible, unique index i_b(b))")
 	tk.MustExec("insert into t values (1,2)")
 
+	// For issue 26217, can't use invisible index after admin check table.
+	tk.MustExec("admin check table t")
+
 	// Optimizer cannot use invisible indexes.
 	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1"))
 	c.Check(tk.MustUseIndex("select a from t order by a", "i_a"), IsFalse)
@@ -3885,6 +3888,21 @@ func (s *testIntegrationSuite) TestSequenceAsDataSource(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestIssue25300(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a char(65) collate utf8_unicode_ci, b text collate utf8_general_ci not null);`)
+	tk.MustExec(`insert into t values ('a', 'A');`)
+	tk.MustExec(`insert into t values ('b', 'B');`)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t);`, mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode(`(select 'a' collate utf8mb4_unicode_ci) union (select 'b' collate utf8mb4_general_ci);`, mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t) union all select 'a';`, mysql.ErrCantAggregate2collations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a';`, mysql.ErrCantAggregate3collations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a' except select 'd';`, mysql.ErrCantAggregate3collations)
+}
+
 func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3975,4 +3993,60 @@ func (s *testIntegrationSuite) TestIsMatchProp(c *C) {
 		})
 		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSerialSuite) TestIssue26250(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tp (id int primary key) partition by range (id) (partition p0 values less than (100));")
+	tk.MustExec("create table tn (id int primary key);")
+	tk.MustExec("insert into tp values(1),(2);")
+	tk.MustExec("insert into tn values(1),(2);")
+	tk.MustQuery("select * from tp,tn where tp.id=tn.id and tn.id=1 for update;").Check(testkit.Rows("1 1"))
+}
+
+func (s *testIntegrationSerialSuite) TestCTESelfJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(t1a int, t1b int, t1c int)")
+	tk.MustExec("create table t2(t2a int, t2b int, t2c int)")
+	tk.MustExec("create table t3(t3a int, t3b int, t3c int)")
+	tk.MustExec(`
+		with inv as
+		(select t1a , t3a, sum(t2c)
+			from t1, t2, t3
+			where t2a = t1a  
+				and t2b = t3b
+				and t3c = 1998
+			group by t1a, t3a)
+		select inv1.t1a, inv2.t3a
+		from inv inv1, inv inv2
+		where inv1.t1a = inv2.t1a  
+			and inv1.t3a = 4
+			and inv2.t3a = 4+1`)
+}
+
+// https://github.com/pingcap/tidb/issues/26214
+func (s *testIntegrationSerialSuite) TestIssue26214(c *C) {
+	originalVal := config.GetGlobalConfig().Experimental.AllowsExpressionIndex
+	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	defer func() {
+		config.GetGlobalConfig().Experimental.AllowsExpressionIndex = originalVal
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table `t` (`a` int(11) default null, `b` int(11) default null, `c` int(11) default null, key `expression_index` ((case when `a` < 0 then 1 else 2 end)))")
+	_, err := tk.Exec("select * from t  where case when a < 0 then 1 else 2 end <= 1 order by 4;")
+	c.Assert(core.ErrUnknownColumn.Equal(err), IsTrue)
+}
+
+func (s *testIntegrationSuite) TestIssue26559(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a timestamp, b datetime);")
+	tk.MustExec("insert into t values('2020-07-29 09:07:01', '2020-07-27 16:57:36');")
+	tk.MustQuery("select greatest(a, b) from t union select null;").Sort().Check(testkit.Rows("2020-07-29 09:07:01", "<nil>"))
 }

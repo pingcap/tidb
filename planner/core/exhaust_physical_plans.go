@@ -959,7 +959,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
 		RowCount:     math.Min(1.0, countAfterAccess),
 		StatsVersion: ds.stats.StatsVersion,
-		// Cardinality would not be used in cost computation of IndexJoin, set leave it as default nil.
+		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
 	}
 	rowSize := ds.TblColHists.GetTableAvgRowSize(p.ctx, ds.TblCols, ts.StoreType, true)
 	sessVars := ds.ctx.GetSessionVars()
@@ -1432,7 +1432,7 @@ func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, p
 	}
 	var innerNDV float64
 	if stats := ijHelper.innerPlan.statsInfo(); stats != nil && stats.StatsVersion != statistics.PseudoVersion {
-		innerNDV = getCardinality(path.IdxCols[:usedColsLen], ijHelper.innerPlan.Schema(), stats)
+		innerNDV = getColsNDV(path.IdxCols[:usedColsLen], ijHelper.innerPlan.Schema(), stats)
 	}
 	// We choose the index by the NDV of the used columns, the larger the better.
 	// If NDVs are same, we choose index which uses more columns.
@@ -1661,19 +1661,15 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 
 func checkChildFitBC(p Plan) bool {
 	if p.statsInfo().HistColl == nil {
-		return p.statsInfo().Count() < p.SCtx().GetSessionVars().BroadcastJoinThresholdCount
+		return p.SCtx().GetSessionVars().BroadcastJoinThresholdCount == -1 || p.statsInfo().Count() < p.SCtx().GetSessionVars().BroadcastJoinThresholdCount
 	}
 	avg := p.statsInfo().HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
 	sz := avg * float64(p.statsInfo().Count())
-	return sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
+	return p.SCtx().GetSessionVars().BroadcastJoinThresholdSize == -1 || sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
 }
 
 // If we can use mpp broadcast join, that's our first choice.
-
 func (p *LogicalJoin) shouldUseMPPBCJ() bool {
-	if p.ctx.GetSessionVars().BroadcastJoinThresholdSize == 0 || p.ctx.GetSessionVars().BroadcastJoinThresholdCount == 0 {
-		return p.ctx.GetSessionVars().AllowBCJ
-	}
 	if len(p.EqualConditions) == 0 && p.ctx.GetSessionVars().AllowCartesianBCJ == 2 {
 		return true
 	}
@@ -1697,8 +1693,11 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 		}
 	})
 
-	if prop.IsFlashProp() && ((p.preferJoinType&preferBCJoin) == 0 && p.preferJoinType > 0) {
-		return nil, false, nil
+	if (p.preferJoinType&preferBCJoin) == 0 && p.preferJoinType > 0 {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.")
+		if prop.IsFlashProp() {
+			return nil, false, nil
+		}
 	}
 	if prop.MPPPartitionTp == property.BroadcastType {
 		return nil, false, nil
@@ -1786,15 +1785,27 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	}
 
 	if p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because join type `" + p.JoinType.String() + "` is not supported now.")
 		return nil
 	}
 
 	if len(p.EqualConditions) == 0 {
-		if p.ctx.GetSessionVars().AllowCartesianBCJ == 0 || !useBCJ {
+		if !useBCJ {
+			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.")
 			return nil
 		}
+		if p.ctx.GetSessionVars().AllowCartesianBCJ == 0 {
+			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variable `tidb_opt_broadcast_cartesian_join`.")
+			return nil
+		}
+
 	}
-	if (len(p.LeftConditions) != 0 && p.JoinType != LeftOuterJoin) || (len(p.RightConditions) != 0 && p.JoinType != RightOuterJoin) {
+	if len(p.LeftConditions) != 0 && p.JoinType != LeftOuterJoin {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.")
+		return nil
+	}
+	if len(p.RightConditions) != 0 && p.JoinType != RightOuterJoin {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there is a join that is not `right join` but has right conditions, which is not supported by mpp now.")
 		return nil
 	}
 
@@ -2133,7 +2144,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	}
 	cacheHitRatio := 0.0
 	if la.stats.RowCount != 0 {
-		ndv := getCardinality(columns, la.schema, la.stats)
+		ndv := getColsNDV(columns, la.schema, la.stats)
 		// for example, if there are 100 rows and the number of distinct values of these correlated columns
 		// are 70, then we can assume 30 rows can hit the cache so the cache hit ratio is 1 - (70/100) = 0.3
 		cacheHitRatio = 1 - (ndv / la.stats.RowCount)

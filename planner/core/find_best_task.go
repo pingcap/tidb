@@ -14,7 +14,6 @@
 package core
 
 import (
-	"context"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -2008,27 +2007,14 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 	if !prop.IsEmpty() {
 		return invalidTask, 1, nil
 	}
-	if p.cte.cteTask != nil {
-		// Already built it.
-		return p.cte.cteTask, 1, nil
-	}
-	sp, _, err := DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
-	if err != nil {
-		return nil, 1, err
-	}
-
-	var rp PhysicalPlan
-	if p.cte.recursivePartLogicalPlan != nil {
-		rp, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
-		if err != nil {
-			return nil, 1, err
-		}
-	}
-
-	pcte := PhysicalCTE{SeedPlan: sp, RecurPlan: rp, CTE: p.cte, cteAsName: p.cteAsName}.Init(p.ctx, p.stats)
+	// The physical plan has been build when derive stats.
+	pcte := PhysicalCTE{SeedPlan: p.cte.seedPartPhysicalPlan, RecurPlan: p.cte.recursivePartPhysicalPlan, CTE: p.cte, cteAsName: p.cteAsName}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
-	t = &rootTask{pcte, sp.statsInfo().RowCount, false}
-	p.cte.cteTask = t
+	cst := p.cte.seedPartPhysicalPlan.Cost()
+	if p.cte.recursivePartPhysicalPlan != nil {
+		cst += p.cte.recursivePartPhysicalPlan.Cost()
+	}
+	t = &rootTask{pcte, cst, false}
 	return t, 1, nil
 }
 
