@@ -394,7 +394,7 @@ The following `SCHEDULE` options are available:
 
 In PD placement rule implementation, the key range must be specified. Now that `table_name` is specified in the `ALTER TABLE` statement, key range can be inferred.
 
-Typically, key format is in such a format: `t_{table_id}_r_{pk_value}`, where `pk_value` may be `_tidb_rowid` in some cases. `table_id` can be inferred from `table_name`, thus the key range is `t_{table_id}_` to `t_{table_id+1}_`.
+Typically, key format is in such a format: `t{table_id}_r{pk_value}`, where `pk_value` may be `_tidb_rowid` in some cases. `table_id` can be inferred from `table_name`, thus the key range is `t{table_id}_` to `t{table_id+1}_`.
 
 Similarly, the key range of partitions can also be inferred.
 
