@@ -37,10 +37,9 @@ func (s *testConnIPExampleSuite) TestLoadPlugin(c *C) {
 	pluginSign := pluginName + "-" + strconv.Itoa(int(pluginVersion))
 
 	cfg := plugin.Config{
-		Plugins:        []string{pluginSign},
-		PluginDir:      "",
-		PluginVarNames: &variable.PluginVarNames,
-		EnvVersion:     map[string]uint16{"go": 1112},
+		Plugins:    []string{pluginSign},
+		PluginDir:  "",
+		EnvVersion: map[string]uint16{"go": 1112},
 	}
 
 	// setup load test hook.
@@ -51,7 +50,6 @@ func (s *testConnIPExampleSuite) TestLoadPlugin(c *C) {
 					Kind:       plugin.Audit,
 					Name:       pluginName,
 					Version:    pluginVersion,
-					SysVars:    map[string]*variable.SysVar{pluginName + "_key": {Scope: variable.ScopeGlobal, Name: pluginName + "_key", Value: "v1"}},
 					OnInit:     OnInit,
 					OnShutdown: OnShutdown,
 					Validate:   Validate,

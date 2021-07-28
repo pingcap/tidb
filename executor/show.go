@@ -614,7 +614,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			var expression interface{}
 			if tblCol.Hidden {
 				colName = "NULL"
-				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+				expression = tblCol.GeneratedExprString
 			}
 
 			e.appendRow([]interface{}{
@@ -1015,7 +1015,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.ShardRowIDBits > 0 {
-		fmt.Fprintf(buf, "/*!90000 SHARD_ROW_ID_BITS=%d ", tableInfo.ShardRowIDBits)
+		fmt.Fprintf(buf, " /*T! SHARD_ROW_ID_BITS=%d ", tableInfo.ShardRowIDBits)
 		if tableInfo.PreSplitRegions > 0 {
 			fmt.Fprintf(buf, "PRE_SPLIT_REGIONS=%d ", tableInfo.PreSplitRegions)
 		}

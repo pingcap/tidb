@@ -1230,7 +1230,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 	if runtimeStatsColl.ExistsRootStats(explainID) {
 		rootStats := runtimeStatsColl.GetRootStats(explainID)
 		analyzeInfo = rootStats.String()
-		actRows = fmt.Sprint(rootStats.GetActRows())
+		actRows = strconv.FormatInt(rootStats.GetActRows(), 10)
 	} else {
 		actRows = "0"
 	}
