@@ -896,8 +896,8 @@ func (s *testStatsSuite) TestSmallRangeEstimation(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int)")
-	for i := 0; i < 1200; i++ {
-		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/3)) // [0, 400)
+	for i := 0; i < 400; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v), (%v), (%v)", i, i, i)) // [0, 400)
 	}
 	testKit.MustExec("analyze table t with 0 topn")
 
