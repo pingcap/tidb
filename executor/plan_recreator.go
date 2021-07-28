@@ -20,6 +20,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math/rand"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
@@ -33,10 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"math/rand"
-	"os"
-	"strings"
-	"time"
 )
 
 const recreatorPath string = "/tmp/recreator"
