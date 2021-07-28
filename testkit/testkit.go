@@ -30,7 +30,7 @@ import (
 	"go.uber.org/atomic"
 )
 
-var testKitIdGenerator atomic.Uint64
+var testKitIDGenerator atomic.Uint64
 
 // TestKit is a utility to run sql test.
 type TestKit struct {
@@ -140,6 +140,6 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 func newSession(t *testing.T, store kv.Storage) session.Session {
 	se, err := session.CreateSession4Test(store)
 	require.Nil(t, err)
-	se.SetConnectionID(testKitIdGenerator.Inc())
+	se.SetConnectionID(testKitIDGenerator.Inc())
 	return se
 }

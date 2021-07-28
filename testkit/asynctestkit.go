@@ -31,8 +31,9 @@ import (
 	"go.uber.org/atomic"
 )
 
-var asyncTestKitIdGenerator atomic.Uint64
+var asyncTestKitIDGenerator atomic.Uint64
 
+// AsyncTestKit is a utility to run sql concurrently.
 type AsyncTestKit struct {
 	require *require.Assertions
 	assert  *assert.Assertions
@@ -53,7 +54,7 @@ func (tk *AsyncTestKit) OpenSession(ctx context.Context, db string) context.Cont
 	if tryRetrieveSession(ctx) == nil {
 		se, err := session.CreateSession4Test(tk.store)
 		tk.require.NoError(err)
-		se.SetConnectionID(asyncTestKitIdGenerator.Inc())
+		se.SetConnectionID(asyncTestKitIDGenerator.Inc())
 		ctx = context.WithValue(ctx, sessionKey, se)
 	}
 	tk.MustExec(ctx, fmt.Sprintf("use %s", db))
