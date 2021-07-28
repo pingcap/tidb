@@ -10015,32 +10015,19 @@ func (s *testIntegrationSuite) TestTimestampIssue25093(c *C) {
 }
 
 func (s *testIntegrationSuite) TestTranslate(c *C) {
-	cases := []struct {
-		args  []interface{}
-		isNil bool
-		isErr bool
-		res   string
-	}{
-		{[]interface{}{"ABC", "A", "B"}, false, false, "BBC"},
-		{[]interface{}{"ABC", "Z", "ABC"}, false, false, "ABC"},
-		{[]interface{}{"A.B.C", ".A", "|"}, false, false, "|B|C"},
-		{[]interface{}{"aaaaabbbbb", "aaabbb", "xyzXYZ"}, false, false, "xxxxxXXXXX"},
-		{[]interface{}{"abc", "ab", ""}, false, false, "c"},
-		{[]interface{}{"aaa", "a", ""}, false, false, ""},
-	}
-	res := "[ZBC]\n[ZBC]\n[Z.B.C]\n[bbbbb]\n[bc]\n[]\n"
+	cases := []string{"ABC", "ABC", "A.B.C", "aaaaabbbbb", "abc", "aaa"}
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(str varchar(100));")
-	for _, t := range cases {
-		stmt := fmt.Sprintf("insert into t set str=\"%s\"", t.args[0])
+	for _, str := range cases {
+		stmt := fmt.Sprintf("insert into t set str=\"%s\"", str)
 		tk.MustExec(stmt)
 	}
 	tk.MustExec("set @@tidb_enable_vectorized_expression=true")
-	tk.MustQuery("select translate(str, 'AAa', 'Zz') from t").Check(testkit.Rows(res))
+	tk.MustQuery("select translate(str, 'AAa', 'Zz') from t").Check(testkit.Rows("ZBC", "ZBC", "Z.B.C", "bbbbb", "bc", ""))
 	tk.MustExec("set @@tidb_enable_vectorized_expression=false")
-	tk.MustQuery("select translate(str, 'AAa', 'Zz') from t").Check(testkit.Rows(res))
+	tk.MustQuery("select translate(str, 'AAa', 'Zz') from t").Check(testkit.Rows("ZBC", "ZBC", "Z.B.C", "bbbbb", "bc", ""))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue26662(c *C) {
