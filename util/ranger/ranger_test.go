@@ -1133,7 +1133,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			exprStr:     `c > 111.11111111`,
 			accessConds: "[gt(test.t.c, 111.11111111)]",
 			filterConds: "[]",
-			resultStr:   "[[111.111115,+inf]]",
+			resultStr:   "[(111.111115,+inf]]",
 			length:      types.UnspecifiedLength,
 		},
 		{
@@ -1251,6 +1251,33 @@ func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
 	testKit.MustQuery("select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
 		"1 2",
 		"1 2",
+	))
+}
+
+func (s *testRangerSuite) TestIssue26638(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a float, unique index uidx(a));")
+	testKit.MustExec("insert into t values(9.46347e37);")
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery("explain format = 'brief' select * from t where a in (-1.56018e38, -1.96716e38, 9.46347e37);").Check(testkit.Rows(
+		"Batch_Point_Get 1.00 root table:t, index:uidx(a) keep order:false, desc:false",
+	))
+	testKit.MustQuery("select * from t where a in (-1.56018e38, -1.96716e38, 9.46347e37);").Check(testkit.Rows(
+		"94634700000000000000000000000000000000",
+	))
+	testKit.MustExec("prepare stmt from 'select * from t where a in (?, ?, ?);';")
+	testKit.MustExec("set @a=-1.56018e38, @b=-1.96716e38, @c=9.46347e37;")
+	testKit.MustQuery("execute stmt using @a, @b, @c;").Check(testkit.Rows(
+		"94634700000000000000000000000000000000",
 	))
 }
 
