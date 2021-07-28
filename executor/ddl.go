@@ -113,6 +113,19 @@ func (e *DDLExec) getLocalTemporaryTables() *infoschema.LocalTemporaryTables {
 	return nil
 }
 
+func (e *DDLExec) getLocalTemporaryTable(schema model.CIStr, table model.CIStr) (table.Table, bool) {
+	tbl, err := e.ctx.GetInfoSchema().(infoschema.InfoSchema).TableByName(schema, table)
+	if infoschema.ErrTableNotExists.Equal(err) {
+		return nil, false
+	}
+
+	if tbl.Meta().TempTableType != model.TempTableLocal {
+		return nil, false
+	}
+
+	return tbl, true
+}
+
 // Next implements the Executor Next interface.
 func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if e.done {
@@ -129,8 +142,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return e.createSessionTemporaryTable(s)
 		}
 	case *ast.TruncateTableStmt:
-		localTemporaryTables := e.getLocalTemporaryTables()
-		if localTemporaryTables != nil && localTemporaryTables.TableExists(s.Table.Schema, s.Table.Name) {
+		if _, exist := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); exist {
 			return e.executeTruncateLocalTemporaryTable(s)
 		}
 	case *ast.DropTableStmt:
@@ -244,12 +256,7 @@ func (e *DDLExec) executeTruncateLocalTemporaryTable(s *ast.TruncateTableStmt) e
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema)
 	}
 
-	localTempTables := e.getLocalTemporaryTables()
-	if localTempTables == nil {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(s.Table.Schema, s.Table.Name)
-	}
-
-	tbl, exists := localTempTables.TableByName(s.Table.Schema, s.Table.Name)
+	tbl, exists := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
 	if !exists {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(s.Table.Schema, s.Table.Name)
 	}
@@ -261,6 +268,7 @@ func (e *DDLExec) executeTruncateLocalTemporaryTable(s *ast.TruncateTableStmt) e
 		return err
 	}
 
+	localTempTables := e.getLocalTemporaryTables()
 	localTempTables.RemoveTable(s.Table.Schema, s.Table.Name)
 	if err := localTempTables.AddTable(dbInfo, newTbl); err != nil {
 		return err
