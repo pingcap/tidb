@@ -97,8 +97,10 @@ func TestEscapeBackslash(t *testing.T) {
 		},
 	}
 	for _, v := range tests {
-		require.Equalf(t, v.output, escapeBytesBackslash(nil, v.input), "name %s", v.name)
-		require.Equalf(t, v.output, escapeStringBackslash(nil, string(v.input)), "name %s", v.name)
+		t.Run(v.name, func(t *testing.T) {
+			require.Equal(t, v.output, escapeBytesBackslash(nil, v.input))
+			require.Equal(t, v.output, escapeStringBackslash(nil, string(v.input)))
+		})
 	}
 }
 
@@ -112,7 +114,7 @@ func TestEscapeSQL(t *testing.T) {
 		err    string
 	}
 	time2, err := time.Parse("2006-01-02 15:04:05", "2018-01-23 04:03:05")
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tests := []TestCase{
 		{
 			name:   "normal 1",
@@ -390,23 +392,25 @@ func TestEscapeSQL(t *testing.T) {
 		r2, e2 := EscapeSQL(v.input, v.params...)
 		e3 := FormatSQL(r3, v.input, v.params...)
 		if v.err == "" {
-			require.Nilf(t, e1, "name %s", v.name)
-			require.Equalf(t, v.output, string(r1), "name %s", v.name)
-			require.Nilf(t, e2, "name %s", v.name)
-			require.Equalf(t, v.output, r2, "name %s", v.name)
-			require.Nilf(t, e3, "name %s", v.name)
-			require.Equalf(t, v.output, r3.String(), "name %s", v.name)
+			t.Run(v.name, func(t *testing.T) {
+				require.NoError(t, e1)
+				require.Equal(t, v.output, string(r1))
+				require.NoError(t, e2)
+				require.Equal(t, v.output, r2)
+				require.NoError(t, e3)
+				require.Equal(t, v.output, r3.String())
+			})
 		} else {
-			require.NotNilf(t, e1, "name %s", v.name)
-			// use error + regexp to replace error match
-			require.Errorf(t, e1, "name %s", v.name)
-			require.Regexpf(t, v.err, e1.Error(), "name %s", v.name)
-			require.NotNilf(t, e2, "name %s", v.name)
-			require.Errorf(t, e2, "name %s", v.name)
-			require.Regexpf(t, v.err, e2.Error(), "name %s", v.name)
-			require.NotNilf(t, e3, "name %s", v.name)
-			require.Errorf(t, e3, "name %s", v.name)
-			require.Regexpf(t, v.err, e3.Error(), "name %s", v.name)
+			t.Run(v.name, func(t *testing.T) {
+				// use error + regexp to replace error match
+				require.Error(t, e1)
+				require.Regexp(t, v.err, e1.Error())
+				require.Error(t, e2)
+				require.Regexp(t, v.err, e2.Error())
+				require.Error(t, e3)
+				require.Regexp(t, v.err, e3.Error())
+			})
+
 		}
 	}
 }
