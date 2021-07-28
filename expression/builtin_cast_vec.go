@@ -1696,8 +1696,6 @@ func (b *builtinCastStringAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chu
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
-			result.SetNull(i, true)
-			continue
 		}
 		times[i] = tm
 		if b.tp.Tp == mysql.TypeDate {
