@@ -507,6 +507,7 @@ func (s *testPrepareSerialSuite) TestExpressionIndexPreparePlanCache(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key ((a+b)));")
 	tk.MustExec("prepare stmt from 'select * from t where a+b = ?'")
@@ -516,5 +517,6 @@ func (s *testPrepareSerialSuite) TestExpressionIndexPreparePlanCache(c *C) {
 	tkProcess := tk.Se.ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	c.Assert(tk.MustUseIndex("for connection "+strconv.FormatUint(tk.Se.ShowProcess().ID, 10), "expression_index", true), IsTrue)
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows("aqaaa"))
+	c.Assert(tk.MustUseIndex("for connection "+strconv.FormatUint(tkProcess.ID, 10), "expression_index"), IsTrue)
 }
