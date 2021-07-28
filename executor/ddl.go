@@ -250,11 +250,6 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 }
 
 func (e *DDLExec) executeTruncateLocalTemporaryTable(s *ast.TruncateTableStmt) error {
-	dbInfo, exists := e.ctx.GetInfoSchema().(infoschema.InfoSchema).SchemaByName(s.Table.Schema)
-	if !exists {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema)
-	}
-
 	tbl, exists := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
 	if !exists {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(s.Table.Schema, s.Table.Name)
@@ -269,7 +264,7 @@ func (e *DDLExec) executeTruncateLocalTemporaryTable(s *ast.TruncateTableStmt) e
 
 	localTempTables := e.getLocalTemporaryTables()
 	localTempTables.RemoveTable(s.Table.Schema, s.Table.Name)
-	if err := localTempTables.AddTable(dbInfo, newTbl); err != nil {
+	if err := localTempTables.AddTable(s.Table.Schema, newTbl); err != nil {
 		return err
 	}
 
@@ -368,7 +363,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		sessVars.TemporaryTableData = bufferTxn.GetMemBuffer()
 	}
 
-	err = localTempTables.AddTable(dbInfo, tbl)
+	err = localTempTables.AddTable(dbInfo.Name, tbl)
 
 	if err != nil && s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
 		e.ctx.GetSessionVars().StmtCtx.AppendNote(err)

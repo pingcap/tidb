@@ -3233,4 +3233,11 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 		_ = iter.Next()
 	}
 	c.Assert(iter.Valid(), IsFalse)
+
+	// truncate after drop database should be successful
+	tk.MustExec("create temporary table test2.t3 (id int)")
+	tk.MustExec("insert into test2.t3 values(1)")
+	tk.MustExec("drop database test2")
+	tk.MustExec("truncate table test2.t3")
+	tk.MustQuery("select * from test2.t3").Check(testkit.Rows())
 }

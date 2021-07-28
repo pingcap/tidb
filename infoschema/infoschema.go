@@ -445,8 +445,8 @@ func (is *LocalTemporaryTables) TableByID(id int64) (tbl table.Table, ok bool) {
 }
 
 // AddTable add a table
-func (is *LocalTemporaryTables) AddTable(schema *model.DBInfo, tbl table.Table) error {
-	schemaTables := is.ensureSchema(schema.Name)
+func (is *LocalTemporaryTables) AddTable(schema model.CIStr, tbl table.Table) error {
+	schemaTables := is.ensureSchema(schema)
 
 	tblMeta := tbl.Meta()
 	if _, ok := schemaTables.tables[tblMeta.Name.L]; ok {
