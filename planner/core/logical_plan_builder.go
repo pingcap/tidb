@@ -3427,7 +3427,14 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
 		}
 	}
+	enableNoopFuncs := b.ctx.GetSessionVars().EnableNoopFuncs
 	if sel.SelectStmtOpts != nil {
+		if sel.SelectStmtOpts.CalcFoundRows && !enableNoopFuncs {
+			// In some limited contexts we support SQL_CALC_FOUND_ROWS.
+			if !b.detectSQLCalcFoundRowsSupported(sel) {
+				return nil, expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
+			}
+		}
 		origin := b.inStraightJoin
 		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
 		defer func() { b.inStraightJoin = origin }()
@@ -3536,7 +3543,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
-		enableNoopFuncs := b.ctx.GetSessionVars().EnableNoopFuncs
 		if sel.LockInfo.LockType == ast.SelectLockForShare && !enableNoopFuncs {
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
 			return nil, err

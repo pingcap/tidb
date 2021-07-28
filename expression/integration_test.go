@@ -3360,14 +3360,6 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
 	tk.MustQuery("select SQL_CALC_FOUND_ROWS * FROM t ORDER BY a LIMIT 1,2").Check(testkit.Rows("2", "2"))
 	tk.MustQuery("select found_rows()").Check(testkit.Rows("3"))
-	tk.MustQuery("select * from t where a = 0").Check(testkit.Rows())
-	tk.MustQuery("select found_rows()").Check(testkit.Rows("0"))
-	tk.MustQuery("select SQL_CALC_FOUND_ROWS * from t where a = 0").Check(testkit.Rows())
-	tk.MustQuery("select found_rows()").Check(testkit.Rows("0"))
-	tk.MustQuery("select * from t where a = 1").Check(testkit.Rows("1"))
-	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
-	tk.MustQuery("select sql_calc_found_rows * from t where a = 1").Check(testkit.Rows("1"))
-	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
 	tk.MustQuery("select sql_calc_found_rows * from t where a = 1 LIMIT 2").Check(testkit.Rows("1"))
 	tk.MustQuery("select found_rows()").Check(testkit.Rows("1"))
 	tk.MustQuery("select sql_calc_found_rows * from t where a = 1 LIMIT 999999").Check(testkit.Rows("1"))
@@ -8090,6 +8082,9 @@ func (s *testIntegrationSerialSuite) TestNoopFunctions(c *C) {
 
 	message := `.* has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
 	stmts := []string{
+		"SELECT SQL_CALC_FOUND_ROWS * FROM t1",                                 // NO LIMIT
+		"SELECT SQL_CALC_FOUND_ROWS 'foo' LIMIT 0",                             // NO TABLE
+		"SELECT SQL_CALC_FOUND_ROWS * FROM t1 a  UNION ALL SELECT * FROM t1 b", // UNION
 		"SELECT * FROM t1 LOCK IN SHARE MODE",
 		"SELECT * FROM t1 GROUP BY a DESC",
 		"SELECT * FROM t1 GROUP BY a ASC",

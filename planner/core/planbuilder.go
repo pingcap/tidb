@@ -943,6 +943,17 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 	return false
 }
 
+// Currently the only supported cases for SQL_CALC_FOUND_ROWS are simple SELECT statements.
+// This is because the semantics are complex (all operators need to be aware it is set),
+// and the feature is deprecated anyway; which makes the justification to support it difficult.
+// This helper function helps prohibit the following:
+// - UNION queries (or non simple SELECT queries)
+// - Queries without a LIMIT
+// - Queries without a table (such as FROM DUAL)
+func (b *PlanBuilder) detectSQLCalcFoundRowsSupported(sel *ast.SelectStmt) bool {
+	return len(sel.Text()) > 0 && sel.Limit != nil && sel.From != nil
+}
+
 func getPathByIndexName(paths []*util.AccessPath, idxName model.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
 	var tablePath *util.AccessPath
 	for _, path := range paths {
