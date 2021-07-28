@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
@@ -137,4 +138,37 @@ func isColEqCorColOrConstant(ctx sessionctx.Context, filter expression.Expressio
 		}
 	}
 	return false
+}
+
+// OnlyPointRange checks whether each range is a point(no interval range exists).
+func (path *AccessPath) OnlyPointRange(sc *stmtctx.StatementContext) bool {
+	noIntervalRange := true
+	if path.IsIntHandlePath {
+		for _, ran := range path.Ranges {
+			if !ran.IsPoint(sc) {
+				noIntervalRange = false
+				break
+			}
+		}
+		return noIntervalRange
+	}
+	haveNullVal := false
+	for _, ran := range path.Ranges {
+		// Not point or the not full matched.
+		if !ran.IsPoint(sc) || len(ran.HighVal) != len(path.Index.Columns) {
+			noIntervalRange = false
+			break
+		}
+		// Check whether there's null value.
+		for i := 0; i < len(path.Index.Columns); i++ {
+			if ran.HighVal[i].IsNull() {
+				haveNullVal = true
+				break
+			}
+		}
+		if haveNullVal {
+			break
+		}
+	}
+	return noIntervalRange && !haveNullVal
 }

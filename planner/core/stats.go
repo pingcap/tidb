@@ -15,6 +15,7 @@ package core
 
 import (
 	"context"
+	"golang.org/x/tools/container/intsets"
 	"math"
 	"sort"
 
@@ -280,30 +281,90 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			return nil, err
 		}
 	}
+	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
+	// when ds.possibleAccessPaths are pruned.
 	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds, ds.possibleAccessPaths)
+	uniqueIdxsWithDoubleScan := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
+	singleScanIdxs := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
+	var selected, uniqueBest, refinedBest *util.AccessPath
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath() {
-			noIntervalRanges, err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
+			err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
 			if err != nil {
 				return nil, err
 			}
-			// If we have point or empty range, just remove other possible paths.
-			if noIntervalRanges || len(path.Ranges) == 0 {
-				ds.possibleAccessPaths[0] = path
-				ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
-				ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
-				break
-			}
-			continue
+		} else {
+			ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
 		}
-		noIntervalRanges := ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
-		// If we have empty range, or point range on unique index, just remove other possible paths.
-		if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
-			ds.possibleAccessPaths[0] = path
-			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
-			ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
+		// TODO: Should we handle TiFlash case specially?
+		// Try some heuristic rules to select access path.
+		if len(path.Ranges) == 0 {
+			selected = path
 			break
 		}
+		// TODO: Can we record isSingleScan = ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+		// as a field of AccessPath? In this way ds.isCoveringIndex only needs to be called once for each path.
+		if path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) {
+			if path.IsTablePath() || path.Index.Unique {
+				if ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo) {
+					selected = path
+					break
+				}
+				uniqueIdxsWithDoubleScan = append(uniqueIdxsWithDoubleScan, path)
+			}
+		} else if ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo) {
+			singleScanIdxs = append(singleScanIdxs, path)
+		}
+	}
+	if len(uniqueIdxsWithDoubleScan) > 0 {
+		// TODO: Move accessCondsColSet from candidatePath to AccessPath so that we can use it both here and skyline pruning.
+		uniqueIdxColumnSets := make([]*intsets.Sparse, 0, len(uniqueIdxsWithDoubleScan))
+		for _, uniqueIdx := range uniqueIdxsWithDoubleScan {
+			uniqueIdxColumnSets = append(uniqueIdxColumnSets, expression.ExtractColumnSet(uniqueIdx.AccessConds))
+			// Find the unique index with the minimal number of ranges as `uniqueBest`.
+			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) {
+				uniqueBest = uniqueIdx
+			}
+		}
+		// `uniqueBest` may not always be the best.
+		// ```
+		// create table t(a int, b int, c int, unique index idx_b(b), unique index idx_b_c(b, c));
+		// select b, c from t where b = 5 and c > 10;
+		// ```
+		// In the case, `uniqueBest` is `idx_b`. However, `idx_b_c` is better than `idx_b_c`.
+		// Hence, for each index in `singleScanIdxs`, we check whether it is better than some index in `uniqueIdxsWithDoubleScan`.
+		// If yes, the index is a refined one. We find the refined index with the minimal number of ranges as `refineBest`.
+		for _, singleScanIdx := range singleScanIdxs {
+			columnSet := expression.ExtractColumnSet(singleScanIdx.AccessConds)
+			for _, uniqueIdxColumnSet := range uniqueIdxColumnSets {
+				setsResult, comparable := compareColumnSet(columnSet, uniqueIdxColumnSet)
+				if comparable && setsResult == 1 {
+					if refinedBest == nil || len(singleScanIdx.Ranges) < len(refinedBest.Ranges) {
+						refinedBest = singleScanIdx
+					}
+				}
+			}
+		}
+		// `refineBest` may not always be better than `uniqueBest`.
+		// ```
+		// create table t(int a, int b, int c, int d, unique index idx_a(a), unique index idx_b_c(b, c), unique index idx_b_c_a_d(b, c, a, d));
+		// select a, b, c from t where a = 1 and b = 2 and c in (1, 2, 3, 4, 5);
+		// ```
+		// In the case, `refinedBest` is `idx_b_c_a_d` and `uniqueBest` is `a`. `idx_b_c_a_d` needs to access five points while `idx_a`
+		// only needs one point access and one table access.
+		// Hence we should compare `2 * len(uniqueBest.Ranges)` and `len(refinedBest.Ranges)` to select the better one.
+		if refinedBest != nil && (uniqueBest == nil || len(refinedBest.Ranges) < 2*len(uniqueBest.Ranges)) {
+			selected = refinedBest
+		} else {
+			selected = uniqueBest
+		}
+	}
+	// If some path matches a heuristic rule, just remove other possible paths
+	if selected != nil {
+		ds.possibleAccessPaths[0] = selected
+		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
+		// TODO: Can we make a more carefull check on whether the optimization depends on mutable constants?
+		ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 	}
 
 	// TODO: implement UnionScan + IndexMerge
@@ -513,7 +574,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			} else {
 				path.IsIntHandlePath = true
 			}
-			noIntervalRanges, err := ds.deriveTablePathStats(path, conditions, true)
+			err := ds.deriveTablePathStats(path, conditions, true)
 			if err != nil {
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
@@ -523,7 +584,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				continue
 			}
 			// If we have point or empty range, just remove other possible paths.
-			if noIntervalRanges || len(path.Ranges) == 0 {
+			if len(path.Ranges) == 0 || path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) {
 				if len(results) == 0 {
 					results = append(results, path)
 				} else {
@@ -543,13 +604,13 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
-			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
+			ds.deriveIndexPathStats(path, conditions, true)
 			// If the path contains a full range, ignore it.
 			if ranger.HasFullRange(path.Ranges) {
 				continue
 			}
 			// If we have empty range, or point range on unique index, just remove other possible paths.
-			if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
+			if len(path.Ranges) == 0 || (path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) && path.Index.Unique) {
 				if len(results) == 0 {
 					results = append(results, path)
 				} else {
