@@ -2453,7 +2453,7 @@ func (s *testEvaluatorSuite) TestTranslate(c *C) {
 		args  []interface{}
 		isNil bool
 		isErr bool
-		res   string
+		res   interface{}
 	}{
 		{[]interface{}{"ABC", "A", "B"}, false, false, "BBC"},
 		{[]interface{}{"ABC", "Z", "ABC"}, false, false, "ABC"},
@@ -2472,6 +2472,10 @@ func (s *testEvaluatorSuite) TestTranslate(c *C) {
 		{[]interface{}{"error", nil, "error"}, true, false, ""},
 		{[]interface{}{"error", "error", nil}, true, false, ""},
 		{[]interface{}{nil, nil, nil}, true, false, ""},
+		{[]interface{}{[]byte{255}, []byte{255}, []byte{255}}, false, false, []byte{255}},
+		{[]interface{}{[]byte{255, 255}, []byte{255}, []byte{254}}, false, false, []byte{254, 254}},
+		{[]interface{}{[]byte{255, 255}, []byte{255, 255}, []byte{254, 253}}, false, false, []byte{254, 254}},
+		{[]interface{}{[]byte{255, 254, 253, 252, 251}, []byte{253, 252, 251}, []byte{254, 253}}, false, false, []byte{255, 254, 254, 253}},
 	}
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Translate, s.primitiveValsToConstants(t.args)...)

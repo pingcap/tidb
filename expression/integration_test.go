@@ -10028,6 +10028,7 @@ func (s *testIntegrationSuite) TestTranslate(c *C) {
 		{[]interface{}{"abc", "ab", ""}, false, false, "c"},
 		{[]interface{}{"aaa", "a", ""}, false, false, ""},
 	}
+	res := "[ZBC]\n[ZBC]\n[Z.B.C]\n[bbbbb]\n[bc]\n[]\n"
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -10037,9 +10038,9 @@ func (s *testIntegrationSuite) TestTranslate(c *C) {
 		tk.MustExec(stmt)
 	}
 	tk.MustExec("set @@tidb_enable_vectorized_expression=true")
-	tk.MustQuery("select translate(str, 'AAa', 'Zz') from t").Check(testkit.Rows())
+	tk.MustQuery("select translate(str, 'AAa', 'Zz') from t").Check(testkit.Rows(res))
 	tk.MustExec("set @@tidb_enable_vectorized_expression=false")
-	tk.MustQuery("select translate(str, 'AAa', 'Zz') from t").Check(testkit.Rows())
+	tk.MustQuery("select translate(str, 'AAa', 'Zz') from t").Check(testkit.Rows(res))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue26662(c *C) {
