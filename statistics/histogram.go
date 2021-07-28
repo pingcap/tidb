@@ -1071,17 +1071,19 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			}
 			continue
 		}
-		rangeVals := enumRangeValues(lowVal, highVal, rg.LowExclude, rg.HighExclude)
-		// The small range case.
-		if rangeVals != nil {
-			for _, val := range rangeVals {
-				cnt, err := c.equalRowCount(sc, val, lowEncoded, modifyCount)
-				if err != nil {
-					return 0, err
+		if c.StatsVer < 2 {
+			rangeVals := enumRangeValues(lowVal, highVal, rg.LowExclude, rg.HighExclude)
+			// The small range case.
+			if rangeVals != nil {
+				for _, val := range rangeVals {
+					cnt, err := c.equalRowCount(sc, val, lowEncoded, modifyCount)
+					if err != nil {
+						return 0, err
+					}
+					rowCount += cnt
 				}
-				rowCount += cnt
+				continue
 			}
-			continue
 		}
 		// The interval case.
 		cnt := c.BetweenRowCount(sc, lowVal, highVal, lowEncoded, highEncoded)

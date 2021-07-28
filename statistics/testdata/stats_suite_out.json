@@ -607,7 +607,7 @@
       },
       {
         "SQL": "select * from t where a < 8 and (b > 10 or c < 3 or b > 4) and a > 2",
-        "Selectivity": 0
+        "Selectivity": 0.3125
       }
     ]
   }
