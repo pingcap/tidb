@@ -10040,7 +10040,7 @@ func (s *testIntegrationSuite) TestTranslate(c *C) {
 			tk.MustExec("set @@tidb_enable_vectorized_expression=false")
 		}
 		for _, t := range cases {
-			stmt := fmt.Sprintf("select translate('%s','%s','%s')", t.args[0], t.args[1], t.args[2])
+			stmt := fmt.Sprintf("select translate(\"%s\",\"%s\",\"%s\")", t.args[0], t.args[1], t.args[2])
 			tk.MustQuery(stmt).Check(testkit.Rows(t.res))
 		}
 	}
