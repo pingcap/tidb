@@ -44,4 +44,3 @@ func CreateMockStore(t *testing.T) (store kv.Storage, clean func()) {
 
 	return
 }
-
