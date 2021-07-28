@@ -43,13 +43,13 @@ import (
 const recreatorPath string = "/tmp/recreator"
 const remainedInterval float64 = 3
 
-// PlanRecreatorExec represents a plan recreator executor.
+// PlanRecreatorSingleExec represents a plan recreator executor.
 type PlanRecreatorSingleExec struct {
 	baseExecutor
 	info *PlanRecreatorSingleInfo
 }
 
-// PlanRecreatorInfo saves the information of plan recreator operation.
+// PlanRecreatorSingleInfo saves the information of plan recreator operation.
 type PlanRecreatorSingleInfo struct {
 	ExecStmt ast.StmtNode
 	Analyze  bool
@@ -122,12 +122,12 @@ const PlanRecreatorFileList planRecreatorFileListType = 0
 func (e *PlanRecreatorSingleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.info.ExecStmt == nil {
-		return errors.New("Plan Recreator: sql is empty.")
+		return errors.New("plan Recreator: sql is empty")
 	}
 	val := e.ctx.Value(PlanRecreatorVarKey)
 	if val != nil {
 		e.ctx.SetValue(PlanRecreatorVarKey, nil)
-		return errors.New("Plan Recreator: previous plan recreator option isn't closed normally.")
+		return errors.New("plan Recreator: previous plan recreator option isn't closed normally")
 	}
 	e.ctx.SetValue(PlanRecreatorVarKey, e.info)
 	return nil
@@ -148,16 +148,15 @@ func (e *PlanRecreatorSingleInfo) Process() (interface{}, error) {
 	// TODO: plan recreator load will be developed later
 	if e.Load {
 		return nil, nil
-	} else {
-		return e.dumpSingle()
 	}
+	return e.dumpSingle()
 }
 
 func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 	// Create path
 	err := os.MkdirAll(recreatorPath, os.ModePerm)
 	if err != nil {
-		return nil, errors.New("Plan Recreator: cannot create plan recreator path.")
+		return nil, errors.New("plan Recreator: cannot create plan recreator path")
 	}
 
 	// Create zip file
@@ -165,7 +164,7 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 	fileName := fmt.Sprintf("recreator_single_%v.zip", startTime.UnixNano())
 	zf, err := os.Create(recreatorPath + "/" + fileName)
 	if err != nil {
-		return nil, errors.New("Plan Recreator: cannot create zip file.")
+		return nil, errors.New("plan Recreator: cannot create zip file")
 	}
 	val := e.Ctx.Value(PlanRecreatorFileList)
 	if val == nil {
