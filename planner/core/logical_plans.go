@@ -460,7 +460,7 @@ type LogicalMemTable struct {
 	QueryTimeRange QueryTimeRange
 }
 
-// LogicalUnionScan is only used in non read-only txn.
+// LogicalUnionScan is used in non read-only txn or for scanning a local temporary table whose snapshot data is located in memory.
 type LogicalUnionScan struct {
 	baseLogicalPlan
 
@@ -1199,8 +1199,6 @@ type CTEClass struct {
 	// seedPartPhysicalPlan and recursivePartPhysicalPlan are the physical plans for the seed part and recursive part of this CTE.
 	seedPartPhysicalPlan      PhysicalPlan
 	recursivePartPhysicalPlan PhysicalPlan
-	// cteTask is the physical plan for this CTE, is a wrapper of the PhysicalCTE.
-	cteTask task
 	// storageID for this CTE.
 	IDForStorage int
 	// optFlag is the optFlag for the whole CTE.
