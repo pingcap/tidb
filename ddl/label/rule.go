@@ -83,8 +83,8 @@ func (r *Rule) Clone() *Rule {
 func (r *Rule) ResetTable(id int64, dbName, tableName string) *Rule {
 	r.ID = fmt.Sprintf(TableIDFormat, IDPrefix, dbName, tableName)
 	r.Labels = append(r.Labels, []Label{
-		{Key: "db", Value: dbName},
-		{Key: "table", Value: tableName},
+		{Key: dbKey, Value: dbName},
+		{Key: tableKey, Value: tableName},
 	}...)
 
 	r.RuleType = ruleType
