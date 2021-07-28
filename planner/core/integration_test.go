@@ -1453,9 +1453,9 @@ func (s *testIntegrationSuite) TestInvisibleIndex(c *C) {
 
 	// Optimizer cannot use invisible indexes.
 	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1"))
-	c.Check(tk.MustUseIndex("select a from t order by a", "i_a", false), IsFalse)
+	c.Check(tk.MustUseIndex("select a from t order by a", "i_a"), IsFalse)
 	tk.MustQuery("select a from t where a > 0").Check(testkit.Rows("1"))
-	c.Check(tk.MustUseIndex("select a from t where a > 1", "i_a", false), IsFalse)
+	c.Check(tk.MustUseIndex("select a from t where a > 1", "i_a"), IsFalse)
 
 	// If use invisible indexes in index hint and sql hint, throw an error.
 	errStr := "[planner:1176]Key 'i_a' doesn't exist in table 't'"
@@ -3700,7 +3700,7 @@ func (s *testIntegrationSuite) TestIssue23736(c *C) {
 	tk.MustQuery("select /*+ nth_plan(3) */ count(1) from t0 where c > 10 and b < 2;").Check(testkit.Rows("0"))
 
 	// Should not use invisible index
-	c.Assert(tk.MustUseIndex("select /*+ stream_agg() */ count(1) from t0 where c > 10 and b < 2", "c", false), IsFalse)
+	c.Assert(tk.MustUseIndex("select /*+ stream_agg() */ count(1) from t0 where c > 10 and b < 2", "c"), IsFalse)
 }
 
 // https://github.com/pingcap/tidb/issues/23802
