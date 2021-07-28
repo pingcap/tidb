@@ -584,12 +584,12 @@ type functionClass interface {
 	verifyArgsByCount(l int) error
 }
 
-// operatorClass is the interface for a operator extended from functionClass
-type operatorClass interface {
+// functionClassWithName is the interface for a function with a display name extended from functionClass
+type functionClassWithName interface {
 	functionClass
 
-	// getOpcode gets the opcode of a operator
-	getOpcode() opcode.Op
+	// getDisplayName gets the display name of a function
+	getDisplayName() string
 }
 
 // funcs holds all registered builtin functions. When new function is added,
@@ -914,10 +914,8 @@ func IsFunctionSupported(name string) bool {
 // GetDisplayName translate a function name to its display name
 func GetDisplayName(name string) string {
 	if funClass, ok := funcs[name]; ok {
-		if opClass, ok := funClass.(operatorClass); ok {
-			var opNameBuilder strings.Builder
-			opClass.getOpcode().Format(&opNameBuilder)
-			return opNameBuilder.String()
+		if funClass, ok := funClass.(functionClassWithName); ok {
+			return funClass.getDisplayName()
 		}
 	}
 

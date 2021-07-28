@@ -1102,8 +1102,10 @@ type compareFunctionClass struct {
 	op opcode.Op
 }
 
-func (c *compareFunctionClass) getOpcode() opcode.Op {
-	return c.op
+func (c *compareFunctionClass) getDisplayName() string {
+	var nameBuilder strings.Builder
+	c.op.Format(&nameBuilder)
+	return nameBuilder.String()
 }
 
 // getBaseCmpType gets the EvalType that the two args will be treated as when comparing.

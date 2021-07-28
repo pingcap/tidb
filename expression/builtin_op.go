@@ -16,6 +16,7 @@ package expression
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
@@ -438,8 +439,10 @@ type isTrueOrFalseFunctionClass struct {
 	keepNull bool
 }
 
-func (c *isTrueOrFalseFunctionClass) getOpcode() opcode.Op {
-	return c.op
+func (c *isTrueOrFalseFunctionClass) getDisplayName() string {
+	var nameBuilder strings.Builder
+	c.op.Format(&nameBuilder)
+	return nameBuilder.String()
 }
 
 func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
