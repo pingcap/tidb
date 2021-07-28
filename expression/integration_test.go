@@ -6115,7 +6115,7 @@ func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t1` (" +
 		"  `COL1` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL," +
-		"  PRIMARY KEY (`COL1`(5)) clustered" +
+		"  PRIMARY KEY (`COL1`(5))" +
 		")")
 	tk.MustExec("INSERT INTO `t1` VALUES ('Ȇ');")
 	tk.MustQuery("select * from t1 where col1 not in (0xc484, 0xe5a4bc, 0xc3b3);").Check(testkit.Rows("Ȇ"))
