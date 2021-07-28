@@ -141,10 +141,6 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		if s.TemporaryKeyword == ast.TemporaryLocal {
 			return e.createSessionTemporaryTable(s)
 		}
-	case *ast.TruncateTableStmt:
-		if _, exist := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); exist {
-			return e.executeTruncateLocalTemporaryTable(s)
-		}
 	case *ast.DropTableStmt:
 		if s.IsView {
 			break
@@ -246,6 +242,9 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	if _, exist := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); exist {
+		return e.executeTruncateLocalTemporaryTable(s)
+	}
 	err := domain.GetDomain(e.ctx).DDL().TruncateTable(e.ctx, ident)
 	return err
 }
