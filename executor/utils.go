@@ -238,11 +238,10 @@ type batchRetrieverHelper struct {
 // nextBatch calculates the index range of the next batch. If there is such a non-empty range, the `retrieveRange` func
 // will be invoked and the range [start, end) is passed to it. Returns error if `retrieveRange` returns error.
 func (b *batchRetrieverHelper) nextBatch(retrieveRange func(start, end int) error) error {
-	if b.retrieved {
-		return nil
-	}
 	if b.retrievedIdx >= b.totalRows {
 		b.retrieved = true
+	}
+	if b.retrieved {
 		return nil
 	}
 	start := b.retrievedIdx
