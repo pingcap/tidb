@@ -10013,3 +10013,35 @@ func (s *testIntegrationSuite) TestTimestampIssue25093(c *C) {
 	tk.MustQuery("select timestamp(0.9999999) from t;").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select timestamp(101.234) from t;").Check(testkit.Rows("2000-01-01 00:00:00.000"))
 }
+
+func (s *testIntegrationSuite) TestTranslate(c *C) {
+	cases := []struct {
+		args  []interface{}
+		isNil bool
+		isErr bool
+		res   string
+	}{
+		{[]interface{}{"ABC", "A", "B"}, false, false, "BBC"},
+		{[]interface{}{"ABC", "Z", "ABC"}, false, false, "ABC"},
+		{[]interface{}{"A.B.C", ".A", "|"}, false, false, "|B|C"},
+		{[]interface{}{"中文", "文", "国"}, false, false, "中国"},
+		{[]interface{}{"UPPERCASE", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"}, false, false, "uppercase"},
+		{[]interface{}{"lowercase", "abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"}, false, false, "LOWERCASE"},
+		{[]interface{}{"aaaaabbbbb", "aaabbb", "xyzXYZ"}, false, false, "xxxxxXXXXX"},
+		{[]interface{}{"Ti*DB User's Guide", " */'", "___"}, false, false, "Ti_DB_Users_Guide"},
+		{[]interface{}{"abc", "ab", ""}, false, false, "c"},
+		{[]interface{}{"aaa", "a", ""}, false, false, ""},
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	for vec := 0; vec <= 1; vec++ {
+		if vec == 0 {
+			tk.MustExec("set @@tidb_enable_vectorized_expression=true")
+		} else {
+			tk.MustExec("set @@tidb_enable_vectorized_expression=false")
+		}
+		for _, t := range cases {
+			stmt := fmt.Sprintf("select translate(%s,%s,%s)", t.args[0], t.args[1], t.args[2])
+			tk.MustQuery(stmt).Check(testkit.Rows(t.res))
+		}
+	}
+}
