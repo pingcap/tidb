@@ -45,7 +45,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/store/tikv"
+=======
+	derr "github.com/pingcap/tidb/store/driver/error"
+>>>>>>> 34d43fb8c... *: convert tikv.error which is returned by RegionCache.Locate to tidb.error  (#26647)
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1682,7 +1686,7 @@ func (e *AnalyzeFastExec) buildSampTask() (err error) {
 		// Search for the region which contains the targetKey.
 		loc, err := e.cache.LocateKey(bo, targetKey)
 		if err != nil {
-			return err
+			return derr.ToTiDBErr(err)
 		}
 		if bytes.Compare(endKey, loc.StartKey) < 0 {
 			break

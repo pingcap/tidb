@@ -34,9 +34,13 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+=======
+	derr "github.com/pingcap/tidb/store/driver/error"
+>>>>>>> 34d43fb8c... *: convert tikv.error which is returned by RegionCache.Locate to tidb.error  (#26647)
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
@@ -94,7 +98,7 @@ func NewHelper(store Storage) *Helper {
 func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	keyLocation, err := h.RegionCache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 500, nil), encodedKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, derr.ToTiDBErr(err)
 	}
 
 	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
@@ -126,7 +130,7 @@ func (h *Helper) GetMvccByStartTs(startTS uint64, startKey, endKey kv.Key) (*Mvc
 		if err != nil {
 			logutil.BgLogger().Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS),
 				zap.Stringer("startKey", startKey), zap.Error(err))
-			return nil, errors.Trace(err)
+			return nil, derr.ToTiDBErr(err)
 		}
 
 		tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByStartTs, &kvrpcpb.MvccGetByStartTsRequest{
