@@ -2283,6 +2283,10 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 	}
 
 	if !r.initialized {
+		if !hasPriv(sctx, mysql.ProcessPriv) {
+			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		}
+
 		r.initialized = true
 		r.deadlocks = deadlockhistory.GlobalDeadlockHistory.GetAll()
 
