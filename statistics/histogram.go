@@ -1071,6 +1071,8 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			}
 			continue
 		}
+		// In stats ver 1, we use CM Sketch to estimate row count for point condition, which is more accurate.
+		// So for the small range, we convert it to points.
 		if c.StatsVer < 2 {
 			rangeVals := enumRangeValues(lowVal, highVal, rg.LowExclude, rg.HighExclude)
 			// The small range case.
