@@ -389,10 +389,10 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 
 	colNames := make([]string, 0, len(is.IdxCols))
 	for i := range is.IdxCols {
-		colNames = append(colNames, is.Columns[i].Name.O)
+		colNames = append(colNames, is.Columns[i].Name.L)
 	}
-	if cols, missingColName := table.FindCols(e.table.Cols(), colNames, true); missingColName != "" {
-		b.err = plannercore.ErrUnknownColumn.GenWithStack("Unknown column %s", missingColName)
+	if cols, missingColOffset := table.FindColumns(e.table.Cols(), colNames, true); missingColOffset >= 0 {
+		b.err = plannercore.ErrUnknownColumn.GenWithStack("Unknown column %s", is.Columns[missingColOffset].Name.O)
 	} else {
 		e.idxTblCols = cols
 	}
@@ -627,6 +627,20 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		tblID2Handle:     v.TblID2Handle,
 		partitionedTable: v.PartitionedTable,
 	}
+
+	// filter out temporary tables because they do not store any record in tikv and should not write any lock
+	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	for tblID := range e.tblID2Handle {
+		tblInfo, ok := is.TableByID(tblID)
+		if !ok {
+			b.err = errors.Errorf("Can not get table %d", tblID)
+		}
+
+		if tblInfo.Meta().TempTableType != model.TempTableNone {
+			delete(e.tblID2Handle, tblID)
+		}
+	}
+
 	if len(e.partitionedTable) > 0 {
 		schema := v.Schema()
 		e.tblID2PIDColumnIndex = make(map[int64]int)
@@ -1579,8 +1593,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
-			strings.ToLower(infoschema.TableTiDBTrx),
-			strings.ToLower(infoschema.ClusterTableTiDBTrx),
 			strings.ToLower(infoschema.TableDeadlocks),
 			strings.ToLower(infoschema.ClusterTableDeadlocks),
 			strings.ToLower(infoschema.TableDataLockWaits):
@@ -1588,6 +1600,16 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &memtableRetriever{
+					table:   v.Table,
+					columns: v.Columns,
+				},
+			}
+		case strings.ToLower(infoschema.TableTiDBTrx),
+			strings.ToLower(infoschema.ClusterTableTiDBTrx):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				table:        v.Table,
+				retriever: &tidbTrxTableRetriever{
 					table:   v.Table,
 					columns: v.Columns,
 				},
@@ -4206,6 +4228,13 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		partTblID:    plan.PartTblID,
 		columns:      plan.Columns,
 	}
+
+	if plan.TblInfo.TempTableType != model.TempTableNone {
+		// Temporary table should not do any lock operations
+		e.lock = false
+		e.waitTime = 0
+	}
+
 	if e.lock {
 		b.hasLock = true
 	}

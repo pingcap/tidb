@@ -127,6 +127,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 			storeTaskMap[taskStoreID] = batchTask
 		}
 	} else {
+		logutil.BgLogger().Info("detecting available mpp stores")
 		// decide the available stores
 		stores := cache.RegionCache.GetTiFlashStores()
 		var wg sync.WaitGroup
@@ -139,15 +140,15 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 				aliveReq := tikvrpc.NewRequest(tikvrpc.CmdMPPAlive, &mpp.IsAliveRequest{}, kvrpcpb.Context{})
 				aliveReq.StoreTp = tikvrpc.TiFlash
 				alive := false
-				resp, err := kvStore.GetTiKVClient().SendRequest(ctx, s.GetAddr(), aliveReq, tikv.ReadTimeoutMedium)
+				resp, err := kvStore.GetTiKVClient().SendRequest(ctx, s.GetAddr(), aliveReq, 3*time.Second)
 				if err != nil {
-					logutil.BgLogger().Warn("Cannot detect store's availablity", zap.String("store address", s.GetAddr()), zap.String("err message", err.Error()))
+					logutil.BgLogger().Warn("Cannot detect store's availability", zap.String("store address", s.GetAddr()), zap.String("err message", err.Error()))
 				} else {
 					rpcResp := resp.Resp.(*mpp.IsAliveResponse)
 					if rpcResp.Available {
 						alive = true
 					} else {
-						logutil.BgLogger().Warn("Cannot detect store's availablity", zap.String("store address", s.GetAddr()))
+						logutil.BgLogger().Warn("Cannot detect store's availability", zap.String("store address", s.GetAddr()))
 					}
 				}
 				if !alive {

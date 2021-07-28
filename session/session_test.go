@@ -2151,7 +2151,7 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
 	defer tk.MustExec(`drop table if exists normal_table`)
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec(`drop table if exists temp_table`)
-	tk.MustExec(`create global temporary table temp_table (id int, c int) on commit delete rows;`)
+	tk.MustExec(`create global temporary table temp_table (id int primary key, c int) on commit delete rows;`)
 	defer tk.MustExec(`drop table if exists temp_table`)
 
 	// The schema version is out of date in the first transaction, and the SQL can't be retried.
@@ -2162,8 +2162,58 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
 
 	// It's fine to change the schema of temporary tables.
 	tk.MustExec(`begin;`)
-	tk1.MustExec(`alter table temp_table modify column c bigint;`)
+	tk1.MustExec(`alter table temp_table modify column c tinyint;`)
 	tk.MustExec(`insert into temp_table values(3, 3);`)
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table temp_table modify column c int;`)
+	tk.MustQuery(`select * from temp_table for update;`).Check(testkit.Rows())
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table temp_table modify column c smallint;`)
+	tk.MustExec(`insert into temp_table values(3, 4);`)
+	tk.MustQuery(`select * from temp_table for update;`).Check(testkit.Rows("3 4"))
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table temp_table modify column c bigint;`)
+	tk.MustQuery(`select * from temp_table where id=1 for update;`).Check(testkit.Rows())
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table temp_table modify column c smallint;`)
+	tk.MustExec("insert into temp_table values (1, 2), (2, 3), (4, 5)")
+	tk.MustQuery(`select * from temp_table where id=1 for update;`).Check(testkit.Rows("1 2"))
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table temp_table modify column c int;`)
+	tk.MustQuery(`select * from temp_table where id=1 for update;`).Check(testkit.Rows())
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table temp_table modify column c bigint;`)
+	tk.MustQuery(`select * from temp_table where id in (1, 2, 3) for update;`).Check(testkit.Rows())
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table temp_table modify column c int;`)
+	tk.MustExec("insert into temp_table values (1, 2), (2, 3), (4, 5)")
+	tk.MustQuery(`select * from temp_table where id in (1, 2, 3) for update;`).Check(testkit.Rows("1 2", "2 3"))
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("insert into normal_table values(1, 2)")
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table temp_table modify column c int;`)
+	tk.MustExec(`insert into temp_table values(1, 5);`)
+	tk.MustQuery(`select * from temp_table, normal_table where temp_table.id = normal_table.id for update;`).Check(testkit.Rows("1 5 1 2"))
+	tk.MustExec(`commit;`)
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table normal_table modify column c bigint;`)
+	tk.MustQuery(`select * from temp_table, normal_table where temp_table.id = normal_table.id for update;`).Check(testkit.Rows())
 	tk.MustExec(`commit;`)
 
 	// Truncate will modify table ID.
@@ -2178,6 +2228,13 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {
 	tk.MustExec(`insert into temp_table values(3, 3);`)
 	tk.MustExec(`insert into normal_table values(3, 3);`)
 	_, err := tk.Exec(`commit;`)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("begin pessimistic")
+	tk1.MustExec(`alter table normal_table modify column c int;`)
+	tk.MustExec(`insert into temp_table values(1, 6);`)
+	tk.MustQuery(`select * from temp_table, normal_table where temp_table.id = normal_table.id for update;`).Check(testkit.Rows("1 6 1 2"))
+	_, err = tk.Exec(`commit;`)
 	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
 }
 
@@ -4300,7 +4357,7 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 
 	info = tk.Se.TxnInfo()
 	c.Assert(info.CurrentSQLDigest, Equals, "")
-	c.Assert(info.State, Equals, txninfo.TxnRunningNormal)
+	c.Assert(info.State, Equals, txninfo.TxnIdle)
 	c.Assert(info.BlockStartTime.Valid, IsFalse)
 	c.Assert(info.StartTS, Equals, startTS)
 	_, beginDigest := parser.NormalizeDigest("begin pessimistic;")
@@ -4367,6 +4424,22 @@ func (s *testTxnStateSerialSuite) TestEntriesCountAndSize(c *C) {
 	tk.MustExec("commit;")
 }
 
+func (s *testTxnStateSerialSuite) TestRunning(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1);")
+	tk.MustExec("begin pessimistic;")
+	failpoint.Enable("github.com/pingcap/tidb/session/mockStmtSlow", "sleep(100)")
+	go func() {
+		tk.MustExec("select * from t for update;")
+		tk.MustExec("commit;")
+	}()
+	time.Sleep(20 * time.Millisecond)
+	info := tk.Se.TxnInfo()
+	c.Assert(info.State, Equals, txninfo.TxnRunning)
+	failpoint.Disable("github.com/pingcap/tidb/session/mockStmtSlow")
+}
+
 func (s *testTxnStateSerialSuite) TestBlocked(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
@@ -4397,15 +4470,13 @@ func (s *testTxnStateSerialSuite) TestCommitting(c *C) {
 		tk2.MustExec("begin pessimistic")
 		c.Assert(tk2.Se.TxnInfo(), NotNil)
 		tk2.MustExec("select * from t where a = 2 for update;")
-		c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "sleep(200)"), IsNil)
-		defer func() {
-			c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit"), IsNil)
-		}()
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "pause"), IsNil)
 		tk2.MustExec("commit;")
 		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
 	c.Assert(tk2.Se.TxnInfo().State, Equals, txninfo.TxnCommitting)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit"), IsNil)
 	tk.MustExec("commit;")
 	<-ch
 }
@@ -4418,12 +4489,12 @@ func (s *testTxnStateSerialSuite) TestRollbacking(c *C) {
 	go func() {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into t(a) values (3);")
-		failpoint.Enable("github.com/pingcap/tidb/session/mockSlowRollback", "sleep(200)")
-		defer failpoint.Disable("github.com/pingcap/tidb/session/mockSlowRollback")
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockSlowRollback", "pause"), IsNil)
 		tk.MustExec("rollback;")
 		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockSlowRollback"), IsNil)
 	c.Assert(tk.Se.TxnInfo().State, Equals, txninfo.TxnRollingBack)
 	<-ch
 }
@@ -4929,6 +5000,7 @@ func (s *testSessionSuite) TestLocalTemporaryTablePointGet(c *C) {
 	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("insert into tmp1 values(1, 11, 101)")
 	tk.MustExec("insert into tmp1 values(2, 12, 102)")
+	tk.MustExec("insert into tmp1 values(4, 14, 104)")
 
 	// check point get out transaction
 	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
@@ -4947,10 +5019,147 @@ func (s *testSessionSuite) TestLocalTemporaryTablePointGet(c *C) {
 	tk.MustQuery("select * from tmp1 where u=13").Check(testkit.Rows("3 13 103"))
 	tk.MustExec("update tmp1 set v=999 where id=2")
 	tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 999"))
+	tk.MustExec("delete from tmp1 where id=4")
+	tk.MustQuery("select * from tmp1 where id=4").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 where u=14").Check(testkit.Rows())
 	tk.MustExec("commit")
 
 	// check point get after transaction
 	tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 103"))
 	tk.MustQuery("select * from tmp1 where u=13").Check(testkit.Rows("3 13 103"))
 	tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 999"))
+	tk.MustQuery("select * from tmp1 where id=4").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 where u=14").Check(testkit.Rows())
+}
+
+func (s *testSessionSuite) TestLocalTemporaryTableBatchPointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("use test")
+	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
+	tk.MustExec("insert into tmp1 values(1, 11, 101)")
+	tk.MustExec("insert into tmp1 values(2, 12, 102)")
+	tk.MustExec("insert into tmp1 values(3, 13, 103)")
+	tk.MustExec("insert into tmp1 values(4, 14, 104)")
+
+	// check point get out transaction
+	tk.MustQuery("select * from tmp1 where id in (1, 3)").Check(testkit.Rows("1 11 101", "3 13 103"))
+	tk.MustQuery("select * from tmp1 where u in (11, 13)").Check(testkit.Rows("1 11 101", "3 13 103"))
+	tk.MustQuery("select * from tmp1 where id in (1, 3, 5)").Check(testkit.Rows("1 11 101", "3 13 103"))
+	tk.MustQuery("select * from tmp1 where u in (11, 13, 15)").Check(testkit.Rows("1 11 101", "3 13 103"))
+
+	// check point get in transaction
+	tk.MustExec("begin")
+	tk.MustQuery("select * from tmp1 where id in (1, 3)").Check(testkit.Rows("1 11 101", "3 13 103"))
+	tk.MustQuery("select * from tmp1 where u in (11, 13)").Check(testkit.Rows("1 11 101", "3 13 103"))
+	tk.MustQuery("select * from tmp1 where id in (1, 3, 5)").Check(testkit.Rows("1 11 101", "3 13 103"))
+	tk.MustQuery("select * from tmp1 where u in (11, 13, 15)").Check(testkit.Rows("1 11 101", "3 13 103"))
+	tk.MustExec("insert into tmp1 values(6, 16, 106)")
+	tk.MustQuery("select * from tmp1 where id in (1, 6)").Check(testkit.Rows("1 11 101", "6 16 106"))
+	tk.MustQuery("select * from tmp1 where u in (11, 16)").Check(testkit.Rows("1 11 101", "6 16 106"))
+	tk.MustExec("update tmp1 set v=999 where id=3")
+	tk.MustQuery("select * from tmp1 where id in (1, 3)").Check(testkit.Rows("1 11 101", "3 13 999"))
+	tk.MustQuery("select * from tmp1 where u in (11, 13)").Check(testkit.Rows("1 11 101", "3 13 999"))
+	tk.MustExec("delete from tmp1 where id=4")
+	tk.MustQuery("select * from tmp1 where id in (1, 4)").Check(testkit.Rows("1 11 101"))
+	tk.MustQuery("select * from tmp1 where u in (11, 14)").Check(testkit.Rows("1 11 101"))
+	tk.MustExec("commit")
+
+	// check point get after transaction
+	tk.MustQuery("select * from tmp1 where id in (1, 3, 6)").Check(testkit.Rows("1 11 101", "3 13 999", "6 16 106"))
+	tk.MustQuery("select * from tmp1 where u in (11, 13, 16)").Check(testkit.Rows("1 11 101", "3 13 999", "6 16 106"))
+	tk.MustQuery("select * from tmp1 where id in (1, 4)").Check(testkit.Rows("1 11 101"))
+	tk.MustQuery("select * from tmp1 where u in (11, 14)").Check(testkit.Rows("1 11 101"))
+}
+
+func (s *testSessionSuite) TestLocalTemporaryTableScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("use test")
+	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
+	tk.MustExec("insert into tmp1 values" +
+		"(1, 101, 1001), (3, 113, 1003), (5, 105, 1005), (7, 117, 1007), (9, 109, 1009)," +
+		"(10, 110, 1010), (12, 112, 1012), (14, 114, 1014), (16, 116, 1016), (18, 118, 1018)",
+	)
+
+	assertSelectAsUnModified := func() {
+		// For TableReader
+		tk.MustQuery("select * from tmp1 where id>3 order by id").Check(testkit.Rows(
+			"5 105 1005", "7 117 1007", "9 109 1009",
+			"10 110 1010", "12 112 1012", "14 114 1014", "16 116 1016", "18 118 1018",
+		))
+
+		// For IndexLookUpReader
+		tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u").Check(testkit.Rows(
+			"5 105 1005", "9 109 1009", "10 110 1010",
+			"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
+		))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		// For IndexReader
+		tk.MustQuery("select /*+ use_index(tmp1, u) */ id,u from tmp1 where u>101 order by id").Check(testkit.Rows(
+			"3 113", "5 105", "7 117", "9 109", "10 110",
+			"12 112", "14 114", "16 116", "18 118",
+		))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		// For IndexMerge, temporary table should not use index merge
+		tk.MustQuery("select /*+ use_index_merge(tmp1, primary, u) */ * from tmp1 where id>5 or u>110 order by u").Check(testkit.Rows(
+			"9 109 1009", "10 110 1010",
+			"12 112 1012", "3 113 1003", "14 114 1014", "16 116 1016", "7 117 1007", "18 118 1018",
+		))
+
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+	}
+
+	doModify := func() {
+		tk.MustExec("insert into tmp1 values(2, 100, 1002)")
+		tk.MustExec("insert into tmp1 values(4, 104, 1004)")
+		tk.MustExec("insert into tmp1 values(11, 111, 1011)")
+		tk.MustExec("update tmp1 set v=9999 where id=7")
+		tk.MustExec("update tmp1 set u=132 where id=12")
+		tk.MustExec("delete from tmp1 where id=16")
+	}
+
+	assertSelectAsModified := func() {
+		// For TableReader
+		tk.MustQuery("select * from tmp1 where id>3 order by id").Check(testkit.Rows(
+			"4 104 1004", "5 105 1005", "7 117 9999", "9 109 1009",
+			"10 110 1010", "11 111 1011", "12 132 1012", "14 114 1014", "18 118 1018",
+		))
+
+		// For IndexLookUpReader
+		tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u").Check(testkit.Rows(
+			"4 104 1004", "5 105 1005", "9 109 1009", "10 110 1010", "11 111 1011",
+			"3 113 1003", "14 114 1014", "7 117 9999", "18 118 1018", "12 132 1012",
+		))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		// For IndexReader
+		tk.MustQuery("select /*+ use_index(tmp1, u) */ id,u from tmp1 where u>101 order by id").Check(testkit.Rows(
+			"3 113", "4 104", "5 105", "7 117", "9 109",
+			"10 110", "11 111", "12 132", "14 114", "18 118",
+		))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		// For IndexMerge, temporary table should not use index merge
+		tk.MustQuery("select /*+ use_index_merge(tmp1, primary, u) */ * from tmp1 where id>5 or u>110 order by u").Check(testkit.Rows(
+			"9 109 1009", "10 110 1010", "11 111 1011",
+			"3 113 1003", "14 114 1014", "7 117 9999", "18 118 1018", "12 132 1012",
+		))
+
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+	}
+
+	assertSelectAsUnModified()
+	tk.MustExec("begin")
+	assertSelectAsUnModified()
+	doModify()
+	tk.MustExec("rollback")
+	assertSelectAsUnModified()
+	tk.MustExec("begin")
+	doModify()
+	assertSelectAsModified()
+	tk.MustExec("commit")
+	assertSelectAsModified()
 }

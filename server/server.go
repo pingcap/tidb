@@ -268,6 +268,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())
+
+	variable.RegisterStatistics(s)
+
 	return s, nil
 }
 

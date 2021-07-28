@@ -316,6 +316,11 @@ error = '''
 Table to exchange with partition has foreign key references: '%-.64s'
 '''
 
+["ddl:1826"]
+error = '''
+Duplicate foreign key constraint name '%s'
+'''
+
 ["ddl:1846"]
 error = '''
 %s is not supported. Reason: %s. Try %s.
@@ -1019,6 +1024,11 @@ Unknown EXPLAIN format name: '%s'
 ["planner:1815"]
 error = '''
 Internal : %s
+'''
+
+["planner:1836"]
+error = '''
+Running in read-only mode
 '''
 
 ["planner:3029"]

@@ -14,6 +14,7 @@
 package ddl_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -2289,6 +2290,11 @@ func (s *testSerialDBSuite1) TestAddExpressionIndex(c *C) {
 
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
+	// Issue #26371
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, primary key(a, b) clustered)")
+	tk.MustExec("alter table t1 add index idx((a+1))")
+
 	// Issue #17111
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a varchar(10), b varchar(10));")
@@ -2349,6 +2355,11 @@ func (s *testSerialDBSuite1) TestCreateExpressionIndexError(c *C) {
 
 	tk.MustGetErrCode("create table t1 (col1 int, index ((concat(''))));", errno.ErrWrongKeyColumnFunctionalIndex)
 	tk.MustGetErrCode("CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))) NONCLUSTERED);", errno.ErrFunctionalIndexPrimaryKey)
+
+	// For issue 26349
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(id char(10) primary key, short_name char(10), name char(10), key n((upper(`name`))));")
+	tk.MustExec("update t t1 set t1.short_name='a' where t1.id='1';")
 }
 
 func (s *testSerialDBSuite1) TestAddExpressionIndexOnPartition(c *C) {
@@ -2912,7 +2923,7 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into check_data values (1)")
 	tk.MustExec("create temporary table a_local_temp_table (id int)")
-	// Although "begin" take a infoschem snapshot, local temporary table inside txn should be always visible.
+	// Although "begin" take a infoschema snapshot, local temporary table inside txn should be always visible.
 	tk.MustExec("show create table tmp_db.a_local_temp_table")
 	tk.MustExec("rollback")
 	tk.MustQuery("select * from check_data").Check(testkit.Rows())
@@ -3016,4 +3027,126 @@ func (s *testIntegrationSuite3) TestAvoidCreateViewOnLocalTemporaryTable(c *C) {
 	tk.MustExec("create table tt2 (c int, d int)")
 	tk.MustExec("create view vv as select * from v0")
 	checkCreateView()
+}
+
+func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_noop_functions = 1")
+
+	// Check drop temporary table(include meta data and real data.
+	tk.MustExec("create temporary table if not exists b_local_temp_table (id int)")
+	tk.MustQuery("select * from b_local_temp_table").Check(testkit.Rows())
+	tk.MustExec("drop table b_local_temp_table")
+	_, err := tk.Exec("select * from b_local_temp_table")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.b_local_temp_table' doesn't exist")
+	// TODO: test drop real data
+
+	// Check if we have a normal and local temporary table in the same db with the same name,
+	// local temporary table should be dropped instead of the normal table.
+	tk.MustExec("drop table if exists b_table_local_and_normal")
+	tk.MustExec("create table if not exists b_table_local_and_normal (id int)")
+	tk.MustExec("create temporary table if not exists b_table_local_and_normal (id int)")
+	tk.MustQuery("select * from b_table_local_and_normal").Check(testkit.Rows())
+	tk.MustExec("drop table b_table_local_and_normal")
+	sequenceTable := testGetTableByName(c, tk.Se, "test", "b_table_local_and_normal")
+	c.Assert(sequenceTable.Meta().TempTableType, Equals, model.TempTableNone)
+	tk.MustExec("drop table if exists b_table_local_and_normal")
+	_, err = tk.Exec("select * from b_table_local_and_normal")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.b_table_local_and_normal' doesn't exist")
+
+	// Check dropping local temporary tables should not commit current transaction implicitly.
+	tk.MustExec("drop table if exists check_data_normal_table")
+	tk.MustExec("create table check_data_normal_table (id int)")
+	defer tk.MustExec("drop table if exists check_data_normal_table")
+	tk.MustExec("begin")
+	tk.MustExec("insert into check_data_normal_table values (1)")
+	tk.MustExec("create temporary table a_local_temp_table (id int)")
+	tk.MustExec("create temporary table a_local_temp_table_1 (id int)")
+	tk.MustExec("create temporary table a_local_temp_table_2 (id int)")
+	tk.MustExec("show create table a_local_temp_table")
+	tk.MustExec("show create table a_local_temp_table_1")
+	tk.MustExec("show create table a_local_temp_table_2")
+	tk.MustExec("drop table a_local_temp_table, a_local_temp_table_1, a_local_temp_table_2")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from check_data_normal_table").Check(testkit.Rows())
+
+	// Check dropping local temporary and normal tables should commit current transaction implicitly.
+	tk.MustExec("drop table if exists check_data_normal_table_1")
+	tk.MustExec("create table check_data_normal_table_1 (id int)")
+	defer tk.MustExec("drop table if exists check_data_normal_table_1")
+	tk.MustExec("begin")
+	tk.MustExec("insert into check_data_normal_table_1 values (1)")
+	tk.MustExec("create temporary table a_local_temp_table (id int)")
+	tk.MustExec("create temporary table a_local_temp_table_1 (id int)")
+	tk.MustExec("create temporary table a_local_temp_table_2 (id int)")
+	tk.MustExec("drop table if exists a_normal_table")
+	tk.MustExec("create table a_normal_table (id int)")
+	defer tk.MustExec("drop table if exists a_normal_table")
+	tk.MustExec("show create table a_local_temp_table")
+	tk.MustExec("show create table a_local_temp_table_1")
+	tk.MustExec("show create table a_local_temp_table_2")
+	tk.MustExec("show create table a_normal_table")
+	tk.MustExec("drop table a_local_temp_table, a_local_temp_table_1, a_local_temp_table_2, a_normal_table")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from check_data_normal_table_1").Check(testkit.Rows("1"))
+
+	// Check drop not exists table.
+	tk.MustExec("create temporary table a_local_temp_table_3 (id int)")
+	tk.MustExec("create temporary table a_local_temp_table_4 (id int)")
+	tk.MustExec("create temporary table a_local_temp_table_5 (id int)")
+	tk.MustExec("drop table if exists a_normal_table_2")
+	tk.MustExec("create table a_normal_table_2 (id int)")
+	defer tk.MustExec("drop table if exists a_normal_table_2")
+	_, err = tk.Exec("drop table a_local_temp_table_3, a_local_temp_table_4, a_local_temp_table_5, a_normal_table_2, a_local_temp_table_6")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.a_local_temp_table_6'")
+
+	tk.MustExec("drop table if exists check_data_normal_table_3")
+	tk.MustExec("create table check_data_normal_table_3 (id int)")
+	defer tk.MustExec("drop table if exists check_data_normal_table_3")
+	tk.MustExec("create temporary table a_local_temp_table_6 (id int)")
+	_, err = tk.Exec("drop table check_data_normal_table_3, check_data_normal_table_7, a_local_temp_table_6")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.check_data_normal_table_7'")
+
+	// Check filter out data from removed local temp tables
+	tk.MustExec("create temporary table a_local_temp_table_7 (id int)")
+	ctx := s.ctx
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	defer func() {
+		err := txn.Rollback()
+		c.Assert(err, IsNil)
+	}()
+	sessionVars := tk.Se.GetSessionVars()
+	sessVarsTempTable := sessionVars.LocalTemporaryTables
+	localTemporaryTable := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
+	tbl, exist := localTemporaryTable.TableByName(model.NewCIStr("test"), model.NewCIStr("a_local_temp_table_7"))
+	c.Assert(exist, IsTrue)
+	tblInfo := tbl.Meta()
+	tablePrefix := tablecodec.EncodeTablePrefix(tblInfo.ID)
+	endTablePrefix := tablecodec.EncodeTablePrefix(tblInfo.ID + 1)
+
+	tk.MustExec("insert into a_local_temp_table_7 values (0)")
+	tk.MustExec("insert into a_local_temp_table_7 values (2)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into a_local_temp_table_7 values (1)")
+	tk.MustExec("drop table if exists a_local_temp_table_7")
+	tk.MustExec("commit")
+
+	_, err = tk.Exec("select * from a_local_temp_table_7")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.a_local_temp_table_7' doesn't exist")
+	memData := sessionVars.TemporaryTableData
+	iter, err := memData.Iter(tablePrefix, endTablePrefix)
+	c.Assert(err, IsNil)
+	for iter.Valid() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, tablePrefix) {
+			break
+		}
+		value := iter.Value()
+		c.Assert(len(value), Equals, 0)
+		_ = iter.Next()
+	}
+	c.Assert(iter.Valid(), IsFalse)
 }
