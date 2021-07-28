@@ -3188,7 +3188,7 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustExec("truncate table test.t2")
 	tk.MustQuery("select * from t2").Check(testkit.Rows())
 
-	// truncate table in txn and rollback
+	// truncate table in txn
 	tk.MustExec("insert into t1 values(1), (2), (3)")
 	tk.MustExec("insert into t2 values(4), (5), (6)")
 	tk.MustExec("begin")
@@ -3199,44 +3199,16 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustExec("truncate table t1")
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
 	tk.MustQuery("select * from t2").Check(testkit.Rows("5", "6", "24", "25"))
-	tk.MustExec("truncate table t2")
-	tk.MustQuery("select * from t2").Check(testkit.Rows())
-	tk.MustExec("insert into t1 values(1), (31)")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "31"))
+
+	// since transaction already committed by truncate, so query after rollback will get same result
 	tk.MustExec("rollback")
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
-	tk.MustQuery("select * from t2").Check(testkit.Rows())
+	tk.MustQuery("select * from t2").Check(testkit.Rows("5", "6", "24", "25"))
+
+	// truncate a temporary table will not effect the normal table with the same name
 	tk.MustExec("drop table t1")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("10", "11", "12"))
 	tk.MustExec("create temporary table t1 (id int)")
-
-	// truncate table in txn and commit
-	tk.MustExec("insert into t1 values(1), (2), (3)")
-	tk.MustExec("insert into t2 values(4), (5), (6)")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t1 values(11), (12)")
-	tk.MustExec("insert into t2 values(24), (25)")
-	tk.MustExec("delete from t1 where id=2")
-	tk.MustExec("delete from t2 where id=4")
-	tk.MustExec("truncate table t1")
-	tk.MustQuery("select * from t1").Check(testkit.Rows())
-	tk.MustQuery("select * from t2").Check(testkit.Rows("5", "6", "24", "25"))
-	tk.MustExec("truncate table t2")
-	tk.MustQuery("select * from t2").Check(testkit.Rows())
-	tk.MustExec("insert into t1 values(1), (31)")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "31"))
-	tk.MustExec("commit")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "31"))
-	tk.MustExec("truncate table t1")
-	tk.MustQuery("select * from t1").Check(testkit.Rows())
-
-	// truncate temporary table do not commit txn explicitly
-	tk.MustExec("begin")
-	tk.MustExec("insert into tn values(100)")
-	tk.MustExec("insert into t1 values(1), (2), (3)")
-	tk.MustExec("truncate table t1")
-	tk.MustExec("rollback")
-	tk.MustQuery("select * from tn").Check(testkit.Rows())
 
 	// truncate temporary table will clear session data
 	localTemporaryTables := tk.Se.GetSessionVars().LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
@@ -3249,7 +3221,6 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 values(5), (6), (7)")
 	tk.MustExec("truncate table t1")
-	tk.MustExec("commit")
 	iter, err := tk.Se.GetSessionVars().TemporaryTableData.Iter(tablePrefix, endTablePrefix)
 	c.Assert(err, IsNil)
 	for iter.Valid() {
