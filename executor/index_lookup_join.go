@@ -518,7 +518,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 			dLookUpKey, dHashKey, err := iw.constructDatumLookupKey(task, chkIdx, rowIdx)
 			if err != nil {
 				if terror.ErrorEqual(err, types.ErrWrongValue) {
-					// we ignore rows with invalid datetime
+					// We ignore rows with invalid datetime.
 					task.encodedLookUpKeys[chkIdx].AppendNull(0)
 					continue
 				}
