@@ -18,7 +18,6 @@ import (
 	"reflect"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -27,10 +26,6 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testLRUCacheSuite{})
-
-type testLRUCacheSuite struct {
-}
 
 type mockCacheKey struct {
 	hash []byte
@@ -54,7 +49,9 @@ func newMockHashKey(key int64) *mockCacheKey {
 	}
 }
 
-func (s *testLRUCacheSuite) TestPut(c *C) {
+func TestPut(t *testing.T) {
+	t.Parallel()
+
 	maxMem, err := memory.MemTotal()
 	c.Assert(err, IsNil)
 
