@@ -214,6 +214,16 @@ func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSket
 	return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy()
 }
 
+// ColHistCount returns the count of the column histograms.
+func (t *Table) ColHistCount() float64 {
+	for _, col := range t.Columns {
+		if col != nil {
+			return col.TotalRowCount()
+		}
+	}
+	return -1
+}
+
 type tableColumnID struct {
 	TableID  int64
 	ColumnID int64
