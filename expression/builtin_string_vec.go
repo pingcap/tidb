@@ -2956,6 +2956,69 @@ func (b *builtinTranslateBinarySig) vecEvalString(input *chunk.Chunk, result *ch
 	}
 	result.ReserveString(n)
 	var (
+		mp           map[byte]byte
+		useCommonMap = false
+	)
+	_, isFromConst := b.args[1].(*Constant)
+	_, isToConst := b.args[2].(*Constant)
+	if isFromConst && isToConst {
+		useCommonMap = true
+		fromBytes, toBytes := []byte(buf1.GetString(0)), []byte(buf2.GetString(0))
+		mp = buildTranslateMap4Binary(fromBytes, toBytes)
+	}
+	for i := 0; i < n; i++ {
+		srcStr := buf0.GetString(i)
+		var tgt []byte
+		if !useCommonMap {
+			fromBytes, toBytes := []byte(buf1.GetString(i)), []byte(buf2.GetString(i))
+			mp = buildTranslateMap4Binary(fromBytes, toBytes)
+		}
+		for _, charSrc := range []byte(srcStr) {
+			if charTo, ok := mp[charSrc]; ok {
+				if charTo != math.MaxUint8 {
+					tgt = append(tgt, charTo)
+				}
+			} else {
+				tgt = append(tgt, charSrc)
+			}
+		}
+		result.AppendString(string(tgt))
+	}
+	return nil
+}
+
+func (b *builtinTranslateBinarySig) vectorized() bool {
+	return true
+}
+
+func (b *builtinTranslateUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	buf1, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	buf2, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	if err := b.args[2].VecEvalString(b.ctx, input, buf2); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	var (
 		mp           map[rune]rune
 		useCommonMap = false
 	)
@@ -2987,6 +3050,6 @@ func (b *builtinTranslateBinarySig) vecEvalString(input *chunk.Chunk, result *ch
 	return nil
 }
 
-func (b *builtinTranslateBinarySig) vectorized() bool {
+func (b *builtinTranslateUTF8Sig) vectorized() bool {
 	return true
 }
