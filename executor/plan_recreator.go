@@ -27,7 +27,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
@@ -263,9 +262,6 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 	// Dump variables
 	varMap := make(map[string]string)
 	recordSets, err := e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "show variables")
-	if len(recordSets) > 0 {
-		defer recordSets[0].Close()
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -283,20 +279,24 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 	if err := toml.NewEncoder(vf).Encode(varMap); err != nil {
 		return nil, err
 	}
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return nil, err
+		}
+	}
 
 	// Dump sql
 	sql, err := zw.Create("sqls.sql")
 	if err != nil {
 		return nil, nil
 	}
-	sql.Write([]byte(e.ExecStmt.Text()))
+	_, err = sql.Write([]byte(e.ExecStmt.Text()))
+	if err != nil {
+		return nil, err
+	}
 
 	// Dump bindings
-	normSql, _ := parser.NormalizeDigest(e.ExecStmt.Text())
-	recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("show bindings where Original_sql='%s'", normSql))
-	if len(recordSets) > 0 {
-		defer recordSets[0].Close()
-	}
+	recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("show bindings"))
 	if err != nil {
 		return nil, err
 	}
@@ -310,6 +310,11 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 	}
 	for _, row := range sRows {
 		fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
+	}
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return nil, err
+		}
 	}
 
 	// Dump explain
@@ -326,9 +331,6 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 			return nil, err
 		}
 	}
-	if len(recordSets) > 0 {
-		defer recordSets[0].Close()
-	}
 	sRows, err = resultSetToStringSlice(context.Background(), recordSets[0])
 	if err != nil {
 		return nil, err
@@ -339,6 +341,11 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 	}
 	for _, row := range sRows {
 		fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
+	}
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return nil, err
+		}
 	}
 	return hex.EncodeToString(token[:]), nil
 }
@@ -365,9 +372,6 @@ func getStatsForTable(do *domain.Domain, pair tableNamePair) (*handle.JSONTable,
 
 func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Context) error {
 	recordSets, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
-	if len(recordSets) > 0 {
-		defer recordSets[0].Close()
-	}
 	if err != nil {
 		return err
 	}
@@ -381,6 +385,11 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 	}
 	for _, row := range sRows {
 		fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
+	}
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
