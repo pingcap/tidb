@@ -1742,8 +1742,11 @@ func (s *testClusterTableSuite) TestDataLockWaits(c *C) {
 }
 
 func (s *testClusterTableSuite) TestDataLockWaitsPrivilege(c *C) {
+	dropUserTk := s.newTestKitWithRoot(c)
+
 	tk := s.newTestKitWithRoot(c)
 	tk.MustExec("create user 'testuser'@'localhost'")
+	defer dropUserTk.MustExec("drop user 'testuser'@'localhost'")
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
@@ -1754,6 +1757,7 @@ func (s *testClusterTableSuite) TestDataLockWaitsPrivilege(c *C) {
 
 	tk = s.newTestKitWithRoot(c)
 	tk.MustExec("create user 'testuser2'@'localhost'")
+	defer dropUserTk.MustExec("drop user 'testuser2'@'localhost'")
 	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
 		Username: "testuser2",
