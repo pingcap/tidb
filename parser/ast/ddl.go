@@ -2213,6 +2213,7 @@ const (
 	AlterTableForce
 	AlterTableAddPartitions
 	AlterTableAlterPartition
+	AlterTablePartitionAttributes
 	AlterTableCoalescePartitions
 	AlterTableDropPartition
 	AlterTableTruncatePartition
@@ -2244,6 +2245,7 @@ const (
 	AlterTablePlacement
 	AlterTableAddStatistics
 	AlterTableDropStatistics
+	AlterTableAttributes
 )
 
 // LockType is the type for AlterTableSpec.
@@ -2343,6 +2345,7 @@ type AlterTableSpec struct {
 	PlacementSpecs  []*PlacementSpec
 	Writeable       bool
 	Statistics      *StatisticsSpec
+	AttributesSpec  *AttributesSpec
 }
 
 type TiFlashReplicaSpec struct {
@@ -2648,6 +2651,15 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 				return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.PlacementSpecs[%d]", i)
 			}
 		}
+	case AlterTablePartitionAttributes:
+		ctx.WriteKeyWord("PARTITION ")
+		ctx.WriteName(n.PartitionNames[0].O)
+		ctx.WritePlain(" ")
+
+		spec := n.AttributesSpec
+		if err := spec.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.AttributesSpec")
+		}
 	case AlterTableCoalescePartitions:
 		ctx.WriteKeyWord("COALESCE PARTITION ")
 		if n.NoWriteToBinlog {
@@ -2847,6 +2859,12 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 				return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.PlacementSpecs[%d]", i)
 			}
 		}
+	case AlterTableAttributes:
+		spec := n.AttributesSpec
+		if err := spec.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.AttributesSpec")
+		}
+
 	default:
 		// TODO: not support
 		ctx.WritePlainf(" /* AlterTableType(%d) is not supported */ ", n.Tp)
@@ -3665,6 +3683,33 @@ func (n *PlacementSpec) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*PlacementSpec)
+	return v.Leave(n)
+}
+
+type AttributesSpec struct {
+	node
+
+	Attributes string
+	Default    bool
+}
+
+func (n *AttributesSpec) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ATTRIBUTES")
+	ctx.WritePlain("=")
+	if n.Default {
+		ctx.WriteKeyWord("DEFAULT")
+		return nil
+	}
+	ctx.WriteString(n.Attributes)
+	return nil
+}
+
+func (n *AttributesSpec) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AttributesSpec)
 	return v.Leave(n)
 }
 

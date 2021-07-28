@@ -78,6 +78,7 @@ import (
 	and               "AND"
 	as                "AS"
 	asc               "ASC"
+	attributes        "ATTRIBUTES"
 	between           "BETWEEN"
 	bigIntType        "BIGINT"
 	binaryType        "BINARY"
@@ -1289,6 +1290,7 @@ import (
 	PlacementOptions                       "Placement rules options"
 	PlacementSpec                          "Placement rules specification"
 	PlacementSpecList                      "Placement rules specifications"
+	AttributesOpt                          "Attributes options"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -1586,6 +1588,16 @@ PlacementSpecList:
 		$$ = append($1.([]*ast.PlacementSpec), $3.(*ast.PlacementSpec))
 	}
 
+AttributesOpt:
+	"ATTRIBUTES" EqOpt "DEFAULT"
+	{
+		$$ = &ast.AttributesSpec{Default: true}
+	}
+|	"ATTRIBUTES" EqOpt stringLit
+	{
+		$$ = &ast.AttributesSpec{Default: false, Attributes: $3}
+	}
+
 AlterTablePartitionOpt:
 	PartitionOpt
 	{
@@ -1609,6 +1621,14 @@ AlterTablePartitionOpt:
 		ret := $4.(*ast.AlterTableSpec)
 		ret.NoWriteToBinlog = $3.(bool)
 		$$ = ret
+	}
+|	"PARTITION" Identifier AttributesOpt
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:             ast.AlterTablePartitionAttributes,
+			PartitionNames: []model.CIStr{model.NewCIStr($2)},
+			AttributesSpec: $3.(*ast.AttributesSpec),
+		}
 	}
 
 LocationLabelList:
@@ -1743,6 +1763,13 @@ AlterTableSpec:
 			Tp:          ast.AlterTableAddStatistics,
 			IfNotExists: $3.(bool),
 			Statistics:  statsSpec,
+		}
+	}
+|	AttributesOpt
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:             ast.AlterTableAttributes,
+			AttributesSpec: $1.(*ast.AttributesSpec),
 		}
 	}
 |	"ALTER" "PARTITION" Identifier PlacementSpecList %prec lowerThanComma
