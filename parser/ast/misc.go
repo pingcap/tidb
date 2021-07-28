@@ -54,6 +54,7 @@ var (
 	_ StmtNode = &RestartStmt{}
 	_ StmtNode = &RenameUserStmt{}
 	_ StmtNode = &HelpStmt{}
+	_ StmtNode = &PlanRecreatorStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -234,6 +235,109 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ExplainStmt)
+	node, ok := n.Stmt.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Stmt = node.(StmtNode)
+	return v.Leave(n)
+}
+
+// PlanRecreatorStmt is a statement to dump or load information for recreating plans
+type PlanRecreatorStmt struct {
+	stmtNode
+
+	Stmt    StmtNode
+	Analyze bool
+	Load    bool
+	File    string
+	// Where is the where clause in select statement.
+	Where ExprNode
+	// OrderBy is the ordering expression list.
+	OrderBy *OrderByClause
+	// Limit is the limit clause.
+	Limit *Limit
+}
+
+// Restore implements Node interface.
+func (n *PlanRecreatorStmt) Restore(ctx *format.RestoreCtx) error {
+	if n.Load {
+		ctx.WriteKeyWord("PLAN RECREATOR LOAD ")
+		ctx.WriteString(n.File)
+		return nil
+	}
+	ctx.WriteKeyWord("PLAN RECREATOR DUMP EXPLAIN ")
+	if n.Analyze {
+		ctx.WriteKeyWord("ANALYZE ")
+	}
+	if n.Stmt == nil {
+		ctx.WriteKeyWord("SLOW QUERY")
+		if n.Where != nil {
+			ctx.WriteKeyWord(" WHERE ")
+			if err := n.Where.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore PlanRecreatorStmt.Where")
+			}
+		}
+		if n.OrderBy != nil {
+			ctx.WriteKeyWord(" ")
+			if err := n.OrderBy.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore PlanRecreatorStmt.OrderBy")
+			}
+		}
+		if n.Limit != nil {
+			ctx.WriteKeyWord(" ")
+			if err := n.Limit.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore PlanRecreatorStmt.Limit")
+			}
+		}
+		return nil
+	}
+	if err := n.Stmt.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore PlanRecreatorStmt.Stmt")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *PlanRecreatorStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*PlanRecreatorStmt)
+
+	if n.Load {
+		return v.Leave(n)
+	}
+
+	if n.Stmt == nil {
+		if n.Where != nil {
+			node, ok := n.Where.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Where = node.(ExprNode)
+		}
+
+		if n.OrderBy != nil {
+			node, ok := n.OrderBy.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.OrderBy = node.(*OrderByClause)
+		}
+
+		if n.Limit != nil {
+			node, ok := n.Limit.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Limit = node.(*Limit)
+		}
+		return v.Leave(n)
+	}
+
 	node, ok := n.Stmt.Accept(v)
 	if !ok {
 		return n, false
