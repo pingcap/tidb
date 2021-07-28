@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,21 +11,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package generatedexpr
+package driver
 
 import (
 	"testing"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/stretchr/testify/require"
-
-	_ "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-func TestParseExpression(t *testing.T) {
-	t.Parallel()
-
-	node, err := ParseExpression("json_extract(a, '$.a')")
-	require.NoError(t, err)
-	require.Equal(t, "json_extract", node.(*ast.FuncCallExpr).FnName.L)
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	goleak.VerifyTestMain(m)
 }
