@@ -1618,10 +1618,9 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 }
 
 // handlePlanRecreator dose the export/import work for reproducing sql queries.
-func (cc *clientConn) handlePlanRecreator(ctx context.Context, info interface{}) (interface{}, error) {
-	switch info.(type) {
-	case *executor.PlanRecreatorSingleInfo:
-		return info.(*executor.PlanRecreatorSingleInfo).Process()
+func (cc *clientConn) handlePlanRecreator(ctx context.Context, PlanRecreatorInfo interface{}) (interface{}, error) {
+	if info, ok := PlanRecreatorInfo.(*executor.PlanRecreatorSingleInfo); ok {
+		return info.Process()
 	}
 	return nil, errors.New("plan recreator: not supporting info type")
 }

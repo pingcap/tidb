@@ -113,8 +113,10 @@ func (k planRecreatorFileListType) String() string {
 	return "plan_recreator_file_list"
 }
 
-// PlanRecreatorVarKey is a variable key for load statistic.
+// PlanRecreatorVarKey is a variable key for plan recreator.
 const PlanRecreatorVarKey planRecreatorVarKeyType = 0
+
+// PlanRecreatorFileList is a variable key for plan recreator's file list.
 const PlanRecreatorFileList planRecreatorFileListType = 0
 
 // Next implements the Executor Next interface.
