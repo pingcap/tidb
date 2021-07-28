@@ -64,21 +64,21 @@ func (t *testLabelSuite) TestRestore(c *C) {
 		input  Label
 		output string
 	}
-	var tests []TestCase
 
 	input := NewLabel("nomerge")
-	tests = append(tests, TestCase{
-		name:   "normal",
-		input:  input,
-		output: "nomerge",
-	})
-
-	input = NewLabel(" nomerge  ")
-	tests = append(tests, TestCase{
-		name:   "normal with spaces",
-		input:  input,
-		output: "nomerge",
-	})
+	input1 := NewLabel(" nomerge  ")
+	tests := []TestCase{
+		{
+			name:   "normal",
+			input:  input,
+			output: "nomerge",
+		},
+		{
+			name:   "normal with spaces",
+			input:  input1,
+			output: "nomerge",
+		},
+	}
 
 	for _, t := range tests {
 		output := t.input.Restore()
@@ -119,29 +119,26 @@ func (t *testLabelsSuite) TestAdd(c *C) {
 		labels Labels
 		label  Label
 	}
-	var tests []TestCase
 
 	labels := NewLabels([]string{"nomerge"})
 	label := NewLabel("somethingelse")
-	tests = append(tests, TestCase{
-		"normal",
-		labels, label,
-	})
-
-	labels = NewLabels([]string{"nomerge"})
-	label = NewLabel("nomerge")
-	tests = append(tests, TestCase{
-		"duplicated attributes, skip",
-		labels, label,
-	})
-
-	tests = append(tests, TestCase{
-		"duplicated attributes, skip",
-		append(labels, Label{
-			Key:   "nomerge",
-			Value: "true",
-		}), label,
-	})
+	tests := []TestCase{
+		{
+			"normal",
+			labels, label,
+		},
+		{
+			"duplicated attributes, skip",
+			NewLabels([]string{"nomerge"}), NewLabel("nomerge"),
+		},
+		{
+			"duplicated attributes, skip",
+			append(labels, Label{
+				Key:   "nomerge",
+				Value: "true",
+			}), label,
+		},
+	}
 
 	for _, t := range tests {
 		t.labels.Add(t.label)
@@ -154,41 +151,35 @@ func (t *testLabelsSuite) TestRestore(c *C) {
 		name   string
 		input  Labels
 		output string
-		err    error
 	}
-	var tests []TestCase
-
-	tests = append(tests, TestCase{
-		"normal1",
-		Labels{},
-		"",
-		nil,
-	})
 
 	input1 := NewLabel("nomerge")
 	input2 := NewLabel("somethingelse")
-	tests = append(tests, TestCase{
-		"normal2",
-		Labels{input1, input2},
-		`"nomerge","somethingelse"`,
-		nil,
-	})
+	input3 := NewLabel("db")
+	input4 := NewLabel("table")
 
-	input4 := NewLabel("db")
-	input5 := NewLabel("table")
-	tests = append(tests, TestCase{
-		"normal3",
-		Labels{input4, input5},
-		"",
-		nil,
-	})
-
-	tests = append(tests, TestCase{
-		"normal4",
-		Labels{input1, input2, input4},
-		`"nomerge","somethingelse"`,
-		nil,
-	})
+	tests := []TestCase{
+		{
+			"normal1",
+			Labels{},
+			"",
+		},
+		{
+			"normal2",
+			Labels{input1, input2},
+			`"nomerge","somethingelse"`,
+		},
+		{
+			"normal3",
+			Labels{input3, input4},
+			"",
+		},
+		{
+			"normal4",
+			Labels{input1, input2, input3},
+			`"nomerge","somethingelse"`,
+		},
+	}
 
 	for _, t := range tests {
 		res := t.input.Restore()

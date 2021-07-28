@@ -31,7 +31,7 @@ type Label struct {
 // Labels is a slice of Label.
 type Labels []Label
 
-// NewLabels create a slice of Label for given attributes.
+// NewLabels creates a slice of Label for given attributes.
 func NewLabels(attrs []string) Labels {
 	labels := make(Labels, 0, len(attrs))
 	for _, attr := range attrs {
@@ -55,8 +55,7 @@ func (labels *Labels) Restore() string {
 			sb.WriteByte(',')
 		}
 		sb.WriteByte('"')
-		conStr := label.Restore()
-		sb.WriteString(conStr)
+		sb.WriteString(label.Restore())
 		sb.WriteByte('"')
 	}
 	return sb.String()
@@ -74,14 +73,12 @@ func (labels *Labels) Add(l Label) {
 	*labels = append(*labels, l)
 }
 
-// NewLabel create a new label for a given string.
+// NewLabel creates a new label for a given string.
 func NewLabel(attr string) Label {
 	return Label{Key: strings.TrimSpace(attr), Value: "true"}
 }
 
 // Restore converts a Attribute to a string.
 func (a *Label) Restore() string {
-	var sb strings.Builder
-	sb.WriteString(a.Key)
-	return sb.String()
+	return a.Key
 }
