@@ -646,14 +646,14 @@ func (s *testSuite) TestBindingSymbolList(c *C) {
 	// before binding
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
-	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"), IsTrue)
+	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)", false), IsTrue)
 
 	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select a, b from t use index (ib) where a = 1 limit 0, 1`)
 
 	// after binding
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
-	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ib(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ib(b)", false), IsTrue)
 
 	// Normalize
 	sql, hash := parser.NormalizeDigest("select a, b from test . t where a = 1 limit 0, 1")
@@ -681,11 +681,11 @@ func (s *testSuite) TestDMLSQLBind(c *C) {
 
 	tk.MustExec("delete from t1 where b = 1 and c > 1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t1:idx_b")
-	c.Assert(tk.MustUseIndex("delete from t1 where b = 1 and c > 1", "idx_b(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("delete from t1 where b = 1 and c > 1", "idx_b(b)", false), IsTrue)
 	tk.MustExec("create global binding for delete from t1 where b = 1 and c > 1 using delete /*+ use_index(t1,idx_c) */ from t1 where b = 1 and c > 1")
 	tk.MustExec("delete from t1 where b = 1 and c > 1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t1:idx_c")
-	c.Assert(tk.MustUseIndex("delete from t1 where b = 1 and c > 1", "idx_c(c)"), IsTrue)
+	c.Assert(tk.MustUseIndex("delete from t1 where b = 1 and c > 1", "idx_c(c)", false), IsTrue)
 
 	c.Assert(tk.HasPlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "HashJoin"), IsTrue)
 	tk.MustExec("create global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b using delete /*+ inl_join(t1) */ t1, t2 from t1 inner join t2 on t1.b = t2.b")
@@ -693,11 +693,11 @@ func (s *testSuite) TestDMLSQLBind(c *C) {
 
 	tk.MustExec("update t1 set a = 1 where b = 1 and c > 1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t1:idx_b")
-	c.Assert(tk.MustUseIndex("update t1 set a = 1 where b = 1 and c > 1", "idx_b(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("update t1 set a = 1 where b = 1 and c > 1", "idx_b(b)", false), IsTrue)
 	tk.MustExec("create global binding for update t1 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t1,idx_c) */ t1 set a = 1 where b = 1 and c > 1")
 	tk.MustExec("delete from t1 where b = 1 and c > 1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t1:idx_c")
-	c.Assert(tk.MustUseIndex("update t1 set a = 1 where b = 1 and c > 1", "idx_c(c)"), IsTrue)
+	c.Assert(tk.MustUseIndex("update t1 set a = 1 where b = 1 and c > 1", "idx_c(c)", false), IsTrue)
 
 	c.Assert(tk.HasPlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "HashJoin"), IsTrue)
 	tk.MustExec("create global binding for update t1, t2 set t1.a = 1 where t1.b = t2.b using update /*+ inl_join(t1) */ t1, t2 set t1.a = 1 where t1.b = t2.b")
@@ -705,24 +705,24 @@ func (s *testSuite) TestDMLSQLBind(c *C) {
 
 	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t2:idx_b")
-	c.Assert(tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)", false), IsTrue)
 	tk.MustExec("create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert /*+ use_index(t2,idx_c) */ into t1 select * from t2 where t2.b = 1 and t2.c > 1")
 	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t2:idx_b")
-	c.Assert(tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)", false), IsTrue)
 	tk.MustExec("drop global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1")
 	tk.MustExec("create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1")
 	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t2:idx_c")
-	c.Assert(tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_c(c)"), IsTrue)
+	c.Assert(tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_c(c)", false), IsTrue)
 
 	tk.MustExec("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t2:idx_b")
-	c.Assert(tk.MustUseIndex("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)", false), IsTrue)
 	tk.MustExec("create global binding for replace into t1 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1")
 	tk.MustExec("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t2:idx_c")
-	c.Assert(tk.MustUseIndex("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_c(c)"), IsTrue)
+	c.Assert(tk.MustUseIndex("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_c(c)", false), IsTrue)
 }
 
 func (s *testSuite) TestBestPlanInBaselines(c *C) {
@@ -736,11 +736,11 @@ func (s *testSuite) TestBestPlanInBaselines(c *C) {
 	// before binding
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 100")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
-	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"), IsTrue)
+	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)", false), IsTrue)
 
 	tk.MustQuery("select a, b from t where b = 3 limit 1, 100")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
-	c.Assert(tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)", false), IsTrue)
 
 	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ia) */ a, b from t where a = 1 limit 0, 1`)
 	tk.MustExec(`create global binding for select a, b from t where b = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ib) */ a, b from t where b = 1 limit 0, 1`)
@@ -756,11 +756,11 @@ func (s *testSuite) TestBestPlanInBaselines(c *C) {
 
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 10")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ia")
-	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)"), IsTrue)
+	c.Assert(tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ia(a)", false), IsTrue)
 
 	tk.MustQuery("select a, b from t where b = 3 limit 1, 100")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:ib")
-	c.Assert(tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)", false), IsTrue)
 }
 
 func (s *testSuite) TestErrorBind(c *C) {
@@ -1100,7 +1100,7 @@ func (s *testSuite) TestCapturePreparedStmt(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, key idx_b(b), key idx_c(c))")
-	c.Assert(tk.MustUseIndex("select * from t where b = 1 and c > 1", "idx_b(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("select * from t where b = 1 and c > 1", "idx_b(b)", false), IsTrue)
 	tk.MustExec("prepare stmt from 'select /*+ use_index(t,idx_c) */ * from t where b = ? and c > ?'")
 	tk.MustExec("set @p = 1")
 	tk.MustExec("execute stmt using @p, @p")
@@ -1113,7 +1113,7 @@ func (s *testSuite) TestCapturePreparedStmt(c *C) {
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `b` = ? and `c` > ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?")
 
-	c.Assert(tk.MustUseIndex("select /*+ use_index(t,idx_b) */ * from t where b = 1 and c > 1", "idx_c(c)"), IsTrue)
+	c.Assert(tk.MustUseIndex("select /*+ use_index(t,idx_b) */ * from t where b = 1 and c > 1", "idx_c(c)", false), IsTrue)
 	tk.MustExec("admin flush bindings")
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
@@ -1746,7 +1746,7 @@ func (s *testSuite) TestInvisibleIndex(c *C) {
 
 	tk.MustQuery("select * from t")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
-	c.Assert(tk.MustUseIndex("select * from t", "idx_a(a)"), IsTrue)
+	c.Assert(tk.MustUseIndex("select * from t", "idx_a(a)", false), IsTrue)
 
 	tk.MustExec(`prepare stmt1 from 'select * from t'`)
 	tk.MustExec("execute stmt1")
@@ -1899,11 +1899,11 @@ func (s *testSuite) TestDMLIndexHintBind(c *C) {
 
 	tk.MustExec("delete from t where b = 1 and c > 1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
-	c.Assert(tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_b(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_b(b)", false), IsTrue)
 	tk.MustExec("create global binding for delete from t where b = 1 and c > 1 using delete from t use index(idx_c) where b = 1 and c > 1")
 	tk.MustExec("delete from t where b = 1 and c > 1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
-	c.Assert(tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_c(c)"), IsTrue)
+	c.Assert(tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_c(c)", false), IsTrue)
 }
 
 func (s *testSuite) TestCapturedBindingCharset(c *C) {
@@ -1992,12 +1992,12 @@ func (s *testSuite) TestIssue20417(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t`")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(`t` `idxb`)*/ * FROM `test`.`t`")
-	c.Assert(tk.MustUseIndex("select * from t", "idxb(b)"), IsTrue)
-	c.Assert(tk.MustUseIndex("select * from test.t", "idxb(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("select * from t", "idxb(b)", false), IsTrue)
+	c.Assert(tk.MustUseIndex("select * from test.t", "idxb(b)", false), IsTrue)
 
 	tk.MustExec("create global binding for select * from t WHERE b=2 AND c=3924541 using select /*+ use_index(@sel_1 test.t idxb) */ * from t WHERE b=2 AND c=3924541")
-	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsTrue)
-	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `b`=2 AND `c`=3924541", "idxb(b)", false), IsTrue)
+	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)", false), IsTrue)
 
 	// Test for capture baseline
 	s.cleanBindingEnv(tk)
@@ -2082,7 +2082,7 @@ func (s *testSuite) TestSPMWithoutUseDatabase(c *C) {
 	err := tk1.ExecToErr("select * from t")
 	c.Assert(err, ErrorMatches, "*No database selected")
 	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
-	c.Assert(tk1.MustUseIndex("select * from test.t", "a"), IsTrue)
+	c.Assert(tk1.MustUseIndex("select * from test.t", "a", false), IsTrue)
 	tk1.MustExec("select * from test.t")
 	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
 }

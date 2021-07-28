@@ -287,10 +287,14 @@ func (tk *TestKit) UsedPartitions(sql string, args ...interface{}) *Result {
 }
 
 // MustUseIndex checks if the result execution plan contains specific index(es).
-func (tk *TestKit) MustUseIndex(sql string, index string, args ...interface{}) bool {
+func (tk *TestKit) MustUseIndex(sql string, index string, analyze bool, args ...interface{}) bool {
+	offset := 3
+	if analyze {
+		offset = 4
+	}
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
-		if strings.Contains(rs.rows[i][3], "index:"+index) {
+		if strings.Contains(rs.rows[i][offset], "index:"+index) {
 			return true
 		}
 	}

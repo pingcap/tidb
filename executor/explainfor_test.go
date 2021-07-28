@@ -24,6 +24,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	txninfo "github.com/pingcap/tidb/session/txninfo"
@@ -485,4 +486,35 @@ func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
+}
+
+func (s *testPrepareSerialSuite) TestExpressionIndexPreparePlanCache(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
+
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key ((a+b)));")
+	tk.MustExec("prepare stmt from 'select * from t where a+b = ?'")
+	tk.MustExec("set @a = 123")
+	tk.MustExec("execute stmt using @a")
+
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	c.Assert(tk.MustUseIndex("for connection "+strconv.FormatUint(tk.Se.ShowProcess().ID, 10), "expression_index", true), IsTrue)
 }
