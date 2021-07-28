@@ -24,13 +24,10 @@ import (
 	"go.uber.org/zap"
 )
 
-// Used for pessimistic lock wait time
+// LockNoWait is used for pessimistic lock wait time
 // these two constants are special for lock protocol with tikv
-// 0 means always wait, -1 means nowait, others meaning lock wait in milliseconds
-var (
-	LockAlwaysWait = int64(0)
-	LockNoWait     = int64(-1)
-)
+// -1 means nowait, others meaning lock wait in milliseconds
+var LockNoWait = int64(-1)
 
 // Manager represents a waiters manager.
 type Manager struct {

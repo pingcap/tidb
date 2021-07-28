@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
+	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
@@ -317,6 +318,24 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 		return 0, err
 	}
 	return tbl.Allocators(ctx).Get(autoid.RowIDAllocType).Base() + 1, nil
+}
+
+func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
+	pm := privilege.GetPrivilegeManager(ctx)
+	if pm == nil {
+		// internal session created with createSession doesn't has the PrivilegeManager. For most experienced cases before,
+		// we use it like this:
+		// ```
+		// checker := privilege.GetPrivilegeManager(ctx)
+		// if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+		//	  continue
+		// }
+		// do something.
+		// ```
+		// So once the privilege manager is nil, it's a signature of internal sql, so just passing the checker through.
+		return true
+	}
+	return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
 }
 
 func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) {
@@ -1020,51 +1039,6 @@ func (e *memtableRetriever) dataForTiKVStoreStatus(ctx sessionctx.Context) (err 
 	return nil
 }
 
-func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
-	pm := privilege.GetPrivilegeManager(ctx)
-	if pm == nil {
-		// internal session created with createSession doesn't has the PrivilegeManager. For most experienced cases before,
-		// we use it like this:
-		// ```
-		// checker := privilege.GetPrivilegeManager(ctx)
-		// if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
-		//	  continue
-		// }
-		// do something.
-		// ```
-		// So once the privilege manager is nil, it's a signature of internal sql, so just passing the checker through.
-		return true
-	}
-	return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
-}
-
-func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
-	if !hasPriv(ctx, mysql.ProcessPriv) {
-		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
-	}
-	waits, err := ctx.GetStore().GetLockWaits()
-	if err != nil {
-		return err
-	}
-	for _, wait := range waits {
-		var digestStr interface{}
-		digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
-		if err != nil {
-			logutil.BgLogger().Warn("failed to decode resource group tag", zap.Error(err))
-			digestStr = nil
-		} else {
-			digestStr = hex.EncodeToString(digest)
-		}
-		e.rows = append(e.rows, types.MakeDatums(
-			hex.EncodeToString(wait.Key),
-			wait.Txn,
-			wait.WaitForTxn,
-			digestStr,
-		))
-	}
-	return nil
-}
-
 // DDLJobsReaderExec executes DDLJobs information retrieving.
 type DDLJobsReaderExec struct {
 	baseExecutor
@@ -1672,19 +1646,33 @@ func (e *tableStorageStatsRetriever) initialize(sctx sessionctx.Context) error {
 		}
 	}
 
+	// Privilege checker.
+	checker := func(db, table string) bool {
+		if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+			return pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, db, table, "", mysql.AllPrivMask)
+		}
+		return true
+	}
+
 	// Extract the tables to the initialTable.
 	for _, DB := range databases {
 		// The user didn't specified the table, extract all tables of this db to initialTable.
 		if len(tables) == 0 {
 			tbs := is.SchemaTables(model.NewCIStr(DB))
 			for _, tb := range tbs {
-				e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+				// For every db.table, check it's privileges.
+				if checker(DB, tb.Meta().Name.L) {
+					e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+				}
 			}
 		} else {
 			// The user specified the table, extract the specified tables of this db to initialTable.
 			for tb := range tables {
 				if tb, err := is.TableByName(model.NewCIStr(DB), model.NewCIStr(tb)); err == nil {
-					e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+					// For every db.table, check it's privileges.
+					if checker(DB, tb.Meta().Name.L) {
+						e.initialTables = append(e.initialTables, &initialTable{DB, tb.Meta()})
+					}
 				}
 			}
 		}
@@ -1919,6 +1907,9 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 }
 
 func (e *memtableRetriever) setDataForStatementsSummaryEvicted(ctx sessionctx.Context) error {
+	if !hasPriv(ctx, mysql.ProcessPriv) {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
 	e.rows = stmtsummary.StmtSummaryByDigestMap.ToEvictedCountDatum()
 	switch e.table.Name.O {
 	case infoschema.ClusterTableStatementsSummaryEvicted:
@@ -2089,8 +2080,8 @@ func (e *memtableRetriever) setDataForDeadlock(ctx sessionctx.Context) error {
 	if !hasPriv(ctx, mysql.ProcessPriv) {
 		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
-
-	e.rows = deadlockhistory.GlobalDeadlockHistory.GetAllDatum()
+	infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	e.rows = deadlockhistory.GlobalDeadlockHistory.GetAllDatum(infoSchema)
 	return nil
 }
 
@@ -2104,6 +2095,47 @@ func (e *memtableRetriever) setDataForClusterDeadlock(ctx sessionctx.Context) er
 		return err
 	}
 	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
+	if !hasPriv(ctx, mysql.ProcessPriv) {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
+	waits, err := ctx.GetStore().GetLockWaits()
+	if err != nil {
+		return err
+	}
+	for _, wait := range waits {
+		var digestStr interface{}
+		digest, err := resourcegrouptag.DecodeResourceGroupTag(wait.ResourceGroupTag)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to decode resource group tag", zap.Error(err))
+			digestStr = nil
+		} else {
+			digestStr = hex.EncodeToString(digest)
+		}
+		infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
+		var decodedKeyStr interface{} = nil
+		decodedKey, err := keydecoder.DecodeKey(wait.Key, infoSchema)
+		if err == nil {
+			decodedKeyBytes, err := json.Marshal(decodedKey)
+			if err != nil {
+				logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
+			} else {
+				decodedKeyStr = string(decodedKeyBytes)
+			}
+		} else {
+			logutil.BgLogger().Warn("decode key failed", zap.Error(err))
+		}
+		e.rows = append(e.rows, types.MakeDatums(
+			strings.ToUpper(hex.EncodeToString(wait.Key)),
+			decodedKeyStr,
+			wait.Txn,
+			wait.WaitForTxn,
+			digestStr,
+		))
+	}
 	return nil
 }
 
