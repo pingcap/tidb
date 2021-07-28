@@ -34,13 +34,10 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
-<<<<<<< HEAD
+	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-=======
-	derr "github.com/pingcap/tidb/store/driver/error"
->>>>>>> 34d43fb8c... *: convert tikv.error which is returned by RegionCache.Locate to tidb.error  (#26647)
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"

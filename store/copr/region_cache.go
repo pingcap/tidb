@@ -17,16 +17,10 @@ import (
 	"bytes"
 
 	"github.com/pingcap/tidb/kv"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/logutil"
-	"github.com/pingcap/tidb/store/tikv/metrics"
-=======
 	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/tikv/client-go/v2/metrics"
-	"github.com/tikv/client-go/v2/tikv"
->>>>>>> 34d43fb8c... *: convert tikv.error which is returned by RegionCache.Locate to tidb.error  (#26647)
 )
 
 // RegionCache wraps tikv.RegionCache.
