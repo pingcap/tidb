@@ -19,17 +19,19 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"math/rand"
+	"os"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"math/rand"
-	"os"
-	"time"
 )
 
 const recreatorPath string = "/tmp/recreator"
+
 // TTL of plan recreator files
 const remainedInterval float64 = 3
 
@@ -76,6 +78,7 @@ func (k planRecreatorFileListType) String() string {
 
 // PlanRecreatorVarKey is a variable key for plan recreator.
 const PlanRecreatorVarKey planRecreatorVarKeyType = 0
+
 // PlanRecreatorFileList is a variable key for plan recreator's file list.
 const PlanRecreatorFileList planRecreatorFileListType = 0
 
