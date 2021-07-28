@@ -137,5 +137,38 @@
       "select * from t where a > 8 or d < 4 or c > 7 or b < 5",
       "select * from t where a < 8 and (b > 10 or c < 3 or b > 4) and a > 2"
     ]
+  },
+  {
+    "Name": "TestSmallRangeEstimation",
+    "Cases": [
+      {
+        "Start": 5,
+        "End": 5
+      },
+      {
+        "Start": 5,
+        "End": 6
+      },
+      {
+        "Start": 5,
+        "End": 10
+      },
+      {
+        "Start": 5,
+        "End": 15
+      },
+      {
+        "Start": 10,
+        "End": 15
+      },
+      {
+        "Start": 5,
+        "End": 25
+      },
+      {
+        "Start": 25,
+        "End": 25
+      }
+    ]
   }
 ]
