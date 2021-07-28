@@ -2331,7 +2331,7 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 		}
 		// Retrieve the SQL texts if necessary.
 		if sqlRetriever != nil {
-			err1 := sqlRetriever.RetrieveLocal(ctx, sctx)
+			err1 := sqlRetriever.RetrieveGlobal(ctx, sctx)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}

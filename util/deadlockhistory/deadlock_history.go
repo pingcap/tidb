@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -206,27 +205,6 @@ func (d *DeadlockHistory) getAll() []*DeadlockRecord {
 		res = append(res, d.deadlocks[:(d.head+d.size)%capacity]...)
 	}
 	return res
-}
-
-// GetAllDatum gets all collected deadlock events, and make it into datum that matches the definition of the table
-// `INFORMATION_SCHEMA.DEADLOCKS`.
-func (d *DeadlockHistory) GetAllDatum(columns []*model.ColumnInfo) [][]types.Datum {
-	records := d.GetAll()
-	rowsCount := 0
-	for _, rec := range records {
-		rowsCount += len(rec.WaitChain)
-	}
-	rows := make([][]types.Datum, 0, rowsCount)
-	for _, rec := range records {
-		for waitChainIdx := range rec.WaitChain {
-			row := make([]types.Datum, len(columns))
-			for colIdx, column := range columns {
-				row[colIdx] = rec.ToDatum(waitChainIdx, column.Name.O)
-			}
-		}
-	}
-
-	return rows
 }
 
 // Clear clears content from deadlock histories

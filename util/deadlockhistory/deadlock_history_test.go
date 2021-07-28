@@ -27,6 +27,27 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 )
 
+func getAllDatum(d *DeadlockHistory, columns []*model.ColumnInfo) [][]types.Datum {
+	records := d.GetAll()
+	rowsCount := 0
+	for _, rec := range records {
+		rowsCount += len(rec.WaitChain)
+	}
+	rows := make([][]types.Datum, 0, rowsCount)
+	for _, rec := range records {
+		for waitChainIdx := range rec.WaitChain {
+			row := make([]types.Datum, len(columns))
+			for colIdx, column := range columns {
+				row[colIdx] = rec.ToDatum(waitChainIdx, column.Name.O)
+			}
+			rows = append(rows, row)
+		}
+	}
+
+	return rows
+
+}
+
 func TestDeadlockHistoryCollection(t *testing.T) {
 	h := NewDeadlockHistory(1)
 	assert.Equal(t, len(h.GetAll()), 0)
@@ -185,11 +206,11 @@ func TestGetDatum(t *testing.T) {
 		{Name: model.NewCIStr(ColKeyInfoStr)},
 		{Name: model.NewCIStr(ColTrxHoldingLockStr)},
 	}
-	res := h.GetAllDatum(dummyColumnInfo)
+	res := getAllDatum(h, dummyColumnInfo)
 
 	assert.Equal(t, len(res), 4)
 	for _, row := range res {
-		assert.Equal(t, len(row), 8)
+		assert.Equal(t, len(row), 9)
 	}
 
 	toGoTime := func(d types.Datum) time.Time {
