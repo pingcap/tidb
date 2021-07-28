@@ -336,7 +336,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
 		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
 		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|<nil>|NO",
-		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|(`id` * 2 + 1)|NO",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|`id` * 2 + 1|NO",
 	))
 
 	// For show like with escape
