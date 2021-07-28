@@ -2956,7 +2956,7 @@ func (b *builtinTranslateBinarySig) vecEvalString(input *chunk.Chunk, result *ch
 	}
 	result.ReserveString(n)
 	var (
-		mp           map[byte]byte
+		mp           map[byte]uint16
 		useCommonMap = false
 	)
 	_, isFromConst := b.args[1].(*Constant)
@@ -2975,8 +2975,8 @@ func (b *builtinTranslateBinarySig) vecEvalString(input *chunk.Chunk, result *ch
 		}
 		for _, charSrc := range []byte(srcStr) {
 			if charTo, ok := mp[charSrc]; ok {
-				if charTo != math.MaxUint8 {
-					tgt = append(tgt, charTo)
+				if charTo != invalidByte {
+					tgt = append(tgt, byte(charTo))
 				}
 			} else {
 				tgt = append(tgt, charSrc)
@@ -3038,7 +3038,7 @@ func (b *builtinTranslateUTF8Sig) vecEvalString(input *chunk.Chunk, result *chun
 		}
 		for _, charSrc := range srcStr {
 			if charTo, ok := mp[charSrc]; ok {
-				if charTo != -1 {
+				if charTo != invalidRune {
 					tgt.WriteRune(charTo)
 				}
 			} else {

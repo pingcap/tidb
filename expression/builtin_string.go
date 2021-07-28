@@ -3977,6 +3977,11 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 	return string(ctor.Key(str)), false, nil
 }
 
+const (
+	invalidRune rune   = -1
+	invalidByte uint16 = 256
+)
+
 type translateFunctionClass struct {
 	baseFunctionClass
 }
@@ -4035,8 +4040,8 @@ func (b *builtinTranslateBinarySig) evalString(row chunk.Row) (d string, isNull 
 	mp := buildTranslateMap4Binary([]byte(fromStr), []byte(toStr))
 	for _, charSrc := range []byte(srcStr) {
 		if charTo, ok := mp[charSrc]; ok {
-			if charTo != math.MaxUint8 {
-				tgt = append(tgt, charTo)
+			if charTo != invalidByte {
+				tgt = append(tgt, byte(charTo))
 			}
 		} else {
 			tgt = append(tgt, charSrc)
@@ -4078,7 +4083,7 @@ func (b *builtinTranslateUTF8Sig) evalString(row chunk.Row) (d string, isNull bo
 	mp := buildTranslateMap4UTF8([]rune(fromStr), []rune(toStr))
 	for _, charSrc := range srcStr {
 		if charTo, ok := mp[charSrc]; ok {
-			if charTo != -1 {
+			if charTo != invalidRune {
 				tgt.WriteRune(charTo)
 			}
 		} else {
@@ -4096,7 +4101,7 @@ func buildTranslateMap4UTF8(from, to []rune) map[rune]rune {
 		minLen = lenFrom
 	}
 	for idx := lenFrom - 1; idx >= lenTo; idx-- {
-		mp[from[idx]] = -1
+		mp[from[idx]] = invalidRune
 	}
 	for idx := minLen - 1; idx >= 0; idx-- {
 		mp[from[idx]] = to[idx]
@@ -4104,18 +4109,18 @@ func buildTranslateMap4UTF8(from, to []rune) map[rune]rune {
 	return mp
 }
 
-func buildTranslateMap4Binary(from, to []byte) map[byte]byte {
-	mp := make(map[byte]byte)
+func buildTranslateMap4Binary(from, to []byte) map[byte]uint16 {
+	mp := make(map[byte]uint16)
 	lenFrom, lenTo := len(from), len(to)
 	minLen := lenTo
 	if lenFrom < lenTo {
 		minLen = lenFrom
 	}
 	for idx := lenFrom - 1; idx >= lenTo; idx-- {
-		mp[from[idx]] = math.MaxUint8
+		mp[from[idx]] = invalidByte
 	}
 	for idx := minLen - 1; idx >= 0; idx-- {
-		mp[from[idx]] = to[idx]
+		mp[from[idx]] = uint16(to[idx])
 	}
 	return mp
 }
