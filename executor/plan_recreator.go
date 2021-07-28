@@ -298,7 +298,7 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 	}
 
 	// Dump bindings
-	recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("show bindings"))
+	recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "show bindings")
 	if err != nil {
 		return nil, err
 	}
