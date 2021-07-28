@@ -2324,7 +2324,7 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeRatio(c *C) {
 	c.Assert(h.HandleAutoAnalyze(is), IsFalse)
 
 	tk.MustExec("delete from t limit 4")
-	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
-	c.Assert(s.do.StatsHandle().HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	c.Assert(h.HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
 }
