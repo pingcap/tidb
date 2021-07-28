@@ -2214,6 +2214,7 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	return res, nil
 }
 
+// dataLockWaitsTableRetriever is the memtable retriever for the DATA_LOCK_WAITS table.
 type dataLockWaitsTableRetriever struct {
 	dummyCloser
 	batchRetrieverHelper
@@ -2272,6 +2273,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 			}
 		}
 
+		// Fetch the SQL Texts of the digests above if necessary.
 		var sqlRetriever *SQLDigestTextRetriever
 		if needSQLText {
 			sqlRetriever = NewSQLDigestTextRetriever()
@@ -2284,6 +2286,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 			}
 		}
 
+		// Calculate rows.
 		res = make([][]types.Datum, 0, end-start)
 		for rowIdx, lockWait := range r.lockWaits[start:end] {
 			row := make([]types.Datum, 0, len(r.columns))
