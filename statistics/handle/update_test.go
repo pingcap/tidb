@@ -2310,8 +2310,8 @@ func (s *testSerialStatsSuite) TestAutoAnalyzeRatio(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustExec("explain select * from t where a = 1")
 	c.Assert(h.LoadNeededHistograms(), IsNil)
-	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='00:00 +0000'"))
-	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='23:59 +0000'"))
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 10))
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
