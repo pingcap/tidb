@@ -242,7 +242,7 @@ func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.E
 
 func unionColumnValues(lhs, rhs []*valueInfo, numCols int) []*valueInfo {
 	if lhs == nil {
-		lhs = make([]*valueInfo, numCols)
+		return rhs
 	}
 	if rhs != nil {
 		for i, valInfo := range lhs {
@@ -634,11 +634,11 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 						if valInfo == nil {
 							continue
 						}
-						sameVale, err := isSameValue(d.sctx.GetSessionVars().StmtCtx, valInfo, res.ColumnValues[j])
+						sameValue, err := isSameValue(d.sctx.GetSessionVars().StmtCtx, valInfo, res.ColumnValues[j])
 						if err != nil {
 							return nil, nil, nil, false, errors.Trace(err)
 						}
-						if !sameVale {
+						if !sameValue {
 							columnValues[j] = nil
 						}
 					}
