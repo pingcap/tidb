@@ -517,6 +517,5 @@ func (s *testPrepareSerialSuite) TestExpressionIndexPreparePlanCache(c *C) {
 	tkProcess := tk.Se.ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows("aqaaa"))
 	c.Assert(tk.MustUseIndex("for connection "+strconv.FormatUint(tkProcess.ID, 10), "expression_index"), IsTrue)
 }
