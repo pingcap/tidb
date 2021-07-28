@@ -658,8 +658,8 @@ As all placement rules are mapped to PD placement rule configurations, `start_ke
 
 As database IDs are all globally unique, it's fine to replace table ID with database ID in the key range. For example, assuming the database ID is 100, then the string format of its key range is:
 
-- `start_key`: `t_{database_id}_`
-- `end_key`: `t_{database_id+1}_`
+- `start_key`: `t{database_id}_`
+- `end_key`: `t{database_id+1}_`
 
 It's same for partitioned tables.
 
