@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
@@ -153,7 +154,7 @@ type mvccKV struct {
 func (t *tikvHandlerTool) getRegionIDByKey(encodedKey []byte) (uint64, error) {
 	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 500, nil), encodedKey)
 	if err != nil {
-		return 0, err
+		return 0, derr.ToTiDBErr(err)
 	}
 	return keyLocation.Region.GetID(), nil
 }
@@ -711,19 +712,29 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 		}
-		if deadlockHistoryCapacity := req.Form.Get("tidb_deadlock_history_capacity"); deadlockHistoryCapacity != "" {
+		if deadlockHistoryCapacity := req.Form.Get("deadlock_history_capacity"); deadlockHistoryCapacity != "" {
 			capacity, err := strconv.Atoi(deadlockHistoryCapacity)
 			if err != nil {
 				writeError(w, errors.New("illegal argument"))
 				return
 			} else if capacity < 0 || capacity > 10000 {
-				writeError(w, errors.New("tidb_deadlock_history_capacity out of range, should be in 0 to 10000"))
+				writeError(w, errors.New("deadlock_history_capacity out of range, should be in 0 to 10000"))
 				return
 			}
 			cfg := config.GetGlobalConfig()
 			cfg.PessimisticTxn.DeadlockHistoryCapacity = uint(capacity)
 			config.StoreGlobalConfig(cfg)
 			deadlockhistory.GlobalDeadlockHistory.Resize(uint(capacity))
+		}
+		if deadlockCollectRetryable := req.Form.Get("deadlock_history_collect_retryable"); deadlockCollectRetryable != "" {
+			collectRetryable, err := strconv.ParseBool(deadlockCollectRetryable)
+			if err != nil {
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+			cfg := config.GetGlobalConfig()
+			cfg.PessimisticTxn.DeadlockHistoryCollectRetryable = collectRetryable
+			config.StoreGlobalConfig(cfg)
 		}
 	} else {
 		writeData(w, config.GetGlobalConfig())

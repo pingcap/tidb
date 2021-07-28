@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/tikv/client-go/v2/tikv"
@@ -57,6 +58,10 @@ func TestT(t *testing.T) {
 	if !reflect.DeepEqual(defaultConfig, globalConfig) {
 		t.Fatalf("%#v != %#v\n", defaultConfig, globalConfig)
 	}
+
+	// AsyncCommit will make DDL wait 2.5s before changing to the next state.
+	// Set schema lease to avoid it from making CI slow.
+	session.SetSchemaLease(0)
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
 	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
