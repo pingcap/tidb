@@ -1013,7 +1013,20 @@ type builtinCastDecimalAsRealSig struct {
 
 func (b *builtinCastDecimalAsRealSig) PropagateType() {
 	expr := b.args[0]
-	expr.GetType().Flen, expr.GetType().Decimal = setDataTypeDouble(expr.GetType().Decimal)
+	oldFlen, oldDecimal := expr.GetType().Flen, expr.GetType().Decimal
+	newFlen, newDecimal := setDataTypeDouble(expr.GetType().Decimal)
+	// For float(M,D), double(M,D) or decimal(M,D), M must be >= D.
+	if newFlen < newDecimal {
+		newFlen = oldFlen - oldDecimal + newDecimal
+	}
+	if oldFlen != newFlen || oldDecimal != newDecimal {
+		if col, ok := b.args[0].(*Column); ok {
+			newCol := col.Clone()
+			newCol.(*Column).RetType = col.RetType.Clone()
+			b.args[0] = newCol
+		}
+		b.args[0].GetType().Flen, b.args[0].GetType().Decimal = newFlen, newDecimal
+	}
 }
 
 func setDataTypeDouble(srcDecimal int) (flen, decimal int) {
