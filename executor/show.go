@@ -614,7 +614,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			var expression interface{}
 			if tblCol.Hidden {
 				colName = "NULL"
-				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+				expression = fmt.Sprintf("%s", tblCol.GeneratedExprString)
 			}
 
 			e.appendRow([]interface{}{
