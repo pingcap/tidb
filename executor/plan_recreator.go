@@ -30,6 +30,7 @@ import (
 )
 
 const recreatorPath string = "/tmp/recreator"
+// TTL of plan recreator files
 const remainedInterval float64 = 3
 
 // PlanRecreatorExec represents a plan recreator executor.
@@ -73,8 +74,9 @@ func (k planRecreatorFileListType) String() string {
 	return "plan_recreator_file_list"
 }
 
-// PlanRecreatorVarKey is a variable key for load statistic.
+// PlanRecreatorVarKey is a variable key for plan recreator.
 const PlanRecreatorVarKey planRecreatorVarKeyType = 0
+// PlanRecreatorFileList is a variable key for plan recreator's file list.
 const PlanRecreatorFileList planRecreatorFileListType = 0
 
 // Next implements the Executor Next interface.
@@ -161,5 +163,7 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 			logutil.BgLogger().Warn("Closing zip file failed.")
 		}
 	}()
+
+	// TODO: DUMP PLAN RECREATOR FILES IN ZIP WRITER
 	return hex.EncodeToString(token[:]), nil
 }
