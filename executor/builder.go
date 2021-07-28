@@ -3837,13 +3837,23 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 
 func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Context, v *plannercore.PhysicalProjection,
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
-	physicalIndexLookUp, isDoubleRead := v.Children()[0].(*plannercore.PhysicalIndexLookUpReader)
-	if !isDoubleRead {
-		return nil, errors.Errorf("inner child of Projection should be IndexLookupReader, but got %T", v)
+	var (
+		childExec Executor
+		err       error
+	)
+	physicalIndexLookUp, isIndexLookUp := v.Children()[0].(*plannercore.PhysicalIndexLookUpReader)
+	physicalTableReader, isTableReader := v.Children()[0].(*plannercore.PhysicalTableReader)
+	if !isIndexLookUp && !isTableReader {
+		return nil, errors.Errorf("inner child of Projection should be IndexLookupReader/TableReader, but got %T", v.Children()[0])
 	}
-	childExec, err := builder.buildIndexLookUpReaderForIndexJoin(ctx, physicalIndexLookUp, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
-	if err != nil {
-		return nil, err
+	if isIndexLookUp {
+		if childExec, err = builder.buildIndexLookUpReaderForIndexJoin(ctx, physicalIndexLookUp, lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
+			return nil, err
+		}
+	} else if isTableReader {
+		if childExec, err = builder.buildTableReaderForIndexJoin(ctx, physicalTableReader, lookUpContents, indexRanges, keyOff2IdxOff, cwc, true); err != nil {
+			return nil, err
+		}
 	}
 
 	e := &ProjectionExec{
