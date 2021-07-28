@@ -895,7 +895,7 @@ func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 // For time zone, the possible delimiter could be +/- (w.r.t. MySQL 8.0, see
 // https://dev.mysql.com/doc/refman/8.0/en/datetime.html) and Z/z (w.r.t. ISO 8601, see section Time zone in
 // https://www.cl.cam.ac.uk/~mgk25/iso-time.html). We also look from backwards for the delimiter, see GetTimezone.
-func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tzSign, tzHour, tzSep, tzMinute string) {
+func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tzSign, tzHour, tzSep, tzMinute string, truncated bool) {
 	tzIndex, tzSign, tzHour, tzSep, tzMinute := GetTimezone(format)
 	if tzIndex > 0 {
 		hasTZ = true
@@ -911,6 +911,7 @@ func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tz
 		for fracEnd < len(format) && isDigit(format[fracEnd]) {
 			fracEnd++
 		}
+		truncated = (fracEnd != len(format))
 		fracStr = format[fracIndex+1 : fracEnd]
 		for ; fracIndex > 0 && isPunctuation(format[fracIndex-1]); fracIndex-- {
 			// In case of multiple separators, e.g. 2020-10..10
@@ -931,9 +932,10 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 		err                                                            error
 	)
 
-	seps, fracStr, hasTZ, tzSign, tzHour, tzSep, tzMinute := splitDateTime(str)
-
-	var truncatedOrIncorrect bool
+	seps, fracStr, hasTZ, tzSign, tzHour, tzSep, tzMinute, truncatedOrIncorrect := splitDateTime(str)
+	if truncatedOrIncorrect {
+		sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("datetime", str))
+	}
 	/*
 		if we have timezone parsed, there are the following cases to be considered, however some of them are wrongly parsed, and we should consider absorb them back to seps.
 

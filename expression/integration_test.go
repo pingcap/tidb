@@ -1408,7 +1408,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 
 	// for year
 	result = tk.MustQuery(`select year("2013-01-09"), year("2013-00-09"), year("000-01-09"), year("1-01-09"), year("20131-01-09"), year(null);`)
-	result.Check(testkit.Rows("2013 2013 0 1 <nil> <nil>"))
+	result.Check(testkit.Rows("2013 2013 0 2001 <nil> <nil>"))
 	result = tk.MustQuery(`select year("2013-00-00"), year("2013-00-00 00:00:00"), year("0000-00-00 12:12:12"), year("2017-00-00 12:12:12");`)
 	result.Check(testkit.Rows("2013 2013 0 2017"))
 	result = tk.MustQuery(`select year("aa"), year(2013), year(2012.09), year("1-01"), year("-09");`)
@@ -8643,7 +8643,7 @@ func (s *testIntegrationSuite) TestIssue19892(c *C) {
 			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("2000-01-00", "2000-00-01"))
 			tk.MustExec("INSERT INTO dd(a) values('0-01-02')")
 			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("2000-01-00", "2000-00-01", "0000-01-02"))
+			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("2000-01-00", "2000-00-01", "2000-01-02"))
 
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustExec("INSERT INTO dd(b) values('2000-01-02')")
@@ -8676,7 +8676,7 @@ func (s *testIntegrationSuite) TestIssue19892(c *C) {
 			// consistent with Mysql8
 			tk.MustExec("UPDATE dd SET b = '0-01-02'")
 			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-01-02 00:00:00"))
+			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("2000-01-02 00:00:00"))
 
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustExec("INSERT INTO dd(c) values('2000-01-02 20:00:00')")
@@ -10006,10 +10006,10 @@ func (s *testIntegrationSuite) TestTimestampIssue25093(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(col decimal(45,8) default 13.654 not null);")
 	tk.MustExec("insert  into t set col = 0.4352;")
-	tk.MustQuery("select timestamp(0.123)").Check(testkit.Rows("0000-00-00 00:00:00.123"))
-	tk.MustQuery("select timestamp(col) from t;").Check(testkit.Rows("0000-00-00 00:00:00.435200"))
+	tk.MustQuery("select timestamp(0.123)").Check(testkit.Rows("2000-00-00 00:00:00.123"))
+	tk.MustQuery("select timestamp(col) from t;").Check(testkit.Rows("2000-00-00 00:00:00.435200"))
 	tk.MustQuery("select timestamp(1.234) from t;").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select timestamp(0.12345678) from t;").Check(testkit.Rows("0000-00-00 00:00:00.123457"))
+	tk.MustQuery("select timestamp(0.12345678) from t;").Check(testkit.Rows("2000-00-00 00:00:00.123457"))
 	tk.MustQuery("select timestamp(0.9999999) from t;").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select timestamp(101.234) from t;").Check(testkit.Rows("2000-01-01 00:00:00.000"))
 }
