@@ -98,6 +98,7 @@ func TestEscapeBackslash(t *testing.T) {
 	}
 	for _, v := range tests {
 		t.Run(v.name, func(t *testing.T) {
+			t.Parallel()
 			require.Equal(t, v.output, escapeBytesBackslash(nil, v.input))
 			require.Equal(t, v.output, escapeStringBackslash(nil, string(v.input)))
 		})
@@ -387,31 +388,29 @@ func TestEscapeSQL(t *testing.T) {
 		},
 	}
 	for _, v := range tests {
-		r3 := new(strings.Builder)
-		r1, e1 := escapeSQL(v.input, v.params...)
-		r2, e2 := EscapeSQL(v.input, v.params...)
-		e3 := FormatSQL(r3, v.input, v.params...)
-		if v.err == "" {
-			t.Run(v.name, func(t *testing.T) {
+		t.Run(v.name, func(t *testing.T) {
+			t.Parallel()
+			r3 := new(strings.Builder)
+			r1, e1 := escapeSQL(v.input, v.params...)
+			r2, e2 := EscapeSQL(v.input, v.params...)
+			e3 := FormatSQL(r3, v.input, v.params...)
+			if v.err == "" {
 				require.NoError(t, e1)
 				require.Equal(t, v.output, string(r1))
 				require.NoError(t, e2)
 				require.Equal(t, v.output, r2)
 				require.NoError(t, e3)
 				require.Equal(t, v.output, r3.String())
-			})
-		} else {
-			t.Run(v.name, func(t *testing.T) {
-				// use error + regexp to replace error match
+
+			} else {
 				require.Error(t, e1)
 				require.Regexp(t, v.err, e1.Error())
 				require.Error(t, e2)
 				require.Regexp(t, v.err, e2.Error())
 				require.Error(t, e3)
 				require.Regexp(t, v.err, e3.Error())
-			})
-
-		}
+			}
+		})
 	}
 }
 
