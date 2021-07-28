@@ -435,7 +435,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 			tblCol := table.Columns[col.Offset]
 			if tblCol.Hidden {
 				colName = "NULL"
-				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+				expression = tblCol.GeneratedExprString
 			}
 
 			record := types.MakeDatums(
@@ -910,7 +910,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 					tblCol := tb.Columns[col.Offset]
 					if tblCol.Hidden {
 						colName = "NULL"
-						expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+						expression = tblCol.GeneratedExprString
 					}
 					visible := "YES"
 					if idxInfo.Invisible {
