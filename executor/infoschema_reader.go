@@ -157,10 +157,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByUser,
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
-		case infoschema.TableDeadlocks:
-			err = e.setDataForDeadlock(sctx)
-		case infoschema.ClusterTableDeadlocks:
-			err = e.setDataForClusterDeadlock(sctx)
 		case infoschema.TableDataLockWaits:
 			err = e.setDataForTableDataLockWaits(sctx)
 		}
@@ -2044,27 +2040,27 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 	return nil
 }
 
-func (e *memtableRetriever) setDataForDeadlock(ctx sessionctx.Context) error {
-	if !hasPriv(ctx, mysql.ProcessPriv) {
-		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
-	}
-	infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	e.rows = deadlockhistory.GlobalDeadlockHistory.GetAllDatum(infoSchema)
-	return nil
-}
+//func (e *memtableRetriever) setDataForDeadlock(ctx sessionctx.Context) error {
+//	if !hasPriv(ctx, mysql.ProcessPriv) {
+//		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+//	}
+//	infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
+//	e.rows = deadlockhistory.GlobalDeadlockHistory.GetAllDatum(infoSchema)
+//	return nil
+//}
 
-func (e *memtableRetriever) setDataForClusterDeadlock(ctx sessionctx.Context) error {
-	err := e.setDataForDeadlock(ctx)
-	if err != nil {
-		return err
-	}
-	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
-	if err != nil {
-		return err
-	}
-	e.rows = rows
-	return nil
-}
+//func (e *memtableRetriever) setDataForClusterDeadlock(ctx sessionctx.Context) error {
+//	err := e.setDataForDeadlock(ctx)
+//	if err != nil {
+//		return err
+//	}
+//	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
+//	if err != nil {
+//		return err
+//	}
+//	e.rows = rows
+//	return nil
+//}
 
 func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
 	if !hasPriv(ctx, mysql.ProcessPriv) {
@@ -2244,6 +2240,139 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 				}
 			}
 			res = append(res, row)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return res, nil
+}
+
+type deadlocksTableRetriever struct {
+	dummyCloser
+	batchRetrieverHelper
+
+	currentIdx          int
+	currentWaitChainIdx int
+
+	table       *model.TableInfo
+	columns     []*model.ColumnInfo
+	deadlocks   []*deadlockhistory.DeadlockRecord
+	initialized bool
+}
+
+func (r *deadlocksTableRetriever) nextIndexPair(idx, waitChainIdx int) (int, int) {
+	waitChainIdx++
+	if waitChainIdx >= len(r.deadlocks[idx].WaitChain) {
+		waitChainIdx = 0
+		idx++
+		for idx < len(r.deadlocks) && len(r.deadlocks[idx].WaitChain) == 0 {
+			idx++
+		}
+	}
+	return idx, waitChainIdx
+}
+
+func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if r.retrieved {
+		return nil, nil
+	}
+
+	if !r.initialized {
+		r.initialized = true
+		r.deadlocks = deadlockhistory.GlobalDeadlockHistory.GetAll()
+
+		r.batchRetrieverHelper.totalRows = 0
+		for _, d := range r.deadlocks {
+			r.batchRetrieverHelper.totalRows += len(d.WaitChain)
+		}
+		r.batchRetrieverHelper.batchSize = 1024
+	}
+
+	// The current TiDB node's address is needed by the CLUSTER_DEADLOCKS table.
+	var err error
+	var instanceAddr string
+	switch r.table.Name.O {
+	case infoschema.ClusterTableDeadlocks:
+		instanceAddr, err = infoschema.GetInstanceAddr(sctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	infoSchema := sctx.GetInfoSchema().(infoschema.InfoSchema)
+
+	var res [][]types.Datum
+
+	err = r.nextBatch(func(start, end int) error {
+		// Before getting rows, collect the SQL digests that needs to be retrieved first.
+		var sqlRetriever *SQLDigestTextRetriever
+		for _, c := range r.columns {
+			if c.Name.O == deadlockhistory.ColCurrentSQLDigestTextStr {
+				if sqlRetriever == nil {
+					sqlRetriever = NewSQLDigestTextRetriever()
+				}
+
+				idx, waitChainIdx := r.currentIdx, r.currentWaitChainIdx
+				for i := start; i < end; i++ {
+					sqlRetriever.SQLDigestsMap[r.deadlocks[idx].WaitChain[waitChainIdx].SQLDigest] = ""
+					// Step to the next entry
+					idx, waitChainIdx = r.nextIndexPair(idx, waitChainIdx)
+				}
+			}
+		}
+		// Retrieve the SQL texts if necessary.
+		if sqlRetriever != nil {
+			err1 := sqlRetriever.RetrieveLocal(ctx, sctx)
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
+		}
+
+		res = make([][]types.Datum, 0, end-start)
+
+		for i := start; i < end; i++ {
+			row := make([]types.Datum, 0, len(r.columns))
+			deadlock := r.deadlocks[r.currentIdx]
+			waitChainItem := deadlock.WaitChain[r.currentWaitChainIdx]
+
+			for _, c := range r.columns {
+				if c.Name.O == util.ClusterTableInstanceColumnName {
+					row = append(row, types.NewDatum(instanceAddr))
+				} else if c.Name.O == deadlockhistory.ColCurrentSQLDigestTextStr {
+					if text, ok := sqlRetriever.SQLDigestsMap[waitChainItem.SQLDigest]; ok && len(text) > 0 {
+						row = append(row, types.NewDatum(text))
+					} else {
+						row = append(row, types.NewDatum(nil))
+					}
+				} else if c.Name.O == deadlockhistory.ColKeyInfoStr {
+					value := types.NewDatum(nil)
+					if len(waitChainItem.Key) > 0 {
+						decodedKey, err := keydecoder.DecodeKey(waitChainItem.Key, infoSchema)
+						if err == nil {
+							decodedKeyJSON, err := json.Marshal(decodedKey)
+							if err != nil {
+								logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
+							} else {
+								value = types.NewDatum(string(decodedKeyJSON))
+							}
+						} else {
+							logutil.BgLogger().Warn("decode key failed", zap.Error(err))
+						}
+					}
+					row = append(row, value)
+				} else {
+					row = append(row, deadlock.ToDatum(r.currentWaitChainIdx, c.Name.O))
+				}
+			}
+
+			res = append(res, row)
+			// Step to the next entry
+			r.currentIdx, r.currentWaitChainIdx = r.nextIndexPair(r.currentIdx, r.currentWaitChainIdx)
 		}
 
 		return nil

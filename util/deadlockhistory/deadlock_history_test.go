@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
@@ -175,8 +174,18 @@ func TestGetDatum(t *testing.T) {
 		WaitChain:   nil,
 	})
 
-	dummyInfoSchema := infoschema.MockInfoSchema([]*model.TableInfo{})
-	res := h.GetAllDatum(dummyInfoSchema)
+	dummyColumnInfo := []*model.ColumnInfo{
+		{Name: model.NewCIStr(ColDeadlockIDStr)},
+		{Name: model.NewCIStr(ColOccurTimeStr)},
+		{Name: model.NewCIStr(ColRetryableStr)},
+		{Name: model.NewCIStr(ColTryLockTrxIDStr)},
+		{Name: model.NewCIStr(ColCurrentSQLDigestStr)},
+		{Name: model.NewCIStr(ColCurrentSQLDigestTextStr)},
+		{Name: model.NewCIStr(ColKeyStr)},
+		{Name: model.NewCIStr(ColKeyInfoStr)},
+		{Name: model.NewCIStr(ColTrxHoldingLockStr)},
+	}
+	res := h.GetAllDatum(dummyColumnInfo)
 
 	assert.Equal(t, len(res), 4)
 	for _, row := range res {
@@ -196,28 +205,30 @@ func TestGetDatum(t *testing.T) {
 	assert.Equal(t, res[0][2].GetValue(), int64(0))    // RETRYABLE
 	assert.Equal(t, res[0][3].GetValue(), uint64(101)) // TRY_LOCK_TRX_ID
 	assert.Equal(t, res[0][4].GetValue(), "sql1")      // SQL_DIGEST
-	assert.Equal(t, res[0][5].GetValue(), "6B31")      // KEY
-	assert.Equal(t, res[0][7].GetValue(), uint64(102)) // TRX_HOLDING_LOCK
+	assert.Equal(t, res[0][5].GetValue(), nil)         // SQL_DIGEST_TEXT
+	assert.Equal(t, res[0][6].GetValue(), "6B31")      // KEY
+	assert.Equal(t, res[0][8].GetValue(), uint64(102)) // TRX_HOLDING_LOCK
 
 	assert.Equal(t, res[1][0].GetValue(), uint64(1))   // ID
 	assert.Equal(t, toGoTime(res[1][1]), time1)        // OCCUR_TIME
 	assert.Equal(t, res[1][2].GetValue(), int64(0))    // RETRYABLE
 	assert.Equal(t, res[1][3].GetValue(), uint64(102)) // TRY_LOCK_TRX_ID
 	assert.Equal(t, res[1][4].GetValue(), nil)         // SQL_DIGEST
-	assert.Equal(t, res[1][5].GetValue(), nil)         // KEY
-	assert.Equal(t, res[1][7].GetValue(), uint64(101)) // TRX_HOLDING_LOCK
+	assert.Equal(t, res[1][5].GetValue(), nil)         // SQL_DIGEST_TEXT
+	assert.Equal(t, res[1][6].GetValue(), nil)         // KEY
+	assert.Equal(t, res[1][8].GetValue(), uint64(101)) // TRX_HOLDING_LOCK
 
 	assert.Equal(t, res[2][0].GetValue(), uint64(2))   // ID
 	assert.Equal(t, toGoTime(res[2][1]), time2)        // OCCUR_TIME
 	assert.Equal(t, res[2][2].GetValue(), int64(1))    // RETRYABLE
 	assert.Equal(t, res[2][3].GetValue(), uint64(201)) // TRY_LOCK_TRX_ID
-	assert.Equal(t, res[2][7].GetValue(), uint64(202)) // TRX_HOLDING_LOCK
+	assert.Equal(t, res[2][8].GetValue(), uint64(202)) // TRX_HOLDING_LOCK
 
 	assert.Equal(t, res[3][0].GetValue(), uint64(2))   // ID
 	assert.Equal(t, toGoTime(res[3][1]), time2)        // OCCUR_TIME
 	assert.Equal(t, res[3][2].GetValue(), int64(1))    // RETRYABLE
 	assert.Equal(t, res[3][3].GetValue(), uint64(202)) // TRY_LOCK_TRX_ID
-	assert.Equal(t, res[3][7].GetValue(), uint64(201)) // TRX_HOLDING_LOCK
+	assert.Equal(t, res[3][8].GetValue(), uint64(201)) // TRX_HOLDING_LOCK
 }
 
 func TestErrDeadlockToDeadlockRecord(t *testing.T) {
