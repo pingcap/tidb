@@ -2962,11 +2962,22 @@ func (b *builtinTranslateBinarySig) vecEvalString(input *chunk.Chunk, result *ch
 	_, isFromConst := b.args[1].(*Constant)
 	_, isToConst := b.args[2].(*Constant)
 	if isFromConst && isToConst {
-		useCommonMap = true
-		fromBytes, toBytes := []byte(buf1.GetString(0)), []byte(buf2.GetString(0))
-		mp = buildTranslateMap4Binary(fromBytes, toBytes)
+		if ExprNotNull(b.args[1]) && ExprNotNull(b.args[2]) {
+			useCommonMap = true
+			fromBytes, toBytes := []byte(buf1.GetString(0)), []byte(buf2.GetString(0))
+			mp = buildTranslateMap4Binary(fromBytes, toBytes)
+		} else {
+			for i := 0; i < n; i++ {
+				result.AppendNull()
+			}
+			return nil
+		}
 	}
 	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
 		srcStr := buf0.GetString(i)
 		var tgt []byte
 		if !useCommonMap {
@@ -3025,11 +3036,22 @@ func (b *builtinTranslateUTF8Sig) vecEvalString(input *chunk.Chunk, result *chun
 	_, isFromConst := b.args[1].(*Constant)
 	_, isToConst := b.args[2].(*Constant)
 	if isFromConst && isToConst {
-		useCommonMap = true
-		fromRunes, toRunes := []rune(buf1.GetString(0)), []rune(buf2.GetString(0))
-		mp = buildTranslateMap4UTF8(fromRunes, toRunes)
+		if ExprNotNull(b.args[1]) && ExprNotNull(b.args[2]) {
+			useCommonMap = true
+			fromRunes, toRunes := []rune(buf1.GetString(0)), []rune(buf2.GetString(0))
+			mp = buildTranslateMap4UTF8(fromRunes, toRunes)
+		} else {
+			for i := 0; i < n; i++ {
+				result.AppendNull()
+			}
+			return nil
+		}
 	}
 	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
 		srcStr := buf0.GetString(i)
 		var tgt strings.Builder
 		if !useCommonMap {
