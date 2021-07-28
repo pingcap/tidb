@@ -2928,7 +2928,7 @@ func formatReal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64, re
 	return nil
 }
 
-func (b *builtinTranslateSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTranslateBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -2964,14 +2964,14 @@ func (b *builtinTranslateSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	if isFromConst && isToConst {
 		useCommonMap = true
 		fromRunes, toRunes := []rune(buf1.GetString(0)), []rune(buf2.GetString(0))
-		mp = buildTranslateMap(fromRunes, toRunes)
+		mp = buildTranslateMap4UTF8(fromRunes, toRunes)
 	}
 	for i := 0; i < n; i++ {
 		srcStr := buf0.GetString(i)
 		var tgt strings.Builder
 		if !useCommonMap {
 			fromRunes, toRunes := []rune(buf1.GetString(i)), []rune(buf2.GetString(i))
-			mp = buildTranslateMap(fromRunes, toRunes)
+			mp = buildTranslateMap4UTF8(fromRunes, toRunes)
 		}
 		for _, charSrc := range srcStr {
 			if charTo, ok := mp[charSrc]; ok {
@@ -2987,6 +2987,6 @@ func (b *builtinTranslateSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	return nil
 }
 
-func (b *builtinTranslateSig) vectorized() bool {
+func (b *builtinTranslateBinarySig) vectorized() bool {
 	return true
 }
