@@ -1074,7 +1074,6 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 }
 
 func (s *testSuite5) TestSelectGlobalVar(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210624")
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("151"))
