@@ -441,7 +441,7 @@ CREATE PLACEMENT POLICY p2 FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-e
 
 #### Partitioned Tables
 
-The key format of a partitioned table is `t_{partition_id}_r_{pk_value}`. As `partition_id` is part of the key prefix, the key range of a partition is successive. The key range is `t_{partition_id}_` to `t_{partition_id+1}_`.
+The key format of a partitioned table is `t{partition_id}_r{pk_value}`. As `partition_id` is part of the key prefix, the key range of a partition is successive. The key range is `t{partition_id}_` to `t{partition_id+1}_`.
 
 Defining placement rules of partitions is expected to be a common use case and is useful for both reducing multi-region latency and compliance scenarios. Because there are multiple key ranges for the table, multiple rules will be generated and sent to PD.
 
