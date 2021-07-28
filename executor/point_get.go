@@ -403,8 +403,8 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		// fallthrough to snapshot get.
 	}
 
-	// Local temporary table always get snapshot value from session
-	if e.tblInfo.TempTableType == model.TempTableLocal {
+	// Temporary table always get snapshot value from session
+	if e.tblInfo.TempTableType != model.TempTableNone {
 		return e.ctx.GetSessionVars().TemporaryTableSnapshotReader(e.tblInfo).Get(ctx, key)
 	}
 
