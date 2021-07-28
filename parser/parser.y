@@ -635,6 +635,7 @@ import (
 	dateAdd               "DATE_ADD"
 	dateSub               "DATE_SUB"
 	dotType               "DOT"
+	dump                  "DUMP"
 	exact                 "EXACT"
 	extract               "EXTRACT"
 	flashback             "FLASHBACK"
@@ -647,8 +648,10 @@ import (
 	min                   "MIN"
 	max                   "MAX"
 	now                   "NOW"
+	plan                  "PLAN"
 	position              "POSITION"
 	recent                "RECENT"
+	recreator             "RECREATOR"
 	running               "RUNNING"
 	s3                    "S3"
 	staleness             "STALENESS"
@@ -873,6 +876,7 @@ import (
 	LoadDataStmt           "Load data statement"
 	LoadStatsStmt          "Load statistic statement"
 	LockTablesStmt         "Lock tables statement"
+	PlanRecreatorStmt      "Plan recreator statement"
 	PreparedStmt           "PreparedStmt"
 	PurgeImportStmt        "PURGE IMPORT statement that removes a IMPORT task record"
 	SelectStmt             "SELECT statement"
@@ -5931,6 +5935,7 @@ NotKeywordToken:
 |	"DATE_ADD"
 |	"DATE_SUB"
 |	"DOT"
+|	"DUMP"
 |	"EXTRACT"
 |	"GET_FORMAT"
 |	"GROUP_CONCAT"
@@ -5941,7 +5946,9 @@ NotKeywordToken:
 |	"MAX"
 |	"NOW"
 |	"RECENT"
+|	"RECREATOR"
 |	"RUNNING"
+|	"PLAN"
 |	"POSITION"
 |	"S3"
 |	"STRICT"
@@ -10570,6 +10577,7 @@ Statement:
 |	KillStmt
 |	LoadDataStmt
 |	LoadStatsStmt
+|	PlanRecreatorStmt
 |	PreparedStmt
 |	PurgeImportStmt
 |	RollbackStmt
@@ -13165,5 +13173,107 @@ RowStmt:
 	"ROW" RowValue
 	{
 		$$ = &ast.RowExpr{Values: $2.([]ast.ExprNode)}
+	}
+
+/********************************************************************
+ *
+ * Plan Recreator Statement
+ * 
+ * PLAN RECREATOR
+ * 		[DUMP EXPLAIN
+ *			[ANALYZE]
+ *			{ExplainableStmt
+ *			| [WHERE where_condition]
+ *			  [ORDER BY {col_name | expr | position}
+ *    			[ASC | DESC], ... [WITH ROLLUP]]
+ *  		  [LIMIT {[offset,] row_count | row_count OFFSET offset}]}
+ *		| LOAD 'file_name']
+ *******************************************************************/
+PlanRecreatorStmt:
+	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" ExplainableStmt
+	{
+		x := &ast.PlanRecreatorStmt{
+			Stmt:    $5,
+			Analyze: false,
+			Load:    false,
+			File:    "",
+			Where:   nil,
+			OrderBy: nil,
+			Limit:   nil,
+		}
+		startOffset := parser.startOffset(&yyS[yypt])
+		x.Stmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+
+		$$ = x
+	}
+|	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" "ANALYZE" ExplainableStmt
+	{
+		x := &ast.PlanRecreatorStmt{
+			Stmt:    $6,
+			Analyze: true,
+			Load:    false,
+			File:    "",
+			Where:   nil,
+			OrderBy: nil,
+			Limit:   nil,
+		}
+		startOffset := parser.startOffset(&yyS[yypt])
+		x.Stmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+
+		$$ = x
+	}
+|	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
+	{
+		x := &ast.PlanRecreatorStmt{
+			Stmt:    nil,
+			Analyze: false,
+			Load:    false,
+			File:    "",
+		}
+		if $7 != nil {
+			x.Where = $7.(ast.ExprNode)
+		}
+		if $8 != nil {
+			x.OrderBy = $8.(*ast.OrderByClause)
+		}
+		if $9 != nil {
+			x.Limit = $9.(*ast.Limit)
+		}
+
+		$$ = x
+	}
+|	"PLAN" "RECREATOR" "DUMP" "EXPLAIN" "ANALYZE" "SLOW" "QUERY" WhereClauseOptional OrderByOptional SelectStmtLimitOpt
+	{
+		x := &ast.PlanRecreatorStmt{
+			Stmt:    nil,
+			Analyze: true,
+			Load:    false,
+			File:    "",
+		}
+		if $8 != nil {
+			x.Where = $8.(ast.ExprNode)
+		}
+		if $9 != nil {
+			x.OrderBy = $9.(*ast.OrderByClause)
+		}
+		if $10 != nil {
+			x.Limit = $10.(*ast.Limit)
+		}
+
+		$$ = x
+	}
+|	"PLAN" "RECREATOR" "LOAD" stringLit
+	{
+		x := &ast.PlanRecreatorStmt{
+			Stmt:    nil,
+			Analyze: false,
+			Load:    true,
+			File:    $4,
+			Where:   nil,
+			OrderBy: nil,
+			Limit:   nil,
+		}
+
+		$$ = x
 	}
 %%
