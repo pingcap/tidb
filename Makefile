@@ -40,7 +40,6 @@ check-fail: goword check-slow
 fmt:
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
-	@cd cmd/importcheck && $(GO) run . ../..
 
 goword:tools/bin/goword
 	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
