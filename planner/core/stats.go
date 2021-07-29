@@ -306,7 +306,14 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		// as a field of AccessPath? In this way ds.isCoveringIndex only needs to be called once for each path.
 		if path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) {
 			if path.IsTablePath() || path.Index.Unique {
-				if ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo) {
+				var singleScan bool
+				if path.IsTablePath() {
+					singleScan = true
+				} else {
+					singleScan = ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+				}
+				if singleScan {
+					// TODO: What if multiple paths satisfy all conditions?
 					selected = path
 					break
 				}
