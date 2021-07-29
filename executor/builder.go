@@ -3841,19 +3841,17 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Contex
 		childExec Executor
 		err       error
 	)
-	physicalIndexLookUp, isIndexLookUp := v.Children()[0].(*plannercore.PhysicalIndexLookUpReader)
-	physicalTableReader, isTableReader := v.Children()[0].(*plannercore.PhysicalTableReader)
-	if !isIndexLookUp && !isTableReader {
+	switch op := v.Children()[0].(type) {
+	case *plannercore.PhysicalIndexLookUpReader:
+		if childExec, err = builder.buildIndexLookUpReaderForIndexJoin(ctx, op, lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
+			return nil, err
+		}
+	case *plannercore.PhysicalTableReader:
+		if childExec, err = builder.buildTableReaderForIndexJoin(ctx, op, lookUpContents, indexRanges, keyOff2IdxOff, cwc, true); err != nil {
+			return nil, err
+		}
+	default:
 		return nil, errors.Errorf("inner child of Projection should be IndexLookupReader/TableReader, but got %T", v.Children()[0])
-	}
-	if isIndexLookUp {
-		if childExec, err = builder.buildIndexLookUpReaderForIndexJoin(ctx, physicalIndexLookUp, lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
-			return nil, err
-		}
-	} else if isTableReader {
-		if childExec, err = builder.buildTableReaderForIndexJoin(ctx, physicalTableReader, lookUpContents, indexRanges, keyOff2IdxOff, cwc, true); err != nil {
-			return nil, err
-		}
 	}
 
 	e := &ProjectionExec{
