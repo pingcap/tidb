@@ -371,23 +371,16 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec("set @@tidb_store_limit = 0")
 
 	tk.MustExec("set global tidb_store_limit = 100")
-	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("100"))
+	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("100"))
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
 	tk.MustExec("set @@tidb_store_limit = 0")
 
 	// instance level store limit test.
+	// we couldn't test the cluster behavior here. because new tk1 will sync the global propagation to
+	// the same StoreLimit with tk.
 	tk.MustExec("set @@tidb_store_limit = 200")
 	tk.MustQuery("select @@tidb_store_limit").Check(testkit.Rows("200"))
-	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustQuery("select @@tidb_store_limit").Check(testkit.Rows("200"))
-	tk.MustExec("set @@global.tidb_store_limit = 300")
-	// old session variable keep it's real
-	tk.MustQuery("select @@tidb_store_limit").Check(testkit.Rows("200"))
-	tk1.MustQuery("select @@tidb_store_limit").Check(testkit.Rows("200"))
-	// new session will perceive the global change.
-	tk2 := testkit.NewTestKit(c, s.store)
-	tk2.MustQuery("select @@tidb_store_limit").Check(testkit.Rows("300"))
 
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
 	tk.MustExec("set @@session.tidb_metric_query_step = 120")
