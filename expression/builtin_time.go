@@ -6105,8 +6105,8 @@ func (b *builtinQuarterSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	if date.IsZero() {
-		_, err := handleInvalidZeroTime(b.ctx, date)
-		return 0, true, err
+		isNull, err := handleInvalidZeroTime(b.ctx, date)
+		return 0, isNull, err
 	}
 
 	return int64((date.Month() + 2) / 3), false, nil
