@@ -549,12 +549,12 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 }
 
 // GetIncreaseFactor get the increase factor to adjust the final estimated count when the table is modified.
-func (idx *Index) GetIncreaseFactor(totalCount int64) float64 {
+func (idx *Index) GetIncreaseFactor(realtimeRowCount int64) float64 {
 	columnCount := idx.TotalRowCount()
 	if columnCount == 0 {
 		return 1.0
 	}
-	return float64(totalCount) / columnCount
+	return float64(realtimeRowCount) / columnCount
 }
 
 // BetweenRowCount estimates the row count for interval [l, r).
@@ -836,6 +836,7 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 // Here we assume the density of data is decreasing from the lower/upper bound of the histogram toward outside.
 // The maximum row count it can get is the increaseCount. It reaches the maximum when out-of-range width reaches histogram range width.
 // As it shows below. To calculate the out-of-range row count, we need to calculate the percentage of the shaded area.
+// Note that we assume histL-boundL == histR-histL == boundR-histR here.
 //
 //               /│             │\
 //             /  │             │  \
@@ -905,7 +906,7 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCou
 	// keep l and r unchanged, use actualL and actualR to calculate.
 	actualL := l
 	actualR := r
-	// Handling the out-of-range part on the left of the histogram range
+	// If the range overlaps with (boundL,histL), we need to handle the out-of-range part on the left of the histogram range
 	if actualL < histL && actualR > boundL {
 		// make sure boundL <= actualL < actualR <= histL
 		if actualL < boundL {
@@ -920,7 +921,7 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCou
 
 	actualL = l
 	actualR = r
-	// Handling the out-of-range part on the right of the histogram range
+	// If the range overlaps with (histR,boundR), we need to handle the out-of-range part on the right of the histogram range
 	if actualL < boundR && actualR > histR {
 		// make sure histR <= actualL < actualR <= boundR
 		if actualL < histR {
@@ -1040,13 +1041,13 @@ func (c *Column) notNullCount() float64 {
 }
 
 // GetIncreaseFactor get the increase factor to adjust the final estimated count when the table is modified.
-func (c *Column) GetIncreaseFactor(totalCount int64) float64 {
+func (c *Column) GetIncreaseFactor(realtimeRowCount int64) float64 {
 	columnCount := c.TotalRowCount()
 	if columnCount == 0 {
 		// avoid dividing by 0
 		return 1.0
 	}
-	return float64(totalCount) / columnCount
+	return float64(realtimeRowCount) / columnCount
 }
 
 // MemoryUsage returns the total memory usage of Histogram and CMSketch in Column.
@@ -1079,7 +1080,7 @@ func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
 	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
 }
 
-func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, encodedVal []byte, tableRowCount int64) (float64, error) {
+func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {
 	if val.IsNull() {
 		return float64(c.NullCount), nil
 	}
@@ -1089,7 +1090,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, en
 			return 0.0, nil
 		}
 		if c.Histogram.NDV > 0 && c.outOfRange(val) {
-			return outOfRangeEQSelectivity(c.Histogram.NDV, tableRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
+			return outOfRangeEQSelectivity(c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 		}
 		if c.CMSketch != nil {
 			count, err := queryValue(sc, c.CMSketch, c.TopN, val)
@@ -1141,7 +1142,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, en
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
-func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range, tableRowCount int64, pkIsHandle bool) (float64, error) {
+func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range, realtimeRowCount int64, pkIsHandle bool) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
 		highVal := *rg.HighVal[0].Clone()
@@ -1173,12 +1174,12 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 					continue
 				}
 				var cnt float64
-				cnt, err = c.equalRowCount(sc, lowVal, lowEncoded, tableRowCount)
+				cnt, err = c.equalRowCount(sc, lowVal, lowEncoded, realtimeRowCount)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
 				// If the current table row count has changed, we should scale the row count accordingly.
-				cnt *= c.GetIncreaseFactor(tableRowCount)
+				cnt *= c.GetIncreaseFactor(realtimeRowCount)
 				rowCount += cnt
 			}
 			continue
@@ -1188,12 +1189,12 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		// case 2: it's a small range
 		if rangeVals != nil {
 			for _, val := range rangeVals {
-				cnt, err := c.equalRowCount(sc, val, lowEncoded, tableRowCount)
+				cnt, err := c.equalRowCount(sc, val, lowEncoded, realtimeRowCount)
 				if err != nil {
 					return 0, err
 				}
 				// If the current table row count has changed, we should scale the row count accordingly.
-				cnt *= c.GetIncreaseFactor(tableRowCount)
+				cnt *= c.GetIncreaseFactor(realtimeRowCount)
 				rowCount += cnt
 			}
 
@@ -1206,7 +1207,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		// Note that, `cnt` does not include null values, we need specially handle cases
 		// where null is the lower bound.
 		if rg.LowExclude && !lowVal.IsNull() {
-			lowCnt, err := c.equalRowCount(sc, lowVal, lowEncoded, tableRowCount)
+			lowCnt, err := c.equalRowCount(sc, lowVal, lowEncoded, realtimeRowCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -1216,7 +1217,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			cnt += float64(c.NullCount)
 		}
 		if !rg.HighExclude {
-			highCnt, err := c.equalRowCount(sc, highVal, highEncoded, tableRowCount)
+			highCnt, err := c.equalRowCount(sc, highVal, highEncoded, realtimeRowCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -1230,11 +1231,11 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		}
 
 		// If the current table row count has changed, we should scale the row count accordingly.
-		cnt *= c.GetIncreaseFactor(tableRowCount)
+		cnt *= c.GetIncreaseFactor(realtimeRowCount)
 
 		// handling the out-of-range part
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
-			increaseCount := tableRowCount - int64(c.TotalRowCount())
+			increaseCount := realtimeRowCount - int64(c.TotalRowCount())
 			if increaseCount < 0 {
 				increaseCount = 0
 			}
@@ -1243,8 +1244,8 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 
 		rowCount += cnt
 	}
-	if rowCount > float64(tableRowCount) {
-		rowCount = float64(tableRowCount)
+	if rowCount > float64(realtimeRowCount) {
+		rowCount = float64(realtimeRowCount)
 	} else if rowCount < 0 {
 		rowCount = 0
 	}
@@ -1293,7 +1294,7 @@ func (idx *Index) MemoryUsage() (sum int64) {
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
 
-func (idx *Index) equalRowCount(b []byte, tableRowCount int64) float64 {
+func (idx *Index) equalRowCount(b []byte, realtimeRowCount int64) float64 {
 	if len(idx.Info.Columns) == 1 {
 		if bytes.Equal(b, nullKeyBytes) {
 			return float64(idx.NullCount)
@@ -1302,7 +1303,7 @@ func (idx *Index) equalRowCount(b []byte, tableRowCount int64) float64 {
 	val := types.NewBytesDatum(b)
 	if idx.StatsVer < Version2 {
 		if idx.NDV > 0 && idx.outOfRange(val) {
-			return outOfRangeEQSelectivity(idx.NDV, tableRowCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
+			return outOfRangeEQSelectivity(idx.NDV, realtimeRowCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
 		}
 		if idx.CMSketch != nil {
 			return float64(idx.QueryBytes(b))
@@ -1334,7 +1335,7 @@ func (idx *Index) QueryBytes(d []byte) uint64 {
 
 // GetRowCount returns the row count of the given ranges.
 // It uses the modifyCount to adjust the influence of modifications on the table.
-func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, indexRanges []*ranger.Range, tableRowCount int64) (float64, error) {
+func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, indexRanges []*ranger.Range, realtimeRowCount int64) (float64, error) {
 	totalCount := float64(0)
 	isSingleCol := len(idx.Info.Columns) == 1
 	for _, indexRange := range indexRanges {
@@ -1358,9 +1359,9 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, inde
 					totalCount += 1
 					continue
 				}
-				count := idx.equalRowCount(lb, tableRowCount)
+				count := idx.equalRowCount(lb, realtimeRowCount)
 				// If the current table row count has changed, we should scale the row count accordingly.
-				count *= idx.GetIncreaseFactor(tableRowCount)
+				count *= idx.GetIncreaseFactor(realtimeRowCount)
 				totalCount += count
 				continue
 			}
@@ -1398,19 +1399,19 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, coll *HistColl, inde
 		}
 
 		// If the current table row count has changed, we should scale the row count accordingly.
-		totalCount *= idx.GetIncreaseFactor(tableRowCount)
+		totalCount *= idx.GetIncreaseFactor(realtimeRowCount)
 
 		// handling the out-of-range part
 		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
-			increaseCount := tableRowCount - int64(idx.TotalRowCount())
+			increaseCount := realtimeRowCount - int64(idx.TotalRowCount())
 			if increaseCount < 0 {
 				increaseCount = 0
 			}
 			totalCount += idx.Histogram.outOfRangeRowCount(&l, &r, increaseCount)
 		}
 	}
-	if totalCount > float64(tableRowCount) {
-		totalCount = float64(tableRowCount)
+	if totalCount > float64(realtimeRowCount) {
+		totalCount = float64(realtimeRowCount)
 	}
 	return totalCount, nil
 }
