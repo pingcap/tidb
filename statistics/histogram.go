@@ -860,15 +860,10 @@ func (hg *Histogram) outOfRangeRowCount(lDatum, rDatum *types.Datum, increaseCou
 	commonPrefix := 0
 	if hg.GetLower(0).Kind() == types.KindBytes || hg.GetLower(0).Kind() == types.KindString {
 		// Calculate the common prefix length among the lower and upper bound of histogram and the range we want to estimate.
-		commonPrefix = commonPrefixLength(hg.GetLower(0).GetBytes(), hg.GetUpper(hg.Len()-1).GetBytes())
-		commonPrefix2 := commonPrefixLength(lDatum.GetBytes(), rDatum.GetBytes())
-		if commonPrefix2 < commonPrefix {
-			commonPrefix = commonPrefix2
-		}
-		commonPrefix3 := commonPrefixLength(hg.GetLower(0).GetBytes(), lDatum.GetBytes())
-		if commonPrefix3 < commonPrefix {
-			commonPrefix = commonPrefix3
-		}
+		commonPrefix = commonPrefixLength(hg.GetLower(0).GetBytes(),
+			hg.GetUpper(hg.Len()-1).GetBytes(),
+			lDatum.GetBytes(),
+			rDatum.GetBytes())
 	}
 
 	// Convert the range we want to estimate to scalar value(float64)

@@ -143,14 +143,22 @@ func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 	return 0.5
 }
 
-func commonPrefixLength(lower, upper []byte) int {
-	minLen := len(lower)
-	if minLen > len(upper) {
-		minLen = len(upper)
+func commonPrefixLength(strs ...[]byte) int {
+	if len(strs) == 0 {
+		return -1
+	}
+	minLen := len(strs[0])
+	for _, str := range strs {
+		if len(str) < minLen {
+			minLen = len(str)
+		}
 	}
 	for i := 0; i < minLen; i++ {
-		if lower[i] != upper[i] {
-			return i
+		a := strs[0][i]
+		for _, str := range strs {
+			if str[i] != a {
+				return i
+			}
 		}
 	}
 	return minLen
