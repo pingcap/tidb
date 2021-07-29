@@ -3976,3 +3976,151 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 	}
 	return string(ctor.Key(str)), false, nil
 }
+
+const (
+	invalidRune rune   = -1
+	invalidByte uint16 = 256
+)
+
+type translateFunctionClass struct {
+	baseFunctionClass
+}
+
+// getFunction sets translate built-in function signature.
+// The syntax of translate in Oracle is 'TRANSLATE(expr, from_string, to_string)'.
+func (c *translateFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	argType := args[0].GetType()
+	bf.tp.Flen = argType.Flen
+	SetBinFlagOrBinStr(argType, bf.tp)
+	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[1].GetType()) || types.IsBinaryStr(args[2].GetType()) {
+		sig := &builtinTranslateBinarySig{bf}
+		return sig, nil
+	}
+	sig := &builtinTranslateUTF8Sig{bf}
+	return sig, nil
+}
+
+type builtinTranslateBinarySig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTranslateBinarySig) Clone() builtinFunc {
+	newSig := &builtinTranslateBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinTranslateSig, corresponding to translate(srcStr, fromStr, toStr)
+// See https://docs.oracle.com/cd/B19306_01/server.102/b14200/functions196.htm
+func (b *builtinTranslateBinarySig) evalString(row chunk.Row) (d string, isNull bool, err error) {
+	var (
+		srcStr, fromStr, toStr     string
+		isFromStrNull, isToStrNull bool
+		tgt                        []byte
+	)
+	srcStr, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, err
+	}
+	fromStr, isFromStrNull, err = b.args[1].EvalString(b.ctx, row)
+	if isFromStrNull || err != nil {
+		return d, isFromStrNull, err
+	}
+	toStr, isToStrNull, err = b.args[2].EvalString(b.ctx, row)
+	if isToStrNull || err != nil {
+		return d, isToStrNull, err
+	}
+	mp := buildTranslateMap4Binary([]byte(fromStr), []byte(toStr))
+	for _, charSrc := range []byte(srcStr) {
+		if charTo, ok := mp[charSrc]; ok {
+			if charTo != invalidByte {
+				tgt = append(tgt, byte(charTo))
+			}
+		} else {
+			tgt = append(tgt, charSrc)
+		}
+	}
+	return string(tgt), false, nil
+}
+
+type builtinTranslateUTF8Sig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTranslateUTF8Sig) Clone() builtinFunc {
+	newSig := &builtinTranslateUTF8Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinTranslateUTF8Sig, corresponding to translate(srcStr, fromStr, toStr)
+// See https://docs.oracle.com/cd/B19306_01/server.102/b14200/functions196.htm
+func (b *builtinTranslateUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, err error) {
+	var (
+		srcStr, fromStr, toStr     string
+		isFromStrNull, isToStrNull bool
+		tgt                        strings.Builder
+	)
+	srcStr, isNull, err = b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return d, isNull, err
+	}
+	fromStr, isFromStrNull, err = b.args[1].EvalString(b.ctx, row)
+	if isFromStrNull || err != nil {
+		return d, isFromStrNull, err
+	}
+	toStr, isToStrNull, err = b.args[2].EvalString(b.ctx, row)
+	if isToStrNull || err != nil {
+		return d, isToStrNull, err
+	}
+	mp := buildTranslateMap4UTF8([]rune(fromStr), []rune(toStr))
+	for _, charSrc := range srcStr {
+		if charTo, ok := mp[charSrc]; ok {
+			if charTo != invalidRune {
+				tgt.WriteRune(charTo)
+			}
+		} else {
+			tgt.WriteRune(charSrc)
+		}
+	}
+	return tgt.String(), false, nil
+}
+
+func buildTranslateMap4UTF8(from, to []rune) map[rune]rune {
+	mp := make(map[rune]rune)
+	lenFrom, lenTo := len(from), len(to)
+	minLen := lenTo
+	if lenFrom < lenTo {
+		minLen = lenFrom
+	}
+	for idx := lenFrom - 1; idx >= lenTo; idx-- {
+		mp[from[idx]] = invalidRune
+	}
+	for idx := minLen - 1; idx >= 0; idx-- {
+		mp[from[idx]] = to[idx]
+	}
+	return mp
+}
+
+func buildTranslateMap4Binary(from, to []byte) map[byte]uint16 {
+	mp := make(map[byte]uint16)
+	lenFrom, lenTo := len(from), len(to)
+	minLen := lenTo
+	if lenFrom < lenTo {
+		minLen = lenFrom
+	}
+	for idx := lenFrom - 1; idx >= lenTo; idx-- {
+		mp[from[idx]] = invalidByte
+	}
+	for idx := minLen - 1; idx >= 0; idx-- {
+		mp[from[idx]] = uint16(to[idx])
+	}
+	return mp
+}
