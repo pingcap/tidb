@@ -539,7 +539,12 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 
 // String implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) String() string {
-	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume)), e.loop)
+	var str strings.Builder
+	str.WriteString("time:")
+	str.WriteString(FormatDuration(time.Duration(e.consume)))
+	str.WriteString(", loops:")
+	str.WriteString(strconv.FormatInt(int64(e.loop), 10))
+	return str.String()
 }
 
 // GetTime get the int64 total time

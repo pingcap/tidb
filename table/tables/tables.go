@@ -285,6 +285,11 @@ func (t *TableCommon) WritableCols() []*table.Column {
 	return writableColumns
 }
 
+// DeletableCols implements table DeletableCols interface.
+func (t *TableCommon) DeletableCols() []*table.Column {
+	return t.Columns
+}
+
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
 	if len(t.FullHiddenColsAndVisibleColumns) > 0 {
@@ -1189,6 +1194,9 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 		return err
 	}
 	for _, v := range t.deletableIndices() {
+		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
+			continue
+		}
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
