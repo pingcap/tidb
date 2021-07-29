@@ -219,7 +219,7 @@ func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSket
 func (t *Table) GetColRowCount() float64 {
 	for _, col := range t.Columns {
 		// need to make sure stats on this column is loaded.
-		if col != nil && !(col.Histogram.NDV > 0 && col.notNullCount() == 0) {
+		if col != nil && !(col.Histogram.NDV > 0 && col.notNullCount() == 0) && col.TotalRowCount() != 0 {
 			return col.TotalRowCount()
 		}
 	}
