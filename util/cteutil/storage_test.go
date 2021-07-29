@@ -14,17 +14,18 @@
 package cteutil
 
 import (
-	"github.com/stretchr/testify/require"
-	"reflect"
 	"strconv"
 	"testing"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStorageBasic(t *testing.T) {
+	t.Parallel()
+
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 1
 	storage := NewStorageRowContainer(fields, chkSize)
@@ -32,7 +33,7 @@ func TestStorageBasic(t *testing.T) {
 
 	// Close before open.
 	err := storage.DerefAndClose()
-	require.NotNil(t, err)
+	require.Error(t, err)
 
 	err = storage.OpenAndRef()
 	require.NoError(t, err)
@@ -41,7 +42,7 @@ func TestStorageBasic(t *testing.T) {
 	require.NoError(t, err)
 
 	err = storage.DerefAndClose()
-	require.NotNil(t, err)
+	require.Error(t, err)
 
 	// Open twice.
 	err = storage.OpenAndRef()
@@ -53,10 +54,12 @@ func TestStorageBasic(t *testing.T) {
 	err = storage.DerefAndClose()
 	require.NoError(t, err)
 	err = storage.DerefAndClose()
-	require.NotNil(t, err)
+	require.Error(t, err)
 }
 
 func TestOpenAndClose(t *testing.T) {
+	t.Parallel()
+
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 1
 	storage := NewStorageRowContainer(fields, chkSize)
@@ -74,10 +77,12 @@ func TestOpenAndClose(t *testing.T) {
 	require.NoError(t, err)
 
 	err = storage.DerefAndClose()
-	require.NotNil(t, err)
+	require.Error(t, err)
 }
 
 func TestAddAndGetChunk(t *testing.T) {
+	t.Parallel()
+
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
 
@@ -89,7 +94,7 @@ func TestAddAndGetChunk(t *testing.T) {
 	}
 
 	err := storage.Add(inChk)
-	require.NotNil(t, err)
+	require.Error(t, err)
 
 	err = storage.OpenAndRef()
 	require.NoError(t, err)
@@ -103,10 +108,12 @@ func TestAddAndGetChunk(t *testing.T) {
 	in64s := inChk.Column(0).Int64s()
 	out64s := outChk.Column(0).Int64s()
 
-	require.True(t, reflect.DeepEqual(in64s, out64s))
+	require.Equal(t, in64s, out64s)
 }
 
 func TestSpillToDisk(t *testing.T) {
+	t.Parallel()
+
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
 	storage := NewStorageRowContainer(fields, chkSize)
@@ -134,7 +141,7 @@ func TestSpillToDisk(t *testing.T) {
 
 	in64s := inChk.Column(0).Int64s()
 	out64s := outChk.Column(0).Int64s()
-	require.True(t, reflect.DeepEqual(in64s, out64s))
+	require.Equal(t, in64s, out64s)
 
 	require.Greater(t, memTracker.BytesConsumed(), int64(0))
 	require.Greater(t, memTracker.MaxConsumed(), int64(0))
@@ -153,15 +160,17 @@ func TestSpillToDisk(t *testing.T) {
 	outChk, err = storage.GetChunk(0)
 	require.NoError(t, err)
 	out64s = outChk.Column(0).Int64s()
-	require.True(t, reflect.DeepEqual(in64s, out64s))
+	require.Equal(t, in64s, out64s)
 
 	outChk, err = storage.GetChunk(1)
 	require.NoError(t, err)
 	out64s = outChk.Column(0).Int64s()
-	require.True(t, reflect.DeepEqual(in64s, out64s))
+	require.Equal(t, in64s, out64s)
 }
 
 func TestReopen(t *testing.T) {
+	t.Parallel()
+
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
 	storage := NewStorageRowContainer(fields, chkSize)
@@ -187,7 +196,7 @@ func TestReopen(t *testing.T) {
 	require.NoError(t, err)
 	in64s := inChk.Column(0).Int64s()
 	out64s := outChk.Column(0).Int64s()
-	require.True(t, reflect.DeepEqual(in64s, out64s))
+	require.Equal(t, in64s, out64s)
 	// Reopen multiple times.
 	for i := 0; i < 100; i++ {
 		err = storage.Reopen()
@@ -201,10 +210,12 @@ func TestReopen(t *testing.T) {
 	require.NoError(t, err)
 	in64s = inChk.Column(0).Int64s()
 	out64s = outChk.Column(0).Int64s()
-	require.True(t, reflect.DeepEqual(in64s, out64s))
+	require.Equal(t, in64s, out64s)
 }
 
 func TestSwapData(t *testing.T) {
+	t.Parallel()
+
 	tp1 := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
 	storage1 := NewStorageRowContainer(tp1, chkSize)
@@ -248,7 +259,6 @@ func TestSwapData(t *testing.T) {
 	}
 	out2 := outChk2.Column(0).Int64s()
 
-	require.True(t, reflect.DeepEqual(in1, out2))
-	require.True(t, reflect.DeepEqual(in2, out1))
-
+	require.Equal(t, in1, out2)
+	require.Equal(t, in2, out1)
 }
