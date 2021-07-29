@@ -316,7 +316,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			singleScanIdxs = append(singleScanIdxs, path)
 		}
 	}
-	if len(uniqueIdxsWithDoubleScan) > 0 {
+	if selected == nil && len(uniqueIdxsWithDoubleScan) > 0 {
 		// TODO: Move accessCondsColSet from candidatePath to AccessPath so that we can use it both here and skyline pruning.
 		uniqueIdxColumnSets := make([]*intsets.Sparse, 0, len(uniqueIdxsWithDoubleScan))
 		for _, uniqueIdx := range uniqueIdxsWithDoubleScan {
@@ -347,12 +347,12 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		}
 		// `refineBest` may not always be better than `uniqueBest`.
 		// ```
-		// create table t(int a, int b, int c, int d, unique index idx_a(a), unique index idx_b_c(b, c), unique index idx_b_c_a_d(b, c, a, d));
+		// create table t(a int, b int, c int, d int, unique index idx_a(a), unique index idx_b_c(b, c), unique index idx_b_c_a_d(b, c, a, d));
 		// select a, b, c from t where a = 1 and b = 2 and c in (1, 2, 3, 4, 5);
 		// ```
 		// In the case, `refinedBest` is `idx_b_c_a_d` and `uniqueBest` is `a`. `idx_b_c_a_d` needs to access five points while `idx_a`
 		// only needs one point access and one table access.
-		// Hence we should compare `2 * len(uniqueBest.Ranges)` and `len(refinedBest.Ranges)` to select the better one.
+		// Hence we should compare `len(refinedBest.Ranges)` and `2*len(uniqueBest.Ranges)` to select the better one.
 		if refinedBest != nil && (uniqueBest == nil || len(refinedBest.Ranges) < 2*len(uniqueBest.Ranges)) {
 			selected = refinedBest
 		} else {
@@ -372,7 +372,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			} else {
 				tableName = ds.TableAsName.O
 			}
-			if !selected.IsTablePath() {
+			if selected.IsTablePath() {
 				pathName = "primary key of " + tableName
 			} else {
 				pathName = "index " + selected.Index.Name.O + " of " + tableName

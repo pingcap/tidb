@@ -1679,5 +1679,48 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestHeuristicIndexSelection",
+    "Cases": [
+      {
+        "SQL": "select f, g from t1 where f = 2 and g in (3, 4, 5)",
+        "Plan": [
+          "Batch_Point_Get_5 3.00 root table:t1, index:f_g(f, g) keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 index f_g of t1 is selected by heuristics"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where c = 1 and (d = 2 or d = 3) and e in (4, 5)",
+        "Plan": [
+          "Batch_Point_Get_5 4.00 root table:t1, index:c_d_e(c, d, e) keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 index c_d_e of t1 is selected by heuristics"
+        ]
+      },
+      {
+        "SQL": "select f, g from t1 where f = 2 and g > 3",
+        "Plan": [
+          "IndexReader_6 33.33 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 33.33 cop[tikv] table:t1, index:f_g(f, g) range:(2 3,2 +inf], keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Note 1105 index f_g of t1 is selected by heuristics"
+        ]
+      },
+      {
+        "SQL": "select a, b, c from t2 where a = 1 and b = 2 and c in (1, 2, 3, 4, 5)",
+        "Plan": [
+          "Selection_6 0.01 root  eq(test.t2.b, 2), in(test.t2.c, 1, 2, 3, 4, 5)",
+          "└─Point_Get_5 1.00 root table:t2, index:idx_a(a) "
+        ],
+        "Warnings": [
+          "Note 1105 index idx_a of t2 is selected by heuristics"
+        ]
+      }
+    ]
   }
 ]
