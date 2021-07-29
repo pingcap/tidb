@@ -425,35 +425,37 @@ func (hg *Histogram) ToString(idxCols int) string {
 }
 
 // equalRowCount estimates the row count where the column equals to value.
-func (hg *Histogram) equalRowCount(value types.Datum, hasBucketNDV bool) float64 {
+// matched: return true if this returned row count is from Bucket.Repeat or bucket NDV, which is more accurate than if not.
+func (hg *Histogram) equalRowCount(value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
 	index, match := hg.Bounds.LowerBound(0, &value)
 	// Since we store the lower and upper bound together, if the index is an odd number, then it points to a upper bound.
 	if index%2 == 1 {
 		if match {
-			return float64(hg.Buckets[index/2].Repeat)
+			return float64(hg.Buckets[index/2].Repeat), true
 		}
 		if hasBucketNDV && hg.Buckets[index/2].NDV > 1 {
-			return float64(hg.bucketCount(index/2)-hg.Buckets[index/2].Repeat) / float64(hg.Buckets[index/2].NDV-1)
+			return float64(hg.bucketCount(index/2)-hg.Buckets[index/2].Repeat) / float64(hg.Buckets[index/2].NDV-1), true
 		}
-		return hg.notNullCount() / float64(hg.NDV)
+		return hg.notNullCount() / float64(hg.NDV), false
 	}
 	if match {
 		cmp := chunk.GetCompareFunc(hg.Tp)
 		if cmp(hg.Bounds.GetRow(index), 0, hg.Bounds.GetRow(index+1), 0) == 0 {
-			return float64(hg.Buckets[index/2].Repeat)
+			return float64(hg.Buckets[index/2].Repeat), true
 		}
 		if hasBucketNDV && hg.Buckets[index/2].NDV > 1 {
-			return float64(hg.bucketCount(index/2)-hg.Buckets[index/2].Repeat) / float64(hg.Buckets[index/2].NDV-1)
+			return float64(hg.bucketCount(index/2)-hg.Buckets[index/2].Repeat) / float64(hg.Buckets[index/2].NDV-1), true
 		}
-		return hg.notNullCount() / float64(hg.NDV)
+		return hg.notNullCount() / float64(hg.NDV), false
 	}
-	return 0
+	return 0, false
 }
 
 // greaterRowCount estimates the row count where the column greater than value.
 // It's deprecated. Only used for test.
 func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
-	gtCount := hg.notNullCount() - hg.lessRowCount(value) - hg.equalRowCount(value, false)
+	histRowCount, _ := hg.equalRowCount(value, false)
+	gtCount := hg.notNullCount() - hg.lessRowCount(value) - histRowCount
 	return math.Max(0, gtCount)
 }
 
@@ -1091,7 +1093,8 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, en
 			count, err := queryValue(sc, c.CMSketch, c.TopN, val)
 			return float64(count), errors.Trace(err)
 		}
-		return c.Histogram.equalRowCount(val, false), nil
+		histRowCount, _ := c.Histogram.equalRowCount(val, false)
+		return histRowCount, nil
 	}
 
 	// Stats version == 2
@@ -1106,34 +1109,13 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, en
 			return float64(rowcount), nil
 		}
 	}
-	// 2. try to find this value in bucket.repeats(the last value in every bucket)
-	index, match := c.Histogram.Bounds.LowerBound(0, &val)
-	if index%2 == 1 && match {
-		return float64(c.Histogram.Buckets[index/2].Repeat), nil
-	}
-	if match {
-		cmp := chunk.GetCompareFunc(c.Histogram.Tp)
-		if cmp(c.Histogram.Bounds.GetRow(index), 0, c.Histogram.Bounds.GetRow(index+1), 0) == 0 {
-			return float64(c.Histogram.Buckets[index/2].Repeat), nil
-		}
+	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
+	histCnt, matched := c.Histogram.equalRowCount(val, true)
+	if matched {
+		return histCnt, nil
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
-	cnt := c.Histogram.notNullCount()
-	for _, bkt := range c.Histogram.Buckets {
-		if cnt <= float64(bkt.Repeat) {
-			return 0, nil
-		}
-		cnt -= float64(bkt.Repeat)
-	}
-	topNLen := int64(0)
-	if c.TopN != nil {
-		topNLen = int64(len(c.TopN.TopN))
-	}
-	ndv := c.Histogram.NDV - topNLen - int64(len(c.Histogram.Buckets))
-	if ndv <= 0 {
-		return 0, nil
-	}
-	return cnt / float64(ndv), nil
+	return c.Histogram.notNullCount() / float64(c.Histogram.NDV-int64(len(c.TopN.TopN))), nil
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
@@ -1307,20 +1289,22 @@ func (idx *Index) equalRowCount(b []byte, realtimeRowCount int64) float64 {
 		if idx.CMSketch != nil {
 			return float64(idx.QueryBytes(b))
 		}
-		return idx.Histogram.equalRowCount(val, false)
+		histRowCount, _ := idx.Histogram.equalRowCount(val, false)
+		return histRowCount
 	}
 	// stats version == 2
-	// query the top-n first.
+	// 1. try to find this value in TopN
 	count, found := idx.TopN.QueryTopN(b)
 	if found {
 		return float64(count)
 	}
-	histCnt := idx.Histogram.equalRowCount(val, true)
-	if histCnt > 0 {
+	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
+	histCnt, matched := idx.Histogram.equalRowCount(val, true)
+	if matched {
 		return histCnt
 	}
-	// the out-of-range case:
-	return idx.notNullCount() / float64(idx.NDV)
+	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
+	return idx.Histogram.notNullCount() / float64(idx.NDV-int64(len(idx.TopN.TopN)))
 }
 
 // QueryBytes is used to query the count of specified bytes.
@@ -2126,7 +2110,8 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	for _, bucket := range globalBuckets {
 		var repeat float64
 		for _, hist := range hists {
-			repeat += hist.equalRowCount(*bucket.upper, isIndex) // only hists of indexes have bucket.NDV
+			histRowCount, _ := hist.equalRowCount(*bucket.upper, isIndex)
+			repeat += histRowCount // only hists of indexes have bucket.NDV
 		}
 		if int64(repeat) > bucket.Repeat {
 			bucket.Repeat = int64(repeat)
