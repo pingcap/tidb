@@ -1001,11 +1001,11 @@ func (b *builtinQuarterSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 		}
 		date := ds[i]
 		if date.IsZero() {
-			isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
+			_, err := handleInvalidZeroTime(b.ctx, ds[i])
 			if err != nil {
 				return err
 			}
-			result.SetNull(i, isNull)
+			result.SetNull(i, true)
 			continue
 		}
 		i64s[i] = int64((date.Month() + 2) / 3)
