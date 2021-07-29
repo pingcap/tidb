@@ -14,78 +14,70 @@
 package cteutil
 
 import (
+	"github.com/stretchr/testify/require"
 	"reflect"
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-func TestT(t *testing.T) {
-	check.TestingT(t)
-}
-
-var _ = check.Suite(&StorageRCTestSuite{})
-
-type StorageRCTestSuite struct{}
-
-func (test *StorageRCTestSuite) TestStorageBasic(c *check.C) {
+func TestStorageBasic(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 1
 	storage := NewStorageRowContainer(fields, chkSize)
-	c.Assert(storage, check.NotNil)
+	require.NotNil(t, storage)
 
 	// Close before open.
 	err := storage.DerefAndClose()
-	c.Assert(err, check.NotNil)
+	require.NotNil(t, err)
 
 	err = storage.OpenAndRef()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
 	err = storage.DerefAndClose()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
 	err = storage.DerefAndClose()
-	c.Assert(err, check.NotNil)
+	require.NotNil(t, err)
 
 	// Open twice.
 	err = storage.OpenAndRef()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	err = storage.OpenAndRef()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	err = storage.DerefAndClose()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	err = storage.DerefAndClose()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	err = storage.DerefAndClose()
-	c.Assert(err, check.NotNil)
+	require.NotNil(t, err)
 }
 
-func (test *StorageRCTestSuite) TestOpenAndClose(c *check.C) {
+func TestOpenAndClose(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 1
 	storage := NewStorageRowContainer(fields, chkSize)
 
 	for i := 0; i < 10; i++ {
 		err := storage.OpenAndRef()
-		c.Assert(err, check.IsNil)
+		require.NoError(t, err)
 	}
 
 	for i := 0; i < 9; i++ {
 		err := storage.DerefAndClose()
-		c.Assert(err, check.IsNil)
+		require.NoError(t, err)
 	}
 	err := storage.DerefAndClose()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
 	err = storage.DerefAndClose()
-	c.Assert(err, check.NotNil)
+	require.NotNil(t, err)
 }
 
-func (test *StorageRCTestSuite) TestAddAndGetChunk(c *check.C) {
+func TestAddAndGetChunk(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
 
@@ -97,24 +89,24 @@ func (test *StorageRCTestSuite) TestAddAndGetChunk(c *check.C) {
 	}
 
 	err := storage.Add(inChk)
-	c.Assert(err, check.NotNil)
+	require.NotNil(t, err)
 
 	err = storage.OpenAndRef()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
 	err = storage.Add(inChk)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
 	outChk, err1 := storage.GetChunk(0)
-	c.Assert(err1, check.IsNil)
+	require.NoError(t, err1)
 
 	in64s := inChk.Column(0).Int64s()
 	out64s := outChk.Column(0).Int64s()
 
-	c.Assert(reflect.DeepEqual(in64s, out64s), check.IsTrue)
+	require.True(t, reflect.DeepEqual(in64s, out64s))
 }
 
-func (test *StorageRCTestSuite) TestSpillToDisk(c *check.C) {
+func TestSpillToDisk(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
 	storage := NewStorageRowContainer(fields, chkSize)
@@ -126,7 +118,7 @@ func (test *StorageRCTestSuite) TestSpillToDisk(c *check.C) {
 	}
 
 	err := storage.OpenAndRef()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
 	memTracker := storage.GetMemTracker()
 	memTracker.SetBytesLimit(inChk.MemoryUsage() + 1)
@@ -136,101 +128,100 @@ func (test *StorageRCTestSuite) TestSpillToDisk(c *check.C) {
 
 	// All data is in memory.
 	err = storage.Add(inChk)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	outChk, err1 := storage.GetChunk(0)
-	c.Assert(err1, check.IsNil)
+	require.NoError(t, err1)
+
 	in64s := inChk.Column(0).Int64s()
 	out64s := outChk.Column(0).Int64s()
-	c.Assert(reflect.DeepEqual(in64s, out64s), check.IsTrue)
+	require.True(t, reflect.DeepEqual(in64s, out64s))
 
-	c.Assert(memTracker.BytesConsumed(), check.Greater, int64(0))
-	c.Assert(memTracker.MaxConsumed(), check.Greater, int64(0))
-	c.Assert(diskTracker.BytesConsumed(), check.Equals, int64(0))
-	c.Assert(diskTracker.MaxConsumed(), check.Equals, int64(0))
+	require.Greater(t, memTracker.BytesConsumed(), int64(0))
+	require.Greater(t, memTracker.MaxConsumed(), int64(0))
+	require.Equal(t, int64(0), diskTracker.BytesConsumed())
+	require.Equal(t, int64(0), diskTracker.MaxConsumed())
 
 	// Add again, and will trigger spill to disk.
 	err = storage.Add(inChk)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	action.WaitForTest()
-	c.Assert(memTracker.BytesConsumed(), check.Equals, int64(0))
-	c.Assert(memTracker.MaxConsumed(), check.Greater, int64(0))
-	c.Assert(diskTracker.BytesConsumed(), check.Greater, int64(0))
-	c.Assert(diskTracker.MaxConsumed(), check.Greater, int64(0))
+	require.Equal(t, int64(0), memTracker.BytesConsumed())
+	require.Greater(t, memTracker.MaxConsumed(), int64(0))
+	require.Greater(t, diskTracker.BytesConsumed(), int64(0))
+	require.Greater(t, diskTracker.MaxConsumed(), int64(0))
 
 	outChk, err = storage.GetChunk(0)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	out64s = outChk.Column(0).Int64s()
-	c.Assert(reflect.DeepEqual(in64s, out64s), check.IsTrue)
+	require.True(t, reflect.DeepEqual(in64s, out64s))
 
 	outChk, err = storage.GetChunk(1)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	out64s = outChk.Column(0).Int64s()
-	c.Assert(reflect.DeepEqual(in64s, out64s), check.IsTrue)
+	require.True(t, reflect.DeepEqual(in64s, out64s))
 }
 
-func (test *StorageRCTestSuite) TestReopen(c *check.C) {
+func TestReopen(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
 	storage := NewStorageRowContainer(fields, chkSize)
 	err := storage.OpenAndRef()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
 	inChk := chunk.NewChunkWithCapacity(fields, chkSize)
 	for i := 0; i < chkSize; i++ {
 		inChk.AppendInt64(0, int64(i))
 	}
 	err = storage.Add(inChk)
-	c.Assert(err, check.IsNil)
-	c.Assert(storage.NumChunks(), check.Equals, 1)
-
+	require.NoError(t, err)
+	require.Equal(t, 1, storage.NumChunks())
 	err = storage.Reopen()
-	c.Assert(err, check.IsNil)
-	c.Assert(storage.NumChunks(), check.Equals, 0)
+	require.NoError(t, err)
+	require.Equal(t, 0, storage.NumChunks())
 
 	err = storage.Add(inChk)
-	c.Assert(err, check.IsNil)
-	c.Assert(storage.NumChunks(), check.Equals, 1)
+	require.NoError(t, err)
+	require.Equal(t, 1, storage.NumChunks())
 
 	outChk, err := storage.GetChunk(0)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	in64s := inChk.Column(0).Int64s()
 	out64s := outChk.Column(0).Int64s()
-	c.Assert(reflect.DeepEqual(in64s, out64s), check.IsTrue)
-
+	require.True(t, reflect.DeepEqual(in64s, out64s))
 	// Reopen multiple times.
 	for i := 0; i < 100; i++ {
 		err = storage.Reopen()
-		c.Assert(err, check.IsNil)
+		require.NoError(t, err)
 	}
 	err = storage.Add(inChk)
-	c.Assert(err, check.IsNil)
-	c.Assert(storage.NumChunks(), check.Equals, 1)
+	require.NoError(t, err)
+	require.Equal(t, 1, storage.NumChunks())
 
 	outChk, err = storage.GetChunk(0)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	in64s = inChk.Column(0).Int64s()
 	out64s = outChk.Column(0).Int64s()
-	c.Assert(reflect.DeepEqual(in64s, out64s), check.IsTrue)
+	require.True(t, reflect.DeepEqual(in64s, out64s))
 }
 
-func (test *StorageRCTestSuite) TestSwapData(c *check.C) {
+func TestSwapData(t *testing.T) {
 	tp1 := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
 	storage1 := NewStorageRowContainer(tp1, chkSize)
 	err := storage1.OpenAndRef()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	inChk1 := chunk.NewChunkWithCapacity(tp1, chkSize)
 	for i := 0; i < chkSize; i++ {
 		inChk1.AppendInt64(0, int64(i))
 	}
 	in1 := inChk1.Column(0).Int64s()
 	err = storage1.Add(inChk1)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
 	tp2 := []*types.FieldType{types.NewFieldType(mysql.TypeVarString)}
 	storage2 := NewStorageRowContainer(tp2, chkSize)
 	err = storage2.OpenAndRef()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
 	inChk2 := chunk.NewChunkWithCapacity(tp2, chkSize)
 	for i := 0; i < chkSize; i++ {
@@ -241,15 +232,15 @@ func (test *StorageRCTestSuite) TestSwapData(c *check.C) {
 		in2 = append(in2, inChk2.Column(0).GetString(i))
 	}
 	err = storage2.Add(inChk2)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
 	err = storage1.SwapData(storage2)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
 	outChk1, err := storage1.GetChunk(0)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	outChk2, err := storage2.GetChunk(0)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
 	var out1 []string
 	for i := 0; i < outChk1.NumRows(); i++ {
@@ -257,6 +248,7 @@ func (test *StorageRCTestSuite) TestSwapData(c *check.C) {
 	}
 	out2 := outChk2.Column(0).Int64s()
 
-	c.Assert(reflect.DeepEqual(in1, out2), check.IsTrue)
-	c.Assert(reflect.DeepEqual(in2, out1), check.IsTrue)
+	require.True(t, reflect.DeepEqual(in1, out2))
+	require.True(t, reflect.DeepEqual(in2, out1))
+
 }
