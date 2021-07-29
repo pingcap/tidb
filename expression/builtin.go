@@ -128,6 +128,8 @@ func CheckIllegalMixCollation(funcName string, args []Expression, evalType types
 }
 
 func illegalMixCollationErr(funcName string, args []Expression) error {
+	funcName = GetDisplayName(funcName)
+
 	switch len(args) {
 	case 2:
 		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], funcName)
@@ -582,6 +584,14 @@ type functionClass interface {
 	verifyArgsByCount(l int) error
 }
 
+// functionClassWithName is the interface for a function with a display name extended from functionClass
+type functionClassWithName interface {
+	functionClass
+
+	// getDisplayName gets the display name of a function
+	getDisplayName() string
+}
+
 // funcs holds all registered builtin functions. When new function is added,
 // check expression/function_traits.go to see if it should be appended to
 // any set there.
@@ -900,6 +910,17 @@ var funcs = map[string]functionClass{
 func IsFunctionSupported(name string) bool {
 	_, ok := funcs[name]
 	return ok
+}
+
+// GetDisplayName translate a function name to its display name
+func GetDisplayName(name string) string {
+	if funClass, ok := funcs[name]; ok {
+		if funClass, ok := funClass.(functionClassWithName); ok {
+			return funClass.getDisplayName()
+		}
+	}
+
+	return name
 }
 
 // GetBuiltinList returns a list of builtin functions

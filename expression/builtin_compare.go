@@ -1102,6 +1102,12 @@ type compareFunctionClass struct {
 	op opcode.Op
 }
 
+func (c *compareFunctionClass) getDisplayName() string {
+	var nameBuilder strings.Builder
+	c.op.Format(&nameBuilder)
+	return nameBuilder.String()
+}
+
 // getBaseCmpType gets the EvalType that the two args will be treated as when comparing.
 func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalType {
 	if lft != nil && rft != nil && (lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified) {
