@@ -1,16 +1,19 @@
 # Proposal: Remove hidden sysvars
 
 - Author(s): [morgo](http://github.com/morgo)
-- Discussion PR: https://github.com/pingcap/tidb/pull/XXXX
-- Tracking Issue: https://github.com/pingcap/tidb/issues/XXXX
 
 ## Table of Contents
 
 * [Introduction](#introduction)
 * [Motivation or Background](#motivation-or-background)
 * [Detailed Design](#detailed-design)
+  * [#1 “Stable” but intended to be deprecated or advanced configuration variables](#1-%22stable%22-but-intended-to-be-deprecated-or-advanced-configuration-variables)
+  * [#2 “Experimental” feature flags](#2-%22experimental%22-feature-flags)
+  * [#3 “In Development” feature flags](#3-%22in-development%22-feature-flags)
+  * [#4 Non-boolean Experimental Options](#4-non-boolean-experimental-options)
 * [Test Design](#test-design)
 * [Implementation Plan](#implementation-plan)
+  * [Appendix #1 - tidb_experimental_feature_switch documentation](#appendix-1---tidb_experimental_feature_switch-documentation)
 * [Impacts & Risks](#impacts--risks)
 * [Investigation & Alternatives](#investigation--alternatives)
 * [Unresolved Questions](#unresolved-questions)
@@ -46,8 +49,8 @@ There are currently ~20 hidden system variables:
 | tidb_enable_stable_result_mode | Make resultset sorted(deterministic order) by default | #1 Stable |
 | tidb_track_aggregate_memory_usage | Track memory usage of aggregate executor | #1 Stable |
 | tidb_enable_top_sql | Top SQL (Sprint3) 总设计文档  | #2 Experimental |
-| tidb_top_sql_agent_address | Parameters for Top SQL |  |
-| tidb_top_sql_precision_seconds | "" |#4 Non-boolean Experimental  |
+| tidb_top_sql_agent_address | Parameters for Top SQL | #4 Non-boolean Experimental |
+| tidb_top_sql_precision_seconds | "" | #4 Non-boolean Experimental  |
 | tidb_top_sql_max_statement_count | "" | #4 Non-boolean Experimental |
 | tidb_top_sql_max_collect | "" | #4 Non-boolean Experimental |
 | tidb_top_sql_report_interval_seconds | "" | #4 Non-boolean Experimental |
@@ -67,7 +70,7 @@ Add to this the fact that async commit is not guaranteed to be bug free: there w
 
 These variables are also in the documentation, but hidden in the server. This makes me (as a DBA) believe that they don’t apply to my version. My MySQL experience works against me, because I expect that every variable is in SHOW VARIABLES.
 
-Recommended Solution:
+**Recommended Solution:**
 
 * Change all of these variables to be visible. They impact behavior, so it should be clear to a user when comparing clusters.
 * We can add functionality to better handle deprecation in the sysvar system when it is intended to be removed.
@@ -81,10 +84,10 @@ The rationale for making them hidden was to not pollute the variable system when
 
 However, the problem is that the number of experiments in TiDB is currently out of control. It is very difficult to know which flags specifically relate to an experiment and quickly ensure for production that all experiments are disabled. Or for development environments, you may choose to have all experiments enabled.
 
-Recommended solution:
+**Recommended solution:**
 
-* These variables should be migrated to use tidb_experimental_feature_switch. This is modeled on how optimizer switches work in MySQL, and better caters for options that appear/disappear quickly.
-* The documentation for tidb_experimental_feature_switch on system-variables can include a one-line description for each of the experiments (See Appendix #1). This is less “heavy” than documenting these as separate system variables, and there is no requirement to include docs on which version an experiment appeared or disappeared.
+* These variables should be migrated to use `tidb_experimental_feature_switch`. This is modeled on how optimizer switches work in MySQL, and better caters for options that appear/disappear quickly.
+* The documentation for `tidb_experimental_feature_switch` on system-variables can include a one-line description for each of the experiments (See Appendix #1). This is less “heavy” than documenting these as separate system variables, and there is no requirement to include docs on which version an experiment appeared or disappeared.
 
 ### #3 “In Development” feature flags
 
@@ -92,29 +95,29 @@ These are a subcategory of “experimental” feature flags, with the difference
 
 Because refactoring code itself can introduce bugs, if the code for these features exists in the server, in the interest of transparency it should be disclosed to the DBA, even if it is highly recommended that the user never use this feature.
 
-Recommended solution:
+**Recommended solution:**
 
-* These variables should be migrated to use tidb_experimental_feature_switch.
-* The sysvar documentation for tidb_experimental_feature_switch will not document these unsupported flags (See Appendix #1) but instead say:
+* These variables should be migrated to use `tidb_experimental_feature_switch`.
+* The sysvar documentation for `tidb_experimental_feature_switch` will not document these unsupported flags (See Appendix #1) but instead say:
    > Your TiDB server installation may include additional experimental features not in this list. Enabling them is not recommended and could result in data loss.
 
 ### #4 Non-boolean Experimental Options
 
 This category of variables is different from Experimental/In Development feature flags because the tidb_experimental_feature_switch only handles boolean switches.
 
-These variables almost always depend on an experimental feature flag (which will move to tidb_experimental_feature_switch). If they don’t, one might need to be created.
+These variables almost always depend on an experimental feature flag (which will move to `tidb_experimental_feature_switch`). If they don’t, one might need to be created.
 
-Recommended Solution:
+**Recommended Solution:**
 
 * Because the system variable system supports dynamic registration/unregistration, these variables should be removed when the experiment is disabled, and added when the experiment is not enabled. 
 * In some cases these variables might have been miscategorized and are instead “Stable” but intended to be deprecated or advanced configuration variables (category #1).
 
 ### Future Handling
 
-Internally, we need an explicit guidebook(Sysvar Usage Proposal will be a good choice) for how the variables are added and removed with the evolution of TiDB:
+Internally, we need an explicit guidebook for how the variables are added and removed with the evolution of TiDB:
 
-When and how a new variable is added. The cons/pros of adding a variable compared with a configuration item.
-When and how a variable will be removed.
+* When and how a new variable is added. The cons/pros of adding a variable compared with a configuration item.
+* When and how a variable will be removed.
 
 Once it is decided, it’s a good idea to publish it the design docs.
 
@@ -125,7 +128,6 @@ There are currently 75 undocumented system variables (not including noop sysvars
 It is expected that all system variables will be documented, with the exception of category #3 which in the recommendation is explicitly “documented as not documented”.
 
 ## Implementation Plan
-
 
 #### Appendix #1 - tidb_experimental_feature_switch documentation
 
