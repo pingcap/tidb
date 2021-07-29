@@ -30,6 +30,7 @@ import (
 )
 
 var _ = Suite(&testIntegrationSuite{})
+var _ = SerialSuites(&testSerialIntegrationSuite{})
 
 type testIntegrationSuite struct {
 	store    kv.Storage
@@ -51,6 +52,25 @@ func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	c.Assert(s.store.Close(), IsNil)
 	testleak.AfterTest(c)()
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
+}
+
+type testSerialIntegrationSuite struct {
+	store kv.Storage
+	do    *domain.Domain
+}
+
+func (s *testSerialIntegrationSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	// Add the hook here to avoid data race.
+	var err error
+	s.store, s.do, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSerialIntegrationSuite) TearDownSuite(c *C) {
+	s.do.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
 }
 
 func (s *testIntegrationSuite) TestChangeVerTo2Behavior(c *C) {
@@ -410,7 +430,7 @@ func (s *testIntegrationSuite) TestHistogramsWithSameTxnTS(c *C) {
 	c.Assert(v3, Equals, v2)
 }
 
-func (s *testIntegrationSuite) TestOutdatedStatsCheck(c *C) {
+func (s *testSerialIntegrationSuite) TestOutdatedStatsCheck(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -422,6 +442,8 @@ func (s *testIntegrationSuite) TestOutdatedStatsCheck(c *C) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 
 	h := s.do.StatsHandle()
 	tk.MustExec("use test")
@@ -436,21 +458,25 @@ func (s *testIntegrationSuite) TestOutdatedStatsCheck(c *C) {
 	tk.MustExec("explain select * from t where a = 1")
 	c.Assert(h.LoadNeededHistograms(), IsNil)
 
-	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 15)) // 35 rows
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	c.Assert(tk.HasPseudoStats("select * from t where a = 1"), IsTrue)
-	c.Assert(h.HandleAutoAnalyze(is), IsTrue)
-
-	tk.MustExec("delete from t limit 16") // 19 rows
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 13)) // 34 rows
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	c.Assert(tk.HasPseudoStats("select * from t where a = 1"), IsFalse)
-	c.Assert(h.HandleAutoAnalyze(is), IsFalse)
 
-	tk.MustExec("delete from t limit 10") // 9 rows
+	tk.MustExec("insert into t values (1)") // 35 rows
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	c.Assert(tk.HasPseudoStats("select * from t where a = 1"), IsTrue)
-	c.Assert(h.HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
+
+	tk.MustExec("analyze table t")
+
+	tk.MustExec("delete from t limit 24") // 11 rows
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	c.Assert(tk.HasPseudoStats("select * from t where a = 1"), IsFalse)
+
+	tk.MustExec("delete from t limit 1") // 10 rows
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	c.Assert(tk.HasPseudoStats("select * from t where a = 1"), IsTrue)
 }
