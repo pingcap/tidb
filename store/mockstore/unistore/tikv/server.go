@@ -981,6 +981,11 @@ func (svr *Server) GetLockWaitInfo(context.Context, *kvrpcpb.GetLockWaitInfoRequ
 	panic("unimplemented")
 }
 
+// RawChecksum implements implements the tikvpb.TikvServer interface.
+func (svr *Server) RawChecksum(context.Context, *kvrpcpb.RawChecksumRequest) (*kvrpcpb.RawChecksumResponse, error) {
+	panic("unimplemented")
+}
+
 func convertToKeyError(err error) *kvrpcpb.KeyError {
 	if err == nil {
 		return nil

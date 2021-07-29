@@ -1130,7 +1130,7 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	const builtinFuncNum = 271
+	const builtinFuncNum = 272
 	c.Assert(builtinFuncNum, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
 	c.Assert("yearweek", Equals, rows[builtinFuncNum-1][0].(string))
