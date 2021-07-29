@@ -103,9 +103,9 @@ type Config struct {
 		CAPath       string
 		CertPath     string
 		KeyPath      string
-		SSLCABytes   []byte
-		SSLCertBytes []byte
-		SSLKEYBytes  []byte
+		SSLCABytes   []byte `json:"-"`
+		SSLCertBytes []byte `json:"-"`
+		SSLKEYBytes  []byte `json:"-"`
 	}
 
 	LogLevel      string
