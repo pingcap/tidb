@@ -107,7 +107,6 @@ func TestAddAndGetChunk(t *testing.T) {
 
 	in64s := inChk.Column(0).Int64s()
 	out64s := outChk.Column(0).Int64s()
-
 	require.Equal(t, in64s, out64s)
 }
 
@@ -258,7 +257,6 @@ func TestSwapData(t *testing.T) {
 		out1 = append(out1, outChk1.Column(0).GetString(i))
 	}
 	out2 := outChk2.Column(0).Int64s()
-
 	require.Equal(t, in1, out2)
 	require.Equal(t, in2, out1)
 }
