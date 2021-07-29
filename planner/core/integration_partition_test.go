@@ -16,13 +16,14 @@ package core_test
 import (
 	"bytes"
 	"fmt"
+	"math/rand"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	"math/rand"
 )
 
 var _ = SerialSuites(&testIntegrationPartitionSerialSuite{})
