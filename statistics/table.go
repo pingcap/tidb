@@ -268,7 +268,7 @@ func (t *Table) IsOutdated() bool {
 	if rowcount < 0 {
 		rowcount = float64(t.Count)
 	}
-	if t.Count > 0 && float64(t.ModifyCount)/rowcount > RatioOfPseudoEstimate.Load() {
+	if rowcount > 0 && float64(t.ModifyCount)/rowcount > RatioOfPseudoEstimate.Load() {
 		return true
 	}
 	return false
