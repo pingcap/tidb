@@ -255,40 +255,6 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 	return true
 }
 
-// MustStaticPartition checks if the result execution plan must read specific partitions under static mode.
-func (tk *TestKit) MustStaticPartition(sql string, partitions string, args ...interface{}) *Result {
-	rs := tk.MustQuery("explain "+sql, args...)
-	pnames := make(map[string]struct{})
-	for i := range rs.rows {
-		str := fmt.Sprintf("%v", rs.rows[i])
-		if idx := strings.Index(str, "partition:"); idx != -1 {
-			idx += len("partition:")
-			idx2 := strings.Index(str[idx:], " ")
-			if idx2 != -1 {
-				pname := str[idx : idx+idx2]
-				pnames[pname] = struct{}{}
-			}
-		}
-	}
-
-	ps := strings.Split(partitions, ",")
-	tk.c.Assert(len(ps), check.Equals, len(pnames))
-
-	equalFlag := true
-	for _, p := range ps {
-		p = strings.TrimSpace(p)
-		if _, ok := pnames[p]; !ok {
-			equalFlag = false
-			break
-		}
-	}
-	tk.c.Assert(equalFlag, check.IsTrue)
-	if !strings.HasPrefix(strings.ToLower(sql), "select") {
-		return nil
-	}
-	return tk.MustQuery(sql, args...)
-}
-
 // MustPartition checks if the result execution plan must read specific partitions.
 func (tk *TestKit) MustPartition(sql string, partitions string, args ...interface{}) *Result {
 	rs := tk.MustQuery("explain "+sql, args...)
@@ -302,9 +268,6 @@ func (tk *TestKit) MustPartition(sql string, partitions string, args ...interfac
 		}
 	}
 	tk.c.Assert(ok, check.IsTrue)
-	if !strings.HasPrefix(strings.ToLower(sql), "select") {
-		return nil
-	}
 	return tk.MustQuery(sql, args...)
 }
 
