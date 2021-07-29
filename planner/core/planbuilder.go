@@ -435,6 +435,8 @@ type cteInfo struct {
 	limitLP       LogicalPlan
 	// seedStat is shared between logicalCTE and logicalCTETable.
 	seedStat *property.StatsInfo
+	// The LogicalCTEs that reference the same table should share the same CteClass.
+	cteClass *CTEClass
 }
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -2939,12 +2941,13 @@ func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Inse
 		// 2. `INSERT INTO tbl_name (col_name [, col_name] ...) SELECT ...`.
 		colName := make([]string, 0, len(insertStmt.Columns))
 		for _, col := range insertStmt.Columns {
-			colName = append(colName, col.Name.O)
+			colName = append(colName, col.Name.L)
 		}
-		var missingColName string
-		affectedValuesCols, missingColName = table.FindCols(insertPlan.Table.VisibleCols(), colName, insertPlan.Table.Meta().PKIsHandle)
-		if missingColName != "" {
-			return nil, ErrUnknownColumn.GenWithStackByArgs(missingColName, clauseMsg[fieldList])
+		var missingColIdx int
+		affectedValuesCols, missingColIdx = table.FindColumns(insertPlan.Table.VisibleCols(), colName, insertPlan.Table.Meta().PKIsHandle)
+		if missingColIdx >= 0 {
+			return nil, ErrUnknownColumn.GenWithStackByArgs(
+				insertStmt.Columns[missingColIdx].Name.O, clauseMsg[fieldList])
 		}
 	} else if len(insertStmt.Setlist) == 0 {
 		// This branch is for the following scenarios:
@@ -2972,9 +2975,9 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	}
 
 	// Check whether the column to be updated is the generated column.
-	tCols, missingColName := table.FindCols(insertPlan.Table.VisibleCols(), colNames, tableInfo.PKIsHandle)
-	if missingColName != "" {
-		return ErrUnknownColumn.GenWithStackByArgs(missingColName, clauseMsg[fieldList])
+	tCols, missingColIdx := table.FindColumns(insertPlan.Table.VisibleCols(), colNames, tableInfo.PKIsHandle)
+	if missingColIdx >= 0 {
+		return ErrUnknownColumn.GenWithStackByArgs(insert.Setlist[missingColIdx].Column.Name.O, clauseMsg[fieldList])
 	}
 	generatedColumns := make(map[string]struct{}, len(tCols))
 	for _, tCol := range tCols {

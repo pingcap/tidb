@@ -55,7 +55,6 @@ func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 	txn.idxNameCache[id] = info
 }
 
-// lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	keys := toTiKVKeys(keysInput)
 	err := txn.KVTxn.LockKeys(ctx, lockCtx, keys...)
