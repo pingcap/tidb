@@ -38,7 +38,6 @@ func TestReserveBuffer(t *testing.T) {
 }
 
 func TestEscapeBackslash(t *testing.T) {
-	t.Parallel()
 	type TestCase struct {
 		name   string
 		input  []byte
