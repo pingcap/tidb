@@ -880,7 +880,7 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 	}
 	// No need to analyze it.
 	tblCnt := float64(tbl.Count)
-	if histCnt := tbl.ColHistCount(); histCnt > 0 {
+	if histCnt := tbl.GetColRowCount(); histCnt > 0 {
 		tblCnt = histCnt
 	}
 	if float64(tbl.ModifyCount)/tblCnt <= autoAnalyzeRatio {

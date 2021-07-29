@@ -13,14 +13,17 @@
 package statistics_test
 
 import (
+	"fmt"
 	"math"
 	"strconv"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -405,4 +408,49 @@ func (s *testIntegrationSuite) TestHistogramsWithSameTxnTS(c *C) {
 	c.Assert(v2, Equals, v1)
 	v3 := rows[1][0].(string)
 	c.Assert(v3, Equals, v2)
+}
+
+func (s *testIntegrationSuite) TestOutdatedStatsCheck(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	handle.AutoAnalyzeMinCnt = 0
+	defer func() {
+		handle.AutoAnalyzeMinCnt = 1000
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+
+	h := s.do.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19)) // 20 rows
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	is := s.do.InfoSchema()
+	c.Assert(h.Update(is), IsNil)
+	// To pass the stats.Pseudo check in autoAnalyzeTable
+	tk.MustExec("analyze table t")
+	tk.MustExec("explain select * from t where a = 1")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
+
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 15)) // 35 rows
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	c.Assert(tk.HasPseudoStats("select * from t where a = 1"), IsTrue)
+	c.Assert(h.HandleAutoAnalyze(is), IsTrue)
+
+	tk.MustExec("delete from t limit 16") // 19 rows
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	c.Assert(tk.HasPseudoStats("select * from t where a = 1"), IsFalse)
+	c.Assert(h.HandleAutoAnalyze(is), IsFalse)
+
+	tk.MustExec("delete from t limit 10") // 9 rows
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	c.Assert(tk.HasPseudoStats("select * from t where a = 1"), IsTrue)
+	c.Assert(h.HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
 }
