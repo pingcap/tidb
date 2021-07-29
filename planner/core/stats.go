@@ -15,7 +15,6 @@ package core
 
 import (
 	"context"
-	"golang.org/x/tools/container/intsets"
 	"math"
 	"sort"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
+	"golang.org/x/tools/container/intsets"
 )
 
 func (p *basePhysicalPlan) StatsCount() float64 {
