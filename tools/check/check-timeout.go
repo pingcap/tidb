@@ -75,7 +75,6 @@ func init() {
 		"testSuite.TestFailNewSession",
 		"testPlanSerialSuite.TestPartitionTable",
 		"testPlanSerialSuite.TestPartitionWithVariedDatasources",
-		"testPrivilegeSuite.TestSecurityEnhancedModeInfoschema",
 		"HTTPHandlerTestSuite.TestZipInfoForSQL",
 		"HTTPHandlerTestSuite.TestBinlogRecover",
 		"ConnTestSuite.TestConnExecutionTimeout",
