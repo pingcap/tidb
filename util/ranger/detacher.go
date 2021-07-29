@@ -207,7 +207,7 @@ func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.E
 			return &DetachRangeResult{}, -1, nil, nil
 		}
 		// take the union of the two columnValues
-		columnValues = unionColumnValues(columnValues, res.ColumnValues, len(cols))
+		columnValues = unionColumnValues(columnValues, res.ColumnValues)
 		if len(res.AccessConds) == 0 || len(res.RemainedConds) > 0 {
 			continue
 		}
@@ -240,12 +240,15 @@ func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.E
 	return r, offset, columnValues, nil
 }
 
-func unionColumnValues(lhs, rhs []*valueInfo, numCols int) []*valueInfo {
+func unionColumnValues(lhs, rhs []*valueInfo) []*valueInfo {
 	if lhs == nil {
 		return rhs
 	}
 	if rhs != nil {
 		for i, valInfo := range lhs {
+			if i >= len(rhs) {
+				break
+			}
 			if valInfo == nil && rhs[i] != nil {
 				lhs[i] = rhs[i]
 			}
@@ -312,7 +315,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		if err != nil {
 			return nil, err
 		}
-		res.ColumnValues = unionColumnValues(res.ColumnValues, columnValues, len(d.cols))
+		res.ColumnValues = unionColumnValues(res.ColumnValues, columnValues)
 		if pointRes != nil {
 			if len(pointRes.Ranges) == 0 {
 				return &DetachRangeResult{}, nil

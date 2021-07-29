@@ -363,8 +363,24 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	if selected != nil {
 		ds.possibleAccessPaths[0] = selected
 		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
-		// TODO: Can we make a more carefull check on whether the optimization depends on mutable constants?
+		// TODO: Can we make a more careful check on whether the optimization depends on mutable constants?
 		ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
+		if ds.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			var tableName, pathName string
+			if ds.TableAsName.O == "" {
+				tableName = ds.tableInfo.Name.O
+			} else {
+				tableName = ds.TableAsName.O
+			}
+			if !selected.IsTablePath() {
+				pathName = "primary key of " + tableName
+			} else {
+				pathName = "index " + selected.Index.Name.O + " of " + tableName
+			}
+			// TODO: Do we need to specify which heuristic rule `selected` matches? It is kind of hard to briefly describe the
+			// three heuristic rules. Besides, we can distinguish the three rules by checking EXPLAIN result.
+			ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(pathName + " is selected by heuristics"))
+		}
 	}
 
 	// TODO: implement UnionScan + IndexMerge
