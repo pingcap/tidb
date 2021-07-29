@@ -105,7 +105,6 @@ func TestEscapeBackslash(t *testing.T) {
 }
 
 func TestEscapeSQL(t *testing.T) {
-	t.Parallel()
 	type TestCase struct {
 		name   string
 		input  string
