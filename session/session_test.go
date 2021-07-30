@@ -5155,16 +5155,78 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("use test")
-
 	tk.MustExec("create temporary table tmp1 (id int primary key, u int unique, v int)")
 
+	idList := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
 	insertRecords := func(idList []int) {
 		for _, id := range idList {
 			tk.MustExec("insert into tmp1 values (?, ?, ?)", id, id+100, id+1000)
 		}
 	}
 
-	idList := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
+	type checkSuccess struct {
+		update []string
+		delete []int
+	}
+
+	type checkError struct {
+		err error
+	}
+
+	cases := []struct {
+		sql             string
+		checkResult     interface{}
+		additionalCheck func(error)
+	}{
+		// update with point get for primary key
+		{"update tmp1 set v=999 where id=1", checkSuccess{[]string{"1 101 999"}, nil}, nil},
+		{"update tmp1 set id=12 where id=1", checkSuccess{[]string{"12 101 1001"}, []int{1}}, nil},
+		{"update tmp1 set id=1 where id=1", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set u=101 where id=1", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set v=999 where id=100", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set u=102 where id=100", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set u=21 where id=1", checkSuccess{[]string{"1 21 1001"}, nil}, func(_ error) {
+			// check index deleted
+			tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u=101").Check(testkit.Rows())
+			tk.MustQuery("show warnings").Check(testkit.Rows())
+		}},
+		{"update tmp1 set id=2 where id=1", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set u=102 where id=1", checkError{kv.ErrKeyExists}, nil},
+		// update with batch point get for primary key
+		{"update tmp1 set v=v+1000 where id in (1, 3, 5)", checkSuccess{[]string{"1 101 2001", "3 103 2003", "5 105 2005"}, nil}, nil},
+		{"update tmp1 set u=u+1 where id in (9, 100)", checkSuccess{[]string{"9 110 1009"}, nil}, nil},
+		{"update tmp1 set u=101 where id in (100, 101)", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set id=id+1 where id in (8, 9)", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set u=u+1 where id in (8, 9)", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set id=id+20 where id in (1, 3, 5)", checkSuccess{[]string{"21 101 1001", "23 103 1003", "25 105 1005"}, []int{1, 3, 5}}, nil},
+		{"update tmp1 set u=u+100 where id in (1, 3, 5)", checkSuccess{[]string{"1 201 1001", "3 203 1003", "5 205 1005"}, nil}, func(_ error) {
+			// check index deleted
+			tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u in (101, 103, 105)").Check(testkit.Rows())
+			tk.MustQuery("show warnings").Check(testkit.Rows())
+		}},
+		// update with point get for unique key
+		{"update tmp1 set v=888 where u=101", checkSuccess{[]string{"1 101 888"}, nil}, nil},
+		{"update tmp1 set id=21 where u=101", checkSuccess{[]string{"21 101 1001"}, []int{1}}, nil},
+		{"update tmp1 set v=888 where u=201", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set u=201 where u=101", checkSuccess{[]string{"1 201 1001"}, nil}, nil},
+		{"update tmp1 set id=2 where u=101", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set u=102 where u=101", checkError{kv.ErrKeyExists}, nil},
+		// update with batch point get for unique key
+		{"update tmp1 set v=v+1000 where u in (101, 103)", checkSuccess{[]string{"1 101 2001", "3 103 2003"}, nil}, nil},
+		{"update tmp1 set v=v+1000 where u in (201, 203)", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set v=v+1000 where u in (101, 110)", checkSuccess{[]string{"1 101 2001"}, nil}, nil},
+		{"update tmp1 set id=id+1 where u in (108, 109)", checkError{kv.ErrKeyExists}, nil},
+		// update with table scan and index scan
+		{"update tmp1 set v=v+1000 where id<3", checkSuccess{[]string{"1 101 2001", "2 102 2002"}, nil}, nil},
+		{"update /*+ use_index(tmp1, u) */ tmp1 set v=v+1000 where u>107", checkSuccess{[]string{"8 108 2008", "9 109 2009"}, nil}, nil},
+		{"update tmp1 set v=v+1000 where v>=1007 or v<=1002", checkSuccess{[]string{"1 101 2001", "2 102 2002", "7 107 2007", "8 108 2008", "9 109 2009"}, nil}, nil},
+		{"update tmp1 set v=v+1000 where id>=10", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set id=id+1 where id>7", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set id=id+1 where id>8", checkSuccess{[]string{"10 109 1009"}, []int{9}}, nil},
+		{"update tmp1 set u=u+1 where u>107", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set u=u+1 where u>108", checkSuccess{[]string{"9 110 1009"}, nil}, nil},
+		{"update /*+ use_index(tmp1, u) */ tmp1 set v=v+1000 where u>108 or u<102", checkSuccess{[]string{"1 101 2001", "9 109 2009"}, nil}, nil},
+	}
 
 	checkUpdatesAndDeletes := func(updates []string, deletes []int) {
 		modifyMap := make(map[int]string)
@@ -5210,172 +5272,63 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 		tk.MustQuery("select * from tmp1").Check(testkit.Rows(expect...))
 	}
 
-	executeUpdateSql := func(sql string, expectedUpdateSuccess bool) (err error) {
-		if expectedUpdateSuccess {
+	executeSql := func(sql string, checkResult interface{}, additionalCheck func(error)) (err error) {
+		switch check := checkResult.(type) {
+		case checkSuccess:
 			tk.MustExec(sql)
-		} else {
+			tk.MustQuery("show warnings").Check(testkit.Rows())
+			checkUpdatesAndDeletes(check.update, check.delete)
+		case checkError:
 			err = tk.ExecToErr(sql)
 			c.Assert(err, NotNil)
+			expectedErr, _ := check.err.(*terror.Error)
+			c.Assert(expectedErr.Equal(err), IsTrue)
 			checkUpdatesAndDeletes(nil, nil)
+		default:
+			c.Fail()
 		}
-		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		if additionalCheck != nil {
+			additionalCheck(err)
+		}
 		return
 	}
 
-	assertUpdate := func(sql string, expectedUpdateSuccess bool, verify func(err error)) {
+	for _, sqlCase := range cases {
 		// update records in txn and records are inserted in txn
 		tk.MustExec("begin")
 		insertRecords(idList)
-		err := executeUpdateSql(sql, expectedUpdateSuccess)
-		verify(err)
+		_ = executeSql(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
 		tk.MustExec("rollback")
 		tk.MustQuery("select * from tmp1").Check(testkit.Rows())
 
 		// update records out of txn
 		insertRecords(idList)
-		err = executeUpdateSql(sql, expectedUpdateSuccess)
-		verify(err)
+		_ = executeSql(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
 		tk.MustExec("delete from tmp1")
 
 		// update records in txn and rollback
 		insertRecords(idList)
 		tk.MustExec("begin")
-		err = executeUpdateSql(sql, expectedUpdateSuccess)
-		verify(err)
+		_ = executeSql(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
 		tk.MustExec("rollback")
 		// rollback left records unmodified
 		checkUpdatesAndDeletes(nil, nil)
 
 		// update records in txn and commit
 		tk.MustExec("begin")
-		err = executeUpdateSql(sql, expectedUpdateSuccess)
-		verify(err)
+		err := executeSql(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
 		tk.MustExec("commit")
-		if !expectedUpdateSuccess {
+		if err != nil {
 			checkUpdatesAndDeletes(nil, nil)
+		} else {
+			r, _ := sqlCase.checkResult.(checkSuccess)
+			checkUpdatesAndDeletes(r.update, r.delete)
 		}
-		verify(err)
+		if sqlCase.additionalCheck != nil {
+			sqlCase.additionalCheck(err)
+		}
 		tk.MustExec("delete from tmp1")
 		tk.MustQuery("select * from tmp1").Check(testkit.Rows())
 	}
-
-	// update with point get for primary key
-	assertUpdate("update tmp1 set v=999 where id=1", true, func(_ error) {
-		checkUpdatesAndDeletes([]string{"1 101 999"}, nil)
-	})
-	assertUpdate("update tmp1 set id=12 where id=1", true, func(_ error) {
-		checkUpdatesAndDeletes([]string{"12 101 1001"}, []int{1})
-	})
-	assertUpdate("update tmp1 set id=1 where id=1", true, func(_ error) {
-		checkUpdatesAndDeletes(nil, nil)
-	})
-	assertUpdate("update tmp1 set u=101 where id=1", true, func(_ error) {
-		checkUpdatesAndDeletes(nil, nil)
-	})
-	assertUpdate("update tmp1 set v=999 where id=100", true, func(_ error) {
-		checkUpdatesAndDeletes(nil, nil)
-	})
-	assertUpdate("update tmp1 set u=102 where id=100", true, func(_ error) {
-		checkUpdatesAndDeletes(nil, nil)
-	})
-	assertUpdate("update tmp1 set u=21 where id=1", true, func(_ error) {
-		checkUpdatesAndDeletes([]string{"1 21 1001"}, nil)
-		// check index deleted
-		tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u=101").Check(testkit.Rows())
-		tk.MustQuery("show warnings").Check(testkit.Rows())
-	})
-	assertUpdate("update tmp1 set id=2 where id=1", false, func(err error) {
-		c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
-	})
-	assertUpdate("update tmp1 set u=102 where id=1", false, func(err error) {
-		c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
-	})
-
-	// update with batch point get for primary key
-	assertUpdate("update tmp1 set v=v+1000 where id in (1, 3, 5)", true, func(_ error) {
-		checkUpdatesAndDeletes([]string{"1 101 2001", "3 103 2003", "5 105 2005"}, nil)
-	})
-	assertUpdate("update tmp1 set u=u+1 where id in (9, 100)", true, func(_ error) {
-		checkUpdatesAndDeletes([]string{"9 110 1009"}, nil)
-	})
-	assertUpdate("update tmp1 set u=101 where id in (100, 101)", true, func(_ error) {
-		checkUpdatesAndDeletes(nil, nil)
-	})
-	assertUpdate("update tmp1 set id=id+1 where id in (8, 9)", false, func(err error) {
-		c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
-	})
-	assertUpdate("update tmp1 set u=u+1 where id in (8, 9)", false, func(err error) {
-		c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
-	})
-	assertUpdate("update tmp1 set id=id+20 where id in (1, 3, 5)", true, func(_ error) {
-		checkUpdatesAndDeletes([]string{"21 101 1001", "23 103 1003", "25 105 1005"}, []int{1, 3, 5})
-	})
-	assertUpdate("update tmp1 set u=u+100 where id in (1, 3, 5)", true, func(err error) {
-		checkUpdatesAndDeletes([]string{"1 201 1001", "3 203 1003", "5 205 1005"}, nil)
-		// check index deleted
-		tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u in (101, 103, 105)").Check(testkit.Rows())
-		tk.MustQuery("show warnings").Check(testkit.Rows())
-	})
-
-	// update with point get for unique key
-	assertUpdate("update tmp1 set v=888 where u=101", true, func(_ error) {
-		checkUpdatesAndDeletes([]string{"1 101 888"}, nil)
-	})
-	assertUpdate("update tmp1 set id=21 where u=101", true, func(_ error) {
-		checkUpdatesAndDeletes([]string{"21 101 1001"}, []int{1})
-	})
-	assertUpdate("update tmp1 set v=888 where u=201", true, func(_ error) {
-	})
-	assertUpdate("update tmp1 set u=201 where u=101", true, func(_ error) {
-		checkUpdatesAndDeletes([]string{"1 201 1001"}, nil)
-	})
-	assertUpdate("update tmp1 set id=2 where u=101", false, func(err error) {
-		c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
-	})
-	assertUpdate("update tmp1 set u=102 where u=101", false, func(err error) {
-		c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
-	})
-
-	// update with batch point get for unique key
-	assertUpdate("update tmp1 set v=v+1000 where u in (101, 103)", true, func(_ error) {
-		checkUpdatesAndDeletes([]string{"1 101 2001", "3 103 2003"}, nil)
-	})
-	assertUpdate("update tmp1 set v=v+1000 where u in (201, 203)", true, func(err error) {
-		checkUpdatesAndDeletes(nil, nil)
-	})
-	assertUpdate("update tmp1 set v=v+1000 where u in (101, 110)", true, func(_ error) {
-		checkUpdatesAndDeletes([]string{"1 101 2001"}, nil)
-	})
-	assertUpdate("update tmp1 set id=id+1 where u in (108, 109)", false, func(err error) {
-		c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
-	})
-
-	// update with table scan and index scan
-	assertUpdate("update tmp1 set v=v+1000 where id<3", true, func(_ error) {
-		checkUpdatesAndDeletes([]string{"1 101 2001", "2 102 2002"}, nil)
-	})
-	assertUpdate("update /*+ use_index(tmp1, u) */ tmp1 set v=v+1000 where u>107", true, func(_ error) {
-		checkUpdatesAndDeletes([]string{"8 108 2008", "9 109 2009"}, nil)
-	})
-	assertUpdate("update tmp1 set v=v+1000 where v>=1007 or v<=1002", true, func(_ error) {
-		checkUpdatesAndDeletes([]string{"1 101 2001", "2 102 2002", "7 107 2007", "8 108 2008", "9 109 2009"}, nil)
-	})
-	assertUpdate("update tmp1 set v=v+1000 where id>=10", true, func(_ error) {
-		checkUpdatesAndDeletes(nil, nil)
-	})
-	assertUpdate("update tmp1 set id=id+1 where id>7", false, func(err error) {
-		c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
-	})
-	assertUpdate("update tmp1 set id=id+1 where id>8", true, func(_ error) {
-		checkUpdatesAndDeletes([]string{"10 109 1009"}, []int{9})
-	})
-	assertUpdate("update tmp1 set u=u+1 where u>107", false, func(err error) {
-		c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
-	})
-	assertUpdate("update tmp1 set u=u+1 where u>108", true, func(err error) {
-		checkUpdatesAndDeletes([]string{"9 110 1009"}, nil)
-	})
-	assertUpdate("update /*+ use_index(tmp1, u) */ tmp1 set v=v+1000 where u>108 or u<102", true, func(err error) {
-		checkUpdatesAndDeletes([]string{"1 101 2001", "9 109 2009"}, nil)
-	})
 }
