@@ -95,3 +95,19 @@ func (s *testRestoreCtxSuite) TestRestoreCtx(c *C) {
 		c.Assert(sb.String(), Equals, testCase.expect, Commentf("case: %#v", testCase))
 	}
 }
+
+func (s *testRestoreCtxSuite) TestRestoreSpecialComment(c *C) {
+	var sb strings.Builder
+	sb.Reset()
+	ctx := NewRestoreCtx(RestoreTiDBSpecialComment, &sb)
+	ctx.WriteWithSpecialComments("fea_id", func() {
+		ctx.WritePlain("content")
+	})
+	c.Assert(sb.String(), Equals, "/*T![fea_id] content */")
+
+	sb.Reset()
+	ctx.WriteWithSpecialComments("", func() {
+		ctx.WritePlain("shard_row_id_bits")
+	})
+	c.Assert(sb.String(), Equals, "/*T! shard_row_id_bits */")
+}
