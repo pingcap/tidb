@@ -11,32 +11,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package keydecoder
+package keydecoder_test
 
 import (
 	"testing"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	. "github.com/pingcap/tidb/util/keydecoder"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
-
-func mustNewCommonHandle(t *testing.T, values ...interface{}) *kv.CommonHandle {
-	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
-	require.Nil(t, err)
-
-	ch, err := kv.NewCommonHandle(encoded)
-	require.Nil(t, err)
-
-	return ch
-}
 
 func TestDecodeKey(t *testing.T) {
 	table.MockTableFromMeta = tables.MockTableFromMeta
@@ -73,7 +63,7 @@ func TestDecodeKey(t *testing.T) {
 	assert.Equal(t, decodedKey.IndexName, "")
 	assert.Nil(t, decodedKey.IndexValues)
 
-	ch := mustNewCommonHandle(t, 100, "abc")
+	ch := testkit.MustNewCommonHandle(t, 100, "abc")
 	encodedCommonKey := ch.Encoded()
 	key := []byte{
 		't',
