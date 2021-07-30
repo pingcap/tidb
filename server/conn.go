@@ -1618,11 +1618,12 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 }
 
 // handlePlanRecreator dose the export/import work for reproducing sql queries.
-func (cc *clientConn) handlePlanRecreator(ctx context.Context, PlanRecreatorInfo interface{}) (interface{}, error) {
-	if info, ok := PlanRecreatorInfo.(*executor.PlanRecreatorSingleInfo); ok {
+func (cc *clientConn) handlePlanRecreator(ctx context.Context, info executor.PlanRecreatorInfo) (string, error) {
+	switch info.(type) {
+	case *executor.PlanRecreatorSingleInfo:
 		return info.Process()
 	}
-	return nil, errors.New("plan recreator: not supporting info type")
+	return "", errors.New("plan recreator: not supporting info type")
 }
 
 // handleQuery executes the sql query string and writes result set or result ok to the client.
@@ -1892,12 +1893,12 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 	if planRecreator != nil {
 		handled = true
 		defer cc.ctx.SetValue(executor.PlanRecreatorVarKey, nil)
-		token, err := cc.handlePlanRecreator(ctx, planRecreator)
+		token, err := cc.handlePlanRecreator(ctx, planRecreator.(executor.PlanRecreatorInfo))
 		if err != nil {
 			return handled, err
 		}
-		if token != nil {
-			return handled, cc.writeOkWith(ctx, token.(string), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
+		if token != "" {
+			return handled, cc.writeOkWith(ctx, token, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
 		}
 	}
 

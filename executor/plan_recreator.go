@@ -35,6 +35,12 @@ const recreatorPath string = "/tmp/recreator"
 // TTL of plan recreator files
 const remainedInterval float64 = 3
 
+// PlanRecreatorInfo saves the information of plan recreator operation.
+type PlanRecreatorInfo interface {
+	// Process dose the export/import work for reproducing sql queries.
+	Process() (string, error)
+}
+
 // PlanRecreatorSingleExec represents a plan recreator executor.
 type PlanRecreatorSingleExec struct {
 	baseExecutor
@@ -108,19 +114,19 @@ func (e *PlanRecreatorSingleExec) Open(ctx context.Context) error {
 }
 
 // Process dose the export/import work for reproducing sql queries.
-func (e *PlanRecreatorSingleInfo) Process() (interface{}, error) {
+func (e *PlanRecreatorSingleInfo) Process() (string, error) {
 	// TODO: plan recreator load will be developed later
 	if e.Load {
-		return nil, nil
+		return "", nil
 	}
 	return e.dumpSingle()
 }
 
-func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
+func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
 	// Create path
 	err := os.MkdirAll(recreatorPath, os.ModePerm)
 	if err != nil {
-		return nil, errors.New("plan Recreator: cannot create plan recreator path")
+		return "", errors.New("plan Recreator: cannot create plan recreator path")
 	}
 
 	// Create zip file
@@ -128,7 +134,7 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 	fileName := fmt.Sprintf("recreator_single_%v.zip", startTime.UnixNano())
 	zf, err := os.Create(recreatorPath + "/" + fileName)
 	if err != nil {
-		return nil, errors.New("plan Recreator: cannot create zip file")
+		return "", errors.New("plan Recreator: cannot create zip file")
 	}
 	val := e.Ctx.Value(PlanRecreatorFileList)
 	if val == nil {
