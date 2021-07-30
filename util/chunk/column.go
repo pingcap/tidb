@@ -74,11 +74,33 @@ func NewColumn(ft *types.FieldType, cap int) *Column {
 func newColumn(typeSize, cap int) *Column {
 	var col *Column
 	if typeSize == varElemLen {
-		col = newVarLenColumn(cap, nil)
+		col = newVarLenColumn(cap)
 	} else {
 		col = newFixedLenColumn(typeSize, cap)
 	}
 	return col
+}
+
+// newFixedLenColumn creates a fixed length Column with elemLen and initial data capacity.
+func newFixedLenColumn(elemLen, cap int) *Column {
+	return &Column{
+		elemBuf:    make([]byte, elemLen),
+		data:       make([]byte, 0, cap*elemLen),
+		nullBitmap: make([]byte, 0, (cap+7)>>3),
+	}
+}
+
+// newVarLenColumn creates a variable length Column with initial data capacity.
+func newVarLenColumn(cap int) *Column {
+	estimatedElemLen := 8
+	// For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
+	// Therefore, in the first executor.Next we use an experience value -- 8 (so it may make runtime.growslice)
+
+	return &Column{
+		offsets:    make([]int64, 1, cap+1),
+		data:       make([]byte, 0, cap*estimatedElemLen),
+		nullBitmap: make([]byte, 0, (cap+7)>>3),
+	}
 }
 
 func (c *Column) typeSize() int {

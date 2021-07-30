@@ -330,7 +330,7 @@ func newChunk(elemLen ...int) *Chunk {
 		if l > 0 {
 			chk.columns = append(chk.columns, newFixedLenColumn(l, 0))
 		} else {
-			chk.columns = append(chk.columns, newVarLenColumn(0, nil))
+			chk.columns = append(chk.columns, newVarLenColumn(0))
 		}
 	}
 	return chk
@@ -342,7 +342,7 @@ func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
 		if l > 0 {
 			chk.columns = append(chk.columns, newFixedLenColumn(l, cap))
 		} else {
-			chk.columns = append(chk.columns, newVarLenColumn(cap, nil))
+			chk.columns = append(chk.columns, newVarLenColumn(cap))
 		}
 	}
 	return chk

@@ -139,31 +139,6 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 	return
 }
 
-// newFixedLenColumn creates a fixed length Column with elemLen and initial data capacity.
-func newFixedLenColumn(elemLen, cap int) *Column {
-	return &Column{
-		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, cap*elemLen),
-		nullBitmap: make([]byte, 0, (cap+7)>>3),
-	}
-}
-
-// newVarLenColumn creates a variable length Column with initial data capacity.
-func newVarLenColumn(cap int, old *Column) *Column {
-	estimatedElemLen := 8
-	// For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
-	// Therefore, in the first executor.Next we use an experience value -- 8 (so it may make runtime.growslice)
-	// but in the following Next call we estimate the length as AVG x 1.125 elemLen of the previous call.
-	if old != nil && old.length != 0 {
-		estimatedElemLen = (len(old.data) + len(old.data)/8) / old.length
-	}
-	return &Column{
-		offsets:    make([]int64, 1, cap+1),
-		data:       make([]byte, 0, cap*estimatedElemLen),
-		nullBitmap: make([]byte, 0, (cap+7)>>3),
-	}
-}
-
 // RequiredRows returns how many rows is considered full.
 func (c *Chunk) RequiredRows() int {
 	return c.requiredRows
