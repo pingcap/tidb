@@ -175,7 +175,7 @@ func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction
 	}
 
 	// Temporary table need not to do prefetch because its all data are stored in the memory.
-	if e.Table.Meta().TempTableType == model.TempTableNone {
+	if e.Table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
