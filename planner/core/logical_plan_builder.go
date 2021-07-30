@@ -4661,7 +4661,14 @@ func CheckUpdateList(assignFlags []int, updt *Update) error {
 		tbl := updt.tblID2Table[content.TblID]
 		flags := assignFlags[content.Start:content.End]
 		var update, updatePK bool
+		// step1: prepare s1 from "update t set a=? where b=?"   // use the schema before the alter table column
+		// step2: execute s1 using @a, @b                        // use the schema after the alter table column
+		// Since the prepare and execute use the difference schema, the step2 will see one more writable column
+		// --- changing column from ctc, which will lead the flag array out of range here.
 		for i, col := range tbl.WritableCols() {
+			//if col.ChangeStateInfo != nil {
+			//	continue
+			//}
 			if flags[i] >= 0 && col.State != model.StatePublic {
 				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 			}

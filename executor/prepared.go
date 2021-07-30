@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -328,6 +329,10 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, false, false, err
+	}
+	if is.SchemaMetaVersion() != sctx.GetInfoSchema().SchemaMetaVersion() {
+		is = sctx.GetInfoSchema().(infoschema.InfoSchema)
+		fmt.Println(1)
 	}
 
 	stmt := &ExecStmt{

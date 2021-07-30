@@ -227,6 +227,10 @@ type session struct {
 	cache [1]ast.StmtNode
 
 	builtinFunctionUsage telemetry.BuiltinFunctionsUsage
+
+	debug map[string]string
+
+	cnt int
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -2047,6 +2051,8 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	} else {
 		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
+	// sync the new information schema with the one in TxnCtx of sessionVar.
+	s.sessionVars.TxnCtx.InfoSchema = is
 	if ok {
 		return s.cachedPlanExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
 	}

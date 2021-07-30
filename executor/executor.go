@@ -1685,6 +1685,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			return err
 		}
 		s = prepareStmt.PreparedAst.Stmt
+		is := ctx.GetInfoSchema()
+		if prepareStmt.PreparedAst.SchemaVersion != is.SchemaMetaVersion() {
+			prepareStmt.PreparedAst.CachedPlan = nil
+			prepareStmt.Executor = nil
+			ret := &plannercore.PreprocessorReturn{InfoSchema: is.(infoschema.InfoSchema)}
+			err := plannercore.Preprocess(ctx, s, plannercore.InPrepare, plannercore.WithPreprocessorReturn(ret))
+			if err != nil {
+				return plannercore.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+			}
+			prepareStmt.PreparedAst.SchemaVersion = is.SchemaMetaVersion()
+		}
 		sc.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.
 		goCtx := context.Background()
