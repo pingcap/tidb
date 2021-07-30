@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/parser/tidb"
 	"github.com/pingcap/parser/types"
 )
 
@@ -501,7 +502,9 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		pkTp := n.PrimaryKeyTp.String()
 		if len(pkTp) != 0 {
 			ctx.WritePlain(" ")
-			ctx.WriteKeyWord(pkTp)
+			ctx.WriteWithSpecialComments(tidb.FeatureIDClusteredIndex, func() {
+				ctx.WriteKeyWord(pkTp)
+			})
 		}
 	case ColumnOptionNotNull:
 		ctx.WriteKeyWord("NOT NULL")
@@ -574,10 +577,12 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("STORAGE ")
 		ctx.WriteKeyWord(n.StrValue)
 	case ColumnOptionAutoRandom:
-		ctx.WriteKeyWord("AUTO_RANDOM")
-		if n.AutoRandomBitLength != types.UnspecifiedLength {
-			ctx.WritePlainf("(%d)", n.AutoRandomBitLength)
-		}
+		ctx.WriteWithSpecialComments(tidb.FeatureIDAutoRandom, func() {
+			ctx.WriteKeyWord("AUTO_RANDOM")
+			if n.AutoRandomBitLength != types.UnspecifiedLength {
+				ctx.WritePlainf("(%d)", n.AutoRandomBitLength)
+			}
+		})
 	default:
 		return errors.New("An error occurred while splicing ColumnOption")
 	}
@@ -1891,22 +1896,32 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(n.StrValue)
 	case TableOptionAutoIncrement:
 		if n.BoolValue {
-			ctx.WriteKeyWord("FORCE ")
+			ctx.WriteWithSpecialComments(tidb.FeatureIDForceAutoInc, func() {
+				ctx.WriteKeyWord("FORCE")
+			})
+			ctx.WritePlain(" ")
 		}
 		ctx.WriteKeyWord("AUTO_INCREMENT ")
 		ctx.WritePlain("= ")
 		ctx.WritePlainf("%d", n.UintValue)
 	case TableOptionAutoIdCache:
-		ctx.WriteKeyWord("AUTO_ID_CACHE ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
+		ctx.WriteWithSpecialComments(tidb.FeatureIDAutoIDCache, func() {
+			ctx.WriteKeyWord("AUTO_ID_CACHE ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
+		})
 	case TableOptionAutoRandomBase:
 		if n.BoolValue {
-			ctx.WriteKeyWord("FORCE ")
+			ctx.WriteWithSpecialComments(tidb.FeatureIDForceAutoInc, func() {
+				ctx.WriteKeyWord("FORCE")
+			})
+			ctx.WritePlain(" ")
 		}
-		ctx.WriteKeyWord("AUTO_RANDOM_BASE ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
+		ctx.WriteWithSpecialComments(tidb.FeatureIDAutoRandomBase, func() {
+			ctx.WriteKeyWord("AUTO_RANDOM_BASE ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
+		})
 	case TableOptionComment:
 		ctx.WriteKeyWord("COMMENT ")
 		ctx.WritePlain("= ")
@@ -1997,11 +2012,15 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlainf("%d", n.UintValue)
 		}
 	case TableOptionShardRowID:
-		ctx.WriteKeyWord("SHARD_ROW_ID_BITS ")
-		ctx.WritePlainf("= %d", n.UintValue)
+		ctx.WriteWithSpecialComments(tidb.FeatureIDTiDB, func() {
+			ctx.WriteKeyWord("SHARD_ROW_ID_BITS ")
+			ctx.WritePlainf("= %d", n.UintValue)
+		})
 	case TableOptionPreSplitRegion:
-		ctx.WriteKeyWord("PRE_SPLIT_REGIONS ")
-		ctx.WritePlainf("= %d", n.UintValue)
+		ctx.WriteWithSpecialComments(tidb.FeatureIDTiDB, func() {
+			ctx.WriteKeyWord("PRE_SPLIT_REGIONS ")
+			ctx.WritePlainf("= %d", n.UintValue)
+		})
 	case TableOptionPackKeys:
 		// TODO: not support
 		ctx.WriteKeyWord("PACK_KEYS ")
