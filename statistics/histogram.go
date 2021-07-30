@@ -1115,7 +1115,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, en
 		return histCnt, nil
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
-	histNDV := float64(c.Histogram.NDV - int64(len(c.TopN.TopN)))
+	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
 	if histNDV <= 0 {
 		return 0, nil
 	}
@@ -1308,7 +1308,7 @@ func (idx *Index) equalRowCount(b []byte, realtimeRowCount int64) float64 {
 		return histCnt
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
-	histNDV := float64(idx.Histogram.NDV - int64(len(idx.TopN.TopN)))
+	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
 	if histNDV <= 0 {
 		return 0
 	}
