@@ -819,6 +819,14 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql str
 func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Row, []*ast.ResultField, error) {
 	startTime := time.Now()
 	recordSets, err := se.Execute(ctx, sql)
+	defer func() {
+		for _, rs := range recordSets {
+			closeErr := rs.Close()
+			if closeErr != nil && err == nil {
+				err = closeErr
+			}
+		}
+	}()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -833,9 +841,6 @@ func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Ro
 		if err != nil {
 			return nil, nil, err
 		}
-		if err = rs.Close(); err != nil {
-			return nil, nil, err
-		}
 
 		if i == 0 {
 			rows = tmp
@@ -843,7 +848,7 @@ func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Ro
 		}
 	}
 	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
-	return rows, fields, nil
+	return rows, fields, err
 }
 
 func createSessionFunc(store kv.Storage) pools.Factory {
@@ -929,8 +934,7 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	if s.Value(sessionctx.Initing) != nil {
 		return nil, nil
 	}
-	sql := `SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %s.%s;`
-	sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.GlobalVariablesTable)
+	sql := sqlexec.MustEscapeSQL("SELECT VARIABLE_NAME, VARIABLE_VALUE FROM %n.%n", mysql.SystemDB, mysql.GlobalVariablesTable)
 	rows, _, err := s.ExecRestrictedSQL(s, sql)
 	if err != nil {
 		return nil, err
@@ -949,8 +953,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
 	}
-	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name)
+	sql := sqlexec.MustEscapeSQL(`SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?`, mysql.SystemDB, mysql.GlobalVariablesTable, name)
 	sysVar, err := s.getExecRet(s, sql)
 	if err != nil {
 		if executor.ErrResultIsEmpty.Equal(err) {
@@ -979,8 +982,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		return err
 	}
 	name = strings.ToLower(name)
-	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
+	sql := sqlexec.MustEscapeSQL(`REPLACE %n.%n VALUES (%?, %?);`, mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
 	_, _, err = s.ExecRestrictedSQL(s, sql)
 	return err
 }
@@ -1080,10 +1082,15 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		return nil, err
 	}
 
-	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
-
+	isInternal := s.isInternal()
 	// Step1: Compile query string to abstract syntax trees(ASTs).
 	parseStartTime := time.Now()
+	var charsetInfo, collation string
+	if isInternal {
+		charsetInfo, collation = mysql.UTF8MB4Charset, mysql.UTF8MB4DefaultCollation
+	} else {
+		charsetInfo, collation = s.sessionVars.GetCharsetInfo()
+	}
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -1094,8 +1101,14 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	}
 	durParse := time.Since(parseStartTime)
 	s.GetSessionVars().DurationParse = durParse
-	isInternal := s.isInternal()
 	if isInternal {
+		if len(stmtNodes) > 1 {
+			// Prohibit multiple statements in restricted SQL can prevent malicious injected SQL to some extent.
+			// For example, the input is someting like this:
+			// mysql> CREATE USER '\';      drop database test;       SELECT \''@'%' IDENTIFIED BY '';
+			// See https://github.com/pingcap/tidb-test/issues/1152 for more details.
+			return nil, errors.New("ExecRestrictedSQL() API doesn't support multiple statements")
+		}
 		sessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
 		sessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
@@ -1772,6 +1785,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBProjectionConcurrency,
 	variable.TiDBHashAggPartialConcurrency,
 	variable.TiDBHashAggFinalConcurrency,
+	variable.TiDBUnionConcurrency,
 	variable.TiDBBackoffLockFast,
 	variable.TiDBBackOffWeight,
 	variable.TiDBConstraintCheckInPlace,

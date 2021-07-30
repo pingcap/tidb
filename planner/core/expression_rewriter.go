@@ -43,19 +43,29 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	b := &PlanBuilder{
-		ctx:       sctx,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
-	}
-	if sctx.GetSessionVars().TxnCtx.InfoSchema != nil {
-		b.is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
-	}
-	fakePlan := LogicalTableDual{}.Init(sctx)
-	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true)
+	newExpr, err := rewriteAstExpr(sctx, expr, nil)
 	if err != nil {
 		return types.Datum{}, err
 	}
 	return newExpr.Eval(chunk.Row{})
+}
+
+// rewriteAstExpr rewrite ast expression directly.
+func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema) (expression.Expression, error) {
+	var is infoschema.InfoSchema
+	if sctx.GetSessionVars().TxnCtx.InfoSchema != nil {
+		is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+	}
+	b := NewPlanBuilder(sctx, is)
+	fakePlan := LogicalTableDual{}.Init(sctx)
+	if schema != nil {
+		fakePlan.schema = schema
+	}
+	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true)
+	if err != nil {
+		return nil, err
+	}
+	return newExpr, nil
 }
 
 func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
@@ -554,7 +564,9 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 // t.id != s.id or count(distinct s.id) > 1 or [any checker]. If there are two different values in s.id ,
 // there must exist a s.id that doesn't equal to t.id.
 func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
-	firstRowFunc, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	// If there is NULL in s.id column, s.id should be the value that isn't null in condition t.id != s.id.
+	// So use function max to filter NULL.
+	maxFunc, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncMax, []expression.Expression{rexpr}, false)
 	if err != nil {
 		er.err = err
 		return
@@ -565,22 +577,22 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		return
 	}
 	plan4Agg := LogicalAggregation{
-		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
+		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
 	}.Init(er.sctx)
 	plan4Agg.SetChildren(np)
-	firstRowResultCol := &expression.Column{
+	maxResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  firstRowFunc.RetTp,
+		RetType:  maxFunc.RetTp,
 	}
 	count := &expression.Column{
 		ColName:  model.NewCIStr("col_count"),
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
-	plan4Agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
+	plan4Agg.SetSchema(expression.NewSchema(maxResultCol, count))
 	gtFunc := expression.NewFunctionInternal(er.sctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count, expression.One)
-	neCond := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol)
+	neCond := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, maxResultCol)
 	cond := expression.ComposeDNFCondition(er.sctx, gtFunc, neCond)
 	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, false)
 }
@@ -1094,7 +1106,7 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 
 func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 	stkLen := len(er.ctxStack)
-	op := ast.IsTruth
+	op := ast.IsTruthWithoutNull
 	if v.True == 0 {
 		op = ast.IsFalsity
 	}
@@ -1292,6 +1304,40 @@ func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
 	er.ctxStack = append(er.ctxStack, function)
 }
 
+func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Expression) {
+	stkLen := len(er.ctxStack)
+	expr, lexp, rexp = er.ctxStack[stkLen-3], er.ctxStack[stkLen-2], er.ctxStack[stkLen-1]
+	var castFunc func(sessionctx.Context, expression.Expression) expression.Expression
+	switch expression.GetCmpTp4MinMax([]expression.Expression{expr, lexp, rexp}) {
+	case types.ETInt:
+		castFunc = expression.WrapWithCastAsInt
+	case types.ETReal:
+		castFunc = expression.WrapWithCastAsReal
+	case types.ETDecimal:
+		castFunc = expression.WrapWithCastAsDecimal
+	case types.ETString:
+		castFunc = func(ctx sessionctx.Context, e expression.Expression) expression.Expression {
+			// string kind expression do not need cast
+			if e.GetType().EvalType().IsStringKind() {
+				return e
+			}
+			return expression.WrapWithCastAsString(ctx, e)
+		}
+	case types.ETDatetime:
+		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDatetime))
+		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldType(mysql.TypeDatetime))
+		rexp = expression.WrapWithCastAsTime(er.sctx, rexp, types.NewFieldType(mysql.TypeDatetime))
+		return
+	default:
+		return
+	}
+
+	expr = castFunc(er.sctx, expr)
+	lexp = castFunc(er.sctx, lexp)
+	rexp = castFunc(er.sctx, rexp)
+	return
+}
+
 func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	stkLen := len(er.ctxStack)
 	er.err = expression.CheckArgsNotMultiColumnRow(er.ctxStack[stkLen-3:]...)
@@ -1299,13 +1345,7 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 		return
 	}
 
-	expr, lexp, rexp := er.ctxStack[stkLen-3], er.ctxStack[stkLen-2], er.ctxStack[stkLen-1]
-
-	if expression.GetCmpTp4MinMax([]expression.Expression{expr, lexp, rexp}) == types.ETDatetime {
-		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDatetime))
-		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldType(mysql.TypeDatetime))
-		rexp = expression.WrapWithCastAsTime(er.sctx, rexp, types.NewFieldType(mysql.TypeDatetime))
-	}
+	expr, lexp, rexp := er.wrapExpWithCast()
 
 	var op string
 	var l, r expression.Expression

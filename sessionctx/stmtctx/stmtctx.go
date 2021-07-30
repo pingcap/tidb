@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -137,9 +138,11 @@ type StatementContext struct {
 	PessimisticLockWaited int32
 	LockKeysDuration      time.Duration
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
-	planNormalized string
-	planDigest     string
-	LockKeysCount  int32
+	planNormalized    string
+	planDigest        string
+	LockKeysCount     int32
+	CheckKeyExists    map[string]struct{} // mark the keys needs to check for existence for pessimistic locks.
+	TblInfo2UnionScan map[*model.TableInfo]bool
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
@@ -436,6 +439,7 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.Unlock()
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
+	sc.CheckKeyExists = make(map[string]struct{})
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print
@@ -471,7 +475,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 func (sc *StatementContext) ShouldClipToZero() bool {
 	// TODO: Currently altering column of integer to unsigned integer is not supported.
 	// If it is supported one day, that case should be added here.
-	return sc.InInsertStmt || sc.InLoadDataStmt
+	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt
 }
 
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,

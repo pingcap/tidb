@@ -719,7 +719,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		return 0.0, nil
 	}
 	if c.NDV > 0 && c.outOfRange(val) {
-		return float64(modifyCount) / float64(c.NDV), nil
+		return outOfRangeEQSelectivity(c.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 	}
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(sc, val)
@@ -818,7 +818,7 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCo
 	}
 	val := types.NewBytesDatum(b)
 	if idx.NDV > 0 && idx.outOfRange(val) {
-		return float64(modifyCount) / (float64(idx.NDV)), nil
+		return outOfRangeEQSelectivity(idx.NDV, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount(), nil
 	}
 	if idx.CMSketch != nil {
 		return float64(idx.CMSketch.QueryBytes(b)), nil

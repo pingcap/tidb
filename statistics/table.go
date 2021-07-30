@@ -375,7 +375,7 @@ func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedCols
 		// so we use heuristic methods to estimate the selectivity.
 		if idx.NDV > 0 && coverAll {
 			// for equality queries
-			return float64(coll.ModifyCount) / float64(idx.NDV) / idx.TotalRowCount()
+			return outOfRangeEQSelectivity(idx.NDV, coll.ModifyCount, int64(idx.TotalRowCount()))
 		}
 		// The equal condition only uses prefix columns of the index.
 		colIDs := coll.Idx2ColumnIDs[idx.ID]
@@ -386,10 +386,7 @@ func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedCols
 			}
 			ndv = mathutil.MaxInt64(ndv, coll.Columns[colID].NDV)
 		}
-		if ndv > 0 {
-			return float64(coll.ModifyCount) / float64(ndv) / idx.TotalRowCount()
-		}
-		return float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.TotalRowCount()
+		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount()))
 	}
 	return float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
 }
@@ -639,4 +636,22 @@ func getPseudoRowCountByUnsignedIntRanges(intRanges []*ranger.Range, tableRowCou
 		rowCount = tableRowCount
 	}
 	return rowCount
+}
+
+// outOfRangeEQSelectivity estimates selectivities for out-of-range values.
+// It assumes all modifications are insertions and all new-inserted rows are uniformly distributed
+// and has the same distribution with analyzed rows, which means each unique value should have the
+// same number of rows(Tot/NDV) of it.
+func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
+	if modifyRows == 0 {
+		return 0 // it must be 0 since the histogram contains the whole data
+	}
+	if ndv < outOfRangeBetweenRate {
+		ndv = outOfRangeBetweenRate // avoid inaccurate selectivity caused by small NDV
+	}
+	selectivity := 1 / float64(ndv) // TODO: After extracting TopN from histograms, we can minus the TopN fraction here.
+	if selectivity*float64(totalRows) > float64(modifyRows) {
+		selectivity = float64(modifyRows) / float64(totalRows)
+	}
+	return selectivity
 }

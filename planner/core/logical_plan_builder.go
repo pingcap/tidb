@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -48,6 +49,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/set"
 )
 
 const (
@@ -2295,8 +2297,9 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 
 func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (LogicalPlan, error) {
 	dbName := tn.Schema
+	sessionVars := b.ctx.GetSessionVars()
 	if dbName.L == "" {
-		dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		dbName = model.NewCIStr(sessionVars.CurrentDB)
 	}
 
 	tbl, err := b.is.TableByName(dbName, tn.Name)
@@ -2312,9 +2315,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
 	if tableInfo.IsView() {
-		if b.capFlag&collectUnderlyingViewName != 0 {
-			b.underlyingViewNames.Insert(dbName.L + "." + tn.Name.L)
-		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
 	}
 
@@ -2405,27 +2405,16 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 	}
 
 	var result LogicalPlan = ds
-
-	needUS := false
-	if pi := tableInfo.GetPartitionInfo(); pi == nil {
-		if b.ctx.HasDirtyContent(tableInfo.ID) {
-			needUS = true
-		}
-	} else {
-		// Currently, we'll add a UnionScan on every partition even though only one partition's data is changed.
-		// This is limited by current implementation of Partition Prune. It'll updated once we modify that part.
-		for _, partition := range pi.Definitions {
-			if b.ctx.HasDirtyContent(partition.ID) {
-				needUS = true
-				break
-			}
-		}
-	}
-	if needUS {
+	dirty := tableHasDirtyContent(b.ctx, tableInfo)
+	if dirty {
 		us := LogicalUnionScan{}.Init(b.ctx)
 		us.SetChildren(ds)
 		result = us
 	}
+	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
+		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
+	}
+	sessionVars.StmtCtx.TblInfo2UnionScan[tableInfo] = dirty
 
 	// If this table contains any virtual generated columns, we need a
 	// "Projection" to calculate these columns.
@@ -2441,8 +2430,33 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 	return result, nil
 }
 
+// checkRecursiveView checks whether this view is recursively defined.
+func (b *PlanBuilder) checkRecursiveView(dbName model.CIStr, tableName model.CIStr) (func(), error) {
+	viewFullName := dbName.L + "." + tableName.L
+	if b.buildingViewStack == nil {
+		b.buildingViewStack = set.NewStringSet()
+	}
+	// If this view has already been on the building stack, it means
+	// this view contains a recursive definition.
+	if b.buildingViewStack.Exist(viewFullName) {
+		return nil, ErrViewRecursive.GenWithStackByArgs(dbName.O, tableName.O)
+	}
+	// If the view is being renamed, we return the mysql compatible error message.
+	if b.capFlag&renameView != 0 && viewFullName == b.renamingViewName {
+		return nil, ErrNoSuchTable.GenWithStackByArgs(dbName.O, tableName.O)
+	}
+	b.buildingViewStack.Insert(viewFullName)
+	return func() { delete(b.buildingViewStack, viewFullName) }, nil
+}
+
 // BuildDataSourceFromView is used to build LogicalPlan from view
 func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
+	deferFunc, err := b.checkRecursiveView(dbName, tableInfo.Name)
+	if err != nil {
+		return nil, err
+	}
+	defer deferFunc()
+
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	viewParser := parser.New()
 	viewParser.EnableWindowFunc(b.ctx.GetSessionVars().EnableWindowFunction)
@@ -2454,7 +2468,10 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	b.visitInfo = make([]visitInfo, 0)
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
-		err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
+			terror.ErrorNotEqual(err, ErrNoSuchTable) {
+			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+		}
 		return nil, err
 	}
 
@@ -2506,7 +2523,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 			origColName = tableInfo.View.Cols[i]
 		}
 		projSchema.Append(&expression.Column{
-			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID:    cols[i].UniqueID,
 			TblName:     tableInfo.Name,
 			OrigTblName: col.OrigTblName,
 			ColName:     columnInfo[i].Name,
@@ -3015,12 +3032,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		for _, tn := range delete.Tables.Tables {
 			foundMatch := false
 			for _, v := range tableList {
-				dbName := v.Schema.L
-				if dbName == "" {
-					dbName = b.ctx.GetSessionVars().CurrentDB
+				dbName := v.Schema
+				if dbName.L == "" {
+					dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 				}
-				if (tn.Schema.L == "" || tn.Schema.L == dbName) && tn.Name.L == v.Name.L {
-					tn.Schema.L = dbName
+				if (tn.Schema.L == "" || tn.Schema.L == dbName.L) && tn.Name.L == v.Name.L {
+					tn.Schema = dbName
 					tn.DBInfo = v.DBInfo
 					tn.TableInfo = v.TableInfo
 					foundMatch = true

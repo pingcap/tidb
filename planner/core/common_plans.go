@@ -227,17 +227,28 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
-			if metrics.ResettablePlanCacheCounterFortTest {
-				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
-			} else {
-				planCacheCounter.Inc()
+			cachedVal := cacheValue.(*PSTMTPlanCacheValue)
+			planValid := true
+			for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
+				if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
+					planValid = false
+					sctx.PreparedPlanCache().Delete(cacheKey)
+					break
+				}
 			}
-			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
-			err := e.rebuildRange(plan)
-			if err != nil {
-				return nil, err
+			if planValid {
+				if metrics.ResettablePlanCacheCounterFortTest {
+					metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+				} else {
+					planCacheCounter.Inc()
+				}
+				plan := cacheValue.(*PSTMTPlanCacheValue).Plan
+				err := e.rebuildRange(plan)
+				if err != nil {
+					return nil, err
+				}
+				return plan, nil
 			}
-			return plan, nil
 		}
 	}
 	p, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
@@ -246,7 +257,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
-		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
+		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p, sctx.GetSessionVars().StmtCtx.TblInfo2UnionScan))
 	}
 	return p, err
 }

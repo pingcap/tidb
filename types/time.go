@@ -720,6 +720,29 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 	switch len(seps) {
 	case 1:
 		l := len(seps[0])
+		// Values specified as numbers
+		if isFloat {
+			numOfTime, err := StrToInt(sc, seps[0])
+			if err != nil {
+				return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(str))
+			}
+
+			dateTime, err := ParseDatetimeFromNum(sc, numOfTime)
+			if err != nil {
+				return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(str))
+			}
+
+			year, month, day, hour, minute, second =
+				dateTime.Time.Year(), dateTime.Time.Month(), dateTime.Time.Day(),
+				dateTime.Time.Hour(), dateTime.Time.Minute(), dateTime.Time.Second()
+			if l >= 9 && l <= 14 {
+				hhmmss = true
+			}
+
+			break
+		}
+
+		// Values specified as strings
 		switch l {
 		case 14: // No delimiter.
 			// YYYYMMDDHHMMSS
@@ -1322,11 +1345,6 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 		return getTime(sc, num, t.Type)
 	}
 
-	// Check YYYYMMDD.
-	if num < 10000101 {
-		return t, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(num))
-	}
-
 	// Adjust hour/min/second.
 	if num <= 99991231 {
 		num = num * 1000000
@@ -1671,13 +1689,15 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, 
 	lf := len(format) - 1
 	// Has fraction part
 	if decimalPointPos < lf {
-		if lf-decimalPointPos >= 6 {
+		dvPre := oneToSixDigitRegex.FindString(format[decimalPointPos+1:]) // the numberical prefix of the fraction part
+		dvPreLen := len(dvPre)
+		if dvPreLen >= 6 {
 			// MySQL rounds down to 1e-6.
-			if dv, err = strconv.ParseInt(format[decimalPointPos+1:decimalPointPos+7], 10, 64); err != nil {
+			if dv, err = strconv.ParseInt(dvPre[0:6], 10, 64); err != nil {
 				return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
 			}
 		} else {
-			if dv, err = strconv.ParseInt(format[decimalPointPos+1:]+"000000"[:6-(lf-decimalPointPos)], 10, 64); err != nil {
+			if dv, err = strconv.ParseInt(dvPre[:]+"000000"[:6-dvPreLen], 10, 64); err != nil {
 				return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
 			}
 		}

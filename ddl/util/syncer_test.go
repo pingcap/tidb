@@ -152,7 +152,6 @@ func TestSyncerSimple(t *testing.T) {
 	}
 
 	// for StartCleanWork
-	go d.SchemaSyncer().StartCleanWork()
 	ttl := 10
 	// Make sure NeededCleanTTL > ttl, then we definitely clean the ttl.
 	NeededCleanTTL = int64(11)

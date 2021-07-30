@@ -87,7 +87,8 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 	timeoutString := r.FormValue("timeout")
 	curDB := strings.ToLower(r.FormValue("current_db"))
 	if curDB != "" {
-		_, err = sh.s.Execute(reqCtx, "use %v"+curDB)
+		sql := sqlexec.MustEscapeSQL("use %n", curDB)
+		_, err = sh.s.Execute(reqCtx, sql)
 		if err != nil {
 			serveError(w, http.StatusInternalServerError, fmt.Sprintf("use database %v failed, err: %v", curDB, err))
 			return
@@ -161,7 +162,8 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 	}
 	// If we don't catch profile. We just get a explain result.
 	if pprofTime == 0 {
-		recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(reqCtx, fmt.Sprintf("explain %s", sql))
+		sql = sqlexec.MustEscapeSQL("explain " + sql)
+		recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(reqCtx, sql)
 		if len(recordSets) > 0 {
 			defer terror.Call(recordSets[0].Close)
 		}
@@ -239,7 +241,8 @@ type explainAnalyzeResult struct {
 }
 
 func (sh *sqlInfoFetcher) getExplainAnalyze(ctx context.Context, sql string, resultChan chan<- *explainAnalyzeResult) {
-	recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(ctx, fmt.Sprintf("explain analyze %s", sql))
+	sql = sqlexec.MustEscapeSQL("explain analyze " + sql)
+	recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if len(recordSets) > 0 {
 		defer terror.Call(recordSets[0].Close)
 	}
@@ -284,7 +287,8 @@ func (sh *sqlInfoFetcher) getStatsForTable(pair tableNamePair) (*handle.JSONTabl
 }
 
 func (sh *sqlInfoFetcher) getShowCreateTable(pair tableNamePair, zw *zip.Writer) error {
-	recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
+	sql := sqlexec.MustEscapeSQL("SHOW CREATE TABLE %n.%n", pair.DBName, pair.TableName)
+	recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(recordSets) > 0 {
 		defer terror.Call(recordSets[0].Close)
 	}

@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
@@ -36,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = Suite(&testPessimisticSuite{})
+var _ = SerialSuites(&testPessimisticSuite{})
 
 type testPessimisticSuite struct {
 	cluster   *mocktikv.Cluster
@@ -687,4 +688,160 @@ func (s *testPessimisticSuite) TestPessimisticReadCommitted(c *C) {
 	wg.Wait()
 
 	tk1.MustExec("commit;")
+}
+
+func (s *testPessimisticSuite) TestInsertDupKeyAfterLock(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk2.MustExec("use test_db")
+	tk2.MustExec("drop table if exists t1")
+	tk2.MustExec("create table t1(c1 int primary key, c2 int, c3 int, unique key uk(c2));")
+	tk2.MustExec("insert into t1 values(1, 2, 3);")
+	tk2.MustExec("insert into t1 values(10, 20, 30);")
+
+	// Test insert after lock.
+	tk.MustExec("begin pessimistic")
+	err := tk.ExecToErr("update t1 set c2 = 20 where c1 = 1;")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	tk.MustExec("commit")
+	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 30"))
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from t1 for update")
+	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	tk.MustExec("commit")
+	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 30"))
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from t1 where c2 = 2 for update")
+	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	tk.MustExec("commit")
+	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 30"))
+
+	// Test insert after insert.
+	tk.MustExec("begin pessimistic")
+	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	tk.MustExec("insert into t1 values(5, 6, 7)")
+	err = tk.ExecToErr("insert into t1 values(6, 6, 7);")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	tk.MustExec("commit")
+	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "5 6 7", "10 20 30"))
+
+	// Test insert after delete.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("delete from t1 where c2 > 2")
+	tk.MustExec("insert into t1 values(10, 20, 500);")
+	err = tk.ExecToErr("insert into t1 values(20, 20, 30);")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	err = tk.ExecToErr("insert into t1 values(1, 20, 30);")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	tk.MustExec("commit")
+	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 500"))
+
+	// Test range.
+	tk.MustExec("begin pessimistic")
+	err = tk.ExecToErr("update t1 set c2 = 20 where c1 >= 1 and c1 < 5;")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	err = tk.ExecToErr("update t1 set c2 = 20 where c1 >= 1 and c1 < 50;")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	err = tk.ExecToErr("insert into t1 values(1, 15, 300);")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	tk.MustExec("commit")
+	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "10 20 500"))
+
+	// Test select for update after dml.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1 values(5, 6, 7)")
+	tk.MustExec("select * from t1 where c1 = 5 for update")
+	tk.MustExec("select * from t1 where c1 = 6 for update")
+	tk.MustExec("select * from t1 for update")
+	err = tk.ExecToErr("insert into t1 values(7, 6, 7)")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	err = tk.ExecToErr("insert into t1 values(5, 8, 6)")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	tk.MustExec("select * from t1 where c1 = 5 for update")
+	tk.MustExec("select * from t1 where c2 = 8 for update")
+	tk.MustExec("select * from t1 for update")
+	tk.MustExec("commit")
+	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 2 3", "5 6 7", "10 20 500"))
+
+	// Test optimistic for update.
+	tk.MustExec("begin optimistic")
+	tk.MustQuery("select * from t1 where c1 = 1 for update").Check(testkit.Rows("1 2 3"))
+	tk.MustExec("insert into t1 values(10, 10, 10)")
+	err = tk.ExecToErr("commit")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+}
+
+func (s *testPessimisticSuite) TestResolveStalePessimisticPrimaryLock(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeCommitSecondaries", "return(\"skip\")"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep", "return(20000)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeCommitSecondaries"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep"), IsNil)
+	}()
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists test")
+	tk.MustExec("create database test")
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk3.MustExec("use test")
+
+	tk3.MustExec("drop table if exists t1")
+	tk3.MustExec("create table t1(c1 int key, c2 int, c3 int, unique key uk(c2), key k1(c3), key k2(c2, c3));")
+	tk3.MustExec("insert into t1 values(1, 1, 1);")
+	tk3.MustExec("insert into t1 values(2, 2, 2);")
+	tk3.MustExec("insert into t1 values(3, 3, 3);")
+	tk3.MustExec("insert into t1 values(101, 101, 101);")
+	tk3.MustExec("insert into t1 values(201, 201, 201);")
+	tk3.MustExec("insert into t1 values(301, 301, 301);")
+	tk3.MustExec("insert into t1 values(401, 401, 401);")
+	tk3.MustExec("insert into t1 values(402, 402, 402);")
+	tk3.MustExec("insert into t1 values(501, 501, 501);")
+	tbl, err := domain.GetDomain(tk3.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+	ukIdxID := tbl.Indices()[0].Meta().ID
+	k1IdxID := tbl.Indices()[1].Meta().ID
+	k2IdxID := tbl.Indices()[2].Meta().ID
+	s.cluster.SplitTable(s.mvccStore, tblID, 8)
+	s.cluster.SplitIndex(s.mvccStore, tblID, ukIdxID, 8)
+	s.cluster.SplitIndex(s.mvccStore, tblID, k1IdxID, 8)
+	s.cluster.SplitIndex(s.mvccStore, tblID, k2IdxID, 8)
+
+	tk.MustExec("set innodb_lock_wait_timeout = 1")
+	tk.MustExec("begin pessimistic")
+	tk3.MustExec("begin pessimistic")
+	tk3.MustQuery("select * from t1 where c1 = 501 for update").Check(testkit.Rows("501 501 501"))
+	err = tk.ExecToErr("update t1 set c1 = c1 + 10, c2 = c2 + 10;")
+	c.Assert(err, NotNil)
+	tk3.MustExec("rollback")
+
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("delete from t1 where c1 = 1")
+	tk2.MustExec("commit")
+
+	tk.MustExec("update t1 set c1 = c1 + 10, c2 = c2 + 10 where c1 > 1;")
+	tk.MustExec("commit")
+
+	tk2.MustExec("set innodb_lock_wait_timeout = 1")
+	tk2.MustExec("begin pessimistic")
+	tk2.MustExec("update t1 set c3 = c3 + 7 where c1 in (3, 101, 201, 301, 401, 402, 501)")
+	tk2.MustExec("commit")
+
+	tk.MustExec("rollback")
+	tk2.MustExec("rollback")
+	tk3.MustExec("rollback")
+
+	c.Assert(tk2.ExecToErr("admin check table t1"), IsNil)
 }

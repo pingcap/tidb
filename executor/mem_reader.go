@@ -272,7 +272,7 @@ func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn process
 		return err
 	}
 	for _, rg := range kvRanges {
-		iter, err := txn.GetMemBuffer().Iter(rg.StartKey, rg.EndKey)
+		iter, err := txn.GetMemBufferSnapshot().Iter(rg.StartKey, rg.EndKey)
 		if err != nil {
 			return err
 		}

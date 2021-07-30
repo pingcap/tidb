@@ -43,19 +43,24 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
 // GCWorker periodically triggers GC process on tikv server.
 type GCWorker struct {
-	uuid        string
-	desc        string
-	store       tikv.Storage
-	pdClient    pd.Client
-	gcIsRunning bool
-	lastFinish  time.Time
-	cancel      context.CancelFunc
-	done        chan error
+	uuid         string
+	desc         string
+	store        tikv.Storage
+	pdClient     pd.Client
+	gcIsRunning  bool
+	lastFinish   time.Time
+	cancel       context.CancelFunc
+	done         chan error
+	testingKnobs struct {
+		scanLocks    func(key []byte, regionID uint64) []*tikv.Lock
+		resolveLocks func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error)
+	}
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -823,6 +828,7 @@ func (w *GCWorker) resolveLocksForRange(
 		ctx = context.WithValue(ctx, "injectedBackoff", struct{}{})
 		bo = tikv.NewBackoffer(ctx, sleep)
 	})
+retryScanAndResolve:
 	for {
 		select {
 		case <-ctx.Done():
@@ -862,17 +868,39 @@ func (w *GCWorker) resolveLocksForRange(
 		for i := range locksInfo {
 			locks[i] = tikv.NewLock(locksInfo[i])
 		}
-
-		ok, err1 := w.store.GetLockResolver().BatchResolveLocks(bo, locks, loc.Region)
-		if err1 != nil {
-			return regions, errors.Trace(err1)
+		if w.testingKnobs.scanLocks != nil {
+			locks = append(locks, w.testingKnobs.scanLocks(key, loc.Region.GetID())...)
 		}
-		if !ok {
-			err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
-			if err != nil {
-				return regions, errors.Trace(err)
+		locForResolve := loc
+		for {
+			var (
+				ok   bool
+				err1 error
+			)
+			if w.testingKnobs.resolveLocks != nil {
+				ok, err1 = w.testingKnobs.resolveLocks(locks, locForResolve.Region)
+			} else {
+				ok, err1 = w.store.GetLockResolver().BatchResolveLocks(bo, locks, locForResolve.Region)
 			}
-			continue
+			if err1 != nil {
+				return regions, errors.Trace(err1)
+			}
+			if !ok {
+				err = bo.Backoff(tikv.BoTxnLock, errors.Errorf("remain locks: %d", len(locks)))
+				if err != nil {
+					return regions, errors.Trace(err)
+				}
+				stillInSame, refreshedLoc, err := w.tryRelocateLocksRegion(bo, locks)
+				if err != nil {
+					return regions, errors.Trace(err)
+				}
+				if stillInSame {
+					locForResolve = refreshedLoc
+					continue
+				}
+				continue retryScanAndResolve
+			}
+			break
 		}
 		if len(locks) < gcScanLockLimit {
 			regions++
@@ -880,7 +908,7 @@ func (w *GCWorker) resolveLocksForRange(
 		} else {
 			logutil.Logger(ctx).Info("[gc worker] region has more than limit locks",
 				zap.String("uuid", w.uuid),
-				zap.Uint64("region", loc.Region.GetID()),
+				zap.Uint64("region", locForResolve.Region.GetID()),
 				zap.Int("scan lock limit", gcScanLockLimit))
 			metrics.GCRegionTooManyLocksCounter.Inc()
 			key = locks[len(locks)-1].Key
@@ -896,6 +924,18 @@ func (w *GCWorker) resolveLocksForRange(
 		})
 	}
 	return regions, nil
+}
+
+func (w *GCWorker) tryRelocateLocksRegion(bo *tikv.Backoffer, locks []*tikv.Lock) (stillInSameRegion bool, refreshedLoc *tikv.KeyLocation, err error) {
+	if len(locks) == 0 {
+		return
+	}
+	refreshedLoc, err = w.store.GetRegionCache().LocateKey(bo, locks[0].Key)
+	if err != nil {
+		return
+	}
+	stillInSameRegion = refreshedLoc.Contains(locks[len(locks)-1].Key)
+	return
 }
 
 func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) error {
@@ -1279,8 +1319,8 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	ctx := context.Background()
 	se := createSession(w.store)
 	defer se.Close()
-	stmt := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	rs, err := se.Execute(ctx, stmt)
+	sql := sqlexec.MustEscapeSQL(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name=%? FOR UPDATE`, key)
+	rs, err := se.Execute(ctx, sql)
 	if len(rs) > 0 {
 		defer terror.Call(rs[0].Close)
 	}
@@ -1305,13 +1345,13 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 }
 
 func (w *GCWorker) saveValueToSysTable(key, value string) error {
-	stmt := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	sql := sqlexec.MustEscapeSQL(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES (%?, %?, %?)
 			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
-		key, value, gcVariableComments[key])
+			       UPDATE variable_value = %?, comment = %?`,
+		key, value, gcVariableComments[key], value, gcVariableComments[key])
 	se := createSession(w.store)
 	defer se.Close()
-	_, err := se.Execute(context.Background(), stmt)
+	_, err := se.Execute(context.Background(), sql)
 	logutil.Logger(context.Background()).Debug("[gc worker] save kv",
 		zap.String("key", key),
 		zap.String("value", value),

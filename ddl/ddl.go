@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	goutil "github.com/pingcap/tidb/util"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
@@ -246,7 +248,6 @@ type DDL interface {
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
-	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error)
 	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
@@ -313,6 +314,7 @@ type ddlCtx struct {
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
 	infoHandle   *infoschema.Handle
+	tableLockCkr util.DeadTableLockChecker
 
 	// hook may be modified.
 	mu struct {
@@ -376,6 +378,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	ctx, cancelFunc := context.WithCancel(ctx)
 	var manager owner.Manager
 	var syncer util.SchemaSyncer
+	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
@@ -384,6 +387,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	} else {
 		manager = owner.NewOwnerManager(etcdCli, ddlPrompt, id, DDLOwnerKey, cancelFunc)
 		syncer = util.NewSchemaSyncer(etcdCli, id, manager)
+		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
 	ddlCtx := &ddlCtx{
@@ -395,6 +399,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		schemaSyncer: syncer,
 		binlogCli:    binloginfo.GetPumpsClient(),
 		infoHandle:   infoHandle,
+		tableLockCkr: deadLockCkr,
 	}
 	ddlCtx.mu.hook = hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
@@ -492,6 +497,11 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 				}
 			})
 		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s", metrics.StartCleanWork)).Inc()
+		if config.TableLockEnabled() {
+			d.wg.Add(1)
+			go d.startCleanDeadTableLock()
+		}
+		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
 }
 
@@ -654,7 +664,6 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			logutil.Logger(ddlLogCtx).Info("[ddl] DDL job is finished", zap.Int64("jobID", jobID))
 			return nil
 		}
-
 		if historyJob.Error != nil {
 			return errors.Trace(historyJob.Error)
 		}
@@ -681,6 +690,40 @@ func (d *ddl) GetHook() Callback {
 	defer d.mu.Unlock()
 
 	return d.mu.hook
+}
+
+func (d *ddl) startCleanDeadTableLock() {
+	defer func() {
+		goutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
+		d.wg.Done()
+	}()
+
+	ticker := time.NewTicker(time.Second * 10)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if !d.ownerManager.IsOwner() {
+				continue
+			}
+			if d.infoHandle == nil || !d.infoHandle.IsValid() {
+				continue
+			}
+			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.quitCh, d.infoHandle.Get().AllSchemas())
+			if err != nil {
+				logutil.Logger(ddlLogCtx).Info("[ddl] get dead table lock failed.", zap.Error(err))
+				continue
+			}
+			for se, tables := range deadLockTables {
+				err := d.CleanDeadTableLock(tables, se)
+				if err != nil {
+					logutil.Logger(ddlLogCtx).Info("[ddl] clean dead table lock failed.", zap.Error(err))
+				}
+			}
+		case <-d.quitCh:
+			return
+		}
+	}
 }
 
 // DDL error codes.

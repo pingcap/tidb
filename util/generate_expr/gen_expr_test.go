@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tables
+package generateExpr
 
 import (
 	. "github.com/pingcap/check"
@@ -31,7 +31,7 @@ func (s *testGenExprSuite) TestParseExpression(c *C) {
 		{"json_extract(a, '$.a')", "json_extract", true},
 	}
 	for _, tt := range tests {
-		node, err := parseExpression(tt.input)
+		node, err := ParseExpression(tt.input)
 		if tt.success {
 			fc := node.(*ast.FuncCallExpr)
 			c.Assert(fc.FnName.L, Equals, tt.output)
@@ -40,5 +40,3 @@ func (s *testGenExprSuite) TestParseExpression(c *C) {
 		}
 	}
 }
-
-var PartitionRecordKey = partitionRecordKey

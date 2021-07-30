@@ -402,13 +402,13 @@ func (e *ShowExec) fetchShowTableStatus() error {
 		return ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 
-	sql := fmt.Sprintf(`SELECT
+	sql := sqlexec.MustEscapeSQL(`SELECT
                table_name, engine, version, row_format, table_rows,
                avg_row_length, data_length, max_data_length, index_length,
                data_free, auto_increment, create_time, update_time, check_time,
                table_collation, IFNULL(checksum,''), create_options, table_comment
                FROM information_schema.tables
-	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
+	       WHERE table_schema=%? ORDER BY table_name`, e.DBName.O)
 
 	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(e.ctx, sql)
 
@@ -1045,8 +1045,7 @@ func (e *ShowExec) fetchShowCreateUser() error {
 		}
 	}
 
-	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`,
-		mysql.SystemDB, mysql.UserTable, userName, hostName)
+	sql := sqlexec.MustEscapeSQL(`SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, userName, hostName)
 	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -1055,8 +1054,7 @@ func (e *ShowExec) fetchShowCreateUser() error {
 		return ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
 			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
 	}
-	sql = fmt.Sprintf(`SELECT PRIV FROM %s.%s WHERE User='%s' AND Host='%s'`,
-		mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
+	sql = sqlexec.MustEscapeSQL(`SELECT PRIV FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	if err != nil {
 		return errors.Trace(err)

@@ -21,9 +21,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -62,8 +64,10 @@ func (p *partition) GetPhysicalID() int64 {
 // partitionedTable is a table, it contains many Partitions.
 type partitionedTable struct {
 	Table
-	partitionExpr *PartitionExpr
-	partitions    map[int64]*partition
+	partitionExpr   *PartitionExpr
+	partitions      map[int64]*partition
+	evalBufferTypes []*types.FieldType
+	evalBufferPool  sync.Pool
 }
 
 func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, error) {
@@ -88,6 +92,12 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 		partitions[p.ID] = &t
 	}
 	ret.partitions = partitions
+	initEvalBufferType(ret)
+	ret.evalBufferPool = sync.Pool{
+		New: func() interface{} {
+			return initEvalBuffer(ret)
+		},
+	}
 	return ret, nil
 }
 
@@ -127,9 +137,30 @@ type PartitionExpr struct {
 	UpperBounds []expression.Expression
 	// Expr is the hash partition expression.
 	Expr expression.Expression
-
 	// The new range partition pruning
 	*ForRangePruning
+}
+
+func initEvalBufferType(t *partitionedTable) {
+	hasExtraHandle := false
+	numCols := len(t.Cols())
+	if !t.Meta().PKIsHandle {
+		hasExtraHandle = true
+		numCols++
+	}
+	t.evalBufferTypes = make([]*types.FieldType, numCols)
+	for i, col := range t.Cols() {
+		t.evalBufferTypes[i] = &col.FieldType
+	}
+
+	if hasExtraHandle {
+		t.evalBufferTypes[len(t.evalBufferTypes)-1] = types.NewFieldType(mysql.TypeLonglong)
+	}
+}
+
+func initEvalBuffer(t *partitionedTable) *chunk.MutRow {
+	evalBuffer := chunk.MutRowFromTypes(t.evalBufferTypes)
+	return &evalBuffer
 }
 
 // ForRangePruning is used for range partition pruning.
@@ -206,7 +237,6 @@ func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 			return nil, errors.Trace(err)
 		}
 		locateExprs = append(locateExprs, exprs[0])
-
 		if i > 0 {
 			fmt.Fprintf(&buf, " and ((%s) >= (%s))", partStr, pi.Definitions[i-1].LessThan[0])
 		} else {
@@ -237,12 +267,18 @@ func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	}
 
 	var rangePruning *ForRangePruning
+	var partitionExpr expression.Expression
 	if len(pi.Columns) == 0 {
+		exprs, err := expression.ParseSimpleExprsWithSchema(ctx, pi.Expr, schema)
+		if err != nil {
+			return nil, err
+		}
 		rangePruning = &ForRangePruning{}
-		err := makeLessThanData(pi, rangePruning)
+		err = makeLessThanData(pi, rangePruning)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		partitionExpr = exprs[0]
 	}
 
 	return &PartitionExpr{
@@ -250,6 +286,7 @@ func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		Ranges:          partitionPruneExprs,
 		UpperBounds:     locateExprs,
 		ForRangePruning: rangePruning,
+		Expr:            partitionExpr,
 	}, nil
 }
 
@@ -301,7 +338,8 @@ func (t *partitionedTable) PartitionExpr(ctx sessionctx.Context, columns []*expr
 	return newPartitionExprBySchema(ctx, t.meta, columns)
 }
 
-func partitionRecordKey(pid int64, handle int64) kv.Key {
+// PartitionRecordKey returns the partition recordKey.
+func PartitionRecordKey(pid int64, handle int64) kv.Key {
 	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
 	return tablecodec.EncodeRecordKey(recordPrefix, handle)
 }
@@ -312,7 +350,11 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 	var idx int
 	switch t.meta.Partition.Type {
 	case model.PartitionTypeRange:
-		idx, err = t.locateRangePartition(ctx, pi, r)
+		if len(pi.Columns) == 0 {
+			idx, err = t.locateRangePartition(ctx, pi, r)
+		} else {
+			idx, err = t.locateRangeColumnPartition(ctx, pi, r)
+		}
 	case model.PartitionTypeHash:
 		idx, err = t.locateHashPartition(ctx, pi, r)
 	}
@@ -322,13 +364,15 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 	return pi.Definitions[idx].ID, nil
 }
 
-func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
+func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
 	var err error
 	var isNull bool
 	partitionExprs := t.partitionExpr.UpperBounds
+	evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
+	defer t.evalBufferPool.Put(evalBuffer)
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
-		var ret int64
-		ret, isNull, err = partitionExprs[i].EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+		evalBuffer.SetDatums(r...)
+		ret, isNull, err := partitionExprs[i].EvalInt(ctx, evalBuffer.ToRow())
 		if err != nil {
 			return true // Break the search.
 		}
@@ -365,9 +409,74 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 	return idx, nil
 }
 
+func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
+	var (
+		ret    int64
+		val    int64
+		isNull bool
+		err    error
+	)
+	if col, ok := t.partitionExpr.Expr.(*expression.Column); ok {
+		if r[col.Index].IsNull() {
+			isNull = true
+		}
+		ret = r[col.Index].GetInt64()
+	} else {
+		evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
+		defer t.evalBufferPool.Put(evalBuffer)
+		evalBuffer.SetDatums(r...)
+		val, isNull, err = t.partitionExpr.Expr.EvalInt(ctx, evalBuffer.ToRow())
+		if err != nil {
+			return 0, err
+		}
+		ret = val
+	}
+	unsigned := mysql.HasUnsignedFlag(t.partitionExpr.Expr.GetType().Flag)
+	ranges := t.partitionExpr.ForRangePruning
+	length := len(ranges.LessThan)
+	pos := sort.Search(length, func(i int) bool {
+		if isNull {
+			return true
+		}
+		return ranges.compare(i, ret, unsigned) > 0
+	})
+	if isNull {
+		pos = 0
+	}
+	if pos < 0 || pos >= length {
+		// The data does not belong to any of the partition returns `table has no partition for value %s`.
+		var valueMsg string
+		if pi.Expr != "" {
+			e, err := expression.ParseSimpleExprWithTableInfo(ctx, pi.Expr, t.meta)
+			if err == nil {
+				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+				if err == nil {
+					valueMsg = fmt.Sprintf("%d", val)
+				}
+			}
+		} else {
+			// When the table is partitioned by range columns.
+			valueMsg = "from column_list"
+		}
+		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
+	}
+	return pos, nil
+}
+
 // TODO: supports linear hashing
 func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
-	ret, isNull, err := t.partitionExpr.Expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+	if col, ok := t.partitionExpr.Expr.(*expression.Column); ok {
+		ret := r[col.Index].GetInt64()
+		ret = ret % int64(t.meta.Partition.Num)
+		if ret < 0 {
+			ret = -ret
+		}
+		return int(ret), nil
+	}
+	evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
+	defer t.evalBufferPool.Put(evalBuffer)
+	evalBuffer.SetDatums(r...)
+	ret, isNull, err := t.partitionExpr.Expr.EvalInt(ctx, evalBuffer.ToRow())
 	if err != nil {
 		return 0, err
 	}
@@ -473,4 +582,32 @@ func FindPartitionByName(meta *model.TableInfo, parName string) (int64, error) {
 		}
 	}
 	return -1, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(parName, meta.Name.O))
+}
+
+func compareUnsigned(v1, v2 int64) int {
+	switch {
+	case uint64(v1) > uint64(v2):
+		return 1
+	case uint64(v1) == uint64(v2):
+		return 0
+	}
+	return -1
+}
+
+func (lt *ForRangePruning) compare(ith int, v int64, unsigned bool) int {
+	if ith == len(lt.LessThan)-1 {
+		if lt.MaxValue {
+			return 1
+		}
+	}
+	if unsigned {
+		return compareUnsigned(lt.LessThan[ith], v)
+	}
+	switch {
+	case lt.LessThan[ith] > v:
+		return 1
+	case lt.LessThan[ith] == v:
+		return 0
+	}
+	return -1
 }

@@ -51,6 +51,8 @@ const (
 	Pessimistic
 	// SnapshotTS is defined to set snapshot ts.
 	SnapshotTS
+	// CheckExist map for key existence check.
+	CheckExists
 )
 
 // Priority value for transaction priority.
@@ -162,6 +164,8 @@ type Transaction interface {
 	Valid() bool
 	// GetMemBuffer return the MemBuffer binding to this transaction.
 	GetMemBuffer() MemBuffer
+	// GetMemBufferSnapshot is used to return a snapshot of MemBuffer without any statement modify.
+	GetMemBufferSnapshot() MemBuffer
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
 	// SetAssertion sets an assertion for an operation on the key.
@@ -182,6 +186,8 @@ type LockCtx struct {
 	PessimisticLockWaited *int32
 	LockKeysDuration      *time.Duration
 	LockKeysCount         *int32
+	CheckKeyExists        map[string]struct{}
+	PointGetLock          *bool
 }
 
 // Client is used to send request to KV layer.

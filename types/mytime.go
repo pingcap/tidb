@@ -160,7 +160,7 @@ func getFixDays(year, month, day int, ot gotime.Time) int {
 // When we execute select date_add('2018-01-31',interval 1 month) in mysql we got 2018-02-28
 // but in tidb we got 2018-03-03.
 // Dig it and we found it's caused by golang api time.Date(year int, month Month, day, hour, min, sec, nsec int, loc *Location) Time ,
-// it says October 32 converts to November 1 ,it conflits with mysql.
+// it says October 32 converts to November 1 ,it conflicts with mysql.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
 func AddDate(year, month, day int64, ot gotime.Time) (nt gotime.Time) {
 	df := getFixDays(int(year), int(month), int(day), ot)

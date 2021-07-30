@@ -107,6 +107,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4PercentRank()
 	case ast.WindowFuncLead, ast.WindowFuncLag:
 		a.typeInfer4LeadLag(ctx)
+	case ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncVarSamp, ast.AggFuncStddevSamp:
+		a.typeInfer4PopOrSamp(ctx)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
@@ -233,6 +235,12 @@ func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
 		// Merge the type of first and third argument.
 		a.RetTp = expression.InferType4ControlFuncs(a.Args[0].GetType(), a.Args[2].GetType())
 	}
+}
+
+func (a *baseFuncDesc) typeInfer4PopOrSamp(ctx sessionctx.Context) {
+	//var_pop/std/var_samp/stddev_samp's return value type is double
+	a.RetTp = types.NewFieldType(mysql.TypeDouble)
+	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 }
 
 // GetDefaultValue gets the default value when the function's input is null.

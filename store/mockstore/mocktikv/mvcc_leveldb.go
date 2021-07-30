@@ -16,6 +16,7 @@ package mocktikv
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"math"
 	"sync"
 
@@ -999,6 +1000,10 @@ func (mvcc *MVCCLevelDB) Cleanup(key []byte, startTS, currentTS uint64) error {
 		if ok && dec.lock.startTS == startTS {
 			// If the lock has already outdated, clean up it.
 			if currentTS == 0 || uint64(oracle.ExtractPhysical(dec.lock.startTS))+dec.lock.ttl < uint64(oracle.ExtractPhysical(currentTS)) {
+				logutil.Logger(context.Background()).Info("rollback expired lock and write rollback record",
+					zap.String("key", hex.EncodeToString(key)),
+					zap.Uint64("lock startTS", dec.lock.startTS),
+					zap.Stringer("lock op", dec.lock.op))
 				if err = rollbackLock(batch, dec.lock, key, startTS); err != nil {
 					return err
 				}
@@ -1125,6 +1130,12 @@ func (mvcc *MVCCLevelDB) ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvr
 func (mvcc *MVCCLevelDB) ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
+	if len(startKey) > 0 {
+		startKey = []byte{}
+	}
+	if len(endKey) > 0 {
+		endKey = []byte{}
+	}
 
 	iter, currKey, err := newScanIterator(mvcc.db, startKey, endKey)
 	defer iter.Release()

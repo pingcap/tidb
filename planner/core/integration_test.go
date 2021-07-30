@@ -431,3 +431,109 @@ func (s *testIntegrationSuite) TestIssue16935(c *C) {
 
 	tk.MustQuery("SELECT * FROM t0 LEFT JOIN v0 ON TRUE WHERE v0.c0 IS NULL;")
 }
+
+func (s *testIntegrationSuite) TestIssue19926(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ta;")
+	tk.MustExec("drop table if exists tb;")
+	tk.MustExec("drop table if exists tc;")
+	tk.MustExec("drop view if exists v;")
+	tk.MustExec("CREATE TABLE `ta`  (\n  `id` varchar(36) NOT NULL ,\n  `status` varchar(1) NOT NULL \n);")
+	tk.MustExec("CREATE TABLE `tb`  (\n  `id` varchar(36) NOT NULL ,\n  `status` varchar(1) NOT NULL \n);")
+	tk.MustExec("CREATE TABLE `tc`  (\n  `id` varchar(36) NOT NULL ,\n  `status` varchar(1) NOT NULL \n);")
+	tk.MustExec("insert into ta values('1','1');")
+	tk.MustExec("insert into tb values('1','1');")
+	tk.MustExec("insert into tc values('1','1');")
+	tk.MustExec("create definer='root'@'localhost' view v as\nselect \nconcat(`ta`.`status`,`tb`.`status`) AS `status`, \n`ta`.`id` AS `id`  from (`ta` join `tb`) \nwhere (`ta`.`id` = `tb`.`id`);")
+	tk.MustQuery("SELECT tc.status,v.id FROM tc, v WHERE tc.id = v.id AND v.status = '11';").Check(testkit.Rows("1 1"))
+}
+
+func (s *testIntegrationSuite) TestIssue20280(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS tx;")
+	tk.MustExec(`
+CREATE TABLE tx (
+  col1 varchar(20) COLLATE utf8mb4_bin NOT NULL DEFAULT ' ' ,
+  col2 varchar(32) COLLATE utf8mb4_bin NOT NULL DEFAULT ' ' ,
+  col3 varchar(9) COLLATE utf8mb4_bin NOT NULL DEFAULT ' ' ,
+  col4 varchar(24) COLLATE utf8mb4_bin NOT NULL DEFAULT ' ' ,
+  col5 varchar(18) COLLATE utf8mb4_bin NOT NULL DEFAULT ' ' ,
+  col6 varchar(32) COLLATE utf8mb4_bin NOT NULL DEFAULT ' ' ,
+  nav decimal(18,8) NOT NULL DEFAULT '0.00000000' ,
+  col8 int(11) NOT NULL DEFAULT '0' ,
+  col9 int(11) NOT NULL DEFAULT '0' ,
+  col10 decimal(18,8) NOT NULL DEFAULT '0.00000000' ,
+  col11 int(11) NOT NULL DEFAULT '0' ,
+  col12 decimal(18,8) NOT NULL DEFAULT '0.00000000' ,
+  col13 decimal(18,3) NOT NULL DEFAULT '0.000' ,
+  col14 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col15 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col16 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col17 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col18 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col19 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col20 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col21 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col22 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col23 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col24 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col25 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col26 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col27 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col28 decimal(18,3) NOT NULL DEFAULT '0.000' ,
+  col29 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col30 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col31 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col32 decimal(9,8) NOT NULL DEFAULT '0.00000000' ,
+  col33 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col34 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col35 decimal(18,8) NOT NULL DEFAULT '0.00000000' ,
+  col36 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col37 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col38 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col39 varchar(250) COLLATE utf8mb4_bin NOT NULL DEFAULT ' ' ,
+  col40 varchar(250) COLLATE utf8mb4_bin NOT NULL DEFAULT ' ' ,
+  col41 varchar(250) COLLATE utf8mb4_bin NOT NULL DEFAULT ' ' ,
+  col42 decimal(18,6) NOT NULL DEFAULT '0.000000' ,
+  col43 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col44 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col45 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col46 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  col47 decimal(18,8) NOT NULL DEFAULT '0.00000000' ,
+  col48 decimal(18,2) NOT NULL DEFAULT '0.00' ,
+  PRIMARY KEY (col1,col2,col3,col6,col8),
+  KEY idx_1 (col5)
+);`)
+
+	tk.MustExec(`
+INSERT INTO tx VALUES
+('123','456','000','789','XXX','31',1.00000000,20200202,20200202,1.00000000,0,0.00000000,400000.000,0.00,400000.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.000,0.00,0.00,0.00,0.00000000,400000.00,0.00,0.00000000,0.00,0.00,0.00,' ',' ',' ',0.000000,400000.00,0.00,0.00,0.00,0.00000000,0.00),
+('123','456','000','789','XXX','30',1.00312000,20200204,20200202,1.00000000,0,0.00000000,803011.640,0.00,800011.00,3010.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.000,0.00,0.00,0.00,0.00000000,803021.00,0.00,0.00000000,0.00,0.00,0.00,' ',' ',' ',0.000000,805517.04,0.00,0.00,0.00,0.00000000,0.00),
+('123','456','000','789','XXX','31',1.00224800,20200205,20200202,1.00000000,0,0.00000000,400000.000,0.00,400000.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.00,0.000,0.00,0.00,0.00,0.00000000,400000.00,0.00,0.00000000,0.00,0.00,0.00,' ',' ',' ',0.000000,400899.20,0.00,0.00,0.00,0.00000000,0.00);
+`)
+	tk.MustExec(`
+update tx a set a.col48 = (
+	SELECT
+		1
+	FROM
+		( SELECT * FROM tx ) b
+	WHERE
+		a.col1 = b.col1
+		AND a.col2 = b.col2
+		AND a.col3 = b.col3
+		AND a.col6 = b.col6
+		AND ( b.col1, b.col2, b.col3, b.col6, b.col8 ) IN (
+			SELECT col1, col2, col3, col6, max(col8)
+			FROM
+				( SELECT * FROM tx ) c
+			WHERE
+				c.col8 < 20200205 AND a.col9 = c.col9
+			GROUP BY
+				col1, col2, col3, col6
+			)
+	)
+WHERE
+	col8 =20200205 AND col5 ='XXX' AND a.col2 = '456';`)
+}

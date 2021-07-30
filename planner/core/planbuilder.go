@@ -170,9 +170,9 @@ const (
 	// canExpandAST indicates whether the origin AST can be expanded during plan
 	// building. ONLY used for `CreateViewStmt` now.
 	canExpandAST
-	// collectUnderlyingViewName indicates whether to collect the underlying
-	// view names of a CreateViewStmt during plan building.
-	collectUnderlyingViewName
+	// renameView indicates a view is being renamed, so we cannot use the origin
+	// definition of that view.
+	renameView
 )
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -207,8 +207,11 @@ type PlanBuilder struct {
 
 	// SelectLock need this information to locate the lock on partitions.
 	partitionedTable []table.PartitionedTable
-	// CreateView needs this information to check whether exists nested view.
-	underlyingViewNames set.StringSet
+
+	// buildingViewStack is used to check whether there is a recursive view.
+	buildingViewStack set.StringSet
+	// renamingViewName is the name of the view which is being renamed.
+	renamingViewName string
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -594,7 +597,7 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 		Name: x.Name,
 	}
 	if x.SQLVar != nil {
-		if v, ok := b.ctx.GetSessionVars().Users[x.SQLVar.Name]; ok {
+		if v, ok := b.ctx.GetSessionVars().Users[strings.ToLower(x.SQLVar.Name)]; ok {
 			p.SQLText = v
 		} else {
 			p.SQLText = "NULL"
@@ -1344,6 +1347,13 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		case ast.ShowCreateView:
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+		case ast.ShowStatsBuckets, ast.ShowStatsHistograms, ast.ShowStatsMeta, ast.ShowStatsHealthy:
+			user := b.ctx.GetSessionVars().User
+			var err error
+			if user != nil {
+				err = ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, mysql.SystemDB)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, mysql.SystemDB, "", "", err)
 		}
 		p.SetSchema(buildShowSchema(show, isView))
 	}
@@ -2218,19 +2228,15 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
-		b.capFlag |= canExpandAST
-		b.capFlag |= collectUnderlyingViewName
+		b.capFlag |= canExpandAST | renameView
+		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L
 		defer func() {
 			b.capFlag &= ^canExpandAST
-			b.capFlag &= ^collectUnderlyingViewName
+			b.capFlag &= ^renameView
 		}()
-		b.underlyingViewNames = set.NewStringSet()
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
 			return nil, err
-		}
-		if b.underlyingViewNames.Exist(v.ViewName.Schema.L + "." + v.ViewName.Name.L) {
-			return nil, ErrNoSuchTable.GenWithStackByArgs(v.ViewName.Schema.O, v.ViewName.Name.O)
 		}
 		schema := plan.Schema()
 		if v.Cols == nil {

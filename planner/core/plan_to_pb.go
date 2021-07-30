@@ -139,7 +139,7 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 // SetPBColumnsDefaultValue sets the default values of tipb.ColumnInfos.
 func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
 	for i, c := range columns {
-		if c.OriginDefaultValue == nil {
+		if c.GetOriginDefaultValue() == nil {
 			continue
 		}
 

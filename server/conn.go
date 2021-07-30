@@ -684,6 +684,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 					logutil.Logger(ctx).Info("read packet timeout, close this connection",
 						zap.Duration("idle", idleTime),
 						zap.Uint64("waitTimeout", waitTimeout),
+						zap.Error(err),
 					)
 				} else {
 					errStack := errors.ErrorStack(err)
@@ -989,7 +990,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 	// if input is "use `SELECT`", mysql client just send "SELECT"
 	// so we add `` around db.
-	_, err = cc.ctx.Execute(ctx, "use `"+db+"`")
+	sql, err := sqlexec.EscapeSQL("use %n", db)
+	if err != nil {
+		return err
+	}
+	_, err = cc.ctx.Execute(ctx, sql)
 	if err != nil {
 		return err
 	}

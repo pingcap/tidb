@@ -245,6 +245,8 @@ func checkPartitionExprValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 			return errors.Trace(err)
 		}
 		return nil
+	case *ast.ParenthesesExpr:
+		return checkPartitionExprValid(ctx, tblInfo, v.Expr)
 	}
 	return nil
 }

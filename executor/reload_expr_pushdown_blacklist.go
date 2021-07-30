@@ -87,7 +87,7 @@ var funcName2Alias = map[string]string{
 	"case":                       ast.Case,
 	"regexp":                     ast.Regexp,
 	"is null":                    ast.IsNull,
-	"is true":                    ast.IsTruth,
+	"is true":                    ast.IsTruthWithoutNull,
 	"is false":                   ast.IsFalsity,
 	"values":                     ast.Values,
 	"bit_count":                  ast.BitCount,

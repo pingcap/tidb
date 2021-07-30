@@ -184,6 +184,10 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 			e, ok := us.opts.Get(PresumeKeyNotExistsError)
 			if ok && e != nil {
 				us.markLazyConditionPair(k, nil, e.(error))
+				if val, ok := us.opts.Get(CheckExists); ok {
+					checkExistMap := val.(map[string]struct{})
+					checkExistMap[string(k)] = struct{}{}
+				}
 			} else {
 				us.markLazyConditionPair(k, nil, ErrKeyExists)
 			}
