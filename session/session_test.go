@@ -5387,7 +5387,7 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 		{"update /*+ use_index(tmp1, u) */ tmp1 set v=v+1000 where u>108 or u<102", checkSuccess{[]string{"1 101 2001", "9 109 2009"}, nil}, nil},
 	}
 
-	executeSql := func(sql string, checkResult interface{}, additionalCheck func(error)) (err error) {
+	executeSQL := func(sql string, checkResult interface{}, additionalCheck func(error)) (err error) {
 		switch check := checkResult.(type) {
 		case checkSuccess:
 			tk.MustExec(sql)
@@ -5413,26 +5413,26 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 		// update records in txn and records are inserted in txn
 		tk.MustExec("begin")
 		insertRecords(idList)
-		_ = executeSql(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
+		_ = executeSQL(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
 		tk.MustExec("rollback")
 		tk.MustQuery("select * from tmp1").Check(testkit.Rows())
 
 		// update records out of txn
 		insertRecords(idList)
-		_ = executeSql(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
+		_ = executeSQL(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
 		tk.MustExec("delete from tmp1")
 
 		// update records in txn and rollback
 		insertRecords(idList)
 		tk.MustExec("begin")
-		_ = executeSql(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
+		_ = executeSQL(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
 		tk.MustExec("rollback")
 		// rollback left records unmodified
 		checkNoChange()
 
 		// update records in txn and commit
 		tk.MustExec("begin")
-		err := executeSql(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
+		err := executeSQL(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
 		tk.MustExec("commit")
 		if err != nil {
 			checkNoChange()
