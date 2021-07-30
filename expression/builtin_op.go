@@ -16,6 +16,7 @@ package expression
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
@@ -436,6 +437,12 @@ type isTrueOrFalseFunctionClass struct {
 	// If keepNull is true and the input parameter is null, the function will return null.
 	// If keepNull is false, the null input parameter will be cast to 0.
 	keepNull bool
+}
+
+func (c *isTrueOrFalseFunctionClass) getDisplayName() string {
+	var nameBuilder strings.Builder
+	c.op.Format(&nameBuilder)
+	return nameBuilder.String()
 }
 
 func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
