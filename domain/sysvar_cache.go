@@ -112,13 +112,13 @@ func (svc *SysVarCache) fetchTableValues(ctx sessionctx.Context) (map[string]str
 
 // RebuildSysVarCache rebuilds the sysvar cache both globally and for session vars.
 // It needs to be called when sysvars are added or removed.
-// Only one rebuild can be in progress at a time, this prevents a lost update race
-// where an earlier fetchTableValues() finishes last.
 func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
-	svc.rebuildLock.Lock()
-	defer svc.rebuildLock.Unlock()
 	newSessionCache := make(map[string]string)
 	newGlobalCache := make(map[string]string)
+	// Only one rebuild can be in progress at a time, this prevents a lost update race
+	// where an earlier fetchTableValues() finishes last.
+	svc.rebuildLock.Lock()
+	defer svc.rebuildLock.Unlock()
 	tableContents, err := svc.fetchTableValues(ctx)
 	if err != nil {
 		return err
