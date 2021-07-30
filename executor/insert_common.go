@@ -1116,7 +1116,6 @@ func (e *InsertValues) txnValueGetter(txn kv.Transaction) kv.Getter {
 	}
 
 	return e.ctx.GetSessionVars().TemporaryTableTxnReader(txn, tblInfo)
-
 }
 
 func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) error {
