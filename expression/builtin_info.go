@@ -773,11 +773,11 @@ func (k TiDBDecodeKeyFunctionKeyType) String() string {
 // TiDBDecodeKeyFunctionKey is used to identify the decoder function in context.
 const TiDBDecodeKeyFunctionKey TiDBDecodeKeyFunctionKeyType = 0
 
-type tidbFindStatementsFromDigestsClass struct {
+type tidbDecodeSQLDigestsFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbFindStatementsFromDigestsClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -792,21 +792,21 @@ func (c *tidbFindStatementsFromDigestsClass) getFunction(ctx sessionctx.Context,
 	if err != nil {
 		return nil, err
 	}
-	sig := &builtinTiDBFindStatementsFromDigestsSig{bf}
+	sig := &builtinTiDBDecodeSQLDigestsSig{bf}
 	return sig, nil
 }
 
-type builtinTiDBFindStatementsFromDigestsSig struct {
+type builtinTiDBDecodeSQLDigestsSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinTiDBFindStatementsFromDigestsSig) Clone() builtinFunc {
-	newSig := &builtinTiDBFindStatementsFromDigestsSig{}
+func (b *builtinTiDBDecodeSQLDigestsSig) Clone() builtinFunc {
+	newSig := &builtinTiDBDecodeSQLDigestsSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-func (b *builtinTiDBFindStatementsFromDigestsSig) evalString(row chunk.Row) (string, bool, error) {
+func (b *builtinTiDBDecodeSQLDigestsSig) evalString(row chunk.Row) (string, bool, error) {
 	args := b.getArgs()
 	digestsStr, isNull, err := args[0].EvalString(b.ctx, row)
 	if err != nil {
@@ -815,6 +815,12 @@ func (b *builtinTiDBFindStatementsFromDigestsSig) evalString(row chunk.Row) (str
 	if isNull {
 		return "", true, nil
 	}
+
+	stmtTruncateLength := int64(0)
+	if len(args) > 1 {
+		stmtTruncateLength, isNull, err = args[1].EvalInt(b.ctx, row)
+	}
+
 	var digests []interface{}
 	err = json.Unmarshal([]byte(digestsStr), &digests)
 	if err != nil {
@@ -843,6 +849,9 @@ func (b *builtinTiDBFindStatementsFromDigestsSig) evalString(row chunk.Row) (str
 		}
 		if digest, ok := item.(string); ok {
 			if stmt, ok := retriever.SQLDigestsMap[digest]; ok {
+				if stmtTruncateLength > 0 && int64(len(stmt)) > stmtTruncateLength {
+					stmt = stmt[:stmtTruncateLength] + "..."
+				}
 				result[i] = stmt
 			}
 		}
