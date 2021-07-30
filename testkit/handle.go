@@ -11,23 +11,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package txn
+// +build !codes
+
+package testkit
 
 import (
+	"testing"
+
 	"github.com/pingcap/tidb/kv"
-	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/stretchr/testify/require"
 )
 
-type tikvScanner struct {
-	*txnsnapshot.Scanner
-}
-
-// Next return next element.
-func (s *tikvScanner) Next() error {
-	err := s.Scanner.Next()
-	return extractKeyErr(err)
-}
-
-func (s *tikvScanner) Key() kv.Key {
-	return kv.Key(s.Scanner.Key())
+// MustNewCommonHandle create a common handle with given values.
+func MustNewCommonHandle(t *testing.T, values ...interface{}) kv.Handle {
+	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
+	require.Nil(t, err)
+	ch, err := kv.NewCommonHandle(encoded)
+	require.Nil(t, err)
+	return ch
 }
