@@ -22,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/parser/mysql"
+	tidbfeature "github.com/pingcap/parser/tidb"
 )
 
 var _ = yyLexer(&Scanner{})
@@ -397,11 +398,10 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		s.r.inc()
 		// in '/*T!', try to match the pattern '/*T![feature1,feature2,...]'.
 		features := s.scanFeatureIDs()
-		if SpecialCommentsController.ContainsAll(features) {
+		if tidbfeature.CanParseFeature(features...) {
 			s.inBangComment = true
 			return s.scan()
 		}
-
 	case 'M': // '/*M' maybe MariaDB-specific comments
 		// no special treatment for now.
 		break
