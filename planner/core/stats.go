@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
@@ -327,7 +328,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			}
 		}
 	}
-	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn {
+	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn && ds.tableInfo.TempTableType != model.TempTableLocal {
 		err := ds.generateAndPruneIndexMergePath(ds.indexMergeHints != nil)
 		if err != nil {
 			return nil, err
@@ -1105,9 +1106,11 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 	}
 
 	var err error
-	p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
-	if err != nil {
-		return nil, err
+	if p.cte.seedPartPhysicalPlan == nil {
+		p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
+		if err != nil {
+			return nil, err
+		}
 	}
 	resStat := p.cte.seedPartPhysicalPlan.Stats()
 	// Changing the pointer so that seedStat in LogicalCTETable can get the new stat.
@@ -1120,9 +1123,11 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 		p.stats.ColNDVs[col.UniqueID] += resStat.ColNDVs[p.cte.seedPartLogicalPlan.Schema().Columns[i].UniqueID]
 	}
 	if p.cte.recursivePartLogicalPlan != nil {
-		p.cte.recursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
-		if err != nil {
-			return nil, err
+		if p.cte.recursivePartPhysicalPlan == nil {
+			p.cte.recursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
+			if err != nil {
+				return nil, err
+			}
 		}
 		recurStat := p.cte.recursivePartPhysicalPlan.Stats()
 		for i, col := range selfSchema.Columns {

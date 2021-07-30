@@ -389,10 +389,10 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 
 	colNames := make([]string, 0, len(is.IdxCols))
 	for i := range is.IdxCols {
-		colNames = append(colNames, is.Columns[i].Name.O)
+		colNames = append(colNames, is.Columns[i].Name.L)
 	}
-	if cols, missingColName := table.FindCols(e.table.Cols(), colNames, true); missingColName != "" {
-		b.err = plannercore.ErrUnknownColumn.GenWithStack("Unknown column %s", missingColName)
+	if cols, missingColOffset := table.FindColumns(e.table.Cols(), colNames, true); missingColOffset >= 0 {
+		b.err = plannercore.ErrUnknownColumn.GenWithStack("Unknown column %s", is.Columns[missingColOffset].Name.O)
 	} else {
 		e.idxTblCols = cols
 	}
@@ -1592,8 +1592,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
-			strings.ToLower(infoschema.TableTiDBTrx),
-			strings.ToLower(infoschema.ClusterTableTiDBTrx),
 			strings.ToLower(infoschema.TableDeadlocks),
 			strings.ToLower(infoschema.ClusterTableDeadlocks),
 			strings.ToLower(infoschema.TableDataLockWaits):
@@ -1601,6 +1599,16 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &memtableRetriever{
+					table:   v.Table,
+					columns: v.Columns,
+				},
+			}
+		case strings.ToLower(infoschema.TableTiDBTrx),
+			strings.ToLower(infoschema.ClusterTableTiDBTrx):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				table:        v.Table,
+				retriever: &tidbTrxTableRetriever{
 					table:   v.Table,
 					columns: v.Columns,
 				},

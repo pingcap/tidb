@@ -867,7 +867,7 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
 	c.Assert(err, IsNil)
-	_, _, err = generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key.pem", "/tmp/server-cert.pem")
+	serverCert, _, err := generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key.pem", "/tmp/server-cert.pem")
 	c.Assert(err, IsNil)
 	_, _, err = generateCert(2, "SQL Client Certificate", caCert, caKey, "/tmp/client-key.pem", "/tmp/client-cert.pem")
 	c.Assert(err, IsNil)
@@ -908,6 +908,16 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	err = cli.runTestTLSConnection(c, connOverrider) // We should get ErrNoTLS.
 	c.Assert(err, NotNil)
 	c.Assert(errors.Cause(err).Error(), Equals, mysql.ErrNoTLS.Error())
+
+	// Test SSL/TLS session vars
+	var v *variable.SessionVars
+	stats, err := server.Stats(v)
+	c.Assert(err, IsNil)
+	c.Assert(stats, HasKey, "Ssl_server_not_after")
+	c.Assert(stats, HasKey, "Ssl_server_not_before")
+	c.Assert(stats["Ssl_server_not_after"], Equals, "")
+	c.Assert(stats["Ssl_server_not_before"], Equals, "")
+
 	server.Close()
 
 	// Start the server with TLS but without CA, in this case the server will not verify client's certificate.
@@ -940,6 +950,15 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	err = cli.runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
 	c.Assert(err, IsNil, Commentf("%v", errors.ErrorStack(err)))
 	cli.runTestRegression(c, connOverrider, "TLSRegression")
+
+	// Test SSL/TLS session vars
+	stats, err = server.Stats(v)
+	c.Assert(err, IsNil)
+	c.Assert(stats, HasKey, "Ssl_server_not_after")
+	c.Assert(stats, HasKey, "Ssl_server_not_before")
+	c.Assert(stats["Ssl_server_not_after"], Equals, serverCert.NotAfter.Format("Jan _2 15:04:05 2006 MST"))
+	c.Assert(stats["Ssl_server_not_before"], Equals, serverCert.NotBefore.Format("Jan _2 15:04:05 2006 MST"))
+
 	server.Close()
 
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
@@ -1758,9 +1777,9 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 		records := agentServer.GetLatestRecords()
 		c.Assert(len(records), Equals, n)
 		for _, r := range records {
-			sqlNormalized, exist := agentServer.GetSQLMetaByDigestBlocking(r.SqlDigest, time.Second)
+			sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(r.SqlDigest, time.Second)
 			c.Assert(exist, IsTrue)
-			c.Check(sqlNormalized, Matches, "select.*from.*join.*")
+			c.Check(sqlMeta.NormalizedSql, Matches, "select.*from.*join.*")
 			if len(r.PlanDigest) == 0 {
 				continue
 			}
