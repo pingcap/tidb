@@ -29,6 +29,7 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 type tikvTxn struct {
@@ -153,7 +154,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		if val == nil {
 			txn.KVTxn.GetSnapshot().SetRuntimeStats(nil)
 		} else {
-			txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+			txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*txnsnapshot.SnapshotRuntimeStats))
 		}
 	case kv.SchemaAmender:
 		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
