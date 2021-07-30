@@ -715,7 +715,6 @@ func (s *testSuite5) TestSetCollationAndCharset(c *C) {
 }
 
 func (s *testSuite5) TestValidateSetVar(c *C) {
-	c.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
 	tk := testkit.NewTestKit(c, s.store)
 
 	_, err := tk.Exec("set global tidb_distsql_scan_concurrency='fff';")
