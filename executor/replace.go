@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -230,12 +229,10 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	prefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
-	// Temporary table need not to do prefetch because its all data are stored in the memory.
-	if e.Table.Meta().TempTableType == model.TempTableNone {
-		if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
-			return err
-		}
+	if err = e.prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
+		return err
 	}
+
 	if e.stats != nil {
 		e.stats.Prefetch = time.Since(prefetchStart)
 	}

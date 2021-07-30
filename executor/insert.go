@@ -167,12 +167,18 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 	return err
 }
 
-func prefetchDataCache(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) error {
+func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("prefetchDataCache", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+
+	// Temporary table need not to do prefetch because its all data are stored in the memory.
+	if e.Table.Meta().TempTableType == model.TempTableNone {
+		return nil
+	}
+
 	values, err := prefetchUniqueIndices(ctx, txn, rows)
 	if err != nil {
 		return err
@@ -223,11 +229,8 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 	prefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
-	// Temporary table need not to do prefetch because its all data are stored in the memory.
-	if e.Table.Meta().TempTableType == model.TempTableNone {
-		if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
-			return err
-		}
+	if err = e.prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
+		return err
 	}
 	if e.stats != nil {
 		e.stats.Prefetch += time.Since(prefetchStart)
