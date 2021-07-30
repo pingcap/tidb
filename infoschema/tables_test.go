@@ -1703,8 +1703,8 @@ func (s *testTableSuite) TestTrx(c *C) {
 	sm.txnInfo[1].BlockStartTime.Time = blockTime2
 	tk.Se.SetSessionManager(sm)
 	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
-		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" Idle <nil> 1 19 2 root test []",
-		"425070846483628033 2021-05-20 21:16:35.778000 <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [sql1, sql2]"))
+		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" <nil> Idle <nil> 1 19 2 root test []",
+		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [\"sql1\",\"sql2\"]"))
 }
 
 func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
@@ -1755,7 +1755,7 @@ func (s *testDataLockWaitSuite) TestDataLockWait(c *C) {
 	keyHex2 := hex.EncodeToString([]byte("b"))
 	tk := s.newTestKitWithRoot(c)
 	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS;").
-		Check(testkit.Rows(keyHex1+" 1 2 "+digest1.String(), keyHex2+" 4 5 "+digest2.String()))
+		Check(testkit.Rows(keyHex1+" <nil> 1 2 "+digest1.String(), keyHex2+" <nil> 4 5 "+digest2.String()))
 }
 
 func (s *testDataLockWaitSuite) TestDataLockPrivilege(c *C) {
