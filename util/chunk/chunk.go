@@ -54,7 +54,7 @@ const (
 
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
 func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
-	return New(fields, cap, cap) //FIXME: in following PR.
+	return New(fields, cap, cap)
 }
 
 // New creates a new chunk.
@@ -308,7 +308,6 @@ func (c *Chunk) CopyConstructSel() *Chunk {
 
 // GrowAndReset resets the Chunk and doubles the capacity of the Chunk.
 // The doubled capacity should not be larger than maxChunkSize.
-// TODO: this method will be used in following PR.
 func (c *Chunk) GrowAndReset(maxChunkSize int) {
 	c.sel = nil
 	if c.columns == nil {
