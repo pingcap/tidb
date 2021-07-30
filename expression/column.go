@@ -231,8 +231,8 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	return false
 }
 
-// EqualByExprAndId extends Equal by comparing virual expression
-func (col *Column) EqualByExprAndId(_ sessionctx.Context, expr Expression) bool {
+// EqualByExprAndID extends Equal by comparing virual expression
+func (col *Column) EqualByExprAndID(_ sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		expr, isOk := col.VirtualExpr.(*ScalarFunction)
 		isVirExprMatched := isOk && expr.Equal(nil, newCol.VirtualExpr)
@@ -509,7 +509,7 @@ func (col *Column) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool
 
 func (col *Column) resolveIndicesByVirtualExpr(schema *Schema) bool {
 	for i, c := range schema.Columns {
-		if c.EqualByExprAndId(nil, col) {
+		if c.EqualByExprAndID(nil, col) {
 			col.Index = i
 			return true
 		}

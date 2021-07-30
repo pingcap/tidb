@@ -466,7 +466,7 @@ func FindPrefixOfIndexByCol(cols []*expression.Column, idxColIDs []int64, cached
 	idLoop:
 		for _, idCol := range idxCols {
 			for _, col := range cols {
-				if col.EqualByExprAndId(nil, idCol) {
+				if col.EqualByExprAndID(nil, idCol) {
 					retCols = append(retCols, col)
 					continue idLoop
 				}
