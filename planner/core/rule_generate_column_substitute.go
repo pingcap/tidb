@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -55,10 +56,12 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 	if !ok {
 		return
 	}
-	tblInfo := ds.tableInfo
-	for _, idx := range tblInfo.Indices {
-		for _, idxPart := range idx.Columns {
-			colInfo := tblInfo.Columns[idxPart.Offset]
+	for _, p := range ds.possibleAccessPaths {
+		if p.IsTablePath() {
+			continue
+		}
+		for _, idxPart := range p.Index.Columns {
+			colInfo := ds.tableInfo.Columns[idxPart.Offset]
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 				s := ds.schema.Columns
 				col := expression.ColInfo2Col(s, colInfo)
@@ -77,55 +80,70 @@ func tryToSubstituteExpr(expr *expression.Expression, sctx sessionctx.Context, c
 	}
 }
 
+func substituteExpression(cond expression.Expression, sctx *stmtctx.StatementContext, sessionCtx sessionctx.Context, exprToColumn ExprColumnMap, schema *expression.Schema) {
+	sf, ok := cond.(*expression.ScalarFunction)
+	if !ok {
+		return
+	}
+	defer func() {
+		// If the argument is not changed, hash code doesn't need to recount again.
+		// But we always do it to keep the code simple and stupid.
+		expression.ReHashCode(sf, sctx)
+	}()
+	var expr *expression.Expression
+	var tp types.EvalType
+	switch sf.FuncName.L {
+	case ast.EQ, ast.LT, ast.LE, ast.GT, ast.GE:
+		if sf.GetArgs()[0].ConstItem(sctx) {
+			expr = &sf.GetArgs()[1]
+			tp = sf.GetArgs()[0].GetType().EvalType()
+		} else if sf.GetArgs()[1].ConstItem(sctx) {
+			expr = &sf.GetArgs()[0]
+			tp = sf.GetArgs()[1].GetType().EvalType()
+		} else {
+			return
+		}
+		for candidateExpr, column := range exprToColumn {
+			tryToSubstituteExpr(expr, sessionCtx, candidateExpr, tp, schema, column)
+		}
+	case ast.In:
+		expr = &sf.GetArgs()[0]
+		tp = sf.GetArgs()[1].GetType().EvalType()
+		canSubstitute := true
+		// Can only substitute if all the operands on the right-hand
+		// side are constants of the same type.
+		for i := 1; i < len(sf.GetArgs()); i++ {
+			if !sf.GetArgs()[i].ConstItem(sctx) || sf.GetArgs()[i].GetType().EvalType() != tp {
+				canSubstitute = false
+				break
+			}
+		}
+		if canSubstitute {
+			for candidateExpr, column := range exprToColumn {
+				tryToSubstituteExpr(expr, sessionCtx, candidateExpr, tp, schema, column)
+			}
+		}
+	case ast.Like:
+		expr = &sf.GetArgs()[0]
+		tp = sf.GetArgs()[1].GetType().EvalType()
+		for candidateExpr, column := range exprToColumn {
+			tryToSubstituteExpr(expr, sessionCtx, candidateExpr, tp, schema, column)
+		}
+	case ast.LogicOr, ast.LogicAnd:
+		substituteExpression(sf.GetArgs()[0], sctx, sessionCtx, exprToColumn, schema)
+		substituteExpression(sf.GetArgs()[1], sctx, sessionCtx, exprToColumn, schema)
+	case ast.UnaryNot:
+		substituteExpression(sf.GetArgs()[0], sctx, sessionCtx, exprToColumn, schema)
+	}
+}
+
 func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToColumn ExprColumnMap) LogicalPlan {
 	sctx := lp.SCtx().GetSessionVars().StmtCtx
-	var expr *expression.Expression
 	var tp types.EvalType
 	switch x := lp.(type) {
 	case *LogicalSelection:
 		for _, cond := range x.Conditions {
-			sf, ok := cond.(*expression.ScalarFunction)
-			if !ok {
-				continue
-			}
-			switch sf.FuncName.L {
-			case ast.EQ, ast.LT, ast.LE, ast.GT, ast.GE:
-				if sf.GetArgs()[0].ConstItem(sctx) {
-					expr = &sf.GetArgs()[1]
-					tp = sf.GetArgs()[0].GetType().EvalType()
-				} else if sf.GetArgs()[1].ConstItem(sctx) {
-					expr = &sf.GetArgs()[0]
-					tp = sf.GetArgs()[1].GetType().EvalType()
-				} else {
-					continue
-				}
-				for candidateExpr, column := range exprToColumn {
-					tryToSubstituteExpr(expr, lp.SCtx(), candidateExpr, tp, x.Schema(), column)
-				}
-			case ast.In:
-				expr = &sf.GetArgs()[0]
-				tp = sf.GetArgs()[1].GetType().EvalType()
-				canSubstitute := true
-				// Can only substitute if all the operands on the right-hand
-				// side are constants of the same type.
-				for i := 1; i < len(sf.GetArgs()); i++ {
-					if !sf.GetArgs()[i].ConstItem(sctx) || sf.GetArgs()[i].GetType().EvalType() != tp {
-						canSubstitute = false
-						break
-					}
-				}
-				if canSubstitute {
-					for candidateExpr, column := range exprToColumn {
-						tryToSubstituteExpr(expr, lp.SCtx(), candidateExpr, tp, x.Schema(), column)
-					}
-				}
-			case ast.Like:
-				expr := &sf.GetArgs()[0]
-				tp = sf.GetArgs()[1].GetType().EvalType()
-				for candidateExpr, column := range exprToColumn {
-					tryToSubstituteExpr(expr, lp.SCtx(), candidateExpr, tp, x.Schema(), column)
-				}
-			}
+			substituteExpression(cond, sctx, lp.SCtx(), exprToColumn, x.Schema())
 		}
 	case *LogicalProjection:
 		for i := range x.Exprs {
@@ -141,29 +159,27 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 				tryToSubstituteExpr(&x.ByItems[i].Expr, lp.SCtx(), candidateExpr, tp, x.Schema(), column)
 			}
 		}
-		// TODO: Uncomment these code after we support virtual generate column push down.
-		// case *LogicalAggregation:
-		// 	for _, aggFunc := range x.AggFuncs {
-		// 		for i := 0; i < len(aggFunc.Args); i++ {
-		// 			tp = aggFunc.Args[i].GetType().EvalType()
-		// 			for candidateExpr, column := range exprToColumn {
-		// 				if aggFunc.Args[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-		// 					x.Schema().ColumnIndex(column) != -1 {
-		// 					aggFunc.Args[i] = column
-		// 				}
-		// 			}
-		// 		}
-		// 	}
-		// 	for i := 0; i < len(x.GroupByItems); i++ {
-		// 		tp = x.GroupByItems[i].GetType().EvalType()
-		// 		for candidateExpr, column := range exprToColumn {
-		// 			if x.GroupByItems[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
-		// 				x.Schema().ColumnIndex(column) != -1 {
-		// 				x.GroupByItems[i] = column
-		// 				x.groupByCols = append(x.groupByCols, column)
-		// 			}
-		// 		}
-		// 	}
+	case *LogicalAggregation:
+		for _, aggFunc := range x.AggFuncs {
+			for i := 0; i < len(aggFunc.Args); i++ {
+				tp = aggFunc.Args[i].GetType().EvalType()
+				for candidateExpr, column := range exprToColumn {
+					if aggFunc.Args[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+						x.Schema().ColumnIndex(column) != -1 {
+						aggFunc.Args[i] = column
+					}
+				}
+			}
+		}
+		for i := 0; i < len(x.GroupByItems); i++ {
+			tp = x.GroupByItems[i].GetType().EvalType()
+			for candidateExpr, column := range exprToColumn {
+				if x.GroupByItems[i].Equal(lp.SCtx(), candidateExpr) && candidateExpr.GetType().EvalType() == tp &&
+					x.Schema().ColumnIndex(column) != -1 {
+					x.GroupByItems[i] = column
+				}
+			}
+		}
 	}
 	for _, child := range lp.Children() {
 		gc.substitute(ctx, child, exprToColumn)

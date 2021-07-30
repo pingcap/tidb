@@ -29,6 +29,7 @@ import (
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
+	tikv.EnableFailpoints()
 	TestingT(t)
 }
 

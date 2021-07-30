@@ -98,6 +98,12 @@ func (alloc *inMemoryAllocator) Rebase(tableID, requiredBase int64, allocIDs boo
 	return nil
 }
 
+// ForceRebase implements autoid.Allocator ForceRebase interface.
+func (alloc *inMemoryAllocator) ForceRebase(tableID, requiredBase int64) error {
+	alloc.base = requiredBase
+	return nil
+}
+
 func (alloc *inMemoryAllocator) alloc4Signed(n uint64, increment, offset int64) (int64, int64, error) {
 	// Check offset rebase if necessary.
 	if offset-1 > alloc.base {

@@ -40,8 +40,10 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -56,12 +58,17 @@ func TestT(t *testing.T) {
 	if !reflect.DeepEqual(defaultConfig, globalConfig) {
 		t.Fatalf("%#v != %#v\n", defaultConfig, globalConfig)
 	}
+
+	// AsyncCommit will make DDL wait 2.5s before changing to the next state.
+	// Set schema lease to avoid it from making CI slow.
+	session.SetSchemaLease(0)
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
 	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	if err != nil {
 		t.Fatal(err)
 	}
+	tikv.EnableFailpoints()
 	TestingT(t)
 }
 
@@ -129,14 +136,9 @@ func (cli *testServerClient) runTests(c *C, overrider configOverrider, tests ...
 		c.Assert(err, IsNil)
 	}()
 
-	_, err = db.Exec("DROP TABLE IF EXISTS test")
-	c.Assert(err, IsNil)
-
 	dbt := &DBTest{c, db}
 	for _, test := range tests {
 		test(dbt)
-		// fixed query error
-		_, _ = dbt.db.Exec("DROP TABLE IF EXISTS test")
 	}
 }
 
@@ -2082,7 +2084,7 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *C) {
 				}
 				rows.Close()
 				dbt.Check(newErrors, Equals, errors)
-				dbt.Check(newWarnings, Equals, warnings)
+				dbt.Check(newWarnings, Equals, warnings, Commentf("source=information_schema.%s code=%d statement=%s", tbl, test.errCode, test.stmt))
 			}
 		}
 

@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -67,6 +68,7 @@ type basicHTTPHandlerTestSuite struct {
 	store   kv.Storage
 	domain  *domain.Domain
 	tidbdrv *TiDBDriver
+	sh      *StatsHandler
 }
 
 type HTTPHandlerTestSuite struct {
@@ -490,6 +492,10 @@ func (ts *basicHTTPHandlerTestSuite) startServer(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	ts.waitUntilServerOnline()
+
+	do, err := session.GetDomain(ts.store)
+	c.Assert(err, IsNil)
+	ts.sh = &StatsHandler{do}
 }
 
 func getPortFromTCPAddr(addr net.Addr) uint {
@@ -497,14 +503,14 @@ func getPortFromTCPAddr(addr net.Addr) uint {
 }
 
 func (ts *basicHTTPHandlerTestSuite) stopServer(c *C) {
+	if ts.server != nil {
+		ts.server.Close()
+	}
 	if ts.domain != nil {
 		ts.domain.Close()
 	}
 	if ts.store != nil {
 		ts.store.Close()
-	}
-	if ts.server != nil {
-		ts.server.Close()
 	}
 }
 
@@ -1074,7 +1080,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(dbtbl.TableInfo.Name.L, Equals, "user")
 	c.Assert(dbtbl.DBInfo.Name.L, Equals, "mysql")
-	se, err := session.CreateSession(ts.store.(kv.Storage))
+	se, err := session.CreateSession(ts.store)
 	c.Assert(err, IsNil)
 	c.Assert(dbtbl.SchemaVersion, Equals, domain.GetDomain(se.(sessionctx.Context)).InfoSchema().SchemaMetaVersion())
 
@@ -1110,6 +1116,52 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	c.Assert(dbtbl.TableInfo.Name.L, Equals, "t1")
 	c.Assert(dbtbl.DBInfo.Name.L, Equals, "test")
 	c.Assert(dbtbl.TableInfo, DeepEquals, t)
+}
+
+func (ts *HTTPHandlerTestSuite) TestGetSchemaStorage(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+
+	do := ts.domain
+	h := do.StatsHandle()
+	do.SetStatsUpdating(true)
+
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int, d int, e char(5), index idx(e))")
+	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
+	h.FlushStats()
+
+	resp, err := ts.fetchStatus("/schema_storage/test")
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+	var tables []*schemaTableStorage
+	err = decoder.Decode(&tables)
+	c.Assert(err, IsNil)
+	c.Assert(len(tables), Equals, 1)
+	expects := []string{`t`}
+	names := make([]string, len(tables))
+	for i, v := range tables {
+		names[i] = v.TableName
+	}
+
+	sort.Strings(names)
+	c.Assert(names, DeepEquals, expects)
+
+	c.Assert(
+		[]int64{
+			tables[0].TableRows,
+			tables[0].AvgRowLength,
+			tables[0].DataLength,
+			tables[0].MaxDataLength,
+			tables[0].IndexLength,
+			tables[0].DataFree,
+		},
+		DeepEquals,
+		[]int64{3, 18, 54, 0, 6, 0},
+	)
 }
 
 func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
@@ -1148,7 +1200,7 @@ func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
-	se, err := session.CreateSession(ts.store.(kv.Storage))
+	se, err := session.CreateSession(ts.store)
 	c.Assert(err, IsNil)
 
 	form := make(url.Values)
@@ -1230,13 +1282,13 @@ func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
 	dbt.mustExec("insert t2 values (unhex('f09f8c80'));")
 
-	// test tidb_deadlock_history_capacity
+	// test deadlock_history_capacity
 	deadlockhistory.GlobalDeadlockHistory.Resize(10)
 	for i := 0; i < 10; i++ {
 		deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
 	}
 	form = make(url.Values)
-	form.Set("tidb_deadlock_history_capacity", "5")
+	form.Set("deadlock_history_capacity", "5")
 	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 5)
@@ -1247,13 +1299,31 @@ func (ts *HTTPHandlerTestSerialSuite) TestPostSettings(c *C) {
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(7))
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[4].ID, Equals, uint64(11))
 	form = make(url.Values)
-	form.Set("tidb_deadlock_history_capacity", "6")
+	form.Set("deadlock_history_capacity", "6")
 	resp, err = ts.formStatus("/settings", form)
 	c.Assert(err, IsNil)
 	deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
 	c.Assert(len(deadlockhistory.GlobalDeadlockHistory.GetAll()), Equals, 6)
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[0].ID, Equals, uint64(7))
 	c.Assert(deadlockhistory.GlobalDeadlockHistory.GetAll()[5].ID, Equals, uint64(12))
+
+	// test deadlock_history_collect_retryable
+	form = make(url.Values)
+	form.Set("deadlock_history_collect_retryable", "true")
+	resp, err = ts.formStatus("/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(config.GetGlobalConfig().PessimisticTxn.DeadlockHistoryCollectRetryable, IsTrue)
+	form = make(url.Values)
+	form.Set("deadlock_history_collect_retryable", "false")
+	resp, err = ts.formStatus("/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(config.GetGlobalConfig().PessimisticTxn.DeadlockHistoryCollectRetryable, IsFalse)
+	form = make(url.Values)
+	form.Set("deadlock_history_collect_retryable", "123")
+	resp, err = ts.formStatus("/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, 400)
+
 	// restore original value.
 	config.GetGlobalConfig().CheckMb4ValueInUTF8 = true
 }
@@ -1298,7 +1368,7 @@ func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
 	c.Assert(info.GitHash, Equals, versioninfo.TiDBGitHash)
 
 	store := ts.server.newTikvHandlerTool().Store.(kv.Storage)
-	do, err := session.GetDomain(store.(kv.Storage))
+	do, err := session.GetDomain(store)
 	c.Assert(err, IsNil)
 	ddl := do.DDL()
 	c.Assert(info.ID, Equals, ddl.GetID())
@@ -1321,7 +1391,7 @@ func (ts *HTTPHandlerTestSerialSuite) TestAllServerInfo(c *C) {
 	c.Assert(clusterInfo.ServersNum, Equals, 1)
 
 	store := ts.server.newTikvHandlerTool().Store.(kv.Storage)
-	do, err := session.GetDomain(store.(kv.Storage))
+	do, err := session.GetDomain(store)
 	c.Assert(err, IsNil)
 	ddl := do.DDL()
 	c.Assert(clusterInfo.OwnerID, Equals, ddl.GetID())

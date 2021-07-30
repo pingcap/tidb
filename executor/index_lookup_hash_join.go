@@ -598,10 +598,10 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
 	go util.WithRecovery(func() { iw.buildHashTableForOuterResult(ctx, task, h) }, iw.handleHashJoinInnerWorkerPanic)
 	err := iw.fetchInnerResults(ctx, task.lookUpJoinTask)
+	iw.wg.Wait()
 	if err != nil {
 		return err
 	}
-	iw.wg.Wait()
 
 	joinStartTime = time.Now()
 	if !task.keepOuterOrder {

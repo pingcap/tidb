@@ -41,4 +41,4 @@ Since we need to decide whether the access path matches the physical property, w
 
 ## References
 
-- [The Skyline Operator](http://skylineresearch.in/skylineintro/The_Skyline_Operator.pdf)
+- [The Skyline Operator](https://www.cse.ust.hk/~dimitris/PAPERS/SIGMOD03-Skyline.pdf)

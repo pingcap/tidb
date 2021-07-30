@@ -116,6 +116,7 @@ func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (
 }
 
 // MustNewCommonHandle create a common handle with given values.
+// TODO: please use testkit.MustNewCommonHandle to replace this function to migrate to testify
 func MustNewCommonHandle(c *check.C, values ...interface{}) kv.Handle {
 	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
 	c.Assert(err, check.IsNil)

@@ -96,7 +96,7 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 
 		// Check if user exists.
-		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)
+		exists, err := userExists(ctx, e.ctx, user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -303,13 +303,13 @@ func composeTablePrivUpdateForRevoke(ctx sessionctx.Context, sql *strings.Builde
 			return err
 		}
 
-		newTablePriv = setFromString(currTablePriv)
+		newTablePriv = SetFromString(currTablePriv)
 		newTablePriv, err = privUpdateForRevoke(newTablePriv, priv)
 		if err != nil {
 			return err
 		}
 
-		newColumnPriv = setFromString(currColumnPriv)
+		newColumnPriv = SetFromString(currColumnPriv)
 		newColumnPriv, err = privUpdateForRevoke(newColumnPriv, priv)
 		if err != nil {
 			return err
@@ -329,7 +329,7 @@ func composeColumnPrivUpdateForRevoke(ctx sessionctx.Context, sql *strings.Build
 			return err
 		}
 
-		newColumnPriv = setFromString(currColumnPriv)
+		newColumnPriv = SetFromString(currColumnPriv)
 		newColumnPriv, err = privUpdateForRevoke(newColumnPriv, priv)
 		if err != nil {
 			return err
