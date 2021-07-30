@@ -5164,6 +5164,58 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 		}
 	}
 
+	checkNoChange := func() {
+		expect := make([]string, 0)
+		for _, id := range idList {
+			expect = append(expect, fmt.Sprintf("%d %d %d", id, id+100, id+1000))
+		}
+		tk.MustQuery("select * from tmp1").Check(testkit.Rows(expect...))
+	}
+
+	checkUpdatesAndDeletes := func(updates []string, deletes []int) {
+		modifyMap := make(map[int]string)
+		for _, m := range updates {
+			parts := strings.Split(strings.TrimSpace(m), " ")
+			c.Assert(len(parts) != 0, IsTrue)
+			id, err := strconv.Atoi(parts[0])
+			c.Assert(err, IsNil)
+			modifyMap[id] = m
+		}
+
+		for _, d := range deletes {
+			modifyMap[d] = ""
+		}
+
+		expect := make([]string, 0)
+		for _, id := range idList {
+			modify, exist := modifyMap[id]
+			if !exist {
+				expect = append(expect, fmt.Sprintf("%d %d %d", id, id+100, id+1000))
+				continue
+			}
+
+			if modify != "" {
+				expect = append(expect, modify)
+			}
+
+			delete(modifyMap, id)
+		}
+
+		otherIds := make([]int, 0)
+		for id := range modifyMap {
+			otherIds = append(otherIds, id)
+		}
+
+		sort.Ints(otherIds)
+		for _, id := range otherIds {
+			modify, exist := modifyMap[id]
+			c.Assert(exist, IsTrue)
+			expect = append(expect, modify)
+		}
+
+		tk.MustQuery("select * from tmp1").Check(testkit.Rows(expect...))
+	}
+
 	type checkSuccess struct {
 		update []string
 		delete []int
@@ -5228,50 +5280,6 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 		{"update /*+ use_index(tmp1, u) */ tmp1 set v=v+1000 where u>108 or u<102", checkSuccess{[]string{"1 101 2001", "9 109 2009"}, nil}, nil},
 	}
 
-	checkUpdatesAndDeletes := func(updates []string, deletes []int) {
-		modifyMap := make(map[int]string)
-		for _, m := range updates {
-			parts := strings.Split(strings.TrimSpace(m), " ")
-			c.Assert(len(parts) != 0, IsTrue)
-			id, err := strconv.Atoi(parts[0])
-			c.Assert(err, IsNil)
-			modifyMap[id] = m
-		}
-
-		for _, d := range deletes {
-			modifyMap[d] = ""
-		}
-
-		expect := make([]string, 0)
-		for _, id := range idList {
-			modify, exist := modifyMap[id]
-			if !exist {
-				expect = append(expect, fmt.Sprintf("%d %d %d", id, id+100, id+1000))
-				continue
-			}
-
-			if modify != "" {
-				expect = append(expect, modify)
-			}
-
-			delete(modifyMap, id)
-		}
-
-		otherIds := make([]int, 0)
-		for id := range modifyMap {
-			otherIds = append(otherIds, id)
-		}
-
-		sort.Ints(otherIds)
-		for _, id := range otherIds {
-			modify, exist := modifyMap[id]
-			c.Assert(exist, IsTrue)
-			expect = append(expect, modify)
-		}
-
-		tk.MustQuery("select * from tmp1").Check(testkit.Rows(expect...))
-	}
-
 	executeSql := func(sql string, checkResult interface{}, additionalCheck func(error)) (err error) {
 		switch check := checkResult.(type) {
 		case checkSuccess:
@@ -5283,7 +5291,7 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 			c.Assert(err, NotNil)
 			expectedErr, _ := check.err.(*terror.Error)
 			c.Assert(expectedErr.Equal(err), IsTrue)
-			checkUpdatesAndDeletes(nil, nil)
+			checkNoChange()
 		default:
 			c.Fail()
 		}
@@ -5313,14 +5321,14 @@ func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
 		_ = executeSql(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
 		tk.MustExec("rollback")
 		// rollback left records unmodified
-		checkUpdatesAndDeletes(nil, nil)
+		checkNoChange()
 
 		// update records in txn and commit
 		tk.MustExec("begin")
 		err := executeSql(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
 		tk.MustExec("commit")
 		if err != nil {
-			checkUpdatesAndDeletes(nil, nil)
+			checkNoChange()
 		} else {
 			r, _ := sqlCase.checkResult.(checkSuccess)
 			checkUpdatesAndDeletes(r.update, r.delete)
