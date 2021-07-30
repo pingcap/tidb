@@ -1115,7 +1115,11 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, en
 		return histCnt, nil
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
-	return c.Histogram.notNullCount() / float64(c.Histogram.NDV-int64(len(c.TopN.TopN))), nil
+	histNDV := float64(c.Histogram.NDV - int64(len(c.TopN.TopN)))
+	if histNDV <= 0 {
+		return 0, nil
+	}
+	return c.Histogram.notNullCount() / histNDV, nil
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
@@ -1304,7 +1308,11 @@ func (idx *Index) equalRowCount(b []byte, realtimeRowCount int64) float64 {
 		return histCnt
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
-	return idx.Histogram.notNullCount() / float64(idx.NDV-int64(len(idx.TopN.TopN)))
+	histNDV := float64(idx.Histogram.NDV - int64(len(idx.TopN.TopN)))
+	if histNDV <= 0 {
+		return 0
+	}
+	return idx.Histogram.notNullCount() / histNDV
 }
 
 // QueryBytes is used to query the count of specified bytes.
