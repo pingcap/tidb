@@ -745,7 +745,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	t = invalidTask
 	candidates, pruningInfo := ds.skylinePruning(prop)
 	defer func() {
-		if err == nil && t != nil && pruningInfo != "" {
+		if err == nil && t != nil && !t.invalid() && pruningInfo != "" {
 			if ds.ctx.GetSessionVars().StmtCtx.OptimInfo == nil {
 				ds.ctx.GetSessionVars().StmtCtx.OptimInfo = make(map[int]string)
 			}
