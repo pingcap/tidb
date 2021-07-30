@@ -6670,6 +6670,31 @@ select 10;`
 	}
 }
 
+func (s *testClusterTableSuite) TestSQLDigestTextRetriever(c *C) {
+	tkInit := testkit.NewTestKitWithInit(c, s.store)
+	tkInit.MustExec("set global tidb_enable_stmt_summary = 1")
+	tkInit.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+	tkInit.MustExec("drop table if exists test_sql_digest_text_retriever")
+	tkInit.MustExec("create table test_sql_digest_text_retriever (id int primary key, v int)")
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("insert into test_sql_digest_text_retriever values (1, 1)")
+
+	insertNormalized, insertDigest := parser.NormalizeDigest("insert into test_sql_digest_text_retriever values (1, 1)")
+	_, updateDigest := parser.NormalizeDigest("update test_sql_digest_text_retriever set v = v + 1 where id = 1")
+	r := &executor.SQLDigestTextRetriever{
+		SQLDigestsMap: map[string]string{
+			insertDigest.String(): "",
+			updateDigest.String(): "",
+		},
+	}
+	err := r.RetrieveLocal(context.Background(), tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(r.SQLDigestsMap[insertDigest.String()], Equals, insertNormalized)
+	c.Assert(r.SQLDigestsMap[updateDigest.String()], Equals, "")
+}
+
 func prepareLogs(c *C, logData []string, fileNames []string) {
 	writeFile := func(file string, data string) {
 		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)

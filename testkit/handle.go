@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,20 +11,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package storage_test
+// +build !codes
+
+package testkit
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/util/sys/storage"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
-func TestGetTargetDirectoryCapacity(t *testing.T) {
-	t.Parallel()
-	r, err := storage.GetTargetDirectoryCapacity(".")
-	require.NoError(t, err)
-	require.GreaterOrEqual(t, r, uint64(1), "couldn't get capacity")
-
-	//TODO: check the value of r with `df` in linux
+// MustNewCommonHandle create a common handle with given values.
+func MustNewCommonHandle(t *testing.T, values ...interface{}) kv.Handle {
+	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
+	require.Nil(t, err)
+	ch, err := kv.NewCommonHandle(encoded)
+	require.Nil(t, err)
+	return ch
 }
