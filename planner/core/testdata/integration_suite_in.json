@@ -327,7 +327,18 @@
       "select f, g from t1 where f = 2 and g in (3, 4, 5)",
       "select * from t1 where c = 1 and (d = 2 or d = 3) and e in (4, 5)",
       "select f, g from t1 where f = 2 and g > 3",
-      "select a, b, c from t2 where a = 1 and b = 2 and c in (1, 2, 3, 4, 5);"
+      "select a, b, c from t2 where a = 1 and b = 2 and c in (1, 2, 3, 4, 5)"
+    ]
+  },
+  {
+    "name": "TestOutputSkylinePruningInfo",
+    "cases": [
+      "select * from t where a > 1 order by f",
+      "select * from t where f > 1",
+      "select f from t where f > 1",
+      "select * from t where f > 3 and g = 5",
+      "select * from t where g = 5 order by f",
+      "select * from t where d = 3 order by c, e"
     ]
   }
 ]
