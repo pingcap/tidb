@@ -894,7 +894,8 @@ var funcs = map[string]functionClass{
 	ast.JSONLength:        &jsonLengthFunctionClass{baseFunctionClass{ast.JSONLength, 1, 2}},
 
 	// TiDB internal function.
-	ast.TiDBDecodeKey: &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},
+	ast.TiDBDecodeKey:                 &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},
+	ast.TiDBFindStatementsFromDigests: &tidbFindStatementsFromDigestsClass{baseFunctionClass{ast.TiDBFindStatementsFromDigests, 1, 2}},
 	// This function is used to show tidb-server version info.
 	ast.TiDBVersion:    &tidbVersionFunctionClass{baseFunctionClass{ast.TiDBVersion, 0, 0}},
 	ast.TiDBIsDDLOwner: &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},

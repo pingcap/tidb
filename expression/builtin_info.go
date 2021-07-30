@@ -18,6 +18,8 @@
 package expression
 
 import (
+	"context"
+	"encoding/json"
 	"sort"
 	"strings"
 
@@ -770,6 +772,89 @@ func (k TiDBDecodeKeyFunctionKeyType) String() string {
 
 // TiDBDecodeKeyFunctionKey is used to identify the decoder function in context.
 const TiDBDecodeKeyFunctionKey TiDBDecodeKeyFunctionKeyType = 0
+
+type tidbFindStatementsFromDigestsClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbFindStatementsFromDigestsClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	var argTps []types.EvalType
+	if len(args) > 1 {
+		argTps = []types.EvalType{types.ETString, types.ETInt}
+	} else {
+		argTps = []types.EvalType{types.ETString}
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinTiDBFindStatementsFromDigestsSig{bf}
+	return sig, nil
+}
+
+type builtinTiDBFindStatementsFromDigestsSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTiDBFindStatementsFromDigestsSig) Clone() builtinFunc {
+	newSig := &builtinTiDBFindStatementsFromDigestsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinTiDBFindStatementsFromDigestsSig) evalString(row chunk.Row) (string, bool, error) {
+	args := b.getArgs()
+	digestsStr, isNull, err := args[0].EvalString(b.ctx, row)
+	if err != nil {
+		return "", true, err
+	}
+	if isNull {
+		return "", true, nil
+	}
+	var digests []interface{}
+	err = json.Unmarshal([]byte(digestsStr), &digests)
+	if err != nil {
+		return "", true, err // TODO: Use a coded error type
+	}
+
+	retriever := NewSQLDigestTextRetriever()
+	for _, item := range digests {
+		if item != nil {
+			digest, ok := item.(string)
+			if ok {
+				retriever.SQLDigestsMap[digest] = ""
+			}
+		}
+	}
+
+	err = retriever.RetrieveGlobal( /* ????? */ context.Background(), b.ctx)
+	if err != nil {
+		return "", true, err // TODO: Use a coded error type
+	}
+
+	result := make([]interface{}, len(digests))
+	for i, item := range digests {
+		if item == nil {
+			continue
+		}
+		if digest, ok := item.(string); ok {
+			if stmt, ok := retriever.SQLDigestsMap[digest]; ok {
+				result[i] = stmt
+			}
+		}
+	}
+
+	resultStr, err := json.Marshal(result)
+	if err != nil {
+		return "", true, err // TODO: Use a coded error type
+	}
+
+	return string(resultStr), false, nil
+}
 
 type tidbDecodePlanFunctionClass struct {
 	baseFunctionClass
