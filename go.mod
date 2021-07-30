@@ -85,4 +85,4 @@ require (
 
 go 1.16
 
-replace github.com/pingcap/parser => github.com/MyonKeminta/parser v0.0.0-20210729090459-9d1ec08fcd0f
+replace github.com/pingcap/parser => github.com/MyonKeminta/parser v0.0.0-20210730082431-9057a5eda6ca

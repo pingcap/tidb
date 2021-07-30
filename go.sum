@@ -35,8 +35,8 @@ github.com/HdrHistogram/hdrhistogram-go v0.9.0/go.mod h1:nxrse8/Tzg2tg3DZcZjm6qE
 github.com/Jeffail/gabs/v2 v2.5.1 h1:ANfZYjpMlfTTKebycu4X1AgkVWumFVDYQl7JwOr4mDk=
 github.com/Jeffail/gabs/v2 v2.5.1/go.mod h1:xCn81vdHKxFUuWWAaD5jCTQDNPBMh5pPs9IJ+NcziBI=
 github.com/KyleBanks/depth v1.2.1/go.mod h1:jzSb9d0L43HxTQfT+oSA1EEp2q+ne2uh6XgeJcm8brE=
-github.com/MyonKeminta/parser v0.0.0-20210729090459-9d1ec08fcd0f h1:/oPPF3SdtauGxd7+b+ATmg2ioIbCRRN1/M0u638K/is=
-github.com/MyonKeminta/parser v0.0.0-20210729090459-9d1ec08fcd0f/go.mod h1:Ek0mLKEqUGnQqBw1JnYrJQxsguU433DU68yUbsoeJ7s=
+github.com/MyonKeminta/parser v0.0.0-20210730082431-9057a5eda6ca h1:HJf8qwKNlNJgxe2pKeowipWgroP7tpxdGVvG6tKZfXs=
+github.com/MyonKeminta/parser v0.0.0-20210730082431-9057a5eda6ca/go.mod h1:Ek0mLKEqUGnQqBw1JnYrJQxsguU433DU68yUbsoeJ7s=
 github.com/OneOfOne/xxhash v1.2.2 h1:KMrpdQIwFcEqXDklaen+P1axHaj9BSKzvpUUfnHldSE=
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=
 github.com/PuerkitoBio/purell v1.1.0/go.mod h1:c11w/QuzBsJSee3cPx9rAFu61PvFxuPbtSwDGJws/X0=
