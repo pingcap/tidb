@@ -701,7 +701,6 @@ var defaultSysVars = []*SysVar{
 		return formatVal, nil
 	}},
 	/* The following variable is defined as session scope but is actually server scope. */
-<<<<<<< HEAD
 	{Scope: ScopeSession, Name: TiDBGeneralLog, Value: BoolToOnOff(DefTiDBGeneralLog), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBPProfSQLCPU, Value: strconv.Itoa(DefTiDBPProfSQLCPU), Type: TypeInt, MinValue: 0, MaxValue: 1},
 	{Scope: ScopeSession, Name: TiDBDDLSlowOprThreshold, Value: strconv.Itoa(DefTiDBDDLSlowOprThreshold)},
@@ -713,95 +712,13 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBMaxDeltaSchemaCount, Value: strconv.Itoa(DefTiDBMaxDeltaSchemaCount), Type: TypeUnsigned, MinValue: 100, MaxValue: 16384, AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableChangeColumnType, Value: BoolToOnOff(DefTiDBChangeColumnType), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnableChangeMultiSchema, Value: BoolToOnOff(DefTiDBChangeMultiSchema), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAutoIncrementInGenerated, Value: BoolToOnOff(DefTiDBEnableAutoIncrementInGenerated), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnablePointGetCache, Value: BoolToOnOff(DefTiDBPointGetCache), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnableAlterPlacement, Value: BoolToOnOff(DefTiDBEnableAlterPlacement), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBForcePriority, Value: mysql.Priority2Str[DefTiDBForcePriority]},
 	{Scope: ScopeSession, Name: TiDBEnableRadixJoin, Value: BoolToOnOff(DefTiDBUseRadixJoin), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptJoinReorderThreshold, Value: strconv.Itoa(DefTiDBOptJoinReorderThreshold), Type: TypeUnsigned, MinValue: 0, MaxValue: 63},
 	{Scope: ScopeSession, Name: TiDBSlowQueryFile, Value: ""},
-=======
-	{Scope: ScopeSession, Name: TiDBGeneralLog, Value: BoolToOnOff(DefTiDBGeneralLog), Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
-		ProcessGeneralLog.Store(TiDBOptOn(val))
-		return nil
-	}, GetSession: func(s *SessionVars) (string, error) {
-		return BoolToOnOff(ProcessGeneralLog.Load()), nil
-	}},
-	{Scope: ScopeSession, Name: TiDBPProfSQLCPU, Value: strconv.Itoa(DefTiDBPProfSQLCPU), Type: TypeInt, skipInit: true, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
-		EnablePProfSQLCPU.Store(uint32(tidbOptPositiveInt32(val, DefTiDBPProfSQLCPU)) > 0)
-		return nil
-	}, GetSession: func(s *SessionVars) (string, error) {
-		val := "0"
-		if EnablePProfSQLCPU.Load() {
-			val = "1"
-		}
-		return val, nil
-	}},
-	{Scope: ScopeSession, Name: TiDBDDLSlowOprThreshold, Value: strconv.Itoa(DefTiDBDDLSlowOprThreshold), skipInit: true, SetSession: func(s *SessionVars, val string) error {
-		atomic.StoreUint32(&DDLSlowOprThreshold, uint32(tidbOptPositiveInt32(val, DefTiDBDDLSlowOprThreshold)))
-		return nil
-	}, GetSession: func(s *SessionVars) (string, error) {
-		return strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10), nil
-	}},
-	{Scope: ScopeSession, Name: TiDBConfig, Value: "", ReadOnly: true, skipInit: true, GetSession: func(s *SessionVars) (string, error) {
-		conf := config.GetGlobalConfig()
-		j, err := json.MarshalIndent(conf, "", "\t")
-		if err != nil {
-			return "", err
-		}
-		return config.HideConfig(string(j)), nil
-	}},
-	{Scope: ScopeGlobal, Name: TiDBDDLReorgWorkerCount, Value: strconv.Itoa(DefTiDBDDLReorgWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: uint64(maxDDLReorgWorkerCount), SetSession: func(s *SessionVars, val string) error {
-		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
-		return nil
-	}},
-	{Scope: ScopeGlobal, Name: TiDBDDLReorgBatchSize, Value: strconv.Itoa(DefTiDBDDLReorgBatchSize), Type: TypeUnsigned, MinValue: int64(MinDDLReorgBatchSize), MaxValue: uint64(MaxDDLReorgBatchSize), AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
-		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
-		return nil
-	}},
-	{Scope: ScopeGlobal, Name: TiDBDDLErrorCountLimit, Value: strconv.Itoa(DefTiDBDDLErrorCountLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
-		SetDDLErrorCountLimit(tidbOptInt64(val, DefTiDBDDLErrorCountLimit))
-		return nil
-	}},
-	{Scope: ScopeSession, Name: TiDBDDLReorgPriority, Value: "PRIORITY_LOW", skipInit: true, SetSession: func(s *SessionVars, val string) error {
-		s.setDDLReorgPriority(val)
-		return nil
-	}},
-	{Scope: ScopeGlobal, Name: TiDBMaxDeltaSchemaCount, Value: strconv.Itoa(DefTiDBMaxDeltaSchemaCount), Type: TypeUnsigned, MinValue: 100, MaxValue: 16384, AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
-		// It's a global variable, but it also wants to be cached in server.
-		SetMaxDeltaSchemaCount(tidbOptInt64(val, DefTiDBMaxDeltaSchemaCount))
-		return nil
-	}},
-	{Scope: ScopeGlobal, Name: TiDBEnableChangeMultiSchema, Value: BoolToOnOff(DefTiDBChangeMultiSchema), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableChangeMultiSchema = TiDBOptOn(val)
-		return nil
-	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAutoIncrementInGenerated, Value: BoolToOnOff(DefTiDBEnableAutoIncrementInGenerated), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableAutoIncrementInGenerated = TiDBOptOn(val)
-		return nil
-	}},
-	{Scope: ScopeGlobal, Name: TiDBEnablePointGetCache, Value: BoolToOnOff(DefTiDBPointGetCache), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnablePointGetCache = TiDBOptOn(val)
-		return nil
-	}},
-	{Scope: ScopeGlobal, Name: TiDBEnableAlterPlacement, Value: BoolToOnOff(DefTiDBEnableAlterPlacement), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableAlterPlacement = TiDBOptOn(val)
-		return nil
-	}},
-	{Scope: ScopeSession, Name: TiDBForcePriority, skipInit: true, Value: mysql.Priority2Str[DefTiDBForcePriority], SetSession: func(s *SessionVars, val string) error {
-		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
-		return nil
-	}, GetSession: func(s *SessionVars) (string, error) {
-		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], nil
-	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptJoinReorderThreshold, Value: strconv.Itoa(DefTiDBOptJoinReorderThreshold), skipInit: true, Type: TypeUnsigned, MinValue: 0, MaxValue: 63, SetSession: func(s *SessionVars, val string) error {
-		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinReorderThreshold)
-		return nil
-	}},
-	{Scope: ScopeSession, Name: TiDBSlowQueryFile, Value: "", skipInit: true, SetSession: func(s *SessionVars, val string) error {
-		s.SlowQueryFile = val
-		return nil
-	}},
->>>>>>> 72807efe2... variable, ddl: allow auto inc columns in generated columns and expression indexes (#23940)
 	{Scope: ScopeGlobal, Name: TiDBScatterRegion, Value: BoolToOnOff(DefTiDBScatterRegion), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBWaitSplitRegionFinish, Value: BoolToOnOff(DefTiDBWaitSplitRegionFinish), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBWaitSplitRegionTimeout, Value: strconv.Itoa(DefWaitSplitRegionTimeout), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt64},

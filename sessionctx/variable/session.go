@@ -1829,6 +1829,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBEnableOrderedResultMode:
 		s.EnableStableResultMode = TiDBOptOn(val)
+	case TiDBEnableAutoIncrementInGenerated:
+		s.EnableAutoIncrementInGenerated = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
