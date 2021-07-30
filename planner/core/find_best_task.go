@@ -1021,11 +1021,8 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
 	for i, indexCol := range indexCols {
 		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
-		if indexCol != nil {
-			// Check duplicate expression columns
-			if col.EqualByExprAndId(nil, indexCol) && isFullLen {
-				return true
-			}
+		if indexCol != nil && col.EqualByExprAndId(nil, indexCol) && isFullLen {
+			return true
 		}
 	}
 	return false
