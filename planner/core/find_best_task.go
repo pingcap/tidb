@@ -510,9 +510,7 @@ func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.Ph
 	// it needs not to keep order for index scan.
 	if !prop.IsEmpty() && all {
 		for i, col := range path.IdxCols {
-			expr, isOk := prop.SortItems[0].Col.VirtualExpr.(*expression.ScalarFunction)
-			isVirExprMatched := isOk && expr.Equal(nil, col.VirtualExpr)
-			if col.Equal(nil, prop.SortItems[0].Col) || isVirExprMatched {
+			if col.EqualByExprAndId(nil, prop.SortItems[0].Col) {
 				candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.SortItems)
 				break
 			} else if i >= path.EqCondCount {
@@ -1025,9 +1023,7 @@ func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, id
 		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
 		if indexCol != nil {
 			// Check duplicate expression columns
-			expr, ok := col.VirtualExpr.(*expression.ScalarFunction)
-			isMatchExpr := ok && expr.Equal(nil, indexCol.VirtualExpr)
-			if (col.Equal(nil, indexCol) || isMatchExpr) && isFullLen {
+			if col.EqualByExprAndId(nil, indexCol) && isFullLen {
 				return true
 			}
 		}
@@ -1287,9 +1283,7 @@ func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []p
 		return false
 	}
 	for i, item := range propItems {
-		expr, isOk := item.Col.VirtualExpr.(*expression.ScalarFunction)
-		isVirExprMatched := isOk && expr.Equal(nil, idxCols[i].VirtualExpr)
-		if colLens[i] != types.UnspecifiedLength || !(item.Col.Equal(nil, idxCols[i]) || isVirExprMatched) {
+		if colLens[i] != types.UnspecifiedLength || !item.Col.EqualByExprAndId(nil, idxCols[i]) {
 			return false
 		}
 	}

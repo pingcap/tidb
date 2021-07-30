@@ -134,12 +134,8 @@ func getPotentialEqOrInColOffset(expr expression.Expression, cols []*expression.
 					return -1
 				}
 				for i, col := range cols {
-					if col.Equal(nil, c) {
-						return i
-					}
-
 					// When cols are a generated expression col, compare them in terms of virtual expr.
-					if expr, ok := col.VirtualExpr.(*expression.ScalarFunction); ok && expr.Equal(nil, c.VirtualExpr) {
+					if col.EqualByExprAndId(nil, c) {
 						return i
 					}
 				}

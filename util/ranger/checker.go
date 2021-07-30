@@ -164,9 +164,7 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 	}
 	// Check if virtual expression column matched
 	if c.checkerCol != nil {
-		virExpr, ok := c.checkerCol.VirtualExpr.(*expression.ScalarFunction)
-		isMatchExpr := ok && virExpr.Equal(nil, col.VirtualExpr)
-		return c.checkerCol.UniqueID == col.UniqueID || isMatchExpr
+		return c.checkerCol.EqualByExprAndId(nil, col)
 	}
 	return c.colUniqueID == col.UniqueID
 }

@@ -231,6 +231,16 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	return false
 }
 
+// EqualByExprAndId extends Equal by comparing virual expression
+func (col *Column) EqualByExprAndId(_ sessionctx.Context, expr Expression) bool {
+	if newCol, ok := expr.(*Column); ok {
+		expr, isOk := col.VirtualExpr.(*ScalarFunction)
+		isVirExprMatched := isOk && expr.Equal(nil, newCol.VirtualExpr)
+		return (newCol.UniqueID == col.UniqueID) || isVirExprMatched
+	}
+	return false
+}
+
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (col *Column) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
 	if col.RetType.Hybrid() {
@@ -499,7 +509,7 @@ func (col *Column) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool
 
 func (col *Column) resolveIndicesByVirtualExpr(schema *Schema) bool {
 	for i, c := range schema.Columns {
-		if expr, ok := c.VirtualExpr.(*ScalarFunction); (ok && expr.Equal(nil, col.VirtualExpr)) || c.UniqueID == col.UniqueID {
+		if c.EqualByExprAndId(nil, col) {
 			col.Index = i
 			return true
 		}
