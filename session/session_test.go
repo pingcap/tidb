@@ -4994,6 +4994,123 @@ func (s *testSessionSuite) TestLocalTemporaryTableInsert(c *C) {
 	tk.MustQuery("select * from tmp1 where id=5").Check(testkit.Rows())
 }
 
+func (s *testSessionSuite) TestLocalTemporaryTableInsertIgnore(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("use test")
+	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
+	tk.MustExec("insert into tmp1 values(1, 11, 101)")
+	tk.MustExec("insert into tmp1 values(2, 12, 102)")
+
+	// test outside transaction
+	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
+	tk.MustExec("insert ignore into tmp1 values(5, 15, 105)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 where id=5").Check(testkit.Rows("5 15 105"))
+
+	// test in transaction and rollback
+	tk.MustExec("begin")
+	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
+	tk.MustExec("insert ignore into tmp1 values(3, 13, 103)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 103"))
+	tk.MustExec("insert ignore into tmp1 values(3, 100, 1000)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '3' for key 'PRIMARY'"))
+	tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 103"))
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 11 101", "2 12 102", "5 15 105"))
+
+	// test commit
+	tk.MustExec("begin")
+	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'PRIMARY'"))
+	tk.MustExec("insert ignore into tmp1 values(3, 13, 103)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("insert ignore into tmp1 values(3, 100, 1000)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '3' for key 'PRIMARY'"))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 11 101", "2 12 102", "3 13 103", "5 15 105"))
+}
+
+func (s *testSessionSuite) TestLocalTemporaryTableInsertOnDuplicateKeyUpdate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("use test")
+	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
+	tk.MustExec("insert into tmp1 values(1, 11, 101)")
+	tk.MustExec("insert into tmp1 values(2, 12, 102)")
+
+	// test outside transaction
+	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000) on duplicate key update u=12")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'u'"))
+	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
+	tk.MustExec("insert into tmp1 values(2, 100, 1000) on duplicate key update v=202")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 202"))
+	tk.MustExec("insert into tmp1 values(3, 13, 103) on duplicate key update v=203")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 where id=3").Check(testkit.Rows("3 13 103"))
+
+	// test in transaction and rollback
+	tk.MustExec("begin")
+	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000) on duplicate key update u=12")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'u'"))
+	tk.MustQuery("select * from tmp1 where id=1").Check(testkit.Rows("1 11 101"))
+	tk.MustExec("insert into tmp1 values(2, 100, 1000) on duplicate key update v=302")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 where id=2").Check(testkit.Rows("2 12 302"))
+	tk.MustExec("insert into tmp1 values(4, 14, 104) on duplicate key update v=204")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 where id=4").Check(testkit.Rows("4 14 104"))
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 11 101", "2 12 202", "3 13 103"))
+
+	// test commit
+	tk.MustExec("begin")
+	tk.MustExec("insert ignore into tmp1 values(1, 100, 1000) on duplicate key update u=12")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '12' for key 'u'"))
+	tk.MustExec("insert into tmp1 values(2, 100, 1000) on duplicate key update v=302")
+	tk.MustExec("insert into tmp1 values(4, 14, 104) on duplicate key update v=204")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 11 101", "2 12 302", "3 13 103", "4 14 104"))
+}
+
+func (s *testSessionSuite) TestLocalTemporaryTableReplace(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("use test")
+	tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
+	tk.MustExec("insert into tmp1 values(1, 11, 101)")
+	tk.MustExec("insert into tmp1 values(2, 12, 102)")
+	tk.MustExec("insert into tmp1 values(3, 13, 103)")
+
+	// out of transaction
+	tk.MustExec("replace into tmp1 values(1, 12, 1000)")
+	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 12 1000", "3 13 103"))
+	tk.MustExec("replace into tmp1 values(4, 14, 104)")
+	tk.MustQuery("select * from tmp1 where id=4").Check(testkit.Rows("4 14 104"))
+
+	// in transaction and rollback
+	tk.MustExec("begin")
+	tk.MustExec("replace into tmp1 values(1, 13, 999)")
+	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 13 999", "4 14 104"))
+	tk.MustExec("replace into tmp1 values(5, 15, 105)")
+	tk.MustQuery("select * from tmp1 where id=5").Check(testkit.Rows("5 15 105"))
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 12 1000", "3 13 103", "4 14 104"))
+
+	// out of transaction
+	tk.MustExec("begin")
+	tk.MustExec("replace into tmp1 values(1, 13, 999)")
+	tk.MustExec("replace into tmp1 values(5, 15, 105)")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from tmp1").Check(testkit.Rows("1 13 999", "4 14 104", "5 15 105"))
+}
+
 func (s *testSessionSuite) TestLocalTemporaryTableDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_enable_noop_functions=1")
