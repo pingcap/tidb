@@ -388,19 +388,17 @@ func (e *DDLExec) newTemporaryTableFromTableInfo(tbInfo *model.TableInfo) (table
 		tbInfo.State = model.StatePublic
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
 
 	// AutoID is allocated in mocked..
 	alloc := autoid.NewAllocatorFromTempTblInfo(tbInfo)
-	tbl, err := tables.TableFromMeta([]autoid.Allocator{alloc}, tbInfo)
-	if err != nil {
-		return nil, err
+	allocs := make([]autoid.Allocator, 0, 1)
+	if alloc != nil {
+		allocs = append(allocs, alloc)
 	}
-
-	return tbl, nil
+	return tables.TableFromMeta(allocs, tbInfo)
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
