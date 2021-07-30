@@ -16,21 +16,15 @@ package storage_test
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/sys/storage"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
 func TestGetTargetDirectoryCapacity(t *testing.T) {
+	t.Parallel()
 	r, err := storage.GetTargetDirectoryCapacity(".")
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-	if r < 1 {
-		t.Fatalf("couldn't get capacity")
-	}
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, r, uint64(1), "couldn't get capacity")
+
 	//TODO: check the value of r with `df` in linux
 }
