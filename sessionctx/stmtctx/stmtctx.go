@@ -63,7 +63,9 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue           bool
+	IsDDLJobInQueue bool
+	// InReorgAttribute is indicated for cast function that the transition is a kind of reorg process.
+	InReorgAttribute          bool
 	InInsertStmt              bool
 	InUpdateStmt              bool
 	InDeleteStmt              bool
@@ -180,14 +182,6 @@ type StatementContext struct {
 		DiskTracker disk.Tracker
 		LogOnExceed [2]memory.LogOnExceed
 	}
-
-	// DepthInExprTree indicates the depth of the current expression being
-	// rewritten in an expression tree.
-	// NOTE: This var is introduced to remind an arithmetic expression to keep
-	// the precision of an real/decimal intermediate result as accurate as
-	// possible. Thus we only take the arithmetic expression into consideration.
-	// e.g. tidb/issues/26348
-	DepthInExprTree int
 }
 
 // StmtHints are SessionVars related sql hints.
