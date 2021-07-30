@@ -6683,7 +6683,7 @@ func (s *testClusterTableSuite) TestSQLDigestTextRetriever(c *C) {
 
 	insertNormalized, insertDigest := parser.NormalizeDigest("insert into test_sql_digest_text_retriever values (1, 1)")
 	_, updateDigest := parser.NormalizeDigest("update test_sql_digest_text_retriever set v = v + 1 where id = 1")
-	r := &executor.SQLDigestTextRetriever{
+	r := &expression.SQLDigestTextRetriever{
 		SQLDigestsMap: map[string]string{
 			insertDigest.String(): "",
 			updateDigest.String(): "",
