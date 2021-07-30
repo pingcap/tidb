@@ -14,6 +14,7 @@
 package core
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
@@ -568,7 +569,7 @@ func (ds *DataSource) getIndexMergeCandidate(path *util.AccessPath) *candidatePa
 func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) ([]*candidatePath, string) {
 	candidates := make([]*candidatePath, 0, 4)
 	// TODO: don't allocate prunedPaths if not InExplainStmt
-	prunedPaths := make([]*candidatePath, 0, 4)
+	prunedPaths := make([]*util.AccessPath, 0, 4)
 	for _, path := range ds.possibleAccessPaths {
 		if path.PartialIndexPaths != nil {
 			candidates = append(candidates, ds.getIndexMergeCandidate(path))
@@ -579,6 +580,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) ([]*candid
 			return []*candidatePath{{path: path}}, ""
 		}
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
+			prunedPaths = append(prunedPaths, path)
 			continue
 		}
 		var currentCandidate *candidatePath
@@ -596,6 +598,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) ([]*candid
 				}
 			}
 			if currentCandidate == nil {
+				prunedPaths = append(prunedPaths, path)
 				continue
 			}
 		} else {
@@ -608,6 +611,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) ([]*candid
 				// 4. The needed columns are all covered by index columns(and handleCol).
 				currentCandidate = ds.getIndexCandidate(path, prop, coveredByIdx)
 			} else {
+				prunedPaths = append(prunedPaths, path)
 				continue
 			}
 		}
@@ -622,18 +626,18 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) ([]*candid
 				// We can break here because the current candidate cannot prune others anymore.
 				break
 			} else if result == -1 {
-				prunedPaths = append(prunedPaths, candidates[i])
+				prunedPaths = append(prunedPaths, candidates[i].path)
 				candidates = append(candidates[:i], candidates[i+1:]...)
 			}
 		}
-		if !pruned {
-			prunedPaths = append(prunedPaths, currentCandidate)
+		if pruned {
+			prunedPaths = append(prunedPaths, currentCandidate.path)
 		} else {
 			candidates = append(candidates, currentCandidate)
 		}
 	}
 
-	getPruningInfo := func(paths []*candidatePath) string {
+	getPruningInfo := func(paths []*util.AccessPath) string {
 		if !ds.ctx.GetSessionVars().StmtCtx.InExplainStmt || len(paths) == 0 {
 			return ""
 		}
@@ -645,13 +649,18 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) ([]*candid
 			tableName = ds.TableAsName.O
 		}
 		for _, path := range paths {
-			if path.path.IsTablePath() {
+			if path.IsTablePath() {
 				names = append(names, tableName)
 			} else {
-				names = append(names, path.path.Index.Name.O)
+				names = append(names, path.Index.Name.O)
 			}
 		}
-		return "[" + strings.Join(names, ",") + "] is pruned when selecting path for " + tableName
+		items := make([]string, 0, len(prop.SortItems))
+		for _, item := range prop.SortItems {
+			items = append(items, item.String())
+		}
+		return fmt.Sprintf("[%s] is pruned when selecting path for %s given Prop{SortItems: [%s], TaskTp: %s}",
+			strings.Join(names, ","), tableName, strings.Join(items, " "), prop.TaskTp)
 	}
 
 	if ds.ctx.GetSessionVars().GetAllowPreferRangeScan() && len(candidates) > 1 {
@@ -659,7 +668,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) ([]*candid
 		for i, c := range candidates {
 			for _, ran := range c.path.Ranges {
 				if ran.IsFullRange() {
-					prunedPaths = append(prunedPaths, candidates[i])
+					prunedPaths = append(prunedPaths, candidates[i].path)
 					candidates = append(candidates[:i], candidates[i+1:]...)
 					return candidates, getPruningInfo(prunedPaths)
 				}
