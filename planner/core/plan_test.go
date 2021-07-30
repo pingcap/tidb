@@ -596,6 +596,11 @@ func (s *testPlanNormalize) TestIssue25729(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Experimental.AllowsExpressionIndex = false
+		})
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tt")
