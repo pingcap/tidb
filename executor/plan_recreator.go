@@ -42,13 +42,19 @@ import (
 const recreatorPath string = "/tmp/recreator"
 const remainedInterval float64 = 3
 
+// PlanRecreatorInfo saves the information of plan recreator operation.
+type PlanRecreatorInfo interface {
+	// Process dose the export/import work for reproducing sql queries.
+	Process() (string, error)
+}
+
 // PlanRecreatorSingleExec represents a plan recreator executor.
 type PlanRecreatorSingleExec struct {
 	baseExecutor
 	info *PlanRecreatorSingleInfo
 }
 
-// PlanRecreatorSingleInfo saves the information of plan recreator operation.
+// PlanRecreatorSingleInfo saves the information of plan recreator operation for single SQL statement.
 type PlanRecreatorSingleInfo struct {
 	ExecStmt ast.StmtNode
 	Analyze  bool
@@ -145,19 +151,19 @@ func (e *PlanRecreatorSingleExec) Open(ctx context.Context) error {
 }
 
 // Process dose the export/import work for reproducing sql queries.
-func (e *PlanRecreatorSingleInfo) Process() (interface{}, error) {
+func (e *PlanRecreatorSingleInfo) Process() (string, error) {
 	// TODO: plan recreator load will be developed later
 	if e.Load {
-		return nil, nil
+		return "", nil
 	}
 	return e.dumpSingle()
 }
 
-func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
+func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
 	// Create path
 	err := os.MkdirAll(recreatorPath, os.ModePerm)
 	if err != nil {
-		return nil, errors.New("plan Recreator: cannot create plan recreator path")
+		return "", errors.New("plan Recreator: cannot create plan recreator path")
 	}
 
 	// Create zip file
@@ -165,7 +171,7 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 	fileName := fmt.Sprintf("recreator_single_%v.zip", startTime.UnixNano())
 	zf, err := os.Create(recreatorPath + "/" + fileName)
 	if err != nil {
-		return nil, errors.New("plan Recreator: cannot create zip file")
+		return "", errors.New("plan Recreator: cannot create zip file")
 	}
 	val := e.Ctx.Value(PlanRecreatorFileList)
 	if val == nil {
@@ -206,20 +212,20 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 	// Dump config
 	cf, err := zw.Create("config.toml")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if err := toml.NewEncoder(cf).Encode(config.GetGlobalConfig()); err != nil {
-		return nil, err
+		return "", err
 	}
 
 	// Dump meta
 	mt, err := zw.Create("meta.txt")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	_, err = mt.Write([]byte(printer.GetTiDBInfo()))
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	// Retrieve current DB
@@ -230,26 +236,26 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 	// Retrieve all tables
 	pairs, err := extractTableNames(e.ExecStmt, dbName.L)
 	if err != nil {
-		return nil, errors.New(fmt.Sprintf("Plan Recreator: invalid SQL text, err: %v", err))
+		return "", errors.New(fmt.Sprintf("Plan Recreator: invalid SQL text, err: %v", err))
 	}
 
 	// Dump stats
 	for pair := range pairs {
 		jsonTbl, err := getStatsForTable(do, pair)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		statsFw, err := zw.Create(fmt.Sprintf("stats/%v.%v.json", pair.DBName, pair.TableName))
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		data, err := json.Marshal(jsonTbl)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		_, err = statsFw.Write(data)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 	}
 
@@ -257,7 +263,7 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 	for pair := range pairs {
 		err = getShowCreateTable(pair, zw, e.Ctx)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 	}
 
@@ -265,57 +271,57 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 	varMap := make(map[string]string)
 	recordSets, err := e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "show variables")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	sRows, err := resultSetToStringSlice(context.Background(), recordSets[0])
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	vf, err := zw.Create("variables.toml")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	for _, row := range sRows {
 		varMap[row[0]] = row[1]
 	}
 	if err := toml.NewEncoder(vf).Encode(varMap); err != nil {
-		return nil, err
+		return "", err
 	}
 	if len(recordSets) > 0 {
 		if err := recordSets[0].Close(); err != nil {
-			return nil, err
+			return "", err
 		}
 	}
 
 	// Dump sql
 	sql, err := zw.Create("sqls.sql")
 	if err != nil {
-		return nil, nil
+		return "", nil
 	}
 	_, err = sql.Write([]byte(e.ExecStmt.Text()))
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	// Dump bindings
 	recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "show bindings")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	sRows, err = resultSetToStringSlice(context.Background(), recordSets[0])
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	bf, err := zw.Create("bindings.sql")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	for _, row := range sRows {
 		fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
 	}
 	if len(recordSets) > 0 {
 		if err := recordSets[0].Close(); err != nil {
-			return nil, err
+			return "", err
 		}
 	}
 
@@ -324,29 +330,29 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (interface{}, error) {
 		// Explain analyze
 		recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain analyze %s", e.ExecStmt.Text()))
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 	} else {
 		// Explain
 		recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), fmt.Sprintf("explain %s", e.ExecStmt.Text()))
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 	}
 	sRows, err = resultSetToStringSlice(context.Background(), recordSets[0])
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	fw, err := zw.Create("explain.txt")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	for _, row := range sRows {
 		fmt.Fprintf(fw, "%s\n", strings.Join(row, "\t"))
 	}
 	if len(recordSets) > 0 {
 		if err := recordSets[0].Close(); err != nil {
-			return nil, err
+			return "", err
 		}
 	}
 	return hex.EncodeToString(token[:]), nil
