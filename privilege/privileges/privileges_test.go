@@ -275,20 +275,20 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	gs, err := pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
-	c.Assert(gs[0], Equals, `GRANT Index ON *.* TO 'show'@'localhost'`)
+	c.Assert(gs[0], Equals, `GRANT INDEX ON *.* TO 'show'@'localhost'`)
 
 	mustExec(c, se, `GRANT Select ON *.* TO  'show'@'localhost';`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
-	c.Assert(gs[0], Equals, `GRANT Select,Index ON *.* TO 'show'@'localhost'`)
+	c.Assert(gs[0], Equals, `GRANT SELECT,INDEX ON *.* TO 'show'@'localhost'`)
 
 	// The order of privs is the same with AllGlobalPrivs
 	mustExec(c, se, `GRANT Update ON *.* TO  'show'@'localhost';`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
-	c.Assert(gs[0], Equals, `GRANT Select,Update,Index ON *.* TO 'show'@'localhost'`)
+	c.Assert(gs[0], Equals, `GRANT SELECT,UPDATE,INDEX ON *.* TO 'show'@'localhost'`)
 
 	// All privileges
 	mustExec(c, se, `GRANT ALL ON *.* TO  'show'@'localhost';`)
@@ -317,7 +317,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 2)
 	expected := []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT Select ON test.* TO 'show'@'localhost'`}
+		`GRANT SELECT ON test.* TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
 	mustExec(c, se, `GRANT Index ON test1.* TO  'show'@'localhost';`)
@@ -325,8 +325,8 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT Select ON test.* TO 'show'@'localhost'`,
-		`GRANT Index ON test1.* TO 'show'@'localhost'`}
+		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
+		`GRANT INDEX ON test1.* TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
 	mustExec(c, se, `GRANT ALL ON test1.* TO  'show'@'localhost';`)
@@ -334,7 +334,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT Select ON test.* TO 'show'@'localhost'`,
+		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
 		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
@@ -344,9 +344,9 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 4)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT Select ON test.* TO 'show'@'localhost'`,
+		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
 		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
-		`GRANT Update ON test.test TO 'show'@'localhost'`}
+		`GRANT UPDATE ON test.test TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
 	// Expected behavior: Usage still exists after revoking all privileges
@@ -422,7 +422,7 @@ func (s *testPrivilegeSuite) TestShowColumnGrants(c *C) {
 	pc := privilege.GetPrivilegeManager(se)
 	gs, err := pc.ShowGrants(se, &auth.UserIdentity{Username: "column", Hostname: "%"}, nil)
 	c.Assert(err, IsNil)
-	c.Assert(strings.Join(gs, " "), Equals, "GRANT USAGE ON *.* TO 'column'@'%' GRANT Select(a), Insert(c), Update(a, b) ON test.column_table TO 'column'@'%'")
+	c.Assert(strings.Join(gs, " "), Equals, "GRANT USAGE ON *.* TO 'column'@'%' GRANT SELECT(a), INSERT(c), UPDATE(a, b) ON test.column_table TO 'column'@'%'")
 }
 
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
@@ -1461,8 +1461,6 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
 	err := tk.QueryToErr(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NOT NULL`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
-	// 36 = a UUID. Normally it is an IP address.
-	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.CLUSTER_STATEMENTS_SUMMARY WHERE length(instance) != 36`).Check(testkit.Rows("0"))
 
 	// That is unless we have the RESTRICTED_TABLES_ADMIN privilege
 	tk.Se.Auth(&auth.UserIdentity{
@@ -1473,7 +1471,6 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
 	// flip from is NOT NULL etc
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NULL`).Check(testkit.Rows("0"))
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NULL`).Check(testkit.Rows("0"))
-	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.CLUSTER_STATEMENTS_SUMMARY WHERE length(instance) = 36`).Check(testkit.Rows("0"))
 }
 
 func (s *testPrivilegeSuite) TestClusterConfigInfoschema(c *C) {
@@ -1541,7 +1538,7 @@ func (s *testPrivilegeSuite) TestClusterConfigInfoschema(c *C) {
 		Username: "ccprocess",
 		Hostname: "localhost",
 	}, nil, nil)
-	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT Process ON *.* TO 'ccprocess'@'%'"))
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT PROCESS ON *.* TO 'ccprocess'@'%'"))
 	// Needs Process privilege
 	tk.MustQuery("SELECT * FROM information_schema.CLUSTER_info")
 	tk.MustQuery("SELECT * FROM information_schema.CLUSTER_load")
@@ -1847,7 +1844,7 @@ func (s *testPrivilegeSuite) TestInfoschemaUserPrivileges(c *C) {
 
 	// I can see myself, but I can not see other users
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows())
-	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows("'isroot'@'%' def Super NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows("'isroot'@'%' def SUPER NO"))
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows())
 
 	// Now as isselectonmysqluser
@@ -1858,6 +1855,6 @@ func (s *testPrivilegeSuite) TestInfoschemaUserPrivileges(c *C) {
 
 	// Now as isselectonmysqluser
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows("'isnobody'@'%' def USAGE NO"))
-	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows("'isroot'@'%' def Super NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows("'isroot'@'%' def SUPER NO"))
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows("'isselectonmysqluser'@'%' def USAGE NO"))
 }

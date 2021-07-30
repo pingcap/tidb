@@ -1324,6 +1324,12 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 // unionJoinFieldType finds the type which can carry the given types in Union.
 // Note that unionJoinFieldType doesn't handle charset and collation, caller need to handle it by itself.
 func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
+	// We ignore the pure NULL type.
+	if a.Tp == mysql.TypeNull {
+		return b
+	} else if b.Tp == mysql.TypeNull {
+		return a
+	}
 	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
 	// This logic will be intelligible when it is associated with the buildProjection4Union logic.
 	if resultTp.Tp == mysql.TypeNewDecimal {
@@ -3773,7 +3779,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				}
 
 				cte.recursiveRef = true
-				p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID}.Init(b.ctx, b.getSelectOffset())
+				p := LogicalCTETable{name: cte.def.Name.String(), idForStorage: cte.storageID, seedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
 				p.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 				p.SetOutputNames(cte.seedLP.OutputNames())
 				return p, nil
@@ -3797,11 +3803,14 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				}
 			}
 
+			if cte.cteClass == nil {
+				cte.cteClass = &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP,
+					recursivePartLogicalPlan: cte.recurLP, IDForStorage: cte.storageID,
+					optFlag: cte.optFlag, HasLimit: hasLimit, LimitBeg: limitBeg,
+					LimitEnd: limitEnd}
+			}
 			var p LogicalPlan
-			lp := LogicalCTE{cteAsName: tn.Name, cte: &CTEClass{IsDistinct: cte.isDistinct, seedPartLogicalPlan: cte.seedLP,
-				recursivePartLogicalPlan: cte.recurLP, IDForStorage: cte.storageID,
-				optFlag: cte.optFlag, HasLimit: hasLimit, LimitBeg: limitBeg,
-				LimitEnd: limitEnd}}.Init(b.ctx, b.getSelectOffset())
+			lp := LogicalCTE{cteAsName: tn.Name, cte: cte.cteClass, seedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 			p = lp
 			p.SetOutputNames(cte.seedLP.OutputNames())
@@ -4025,7 +4034,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			ColName:     col.Name,
 			OrigTblName: tableInfo.Name,
 			OrigColName: col.Name,
-			Hidden:      col.Hidden,
 			// For update statement and delete statement, internal version should see the special middle state column, while user doesn't.
 			NotExplicitUsable: col.State != model.StatePublic,
 		})
@@ -4085,7 +4093,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	var result LogicalPlan = ds
 	dirty := tableHasDirtyContent(b.ctx, tableInfo)
-	if dirty {
+	if dirty || tableInfo.TempTableType == model.TempTableLocal {
 		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		result = us
@@ -6228,7 +6236,7 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 		nameMap[cte.Name.L] = struct{}{}
 	}
 	for _, cte := range w.CTEs {
-		b.outerCTEs = append(b.outerCTEs, &cteInfo{def: cte, nonRecursive: !w.IsRecursive, isBuilding: true, storageID: b.allocIDForCTEStorage})
+		b.outerCTEs = append(b.outerCTEs, &cteInfo{def: cte, nonRecursive: !w.IsRecursive, isBuilding: true, storageID: b.allocIDForCTEStorage, seedStat: &property.StatsInfo{}})
 		b.allocIDForCTEStorage++
 		saveFlag := b.optFlag
 		// Init the flag to flagPrunColumns, otherwise it's missing.

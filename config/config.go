@@ -498,13 +498,16 @@ type PessimisticTxn struct {
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
 	// The max count of deadlock events that will be recorded in the information_schema.deadlocks table.
 	DeadlockHistoryCapacity uint `toml:"deadlock-history-capacity" json:"deadlock-history-capacity"`
+	// Whether retryable deadlocks (in-statement deadlocks) are collected to the information_schema.deadlocks table.
+	DeadlockHistoryCollectRetryable bool `toml:"deadlock-history-collect-retryable" json:"deadlock-history-collect-retryable"`
 }
 
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
 	return PessimisticTxn{
-		MaxRetryCount:           256,
-		DeadlockHistoryCapacity: 10,
+		MaxRetryCount:                   256,
+		DeadlockHistoryCapacity:         10,
+		DeadlockHistoryCollectRetryable: false,
 	}
 }
 
