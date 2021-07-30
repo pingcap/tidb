@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -332,7 +331,6 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	}
 	if is.SchemaMetaVersion() != sctx.GetInfoSchema().SchemaMetaVersion() {
 		is = sctx.GetInfoSchema().(infoschema.InfoSchema)
-		fmt.Println(1)
 	}
 
 	stmt := &ExecStmt{
