@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	. "github.com/pingcap/tidb/ddl"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
 	"go.etcd.io/etcd/integration"
@@ -35,10 +35,6 @@ import (
 )
 
 const testLease = 5 * time.Millisecond
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
 
 func checkOwner(d DDL, fbVal bool) (isOwner bool) {
 	manager := d.OwnerManager()
@@ -60,12 +56,12 @@ func TestSingle(t *testing.T) {
 	}
 	store, err := mockstore.NewMockStore()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	defer func() {
 		err := store.Close()
 		if err != nil {
-			t.Fatal(err)
+			require.NoError(t, err)
 		}
 	}()
 
@@ -84,7 +80,7 @@ func TestSingle(t *testing.T) {
 	)
 	err = d.Start(nil)
 	if err != nil {
-		t.Fatalf("DDL start failed %v", err)
+		require.NoErrorf(t, err, "DDL start failed %v")
 	}
 	defer func() {
 		_ = d.Stop()
@@ -92,7 +88,7 @@ func TestSingle(t *testing.T) {
 
 	isOwner := checkOwner(d, true)
 	if !isOwner {
-		t.Fatalf("expect true, got isOwner:%v", isOwner)
+		require.Emptyf(t, isOwner, "expet true, got isOowner:%v")
 	}
 
 	// test for newSession failed
@@ -102,27 +98,28 @@ func TestSingle(t *testing.T) {
 	err = manager.CampaignOwner()
 	if !terror.ErrorEqual(err, goctx.Canceled) &&
 		!terror.ErrorEqual(err, goctx.DeadlineExceeded) {
-		t.Fatalf("campaigned result don't match, err %v", err)
+		require.NoErrorf(t, err, "campaigned result don't match, err %v")
 	}
 	isOwner = checkOwner(d, true)
 	if !isOwner {
-		t.Fatalf("expect true, got isOwner:%v", isOwner)
+		require.NotEmptyf(t, isOwner, "expected true, got isOwner:%v")
 	}
 	// The test is used to exit campaign loop.
 	d.OwnerManager().Cancel()
 	isOwner = checkOwner(d, false)
 	if isOwner {
-		t.Fatalf("expect false, got isOwner:%v", isOwner)
+		require.Emptyf(t, isOwner, "expected false, got isOwner:%v")
 	}
 	time.Sleep(200 * time.Millisecond)
 	ownerID, _ := manager.GetOwnerID(goctx.Background())
 	// The error is ok to be not nil since we canceled the manager.
 	if ownerID != "" {
-		t.Fatalf("owner %s is not empty", ownerID)
+		require.Emptyf(t, ownerID, "owner %s is not empty")
 	}
 }
 
 func TestCluster(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
@@ -134,12 +131,12 @@ func TestCluster(t *testing.T) {
 	}()
 	store, err := mockstore.NewMockStore()
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	defer func() {
 		err := store.Close()
 		if err != nil {
-			t.Fatal(err)
+			require.NoError(t, err)
 		}
 	}()
 	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 4})
@@ -157,11 +154,11 @@ func TestCluster(t *testing.T) {
 	)
 	err = d.Start(nil)
 	if err != nil {
-		t.Fatalf("DDL start failed %v", err)
+		require.NoErrorf(t, err, "DDL start failed %v")
 	}
 	isOwner := checkOwner(d, true)
 	if !isOwner {
-		t.Fatalf("expect true, got isOwner:%v", isOwner)
+		require.Emptyf(t, isOwner, "expect true, got isOwner:%v")
 	}
 	cli1 := clus.Client(1)
 	ic2 := infoschema.NewCache(2)
@@ -175,26 +172,26 @@ func TestCluster(t *testing.T) {
 	)
 	err = d1.Start(nil)
 	if err != nil {
-		t.Fatalf("DDL start failed %v", err)
+		require.NoErrorf(t, err, "DDL start failed %v")
 	}
 	isOwner = checkOwner(d1, false)
 	if isOwner {
-		t.Fatalf("expect false, got isOwner:%v", isOwner)
+		require.Emptyf(t, isOwner, "expect false, got isOwner:%v")
 	}
 
 	// Delete the leader key, the d1 become the owner.
 	cliRW := clus.Client(2)
 	err = deleteLeader(cliRW, DDLOwnerKey)
 	if err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	isOwner = checkOwner(d, false)
 	if isOwner {
-		t.Fatalf("expect false, got isOwner:%v", isOwner)
+		require.Emptyf(t, isOwner, "expect false, got isOwner:%v")
 	}
 	err = d.Stop()
 	if err != nil {
-		t.Fatal(err, IsNil)
+		require.NoErrorf(t, err, "DDL stop failed %v")
 	}
 
 	// d3 (not owner) stop
@@ -210,39 +207,39 @@ func TestCluster(t *testing.T) {
 	)
 	err = d3.Start(nil)
 	if err != nil {
-		t.Fatalf("DDL start failed %v", err)
+		require.NoErrorf(t, err, "DDL start failed %v")
 	}
 	defer func() {
 		err = d3.Stop()
 		if err != nil {
-			t.Fatal(err, IsNil)
+			require.NoErrorf(t, err, "DDL stop failed %v")
 		}
 	}()
 	isOwner = checkOwner(d3, false)
 	if isOwner {
-		t.Fatalf("expect false, got isOwner:%v", isOwner)
+		require.Emptyf(t, isOwner, "expect false, got isOwner:%v")
 	}
 	err = d3.Stop()
 	if err != nil {
-		t.Fatal(err, IsNil)
+		require.NoErrorf(t, err, "DDL stop failed %v")
 	}
 
 	// Cancel the owner context, there is no owner.
 	err = d1.Stop()
 	if err != nil {
-		t.Fatal(err, IsNil)
+		require.NoErrorf(t, err, "DDL stop failed %v")
 	}
 	time.Sleep(time.Duration(tmpTTL+1) * time.Second)
 	session, err := concurrency.NewSession(cliRW)
 	if err != nil {
-		t.Fatalf("new session failed %v", err)
+		require.NoErrorf(t, err, "new session failed %v")
 	}
 	elec := concurrency.NewElection(session, DDLOwnerKey)
 	logPrefix := fmt.Sprintf("[ddl] %s ownerManager %s", DDLOwnerKey, "useless id")
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
 	_, err = owner.GetOwnerInfo(goctx.Background(), logCtx, elec, "useless id")
 	if !terror.ErrorEqual(err, concurrency.ErrElectionNoLeader) {
-		t.Fatalf("get owner info result don't match, err %v", err)
+		require.NoErrorf(t, err, "get owner info result don't match, err %v")
 	}
 }
 
