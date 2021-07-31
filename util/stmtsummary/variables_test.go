@@ -14,9 +14,10 @@
 package stmtsummary
 
 import (
+	"testing"
+
 	"github.com/pingcap/tidb/config"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestSetInVariable(t *testing.T) {
