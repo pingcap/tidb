@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	. "github.com/pingcap/tidb/ddl"
@@ -35,10 +34,6 @@ import (
 )
 
 const testLease = 5 * time.Millisecond
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
 
 func checkOwner(d DDL, fbVal bool) (isOwner bool) {
 	manager := d.OwnerManager()
@@ -123,6 +118,7 @@ func TestSingle(t *testing.T) {
 }
 
 func TestCluster(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
@@ -194,7 +190,7 @@ func TestCluster(t *testing.T) {
 	}
 	err = d.Stop()
 	if err != nil {
-		t.Fatal(err, IsNil)
+		t.Fatalf("DDL stop failed %v", err)
 	}
 
 	// d3 (not owner) stop
@@ -215,7 +211,7 @@ func TestCluster(t *testing.T) {
 	defer func() {
 		err = d3.Stop()
 		if err != nil {
-			t.Fatal(err, IsNil)
+			t.Fatalf("DDL stop failed %v", err)
 		}
 	}()
 	isOwner = checkOwner(d3, false)
@@ -224,13 +220,13 @@ func TestCluster(t *testing.T) {
 	}
 	err = d3.Stop()
 	if err != nil {
-		t.Fatal(err, IsNil)
+		t.Fatalf("DDL stop failed %v", err)
 	}
 
 	// Cancel the owner context, there is no owner.
 	err = d1.Stop()
 	if err != nil {
-		t.Fatal(err, IsNil)
+		t.Fatalf("DDL stop failed %v", err)
 	}
 	time.Sleep(time.Duration(tmpTTL+1) * time.Second)
 	session, err := concurrency.NewSession(cliRW)
