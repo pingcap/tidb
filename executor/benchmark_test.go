@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"reflect"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
@@ -2098,4 +2101,51 @@ func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
 	b.ReportAllocs()
 
+}
+
+type BenchOutput struct {
+	Date   string
+	Commit string
+	Result []BenchResult
+}
+
+type BenchResult struct {
+	Name        string
+	NsPerOp     int64
+	AllocsPerOp int64
+	BytesPerOp  int64
+}
+
+func callerName(f func(b *testing.B)) string {
+	fullName := runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
+	idx := strings.LastIndexByte(fullName, '.')
+	if idx > 0 && idx+1 < len(fullName) {
+		return fullName[idx+1:]
+	}
+	return fullName
+}
+
+func benchmarkResultToJSON(name string, r testing.BenchmarkResult) BenchResult {
+	return BenchResult{
+		Name:        name,
+		NsPerOp:     r.NsPerOp(),
+		AllocsPerOp: r.AllocsPerOp(),
+		BytesPerOp:  r.AllocedBytesPerOp(),
+	}
+}
+
+func BenchShuffleStreamAggRowsOnce(b *testing.B) {
+	cas := defaultAggTestCase("stream")
+	cas.rows = 100000
+	cas.dataSourceSorted = false
+	cas.hasDistinct = false
+	cas.concurrency = 4
+	benchmarkAggExecWithCase(b, cas)
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchShuffleStreamAggRowsOnce,
+		BenchmarkReadLastLinesOfHugeLine,
+	)
 }

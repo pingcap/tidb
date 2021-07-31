@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
@@ -88,4 +89,12 @@ func BenchmarkDecode(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkEncode,
+		BenchmarkDecode,
+		BenchmarkEncodeFromOldRow,
+	)
 }

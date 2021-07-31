@@ -19,3 +19,4 @@ vendor
 /_tools/
 .DS_Store
 .vscode
+bench_daily.json

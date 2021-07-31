@@ -269,5 +269,13 @@ endif
 # Usage:
 #	make bench-daily TO=/path/to/file.json
 bench-daily:
-	cd ./session && \
-	go test -run TestBenchDaily --date `git log -n1 --date=unix --pretty=format:%cd` --commit `git log -n1 --pretty=format:%h` --outfile $(TO)
+	go test github.com/pingcap/tidb/session -run TestBenchDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/executor -run TestBenchDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/tablecodec -run TestBenchDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/expression -run TestBenchDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/rowcodec -run TestBenchDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/codec -run TestBenchDaily --outfile bench_daily.json
+	go test github.com/pingcap/tidb/util/benchdaily -run TestBenchDaily \
+		-date `git log -n1 --date=unix --pretty=format:%cd` \
+		-commit `git log -n1 --pretty=format:%h` \
+		-outfile $(TO)
