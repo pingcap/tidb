@@ -21,7 +21,7 @@ import (
 	"sync"
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/assert"
 )
 
 type Obj struct {
@@ -29,16 +29,7 @@ type Obj struct {
 	val int64 // nolint:structcheck // Dummy field to make it non-empty.
 }
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testPoolSuite{})
-
-type testPoolSuite struct {
-}
-
-func (s *testPoolSuite) TestPool(c *C) {
+func TestPool(t *testing.T) {
 	numWorkers := runtime.GOMAXPROCS(0)
 	wg := new(sync.WaitGroup)
 	wg.Add(numWorkers)
@@ -62,8 +53,8 @@ func (s *testPoolSuite) TestPool(c *C) {
 		putHit += slot.putHit
 		putMiss += slot.putMiss
 	}
-	c.Assert(getHit, Greater, getMiss)
-	c.Assert(putHit, Greater, putMiss)
+	assert.Greater(t, getHit, getMiss)
+	assert.Greater(t, putHit, putMiss)
 }
 
 func GetAndPut(pool *LocalPool) {
