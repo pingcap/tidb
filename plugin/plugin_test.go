@@ -19,13 +19,9 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/stretchr/testify/assert"
 )
-
-func TestT(t *testing.T) {
-	check.TestingT(t)
-}
 
 func TestLoadPluginSuccess(t *testing.T) {
 	ctx := context.Background()
@@ -41,7 +37,7 @@ func TestLoadPluginSuccess(t *testing.T) {
 	}
 
 	// setup load test hook.
-	testHook = &struct{ loadOne loadFn }{loadOne: func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
+	SetTestHook(func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
 		return func() *Manifest {
 			m := &AuditManifest{
 				Manifest: Manifest{
@@ -63,55 +59,40 @@ func TestLoadPluginSuccess(t *testing.T) {
 			}
 			return ExportManifest(m)
 		}, nil
-	}}
+	})
 	defer func() {
 		testHook = nil
 	}()
 
 	// trigger load.
 	err := Load(ctx, cfg)
-	if err != nil {
-		t.Errorf("load plugin [%s] fail", pluginSign)
-	}
+	assert.NoErrorf(t, err, "load plugin [%s] fail", pluginSign)
 
 	err = Init(ctx, cfg)
-	if err != nil {
-		t.Errorf("init plugin [%s] fail", pluginSign)
-	}
+	assert.NoErrorf(t, err, "init plugin [%s] fail", pluginSign)
 
 	// load all.
 	ps := GetAll()
-	if len(ps) != 1 {
-		t.Errorf("loaded plugins is empty")
-	}
+	assert.Lenf(t, ps, 1, "loaded plugins is empty")
+	assert.Truef(t, IsEnable(Authentication), "plugin is not enabled")
 
 	// find plugin by type and name
 	p := Get(Authentication, "tplugin")
-	if p == nil {
-		t.Errorf("tplugin can not be load")
-	}
+	assert.NotNilf(t, p, "tplugin can not be load")
 	p = Get(Authentication, "tplugin2")
-	if p != nil {
-		t.Errorf("found miss plugin")
-	}
+	assert.Nilf(t, p, "found miss plugin")
 	p = getByName("tplugin")
-	if p == nil {
-		t.Errorf("can not find miss plugin")
-	}
+	assert.NotNilf(t, p, "can not find miss plugin")
 
 	// foreach plugin
 	err = ForeachPlugin(Authentication, func(plugin *Plugin) error {
 		return nil
 	})
-	if err != nil {
-		t.Errorf("foreach error %v", err)
-	}
+	assert.NoErrorf(t, err, "foreach error %v", err)
 	err = ForeachPlugin(Authentication, func(plugin *Plugin) error {
 		return io.EOF
 	})
-	if err != io.EOF {
-		t.Errorf("foreach should return EOF error")
-	}
+	assert.Equalf(t, io.EOF, err, "foreach should return EOF error")
 
 	Shutdown(ctx)
 }
@@ -131,7 +112,7 @@ func TestLoadPluginSkipError(t *testing.T) {
 	}
 
 	// setup load test hook.
-	testHook = &struct{ loadOne loadFn }{loadOne: func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
+	SetTestHook(func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
 		return func() *Manifest {
 			m := &AuditManifest{
 				Manifest: Manifest{
@@ -153,58 +134,41 @@ func TestLoadPluginSkipError(t *testing.T) {
 			}
 			return ExportManifest(m)
 		}, nil
-	}}
+	})
 	defer func() {
 		testHook = nil
 	}()
 
 	// trigger load.
 	err := Load(ctx, cfg)
-	if err != nil {
-		t.Errorf("load plugin [%s] fail %v", pluginSign, err)
-	}
+	assert.NoErrorf(t, err, "load plugin [%s] fail", pluginSign)
 
 	err = Init(ctx, cfg)
-	if err != nil {
-		t.Errorf("init plugin [%s] fail", pluginSign)
-	}
+	assert.NoErrorf(t, err, "init plugin [%s] fail", pluginSign)
+	assert.Falsef(t, IsEnable(Audit), "plugin is enabled")
 
 	// load all.
 	ps := GetAll()
-	if len(ps) != 1 {
-		t.Errorf("loaded plugins is empty")
-	}
+	assert.Lenf(t, ps, 1, "loaded plugins is empty")
 
 	// find plugin by type and name
 	p := Get(Audit, "tplugin")
-	if p == nil {
-		t.Errorf("tplugin can not be load")
-	}
+	assert.NotNilf(t, p, "tplugin can not be load")
 	p = Get(Audit, "tplugin2")
-	if p != nil {
-		t.Errorf("found miss plugin")
-	}
+	assert.Nilf(t, p, "found miss plugin")
 	p = getByName("tplugin")
-	if p == nil {
-		t.Errorf("can not find miss plugin")
-	}
+	assert.NotNilf(t, p, "can not find miss plugin")
 	p = getByName("not exists")
-	if p != nil {
-		t.Errorf("got not exists plugin")
-	}
+	assert.Nilf(t, p, "got not exists plugin")
 
 	// foreach plugin
 	readyCount := 0
-	err = ForeachPlugin(Authentication, func(plugin *Plugin) error {
+	err = ForeachPlugin(Audit, func(plugin *Plugin) error {
 		readyCount++
 		return nil
 	})
-	if err != nil {
-		t.Errorf("foreach meet error %v", err)
-	}
-	if readyCount != 0 {
-		t.Errorf("validate fail can be load but no ready")
-	}
+	assert.NoErrorf(t, err, "foreach meet error %v", err)
+	assert.Equalf(t, 0, readyCount, "validate fail can be load but no ready")
 
 	Shutdown(ctx)
 }
@@ -224,7 +188,7 @@ func TestLoadFail(t *testing.T) {
 	}
 
 	// setup load test hook.
-	testHook = &struct{ loadOne loadFn }{loadOne: func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
+	SetTestHook(func(plugin *Plugin, dir string, pluginID ID) (manifest func() *Manifest, err error) {
 		return func() *Manifest {
 			m := &AuditManifest{
 				Manifest: Manifest{
@@ -246,15 +210,13 @@ func TestLoadFail(t *testing.T) {
 			}
 			return ExportManifest(m)
 		}, nil
-	}}
+	})
 	defer func() {
 		testHook = nil
 	}()
 
 	err := Load(ctx, cfg)
-	if err == nil {
-		t.Errorf("load plugin should fail")
-	}
+	assert.Errorf(t, err, "load plugin should fail")
 }
 
 func TestPluginsClone(t *testing.T) {
@@ -273,7 +235,10 @@ func TestPluginsClone(t *testing.T) {
 	as := ps.plugins[Audit]
 	ps.plugins[Audit] = append(as, Plugin{})
 
-	if len(cps.plugins) != 1 || len(cps.plugins[Audit]) != 1 || len(cps.versions) != 1 || len(cps.dyingPlugins) != 1 {
-		t.Errorf("clone plugins failure")
-	}
+	msg := "clone plugins failure"
+	assert.Lenf(t, cps.plugins, 1, msg)
+	assert.Lenf(t, cps.plugins[Audit], 1, msg)
+	assert.Lenf(t, cps.versions, 1, msg)
+	assert.Equalf(t, uint16(1), cps.versions["whitelist"], msg)
+	assert.Lenf(t, cps.dyingPlugins, 1, msg)
 }

@@ -19,9 +19,11 @@ import (
 
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExportManifest(t *testing.T) {
+	t.Parallel()
 	callRecorder := struct {
 		OnInitCalled      bool
 		NotifyEventCalled bool
@@ -42,12 +44,9 @@ func TestExportManifest(t *testing.T) {
 	}
 	exported := plugin.ExportManifest(manifest)
 	err := exported.OnInit(context.Background(), exported)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	audit := plugin.DeclareAuditManifest(exported)
 	audit.OnGeneralEvent(context.Background(), nil, plugin.Log, "QUERY")
-	if !callRecorder.NotifyEventCalled || !callRecorder.OnInitCalled {
-		t.Fatalf("export test failure")
-	}
+	require.Truef(t, callRecorder.NotifyEventCalled, "export test failure")
+	require.Truef(t, callRecorder.OnInitCalled, "export test failure")
 }

@@ -13,42 +13,38 @@
 
 package plugin
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
 
 func TestPluginDeclare(t *testing.T) {
+	t.Parallel()
 	auditRaw := &AuditManifest{Manifest: Manifest{}}
 	auditExport := ExportManifest(auditRaw)
 	audit2 := DeclareAuditManifest(auditExport)
-	if audit2 != auditRaw {
-		t.Errorf("declare audit fail")
-	}
+	assert.Equalf(t, auditRaw, audit2, "declare audit fail")
 
 	authRaw := &AuthenticationManifest{Manifest: Manifest{}}
 	authExport := ExportManifest(authRaw)
 	auth2 := DeclareAuthenticationManifest(authExport)
-	if auth2 != authRaw {
-		t.Errorf("declare auth fail")
-	}
+	assert.Equalf(t, authRaw, auth2, "declare auth fail")
 
 	schemaRaw := &SchemaManifest{Manifest: Manifest{}}
 	schemaExport := ExportManifest(schemaRaw)
 	schema2 := DeclareSchemaManifest(schemaExport)
-	if schema2 != schemaRaw {
-		t.Errorf("declare schema fail")
-	}
+	assert.Equalf(t, schemaRaw, schema2, "declare schema fail")
 
 	daemonRaw := &DaemonManifest{Manifest: Manifest{}}
 	daemonExport := ExportManifest(daemonRaw)
 	daemon2 := DeclareDaemonManifest(daemonExport)
-	if daemon2 != daemonRaw {
-		t.Errorf("declare daemon fail")
-	}
+	assert.Equalf(t, daemonRaw, daemon2, "declare daemon fail")
 }
 
 func TestDecode(t *testing.T) {
+	t.Parallel()
 	failID := ID("fail")
 	_, _, err := failID.Decode()
-	if err == nil {
-		t.Errorf("'fail' should not decode success")
-	}
+	assert.Errorf(t, err, "'fail' should not decode success")
 }

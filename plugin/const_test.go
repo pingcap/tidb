@@ -16,9 +16,12 @@ package plugin
 import (
 	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestConstToString(t *testing.T) {
+	t.Parallel()
 	kinds := map[fmt.Stringer]string{
 		Audit:                     "Audit",
 		Authentication:            "Authentication",
@@ -32,11 +35,10 @@ func TestConstToString(t *testing.T) {
 		Disconnect:                "Disconnect",
 		ChangeUser:                "ChangeUser",
 		PreAuth:                   "PreAuth",
+		Reject:                    "Reject",
 		ConnectionEvent(byte(15)): "",
 	}
 	for key, value := range kinds {
-		if key.String() != value {
-			t.Errorf("kind %s != %s", key.String(), kinds)
-		}
+		assert.Equalf(t, value, key.String(), "kind %s != %s", key.String(), value)
 	}
 }
