@@ -84,7 +84,7 @@ func (l *List) GetChunk(chkIdx int) *Chunk {
 // AppendRow appends a row to the List, the row is copied to the List.
 func (l *List) AppendRow(row Row) RowPtr {
 	chkIdx := len(l.chunks) - 1
-	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() || chkIdx == l.consumedIdx {
+	if chkIdx == -1 || l.chunks[chkIdx].IsFull() || chkIdx == l.consumedIdx {
 		newChk := l.allocChunk()
 		l.chunks = append(l.chunks, newChk)
 		if chkIdx != l.consumedIdx {
@@ -167,7 +167,7 @@ func (l *List) Clear() {
 //    rows data into the List after the pre-allocation.
 func (l *List) preAlloc4Row(row Row) (ptr RowPtr) {
 	chkIdx := len(l.chunks) - 1
-	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() {
+	if chkIdx == -1 || l.chunks[chkIdx].IsFull() {
 		newChk := l.allocChunk()
 		l.chunks = append(l.chunks, newChk)
 		if chkIdx != l.consumedIdx {

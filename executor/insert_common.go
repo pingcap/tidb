@@ -424,7 +424,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	fields := retTypes(selectExec)
 	chk := newFirstChunk(selectExec)
 	iter := chunk.NewIterator4Chunk(chk)
-	rows := make([][]types.Datum, 0, chk.Capacity())
+	rows := make([][]types.Datum, 0, chk.RequiredRows())
 
 	sessVars := e.ctx.GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
@@ -432,7 +432,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	memUsageOfRows := int64(0)
 	memUsageOfExtraCols := int64(0)
 	memTracker := e.memTracker
-	extraColsInSel := make([][]types.Datum, 0, chk.Capacity())
+	extraColsInSel := make([][]types.Datum, 0, chk.RequiredRows())
 	// In order to ensure the correctness of the `transaction write throughput` SLI statistics,
 	// just ignore the transaction which contain `insert|replace into ... select ... from ...` statement.
 	e.ctx.GetTxnWriteThroughputSLI().SetInvalid()

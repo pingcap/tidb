@@ -86,7 +86,7 @@ func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 	t.groupRowsIter = chunk.NewIterator4Chunk(t.childChunk)
 
 	if t.isInner {
-		t.rowContainer = chunk.NewRowContainer(child.base().retFieldTypes, t.childChunk.Capacity())
+		t.rowContainer = chunk.NewRowContainer(child.base().retFieldTypes, t.childChunk.RequiredRows())
 		t.rowContainer.GetMemTracker().AttachTo(exec.memTracker)
 		t.rowContainer.GetMemTracker().SetLabel(memory.LabelForInnerTable)
 		t.rowContainer.GetDiskTracker().AttachTo(exec.diskTracker)

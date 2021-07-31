@@ -1071,7 +1071,7 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	// Append running DDL jobs.
 	if e.cursor < len(e.runningJobs) {
-		num := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
+		num := mathutil.Min(req.RequiredRows(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+num; i++ {
 			e.appendJobToChunk(req, e.runningJobs[i], checker)
 			req.AppendString(11, e.runningJobs[i].Query)
@@ -1082,8 +1082,8 @@ func (e *DDLJobsReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	var err error
 
 	// Append history DDL jobs.
-	if count < req.Capacity() {
-		e.cacheJobs, err = e.historyJobIter.GetLastJobs(req.Capacity()-count, e.cacheJobs)
+	if count < req.RequiredRows() {
+		e.cacheJobs, err = e.historyJobIter.GetLastJobs(req.RequiredRows()-count, e.cacheJobs)
 		if err != nil {
 			return err
 		}

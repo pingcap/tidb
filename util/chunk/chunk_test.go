@@ -1014,7 +1014,7 @@ func (x *seqNumberGenerateExec) Next(chk *Chunk, resize bool) {
 	} else {
 		chk.Reset()
 	}
-	for chk.NumRows() < chk.Capacity() {
+	for chk.NumRows() < chk.RequiredRows() {
 		x.seq++
 		if x.seq > x.genCountSize {
 			break

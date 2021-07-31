@@ -62,7 +62,7 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
-	numCurRows := mathutil.Min(req.Capacity(), len(e.rows)-e.cursor)
+	numCurRows := mathutil.Min(req.RequiredRows(), len(e.rows)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurRows; i++ {
 		for j := range e.rows[i] {
 			req.AppendString(j, e.rows[i][j])
