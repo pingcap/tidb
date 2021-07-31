@@ -19,13 +19,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
-
-func TestT(t *testing.T) {
-	check.TestingT(t)
-}
 
 func TestLoadPluginSuccess(t *testing.T) {
 	ctx := context.Background()
