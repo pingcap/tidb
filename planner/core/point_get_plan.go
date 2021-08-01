@@ -44,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/tikv"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
 )
 
@@ -542,7 +542,7 @@ func getLockWaitTime(ctx sessionctx.Context, lockInfo *ast.SelectLockInfo) (lock
 				if lockInfo.LockType == ast.SelectLockForUpdateWaitN {
 					waitTime = int64(lockInfo.WaitSec * 1000)
 				} else if lockInfo.LockType == ast.SelectLockForUpdateNoWait {
-					waitTime = tikv.LockNoWait
+					waitTime = tikvstore.LockNoWait
 				}
 			}
 		}
