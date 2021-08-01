@@ -294,6 +294,38 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 	return hs, stmtNodes[0], extractHintWarns(warns), nil
 }
 
+// ParseHintsSet collects and normalizes the HintsSet from StmtNode.
+func ParseHintsSetFromStmtNode(stmt ast.StmtNode) [][]*ast.TableOptimizerHint {
+	hs := CollectHint(stmt)
+	processor := &BlockHintProcessor{}
+	stmt.Accept(processor)
+	topNodeType := nodeType4Stmt(stmt)
+	for i, tblHints := range hs.tableHints {
+		newHints := make([]*ast.TableOptimizerHint, 0, len(tblHints))
+		curOffset := i + 1
+		if topNodeType == TypeDelete || topNodeType == TypeUpdate {
+			curOffset = curOffset - 1
+		}
+		for _, tblHint := range tblHints {
+			if tblHint.HintName.L == hintQBName {
+				continue
+			}
+			offset := processor.GetHintOffset(tblHint.QBName, curOffset)
+			if offset < 0 || !processor.checkTableQBName(tblHint.Tables) {
+				return nil
+			}
+			var err error
+			tblHint.QBName, err = GenerateQBName(topNodeType, offset)
+			if err != nil {
+				return nil
+			}
+			newHints = append(newHints, tblHint)
+		}
+		hs.tableHints[i] = newHints
+	}
+	return hs.tableHints
+}
+
 func extractHintWarns(warns []error) []error {
 	for _, w := range warns {
 		if parser.ErrWarnOptimizerHintUnsupportedHint.Equal(w) ||
