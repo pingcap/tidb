@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -30,397 +29,388 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/stretchr/testify/require"
 )
 
 func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-var _ = SerialSuites(&testSuite{})
-
-type testSuite struct {
-}
-
-func (*testSuite) TestT(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
 	}()
 
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: model.NewCIStr("t1")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: model.NewCIStr("t2")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: model.NewCIStr("t3")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		return nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// Since the test here is applicable to any type of allocators, autoid.RowIDAllocType is chosen.
 	alloc := autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
-	c.Assert(alloc, NotNil)
+	require.NotNil(t, alloc)
 
 	ctx := context.Background()
 	globalAutoID, err := alloc.NextGlobalAutoID(1)
-	c.Assert(err, IsNil)
-	c.Assert(globalAutoID, Equals, int64(1))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), globalAutoID)
 	_, id, err := alloc.Alloc(ctx, 1, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(1))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), id)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(2))
+	require.NoError(t, err)
+	require.Equal(t, int64(2), id)
 	_, _, err = alloc.Alloc(ctx, 0, 1, 1, 1)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	globalAutoID, err = alloc.NextGlobalAutoID(1)
-	c.Assert(err, IsNil)
-	c.Assert(globalAutoID, Equals, autoid.GetStep()+1)
+	require.NoError(t, err)
+	require.Equal(t, autoid.GetStep()+1, globalAutoID)
 
 	// rebase
 	err = alloc.Rebase(1, int64(1), true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(3))
+	require.NoError(t, err)
+	require.Equal(t, int64(3), id)
 	err = alloc.Rebase(1, int64(3), true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(4))
+	require.NoError(t, err)
+	require.Equal(t, int64(4), id)
 	err = alloc.Rebase(1, int64(10), true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(11))
+	require.NoError(t, err)
+	require.Equal(t, int64(11), id)
 	err = alloc.Rebase(1, int64(3010), true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(3011))
+	require.NoError(t, err)
+	require.Equal(t, int64(3011), id)
 
 	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
-	c.Assert(alloc, NotNil)
+	require.NotNil(t, alloc)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, autoid.GetStep()+1)
+	require.NoError(t, err)
+	require.Equal(t, autoid.GetStep()+1, id)
 
 	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
-	c.Assert(alloc, NotNil)
+	require.NotNil(t, alloc)
 	err = alloc.Rebase(2, int64(1), false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 2, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(2))
+	require.NoError(t, err)
+	require.Equal(t, int64(2), id)
 
 	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
-	c.Assert(alloc, NotNil)
+	require.NotNil(t, alloc)
 	err = alloc.Rebase(3, int64(3210), false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
-	c.Assert(alloc, NotNil)
+	require.NotNil(t, alloc)
 	err = alloc.Rebase(3, int64(3000), false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 3, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(3211))
+	require.NoError(t, err)
+	require.Equal(t, int64(3211), id)
 	err = alloc.Rebase(3, int64(6543), false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 3, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(6544))
+	require.NoError(t, err)
+	require.Equal(t, int64(6544), id)
 
 	// Test the MaxInt64 is the upper bound of `alloc` function but not `rebase`.
 	err = alloc.Rebase(3, int64(math.MaxInt64-1), true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, _, err = alloc.Alloc(ctx, 3, 1, 1, 1)
-	c.Assert(alloc, NotNil)
+	require.Error(t, err)
 	err = alloc.Rebase(3, int64(math.MaxInt64), true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// alloc N for signed
 	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
-	c.Assert(alloc, NotNil)
+	require.NotNil(t, alloc)
 	globalAutoID, err = alloc.NextGlobalAutoID(4)
-	c.Assert(err, IsNil)
-	c.Assert(globalAutoID, Equals, int64(1))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), globalAutoID)
 	min, max, err := alloc.Alloc(ctx, 4, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(max-min, Equals, int64(1))
-	c.Assert(min+1, Equals, int64(1))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), max-min)
+	require.Equal(t, int64(1), min+1)
 
 	min, max, err = alloc.Alloc(ctx, 4, 2, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(max-min, Equals, int64(2))
-	c.Assert(min+1, Equals, int64(2))
-	c.Assert(max, Equals, int64(3))
+	require.NoError(t, err)
+	require.Equal(t, int64(2), max-min)
+	require.Equal(t, int64(2), min+1)
+	require.Equal(t, int64(3), max)
 
 	min, max, err = alloc.Alloc(ctx, 4, 100, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(max-min, Equals, int64(100))
+	require.NoError(t, err)
+	require.Equal(t, int64(100), max-min)
 	expected := int64(4)
 	for i := min + 1; i <= max; i++ {
-		c.Assert(i, Equals, expected)
+		require.Equal(t, expected, i)
 		expected++
 	}
 
 	err = alloc.Rebase(4, int64(1000), false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	min, max, err = alloc.Alloc(ctx, 4, 3, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(max-min, Equals, int64(3))
-	c.Assert(min+1, Equals, int64(1001))
-	c.Assert(min+2, Equals, int64(1002))
-	c.Assert(max, Equals, int64(1003))
+	require.NoError(t, err)
+	require.Equal(t, int64(3), max-min)
+	require.Equal(t, int64(1001), min+1)
+	require.Equal(t, int64(1002), min+2)
+	require.Equal(t, int64(1003), max)
 
 	lastRemainOne := alloc.End()
 	err = alloc.Rebase(4, alloc.End()-2, false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	min, max, err = alloc.Alloc(ctx, 4, 5, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(max-min, Equals, int64(5))
-	c.Assert(min+1, Greater, lastRemainOne)
+	require.NoError(t, err)
+	require.Equal(t, int64(5), max-min)
+	require.Greater(t, min+1, lastRemainOne)
 
 	// Test for increment & offset for signed.
 	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
-	c.Assert(alloc, NotNil)
+	require.NotNil(t, alloc)
 
 	increment := int64(2)
 	offset := int64(100)
-	c.Assert(err, IsNil)
-	c.Assert(globalAutoID, Equals, int64(1))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), globalAutoID)
 	min, max, err = alloc.Alloc(ctx, 5, 1, increment, offset)
-	c.Assert(err, IsNil)
-	c.Assert(min, Equals, int64(99))
-	c.Assert(max, Equals, int64(100))
+	require.NoError(t, err)
+	require.Equal(t, int64(99), min)
+	require.Equal(t, int64(100), max)
 
 	min, max, err = alloc.Alloc(ctx, 5, 2, increment, offset)
-	c.Assert(err, IsNil)
-	c.Assert(max-min, Equals, int64(4))
-	c.Assert(max-min, Equals, autoid.CalcNeededBatchSize(100, 2, increment, offset, false))
-	c.Assert(min, Equals, int64(100))
-	c.Assert(max, Equals, int64(104))
+	require.NoError(t, err)
+	require.Equal(t, int64(4), max-min)
+	require.Equal(t, autoid.CalcNeededBatchSize(100, 2, increment, offset, false), max-min)
+	require.Equal(t, int64(100), min)
+	require.Equal(t, int64(104), max)
 
 	increment = int64(5)
 	min, max, err = alloc.Alloc(ctx, 5, 3, increment, offset)
-	c.Assert(err, IsNil)
-	c.Assert(max-min, Equals, int64(11))
-	c.Assert(max-min, Equals, autoid.CalcNeededBatchSize(104, 3, increment, offset, false))
-	c.Assert(min, Equals, int64(104))
-	c.Assert(max, Equals, int64(115))
+	require.NoError(t, err)
+	require.Equal(t, int64(11), max-min)
+	require.Equal(t, autoid.CalcNeededBatchSize(104, 3, increment, offset, false), max-min)
+	require.Equal(t, int64(104), min)
+	require.Equal(t, int64(115), max)
 	firstID := autoid.SeekToFirstAutoIDSigned(104, increment, offset)
-	c.Assert(firstID, Equals, int64(105))
+	require.Equal(t, int64(105), firstID)
 
 	increment = int64(15)
 	min, max, err = alloc.Alloc(ctx, 5, 2, increment, offset)
-	c.Assert(err, IsNil)
-	c.Assert(max-min, Equals, int64(30))
-	c.Assert(max-min, Equals, autoid.CalcNeededBatchSize(115, 2, increment, offset, false))
-	c.Assert(min, Equals, int64(115))
-	c.Assert(max, Equals, int64(145))
+	require.NoError(t, err)
+	require.Equal(t, int64(30), max-min)
+	require.Equal(t, autoid.CalcNeededBatchSize(115, 2, increment, offset, false), max-min)
+	require.Equal(t, int64(115), min)
+	require.Equal(t, int64(145), max)
 	firstID = autoid.SeekToFirstAutoIDSigned(115, increment, offset)
-	c.Assert(firstID, Equals, int64(130))
+	require.Equal(t, int64(130), firstID)
 
 	offset = int64(200)
 	min, max, err = alloc.Alloc(ctx, 5, 2, increment, offset)
-	c.Assert(err, IsNil)
-	c.Assert(max-min, Equals, int64(16))
+	require.NoError(t, err)
+	require.Equal(t, int64(16), max-min)
 	// offset-1 > base will cause alloc rebase to offset-1.
-	c.Assert(max-min, Equals, autoid.CalcNeededBatchSize(offset-1, 2, increment, offset, false))
-	c.Assert(min, Equals, int64(199))
-	c.Assert(max, Equals, int64(215))
+	require.Equal(t, autoid.CalcNeededBatchSize(offset-1, 2, increment, offset, false), max-min)
+	require.Equal(t, int64(199), min)
+	require.Equal(t, int64(215), max)
 	firstID = autoid.SeekToFirstAutoIDSigned(offset-1, increment, offset)
-	c.Assert(firstID, Equals, int64(200))
+	require.Equal(t, int64(200), firstID)
 }
 
-func (*testSuite) TestUnsignedAutoid(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+func TestUnsignedAutoid(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
 	}()
 
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: model.NewCIStr("t1")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: model.NewCIStr("t2")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: model.NewCIStr("t3")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		return nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	alloc := autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
-	c.Assert(alloc, NotNil)
+	require.NotNil(t, alloc)
 
 	ctx := context.Background()
 	globalAutoID, err := alloc.NextGlobalAutoID(1)
-	c.Assert(err, IsNil)
-	c.Assert(globalAutoID, Equals, int64(1))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), globalAutoID)
 	_, id, err := alloc.Alloc(ctx, 1, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(1))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), id)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(2))
+	require.NoError(t, err)
+	require.Equal(t, int64(2), id)
 	_, _, err = alloc.Alloc(ctx, 0, 1, 1, 1)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	globalAutoID, err = alloc.NextGlobalAutoID(1)
-	c.Assert(err, IsNil)
-	c.Assert(globalAutoID, Equals, autoid.GetStep()+1)
+	require.NoError(t, err)
+	require.Equal(t, autoid.GetStep()+1, globalAutoID)
 
 	// rebase
 	err = alloc.Rebase(1, int64(1), true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(3))
+	require.NoError(t, err)
+	require.Equal(t, int64(3), id)
 	err = alloc.Rebase(1, int64(3), true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(4))
+	require.NoError(t, err)
+	require.Equal(t, int64(4), id)
 	err = alloc.Rebase(1, int64(10), true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(11))
+	require.NoError(t, err)
+	require.Equal(t, int64(11), id)
 	err = alloc.Rebase(1, int64(3010), true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(3011))
+	require.NoError(t, err)
+	require.Equal(t, int64(3011), id)
 
 	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
-	c.Assert(alloc, NotNil)
+	require.NotNil(t, alloc)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, autoid.GetStep()+1)
+	require.NoError(t, err)
+	require.Equal(t, autoid.GetStep()+1, id)
 
 	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
-	c.Assert(alloc, NotNil)
+	require.NotNil(t, alloc)
 	err = alloc.Rebase(2, int64(1), false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 2, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(2))
+	require.NoError(t, err)
+	require.Equal(t, int64(2), id)
 
 	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
-	c.Assert(alloc, NotNil)
+	require.NotNil(t, alloc)
 	err = alloc.Rebase(3, int64(3210), false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
-	c.Assert(alloc, NotNil)
+	require.NotNil(t, alloc)
 	err = alloc.Rebase(3, int64(3000), false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 3, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(3211))
+	require.NoError(t, err)
+	require.Equal(t, int64(3211), id)
 	err = alloc.Rebase(3, int64(6543), false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 3, 1, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(6544))
+	require.NoError(t, err)
+	require.Equal(t, int64(6544), id)
 
 	// Test the MaxUint64 is the upper bound of `alloc` func but not `rebase`.
 	var n uint64 = math.MaxUint64 - 1
 	un := int64(n)
 	err = alloc.Rebase(3, un, true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, _, err = alloc.Alloc(ctx, 3, 1, 1, 1)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	un = int64(n + 1)
 	err = alloc.Rebase(3, un, true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// alloc N for unsigned
 	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
-	c.Assert(alloc, NotNil)
+	require.NotNil(t, alloc)
 	globalAutoID, err = alloc.NextGlobalAutoID(4)
-	c.Assert(err, IsNil)
-	c.Assert(globalAutoID, Equals, int64(1))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), globalAutoID)
 
 	min, max, err := alloc.Alloc(ctx, 4, 2, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(max-min, Equals, int64(2))
-	c.Assert(min+1, Equals, int64(1))
-	c.Assert(max, Equals, int64(2))
+	require.NoError(t, err)
+	require.Equal(t, int64(2), max-min)
+	require.Equal(t, int64(1), min+1)
+	require.Equal(t, int64(2), max)
 
 	err = alloc.Rebase(4, int64(500), true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	min, max, err = alloc.Alloc(ctx, 4, 2, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(max-min, Equals, int64(2))
-	c.Assert(min+1, Equals, int64(501))
-	c.Assert(max, Equals, int64(502))
+	require.NoError(t, err)
+	require.Equal(t, int64(2), max-min)
+	require.Equal(t, int64(501), min+1)
+	require.Equal(t, int64(502), max)
 
 	lastRemainOne := alloc.End()
 	err = alloc.Rebase(4, alloc.End()-2, false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	min, max, err = alloc.Alloc(ctx, 4, 5, 1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(max-min, Equals, int64(5))
-	c.Assert(min+1, Greater, lastRemainOne)
+	require.NoError(t, err)
+	require.Equal(t, int64(5), max-min)
+	require.Greater(t, min+1, lastRemainOne)
 
 	// Test increment & offset for unsigned. Using AutoRandomType to avoid valid range check for increment and offset.
 	alloc = autoid.NewAllocator(store, 1, true, autoid.AutoRandomType)
-	c.Assert(alloc, NotNil)
-	c.Assert(err, IsNil)
-	c.Assert(globalAutoID, Equals, int64(1))
+	require.NotNil(t, alloc)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), globalAutoID)
 
 	increment := int64(2)
 	n = math.MaxUint64 - 100
 	offset := int64(n)
 
 	min, max, err = alloc.Alloc(ctx, 5, 2, increment, offset)
-	c.Assert(err, IsNil)
-	c.Assert(uint64(min), Equals, uint64(math.MaxUint64-101))
-	c.Assert(uint64(max), Equals, uint64(math.MaxUint64-98))
+	require.NoError(t, err)
+	require.Equal(t, uint64(math.MaxUint64-101), uint64(min))
+	require.Equal(t, uint64(math.MaxUint64-98), uint64(max))
 
-	c.Assert(max-min, Equals, autoid.CalcNeededBatchSize(int64(uint64(offset)-1), 2, increment, offset, true))
+	require.Equal(t, autoid.CalcNeededBatchSize(int64(uint64(offset)-1), 2, increment, offset, true), max-min)
 	firstID := autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment), uint64(offset))
-	c.Assert(firstID, Equals, uint64(math.MaxUint64-100))
+	require.Equal(t, uint64(math.MaxUint64-100), firstID)
 
 }
 
 // TestConcurrentAlloc is used for the test that
 // multiple allocators allocate ID with the same table ID concurrently.
-func (*testSuite) TestConcurrentAlloc(c *C) {
+func TestConcurrentAlloc(t *testing.T) {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	autoid.SetStep(100)
 	defer func() {
@@ -432,12 +422,12 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		return nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	var mu sync.Mutex
 	wg := sync.WaitGroup{}
@@ -501,29 +491,29 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 
 	close(errCh)
 	err = <-errCh
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
 // TestRollbackAlloc tests that when the allocation transaction commit failed,
 // the local variable base and end doesn't change.
-func (*testSuite) TestRollbackAlloc(c *C) {
+func TestRollbackAlloc(t *testing.T) {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	dbID := int64(1)
 	tblID := int64(2)
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		return nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	injectConf := new(kv.InjectionConfig)
@@ -531,24 +521,24 @@ func (*testSuite) TestRollbackAlloc(c *C) {
 	injectedStore := kv.NewInjectedStore(store, injectConf)
 	alloc := autoid.NewAllocator(injectedStore, 1, false, autoid.RowIDAllocType)
 	_, _, err = alloc.Alloc(ctx, 2, 1, 1, 1)
-	c.Assert(err, NotNil)
-	c.Assert(alloc.Base(), Equals, int64(0))
-	c.Assert(alloc.End(), Equals, int64(0))
+	require.Error(t, err)
+	require.Equal(t, int64(0), alloc.Base())
+	require.Equal(t, int64(0), alloc.End())
 
 	err = alloc.Rebase(2, 100, true)
-	c.Assert(err, NotNil)
-	c.Assert(alloc.Base(), Equals, int64(0))
-	c.Assert(alloc.End(), Equals, int64(0))
+	require.Error(t, err)
+	require.Equal(t, int64(0), alloc.Base())
+	require.Equal(t, int64(0), alloc.End())
 }
 
 // TestNextStep tests generate next auto id step.
-func (*testSuite) TestNextStep(c *C) {
+func TestNextStep(t *testing.T) {
 	nextStep := autoid.NextStep(2000000, 1*time.Nanosecond)
-	c.Assert(nextStep, Equals, int64(2000000))
+	require.Equal(t, int64(2000000), nextStep)
 	nextStep = autoid.NextStep(678910, 10*time.Second)
-	c.Assert(nextStep, Equals, int64(678910))
+	require.Equal(t, int64(678910), nextStep)
 	nextStep = autoid.NextStep(50000, 10*time.Minute)
-	c.Assert(nextStep, Equals, int64(30000))
+	require.Equal(t, int64(30000), nextStep)
 }
 
 func BenchmarkAllocator_Alloc(b *testing.B) {
@@ -655,12 +645,12 @@ func BenchmarkAllocator_Seek(b *testing.B) {
 	}
 }
 
-func (*testSuite) TestSequenceAutoid(c *C) {
+func TestSequenceAutoid(t *testing.T) {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
 	var seq *model.SequenceInfo
@@ -668,7 +658,7 @@ func (*testSuite) TestSequenceAutoid(c *C) {
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		seq = &model.SequenceInfo{
 			Start:      1,
 			Cycle:      true,
@@ -685,106 +675,106 @@ func (*testSuite) TestSequenceAutoid(c *C) {
 		}
 		sequenceBase = seq.Start - 1
 		err = m.CreateSequenceAndSetSeqValue(1, seqTable, sequenceBase)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		return nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	alloc := autoid.NewSequenceAllocator(store, 1, seq)
-	c.Assert(alloc, NotNil)
+	require.NotNil(t, alloc)
 
 	// allocate sequence cache.
 	base, end, round, err := alloc.AllocSeqCache(1)
-	c.Assert(err, IsNil)
-	c.Assert(base, Equals, int64(0))
-	c.Assert(end, Equals, int64(5))
-	c.Assert(round, Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), base)
+	require.Equal(t, int64(5), end)
+	require.Equal(t, int64(0), round)
 
 	// test the sequence batch size.
 	offset := seq.Start
 	size, err := autoid.CalcSequenceBatchSize(sequenceBase, seq.CacheValue, seq.Increment, offset, seq.MinValue, seq.MaxValue)
-	c.Assert(err, IsNil)
-	c.Assert(size, Equals, end-base)
+	require.NoError(t, err)
+	require.Equal(t, end-base, size)
 
 	// simulate the next value allocation.
 	nextVal, ok := autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
-	c.Assert(ok, Equals, true)
-	c.Assert(nextVal, Equals, int64(1))
+	require.True(t, ok)
+	require.Equal(t, int64(1), nextVal)
 	base = nextVal
 
 	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
-	c.Assert(ok, Equals, true)
-	c.Assert(nextVal, Equals, int64(3))
+	require.True(t, ok)
+	require.Equal(t, int64(3), nextVal)
 	base = nextVal
 
 	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
-	c.Assert(ok, Equals, true)
-	c.Assert(nextVal, Equals, int64(5))
+	require.True(t, ok)
+	require.Equal(t, int64(5), nextVal)
 
 	base, end, round, err = alloc.AllocSeqCache(1)
-	c.Assert(err, IsNil)
-	c.Assert(base, Equals, int64(5))
-	c.Assert(end, Equals, int64(10))
-	c.Assert(round, Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(5), base)
+	require.Equal(t, int64(10), end)
+	require.Equal(t, int64(0), round)
 
 	// test the sequence batch size.
 	size, err = autoid.CalcSequenceBatchSize(sequenceBase, seq.CacheValue, seq.Increment, offset, seq.MinValue, seq.MaxValue)
-	c.Assert(err, IsNil)
-	c.Assert(size, Equals, end-base)
+	require.NoError(t, err)
+	require.Equal(t, end-base, size)
 
 	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
-	c.Assert(ok, Equals, true)
-	c.Assert(nextVal, Equals, int64(7))
+	require.True(t, ok)
+	require.Equal(t, int64(7), nextVal)
 	base = nextVal
 
 	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
-	c.Assert(ok, Equals, true)
-	c.Assert(nextVal, Equals, int64(9))
+	require.True(t, ok)
+	require.Equal(t, int64(9), nextVal)
 	base = nextVal
 
 	_, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
 	// the rest in cache in not enough for next value.
-	c.Assert(ok, Equals, false)
+	require.False(t, ok)
 
 	base, end, round, err = alloc.AllocSeqCache(1)
-	c.Assert(err, IsNil)
-	c.Assert(base, Equals, int64(-11))
-	c.Assert(end, Equals, int64(-6))
+	require.NoError(t, err)
+	require.Equal(t, int64(-11), base)
+	require.Equal(t, int64(-6), end)
 	// the round is already in cycle.
-	c.Assert(round, Equals, int64(1))
+	require.Equal(t, int64(1), round)
 
 	// test the sequence batch size.
 	size, err = autoid.CalcSequenceBatchSize(sequenceBase, seq.CacheValue, seq.Increment, offset, seq.MinValue, seq.MaxValue)
-	c.Assert(err, IsNil)
-	c.Assert(size, Equals, end-base)
+	require.NoError(t, err)
+	require.Equal(t, end-base, size)
 
 	offset = seq.MinValue
 	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
-	c.Assert(ok, Equals, true)
-	c.Assert(nextVal, Equals, int64(-10))
+	require.True(t, ok)
+	require.Equal(t, int64(-10), nextVal)
 	base = nextVal
 
 	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
-	c.Assert(ok, Equals, true)
-	c.Assert(nextVal, Equals, int64(-8))
+	require.True(t, ok)
+	require.Equal(t, int64(-8), nextVal)
 	base = nextVal
 
 	nextVal, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
-	c.Assert(ok, Equals, true)
-	c.Assert(nextVal, Equals, int64(-6))
+	require.True(t, ok)
+	require.Equal(t, int64(-6), nextVal)
 	base = nextVal
 
 	_, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
 	// the cache is already empty.
-	c.Assert(ok, Equals, false)
+	require.False(t, ok)
 }
 
-func (*testSuite) TestConcurrentAllocSequence(c *C) {
+func TestConcurrentAllocSequence(t *testing.T) {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
 	var seq *model.SequenceInfo
@@ -792,7 +782,7 @@ func (*testSuite) TestConcurrentAllocSequence(c *C) {
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err1 := m.CreateDatabase(&model.DBInfo{ID: 2, Name: model.NewCIStr("a")})
-		c.Assert(err1, IsNil)
+		require.NoError(t, err1)
 		seq = &model.SequenceInfo{
 			Start:      100,
 			Cycle:      false,
@@ -813,10 +803,10 @@ func (*testSuite) TestConcurrentAllocSequence(c *C) {
 			sequenceBase = seq.Start + 1
 		}
 		err1 = m.CreateSequenceAndSetSeqValue(2, seqTable, sequenceBase)
-		c.Assert(err1, IsNil)
+		require.NoError(t, err1)
 		return nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	var mu sync.Mutex
 	wg := sync.WaitGroup{}
@@ -863,47 +853,47 @@ func (*testSuite) TestConcurrentAllocSequence(c *C) {
 
 	close(errCh)
 	err = <-errCh
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
 // Fix a computation logic bug in allocator computation.
-func (*testSuite) TestAllocComputationIssue(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDCustomize", `return(true)`), IsNil)
+func TestAllocComputationIssue(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDCustomize", `return(true)`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDCustomize"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDCustomize"))
 	}()
 
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		return nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// Since the test here is applicable to any type of allocators, autoid.RowIDAllocType is chosen.
 	unsignedAlloc := autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
-	c.Assert(unsignedAlloc, NotNil)
+	require.NotNil(t, unsignedAlloc)
 	signedAlloc := autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
-	c.Assert(signedAlloc, NotNil)
+	require.NotNil(t, signedAlloc)
 
 	// the next valid two value must be 13 & 16, batch size = 6.
 	err = unsignedAlloc.Rebase(1, 10, false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// the next valid two value must be 10 & 13, batch size = 6.
 	err = signedAlloc.Rebase(2, 7, false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// Simulate the rest cache is not enough for next batch, assuming 10 & 13, batch size = 4.
 	autoid.TestModifyBaseAndEndInjection(unsignedAlloc, 9, 9)
 	// Simulate the rest cache is not enough for next batch, assuming 10 & 13, batch size = 4.
@@ -912,11 +902,11 @@ func (*testSuite) TestAllocComputationIssue(c *C) {
 	ctx := context.Background()
 	// Here will recompute the new allocator batch size base on new base = 10, which will get 6.
 	min, max, err := unsignedAlloc.Alloc(ctx, 1, 2, 3, 1)
-	c.Assert(err, IsNil)
-	c.Assert(min, Equals, int64(10))
-	c.Assert(max, Equals, int64(16))
+	require.NoError(t, err)
+	require.Equal(t, int64(10), min)
+	require.Equal(t, int64(16), max)
 	min, max, err = signedAlloc.Alloc(ctx, 2, 2, 3, 1)
-	c.Assert(err, IsNil)
-	c.Assert(min, Equals, int64(7))
-	c.Assert(max, Equals, int64(13))
+	require.NoError(t, err)
+	require.Equal(t, int64(7), min)
+	require.Equal(t, int64(13), max)
 }
