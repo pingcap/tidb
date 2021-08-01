@@ -25,7 +25,7 @@ import (
 
 var msgErrSelNotNil = "The selection vector of Chunk is not nil. Please file a bug to the TiDB Team"
 
-// Chunk stores multiple rows of data in Apache Arrow format.
+// Chunk stores multiple rows of data in columns. Columns are in Apache Arrow format.
 // See https://arrow.apache.org/docs/format/Columnar.html#physical-memory-layout
 // Values are appended in compact format and can be directly accessed without decoding.
 // When the chunk is done processing, we can reuse the allocated memory by resetting it.
@@ -56,19 +56,15 @@ func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 
 // New creates a new chunk.
 //  cap: the initial capacity of the chunk.
-//  maxChunkSize: the max limit for the number of rows.
-func New(fields []*types.FieldType, initCap, maxChunkSize int) *Chunk {
+//  requiredRows: how many rows the parent executor wants.
+func New(fields []*types.FieldType, cap, requiredRows int) *Chunk {
 	chk := &Chunk{
-		columns: make([]*Column, 0, len(fields)),
-		// set the default value of requiredRows to maxChunkSize to let chk.IsFull() behave
-		// like how we judge whether a chunk is full now, then the statement
-		// "chk.NumRows() < maxChunkSize"
-		// equals to "!chk.IsFull()".
-		requiredRows: maxChunkSize,
+		columns:      make([]*Column, 0, len(fields)),
+		requiredRows: requiredRows,
 	}
 
 	for _, f := range fields {
-		chk.columns = append(chk.columns, NewColumn(f, initCap))
+		chk.columns = append(chk.columns, NewColumn(f, cap))
 	}
 
 	return chk
