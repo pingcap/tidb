@@ -2126,7 +2126,7 @@ func (s *testSuite) TestIssue25505(c *C) {
 	}()
 	tk.MustExec("set tidb_slow_log_threshold = 0")
 	tk.MustExec("create table t (a int(11) default null,b int(11) default null,key b (b),key ba (b))")
-	tk.MustExec("create table t1 (a int(11) default null,b int(11) default null,key idx_ab (a,b))")
+	tk.MustExec("create table t1 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
 	tk.MustExec("create table t2 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
 	tk.MustExec("with cte as (with cte1 as (select /*+use_index(t2 idx_a)*/ * from t2 where a = 1 and b = 1) select * from cte1) select /*+use_index(t1 idx_a)*/ * from cte join t1 on t1.a=cte.a;")
