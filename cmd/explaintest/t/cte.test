@@ -175,3 +175,54 @@ desc with cte as (select * from t) select * from cte;
 create SESSION binding for with cte as (select * from t) select * from cte using with cte as (select * from t use index(b)) select * from cte;
 desc with cte as (select * from t) select * from cte;
 desc with cte as (select * from t use index()) select * from cte;
+# case 33
+drop table if exists t1, tpk;
+create table t1(c1 int);
+insert into t1 values(1), (2), (1), (2);
+create table tpk(c1 int primary key);
+insert into tpk values(1), (2), (3);
+
+--echo // Expect a Sort operator on CTE.
+explain with cte1 as (select c1 from t1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+with cte1 as (select c1 from t1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+
+--echo // Sort should not exist, because tpk.c1 is pk. Not the best plan for now(#25674).
+explain with cte1 as (select c1 from tpk) select /*+ MERGE_JOIN(dt1, dt2) */ * from tpk dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+with cte1 as (select c1 from tpk) select /*+ MERGE_JOIN(dt1, dt2) */ * from tpk dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+
+--echo // Sort should not exist, because we have order by in CTE definition. Not the best plan for now(#25674).
+explain with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+
+--echo // Expect a Sort operator on CTE. Because it's recursive.
+explain with recursive cte1 as (select c1 from t1 union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+with recursive cte1 as (select c1 from t1 union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+
+--echo // Expect a Sort operator on CTE. Because it's recursive.
+explain with recursive cte1 as (select c1 from tpk union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+with recursive cte1 as (select c1 from tpk union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+
+--echo // Got order by in CTE definition
+--echo // Expect Sort operator in CTE definition.
+explain with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+
+--echo // Sort should not exist, because tpk is ordered. Not the best plan for now(#25674).
+explain with cte1 as (select c1 from tpk order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+with cte1 as (select c1 from tpk order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+
+--echo // HashJoin. No need to sort
+explain with cte1 as (select c1 from t1) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
+with cte1 as (select c1 from t1) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
+
+explain with cte1 as (select c1 from tpk) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
+with cte1 as (select c1 from tpk) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
+
+--echo // Use same CTE.
+drop table if exists tpk1, tpk;
+create table tpk(c1 int primary key);
+insert into tpk values(1), (2), (3);
+create table tpk1(c1 int primary key);
+insert into tpk1 values(1), (2), (3);
+explain with cte1 as (select c1 from tpk) select /*+ merge_join(dt1, dt2) */ * from tpk1 dt1 inner join cte1 dt2 inner join cte1 dt3 on dt1.c1 = dt2.c1 and dt2.c1 = dt3.c1;
+with cte1 as (select c1 from tpk) select /*+ merge_join(dt1, dt2) */ * from tpk1 dt1 inner join cte1 dt2 inner join cte1 dt3 on dt1.c1 = dt2.c1 and dt2.c1 = dt3.c1;
