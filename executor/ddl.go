@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/admin"
@@ -283,7 +284,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema.O)
 	}
-	tbInfo, err := ddl.BuildTableInfoWithCheck(e.ctx, s, dbInfo.Charset, dbInfo.Collate)
+	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.ctx, is, s, dbInfo.Charset, dbInfo.Collate)
 	if err != nil {
 		return err
 	}
@@ -335,7 +336,13 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		sessVars.TemporaryTableData = bufferTxn.GetMemBuffer()
 	}
 
-	err = localTempTables.AddTable(dbInfo, tbl)
+	var referTbl table.Table
+	referTbl, err = is.TableByName(s.Table.Schema, s.Table.Name)
+	if referTbl != nil {
+		err = infoschema.ErrTableExists.GenWithStackByArgs(referTbl.Meta().Name)
+	} else {
+		err = localTempTables.AddTable(dbInfo, tbl)
+	}
 
 	if err != nil && s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
 		e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
