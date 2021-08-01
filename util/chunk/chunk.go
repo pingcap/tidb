@@ -38,9 +38,6 @@ type Chunk struct {
 	// numVirtualRows indicates the number of virtual rows, which have zero Column.
 	// It is used only when this Chunk doesn't hold any data, i.e. "len(columns)==0".
 	numVirtualRows int
-	// capacity indicates the max number of rows this chunk can hold.
-	// TODO: replace all usages of capacity to requiredRows and remove this field
-	capacity int
 
 	// requiredRows indicates how many rows the parent executor want.
 	requiredRows int
@@ -58,12 +55,11 @@ func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 }
 
 // New creates a new chunk.
-//  cap: the limit for the max number of rows.
+//  cap: the initial capacity of the chunk.
 //  maxChunkSize: the max limit for the number of rows.
-func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
+func New(fields []*types.FieldType, initCap, maxChunkSize int) *Chunk {
 	chk := &Chunk{
-		columns:  make([]*Column, 0, len(fields)),
-		capacity: mathutil.Min(cap, maxChunkSize),
+		columns: make([]*Column, 0, len(fields)),
 		// set the default value of requiredRows to maxChunkSize to let chk.IsFull() behave
 		// like how we judge whether a chunk is full now, then the statement
 		// "chk.NumRows() < maxChunkSize"
@@ -72,24 +68,10 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	}
 
 	for _, f := range fields {
-		chk.columns = append(chk.columns, NewColumn(f, chk.capacity))
+		chk.columns = append(chk.columns, NewColumn(f, initCap))
 	}
 
 	return chk
-}
-
-// renewWithCapacity creates a new Chunk based on an existing Chunk with capacity. The newly
-// created Chunk has the same data schema with the old Chunk.
-func renewWithCapacity(chk *Chunk, cap, requiredRows int) *Chunk {
-	if chk.columns == nil {
-		return &Chunk{}
-	}
-	return &Chunk{
-		columns:        renewColumns(chk.columns, cap),
-		numVirtualRows: 0,
-		capacity:       cap,
-		requiredRows:   requiredRows,
-	}
 }
 
 // Renew creates a new Chunk based on an existing Chunk. The newly created Chunk
@@ -98,8 +80,15 @@ func renewWithCapacity(chk *Chunk, cap, requiredRows int) *Chunk {
 //  chk: old chunk(often used in previous call).
 //  maxChunkSize: the limit for the max number of rows.
 func Renew(chk *Chunk, maxChunkSize int) *Chunk {
+	if chk.columns == nil {
+		return &Chunk{}
+	}
 	newCap := reCalcCapacity(chk, maxChunkSize)
-	return renewWithCapacity(chk, newCap, maxChunkSize)
+	return &Chunk{
+		columns:        renewColumns(chk.columns, newCap),
+		numVirtualRows: 0,
+		requiredRows:   maxChunkSize,
+	}
 }
 
 // renewColumns creates the columns of a Chunk. The capacity of the newly
@@ -118,7 +107,6 @@ func renewEmpty(chk *Chunk) *Chunk {
 	newChk := &Chunk{
 		columns:        nil,
 		numVirtualRows: chk.numVirtualRows,
-		capacity:       chk.capacity,
 		requiredRows:   chk.requiredRows,
 	}
 	if chk.sel != nil {
@@ -272,7 +260,7 @@ func (c *Chunk) CopyConstructSel() *Chunk {
 	if c.sel == nil {
 		return c.CopyConstruct()
 	}
-	newChk := renewWithCapacity(c, c.capacity, c.requiredRows)
+	newChk := Renew(c, c.requiredRows)
 	for colIdx, dstCol := range newChk.columns {
 		for _, rowIdx := range c.sel {
 			appendCellByCell(dstCol, c.columns[colIdx], rowIdx)
@@ -289,11 +277,10 @@ func (c *Chunk) GrowAndReset(maxChunkSize int) {
 		return
 	}
 	newCap := reCalcCapacity(c, maxChunkSize)
-	if newCap <= c.capacity {
+	if newCap <= c.requiredRows {
 		c.Reset()
 		return
 	}
-	c.capacity = newCap
 	c.columns = renewColumns(c.columns, newCap)
 	c.numVirtualRows = 0
 	c.requiredRows = maxChunkSize
