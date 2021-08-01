@@ -10014,7 +10014,6 @@ func (s *testIntegrationSuite) TestTimestampIssue25093(c *C) {
 	tk.MustQuery("select timestamp(101.234) from t;").Check(testkit.Rows("2000-01-01 00:00:00.000"))
 }
 
-
 func (s *testIntegrationSuite) TestIssue24953(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
