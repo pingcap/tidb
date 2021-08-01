@@ -431,7 +431,7 @@ The following `SCHEDULE` options are available:
 
 In PD placement rule implementation, the key range must be specified. Now that `table_name` is specified in the `ALTER TABLE` statement, key range can be inferred.
 
-Typically, key format is in such a format: `t_{table_id}_r_{pk_value}`, where `pk_value` may be `_tidb_rowid` in some cases. `table_id` can be inferred from `table_name`, thus the key range is `t_{table_id}_` to `t_{table_id+1}_`.
+Typically, key format is in such a format: `t{table_id}_r{pk_value}`, where `pk_value` may be `_tidb_rowid` in some cases. `table_id` can be inferred from `table_name`, thus the key range is `t{table_id}_` to `t{table_id+1}_`.
 
 Similarly, the key range of partitions can also be inferred.
 
@@ -478,7 +478,7 @@ CREATE PLACEMENT POLICY p2 FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-e
 
 #### Partitioned Tables
 
-The key format of a partitioned table is `t_{partition_id}_r_{pk_value}`. As `partition_id` is part of the key prefix, the key range of a partition is successive. The key range is `t_{partition_id}_` to `t_{partition_id+1}_`.
+The key format of a partitioned table is `t{partition_id}_r{pk_value}`. As `partition_id` is part of the key prefix, the key range of a partition is successive. The key range is `t{partition_id}_` to `t{partition_id+1}_`.
 
 Defining placement rules of partitions is expected to be a common use case and is useful for both reducing multi-region latency and compliance scenarios. Because there are multiple key ranges for the table, multiple rules will be generated and sent to PD.
 
@@ -695,8 +695,8 @@ As all placement rules are mapped to PD placement rule configurations, `start_ke
 
 As database IDs are all globally unique, it's fine to replace table ID with database ID in the key range. For example, assuming the database ID is 100, then the string format of its key range is:
 
-- `start_key`: `t_{database_id}_`
-- `end_key`: `t_{database_id+1}_`
+- `start_key`: `t{database_id}_`
+- `end_key`: `t{database_id+1}_`
 
 It's same for partitioned tables.
 
