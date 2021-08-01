@@ -38,6 +38,7 @@ var (
 	_ functionClass = &getIntVarFunctionClass{}
 	_ functionClass = &getRealVarFunctionClass{}
 	_ functionClass = &getDecimalVarFunctionClass{}
+	_ functionClass = &getTimeVarFunctionClass{}
 	_ functionClass = &getStringVarFunctionClass{}
 	_ functionClass = &lockFunctionClass{}
 	_ functionClass = &releaseLockFunctionClass{}
@@ -64,6 +65,7 @@ var (
 	_ builtinFunc = &builtinGetIntVarSig{}
 	_ builtinFunc = &builtinGetRealVarSig{}
 	_ builtinFunc = &builtinGetDecimalVarSig{}
+	_ builtinFunc = &builtinGetTimeVarSig{}
 	_ builtinFunc = &builtinLockSig{}
 	_ builtinFunc = &builtinReleaseLockSig{}
 	_ builtinFunc = &builtinValuesIntSig{}
@@ -700,7 +702,7 @@ func (c *setVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 	argTp := args[1].GetType().EvalType()
-	if argTp == types.ETTimestamp || argTp == types.ETDatetime || argTp == types.ETDuration || argTp == types.ETJson {
+	if argTp == types.ETTimestamp || argTp == types.ETDuration || argTp == types.ETJson {
 		argTp = types.ETString
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, types.ETString, argTp)
@@ -717,6 +719,8 @@ func (c *setVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		sig = &builtinSetDecimalVarSig{bf}
 	case types.ETInt:
 		sig = &builtinSetIntVarSig{bf}
+	case types.ETDatetime:
+		sig = &builtinSetTimeVarSig{bf}
 	default:
 		return nil, errors.Errorf("unexpected types.EvalType %v", argTp)
 	}
@@ -844,6 +848,34 @@ func (b *builtinSetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return res, false, nil
 }
 
+type builtinSetTimeVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinSetTimeVarSig) Clone() builtinFunc {
+	newSig := &builtinSetTimeVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinSetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	sessionVars := b.ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, isNull, err
+	}
+	datum, err := b.args[1].Eval(row)
+	if err != nil || datum.IsNull() {
+		return types.ZeroTime, datum.IsNull(), handleInvalidTimeError(b.ctx, err)
+	}
+	res := datum.GetMysqlTime()
+	varName = strings.ToLower(varName)
+	sessionVars.UsersLock.Lock()
+	sessionVars.Users[varName] = datum
+	sessionVars.UsersLock.Unlock()
+	return res, false, nil
+}
+
 // BuildGetVarFunction builds a GetVar ScalarFunction from the Expression.
 func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types.FieldType) (Expression, error) {
 	var fc functionClass
@@ -854,6 +886,8 @@ func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types
 		fc = &getDecimalVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
 	case types.ETReal:
 		fc = &getRealVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
+	case types.ETDatetime:
+		fc = &getTimeVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
 	default:
 		fc = &getStringVarFunctionClass{getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}, retType}}
 	}
@@ -1059,6 +1093,48 @@ func (b *builtinGetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 		return v.GetMysqlDecimal(), false, nil
 	}
 	return nil, true, nil
+}
+
+type getTimeVarFunctionClass struct {
+	getVarFunctionClass
+}
+
+func (c *getTimeVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Flen = c.tp.Flen
+	sig = &builtinGetTimeVarSig{bf}
+	return sig, nil
+}
+
+type builtinGetTimeVarSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinGetTimeVarSig) Clone() builtinFunc {
+	newSig := &builtinGetTimeVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinGetTimeVarSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	sessionVars := b.ctx.GetSessionVars()
+	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, isNull, err
+	}
+	varName = strings.ToLower(varName)
+	sessionVars.UsersLock.RLock()
+	defer sessionVars.UsersLock.RUnlock()
+	if v, ok := sessionVars.Users[varName]; ok {
+		return v.GetMysqlTime(), false, nil
+	}
+	return types.ZeroTime, true, nil
 }
 
 type valuesFunctionClass struct {

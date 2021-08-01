@@ -403,7 +403,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	}
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
-	if e.table.Meta().TempTableType == model.TempTableGlobal {
+	if e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
@@ -552,7 +552,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
 			SetTxnScope(e.txnScope).
-			SetIsStaleness(e.explicitStaleness).
+			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
 			SetMemTracker(tracker)
@@ -651,7 +651,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		dagPB:               e.tableRequest,
 		startTS:             e.startTS,
 		txnScope:            e.txnScope,
-		isStaleness:         e.explicitStaleness,
+		isStaleness:         e.isStaleness,
 		columns:             e.columns,
 		streaming:           e.tableStreaming,
 		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),
@@ -694,7 +694,7 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.table.Meta().TempTableType == model.TempTableGlobal {
+	if e.table.Meta().TempTableType != model.TempTableNone {
 		req.Reset()
 		return nil
 	}

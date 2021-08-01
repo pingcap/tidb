@@ -40,7 +40,6 @@ check-fail: goword check-slow
 fmt:
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
-	@cd cmd/importcheck && $(GO) run . ../..
 
 goword:tools/bin/goword
 	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
@@ -58,6 +57,7 @@ check-static: tools/bin/golangci-lint
 	  --enable=structcheck \
 	  --enable=deadcode \
 	  --enable=gosimple \
+	  --enable=goimports \
 	  $$($(PACKAGE_DIRECTORIES))
 
 check-slow:tools/bin/gometalinter tools/bin/gosec
@@ -139,7 +139,9 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 else
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -v -cover $(PACKAGES) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
+	@echo "timeout-check"
+	grep '^PASS:' gotest.log | go run tools/check/check-timeout.go || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
 
@@ -241,7 +243,7 @@ tools/bin/errdoc-gen: tools/check/go.mod
 	$(GO) build -o ../bin/errdoc-gen github.com/pingcap/errors/errdoc-gen
 
 tools/bin/golangci-lint:
-	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.29.0
+	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.41.1
 
 # Usage:
 #
@@ -262,3 +264,10 @@ else
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
+
+# Collect the daily benchmark data.
+# Usage:
+#	make bench-daily TO=/path/to/file.json
+bench-daily:
+	cd ./session && \
+	go test -run TestBenchDaily --date `git log -n1 --date=unix --pretty=format:%cd` --commit `git log -n1 --pretty=format:%h` --outfile $(TO)

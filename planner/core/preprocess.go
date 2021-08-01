@@ -14,6 +14,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -55,7 +56,7 @@ func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
 }
 
-// WithPreprocessorReturn returns a PreprocessOpt to initialize the PreprocesorReturn.
+// WithPreprocessorReturn returns a PreprocessOpt to initialize the PreprocessorReturn.
 func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 	return func(p *preprocessor) {
 		p.PreprocessorReturn = ret
@@ -93,7 +94,7 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
-// prepreocssReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
+// preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
 func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
 	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0), withName: make(map[string]interface{})}
 	for _, optFn := range preprocessOpt {
@@ -133,7 +134,7 @@ var _ = PreprocessorReturn{}.initedLastSnapshotTS
 // PreprocessorReturn is used to retain information obtained in the preprocessor.
 type PreprocessorReturn struct {
 	initedLastSnapshotTS bool
-	ExplicitStaleness    bool
+	IsStaleness          bool
 	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
@@ -453,8 +454,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			break
 		}
 		valid := false
-		for i, length := 0, len(ast.ExplainFormats); i < length; i++ {
-			if strings.ToLower(x.Format) == ast.ExplainFormats[i] {
+		for i, length := 0, len(types.ExplainFormats); i < length; i++ {
+			if strings.ToLower(x.Format) == types.ExplainFormats[i] {
 				valid = true
 				break
 			}
@@ -631,6 +632,10 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 	for _, sel := range stmt.Selects[:len(stmt.Selects)-1] {
 		switch s := sel.(type) {
 		case *ast.SelectStmt:
+			if s.SelectIntoOpt != nil {
+				p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")
+				return
+			}
 			if s.IsInBraces {
 				continue
 			}
@@ -837,10 +842,54 @@ func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
 
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 	p.checkDropTableNames(stmt.Tables)
-	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
-	if stmt.TemporaryKeyword == ast.TemporaryLocal && !enableNoopFuncs {
+	if stmt.TemporaryKeyword != ast.TemporaryNone {
+		p.checkDropTemporaryTableGrammar(stmt)
+	}
+}
+
+func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
+	if stmt.TemporaryKeyword == ast.TemporaryLocal && !p.ctx.GetSessionVars().EnableNoopFuncs {
 		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
 		return
+	}
+
+	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
+	nonExistsTables := make([]string, 0)
+	for _, t := range stmt.Tables {
+		if isIncorrectName(t.Name.String()) {
+			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
+			return
+		}
+
+		schema := t.Schema
+		if schema.L == "" {
+			schema = currentDB
+		}
+
+		tbl, err := p.ensureInfoSchema().TableByName(schema, t.Name)
+		if infoschema.ErrTableNotExists.Equal(err) {
+			nonExistsTables = append(nonExistsTables, ast.Ident{Schema: schema, Name: t.Name}.String())
+			continue
+		}
+
+		if err != nil {
+			p.err = err
+			return
+		}
+
+		tblInfo := tbl.Meta()
+		if stmt.TemporaryKeyword == ast.TemporaryGlobal && tblInfo.TempTableType != model.TempTableGlobal {
+			p.err = ErrDropTableOnTemporaryTable
+			return
+		}
+
+		if stmt.TemporaryKeyword == ast.TemporaryLocal && tblInfo.TempTableType != model.TempTableLocal {
+			nonExistsTables = append(nonExistsTables, ast.Ident{Schema: schema, Name: t.Name}.String())
+		}
+	}
+
+	if len(nonExistsTables) > 0 {
+		p.err = infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(nonExistsTables, ","))
 	}
 }
 
@@ -1473,9 +1522,12 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		}
 		txnCtx := p.ctx.GetSessionVars().TxnCtx
 		p.TxnScope = txnCtx.TxnScope
+		// It means we meet following case:
+		// 1. start transaction read only as of timestamp ts
+		// 2. select statement
 		if txnCtx.IsStaleness {
 			p.LastSnapshotTS = txnCtx.StartTS
-			p.ExplicitStaleness = txnCtx.IsStaleness
+			p.IsStaleness = txnCtx.IsStaleness
 			p.initedLastSnapshotTS = true
 			return
 		}
@@ -1489,6 +1541,9 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
 			return
 		}
+		// it means we meet following case:
+		// 1. set transaction read only as of timestamp ts
+		// 2. select statement
 		if !p.initedLastSnapshotTS {
 			p.SnapshotTSEvaluator = func(sessionctx.Context) (uint64, error) {
 				return ts, nil
@@ -1502,6 +1557,12 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		if p.err != nil {
 			return
 		}
+		if err := sessionctx.ValidateStaleReadTS(context.Background(), p.ctx, ts); err != nil {
+			p.err = errors.Trace(err)
+			return
+		}
+		// It means we meet following case:
+		// select statement with as of timestamp
 		if !p.initedLastSnapshotTS {
 			p.SnapshotTSEvaluator = func(ctx sessionctx.Context) (uint64, error) {
 				return calculateTsExpr(ctx, node)
@@ -1521,6 +1582,9 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			return
 		}
 	}
+	if p.flag&inPrepare == 0 {
+		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
+	}
 	p.initedLastSnapshotTS = true
 }
 
@@ -1538,6 +1602,6 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 
 func (p *preprocessor) setStalenessReturn() {
 	txnScope := config.GetTxnScopeFromConfig()
-	p.ExplicitStaleness = true
+	p.IsStaleness = true
 	p.TxnScope = txnScope
 }
