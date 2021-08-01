@@ -294,7 +294,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 	return hs, stmtNodes[0], extractHintWarns(warns), nil
 }
 
-// ParseHintsSet collects and normalizes the HintsSet from StmtNode.
+// ParseHintsSetFromStmtNode collects and normalizes the HintsSet from StmtNode.
 func ParseHintsSetFromStmtNode(stmt ast.StmtNode) [][]*ast.TableOptimizerHint {
 	hs := CollectHint(stmt)
 	processor := &BlockHintProcessor{}
