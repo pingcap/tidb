@@ -735,6 +735,8 @@ func (p *basePhysicalJoin) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalJoi
 	for _, d := range p.DefaultValues {
 		cloned.DefaultValues = append(cloned.DefaultValues, *d.Clone())
 	}
+	cloned.childrenXchgProps = make([]*XchgProperty, len(p.childrenXchgProps))
+	copy(cloned.childrenXchgProps, p.childrenXchgProps)
 	return cloned, nil
 }
 
@@ -1492,5 +1494,19 @@ func (p *CTEDefinition) ExplainInfo() string {
 func (p *CTEDefinition) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
+	})
+}
+
+func (p *PhysicalXchg) ExplainInfo() string {
+	var res string
+	if p.isSender() {
+		res = "dop: " + strconv.Itoa(p.inStreamCnt)
+	}
+	return res
+}
+
+func (p *PhysicalXchg) ExplainID() fmt.Stringer {
+	return stringutil.MemoizeStr(func() string {
+		return XchgNames[p.tp]
 	})
 }

@@ -41,6 +41,7 @@ var (
 	_ task = &copTask{}
 	_ task = &rootTask{}
 	_ task = &mppTask{}
+	_ task = &xchgTask{}
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
@@ -2196,4 +2197,54 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 		partTp:   prop.MPPPartitionTp,
 		hashCols: prop.MPPPartitionCols,
 	}
+}
+
+type xchgTask struct {
+	rootTask
+	dop int
+}
+
+func (t *xchgTask) copy() task {
+	return &xchgTask{
+		rootTask: *(t.rootTask.copy().(*rootTask)),
+		dop:      t.dop,
+	}
+}
+
+func (t *xchgTask) addCost(cst float64) {
+	t.cst += cst / float64(t.dop)
+}
+
+func (t *xchgTask) convertToRootTask(ctx sessionctx.Context) *rootTask {
+	return t.rootTask.copy().(*rootTask)
+}
+
+func (p *PhysicalXchg) GetCost(childCost float64, concurrency int) float64 {
+	// TODO: XchgHash not support yet.
+	return (childCost / float64(concurrency)) * 0.03
+}
+
+func (p *PhysicalXchg) attach2Task(tasks ...task) task {
+	if p.isSender() {
+		panic("attach xchgSender to task is unexpected")
+	}
+
+	var dop int
+	concurrency := p.ctx.GetSessionVars().ExecutorConcurrency
+	if p.tp == TypeXchgReceiverPassThrough || p.tp == TypeXchgReceiverPassThroughHT {
+		dop = concurrency
+	} else {
+		dop = 1
+	}
+
+	sender, ok := p.Children()[0].(*PhysicalXchg)
+	if !ok {
+		// TODO: return error
+		panic("receiver's child must be sender")
+	}
+	t := &xchgTask{
+		rootTask: rootTask{cst: sender.GetCost(sender.Children()[0].Cost(), concurrency), p: p},
+		dop:      dop,
+	}
+	return t
 }

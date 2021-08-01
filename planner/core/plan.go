@@ -352,6 +352,10 @@ type PhysicalPlan interface {
 
 	// Clone clones this physical plan.
 	Clone() (PhysicalPlan, error)
+
+	GetChildXchgProps() []*XchgProperty
+	SetChildXchgProps(props []*XchgProperty)
+	TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) ([]PhysicalPlan, error)
 }
 
 type baseLogicalPlan struct {
@@ -379,10 +383,11 @@ func (p *baseLogicalPlan) ExplainInfo() string {
 type basePhysicalPlan struct {
 	basePlan
 
-	childrenReqProps []*property.PhysicalProperty
-	self             PhysicalPlan
-	children         []PhysicalPlan
-	cost             float64
+	childrenReqProps  []*property.PhysicalProperty
+	childrenXchgProps []*XchgProperty
+	self              PhysicalPlan
+	children          []PhysicalPlan
+	cost              float64
 }
 
 // Cost implements PhysicalPlan interface.

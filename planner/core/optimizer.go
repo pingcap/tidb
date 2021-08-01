@@ -154,6 +154,16 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 		return nil, 0, err
 	}
 	finalPlan := postOptimize(sctx, physical)
+
+	if sctx.GetSessionVars().UseParallel {
+		xchgTask, err := FindBestXchgTask(sctx, finalPlan)
+		if err != nil {
+			return nil, 0, err
+		}
+		finalPlan = xchgTask.plan()
+		cost = xchgTask.cost()
+	}
+
 	return finalPlan, cost, nil
 }
 
