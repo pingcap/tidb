@@ -124,7 +124,7 @@ func (s *testSuite5) TestAdminCheckIndexInLocalTemporaryMode(c *C) {
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
 	_, err = tk.Exec("admin checksum table local_temporary_admin_checksum_table_without_index_test;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
-	tk.MustExec("drop table if exists temporary_admin_checksum_table_with_index_test,temporary_admin_checksum_table_without_index_test;")
+	tk.MustExec("drop table if exists local_temporary_admin_checksum_table_with_index_test,local_temporary_admin_checksum_table_without_index_test;")
 }
 
 func (s *testSuite5) TestAdminRecoverIndex(c *C) {
