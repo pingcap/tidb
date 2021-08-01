@@ -24,12 +24,14 @@ import (
 	"testing"
 )
 
+// BenchOutput is the json format for the final output file.
 type BenchOutput struct {
 	Date   string
 	Commit string
 	Result []BenchResult
 }
 
+// BenchResult is one benchmark result.
 type BenchResult struct {
 	Name        string
 	NsPerOp     int64
@@ -57,6 +59,7 @@ func callerName(f func(b *testing.B)) string {
 
 var outfile = flag.String("outfile", "", "specify the output file")
 
+// Run runs some benchmark tests, write the result to a JSON file.
 func Run(tests ...func(b *testing.B)) {
 	if !flag.Parsed() {
 		flag.Parse()
@@ -83,7 +86,12 @@ func readBenchResultFromFile(file string) []BenchResult {
 	if err != nil {
 		log.Panic(err)
 	}
-	defer f.Close()
+	defer func() {
+		err := f.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}()
 
 	res := make([]BenchResult, 0, 100)
 	dec := json.NewDecoder(f)
@@ -99,7 +107,12 @@ func writeBenchResultToFile(res []BenchResult, file string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer out.Close()
+	defer func() {
+		err := out.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}()
 
 	enc := json.NewEncoder(out)
 	err = enc.Encode(res)

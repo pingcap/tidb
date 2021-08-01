@@ -19,8 +19,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"reflect"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -2105,7 +2103,6 @@ func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
 
 func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
-		BenchShuffleStreamAggRowsOnce,
 		BenchmarkReadLastLinesOfHugeLine,
 	)
 }
