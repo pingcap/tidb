@@ -19,12 +19,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
+
 
 
 type mockCacheKey struct {
@@ -53,12 +51,12 @@ func TestPut(t *testing.T) {
 	t.Parallel()
 
 	maxMem, err := memory.MemTotal()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	lruMaxMem := NewSimpleLRUCache(3, 0, maxMem)
 	lruZeroQuota := NewSimpleLRUCache(3, 0, 0)
-	c.Assert(lruMaxMem.capacity, Equals, uint(3))
-	c.Assert(lruZeroQuota.capacity, Equals, uint(3))
+	require.Equal(t, uint(3), lruMaxMem.capacity)
+	require.Equal(t, uint(3), lruMaxMem.capacity)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]int64, 5)
@@ -79,54 +77,55 @@ func TestPut(t *testing.T) {
 		lruMaxMem.Put(keys[i], vals[i])
 		lruZeroQuota.Put(keys[i], vals[i])
 	}
-	c.Assert(lruMaxMem.size, Equals, lruMaxMem.capacity)
-	c.Assert(lruZeroQuota.size, Equals, lruZeroQuota.capacity)
-	c.Assert(lruMaxMem.size, Equals, uint(3))
-	c.Assert(lruZeroQuota.size, Equals, lruMaxMem.size)
+	require.Equal(t, lruMaxMem.size, lruMaxMem.capacity)
+	require.Equal(t, lruZeroQuota.size, lruZeroQuota.capacity)
+	require.Equal(t, uint(3), lruMaxMem.size)
+	require.Equal(t, lruZeroQuota.size, lruMaxMem.size)
 
 	// test for non-existent elements
-	c.Assert(len(maxMemDroppedKv), Equals, 2)
+	require.Len(t, maxMemDroppedKv, 2)
 	for i := 0; i < 2; i++ {
 		element, exists := lruMaxMem.elements[string(keys[i].Hash())]
-		c.Assert(exists, IsFalse)
-		c.Assert(element, IsNil)
-		c.Assert(maxMemDroppedKv[keys[i]], Equals, vals[i])
-		c.Assert(zeroQuotaDroppedKv[keys[i]], Equals, vals[i])
+		require.False(t, exists)
+		require.Nil(t, element)
+		require.Equal(t, vals[i], maxMemDroppedKv[keys[i]])
+		require.Equal(t, vals[i], zeroQuotaDroppedKv[keys[i]])
 	}
 
 	// test for existent elements
 	root := lruMaxMem.cache.Front()
-	c.Assert(root, NotNil)
+	require.NotNil(t, root)
 	for i := 4; i >= 2; i-- {
 		entry, ok := root.Value.(*cacheEntry)
-		c.Assert(ok, IsTrue)
-		c.Assert(entry, NotNil)
+		require.True(t, ok)
+		require.NotNil(t, entry)
 
 		// test key
 		key := entry.key
-		c.Assert(key, NotNil)
-		c.Assert(key, Equals, keys[i])
+		require.NotNil(t, key)
+		require.Equal(t, keys[i], key)
 
 		element, exists := lruMaxMem.elements[string(keys[i].Hash())]
-		c.Assert(exists, IsTrue)
-		c.Assert(element, NotNil)
-		c.Assert(element, Equals, root)
+		require.True(t, exists)
+		require.NotNil(t, element)
+		require.Equal(t, root, element)
 
 		// test value
 		value, ok := entry.value.(int64)
-		c.Assert(ok, IsTrue)
-		c.Assert(value, Equals, vals[i])
+		require.True(t, ok)
+		require.Equal(t, vals[i], value)
 
 		root = root.Next()
 	}
 
 	// test for end of double-linked list
-	c.Assert(root, IsNil)
+	require.Nil(t, root)
 }
 
-func (s *testLRUCacheSuite) TestZeroQuota(c *C) {
+func TestZeroQuota(t *testing.T) {
+	t.Parallel()
 	lru := NewSimpleLRUCache(100, 0, 0)
-	c.Assert(lru.capacity, Equals, uint(100))
+	require.Equal(t, uint(100), lru.capacity)
 
 	keys := make([]*mockCacheKey, 100)
 	vals := make([]int64, 100)
@@ -136,16 +135,17 @@ func (s *testLRUCacheSuite) TestZeroQuota(c *C) {
 		vals[i] = int64(i)
 		lru.Put(keys[i], vals[i])
 	}
-	c.Assert(lru.size, Equals, lru.capacity)
-	c.Assert(lru.size, Equals, uint(100))
+	require.Equal(t, lru.size, lru.capacity)
+	require.Equal(t, uint(100), lru.size)
 }
 
-func (s *testLRUCacheSuite) TestOOMGuard(c *C) {
+func TestOOMGuard(t *testing.T) {
+	t.Parallel()
 	maxMem, err := memory.MemTotal()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	lru := NewSimpleLRUCache(3, 1.0, maxMem)
-	c.Assert(lru.capacity, Equals, uint(3))
+	require.Equal(t, uint(3), lru.capacity)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]int64, 5)
@@ -155,19 +155,20 @@ func (s *testLRUCacheSuite) TestOOMGuard(c *C) {
 		vals[i] = int64(i)
 		lru.Put(keys[i], vals[i])
 	}
-	c.Assert(lru.size, Equals, uint(0))
+	require.Equal(t, uint(0), lru.size)
 
 	// test for non-existent elements
 	for i := 0; i < 5; i++ {
 		element, exists := lru.elements[string(keys[i].Hash())]
-		c.Assert(exists, IsFalse)
-		c.Assert(element, IsNil)
+		require.False(t, exists)
+		require.Nil(t, element)
 	}
 }
 
-func (s *testLRUCacheSuite) TestGet(c *C) {
+func TestGet(t *testing.T) {
+	t.Parallel()
 	maxMem, err := memory.MemTotal()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	lru := NewSimpleLRUCache(3, 0, maxMem)
 
@@ -183,34 +184,35 @@ func (s *testLRUCacheSuite) TestGet(c *C) {
 	// test for non-existent elements
 	for i := 0; i < 2; i++ {
 		value, exists := lru.Get(keys[i])
-		c.Assert(exists, IsFalse)
-		c.Assert(value, IsNil)
+		require.False(t, exists)
+		require.Nil(t, value)
 	}
 
 	for i := 2; i < 5; i++ {
 		value, exists := lru.Get(keys[i])
-		c.Assert(exists, IsTrue)
-		c.Assert(value, NotNil)
-		c.Assert(value, Equals, vals[i])
-		c.Assert(lru.size, Equals, uint(3))
-		c.Assert(lru.capacity, Equals, uint(3))
+		require.True(t, exists)
+		require.NotNil(t, value)
+		require.Equal(t, vals[i], value)
+		require.Equal(t, uint(3), lru.size)
+		require.Equal(t, uint(3), lru.capacity)
 
 		root := lru.cache.Front()
-		c.Assert(root, NotNil)
+		require.NotNil(t, root)
 
 		entry, ok := root.Value.(*cacheEntry)
-		c.Assert(ok, IsTrue)
-		c.Assert(entry.key, Equals, keys[i])
+		require.True(t, ok)
+		require.Equal(t, keys[i], entry.key)
 
 		value, ok = entry.value.(int64)
-		c.Assert(ok, IsTrue)
-		c.Assert(value, Equals, vals[i])
+		require.True(t, ok)
+		require.Equal(t, vals[i], value)
 	}
 }
 
-func (s *testLRUCacheSuite) TestDelete(c *C) {
+func TestDelete(t *testing.T) {
+	t.Parallel()
 	maxMem, err := memory.MemTotal()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	lru := NewSimpleLRUCache(3, 0, maxMem)
 
@@ -222,24 +224,25 @@ func (s *testLRUCacheSuite) TestDelete(c *C) {
 		vals[i] = int64(i)
 		lru.Put(keys[i], vals[i])
 	}
-	c.Assert(int(lru.size), Equals, 3)
+	require.Equal(t, 3, int(lru.size))
 
 	lru.Delete(keys[1])
 	value, exists := lru.Get(keys[1])
-	c.Assert(exists, IsFalse)
-	c.Assert(value, IsNil)
-	c.Assert(int(lru.size), Equals, 2)
+	require.False(t, exists)
+	require.Nil(t, value)
+	require.Equal(t, 2, int(lru.size))
 
 	_, exists = lru.Get(keys[0])
-	c.Assert(exists, IsTrue)
+	require.True(t, exists)
 
 	_, exists = lru.Get(keys[2])
-	c.Assert(exists, IsTrue)
+	require.True(t, exists)
 }
 
-func (s *testLRUCacheSuite) TestDeleteAll(c *C) {
+func TestDeleteAll(t *testing.T) {
+	t.Parallel()
 	maxMem, err := memory.MemTotal()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	lru := NewSimpleLRUCache(3, 0, maxMem)
 
@@ -251,21 +254,22 @@ func (s *testLRUCacheSuite) TestDeleteAll(c *C) {
 		vals[i] = int64(i)
 		lru.Put(keys[i], vals[i])
 	}
-	c.Assert(int(lru.size), Equals, 3)
+	require.Equal(t, 3, int(lru.size))
 
 	lru.DeleteAll()
 
 	for i := 0; i < 3; i++ {
 		value, exists := lru.Get(keys[i])
-		c.Assert(exists, IsFalse)
-		c.Assert(value, IsNil)
-		c.Assert(int(lru.size), Equals, 0)
+		require.False(t, exists)
+		require.Nil(t, value)
+		require.Equal(t, 0, int(lru.size))
 	}
 }
 
-func (s *testLRUCacheSuite) TestValues(c *C) {
+func TestValues(t *testing.T) {
+	t.Parallel()
 	maxMem, err := memory.MemTotal()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	lru := NewSimpleLRUCache(5, 0, maxMem)
 
@@ -279,16 +283,17 @@ func (s *testLRUCacheSuite) TestValues(c *C) {
 	}
 
 	values := lru.Values()
-	c.Assert(len(values), Equals, 5)
+	require.Equal(t, 5, len(values))
 	for i := 0; i < 5; i++ {
-		c.Assert(values[i], Equals, int64(4-i))
+		require.Equal(t, int64(4-i), values[i])
 	}
 }
 
-func (s *testLRUCacheSuite) TestPutProfileName(c *C) {
+func TestPutProfileName(t *testing.T) {
+	t.Parallel()
 	lru := NewSimpleLRUCache(3, 0, 10)
-	c.Assert(lru.capacity, Equals, uint(3))
-	t := reflect.TypeOf(*lru)
+	require.Equal(t, uint(3), lru.capacity)
+	tem := reflect.TypeOf(*lru)
 	pt := reflect.TypeOf(lru)
 	functionName := ""
 	for i := 0; i < pt.NumMethod(); i++ {
@@ -296,6 +301,6 @@ func (s *testLRUCacheSuite) TestPutProfileName(c *C) {
 			functionName = "Put"
 		}
 	}
-	pName := fmt.Sprintf("%s.(*%s).%s", t.PkgPath(), t.Name(), functionName)
-	c.Assert(pName, Equals, ProfileName)
+	pName := fmt.Sprintf("%s.(*%s).%s", tem.PkgPath(), tem.Name(), functionName)
+	require.Equal(t, ProfileName, pName)
 }
