@@ -197,6 +197,43 @@ The statement is in such a format:
 SHOW PLACEMENT FOR [{DATABASE | SCHEMA} schema_name] [TABLE table_name [PARTITION partition_name]];
 ```
 
+Examples:
+
+```sql
+SHOW PLACEMENT;
++----------------------------+----------------------------------------------------------------------+------------------+
+| target                     | placement                                                            | scheduling_state |
++----------------------------+----------------------------------------------------------------------+------------------+
+| POLICY system              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4 | SCHEDULED        |
+| POLICY default             | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | SCHEDULED        |
+| DATABASE test              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | SCHEDULED        |
+| TABLE test.t1              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | SCHEDULED        |
+| TABLE test.t1 PARTITION p1 | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | INPROGRESS       |
++----------------------------+----------------------------------------------------------------------+------------------+
+5 rows in set (0.00 sec)
+
+SHOW PLACEMENT LIKE 'POLICY%';
++----------------------------+----------------------------------------------------------------------+------------------+
+| target                     | placement                                                            | scheduling_state |
++----------------------------+----------------------------------------------------------------------+------------------+
+| POLICY system              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2" FOLLOWERS=4 | SCHEDULED        |
+| POLICY default             | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | SCHEDULED        |
++----------------------------+----------------------------------------------------------------------+------------------+
+2 rows in set (0.00 sec)
+
+SHOW PLACEMENT FOR DATABASE test;
++----------------------------+----------------------------------------------------------------------+------------------+
+| target                     | placement                                                            | scheduling_state |
++----------------------------+----------------------------------------------------------------------+------------------+
+| DATABASE test              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | SCHEDULED        |
+| TABLE test.t1              | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | SCHEDULED        |
+| TABLE test.t1 PARTITION p1 | PRIMARY_REGION="us-east-1" REGIONS="us-east-1,us-east-2"             | INPROGRESS       |
++----------------------------+----------------------------------------------------------------------+------------------+
+3 rows in set (0.00 sec)
+
+```
+
+
 TiDB will automatically find the effective rule based on the rule priorities.
 
 This statement outputs at most 1 line. For example, when querying a table, only the placement rule defined on the table itself is shown, and the partitions in it will not be shown.
@@ -204,17 +241,17 @@ This statement outputs at most 1 line. For example, when querying a table, only 
 The output of this statement contains these fields:
 
 * Target: The object queried. It can be a database, table, partition, or index.
+    * For policies, it is shown as the policy name.
     * For database, it is shown in the format `DATABASE database_name`
     * For table, it is shown in the format `TABLE database_name.table_name`
     * For partition, it is shown in the format `TABLE database_name.table_name PARTITION partition_name`
-* Equivalent placement: An equivalent `ALTER` statement on `target` that defines the placement rule.
-* Existing placement: All the executed `ALTER` statements that affect the placement of `target`, including the statements on its parent.
+* Placement: An equivalent `ALTER` statement on `target` that defines the placement rule.
 * Scheduling state: The scheduling progress from the PD aspect.
 
 For finding the current use of a placement policy, the following syntax can be used:
 
 ```sql
-SHOW PLACEMENT LIKE 'standardpol%';
+SHOW PLACEMENT LIKE 'POLICY standardpol%';
 ```
 
 This will match for `PLACEMENT POLICY` names such as `standardpolicy`.
@@ -935,6 +972,7 @@ CockroachDB does not look to have something directly comparable to `PLACEMENT PO
 - In this proposal, placement policies are global-level and not specific to a database. This simplifies the configuration, but makes it restrictive for multi-tenant scenarios where a schema-per-tenant is provided. This is because creating or modifying placement policies requires a privilege which is cluster scoped (`PLACEMENT_ADMIN`). The limitation is that "tenants" will be able to `CREATE TABLE (..) PLACEMENT POLICY=x`, but they will not be able to `CREATE PLACEMENT POLICY x` or `ALTER PLACEMENT POLICY x`
 - Complex scenarios may exist where there is not a column in the current table which can be used to partition the table into different regions, but instead there is a column which is a foreign key to another table from which this information can be determined. In this scenario, the user will be required to "denormalize" the usage and move the parent_id into the child table so geo-partitioning is possible.
 - Because direct assignment and `PLACEMENT POLICY` are mutually exclusive, it results in some scenarios where users that just want to make one small change on a placement policy need to create a new policy. This is intentional to limit the risk of misconfiguration.
+- The name `REGION` is ambigous, since we are using it for placement as well as to refer to a chunk of data. We could avoid region here, but the problem is it is the most used term for a geographic location of a data center. We recommend instead calling both region but in documentation refering to them as "data regions" and "placement regions".
 
 ## Unresolved Questions
 
