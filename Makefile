@@ -40,7 +40,6 @@ check-fail: goword check-slow
 fmt:
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
-	@cd cmd/importcheck && $(GO) run . ../..
 
 goword:tools/bin/goword
 	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
@@ -58,6 +57,7 @@ check-static: tools/bin/golangci-lint
 	  --enable=structcheck \
 	  --enable=deadcode \
 	  --enable=gosimple \
+	  --enable=goimports \
 	  $$($(PACKAGE_DIRECTORIES))
 
 check-slow:tools/bin/gometalinter tools/bin/gosec
