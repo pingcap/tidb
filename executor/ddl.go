@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/admin"
@@ -336,13 +335,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		sessVars.TemporaryTableData = bufferTxn.GetMemBuffer()
 	}
 
-	var referTbl table.Table
-	referTbl, err = is.TableByName(s.Table.Schema, s.Table.Name)
-	if referTbl != nil {
-		err = infoschema.ErrTableExists.GenWithStackByArgs(referTbl.Meta().Name)
-	} else {
-		err = localTempTables.AddTable(dbInfo, tbl)
-	}
+	err = localTempTables.AddTable(dbInfo, tbl)
 
 	if err != nil && s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
 		e.ctx.GetSessionVars().StmtCtx.AppendNote(err)

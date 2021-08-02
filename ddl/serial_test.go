@@ -646,6 +646,28 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	_, err = tk.Exec("create global temporary table tb8 like tb7 on commit delete rows;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
 	defer tk.MustExec("drop table if exists tb7, tb8")
+
+	tk.MustExec("set tidb_enable_noop_functions=true")
+	// Test from->normal, to->local temporary
+	tk.MustExec("drop table if exists tb11, tb12")
+	tk.MustExec("create table tb11 (i int primary key, j int)")
+	tk.MustExec("create temporary table tb12 like tb11")
+	tk.MustQuery("show create table tb12;").Check(testkit.Rows("tb12 CREATE TEMPORARY TABLE `tb12` (\n" +
+		"`i` int(11) NOT NULL,\n  `j` int(11) DEFAULT NULL,\n  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	defer tk.MustExec("drop table if exists tb11, tb12")
+	// Test from->local temporary, to->local temporary
+	tk.MustExec("drop table if exists tb13, tb14")
+	tk.MustExec("create temporary table tb13 (i int primary key, j int)")
+	_, err = tk.Exec("create temporary table tb14 like tb13;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
+	defer tk.MustExec("drop table if exists tb13, tb14")
+	// Test from->local temporary, to->normal
+	tk.MustExec("drop table if exists tb15, tb16")
+	tk.MustExec("create temporary table tb15 (i int primary key, j int)")
+	_, err = tk.Exec("create table tb16 like tb15;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
+	defer tk.MustExec("drop table if exists tb15, tb16")
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
