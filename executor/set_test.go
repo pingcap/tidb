@@ -376,11 +376,6 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
 	tk.MustExec("set @@tidb_store_limit = 0")
 
-	// instance level store limit test.
-	// we couldn't test the cluster behavior here. because new tk1 will sync the global propagation to
-	// the same StoreLimit with tk.
-	tk.MustExec("set @@tidb_store_limit = 200")
-	tk.MustQuery("select @@tidb_store_limit").Check(testkit.Rows("200"))
 
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
 	tk.MustExec("set @@session.tidb_metric_query_step = 120")
