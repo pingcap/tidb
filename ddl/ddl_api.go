@@ -5123,9 +5123,6 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		idxPart.Expr = nil
 		hiddenCols = append(hiddenCols, colInfo)
 	}
-	if len(hiddenCols) > 0 && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
-		return nil, ErrUnsupportedExpressionIndex
-	}
 	return hiddenCols, nil
 }
 
