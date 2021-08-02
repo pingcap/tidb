@@ -43,6 +43,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 	for _, worker := range d.workers {
 		worker.wg.Add(1)
 		worker.ctx = d.ctx
+		worker.ddlJobCtx = context.Background()
 		w := worker
 		go w.start(d.ddlCtx)
 		asyncNotify(worker.ddlJobCh)

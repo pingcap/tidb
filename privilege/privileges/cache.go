@@ -963,8 +963,9 @@ func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *col
 	return nil
 }
 
-// RequestDynamicVerification checks all roles for a specific DYNAMIC privilege.
-func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
+// HasExplicitlyGrantedDynamicPrivilege checks if a user has a DYNAMIC privilege
+// without accepting SUPER privilege as a fallback.
+func (p *MySQLPrivilege) HasExplicitlyGrantedDynamicPrivilege(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
 	privName = strings.ToUpper(privName)
 	roleList := p.FindAllRole(activeRoles)
 	roleList = append(roleList, &auth.RoleIdentity{Username: user, Hostname: host})
@@ -983,6 +984,15 @@ func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIden
 				}
 			}
 		}
+	}
+	return false
+}
+
+// RequestDynamicVerification checks all roles for a specific DYNAMIC privilege.
+func (p *MySQLPrivilege) RequestDynamicVerification(activeRoles []*auth.RoleIdentity, user, host, privName string, withGrant bool) bool {
+	privName = strings.ToUpper(privName)
+	if p.HasExplicitlyGrantedDynamicPrivilege(activeRoles, user, host, privName, withGrant) {
+		return true
 	}
 	// If SEM is enabled, and the privilege is of type restricted, do not fall through
 	// To using SUPER as a replacement privilege.
@@ -1354,7 +1364,8 @@ func privOnColumnsToString(p privOnColumns) string {
 		if idx > 0 {
 			buf.WriteString(", ")
 		}
-		fmt.Fprintf(&buf, "%s(", mysql.Priv2Str[priv])
+		privStr := privToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)
+		fmt.Fprintf(&buf, "%s(", privStr)
 		for i, col := range v {
 			if i > 0 {
 				fmt.Fprintf(&buf, ", ")
@@ -1414,21 +1425,29 @@ func privToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allP
 		if priv&p == 0 {
 			continue
 		}
-		s := allPrivNames[p]
+		s := strings.ToUpper(allPrivNames[p])
 		pstrs = append(pstrs, s)
 	}
 	return strings.Join(pstrs, ",")
 }
 
-// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGE table.
-func (p *MySQLPrivilege) UserPrivilegesTable() [][]types.Datum {
+// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USERS_PRIVILEGES table.
+func (p *MySQLPrivilege) UserPrivilegesTable(activeRoles []*auth.RoleIdentity, user, host string) [][]types.Datum {
+	// Seeing all users requires SELECT ON * FROM mysql.*
+	// The SUPER privilege (or any other dynamic privilege) doesn't help here.
+	// This is verified against MySQL.
+	showOtherUsers := p.RequestVerification(activeRoles, user, host, mysql.SystemDB, "", "", mysql.SelectPriv)
 	var rows [][]types.Datum
-	for _, user := range p.User {
-		rows = appendUserPrivilegesTableRow(rows, user)
+	for _, u := range p.User {
+		if showOtherUsers || u.match(user, host) {
+			rows = appendUserPrivilegesTableRow(rows, u)
+		}
 	}
 	for _, dynamicPrivs := range p.Dynamic {
 		for _, dynamicPriv := range dynamicPrivs {
-			rows = appendDynamicPrivRecord(rows, dynamicPriv)
+			if showOtherUsers || dynamicPriv.match(user, host) {
+				rows = appendDynamicPrivRecord(rows, dynamicPriv)
+			}
 		}
 	}
 	return rows
@@ -1460,7 +1479,7 @@ func appendUserPrivilegesTableRow(rows [][]types.Datum, user UserRecord) [][]typ
 	}
 	for _, priv := range mysql.AllGlobalPrivs {
 		if user.Privileges&priv > 0 {
-			privilegeType := mysql.Priv2Str[priv]
+			privilegeType := strings.ToUpper(mysql.Priv2Str[priv])
 			// +---------------------------+---------------+-------------------------+--------------+
 			// | GRANTEE                   | TABLE_CATALOG | PRIVILEGE_TYPE          | IS_GRANTABLE |
 			// +---------------------------+---------------+-------------------------+--------------+

@@ -18,6 +18,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -1034,7 +1036,7 @@ func IsAutoRandomColumnID(tblInfo *model.TableInfo, colID int64) bool {
 	return tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() && tblInfo.GetPkColInfo().ID == colID
 }
 
-func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
+func checkGeneratedColumn(ctx sessionctx.Context, colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
 	var exists bool
 	var autoIncrementColumn string
@@ -1066,9 +1068,11 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 
 	// Check whether the generated column refers to any auto-increment columns
 	if exists {
-		for colName, generated := range colName2Generation {
-			if _, found := generated.dependences[autoIncrementColumn]; found {
-				return ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(colName)
+		if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
+			for colName, generated := range colName2Generation {
+				if _, found := generated.dependences[autoIncrementColumn]; found {
+					return ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(colName)
+				}
 			}
 		}
 	}
@@ -1162,7 +1166,7 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	nameLower := strings.ToLower(name)
 	if namesMap[nameLower] {
 		if foreign {
-			return infoschema.ErrCannotAddForeign
+			return ErrFkDupName.GenWithStackByArgs(name)
 		}
 		return ErrDupKeyName.GenWithStack("duplicate key name %s", name)
 	}
@@ -1587,7 +1591,7 @@ func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
 	// All of these rely on the AST structure of expressions, which were
 	// lost in the model (got serialized into strings).
-	if err := checkGeneratedColumn(s.Cols); err != nil {
+	if err := checkGeneratedColumn(ctx, s.Cols); err != nil {
 		return errors.Trace(err)
 	}
 	if tbInfo.Partition != nil {
@@ -2388,8 +2392,8 @@ func isSameTypeMultiSpecs(specs []*ast.AlterTableSpec) bool {
 	return true
 }
 
-func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
-	validSpecs, err := resolveAlterTableSpec(ctx, specs)
+func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
+	validSpecs, err := resolveAlterTableSpec(sctx, specs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2400,15 +2404,15 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	}
 
 	if len(validSpecs) > 1 {
-		if !ctx.GetSessionVars().EnableChangeMultiSchema {
+		if !sctx.GetSessionVars().EnableChangeMultiSchema {
 			return errRunMultiSchemaChanges
 		}
 		if isSameTypeMultiSpecs(validSpecs) {
 			switch validSpecs[0].Tp {
 			case ast.AlterTableAddColumns:
-				err = d.AddColumns(ctx, ident, validSpecs)
+				err = d.AddColumns(sctx, ident, validSpecs)
 			case ast.AlterTableDropColumn:
-				err = d.DropColumns(ctx, ident, validSpecs)
+				err = d.DropColumns(sctx, ident, validSpecs)
 			default:
 				return errRunMultiSchemaChanges
 			}
@@ -2425,14 +2429,14 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
 			if len(spec.NewColumns) != 1 {
-				err = d.AddColumns(ctx, ident, []*ast.AlterTableSpec{spec})
+				err = d.AddColumns(sctx, ident, []*ast.AlterTableSpec{spec})
 			} else {
-				err = d.AddColumn(ctx, ident, spec)
+				err = d.AddColumn(sctx, ident, spec)
 			}
 		case ast.AlterTableAddPartitions:
-			err = d.AddTablePartitions(ctx, ident, spec)
+			err = d.AddTablePartitions(sctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:
-			err = d.CoalescePartitions(ctx, ident, spec)
+			err = d.CoalescePartitions(sctx, ident, spec)
 		case ast.AlterTableReorganizePartition:
 			err = errors.Trace(errUnsupportedReorganizePartition)
 		case ast.AlterTableCheckPartitions:
@@ -2446,24 +2450,24 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		case ast.AlterTableRepairPartition:
 			err = errors.Trace(errUnsupportedRepairPartition)
 		case ast.AlterTableDropColumn:
-			err = d.DropColumn(ctx, ident, spec)
+			err = d.DropColumn(sctx, ident, spec)
 		case ast.AlterTableDropIndex:
-			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name), spec.IfExists)
+			err = d.DropIndex(sctx, ident, model.NewCIStr(spec.Name), spec.IfExists)
 		case ast.AlterTableDropPrimaryKey:
-			err = d.DropIndex(ctx, ident, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
+			err = d.DropIndex(sctx, ident, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
 		case ast.AlterTableRenameIndex:
-			err = d.RenameIndex(ctx, ident, spec)
+			err = d.RenameIndex(sctx, ident, spec)
 		case ast.AlterTableDropPartition:
-			err = d.DropTablePartition(ctx, ident, spec)
+			err = d.DropTablePartition(sctx, ident, spec)
 		case ast.AlterTableTruncatePartition:
-			err = d.TruncateTablePartition(ctx, ident, spec)
+			err = d.TruncateTablePartition(sctx, ident, spec)
 		case ast.AlterTableWriteable:
 			if !config.TableLockEnabled() {
 				return nil
 			}
 			tName := &ast.TableName{Schema: ident.Schema, Name: ident.Name}
 			if spec.Writeable {
-				err = d.CleanupTableLock(ctx, []*ast.TableName{tName})
+				err = d.CleanupTableLock(sctx, []*ast.TableName{tName})
 			} else {
 				lockStmt := &ast.LockTablesStmt{
 					TableLocks: []ast.TableLock{
@@ -2473,50 +2477,50 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 						},
 					},
 				}
-				err = d.LockTables(ctx, lockStmt)
+				err = d.LockTables(sctx, lockStmt)
 			}
 		case ast.AlterTableExchangePartition:
-			err = d.ExchangeTablePartition(ctx, ident, spec)
+			err = d.ExchangeTablePartition(sctx, ident, spec)
 		case ast.AlterTableAddConstraint:
 			constr := spec.Constraint
 			switch spec.Constraint.Tp {
 			case ast.ConstraintKey, ast.ConstraintIndex:
-				err = d.CreateIndex(ctx, ident, ast.IndexKeyTypeNone, model.NewCIStr(constr.Name),
+				err = d.CreateIndex(sctx, ident, ast.IndexKeyTypeNone, model.NewCIStr(constr.Name),
 					spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
-				err = d.CreateIndex(ctx, ident, ast.IndexKeyTypeUnique, model.NewCIStr(constr.Name),
+				err = d.CreateIndex(sctx, ident, ast.IndexKeyTypeUnique, model.NewCIStr(constr.Name),
 					spec.Constraint.Keys, constr.Option, false) // IfNotExists should be not applied
 			case ast.ConstraintForeignKey:
 				// NOTE: we do not handle `symbol` and `index_name` well in the parser and we do not check ForeignKey already exists,
 				// so we just also ignore the `if not exists` check.
-				err = d.CreateForeignKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
+				err = d.CreateForeignKey(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
-				err = d.CreatePrimaryKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
+				err = d.CreatePrimaryKey(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 			case ast.ConstraintFulltext:
-				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
+				sctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
 			case ast.ConstraintCheck:
-				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck.GenWithStackByArgs("ADD CONSTRAINT CHECK"))
+				sctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck.GenWithStackByArgs("ADD CONSTRAINT CHECK"))
 			default:
 				// Nothing to do now.
 			}
 		case ast.AlterTableDropForeignKey:
 			// NOTE: we do not check `if not exists` and `if exists` for ForeignKey now.
-			err = d.DropForeignKey(ctx, ident, model.NewCIStr(spec.Name))
+			err = d.DropForeignKey(sctx, ident, model.NewCIStr(spec.Name))
 		case ast.AlterTableModifyColumn:
-			err = d.ModifyColumn(ctx, ident, spec)
+			err = d.ModifyColumn(ctx, sctx, ident, spec)
 		case ast.AlterTableChangeColumn:
-			err = d.ChangeColumn(ctx, ident, spec)
+			err = d.ChangeColumn(ctx, sctx, ident, spec)
 		case ast.AlterTableRenameColumn:
-			err = d.RenameColumn(ctx, ident, spec)
+			err = d.RenameColumn(sctx, ident, spec)
 		case ast.AlterTableAlterColumn:
-			err = d.AlterColumn(ctx, ident, spec)
+			err = d.AlterColumn(sctx, ident, spec)
 		case ast.AlterTableRenameTable:
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			isAlterTable := true
-			err = d.RenameTable(ctx, ident, newIdent, isAlterTable)
+			err = d.RenameTable(sctx, ident, newIdent, isAlterTable)
 		case ast.AlterTableAlterPartition:
-			if ctx.GetSessionVars().EnableAlterPlacement {
-				err = d.AlterTableAlterPartition(ctx, ident, spec)
+			if sctx.GetSessionVars().EnableAlterPlacement {
+				err = d.AlterTableAlterPartition(sctx, ident, spec)
 			} else {
 				err = errors.New("alter partition alter placement is experimental and it is switched off by tidb_enable_alter_placement")
 			}
@@ -2530,20 +2534,20 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					if opt.UintValue > shardRowIDBitsMax {
 						opt.UintValue = shardRowIDBitsMax
 					}
-					err = d.ShardRowID(ctx, ident, opt.UintValue)
+					err = d.ShardRowID(sctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
-					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue), autoid.RowIDAllocType, opt.BoolValue)
+					err = d.RebaseAutoID(sctx, ident, int64(opt.UintValue), autoid.RowIDAllocType, opt.BoolValue)
 				case ast.TableOptionAutoIdCache:
 					if opt.UintValue > uint64(math.MaxInt64) {
 						// TODO: Refine this error.
 						return errors.New("table option auto_id_cache overflows int64")
 					}
-					err = d.AlterTableAutoIDCache(ctx, ident, int64(opt.UintValue))
+					err = d.AlterTableAutoIDCache(sctx, ident, int64(opt.UintValue))
 				case ast.TableOptionAutoRandomBase:
-					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue), autoid.AutoRandomType, opt.BoolValue)
+					err = d.RebaseAutoID(sctx, ident, int64(opt.UintValue), autoid.AutoRandomType, opt.BoolValue)
 				case ast.TableOptionComment:
 					spec.Comment = opt.StrValue
-					err = d.AlterTableComment(ctx, ident, spec)
+					err = d.AlterTableComment(sctx, ident, spec)
 				case ast.TableOptionCharset, ast.TableOptionCollate:
 					// getCharsetAndCollateInTableOption will get the last charset and collate in the options,
 					// so it should be handled only once.
@@ -2556,7 +2560,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 						return err
 					}
 					needsOverwriteCols := needToOverwriteColCharset(spec.Options)
-					err = d.AlterTableCharsetAndCollate(ctx, ident, toCharset, toCollate, needsOverwriteCols)
+					err = d.AlterTableCharsetAndCollate(sctx, ident, toCharset, toCollate, needsOverwriteCols)
 					handledCharsetOrCollate = true
 				default:
 					err = errUnsupportedAlterTableOption
@@ -2567,23 +2571,25 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				}
 			}
 		case ast.AlterTableSetTiFlashReplica:
-			err = d.AlterTableSetTiFlashReplica(ctx, ident, spec.TiFlashReplica)
+			err = d.AlterTableSetTiFlashReplica(sctx, ident, spec.TiFlashReplica)
 		case ast.AlterTableOrderByColumns:
-			err = d.OrderByColumns(ctx, ident)
+			err = d.OrderByColumns(sctx, ident)
 		case ast.AlterTableIndexInvisible:
-			err = d.AlterIndexVisibility(ctx, ident, spec.IndexName, spec.Visibility)
+			err = d.AlterIndexVisibility(sctx, ident, spec.IndexName, spec.Visibility)
 		case ast.AlterTableAlterCheck:
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck.GenWithStackByArgs("ALTER CHECK"))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck.GenWithStackByArgs("ALTER CHECK"))
 		case ast.AlterTableDropCheck:
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck.GenWithStackByArgs("DROP CHECK"))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck.GenWithStackByArgs("DROP CHECK"))
 		case ast.AlterTableWithValidation:
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedAlterTableWithValidation)
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedAlterTableWithValidation)
 		case ast.AlterTableWithoutValidation:
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedAlterTableWithoutValidation)
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedAlterTableWithoutValidation)
 		case ast.AlterTableAddStatistics:
-			err = d.AlterTableAddStatistics(ctx, ident, spec.Statistics, spec.IfNotExists)
+			err = d.AlterTableAddStatistics(sctx, ident, spec.Statistics, spec.IfNotExists)
 		case ast.AlterTableDropStatistics:
-			err = d.AlterTableDropStatistics(ctx, ident, spec.Statistics, spec.IfExists)
+			err = d.AlterTableDropStatistics(sctx, ident, spec.Statistics, spec.IfExists)
+		case ast.AlterTableAttributes:
+			err = d.AlterTableAttributes(sctx, ident, spec)
 		default:
 			// Nothing to do now.
 		}
@@ -2763,8 +2769,10 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 			}
 
 			_, dependColNames := findDependedColumnNames(specNewColumn)
-			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
-				return nil, errors.Trace(err)
+			if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
+				if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 			duplicateColNames := make(map[string]struct{}, len(dependColNames))
 			for k := range dependColNames {
@@ -3574,8 +3582,16 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg 
 		return true, "conversion between char and varchar string needs reorganization"
 	}
 
-	if toFlen > 0 && toFlen < originFlen {
-		return true, fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
+	if toFlen > 0 && toFlen != originFlen {
+		if toFlen < originFlen {
+			return true, fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
+		}
+
+		// Due to the behavior of padding \x00 at binary type, we need to reorg when binary length changed
+		isBinaryType := func(tp *types.FieldType) bool { return tp.Tp == mysql.TypeString && types.IsBinaryStr(tp) }
+		if isBinaryType(origin) && isBinaryType(to) {
+			return true, "can't change binary types of different length"
+		}
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
 		return true, fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
@@ -3789,7 +3805,7 @@ func processAndCheckDefaultValueAndColumn(ctx sessionctx.Context, col *table.Col
 	return nil
 }
 
-func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, originalColName model.CIStr,
+func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, originalColName model.CIStr,
 	spec *ast.AlterTableSpec) (*model.Job, error) {
 	specNewColumn := spec.NewColumns[0]
 	is := d.infoCache.GetLatest()
@@ -3894,11 +3910,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
 	}
 
-	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
+	if err = processColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkModifyTypes(ctx, &col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
+	if err = checkModifyTypes(sctx, &col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
 		if strings.Contains(err.Error(), "Unsupported modifying collation") {
 			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
 			err = errUnsupportedModifyCollation.GenWithStack(colErrMsg, col.Name.L, col.Collate, newCol.Collate)
@@ -3919,14 +3935,14 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("can't set auto_increment")
 	}
 	// Disallow modifying column from auto_increment to not auto_increment if the session variable `AllowRemoveAutoInc` is false.
-	if !ctx.GetSessionVars().AllowRemoveAutoInc && mysql.HasAutoIncrementFlag(col.Flag) && !mysql.HasAutoIncrementFlag(newCol.Flag) {
+	if !sctx.GetSessionVars().AllowRemoveAutoInc && mysql.HasAutoIncrementFlag(col.Flag) && !mysql.HasAutoIncrementFlag(newCol.Flag) {
 		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("can't remove auto_increment without @@tidb_allow_remove_auto_inc enabled")
 	}
 
 	// We support modifying the type definitions of 'null' to 'not null' now.
 	var modifyColumnTp byte
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		if err = checkForNullValue(ctx, true, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
+		if err = checkForNullValue(ctx, sctx, true, ident.Schema, ident.Name, newCol.Name, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		// `modifyColumnTp` indicates that there is a type modification.
@@ -3938,7 +3954,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
-	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn, spec.Position); err != nil {
+	if err = checkModifyGeneratedColumn(sctx, t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -3954,7 +3970,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
+			SQLMode:       sctx.GetSessionVars().SQLMode,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
 		},
@@ -4118,7 +4134,7 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 // ChangeColumn renames an existing column and modifies the column's definition,
 // currently we only support limited kind of changes
 // that do not need to change or check data on the table.
-func (d *ddl) ChangeColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (d *ddl) ChangeColumn(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
 	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
 		return ErrWrongDBName.GenWithStackByArgs(specNewColumn.Name.Schema.O)
@@ -4133,19 +4149,19 @@ func (d *ddl) ChangeColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		return ErrWrongTableName.GenWithStackByArgs(spec.OldColumnName.Table.O)
 	}
 
-	job, err := d.getModifiableColumnJob(ctx, ident, spec.OldColumnName.Name, spec)
+	job, err := d.getModifiableColumnJob(ctx, sctx, ident, spec.OldColumnName.Name, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.GenWithStackByArgs(spec.OldColumnName.Name, ident.Name))
+			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.GenWithStackByArgs(spec.OldColumnName.Name, ident.Name))
 			return nil
 		}
 		return errors.Trace(err)
 	}
 
-	err = d.doDDLJob(ctx, job)
+	err = d.doDDLJob(sctx, job)
 	// column not exists, but if_exists flags is true, so we ignore this error.
 	if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		sctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
 	err = d.callHookOnChanged(err)
@@ -4218,7 +4234,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 
 // ModifyColumn does modification on an existing column, currently we only support limited kind of changes
 // that do not need to change or check data on the table.
-func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+func (d *ddl) ModifyColumn(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
 	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
 		return ErrWrongDBName.GenWithStackByArgs(specNewColumn.Name.Schema.O)
@@ -4228,19 +4244,19 @@ func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	}
 
 	originalColName := specNewColumn.Name.Name
-	job, err := d.getModifiableColumnJob(ctx, ident, originalColName, spec)
+	job, err := d.getModifiableColumnJob(ctx, sctx, ident, originalColName, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name))
+			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name))
 			return nil
 		}
 		return errors.Trace(err)
 	}
 
-	err = d.doDDLJob(ctx, job)
+	err = d.doDDLJob(sctx, job)
 	// column not exists, but if_exists flags is true, so we ignore this error.
 	if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		sctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
 	err = d.callHookOnChanged(err)
@@ -5075,8 +5091,10 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		if err = checkDependedColExist(checkDependencies, existCols); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if err = checkExpressionIndexAutoIncrement(indexName.O, colInfo.Dependences, tblInfo); err != nil {
-			return nil, errors.Trace(err)
+		if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
+			if err = checkExpressionIndexAutoIncrement(indexName.O, colInfo.Dependences, tblInfo); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		idxPart.Expr = nil
 		hiddenCols = append(hiddenCols, colInfo)
@@ -5139,13 +5157,16 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return errors.Trace(err)
 	}
 
+	finalColumns := make([]*model.ColumnInfo, len(tblInfo.Columns), len(tblInfo.Columns)+len(hiddenCols))
+	copy(finalColumns, tblInfo.Columns)
+	finalColumns = append(finalColumns, hiddenCols...)
 	// Check before the job is put to the queue.
 	// This check is redundant, but useful. If DDL check fail before the job is put
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, err := buildIndexColumns(append(tblInfo.Columns, hiddenCols...), indexPartSpecifications)
+	indexColumns, err := buildIndexColumns(finalColumns, indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5157,7 +5178,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		if err != nil {
 			return err
 		}
-		idxLen, err = indexColumnsLen(tblInfo.Columns, indexColumns)
+		idxLen, err = indexColumnsLen(finalColumns, indexColumns)
 		if err != nil {
 			return err
 		}
@@ -5296,6 +5317,13 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	}
 	if t.Meta().TempTableType != model.TempTableNone {
 		return infoschema.ErrCannotAddForeign
+	}
+
+	// Check the uniqueness of the FK.
+	for _, fk := range t.Meta().ForeignKeys {
+		if fk.Name.L == fkName.L {
+			return ErrFkDupName.GenWithStackByArgs(fkName.O)
+		}
 	}
 
 	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols(), t.Meta())
@@ -5985,6 +6013,45 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		Type:       model.ActionAlterTableAlterPartition,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partitionID, bundle},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	meta := tb.Meta()
+
+	rule := label.NewRule()
+	err = rule.ApplyAttributesSpec(spec.AttributesSpec)
+	if err != nil {
+		var sb strings.Builder
+		restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreKeyWordLowercase|format.RestoreNameBackQuotes, &sb)
+
+		if e := spec.Restore(restoreCtx); e != nil {
+			return ErrInvalidAttributesSpec.GenWithStackByArgs(sb.String(), err)
+		}
+		return ErrInvalidAttributesSpec.GenWithStackByArgs(err)
+	}
+
+	rule.ResetTable(meta.ID, schema.Name.L, meta.Name.L)
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAlterTableAttributes,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{rule},
 	}
 
 	err = d.doDDLJob(ctx, job)
