@@ -976,6 +976,8 @@ func (s *testSerialSuite2) TestIssue20874(c *C) {
 		"1 2 2 0 0 1 0",
 	))
 	tk.MustExec("set @@tidb_analyze_version=2")
+	a := tk.MustQuery("select @@tidb_analyze_version")
+	fmt.Println(">>> CI DEBUG >>>: analyze ver: ", a)
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
 		"test t  a 0 \x02\xd2 1",

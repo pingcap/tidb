@@ -246,6 +246,8 @@ func (s *testShowStatsSuite) TestShowAnalyzeStatus(c *C) {
 
 	statistics.ClearHistoryJobs()
 	tk.MustExec("set @@tidb_analyze_version=2")
+	a := tk.MustQuery("select @@tidb_analyze_version")
+	fmt.Println(">>> CI DEBUG >>>: analyze ver: ", a)
 	tk.MustExec("analyze table t")
 	result = tk.MustQuery("show analyze status").Sort()
 	c.Assert(len(result.Rows()), Equals, 1)
