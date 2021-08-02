@@ -15,8 +15,10 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -286,45 +288,39 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds, ds.possibleAccessPaths)
 	uniqueIdxsWithDoubleScan := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 	singleScanIdxs := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
-	var selected, uniqueBest, refinedBest *util.AccessPath
+	var (
+		selected, uniqueBest, refinedBest *util.AccessPath
+		isRefinedPath                     bool
+	)
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath() {
 			err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
 			if err != nil {
 				return nil, err
 			}
+			path.IsSingleScan = true
 		} else {
 			ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
+			path.IsSingleScan = ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
 		}
-		// TODO: Should we handle TiFlash case specially?
 		// Try some heuristic rules to select access path.
 		if len(path.Ranges) == 0 {
 			selected = path
 			break
 		}
-		// TODO: Can we record isSingleScan = ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
-		// as a field of AccessPath? In this way ds.isCoveringIndex only needs to be called once for each path.
 		if path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) {
 			if path.IsTablePath() || path.Index.Unique {
-				var singleScan bool
-				if path.IsTablePath() {
-					singleScan = true
-				} else {
-					singleScan = ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
-				}
-				if singleScan {
-					// TODO: What if multiple paths satisfy all conditions?
+				if path.IsSingleScan {
 					selected = path
 					break
 				}
 				uniqueIdxsWithDoubleScan = append(uniqueIdxsWithDoubleScan, path)
 			}
-		} else if ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo) {
+		} else if path.IsSingleScan {
 			singleScanIdxs = append(singleScanIdxs, path)
 		}
 	}
 	if selected == nil && len(uniqueIdxsWithDoubleScan) > 0 {
-		// TODO: Move accessCondsColSet from candidatePath to AccessPath so that we can use it both here and skyline pruning.
 		uniqueIdxColumnSets := make([]*intsets.Sparse, 0, len(uniqueIdxsWithDoubleScan))
 		for _, uniqueIdx := range uniqueIdxsWithDoubleScan {
 			uniqueIdxColumnSets = append(uniqueIdxColumnSets, expression.ExtractColumnSet(uniqueIdx.AccessConds))
@@ -362,6 +358,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		// Hence we should compare `len(refinedBest.Ranges)` and `2*len(uniqueBest.Ranges)` to select the better one.
 		if refinedBest != nil && (uniqueBest == nil || len(refinedBest.Ranges) < 2*len(uniqueBest.Ranges)) {
 			selected = refinedBest
+			isRefinedPath = true
 		} else {
 			selected = uniqueBest
 		}
@@ -373,20 +370,33 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		// TODO: Can we make a more careful check on whether the optimization depends on mutable constants?
 		ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
 		if ds.ctx.GetSessionVars().StmtCtx.InExplainStmt {
-			var tableName, pathName string
+			var tableName string
 			if ds.TableAsName.O == "" {
 				tableName = ds.tableInfo.Name.O
 			} else {
 				tableName = ds.TableAsName.O
 			}
 			if selected.IsTablePath() {
-				pathName = "primary key of " + tableName
+				// TODO: primary key / handle / real name?
+				ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(fmt.Sprintf("handle of %s is selected since the path only has point ranges", tableName)))
 			} else {
-				pathName = "index " + selected.Index.Name.O + " of " + tableName
+				var sb strings.Builder
+				if selected.Index.Unique {
+					sb.WriteString("unique ")
+				}
+				sb.WriteString(fmt.Sprintf("index %s of %s is selected since the path", selected.Index.Name.O, tableName))
+				if isRefinedPath {
+					sb.WriteString(" only fetches limited number of rows")
+				} else {
+					sb.WriteString(" only has point ranges")
+				}
+				if selected.IsSingleScan {
+					sb.WriteString(" with single scan")
+				} else {
+					sb.WriteString(" with double scan")
+				}
+				ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(sb.String()))
 			}
-			// TODO: Do we need to specify which heuristic rule `selected` matches? It is kind of hard to briefly describe the
-			// three heuristic rules. Besides, we can distinguish the three rules by checking EXPLAIN result.
-			ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(pathName + " is selected by heuristics"))
 		}
 	}
 

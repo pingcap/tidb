@@ -1045,7 +1045,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
-	if !ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, is.Table) {
+	if !path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
 			Columns:         ds.Columns,
