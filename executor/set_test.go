@@ -374,7 +374,6 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("100"))
 	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("100"))
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
-	tk.MustExec("set @@tidb_store_limit = 0")
 
 
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
