@@ -298,7 +298,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
 		}
 		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldType.CompactStr(), str)
-	} else if err == nil && (sc.InInsertStmt || sc.InUpdateStmt) && !casted.IsNull() &&
+	} else if (sc.InInsertStmt || sc.InUpdateStmt) && !casted.IsNull() &&
 		(val.Kind() != types.KindMysqlTime || !val.GetMysqlTime().IsZero()) &&
 		(col.Tp == mysql.TypeDate || col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeTimestamp) {
 		if innCasted, exit, innErr := handleZeroDatetime(ctx, col, casted, val.GetString(), types.ErrWrongValue.Equal(err)); exit {
