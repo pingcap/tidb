@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -54,6 +55,7 @@ var (
 	_ functionClass = &tidbIsDDLOwnerFunctionClass{}
 	_ functionClass = &tidbDecodePlanFunctionClass{}
 	_ functionClass = &tidbDecodeKeyFunctionClass{}
+	_ functionClass = &tidbDecodeSQLDigestsFunctionClass{}
 	_ functionClass = &nextValFunctionClass{}
 	_ functionClass = &lastValFunctionClass{}
 	_ functionClass = &setValFunctionClass{}
@@ -73,6 +75,7 @@ var (
 	_ builtinFunc = &builtinTiDBVersionSig{}
 	_ builtinFunc = &builtinRowCountSig{}
 	_ builtinFunc = &builtinTiDBDecodeKeySig{}
+	_ builtinFunc = &builtinTiDBDecodeSQLDigestsSig{}
 	_ builtinFunc = &builtinNextValSig{}
 	_ builtinFunc = &builtinLastValSig{}
 	_ builtinFunc = &builtinSetValSig{}
@@ -819,12 +822,23 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(row chunk.Row) (string, bool
 	stmtTruncateLength := int64(0)
 	if len(args) > 1 {
 		stmtTruncateLength, isNull, err = args[1].EvalInt(b.ctx, row)
+		if err != nil {
+			return "", true, err
+		}
+		if isNull {
+			stmtTruncateLength = 0
+		}
 	}
 
 	var digests []interface{}
 	err = json.Unmarshal([]byte(digestsStr), &digests)
 	if err != nil {
-		return "", true, err // TODO: Use a coded error type
+		const errMsgMaxLength = 32
+		if len(digestsStr) > errMsgMaxLength {
+			digestsStr = digestsStr[:errMsgMaxLength] + "..."
+		}
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errIncorrectArgs.GenWithStack("The argument can't be unmarshalled as JSON: '%s'", digestsStr))
+		return "", true, nil
 	}
 
 	retriever := NewSQLDigestTextRetriever()
@@ -837,9 +851,16 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(row chunk.Row) (string, bool
 		}
 	}
 
-	err = retriever.RetrieveGlobal( /* ????? */ context.Background(), b.ctx)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err = retriever.RetrieveGlobal(ctx, b.ctx)
 	if err != nil {
-		return "", true, err // TODO: Use a coded error type
+		if errors.Cause(err) == context.DeadlineExceeded || errors.Cause(err) == context.Canceled {
+			return "", true, errUnknown.GenWithStack("Retrieving cancelled internally with error: %v", err)
+		}
+
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.GenWithStack("Retrieving statements information failed with error: %v", err))
+		return "", true, nil // TODO: Use a coded error type
 	}
 
 	result := make([]interface{}, len(digests))
@@ -848,7 +869,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(row chunk.Row) (string, bool
 			continue
 		}
 		if digest, ok := item.(string); ok {
-			if stmt, ok := retriever.SQLDigestsMap[digest]; ok {
+			if stmt, ok := retriever.SQLDigestsMap[digest]; ok && len(stmt) > 0 {
 				if stmtTruncateLength > 0 && int64(len(stmt)) > stmtTruncateLength {
 					stmt = stmt[:stmtTruncateLength] + "..."
 				}
@@ -859,7 +880,8 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(row chunk.Row) (string, bool
 
 	resultStr, err := json.Marshal(result)
 	if err != nil {
-		return "", true, err // TODO: Use a coded error type
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.GenWithStack("Marshalling result as JSON failed with error: %v", err))
+		return "", true, nil
 	}
 
 	return string(resultStr), false, nil
