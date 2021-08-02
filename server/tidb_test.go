@@ -897,6 +897,7 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	cfg := newTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
+	cfg.Security.AutoTLS = true
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
