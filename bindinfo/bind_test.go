@@ -1094,6 +1094,12 @@ func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {
 }
 
 func (s *testSuite) TestCapturePreparedStmt(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -1114,7 +1120,6 @@ func (s *testSuite) TestCapturePreparedStmt(c *C) {
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `b` = ? and `c` > ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?")
 
-	config.CheckTableBeforeDrop = true
 	c.Assert(tk.MustUseIndex("select /*+ use_index(t,idx_b) */ * from t where b = 1 and c > 1", "idx_c(c)"), IsTrue)
 	tk.MustExec("admin flush bindings")
 	tk.MustExec("admin evolve bindings")
@@ -1168,6 +1173,12 @@ func (s *testSuite) TestDropSingleBindings(c *C) {
 }
 
 func (s *testSuite) TestDMLEvolveBaselines(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1175,7 +1186,6 @@ func (s *testSuite) TestDMLEvolveBaselines(c *C) {
 	tk.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c(c))")
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
 	tk.MustExec("analyze table t")
-	config.CheckTableBeforeDrop = true
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 
 	tk.MustExec("create global binding for delete from t where b = 1 and c > 1 using delete /*+ use_index(t,idx_c) */ from t where b = 1 and c > 1")
@@ -1229,6 +1239,12 @@ func (s *testSuite) TestDMLEvolveBaselines(c *C) {
 }
 
 func (s *testSuite) TestAddEvolveTasks(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1237,7 +1253,6 @@ func (s *testSuite) TestAddEvolveTasks(c *C) {
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
 	tk.MustExec("analyze table t")
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select * from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
-	config.CheckTableBeforeDrop = true
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 	// It cannot choose table path although it has lowest cost.
 	tk.MustQuery("select * from t where a >= 4 and b >= 1 and c = 0")
@@ -1256,11 +1271,16 @@ func (s *testSuite) TestAddEvolveTasks(c *C) {
 }
 
 func (s *testSuite) TestRuntimeHintsInEvolveTasks(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	config.CheckTableBeforeDrop = true
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))")
 
@@ -1452,6 +1472,12 @@ func (s *testSuite) TestDefaultDB(c *C) {
 }
 
 func (s *testSuite) TestEvolveInvalidBindings(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1469,7 +1495,6 @@ func (s *testSuite) TestEvolveInvalidBindings(c *C) {
 	s.domain.BindHandle().Clear()
 	c.Assert(s.domain.BindHandle().Update(true), IsNil)
 
-	config.CheckTableBeforeDrop = true
 	tk.MustExec("alter table t drop index idx_a")
 	tk.MustExec("admin evolve bindings")
 	c.Assert(s.domain.BindHandle().Update(false), IsNil)
@@ -1513,13 +1538,18 @@ func (s *testSuite) TestPrivileges(c *C) {
 }
 
 func (s *testSuite) TestHintsSetEvolveTask(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, index idx_a(a))")
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx_a) where a > 10")
-	config.CheckTableBeforeDrop = true
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 	tk.MustQuery("select * from t use index(idx_a) where a > 0")
 	bindHandle := s.domain.BindHandle()
@@ -1638,6 +1668,12 @@ func (s *testSuite) TestCapturePlanBaselineIgnoreTiFlash(c *C) {
 }
 
 func (s *testSuite) TestNotEvolvePlanForReadStorageHint(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1664,7 +1700,6 @@ func (s *testSuite) TestNotEvolvePlanForReadStorageHint(c *C) {
 	rows := tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[len(rows)-1][2]), Equals, "cop[tikv]")
 
-	config.CheckTableBeforeDrop = true
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select /*+ read_from_storage(tiflash[t]) */ * from t where a >= 1 and b >= 1")
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 
@@ -1712,6 +1747,12 @@ func (s *testSuite) TestBindingWithIsolationRead(c *C) {
 }
 
 func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1720,7 +1761,6 @@ func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
 	tk.MustExec("analyze table t")
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select * from t use index(idx_a) where a >= 1 and b >= 1")
-	config.CheckTableBeforeDrop = true
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 
 	// It cannot choose table path although it has lowest cost.
@@ -1774,6 +1814,12 @@ func (s *testSuite) TestInvisibleIndex(c *C) {
 }
 
 func (s *testSuite) TestBindingSource(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1981,6 +2027,12 @@ func (s *testSuite) TestUpdateSubqueryCapture(c *C) {
 }
 
 func (s *testSuite) TestIssue20417(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -2025,7 +2077,6 @@ func (s *testSuite) TestIssue20417(c *C) {
 
 	// Test for evolve baseline
 	s.cleanBindingEnv(tk)
-	config.CheckTableBeforeDrop = true
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 	tk.MustExec("create global binding for select * from t WHERE c=3924541 using select /*+ use_index(@sel_1 test.t idxb) */ * from t WHERE c=3924541")
 	rows = tk.MustQuery("show global bindings").Rows()
@@ -2051,9 +2102,14 @@ func (s *testSuite) TestIssue20417(c *C) {
 }
 
 func (s *testSuite) TestForbidEvolvePlanBaseLinesBeforeGA(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = false
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
-	config.CheckTableBeforeDrop = false
 	err := tk.ExecToErr("set @@tidb_evolve_plan_baselines=1")
 	c.Assert(err, ErrorMatches, "The 'baseline evolution' of TiDB has not been GA yet, so it is forbidden to use it.")
 	err = tk.ExecToErr("admin evolve bindings")
