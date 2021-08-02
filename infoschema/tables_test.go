@@ -1724,12 +1724,13 @@ func (s *testClusterTableSuite) TestDataLockWaits(c *C) {
 	_, digest1 := parser.NormalizeDigest("select * from test_data_lock_waits for update")
 	_, digest2 := parser.NormalizeDigest("update test_data_lock_waits set f1=1 where id=2")
 	s.store.(mockstorage.MockLockWaitSetter).SetMockLockWaits([]*deadlock.WaitForEntry{
-		{Txn: 1, WaitForTxn: 2, KeyHash: 3, Key: []byte("key1"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest1, nil)},
-		{Txn: 4, WaitForTxn: 5, KeyHash: 6, Key: []byte("key2"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest2, nil)},
+		{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest1, nil)},
+		{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(digest2, nil)},
+		// Invalid digests
+		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: resourcegrouptag.EncodeResourceGroupTag(nil, nil)},
+		{Txn: 7, WaitForTxn: 8, Key: []byte("key4"), ResourceGroupTag: []byte("asdfghjkl")},
 	})
 
-	keyHex1 := "6B657931"
-	keyHex2 := "6B657932"
 	tk := s.newTestKitWithRoot(c)
 
 	// Execute one of the query once so it's stored into statements_summary.
@@ -1737,8 +1738,10 @@ func (s *testClusterTableSuite) TestDataLockWaits(c *C) {
 	tk.MustExec("select * from test_data_lock_waits for update")
 
 	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS").Check(testkit.Rows(
-		keyHex1+" <nil> 1 2 "+digest1.String()+" select * from `test_data_lock_waits` for update",
-		keyHex2+" <nil> 4 5 "+digest2.String()+" <nil>"))
+		"6B657931 <nil> 1 2 "+digest1.String()+" select * from `test_data_lock_waits` for update",
+		"6B657932 <nil> 3 4 "+digest2.String()+" <nil>",
+		"6B657933 <nil> 5 6 <nil> <nil>",
+		"6B657934 <nil> 7 8 <nil> <nil>"))
 }
 
 func (s *testClusterTableSuite) TestDataLockWaitsPrivilege(c *C) {

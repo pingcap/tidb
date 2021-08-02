@@ -2266,7 +2266,9 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 			for i, lockWait := range r.lockWaits {
 				digest, err := resourcegrouptag.DecodeResourceGroupTag(lockWait.ResourceGroupTag)
 				if err != nil {
-					logutil.BgLogger().Warn("failed to decode resource group tag", zap.Error(err))
+					// Ignore the error if failed to decode the digest from resource_group_tag. We still want to show
+					// as much information as possible even we can't retrieve some of them.
+					logutil.Logger(ctx).Warn("failed to decode resource group tag", zap.Error(err))
 				} else {
 					digests[i] = hex.EncodeToString(digest)
 				}
@@ -2278,7 +2280,9 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 		if needSQLText {
 			sqlRetriever = NewSQLDigestTextRetriever()
 			for _, digest := range digests {
-				sqlRetriever.SQLDigestsMap[digest] = ""
+				if len(digest) > 0 {
+					sqlRetriever.SQLDigestsMap[digest] = ""
+				}
 			}
 			err := sqlRetriever.RetrieveGlobal(ctx, sctx)
 			if err != nil {
@@ -2315,7 +2319,12 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 				case infoschema.DataLockWaitsColumnCurrentHoldingTrxID:
 					row = append(row, types.NewDatum(lockWait.WaitForTxn))
 				case infoschema.DataLockWaitsColumnSQLDigest:
-					row = append(row, types.NewDatum(digests[rowIdx]))
+					digest := digests[rowIdx]
+					if len(digest) == 0 {
+						row = append(row, types.NewDatum(nil))
+					} else {
+						row = append(row, types.NewDatum(digest))
+					}
 				case infoschema.DataLockWaitsColumnSQLDigestText:
 					text := sqlRetriever.SQLDigestsMap[digests[rowIdx]]
 					if len(text) > 0 {
