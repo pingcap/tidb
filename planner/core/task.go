@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -707,8 +708,8 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 		rp = rProj
 	}
 
-	lPartKeys := make([]*property.PartitionColumn, 0, len(rTask.hashCols))
-	rPartKeys := make([]*property.PartitionColumn, 0, len(lTask.hashCols))
+	lPartKeys := make([]*property.MPPPartitionColumn, 0, len(rTask.hashCols))
+	rPartKeys := make([]*property.MPPPartitionColumn, 0, len(lTask.hashCols))
 	for i := range lTask.hashCols {
 		lKey := lTask.hashCols[i]
 		rKey := rTask.hashCols[i]
@@ -716,13 +717,13 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 			cType := cTypes[i].Clone()
 			cType.Flag = lKey.Col.RetType.Flag
 			lCast := expression.BuildCastFunction(p.ctx, lKey.Col, cType)
-			lKey = &property.PartitionColumn{Col: appendExpr(lProj, lCast), CollateId: lKey.CollateId}
+			lKey = &property.MPPPartitionColumn{Col: appendExpr(lProj, lCast), CollateId: lKey.CollateId}
 		}
 		if rMask[i] {
 			cType := cTypes[i].Clone()
 			cType.Flag = rKey.Col.RetType.Flag
 			rCast := expression.BuildCastFunction(p.ctx, rKey.Col, cType)
-			rKey = &property.PartitionColumn{Col: appendExpr(rProj, rCast), CollateId: rKey.CollateId}
+			rKey = &property.MPPPartitionColumn{Col: appendExpr(rProj, rCast), CollateId: rKey.CollateId}
 		}
 		lPartKeys = append(lPartKeys, lKey)
 		rPartKeys = append(rPartKeys, rKey)
@@ -1922,14 +1923,14 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		partitionCols := p.MppPartitionCols
 		if len(partitionCols) == 0 {
 			items := finalAgg.(*PhysicalHashAgg).GroupByItems
-			partitionCols = make([]*property.PartitionColumn, 0, len(items))
+			partitionCols = make([]*property.MPPPartitionColumn, 0, len(items))
 			for _, expr := range items {
 				col, ok := expr.(*expression.Column)
 				if !ok {
 					return invalidTask
 				}
 				_, coll := expression.DeriveCollationFromExprs(p.ctx, col)
-				partitionCols = append(partitionCols, &property.PartitionColumn{
+				partitionCols = append(partitionCols, &property.MPPPartitionColumn{
 					Col:       col,
 					CollateId: property.GetCollateIDByNameForPartition(coll),
 				})
@@ -2092,7 +2093,7 @@ type mppTask struct {
 	cst float64
 
 	partTp   property.MPPPartitionType
-	hashCols []*property.PartitionColumn
+	hashCols []*property.MPPPartitionColumn
 }
 
 func (t *mppTask) count() float64 {
@@ -2184,6 +2185,14 @@ func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 }
 
 func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask {
+	if collate.NewCollationEnabled() && t.p.SCtx().GetSessionVars().HashExchangeWithNewCollation && prop.MPPPartitionTp == property.HashType {
+		for _, col := range prop.MPPPartitionCols {
+			if types.IsString(col.Col.RetType.Tp) {
+				t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.")
+				return &mppTask{cst: math.MaxFloat64}
+			}
+		}
+	}
 	ctx := t.p.SCtx()
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType(prop.MPPPartitionTp),

@@ -45,12 +45,12 @@ const (
 	HashType
 )
 
-type PartitionColumn struct {
+type MPPPartitionColumn struct {
 	Col       *expression.Column
 	CollateId int32
 }
 
-func (partitionCol *PartitionColumn) hashCode(ctx *stmtctx.StatementContext) []byte {
+func (partitionCol *MPPPartitionColumn) hashCode(ctx *stmtctx.StatementContext) []byte {
 	hashcode := partitionCol.Col.HashCode(ctx)
 	if partitionCol.CollateId < 0 {
 		// collateId < 0 means new collation is not enabled
@@ -61,7 +61,7 @@ func (partitionCol *PartitionColumn) hashCode(ctx *stmtctx.StatementContext) []b
 	return hashcode
 }
 
-func (partitionCol *PartitionColumn) Equal(other *PartitionColumn) bool {
+func (partitionCol *MPPPartitionColumn) Equal(other *MPPPartitionColumn) bool {
 	if partitionCol.CollateId < 0 {
 		// collateId only matters if new collation is enabled
 		if partitionCol.CollateId != other.CollateId {
@@ -72,7 +72,7 @@ func (partitionCol *PartitionColumn) Equal(other *PartitionColumn) bool {
 }
 
 // ExplainColumnList generates explain information for a list of columns.
-func ExplainColumnList(cols []*PartitionColumn) []byte {
+func ExplainColumnList(cols []*MPPPartitionColumn) []byte {
 	buffer := bytes.NewBufferString("")
 	for i, col := range cols {
 		buffer.WriteString("[name: ")
@@ -131,7 +131,7 @@ type PhysicalProperty struct {
 	CanAddEnforcer bool
 
 	// If the partition type is hash, the data should be reshuffled by partition cols.
-	MPPPartitionCols []*PartitionColumn
+	MPPPartitionCols []*MPPPartitionColumn
 
 	// which types the exchange sender belongs to, only take effects when it's a mpp task.
 	MPPPartitionTp MPPPartitionType
@@ -157,7 +157,7 @@ func SortItemsFromCols(cols []*expression.Column, desc bool) []SortItem {
 }
 
 // IsSubsetOf check if the keys can match the needs of partition.
-func (p *PhysicalProperty) IsSubsetOf(keys []*PartitionColumn) []int {
+func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 	if len(p.MPPPartitionCols) > len(keys) {
 		return nil
 	}

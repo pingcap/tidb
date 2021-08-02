@@ -1899,8 +1899,8 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	return []PhysicalPlan{join}
 }
 
-func choosePartitionKeys(keys []*property.PartitionColumn, matches []int) []*property.PartitionColumn {
-	newKeys := make([]*property.PartitionColumn, 0, len(matches))
+func choosePartitionKeys(keys []*property.MPPPartitionColumn, matches []int) []*property.MPPPartitionColumn {
+	newKeys := make([]*property.MPPPartitionColumn, 0, len(matches))
 	for _, id := range matches {
 		newKeys = append(newKeys, keys[id])
 	}
