@@ -450,6 +450,23 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 	return nil
 }
 
+// ResolveIndicesByVirtualExpr implements Expression interface.
+func (sf *ScalarFunction) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) {
+	newSf := sf.Clone()
+	isOK := newSf.resolveIndicesByVirtualExpr(schema)
+	return newSf, isOK
+}
+
+func (sf *ScalarFunction) resolveIndicesByVirtualExpr(schema *Schema) bool {
+	for _, arg := range sf.GetArgs() {
+		isOk := arg.resolveIndicesByVirtualExpr(schema)
+		if !isOk {
+			return false
+		}
+	}
+	return true
+}
+
 // GetSingleColumn returns (Col, Desc) when the ScalarFunction is equivalent to (Col, Desc)
 // when used as a sort key, otherwise returns (nil, false).
 //
