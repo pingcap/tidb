@@ -121,7 +121,7 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 
 func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	if col.Flen == 0 && (types.IsTypeChar(col.FieldType.Tp) || types.IsTypeVarchar(col.FieldType.Tp)) {
-		if col.GeneratedExprString != "" {
+		if col.Hidden {
 			return errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
 		}
 		return errors.Trace(errWrongKeyColumn.GenWithStackByArgs(col.Name))
@@ -129,7 +129,7 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 
 	// JSON column cannot index.
 	if col.FieldType.Tp == mysql.TypeJSON {
-		if col.GeneratedExprString != "" {
+		if col.Hidden {
 			return ErrFunctionalIndexOnJSONOrGeometryFunction
 		}
 		return errors.Trace(errJSONUsedAsKey.GenWithStackByArgs(col.Name.O))
