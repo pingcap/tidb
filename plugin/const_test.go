@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestConstToString(t *testing.T) {
@@ -39,6 +39,6 @@ func TestConstToString(t *testing.T) {
 		ConnectionEvent(byte(15)): "",
 	}
 	for key, value := range kinds {
-		assert.Equalf(t, value, key.String(), "kind %s != %s", key.String(), value)
+		require.Equal(t, value, key.String())
 	}
 }

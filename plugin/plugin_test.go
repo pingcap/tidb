@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadPluginSuccess(t *testing.T) {
@@ -66,33 +66,33 @@ func TestLoadPluginSuccess(t *testing.T) {
 
 	// trigger load.
 	err := Load(ctx, cfg)
-	assert.NoErrorf(t, err, "load plugin [%s] fail", pluginSign)
+	require.NoError(t, err)
 
 	err = Init(ctx, cfg)
-	assert.NoErrorf(t, err, "init plugin [%s] fail", pluginSign)
+	require.NoError(t, err)
 
 	// load all.
 	ps := GetAll()
-	assert.Lenf(t, ps, 1, "loaded plugins is empty")
-	assert.Truef(t, IsEnable(Authentication), "plugin is not enabled")
+	require.Len(t, ps, 1)
+	require.True(t, IsEnable(Authentication))
 
 	// find plugin by type and name
 	p := Get(Authentication, "tplugin")
-	assert.NotNilf(t, p, "tplugin can not be load")
+	require.NotNil(t, p)
 	p = Get(Authentication, "tplugin2")
-	assert.Nilf(t, p, "found miss plugin")
+	require.Nil(t, p)
 	p = getByName("tplugin")
-	assert.NotNilf(t, p, "can not find miss plugin")
+	require.NotNil(t, p)
 
 	// foreach plugin
 	err = ForeachPlugin(Authentication, func(plugin *Plugin) error {
 		return nil
 	})
-	assert.NoErrorf(t, err, "foreach error %v", err)
+	require.NoError(t, err)
 	err = ForeachPlugin(Authentication, func(plugin *Plugin) error {
 		return io.EOF
 	})
-	assert.Equalf(t, io.EOF, err, "foreach should return EOF error")
+	require.Equal(t, io.EOF, err)
 
 	Shutdown(ctx)
 }
@@ -141,25 +141,25 @@ func TestLoadPluginSkipError(t *testing.T) {
 
 	// trigger load.
 	err := Load(ctx, cfg)
-	assert.NoErrorf(t, err, "load plugin [%s] fail", pluginSign)
+	require.NoError(t, err)
 
 	err = Init(ctx, cfg)
-	assert.NoErrorf(t, err, "init plugin [%s] fail", pluginSign)
-	assert.Falsef(t, IsEnable(Audit), "plugin is enabled")
+	require.NoError(t, err)
+	require.False(t, IsEnable(Audit))
 
 	// load all.
 	ps := GetAll()
-	assert.Lenf(t, ps, 1, "loaded plugins is empty")
+	require.Len(t, ps, 1)
 
 	// find plugin by type and name
 	p := Get(Audit, "tplugin")
-	assert.NotNilf(t, p, "tplugin can not be load")
+	require.NotNil(t, p)
 	p = Get(Audit, "tplugin2")
-	assert.Nilf(t, p, "found miss plugin")
+	require.Nil(t, p)
 	p = getByName("tplugin")
-	assert.NotNilf(t, p, "can not find miss plugin")
+	require.NotNil(t, p)
 	p = getByName("not exists")
-	assert.Nilf(t, p, "got not exists plugin")
+	require.Nil(t, p)
 
 	// foreach plugin
 	readyCount := 0
@@ -167,8 +167,8 @@ func TestLoadPluginSkipError(t *testing.T) {
 		readyCount++
 		return nil
 	})
-	assert.NoErrorf(t, err, "foreach meet error %v", err)
-	assert.Equalf(t, 0, readyCount, "validate fail can be load but no ready")
+	require.NoError(t, err)
+	require.Equal(t, 0, readyCount)
 
 	Shutdown(ctx)
 }
@@ -216,7 +216,7 @@ func TestLoadFail(t *testing.T) {
 	}()
 
 	err := Load(ctx, cfg)
-	assert.Errorf(t, err, "load plugin should fail")
+	require.Error(t, err)
 }
 
 func TestPluginsClone(t *testing.T) {
@@ -235,10 +235,9 @@ func TestPluginsClone(t *testing.T) {
 	as := ps.plugins[Audit]
 	ps.plugins[Audit] = append(as, Plugin{})
 
-	msg := "clone plugins failure"
-	assert.Lenf(t, cps.plugins, 1, msg)
-	assert.Lenf(t, cps.plugins[Audit], 1, msg)
-	assert.Lenf(t, cps.versions, 1, msg)
-	assert.Equalf(t, uint16(1), cps.versions["whitelist"], msg)
-	assert.Lenf(t, cps.dyingPlugins, 1, msg)
+	require.Len(t, cps.plugins, 1)
+	require.Len(t, cps.plugins[Audit], 1)
+	require.Len(t, cps.versions, 1)
+	require.Equal(t, uint16(1), cps.versions["whitelist"])
+	require.Len(t, cps.dyingPlugins, 1)
 }
