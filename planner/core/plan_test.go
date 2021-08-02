@@ -20,7 +20,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
@@ -593,14 +592,6 @@ func (s *testPlanNormalize) BenchmarkEncodePlan(c *C) {
 
 // Close issue 25729
 func (s *testPlanNormalize) TestIssue25729(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.Experimental.AllowsExpressionIndex = false
-		})
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tt")
