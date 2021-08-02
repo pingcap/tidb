@@ -561,7 +561,6 @@ func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.Ph
 			}
 		}
 	}
-	candidate.columnSet = expression.ExtractColumnSet(path.AccessConds)
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
 	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
 	candidate.indexFiltersColSet = expression.ExtractColumnSet(path.IndexFilters)
