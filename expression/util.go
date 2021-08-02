@@ -998,7 +998,8 @@ func GetFormatNanoTime(time float64) string {
 }
 
 // SQLDigestTextRetriever is used to find the normalized SQL statement text by SQL digests in statements_summary table.
-// It's exported for test purposes.
+// It's exported for test purposes. It's used by the `tidb_decode_sql_digests` builtin function, but also exposed to
+// be used in other modules.
 type SQLDigestTextRetriever struct {
 	// SQLDigestsMap is the place to put the digests that's requested for getting SQL text and also the place to put
 	// the query result.
