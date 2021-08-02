@@ -2047,8 +2047,6 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	} else {
 		is = s.GetInfoSchema().(infoschema.InfoSchema)
 	}
-	// sync the new information schema with the one in TxnCtx of sessionVar.
-	s.sessionVars.TxnCtx.InfoSchema = is
 	if ok {
 		return s.cachedPlanExec(ctx, is, snapshotTS, stmtID, preparedStmt, args)
 	}
