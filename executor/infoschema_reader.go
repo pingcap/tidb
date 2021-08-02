@@ -2040,28 +2040,6 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 	return nil
 }
 
-//func (e *memtableRetriever) setDataForDeadlock(ctx sessionctx.Context) error {
-//	if !hasPriv(ctx, mysql.ProcessPriv) {
-//		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
-//	}
-//	infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
-//	e.rows = deadlockhistory.GlobalDeadlockHistory.GetAllDatum(infoSchema)
-//	return nil
-//}
-
-//func (e *memtableRetriever) setDataForClusterDeadlock(ctx sessionctx.Context) error {
-//	err := e.setDataForDeadlock(ctx)
-//	if err != nil {
-//		return err
-//	}
-//	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
-//	if err != nil {
-//		return err
-//	}
-//	e.rows = rows
-//	return nil
-//}
-
 func (e *memtableRetriever) setDataForTableDataLockWaits(ctx sessionctx.Context) error {
 	if !hasPriv(ctx, mysql.ProcessPriv) {
 		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
