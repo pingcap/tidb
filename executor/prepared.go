@@ -329,10 +329,6 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return nil, false, false, err
 	}
-	// Since the `is` may change in the optimize logic of execute plan, here we use execPlan.ForUpdateReadIS
-	if execute, ok := execPlan.(*plannercore.Execute); ok {
-		is = execute.ForUpdateReadIS
-	}
 
 	stmt := &ExecStmt{
 		GoCtx:       ctx,

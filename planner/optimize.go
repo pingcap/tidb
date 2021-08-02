@@ -298,31 +298,6 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
 
-	if execPlan, ok := p.(*plannercore.Execute); ok {
-		execID := execPlan.ExecID
-		if execPlan.Name != "" {
-			execID = sctx.GetSessionVars().PreparedStmtNameToID[execPlan.Name]
-		}
-		if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execID]; ok {
-			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
-				// Actually, `IS` is read only for all the travel path around optimize and exec. The `IS` and `TxnCtn.IS`
-				// should always be the same, otherwise, it will cause some check fails. For example. `checkUpdateList`
-				// panics in the plan building phase.
-				//
-				//  ...
-				//  optimize(is) -> OptimizePreparedPlan(is) -> ... `is` changed
-				//  runstmt(is)
-				//  ...
-				// The modification of `is` is in the deep call chain. once func the backtracking to the outer, since
-				// the `is` struct value copy model, the outer `is` is still the old one before calling the runstmt.
-				//
-				// while the session TxnCtx hold the new `IS`, we can substitute the outer `is` once we found the schema
-				// version difference before calling the runstmt
-				is = domain.GetDomain(sctx).InfoSchema()
-			}
-		}
-	}
-
 	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
 	activeRoles := sctx.GetSessionVars().ActiveRoles
 	// Check privilege. Maybe it's better to move this to the Preprocess, but

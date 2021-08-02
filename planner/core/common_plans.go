@@ -182,17 +182,16 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name            string
-	UsingVars       []expression.Expression
-	PrepareParams   []types.Datum
-	ExecID          uint32
-	SnapshotTS      uint64
-	IsStaleness     bool
-	TxnScope        string
-	Stmt            ast.StmtNode
-	StmtType        string
-	Plan            Plan
-	ForUpdateReadIS infoschema.InfoSchema
+	Name          string
+	UsingVars     []expression.Expression
+	PrepareParams []types.Datum
+	ExecID        uint32
+	SnapshotTS    uint64
+	IsStaleness   bool
+	TxnScope      string
+	Stmt          ast.StmtNode
+	StmtType      string
+	Plan          Plan
 }
 
 // Check if result of GetVar expr is BinaryLiteral
@@ -302,7 +301,6 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	e.TxnScope = txnScope
 	e.IsStaleness = isStaleness
 	e.Stmt = prepared.Stmt
-	e.ForUpdateReadIS = is
 	return nil
 }
 
