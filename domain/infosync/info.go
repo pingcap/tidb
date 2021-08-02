@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
@@ -803,4 +804,34 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 	})
 
 	return info
+}
+
+// PutLabelRule synchronizes the label rule to PD.
+func PutLabelRule(ctx context.Context, rule *label.Rule) error {
+	if rule == nil {
+		return nil
+	}
+
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+
+	if is.etcdCli == nil {
+		return nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return errors.Errorf("pd unavailable")
+	}
+
+	r, err := json.Marshal(rule)
+	if err != nil {
+		return err
+	}
+
+	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "region-label", "rule"), "POST", bytes.NewReader(r))
+	return err
 }
