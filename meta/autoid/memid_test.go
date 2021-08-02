@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 

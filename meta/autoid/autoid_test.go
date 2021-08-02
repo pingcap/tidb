@@ -15,14 +15,10 @@ package autoid_test
 
 import (
 	"context"
-	"fmt"
 	"math"
-	"math/rand"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
@@ -32,7 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
+func TestSignedAutoid(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
@@ -403,134 +399,6 @@ func TestUnsignedAutoid(t *testing.T) {
 
 }
 
-// TestConcurrentAlloc is used for the test that
-// multiple allocators allocate ID with the same table ID concurrently.
-func TestConcurrentAlloc(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
-	}()
-	autoid.SetStep(100)
-	defer func() {
-		autoid.SetStep(5000)
-	}()
-
-	dbID := int64(2)
-	tblID := int64(100)
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
-		require.NoError(t, err)
-		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
-		require.NoError(t, err)
-		return nil
-	})
-	require.NoError(t, err)
-
-	var mu sync.Mutex
-	wg := sync.WaitGroup{}
-	m := map[int64]struct{}{}
-	count := 10
-	errCh := make(chan error, count)
-
-	allocIDs := func() {
-		ctx := context.Background()
-		alloc := autoid.NewAllocator(store, dbID, false, autoid.RowIDAllocType)
-		for j := 0; j < int(autoid.GetStep())+5; j++ {
-			_, id, err1 := alloc.Alloc(ctx, tblID, 1, 1, 1)
-			if err1 != nil {
-				errCh <- err1
-				break
-			}
-
-			mu.Lock()
-			if _, ok := m[id]; ok {
-				errCh <- fmt.Errorf("duplicate id:%v", id)
-				mu.Unlock()
-				break
-			}
-			m[id] = struct{}{}
-			mu.Unlock()
-
-			// test Alloc N
-			N := rand.Uint64() % 100
-			min, max, err1 := alloc.Alloc(ctx, tblID, N, 1, 1)
-			if err1 != nil {
-				errCh <- err1
-				break
-			}
-
-			errFlag := false
-			mu.Lock()
-			for i := min + 1; i <= max; i++ {
-				if _, ok := m[i]; ok {
-					errCh <- fmt.Errorf("duplicate id:%v", i)
-					errFlag = true
-					mu.Unlock()
-					break
-				}
-				m[i] = struct{}{}
-			}
-			if errFlag {
-				break
-			}
-			mu.Unlock()
-		}
-	}
-	for i := 0; i < count; i++ {
-		wg.Add(1)
-		go func(num int) {
-			defer wg.Done()
-			time.Sleep(time.Duration(num%10) * time.Microsecond)
-			allocIDs()
-		}(i)
-	}
-	wg.Wait()
-
-	close(errCh)
-	err = <-errCh
-	require.NoError(t, err)
-}
-
-// TestRollbackAlloc tests that when the allocation transaction commit failed,
-// the local variable base and end doesn't change.
-func TestRollbackAlloc(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
-	}()
-	dbID := int64(1)
-	tblID := int64(2)
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
-		require.NoError(t, err)
-		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
-		require.NoError(t, err)
-		return nil
-	})
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	injectConf := new(kv.InjectionConfig)
-	injectConf.SetCommitError(errors.New("injected"))
-	injectedStore := kv.NewInjectedStore(store, injectConf)
-	alloc := autoid.NewAllocator(injectedStore, 1, false, autoid.RowIDAllocType)
-	_, _, err = alloc.Alloc(ctx, 2, 1, 1, 1)
-	require.Error(t, err)
-	require.Equal(t, int64(0), alloc.Base())
-	require.Equal(t, int64(0), alloc.End())
-
-	err = alloc.Rebase(2, 100, true)
-	require.Error(t, err)
-	require.Equal(t, int64(0), alloc.Base())
-	require.Equal(t, int64(0), alloc.End())
-}
-
 // TestNextStep tests generate next auto id step.
 func TestNextStep(t *testing.T) {
 	nextStep := autoid.NextStep(2000000, 1*time.Nanosecond)
@@ -539,110 +407,6 @@ func TestNextStep(t *testing.T) {
 	require.Equal(t, int64(678910), nextStep)
 	nextStep = autoid.NextStep(50000, 10*time.Minute)
 	require.Equal(t, int64(30000), nextStep)
-}
-
-func BenchmarkAllocator_Alloc(b *testing.B) {
-	b.StopTimer()
-	store, err := mockstore.NewMockStore()
-	if err != nil {
-		return
-	}
-	defer func() {
-		err := store.Close()
-		if err != nil {
-			b.Fatal(err)
-		}
-	}()
-	dbID := int64(1)
-	tblID := int64(2)
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
-		if err != nil {
-			return err
-		}
-		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
-		if err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		return
-	}
-	ctx := context.Background()
-	alloc := autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
-	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		_, _, err := alloc.Alloc(ctx, 2, 1, 1, 1)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
-	b.StopTimer()
-	store, err := mockstore.NewMockStore()
-	if err != nil {
-		return
-	}
-	defer func() {
-		err := store.Close()
-		if err != nil {
-			b.Fatal(err)
-		}
-	}()
-	var seq *model.SequenceInfo
-	var sequenceBase int64
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
-		if err != nil {
-			return err
-		}
-		seq = &model.SequenceInfo{
-			Start:      1,
-			Cycle:      true,
-			Cache:      false,
-			MinValue:   -10,
-			MaxValue:   math.MaxInt64,
-			Increment:  2,
-			CacheValue: 2000000,
-		}
-		seqTable := &model.TableInfo{
-			ID:       1,
-			Name:     model.NewCIStr("seq"),
-			Sequence: seq,
-		}
-		sequenceBase = seq.Start - 1
-		err = m.CreateSequenceAndSetSeqValue(1, seqTable, sequenceBase)
-		return err
-	})
-	if err != nil {
-		return
-	}
-	alloc := autoid.NewSequenceAllocator(store, 1, seq)
-	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		_, _, _, err := alloc.AllocSeqCache(1)
-		if err != nil {
-			fmt.Println("err")
-		}
-	}
-}
-
-func BenchmarkAllocator_Seek(b *testing.B) {
-	base := int64(21421948021)
-	offset := int64(-351354365326)
-	increment := int64(3)
-	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := autoid.CalcSequenceBatchSize(base, 3, increment, offset, math.MinInt64, math.MaxInt64)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
 }
 
 func TestSequenceAutoid(t *testing.T) {
@@ -767,93 +531,6 @@ func TestSequenceAutoid(t *testing.T) {
 	_, ok = autoid.SeekToFirstSequenceValue(base, seq.Increment, offset, base, end)
 	// the cache is already empty.
 	require.False(t, ok)
-}
-
-func TestConcurrentAllocSequence(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
-	}()
-
-	var seq *model.SequenceInfo
-	var sequenceBase int64
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		err1 := m.CreateDatabase(&model.DBInfo{ID: 2, Name: model.NewCIStr("a")})
-		require.NoError(t, err1)
-		seq = &model.SequenceInfo{
-			Start:      100,
-			Cycle:      false,
-			Cache:      true,
-			MinValue:   -100,
-			MaxValue:   100,
-			Increment:  -2,
-			CacheValue: 3,
-		}
-		seqTable := &model.TableInfo{
-			ID:       2,
-			Name:     model.NewCIStr("seq"),
-			Sequence: seq,
-		}
-		if seq.Increment >= 0 {
-			sequenceBase = seq.Start - 1
-		} else {
-			sequenceBase = seq.Start + 1
-		}
-		err1 = m.CreateSequenceAndSetSeqValue(2, seqTable, sequenceBase)
-		require.NoError(t, err1)
-		return nil
-	})
-	require.NoError(t, err)
-
-	var mu sync.Mutex
-	wg := sync.WaitGroup{}
-	m := map[int64]struct{}{}
-	count := 10
-	errCh := make(chan error, count)
-
-	allocSequence := func() {
-		alloc := autoid.NewSequenceAllocator(store, 2, seq)
-		for j := 0; j < 3; j++ {
-			base, end, _, err1 := alloc.AllocSeqCache(2)
-			if err1 != nil {
-				errCh <- err1
-				break
-			}
-
-			errFlag := false
-			mu.Lock()
-			// sequence is negative-growth here.
-			for i := base - 1; i >= end; i-- {
-				if _, ok := m[i]; ok {
-					errCh <- fmt.Errorf("duplicate id:%v", i)
-					errFlag = true
-					mu.Unlock()
-					break
-				}
-				m[i] = struct{}{}
-			}
-			if errFlag {
-				break
-			}
-			mu.Unlock()
-		}
-	}
-	for i := 0; i < count; i++ {
-		wg.Add(1)
-		go func(num int) {
-			time.Sleep(time.Duration(num%10) * time.Microsecond)
-			allocSequence()
-			wg.Done()
-		}(i)
-	}
-	wg.Wait()
-
-	close(errCh)
-	err = <-errCh
-	require.NoError(t, err)
 }
 
 // Fix a computation logic bug in allocator computation.
