@@ -177,9 +177,9 @@ func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, i
 func (p *LogicalJoin) GetPotentialPartitionKeys() (leftKeys, rightKeys []*property.MPPPartitionColumn) {
 	for _, expr := range p.EqualConditions {
 		_, coll := expr.CharsetAndCollation(p.ctx)
-		collateId := property.GetCollateIDByNameForPartition(coll)
-		leftKeys = append(leftKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[0].(*expression.Column), CollateId: collateId})
-		rightKeys = append(rightKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[1].(*expression.Column), CollateId: collateId})
+		collateID := property.GetCollateIDByNameForPartition(coll)
+		leftKeys = append(leftKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[0].(*expression.Column), CollateID: collateID})
+		rightKeys = append(rightKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[1].(*expression.Column), CollateID: collateID})
 	}
 	return
 }
@@ -372,6 +372,7 @@ func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
 	return groupByCols
 }
 
+// GetPotentialPartitionKeys return potential partition keys for aggregation, the potential partition keys are the group by keys
 func (la *LogicalAggregation) GetPotentialPartitionKeys() []*property.MPPPartitionColumn {
 	groupByCols := make([]*property.MPPPartitionColumn, 0, len(la.GroupByItems))
 	for _, item := range la.GroupByItems {
@@ -379,7 +380,7 @@ func (la *LogicalAggregation) GetPotentialPartitionKeys() []*property.MPPPartiti
 			_, coll := expression.DeriveCollationFromExprs(la.ctx, col)
 			groupByCols = append(groupByCols, &property.MPPPartitionColumn{
 				Col:       col,
-				CollateId: property.GetCollateIDByNameForPartition(coll),
+				CollateID: property.GetCollateIDByNameForPartition(coll),
 			})
 		}
 	}

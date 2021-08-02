@@ -717,13 +717,13 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 			cType := cTypes[i].Clone()
 			cType.Flag = lKey.Col.RetType.Flag
 			lCast := expression.BuildCastFunction(p.ctx, lKey.Col, cType)
-			lKey = &property.MPPPartitionColumn{Col: appendExpr(lProj, lCast), CollateId: lKey.CollateId}
+			lKey = &property.MPPPartitionColumn{Col: appendExpr(lProj, lCast), CollateID: lKey.CollateID}
 		}
 		if rMask[i] {
 			cType := cTypes[i].Clone()
 			cType.Flag = rKey.Col.RetType.Flag
 			rCast := expression.BuildCastFunction(p.ctx, rKey.Col, cType)
-			rKey = &property.MPPPartitionColumn{Col: appendExpr(rProj, rCast), CollateId: rKey.CollateId}
+			rKey = &property.MPPPartitionColumn{Col: appendExpr(rProj, rCast), CollateID: rKey.CollateID}
 		}
 		lPartKeys = append(lPartKeys, lKey)
 		rPartKeys = append(rPartKeys, rKey)
@@ -1932,7 +1932,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 				_, coll := expression.DeriveCollationFromExprs(p.ctx, col)
 				partitionCols = append(partitionCols, &property.MPPPartitionColumn{
 					Col:       col,
-					CollateId: property.GetCollateIDByNameForPartition(coll),
+					CollateID: property.GetCollateIDByNameForPartition(coll),
 				})
 			}
 		}

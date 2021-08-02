@@ -45,26 +45,28 @@ const (
 	HashType
 )
 
+// MPPPartitionColumn is the column that will be used in MPP Hash Exchange
 type MPPPartitionColumn struct {
 	Col       *expression.Column
-	CollateId int32
+	CollateID int32
 }
 
 func (partitionCol *MPPPartitionColumn) hashCode(ctx *stmtctx.StatementContext) []byte {
 	hashcode := partitionCol.Col.HashCode(ctx)
-	if partitionCol.CollateId < 0 {
+	if partitionCol.CollateID < 0 {
 		// collateId < 0 means new collation is not enabled
-		hashcode = codec.EncodeInt(hashcode, int64(partitionCol.CollateId))
+		hashcode = codec.EncodeInt(hashcode, int64(partitionCol.CollateID))
 	} else {
 		hashcode = codec.EncodeInt(hashcode, 1)
 	}
 	return hashcode
 }
 
+// Equal returns true if partitionCol == other
 func (partitionCol *MPPPartitionColumn) Equal(other *MPPPartitionColumn) bool {
-	if partitionCol.CollateId < 0 {
+	if partitionCol.CollateID < 0 {
 		// collateId only matters if new collation is enabled
-		if partitionCol.CollateId != other.CollateId {
+		if partitionCol.CollateID != other.CollateID {
 			return false
 		}
 	}
@@ -79,7 +81,7 @@ func ExplainColumnList(cols []*MPPPartitionColumn) []byte {
 		buffer.WriteString(col.Col.ExplainInfo())
 		buffer.WriteString(", collate: ")
 		if collate.NewCollationEnabled() {
-			buffer.WriteString(GetCollateNameByIDForPartition(col.CollateId))
+			buffer.WriteString(GetCollateNameByIDForPartition(col.CollateID))
 		} else {
 			buffer.WriteString("N/A")
 		}

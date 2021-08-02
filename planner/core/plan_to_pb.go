@@ -246,7 +246,7 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 	for _, col := range e.HashCols {
 		hashCols = append(hashCols, col.Col)
 		tp := expression.ToPBFieldType(col.Col.RetType)
-		tp.Collate = col.CollateId
+		tp.Collate = col.CollateID
 		types = append(types, tp)
 	}
 	hashColPb, err := expression.ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, hashCols, ctx.GetClient())
