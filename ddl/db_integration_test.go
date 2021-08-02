@@ -2290,6 +2290,11 @@ func (s *testSerialDBSuite1) TestAddExpressionIndex(c *C) {
 
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
+	// Issue #26371
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, primary key(a, b) clustered)")
+	tk.MustExec("alter table t1 add index idx((a+1))")
+
 	// Issue #17111
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a varchar(10), b varchar(10));")

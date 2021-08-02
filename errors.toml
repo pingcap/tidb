@@ -316,6 +316,11 @@ error = '''
 Table to exchange with partition has foreign key references: '%-.64s'
 '''
 
+["ddl:1826"]
+error = '''
+Duplicate foreign key constraint name '%s'
+'''
+
 ["ddl:1846"]
 error = '''
 %s is not supported. Reason: %s. Try %s.
@@ -464,6 +469,11 @@ Invalid placement policy '%s': %s
 ["ddl:8236"]
 error = '''
 Placement policy didn't meet the constraint, reason: %s
+'''
+
+["ddl:8237"]
+error = '''
+Invalid attributes '%s': %s
 '''
 
 ["domain:8027"]
