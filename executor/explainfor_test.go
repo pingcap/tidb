@@ -517,5 +517,15 @@ func (s *testPrepareSerialSuite) TestExpressionIndexPreparePlanCache(c *C) {
 	tkProcess := tk.Se.ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	c.Assert(tk.MustUseIndex("for connection "+strconv.FormatUint(tkProcess.ID, 10), "expression_index"), IsTrue)
+	res := tk.MustQuery("explain for connection "+strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[2][3], Matches, ".*expression_index.*")
+	c.Assert(res.Rows()[2][4], Matches, ".*[123,123].*")
+
+	tk.MustExec("set @a = 1234")
+	tk.MustExec("execute stmt using @a")
+	res = tk.MustQuery("explain for connection "+strconv.FormatUint(tkProcess.ID, 10))
+	c.Assert(len(res.Rows()), Equals, 4)
+	c.Assert(res.Rows()[2][3], Matches, ".*expression_index.*")
+	c.Assert(res.Rows()[2][4], Matches, ".*[1234,1234].*")
 }
