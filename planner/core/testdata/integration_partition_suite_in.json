@@ -1,0 +1,35 @@
+[
+  {
+    "name": "TestListPartitionPruning",
+    "cases": [
+      // in
+      "explain format = 'brief' select * from tlist where a in (2)",
+      "explain format = 'brief' select * from tlist where a in (7)",
+      "explain format = 'brief' select * from tlist where a in (0,5)",
+      // not in: not support
+      "explain format = 'brief' select * from tlist where a not in (0, 1, 2, 3, 4, 5, 6, 7, 8)",
+      // GE: not support
+      "explain format = 'brief' select * from tlist where a >= 7",
+      // LE: not support
+      "explain format = 'brief' select * from tlist where a <= 7",
+      // or
+      "explain format = 'brief' select * from tlist where a=0 or a=7",
+      "explain format = 'brief' select * from tlist where a=0 or a=1 or a=6 or a=11",
+      // and 
+      "explain format = 'brief' select * from tlist where a in (0, 1, 2) and mod(a, 2)=0",
+      "explain format = 'brief' select * from tlist where a in (0, 3, 6) and a+1>3",
+      // delete
+      "explain format = 'brief' delete from tlist where a in (2)",
+      "explain format = 'brief' delete from tlist where a in (0, 5)",
+      // update
+      "explain format = 'brief' update tlist set a=3 where a in (2)",
+      "explain format = 'brief' update tlist set a=3 where a in (0, 5)",
+      // insert
+      "explain format = 'brief' insert into tlist select * from tlist where a in (2)",
+      "explain format = 'brief' insert into tlist select * from tlist where a in (0, 5)",
+      // replace
+      "explain format = 'brief' replace tlist select * from tlist where a in (2)",
+      "explain format = 'brief' replace tlist select * from tlist where a in (0, 5)"
+    ]
+  }
+]
