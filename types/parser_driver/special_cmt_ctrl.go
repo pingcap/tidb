@@ -33,12 +33,11 @@ func BuildSpecialCommentPrefix(featureID string) string {
 	return fmt.Sprintf("%s[%s]", SpecialCommentVersionPrefix, featureID)
 }
 
-
 // FeatureIDPatterns is used to record special comments patterns.
 var FeatureIDPatterns = map[string]*regexp.Regexp{
 	tidb.FeatureIDAutoRandom:     regexp.MustCompile(`(?P<REPLACE>(?i)AUTO_RANDOM\b\s*(\s*\(\s*\d+\s*\)\s*)?)`),
 	tidb.FeatureIDAutoIDCache:    regexp.MustCompile(`(?P<REPLACE>(?i)AUTO_ID_CACHE\s*=?\s*\d+\s*)`),
 	tidb.FeatureIDAutoRandomBase: regexp.MustCompile(`(?P<REPLACE>(?i)AUTO_RANDOM_BASE\s*=?\s*\d+\s*)`),
-	tidb.FeatureIDClusteredIndex:   regexp.MustCompile(`(?i)(PRIMARY)?\s+KEY(\s*\(.*\))?\s+(?P<REPLACE>(NON)?CLUSTERED\b)`),
-	tidb.FeatureIDForceAutoInc:     regexp.MustCompile(`(?P<REPLACE>(?i)FORCE)\b\s*AUTO_INCREMENT\s*`),
+	tidb.FeatureIDClusteredIndex: regexp.MustCompile(`(?i)(PRIMARY)?\s+KEY(\s*\(.*\))?\s+(?P<REPLACE>(NON)?CLUSTERED\b)`),
+	tidb.FeatureIDForceAutoInc:   regexp.MustCompile(`(?P<REPLACE>(?i)FORCE)\b\s*AUTO_INCREMENT\s*`),
 }
