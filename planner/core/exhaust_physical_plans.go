@@ -2043,17 +2043,38 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	return ret, true, nil
 }
 
-func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
-	if lt.limitHints.preferLimitToCop {
-		if !lt.canPushToCop(kv.TiKV) {
+func pushLimitOrTopNForcibly(p LogicalPlan) bool {
+	var meetThreshold bool
+	var preferPushDown *bool
+	switch lp := p.(type) {
+	case *LogicalTopN:
+		preferPushDown = &lp.limitHints.preferLimitToCop
+		meetThreshold = lp.Count+lp.Offset <= uint64(lp.ctx.GetSessionVars().LimitPushDownThreshold)
+	case *LogicalLimit:
+		preferPushDown = &lp.limitHints.preferLimitToCop
+		meetThreshold = true // always push Limit down in this case since it has no side effect
+	default:
+		return false
+	}
+
+	if *preferPushDown || meetThreshold {
+		if p.canPushToCop(kv.TiKV) {
+			return true
+		}
+		if *preferPushDown {
 			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
 			warning := ErrInternal.GenWithStack(errMsg)
-			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-			lt.limitHints.preferLimitToCop = false
+			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+			*preferPushDown = false
 		}
 	}
+
+	return false
+}
+
+func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
-	if !lt.limitHints.preferLimitToCop {
+	if !pushLimitOrTopNForcibly(lt) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
 	if lt.ctx.GetSessionVars().IsMPPAllowed() {
@@ -2078,17 +2099,8 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 		return nil
 	}
 
-	if lt.limitHints.preferLimitToCop {
-		if !lt.canPushToCop(kv.TiKV) {
-			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
-			warning := ErrInternal.GenWithStack(errMsg)
-			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-			lt.limitHints.preferLimitToCop = false
-		}
-	}
-
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
-	if !lt.limitHints.preferLimitToCop {
+	if !pushLimitOrTopNForcibly(lt) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
@@ -2225,6 +2237,12 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 				}
 			}
 			ret = ret && validDs
+
+			_, isTopN := p.self.(*LogicalTopN)
+			_, isLimit := p.self.(*LogicalLimit)
+			if (isTopN || isLimit) && len(c.indexMergeHints) != 0 {
+				return false // TopN and Limit cannot be pushed down to IndexMerge
+			}
 		case *LogicalUnionAll:
 			if storeTp == kv.TiFlash {
 				ret = ret && c.canPushToCopImpl(storeTp, true)
@@ -2585,17 +2603,8 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 		return nil, true, nil
 	}
 
-	if p.limitHints.preferLimitToCop {
-		if !p.canPushToCop(kv.TiKV) {
-			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
-			warning := ErrInternal.GenWithStack(errMsg)
-			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-			p.limitHints.preferLimitToCop = false
-		}
-	}
-
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
-	if !p.limitHints.preferLimitToCop {
+	if !pushLimitOrTopNForcibly(p) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
 	if p.canPushToCop(kv.TiFlash) && p.ctx.GetSessionVars().IsMPPAllowed() {
