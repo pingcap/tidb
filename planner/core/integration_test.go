@@ -4084,12 +4084,6 @@ func (s *testIntegrationSerialSuite) TestCTESelfJoin(c *C) {
 
 // https://github.com/pingcap/tidb/issues/26214
 func (s *testIntegrationSerialSuite) TestIssue26214(c *C) {
-	originalVal := config.GetGlobalConfig().Experimental.AllowsExpressionIndex
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
-	defer func() {
-		config.GetGlobalConfig().Experimental.AllowsExpressionIndex = originalVal
-	}()
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
