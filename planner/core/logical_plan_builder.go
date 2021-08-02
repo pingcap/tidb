@@ -3407,6 +3407,15 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 	return &(b.tableHintInfo[len(b.tableHintInfo)-1])
 }
 
+func (b *PlanBuilder) setOrderByPKLimitNForDataSource(p LogicalPlan, sel *ast.SelectStmt) {
+	ds, ok := p.(*DataSource)
+	if !ok || sel.OrderBy == nil || sel.Limit == nil {
+		return
+	}
+
+	ds.orderByPKLimitN = true
+}
+
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
@@ -3466,6 +3475,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	if err != nil {
 		return nil, err
 	}
+	// For filling DataSource.orderByPKLimitN
+	ds, isDataSource := p.(*DataSource)
 
 	originalFields := sel.Fields.Fields
 	sel.Fields.Fields, err = b.unfoldWildStar(p, sel.Fields.Fields)
@@ -3649,6 +3660,13 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 		if err != nil {
 			return nil, err
+		}
+		if logicalSort, isSort := p.(*LogicalSort); isSort && sel.Limit != nil && isDataSource {
+			if col, isCol := logicalSort.ByItems[0].Expr.(*expression.Column); isCol && ds.handleCols.NumCols() == 1 {
+				if ds.handleCols.GetCol(0).Equal(nil, col) && sel.Limit != nil {
+					ds.orderByPKLimitN = true
+				}
+			}
 		}
 	}
 

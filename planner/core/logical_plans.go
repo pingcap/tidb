@@ -523,6 +523,8 @@ type DataSource struct {
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
 	isForUpdateRead bool
+	// orderByPKLimitN is true iff there exists `order by pk limit n` pattern.
+	orderByPKLimitN bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
