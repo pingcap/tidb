@@ -289,7 +289,7 @@ var (
 	errUnsupportedClusteredSecondaryKey = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil))
 
 	// ErrInvalidAttributesSpec is returned when meeting invalid attributes.
-	ErrInvalidAttributesSpec                   = dbterror.ClassDDL.NewStd(mysql.ErrInvalidAttributesSpec)
+	ErrInvalidAttributesSpec = dbterror.ClassDDL.NewStd(mysql.ErrInvalidAttributesSpec)
 	// ErrFunctionalIndexOnJSONOrGeometryFunction returns when creating expression index and the type of the expression is JSON.
 	ErrFunctionalIndexOnJSONOrGeometryFunction = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnJSONOrGeometryFunction)
 )
