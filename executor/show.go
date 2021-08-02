@@ -614,7 +614,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			var expression interface{}
 			if tblCol.Hidden {
 				colName = "NULL"
-				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+				expression = tblCol.GeneratedExprString
 			}
 
 			e.appendRow([]interface{}{
@@ -779,6 +779,8 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	switch tableInfo.TempTableType {
 	case model.TempTableGlobal:
 		fmt.Fprintf(buf, "CREATE GLOBAL TEMPORARY TABLE %s (\n", tableName)
+	case model.TempTableLocal:
+		fmt.Fprintf(buf, "CREATE TEMPORARY TABLE %s (\n", tableName)
 	default:
 		fmt.Fprintf(buf, "CREATE TABLE %s (\n", tableName)
 	}
