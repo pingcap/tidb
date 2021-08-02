@@ -193,7 +193,6 @@ func TestCluster(t *testing.T) {
 	if err != nil {
 		require.NoErrorf(t, err, "DDL stop failed %v")
 	}
-
 	// d3 (not owner) stop
 	cli3 := clus.Client(3)
 	ic3 := infoschema.NewCache(2)
@@ -229,7 +228,6 @@ func TestCluster(t *testing.T) {
 	if err != nil {
 		require.NoErrorf(t, err, "DDL stop failed %v")
 	}
-	time.Sleep(time.Duration(tmpTTL+1) * time.Second)
 	session, err := concurrency.NewSession(cliRW)
 	if err != nil {
 		require.NoErrorf(t, err, "new session failed %v")

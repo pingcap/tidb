@@ -84,6 +84,13 @@ func TestFailNewSession(t *testing.T) {
 			require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/owner/closeClient"))
 		}()
 		require.NoError(t, err, failpoint.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`))
+
+		// TODO: It takes more than 2s here in etcd client, the CI takes 5s to run this test.
+		// The config is hard coded, not way to control it outside.
+		// Call stack:
+		// https://github.com/etcd-io/etcd/blob/ae9734e/clientv3/concurrency/session.go#L38
+		// https://github.com/etcd-io/etcd/blob/ae9734ed278b7a1a7dfc82e800471ebbf9fce56f/clientv3/client.go#L253
+		// https://github.com/etcd-io/etcd/blob/ae9734ed278b7a1a7dfc82e800471ebbf9fce56f/clientv3/retry_interceptor.go#L63
 		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
 		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
 		require.True(t, isContextDone, "err %v", err)
@@ -102,9 +109,11 @@ func TestFailNewSession(t *testing.T) {
 			require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/owner/closeGrpc"))
 		}()
 		require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(false)`))
+
+		// TODO: It takes more than 2s here in etcd client, the CI takes 5s to run this test.
+		// The config is hard coded, not way to control it outside.
 		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
 		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
 		require.True(t, isContextDone, "err %v", err)
 	}()
-
 }
