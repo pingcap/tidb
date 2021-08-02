@@ -15,11 +15,11 @@ package txn
 
 import (
 	"github.com/pingcap/tidb/kv"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 type tikvScanner struct {
-	*tikv.Scanner
+	*txnsnapshot.Scanner
 }
 
 // Next return next element.
