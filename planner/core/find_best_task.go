@@ -655,10 +655,6 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 
 func (ds *DataSource) isPointGetConvertableSchema() bool {
 	for _, col := range ds.Columns {
-		// Do not handle generated columns.
-		if col.IsGenerated() {
-			return false
-		}
 		// Only handle tables that all columns are public.
 		if col.State != model.StatePublic {
 			return false
