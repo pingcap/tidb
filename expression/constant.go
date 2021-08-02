@@ -384,6 +384,15 @@ func (c *Constant) resolveIndices(_ *Schema) error {
 	return nil
 }
 
+// ResolveIndicesByVirtualExpr implements Expression interface.
+func (c *Constant) ResolveIndicesByVirtualExpr(_ *Schema) (Expression, bool) {
+	return c, true
+}
+
+func (c *Constant) resolveIndicesByVirtualExpr(_ *Schema) bool {
+	return true
+}
+
 // Vectorized returns if this expression supports vectorized evaluation.
 func (c *Constant) Vectorized() bool {
 	if c.DeferredExpr != nil {
