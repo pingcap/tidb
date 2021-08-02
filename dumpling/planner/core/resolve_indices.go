@@ -278,6 +278,12 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 	for i, col := range p.OutputColumns {
 		newCol, err := col.ResolveIndices(p.indexPlan.Schema())
 		if err != nil {
+			// Check if there is duplicate virtual expression column matched.
+			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(p.indexPlan.Schema())
+			if isOK {
+				p.OutputColumns[i] = newExprCol.(*expression.Column)
+				continue
+			}
 			return err
 		}
 		p.OutputColumns[i] = newCol.(*expression.Column)
@@ -346,10 +352,16 @@ func (p *PhysicalSelection) ResolveIndices() (err error) {
 	for i, expr := range p.Conditions {
 		p.Conditions[i], err = expr.ResolveIndices(p.children[0].Schema())
 		if err != nil {
+			// Check if there is duplicate virtual expression column matched.
+			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.children[0].Schema())
+			if isOk {
+				p.Conditions[i] = newCond
+				continue
+			}
 			return err
 		}
 	}
-	return
+	return nil
 }
 
 // ResolveIndices implements Plan interface.

@@ -548,6 +548,19 @@ func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.Ph
 
 func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.PhysicalProperty, isSingleScan bool) *candidatePath {
 	candidate := &candidatePath{path: path}
+	all, _ := prop.AllSameOrder()
+	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
+	// it needs not to keep order for index scan.
+	if !prop.IsEmpty() && all {
+		for i, col := range path.IdxCols {
+			if col.EqualByExprAndID(nil, prop.SortItems[0].Col) {
+				candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.SortItems)
+				break
+			} else if i >= path.EqCondCount {
+				break
+			}
+		}
+	}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
 	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
 	candidate.indexFiltersColSet = expression.ExtractColumnSet(path.IndexFilters)
@@ -1053,7 +1066,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
 	for i, indexCol := range indexCols {
 		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
-		if indexCol != nil && col.Equal(nil, indexCol) && isFullLen {
+		if indexCol != nil && col.EqualByExprAndID(nil, indexCol) && isFullLen {
 			return true
 		}
 	}
@@ -1312,7 +1325,7 @@ func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []p
 		return false
 	}
 	for i, item := range propItems {
-		if colLens[i] != types.UnspecifiedLength || !item.Col.Equal(nil, idxCols[i]) {
+		if colLens[i] != types.UnspecifiedLength || !item.Col.EqualByExprAndID(nil, idxCols[i]) {
 			return false
 		}
 	}
