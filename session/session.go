@@ -227,10 +227,6 @@ type session struct {
 	cache [1]ast.StmtNode
 
 	builtinFunctionUsage telemetry.BuiltinFunctionsUsage
-
-	debug map[string]string
-
-	cnt int
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}

@@ -309,7 +309,6 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				// while the session TxnCtx hold the new `IS`, we can substitute the outer `is` once we found the schema
 				// version difference before calling the runstmt
 				is = domain.GetDomain(sctx).InfoSchema()
-				sctx.GetSessionVars().TxnCtx.InfoSchema = is
 			}
 		}
 	}
@@ -342,6 +341,9 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// Handle the execute statement.
 	if execPlan, ok := p.(*plannercore.Execute); ok {
 		err := execPlan.OptimizePreparedPlan(ctx, sctx, is)
+		if is.SchemaMetaVersion() != sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema).SchemaMetaVersion() {
+			fmt.Println(1)
+		}
 		return p, p.OutputNames(), 0, err
 	}
 
