@@ -1854,10 +1854,10 @@ func (s *testSuite) TestIssue19836(c *C) {
 	})
 	explainResult := testkit.Rows(
 		"Limit_8 2.00 0 root  time:0s, loops:0 offset:1, count:2 N/A N/A",
-		"└─TableReader_14 3.00 0 root  time:0s, loops:0 data:Limit_13 N/A N/A",
-		"  └─Limit_13 3.00 0 cop[tikv]   offset:0, count:3 N/A N/A",
-		"    └─Selection_12 3.00 0 cop[tikv]   eq(test.t.a, 40) N/A N/A",
-		"      └─TableFullScan_11 3000.00 0 cop[tikv] table:t  keep order:false, stats:pseudo N/A N/A",
+		"└─TableReader_13 3.00 0 root  time:0s, loops:0 data:Limit_12 N/A N/A",
+		"  └─Limit_12 3.00 0 cop[tikv]   offset:0, count:3 N/A N/A",
+		"    └─Selection_11 3.00 0 cop[tikv]   eq(test.t.a, 40) N/A N/A",
+		"      └─TableFullScan_10 3000.00 0 cop[tikv] table:t  keep order:false, stats:pseudo N/A N/A",
 	)
 	tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Se.ShowProcess().ID, 10)).Check(explainResult)
 }
@@ -1889,6 +1889,24 @@ func (s *testSuite) TestReCreateBind(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t`")
 	c.Assert(rows[0][3], Equals, "using")
+}
+
+func (s *testSuite) TestExplainShowBindSQL(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key(a))")
+
+	tk.MustExec("create global binding for select * from t using select * from t use index(a)")
+	tk.MustQuery("select original_sql, bind_sql from mysql.bind_info where default_db != 'mysql'").Check(testkit.Rows(
+		"select * from `test` . `t` SELECT * FROM `test`.`t` USE INDEX (`a`)",
+	))
+
+	tk.MustExec("explain select * from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
+	tk.MustExec("explain analyze select * from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
 }
 
 func (s *testSuite) TestDMLIndexHintBind(c *C) {

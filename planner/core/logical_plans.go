@@ -460,7 +460,7 @@ type LogicalMemTable struct {
 	QueryTimeRange QueryTimeRange
 }
 
-// LogicalUnionScan is only used in non read-only txn.
+// LogicalUnionScan is used in non read-only txn or for scanning a local temporary table whose snapshot data is located in memory.
 type LogicalUnionScan struct {
 	baseLogicalPlan
 
@@ -675,6 +675,12 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 		path.EqCondCount = res.EqCondCount
 		path.EqOrInCondCount = res.EqOrInCount
 		path.IsDNFCond = res.IsDNFCond
+		path.ConstCols = make([]bool, len(path.IdxCols))
+		if res.ColumnValues != nil {
+			for i := range path.ConstCols {
+				path.ConstCols[i] = res.ColumnValues[i] != nil
+			}
+		}
 		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
 		if err != nil {
 			return false, err
@@ -854,6 +860,12 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 		path.EqCondCount = res.EqCondCount
 		path.EqOrInCondCount = res.EqOrInCount
 		path.IsDNFCond = res.IsDNFCond
+		path.ConstCols = make([]bool, len(path.IdxCols))
+		if res.ColumnValues != nil {
+			for i := range path.ConstCols {
+				path.ConstCols[i] = res.ColumnValues[i] != nil
+			}
+		}
 		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
 		if err != nil {
 			return err
@@ -1199,8 +1211,6 @@ type CTEClass struct {
 	// seedPartPhysicalPlan and recursivePartPhysicalPlan are the physical plans for the seed part and recursive part of this CTE.
 	seedPartPhysicalPlan      PhysicalPlan
 	recursivePartPhysicalPlan PhysicalPlan
-	// cteTask is the physical plan for this CTE, is a wrapper of the PhysicalCTE.
-	cteTask task
 	// storageID for this CTE.
 	IDForStorage int
 	// optFlag is the optFlag for the whole CTE.
@@ -1216,13 +1226,14 @@ type LogicalCTE struct {
 
 	cte       *CTEClass
 	cteAsName model.CIStr
+	seedStat  *property.StatsInfo
 }
 
 // LogicalCTETable is for CTE table
 type LogicalCTETable struct {
 	logicalSchemaProducer
 
-	seedPlan     LogicalPlan
+	seedStat     *property.StatsInfo
 	name         string
 	idForStorage int
 }

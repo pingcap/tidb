@@ -1071,17 +1071,21 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			}
 			continue
 		}
-		rangeVals := enumRangeValues(lowVal, highVal, rg.LowExclude, rg.HighExclude)
-		// The small range case.
-		if rangeVals != nil {
-			for _, val := range rangeVals {
-				cnt, err := c.equalRowCount(sc, val, lowEncoded, modifyCount)
-				if err != nil {
-					return 0, err
+		// In stats ver 1, we use CM Sketch to estimate row count for point condition, which is more accurate.
+		// So for the small range, we convert it to points.
+		if c.StatsVer < 2 {
+			rangeVals := enumRangeValues(lowVal, highVal, rg.LowExclude, rg.HighExclude)
+			// The small range case.
+			if rangeVals != nil {
+				for _, val := range rangeVals {
+					cnt, err := c.equalRowCount(sc, val, lowEncoded, modifyCount)
+					if err != nil {
+						return 0, err
+					}
+					rowCount += cnt
 				}
-				rowCount += cnt
+				continue
 			}
-			continue
 		}
 		// The interval case.
 		cnt := c.BetweenRowCount(sc, lowVal, highVal, lowEncoded, highEncoded)
