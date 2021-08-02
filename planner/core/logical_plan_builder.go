@@ -3416,6 +3416,27 @@ func (b *PlanBuilder) setOrderByPKLimitNForDataSource(p LogicalPlan, sel *ast.Se
 	ds.orderByPKLimitN = true
 }
 
+func checkOrderByPK(ds *DataSource, byItems []*util.ByItems) bool {
+	if ds.tableInfo.PKIsHandle && len(byItems) == 1 {
+		if col, isCol := byItems[0].Expr.(*expression.Column); isCol && col.Equal(nil, ds.getPKIsHandleCol()) {
+			return true
+		}
+		return false
+	}
+	if ds.tableInfo.IsCommonHandle && len(byItems) == len(ds.commonHandleCols) {
+		orderByPK := true
+		for i, byItem := range byItems {
+			if col, isCol := byItem.Expr.(*expression.Column); !isCol || ds.commonHandleLens[i] != types.UnspecifiedLength ||
+				!col.Equal(nil, ds.commonHandleCols[i]) || (i > 0 && byItem.Desc != byItems[i-1].Desc) {
+				orderByPK = false
+				break
+			}
+		}
+		return orderByPK
+	}
+	return false
+}
+
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
@@ -3662,11 +3683,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, err
 		}
 		if logicalSort, isSort := p.(*LogicalSort); isSort && sel.Limit != nil && isDataSource {
-			if col, isCol := logicalSort.ByItems[0].Expr.(*expression.Column); isCol && ds.handleCols.NumCols() == 1 {
-				if ds.handleCols.GetCol(0).Equal(nil, col) && sel.Limit != nil {
-					ds.orderByPKLimitN = true
-				}
-			}
+			ds.orderByPKLimitN = checkOrderByPK(ds, logicalSort.ByItems)
 		}
 	}
 
