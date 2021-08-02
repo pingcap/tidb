@@ -653,7 +653,7 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	tk.MustExec("create table tb11 (i int primary key, j int)")
 	tk.MustExec("create temporary table tb12 like tb11")
 	tk.MustQuery("show create table tb12;").Check(testkit.Rows("tb12 CREATE TEMPORARY TABLE `tb12` (\n" +
-		"`i` int(11) NOT NULL,\n  `j` int(11) DEFAULT NULL,\n  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
+		"  `i` int(11) NOT NULL,\n  `j` int(11) DEFAULT NULL,\n  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	defer tk.MustExec("drop table if exists tb11, tb12")
 	// Test from->local temporary, to->local temporary
