@@ -837,10 +837,11 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(row chunk.Row) (string, bool
 		if len(digestsStr) > errMsgMaxLength {
 			digestsStr = digestsStr[:errMsgMaxLength] + "..."
 		}
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errIncorrectArgs.GenWithStack("The argument can't be unmarshalled as JSON: '%s'", digestsStr))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errIncorrectArgs.GenWithStack("The argument can't be unmarshalled as JSON array: '%s'", digestsStr))
 		return "", true, nil
 	}
 
+	// Query the SQL Statements by digests.
 	retriever := NewSQLDigestTextRetriever()
 	for _, item := range digests {
 		if item != nil {
@@ -851,6 +852,8 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(row chunk.Row) (string, bool
 		}
 	}
 
+	// Querying may take some time and it takes a context.Context as argument, which is not available here.
+	// We simply create a context with 1s timeout here.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	err = retriever.RetrieveGlobal(ctx, b.ctx)
@@ -860,9 +863,10 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(row chunk.Row) (string, bool
 		}
 
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.GenWithStack("Retrieving statements information failed with error: %v", err))
-		return "", true, nil // TODO: Use a coded error type
+		return "", true, nil
 	}
 
+	// Collect the result.
 	result := make([]interface{}, len(digests))
 	for i, item := range digests {
 		if item == nil {
@@ -870,6 +874,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(row chunk.Row) (string, bool
 		}
 		if digest, ok := item.(string); ok {
 			if stmt, ok := retriever.SQLDigestsMap[digest]; ok && len(stmt) > 0 {
+				// Truncate too-long statements if necessary.
 				if stmtTruncateLength > 0 && int64(len(stmt)) > stmtTruncateLength {
 					stmt = stmt[:stmtTruncateLength] + "..."
 				}
