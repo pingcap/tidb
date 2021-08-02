@@ -4215,7 +4215,7 @@ func (s *testSuiteP1) TestUnionAutoSignedCast(c *C) {
 	tk.MustQuery("select id, v from t3 union select id, v from t4 order by id").
 		Check(testkit.Rows("1 -1", "2 1"))
 	tk.MustQuery("select id, v from t4 union select id, v from t3 order by id").
-		Check(testkit.Rows("1 0", "2 1"))
+		Check(testkit.Rows("1 -1", "2 1"))
 
 	tk.MustExec("drop table if exists t5,t6,t7")
 	tk.MustExec("create table t5 (id int, v bigint unsigned)")
