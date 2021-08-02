@@ -316,6 +316,11 @@ error = '''
 Table to exchange with partition has foreign key references: '%-.64s'
 '''
 
+["ddl:1826"]
+error = '''
+Duplicate foreign key constraint name '%s'
+'''
+
 ["ddl:1846"]
 error = '''
 %s is not supported. Reason: %s. Try %s.
@@ -466,6 +471,11 @@ error = '''
 Placement policy didn't meet the constraint, reason: %s
 '''
 
+["ddl:8237"]
+error = '''
+Invalid attributes '%s': %s
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -534,6 +544,11 @@ Query execution was interrupted
 ["executor:1347"]
 error = '''
 '%-.192s.%-.192s' is not %s
+'''
+
+["executor:1356"]
+error = '''
+View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
 '''
 
 ["executor:1390"]
@@ -976,6 +991,11 @@ error = '''
 EXPLAIN/SHOW can not be issued; lacking privileges for underlying table
 '''
 
+["planner:1352"]
+error = '''
+View's SELECT refers to a temporary table '%-.192s'
+'''
+
 ["planner:1356"]
 error = '''
 View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
@@ -1009,6 +1029,11 @@ Unknown EXPLAIN format name: '%s'
 ["planner:1815"]
 error = '''
 Internal : %s
+'''
+
+["planner:1836"]
+error = '''
+Running in read-only mode
 '''
 
 ["planner:3029"]

@@ -15,6 +15,7 @@ package variable
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -531,8 +532,14 @@ type SessionVars struct {
 	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	BroadcastJoinThresholdCount int64
 
+	// LimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
+	LimitPushDownThreshold int64
+
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
+
+	// EnableCorrelationAdjustment is used to indicate if correlation adjustment is enabled.
+	EnableCorrelationAdjustment bool
 
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
@@ -627,6 +634,9 @@ type SessionVars struct {
 
 	// EnableChangeMultiSchema is used to control whether to enable the multi schema change.
 	EnableChangeMultiSchema bool
+
+	// EnableAutoIncrementInGenerated is used to control whether to allow auto incremented columns in generated columns.
+	EnableAutoIncrementInGenerated bool
 
 	// EnablePointGetCache is used to cache value for point get for read only scenario.
 	EnablePointGetCache bool
@@ -741,7 +751,6 @@ type SessionVars struct {
 	PlannerSelectBlockAsName []ast.HintTable
 
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
-	// negative value means nowait, 0 means default behavior, others means actual wait time
 	LockWaitTimeout int64
 
 	// MetricSchemaStep indicates the step when query metric schema.
@@ -859,6 +868,9 @@ type SessionVars struct {
 	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
 	// It's nil if there is no local temporary table.
 	LocalTemporaryTables interface{}
+
+	// TemporaryTableData stores committed kv values for temporary table for current session.
+	TemporaryTableData kv.MemBuffer
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -1017,6 +1029,8 @@ func NewSessionVars() *SessionVars {
 		DDLReorgPriority:            kv.PriorityLow,
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
 		preferRangeScan:             DefOptPreferRangeScan,
+		EnableCorrelationAdjustment: DefOptEnableCorrelationAdjustment,
+		LimitPushDownThreshold:      DefOptLimitPushDownThreshold,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		CPUFactor:                   DefOptCPUFactor,
@@ -2198,4 +2212,41 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		}
 	}
 	return s.seekFactor
+}
+
+// GetTemporaryTableSnapshotValue get temporary table value from session
+func (s *SessionVars) GetTemporaryTableSnapshotValue(ctx context.Context, key kv.Key) ([]byte, error) {
+	memData := s.TemporaryTableData
+	if memData == nil {
+		return nil, kv.ErrNotExist
+	}
+
+	v, err := memData.Get(ctx, key)
+	if err != nil {
+		return v, err
+	}
+
+	if len(v) == 0 {
+		return nil, kv.ErrNotExist
+	}
+
+	return v, nil
+}
+
+// GetTemporaryTableTxnValue returns a kv.Getter to fetch temporary table data in txn
+func (s *SessionVars) GetTemporaryTableTxnValue(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, error) {
+	v, err := txn.GetMemBuffer().Get(ctx, key)
+	if err == nil {
+		if len(v) == 0 {
+			return nil, kv.ErrNotExist
+		}
+
+		return v, nil
+	}
+
+	if !kv.IsErrNotFound(err) {
+		return v, err
+	}
+
+	return s.GetTemporaryTableSnapshotValue(ctx, key)
 }

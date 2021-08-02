@@ -199,6 +199,8 @@ func checkEnableServerGlobalVar(name, sVal string) {
 			break
 		}
 		variable.TopSQLVariable.ReportIntervalSeconds.Store(val)
+	case variable.TiDBRestrictedReadOnly:
+		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))

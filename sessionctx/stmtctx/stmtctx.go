@@ -63,7 +63,9 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue           bool
+	IsDDLJobInQueue bool
+	// InReorgAttribute is indicated for cast function that the transition is a kind of reorg process.
+	InReorgAttribute          bool
 	InInsertStmt              bool
 	InUpdateStmt              bool
 	InDeleteStmt              bool
@@ -172,6 +174,14 @@ type StatementContext struct {
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
+
+	// cache is used to reduce object allocation.
+	cache struct {
+		execdetails.RuntimeStatsColl
+		MemTracker  memory.Tracker
+		DiskTracker disk.Tracker
+		LogOnExceed [2]memory.LogOnExceed
+	}
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -290,6 +300,18 @@ func (sc *StatementContext) SetEncodedPlan(encodedPlan string) {
 // GetPlanHint gets the hint string generated from the plan.
 func (sc *StatementContext) GetPlanHint() (string, bool) {
 	return sc.planHint, sc.planHintSet
+}
+
+// InitDiskTracker initializes the sc.DiskTracker, use cache to avoid allocation.
+func (sc *StatementContext) InitDiskTracker(label int, bytesLimit int64) {
+	memory.InitTracker(&sc.cache.DiskTracker, label, bytesLimit, &sc.cache.LogOnExceed[0])
+	sc.DiskTracker = &sc.cache.DiskTracker
+}
+
+// InitMemTracker initializes the sc.MemTracker, use cache to avoid allocation.
+func (sc *StatementContext) InitMemTracker(label int, bytesLimit int64) {
+	memory.InitTracker(&sc.cache.MemTracker, label, bytesLimit, &sc.cache.LogOnExceed[1])
+	sc.MemTracker = &sc.cache.MemTracker
 }
 
 // SetPlanHint sets the hint for the plan.

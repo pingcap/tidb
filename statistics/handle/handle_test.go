@@ -559,6 +559,23 @@ func (s *testStatsSuite) TestInitStatsVer2(c *C) {
 	h.SetLease(0)
 }
 
+func (s *testStatsSuite) TestReloadExtStatsLockRelease(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
+	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	tk.MustExec("analyze table t")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/statistics/handle/injectExtStatsLoadErr", `return("")`), IsNil)
+	err := tk.ExecToErr("admin reload stats_extended")
+	c.Assert(err.Error(), Equals, "gofail extendedStatsFromStorage error")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/handle/injectExtStatsLoadErr"), IsNil)
+	// Check the lock is released by `admin reload stats_extended` if error happens.
+	tk.MustExec("analyze table t")
+}
+
 func (s *testStatsSuite) TestLoadStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -2243,13 +2260,13 @@ func (s *statsSerialSuite) TestFeedbackWithGlobalStats(c *C) {
 
 	oriProbability := statistics.FeedbackProbability.Load()
 	oriNumber := statistics.MaxNumberOfRanges
-	oriMinLogCount := handle.MinLogScanCount
-	oriErrorRate := handle.MinLogErrorRate
+	oriMinLogCount := handle.MinLogScanCount.Load()
+	oriErrorRate := handle.MinLogErrorRate.Load()
 	defer func() {
 		statistics.FeedbackProbability.Store(oriProbability)
 		statistics.MaxNumberOfRanges = oriNumber
-		handle.MinLogScanCount = oriMinLogCount
-		handle.MinLogErrorRate = oriErrorRate
+		handle.MinLogScanCount.Store(oriMinLogCount)
+		handle.MinLogErrorRate.Store(oriErrorRate)
 	}()
 	// Case 1: You can't set tidb_analyze_version to 2 if feedback is enabled.
 	// Note: if we want to set @@tidb_partition_prune_mode = 'dynamic'. We must set tidb_analyze_version to 2 first. We have already tested this.
