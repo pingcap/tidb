@@ -18,30 +18,20 @@ import (
 	"io"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-var _ = Suite(&testFormatSuite{})
-
-type testFormatSuite struct {
-}
-
-func checkFormat(c *C, f Formatter, buf *bytes.Buffer, str, expect string) {
+func checkFormat(t *testing.T, f Formatter, buf *bytes.Buffer, str, expect string) {
 	_, err := f.Format(str, 3)
-	c.Assert(err, IsNil)
+	assert.Nil(t, err)
 	b, err := io.ReadAll(buf)
-	c.Assert(err, IsNil)
-	c.Assert(string(b), Equals, expect)
+	assert.Nil(t, err)
+	assert.Equal(t, string(b), expect)
 }
 
-func (s *testFormatSuite) TestFormat(c *C) {
-	defer testleak.AfterTest(c)()
+func TestFormat(t *testing.T) {
+	t.Parallel()
+
 	str := "abc%d%%e%i\nx\ny\n%uz\n"
 	buf := &bytes.Buffer{}
 	f := IndentFormatter(buf, "\t")
@@ -50,14 +40,14 @@ func (s *testFormatSuite) TestFormat(c *C) {
 	y
 z
 `
-	checkFormat(c, f, buf, str, expect)
+	checkFormat(t, f, buf, str, expect)
 
 	str = "abc%d%%e%i\nx\ny\n%uz\n%i\n"
 	buf = &bytes.Buffer{}
 	f = FlatFormatter(buf)
 	expect = "abc3%e x y z\n "
-	checkFormat(c, f, buf, str, expect)
+	checkFormat(t, f, buf, str, expect)
 
 	str2 := OutputFormat(`\'\000abc\n\rdef`)
-	c.Assert(str2, Equals, "\\''\\000abc\\n\\rdef")
+	assert.Equal(t, str2, "\\''\\000abc\\n\\rdef")
 }

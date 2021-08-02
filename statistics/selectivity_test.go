@@ -889,3 +889,43 @@ func (s *testStatsSuite) TestRangeStepOverflow(c *C) {
 	// Must execute successfully after loading the column stats.
 	tk.MustQuery("select * from t where col between '8499-1-23 2:14:38' and '9961-7-23 18:35:26'").Check(testkit.Rows())
 }
+
+func (s *testStatsSuite) TestSmallRangeEstimation(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int)")
+	for i := 0; i < 400; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v), (%v), (%v)", i, i, i)) // [0, 400)
+	}
+	testKit.MustExec("analyze table t with 0 topn")
+
+	h := s.do.StatsHandle()
+	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl := h.GetTableStats(table.Meta())
+	sc := &stmtctx.StatementContext{}
+	col := statsTbl.Columns[table.Meta().Columns[0].ID]
+
+	var input []struct {
+		Start int64
+		End   int64
+	}
+	var output []struct {
+		Start int64
+		End   int64
+		Count float64
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ran := range input {
+		count, err := col.GetColumnRowCount(sc, getRange(ran.Start, ran.End), statsTbl.Count, false)
+		c.Assert(err, IsNil)
+		s.testData.OnRecord(func() {
+			output[i].Start = ran.Start
+			output[i].End = ran.End
+			output[i].Count = count
+		})
+		c.Assert(math.Abs(count-output[i].Count) < eps, IsTrue, Commentf("for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count))
+	}
+}
