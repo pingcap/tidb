@@ -190,7 +190,7 @@ func main() {
 			fmt.Println("parser line error:", err)
 			os.Exit(-1)
 		}
-		if dur > 4*time.Second {
+		if dur > 5*time.Second {
 			if inAllowList(testName) {
 				continue
 			}
