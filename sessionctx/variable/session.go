@@ -1093,7 +1093,7 @@ func NewSessionVars() *SessionVars {
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
 		TMPTableSize:                DefTMPTableSize,
 		EnableGlobalTemporaryTable:  DefTiDBEnableGlobalTemporaryTable,
-		MPPStoreLastFailTime:      	 make(map[string]time.Time),
+		MPPStoreLastFailTime:        make(map[string]time.Time),
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
