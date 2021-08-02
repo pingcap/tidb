@@ -1045,7 +1045,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
-	if !ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, is.Table) {
+	if !path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
 			Columns:         ds.Columns,
@@ -1251,7 +1251,7 @@ func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSo
 	var remainedEqOrIn []expression.Expression
 	// Extract the eq/in functions of possible join key.
 	// you can see the comment of ExtractEqAndInCondition to get the meaning of the second return value.
-	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _ = ranger.ExtractEqAndInCondition(
+	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _, _ = ranger.ExtractEqAndInCondition(
 		innerPlan.ctx, innerPlan.pushedDownConds,
 		ijHelper.curNotUsedIndexCols,
 		ijHelper.curNotUsedColLens,
