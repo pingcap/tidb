@@ -259,7 +259,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
 	c.Check(col.Len(), Equals, 226)
-	count := col.equalRowCount(types.NewIntDatum(1000), false)
+	count, _ := col.equalRowCount(types.NewIntDatum(1000), false)
 	c.Check(int(count), Equals, 0)
 	count = col.lessRowCount(types.NewIntDatum(1000))
 	c.Check(int(count), Equals, 10000)
@@ -271,7 +271,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 100000)
 	count = col.greaterRowCount(types.NewIntDatum(200000000))
 	c.Check(count, Equals, 0.0)
-	count = col.equalRowCount(types.NewIntDatum(200000000), false)
+	count, _ = col.equalRowCount(types.NewIntDatum(200000000), false)
 	c.Check(count, Equals, 0.0)
 	count = col.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
 	c.Check(int(count), Equals, 4994)
@@ -327,7 +327,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
 	c.Check(int(tblCount), Equals, 100000)
-	count = col.equalRowCount(encodeKey(types.NewIntDatum(10000)), false)
+	count, _ = col.equalRowCount(encodeKey(types.NewIntDatum(10000)), false)
 	c.Check(int(count), Equals, 1)
 	count = col.lessRowCount(encodeKey(types.NewIntDatum(20000)))
 	c.Check(int(count), Equals, 19999)
@@ -344,7 +344,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
 	c.Check(int(tblCount), Equals, 100000)
-	count = col.equalRowCount(types.NewIntDatum(10000), false)
+	count, _ = col.equalRowCount(types.NewIntDatum(10000), false)
 	c.Check(int(count), Equals, 1)
 	count = col.lessRowCount(types.NewIntDatum(20000))
 	c.Check(int(count), Equals, 20000)
@@ -639,7 +639,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	tbl.Count *= 10
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 10)
+	c.Assert(int(count), Equals, 1)
 }
 
 func (s *testStatisticsSuite) TestIndexRanges(c *C) {
