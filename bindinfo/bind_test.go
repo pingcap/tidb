@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -2125,28 +2124,21 @@ func (s *testSuite) TestBindingLastUpdateTime(c *C) {
 	tk.MustExec("create global binding for select * from t0 using select * from t0 use index(a);")
 	tk.MustExec("admin reload bindings;")
 
-	rows := tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
-	updateTime := rows[0][5]
-	updateTimeVal, ok := updateTime.(string)
-	c.Assert(ok, Equals, true)
-	// The format of update time in global binding is 'xxxx-xx-xx xx:xx:xx.xxx'.
-	updateTimeStr := strings.Split(updateTimeVal, ".")
+	bindHandle := bindinfo.NewBindHandle(tk.Se)
+	err := bindHandle.Update(true)
+	c.Check(err, IsNil)
+	sql, hash := parser.NormalizeDigest("select * from test . t0")
+	bindData := bindHandle.GetBindRecord(hash.String(), sql, "test")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind := bindData.Bindings[0]
+	updateTime := bind.UpdateTime.String()
 
-	// The format of update time in stats var is 'xxxx-xx-xx xx:xx:xx'. And it will convert to 'xxxx-xx-xx xx:xx:xx.000'.
-	// So when we compare, we remove the last three digits and compare.
 	rows1 := tk.MustQuery("show status like 'last_plan_binding_update_time';").Rows()
 	updateTime1 := rows1[0][1]
-	updateTimeVal1, ok := updateTime1.(string)
-	c.Assert(ok, Equals, true)
-	updateTimeStr1 := strings.Split(updateTimeVal1, ".")
-	c.Assert(updateTimeStr1[0], Equals, updateTimeStr[0])
+	c.Assert(updateTime1, Equals, updateTime)
 
 	rows2 := tk.MustQuery("show session status like 'last_plan_binding_update_time';").Rows()
 	updateTime2 := rows2[0][1]
-	updateTimeVal2, ok := updateTime2.(string)
-	c.Assert(ok, Equals, true)
-	updateTimeStr2 := strings.Split(updateTimeVal2, ".")
-	c.Assert(updateTimeStr2[0], Equals, updateTimeStr[0])
+	c.Assert(updateTime2, Equals, updateTime)
 	tk.MustQuery(`show global status like 'last_plan_binding_update_time';`).Check(testkit.Rows())
 }
