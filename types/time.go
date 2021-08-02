@@ -1945,7 +1945,7 @@ func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, isFl
 
 	t.SetType(tp)
 	if err = t.check(sc); err != nil {
-		return t, errors.Trace(err)
+		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 	return t, nil
 }
