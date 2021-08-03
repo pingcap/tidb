@@ -852,6 +852,10 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 	pi := tbl.GetPartitionInfo()
 
 	for _, col := range tbl.Columns {
+		// Do not handle generated columns.
+		if col.IsGenerated() {
+			return nil
+		}
 		// Only handle tables that all columns are public.
 		if col.State != model.StatePublic {
 			return nil
