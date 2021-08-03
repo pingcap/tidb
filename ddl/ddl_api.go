@@ -1096,6 +1096,16 @@ func checkTooLongColumn(cols []*model.ColumnInfo) error {
 	return nil
 }
 
+func checkTooLongColumnComment(cols []*model.ColumnInfo) error {
+	for _, col := range cols {
+		colComment := col.Comment
+		if utf8.RuneCountInString(colComment) > MaxCommentLength {
+			return errTooLongFieldComment.GenWithStackByArgs(col.Name.O, MaxCommentLength)
+		}
+	}
+	return nil
+}
+
 func checkTooManyColumns(colDefs []*model.ColumnInfo) error {
 	if uint32(len(colDefs)) > atomic.LoadUint32(&config.GetGlobalConfig().TableColumnCountLimit) {
 		return errTooManyFields
@@ -1564,6 +1574,9 @@ func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 		return err
 	}
 	if err := checkTooLongColumn(tbInfo.Columns); err != nil {
+		return err
+	}
+	if err := checkTooLongColumnComment(tbInfo.Columns); err != nil {
 		return err
 	}
 	if err := checkTooManyColumns(tbInfo.Columns); err != nil {
@@ -3705,7 +3718,13 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 		return errors.Trace(err)
 	}
 	col.Comment, err = value.ToString()
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if utf8.RuneCountInString(col.Comment) > MaxCommentLength {
+		return errTooLongFieldComment.GenWithStackByArgs(col.Name.O, MaxCommentLength)
+	}
+	return nil
 }
 
 // processColumnOptions is only used in getModifiableColumnJob.

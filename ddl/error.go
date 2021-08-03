@@ -80,7 +80,10 @@ var (
 	errJSONUsedAsKey = dbterror.ClassDDL.NewStd(mysql.ErrJSONUsedAsKey)
 	// errBlobCantHaveDefault forbids to give not null default value to TEXT/BLOB/JSON.
 	errBlobCantHaveDefault = dbterror.ClassDDL.NewStd(mysql.ErrBlobCantHaveDefault)
+	// errTooLongIndexComment returns for index comment length greater than MaxCommentLength.
 	errTooLongIndexComment = dbterror.ClassDDL.NewStd(mysql.ErrTooLongIndexComment)
+	// errTooLongFieldComment returns for column comment length greater than MaxCommentLength.
+	errTooLongFieldComment = dbterror.ClassDDL.NewStd(mysql.ErrTooLongFieldComment)
 	// ErrInvalidDefaultValue returns for invalid default value for columns.
 	ErrInvalidDefaultValue = dbterror.ClassDDL.NewStd(mysql.ErrInvalidDefault)
 	// ErrGeneratedColumnRefAutoInc forbids to refer generated columns to auto-increment columns .
