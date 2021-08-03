@@ -294,7 +294,7 @@ func (e *ExchangeSenderBroadcastHT) Open(ctx context.Context) error {
 		allTypes:  e.buildTypes,
 		keyColIdx: buildKeyColIdx,
 	}
-	e.ht = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
+	e.ht = newHashRowContainerMultiple(e.ctx, int(e.buildSideEstCount), hCtx, len(e.outputs))
 	e.childResult = newFirstChunk(e)
 	htSlice, ok := e.ctx.GetSessionVars().StmtCtx.BroadcastHT.([]*HashRowContainer)
 	if !ok {

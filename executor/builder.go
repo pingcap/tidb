@@ -1280,6 +1280,9 @@ func (b *executorBuilder) getAllHashJoinsHelper(join *NonParallelHashJoinExec, a
 }
 
 func (b *executorBuilder) addExchangeBroadcast(hashJoins []*NonParallelHashJoinExec, concurrency int, execID *int) error {
+	for i, join := range hashJoins {
+		join.workerID = i
+	}
 	var exec Executor
 	exec = hashJoins[0].buildSideExec
 	broadcastSender := &ExchangeSenderBroadcastHT{

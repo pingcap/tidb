@@ -77,17 +77,23 @@ type HashRowContainer struct {
 	// hashTable stores the map of hashKey and RowPtr
 	hashTable baseHashTable
 
-	rowContainer *chunk.RowContainer
+	rowContainers []*chunk.RowContainer
 }
 
 func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext) *HashRowContainer {
+	return newHashRowContainerMultiple(sCtx, estCount, hCtx, 1)
+}
+func newHashRowContainerMultiple(sCtx sessionctx.Context, estCount int, hCtx *hashContext, rcCnt int) *HashRowContainer {
+	rowContainers := make([]*chunk.RowContainer, 0, rcCnt)
 	maxChunkSize := sCtx.GetSessionVars().MaxChunkSize
-	rc := chunk.NewRowContainer(hCtx.allTypes, maxChunkSize)
+	for i := 0; i < rcCnt; i++ {
+		rowContainers = append(rowContainers, chunk.NewRowContainer(hCtx.allTypes, maxChunkSize))
+	}
 	c := &HashRowContainer{
-		sc:           sCtx.GetSessionVars().StmtCtx,
-		hCtx:         hCtx,
-		hashTable:    newConcurrentMapHashTable(),
-		rowContainer: rc,
+		sc:            sCtx.GetSessionVars().StmtCtx,
+		hCtx:          hCtx,
+		hashTable:     newConcurrentMapHashTable(),
+		rowContainers: rowContainers,
 	}
 	return c
 }
@@ -96,6 +102,10 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
 func (c *HashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {
+	return c.GetMatchedRowsAndPtrsMultiple(probeKey, probeRow, hCtx, 0)
+}
+
+func (c *HashRowContainer) GetMatchedRowsAndPtrsMultiple(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, rcIdx int) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {
 	innerPtrs := c.hashTable.Get(probeKey)
 	if len(innerPtrs) == 0 {
 		return
@@ -104,7 +114,7 @@ func (c *HashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 	var matchedRow chunk.Row
 	matchedPtrs = make([]chunk.RowPtr, 0, len(innerPtrs))
 	for _, ptr := range innerPtrs {
-		matchedRow, err = c.rowContainer.GetRow(ptr)
+		matchedRow, err = c.rowContainers[rcIdx].GetRow(ptr)
 		if err != nil {
 			return
 		}
@@ -132,7 +142,7 @@ func (c *HashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx 
 
 // alreadySpilledSafeForTest indicates that records have spilled out into disk. It's thread-safe.
 func (c *HashRowContainer) alreadySpilledSafeForTest() bool {
-	return c.rowContainer.AlreadySpilledSafeForTest()
+	return c.rowContainers[0].AlreadySpilledSafeForTest()
 }
 
 // PutChunk puts a chunk into HashRowContainer and build hash map. It's not thread-safe.
@@ -149,10 +159,12 @@ func (c *HashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 	start := time.Now()
 	defer func() { c.stat.buildTableElapse += time.Since(start) }()
 
-	chkIdx := uint32(c.rowContainer.NumChunks())
-	err := c.rowContainer.Add(chk)
-	if err != nil {
-		return err
+	chkIdx := uint32(c.rowContainers[0].NumChunks())
+	for i := 0; i < len(c.rowContainers); i++ {
+		err := c.rowContainers[i].Add(chk)
+		if err != nil {
+			return err
+		}
 	}
 	numRows := chk.NumRows()
 	c.hCtx.initHash(numRows)
@@ -178,22 +190,22 @@ func (c *HashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 
 // NumChunks returns the number of chunks in the rowContainer
 func (c *HashRowContainer) NumChunks() int {
-	return c.rowContainer.NumChunks()
+	return c.rowContainers[0].NumChunks()
 }
 
 // NumRowsOfChunk returns the number of rows of a chunk
 func (c *HashRowContainer) NumRowsOfChunk(chkID int) int {
-	return c.rowContainer.NumRowsOfChunk(chkID)
+	return c.rowContainers[0].NumRowsOfChunk(chkID)
 }
 
 // GetChunk returns chkIdx th chunk of in memory records, only works if rowContainer is not spilled
 func (c *HashRowContainer) GetChunk(chkIdx int) (*chunk.Chunk, error) {
-	return c.rowContainer.GetChunk(chkIdx)
+	return c.rowContainers[0].GetChunk(chkIdx)
 }
 
 // GetRow returns the row the ptr pointed to in the rowContainer
 func (c *HashRowContainer) GetRow(ptr chunk.RowPtr) (chunk.Row, error) {
-	return c.rowContainer.GetRow(ptr)
+	return c.rowContainers[0].GetRow(ptr)
 }
 
 // Len returns number of records in the hash table.
@@ -202,18 +214,24 @@ func (c *HashRowContainer) Len() uint64 {
 }
 
 func (c *HashRowContainer) Close() error {
-	return c.rowContainer.Close()
+	for i := 0; i < len(c.rowContainers); i++ {
+		if err := c.rowContainers[i].Close(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetMemTracker returns the underlying memory usage tracker in HashRowContainer.
-func (c *HashRowContainer) GetMemTracker() *memory.Tracker { return c.rowContainer.GetMemTracker() }
+func (c *HashRowContainer) GetMemTracker() *memory.Tracker { return c.rowContainers[0].GetMemTracker() }
 
 // GetDiskTracker returns the underlying disk usage tracker in HashRowContainer.
-func (c *HashRowContainer) GetDiskTracker() *disk.Tracker { return c.rowContainer.GetDiskTracker() }
+func (c *HashRowContainer) GetDiskTracker() *disk.Tracker { return c.rowContainers[0].GetDiskTracker() }
 
 // ActionSpill returns a memory.ActionOnExceed for spilling over to disk.
+// TODO: check if it's ok!!!!
 func (c *HashRowContainer) ActionSpill() memory.ActionOnExceed {
-	return c.rowContainer.ActionSpill()
+	return c.rowContainers[0].ActionSpill()
 }
 
 const (

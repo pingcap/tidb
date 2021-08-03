@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
+	_ "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -53,6 +53,7 @@ type NonParallelHashJoinExec struct {
 	hCtx            *hashContext
 	selected        []bool
 	probeSideResult *chunk.Chunk
+	workerID        int
 
 	needContinueJoinRow bool
 	needContinueProbe   bool
@@ -186,7 +187,7 @@ func (e *NonParallelHashJoinExec) probeHashTable(probeChk *chunk.Chunk, startIdx
 		} else {
 			probeKey := hCtx.hashVals[i].Sum64()
 			e.probeRow = probeChk.GetRow(i)
-			buildSideRows, _, err := e.rowContainer.GetMatchedRowsAndPtrs(probeKey, e.probeRow, hCtx)
+			buildSideRows, _, err := e.rowContainer.GetMatchedRowsAndPtrsMultiple(probeKey, e.probeRow, hCtx, e.workerID)
 			if err != nil {
 				return err
 			}
@@ -973,16 +974,17 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	e.rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
 	e.rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
-	if config.GetGlobalConfig().OOMUseTmpStorage {
-		actionSpill := e.rowContainer.ActionSpill()
-		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
-			if val.(bool) {
-				actionSpill = e.rowContainer.rowContainer.ActionSpillForTest()
-				defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
-			}
-		})
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
-	}
+	// TODO: check here
+	// if config.GetGlobalConfig().OOMUseTmpStorage {
+	// 	actionSpill := e.rowContainer.ActionSpill()
+	// 	failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
+	// 		if val.(bool) {
+	// 			actionSpill = e.rowContainer.rowContainer.ActionSpillForTest()
+	// 			defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
+	// 		}
+	// 	})
+	// 	e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
+	// }
 	for chk := range buildSideResultCh {
 		if e.finished.Load().(bool) {
 			return nil
