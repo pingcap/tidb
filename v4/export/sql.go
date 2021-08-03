@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-sql-driver/mysql"
+
 	tcontext "github.com/pingcap/dumpling/v4/context"
 
 	"github.com/pingcap/errors"
@@ -49,6 +51,13 @@ func ShowCreateDatabase(db *sql.Conn, database string) (string, error) {
 	}
 	query := fmt.Sprintf("SHOW CREATE DATABASE `%s`", escapeString(database))
 	err := simpleQuery(db, query, handleOneRow)
+	if mysqlErr, ok := errors.Cause(err).(*mysql.MySQLError); ok {
+		// Falling back to simple create statement for MemSQL/SingleStore, because of this:
+		// ERROR 1706 (HY000): Feature 'SHOW CREATE DATABASE' is not supported by MemSQL.
+		if mysqlErr.Number == 1706 {
+			return fmt.Sprintf("CREATE DATABASE `%s`", escapeString(database)), nil
+		}
+	}
 	if err != nil {
 		return "", errors.Annotatef(err, "sql: %s", query)
 	}
@@ -642,7 +651,14 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB) (*sql.Conn, erro
 	query = "START TRANSACTION /*!40108 WITH CONSISTENT SNAPSHOT */"
 	_, err = conn.ExecContext(ctx, query)
 	if err != nil {
-		return nil, errors.Annotatef(err, "sql: %s", query)
+		// Some MySQL Compatible databases like Vitess and MemSQL/SingleStore
+		// are newer than 4.1.8 (the version comment) but don't actually support
+		// `WITH CONSISTENT SNAPSHOT`. So retry without that if the statement fails.
+		query = "START TRANSACTION"
+		_, err = conn.ExecContext(ctx, query)
+		if err != nil {
+			return nil, errors.Annotatef(err, "sql: %s", query)
+		}
 	}
 	return conn, nil
 }
