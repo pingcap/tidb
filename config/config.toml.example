@@ -446,6 +446,9 @@ max-retry-count = 256
 # The max count of deadlock events that will be recorded in the information_schema.deadlocks table.
 deadlock-history-capacity = 10
 
+# Whether retryable deadlocks (in-statement deadlocks) are collected to the information_schema.deadlocks table.
+deadlock-history-collect-retryable = false
+
 [stmt-summary]
 # enable statement summary.
 enable = true
@@ -468,8 +471,6 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
-# enable creating expression index.
-allow-expression-index = false
 
 # server level isolation read by engines and labels
 [isolation-read]

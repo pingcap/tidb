@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -4357,7 +4358,7 @@ func (s *testTxnStateSerialSuite) TestBasic(c *C) {
 
 	info = tk.Se.TxnInfo()
 	c.Assert(info.CurrentSQLDigest, Equals, "")
-	c.Assert(info.State, Equals, txninfo.TxnRunningNormal)
+	c.Assert(info.State, Equals, txninfo.TxnIdle)
 	c.Assert(info.BlockStartTime.Valid, IsFalse)
 	c.Assert(info.StartTS, Equals, startTS)
 	_, beginDigest := parser.NormalizeDigest("begin pessimistic;")
@@ -4424,6 +4425,22 @@ func (s *testTxnStateSerialSuite) TestEntriesCountAndSize(c *C) {
 	tk.MustExec("commit;")
 }
 
+func (s *testTxnStateSerialSuite) TestRunning(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t(a) values (1);")
+	tk.MustExec("begin pessimistic;")
+	failpoint.Enable("github.com/pingcap/tidb/session/mockStmtSlow", "sleep(100)")
+	go func() {
+		tk.MustExec("select * from t for update;")
+		tk.MustExec("commit;")
+	}()
+	time.Sleep(20 * time.Millisecond)
+	info := tk.Se.TxnInfo()
+	c.Assert(info.State, Equals, txninfo.TxnRunning)
+	failpoint.Disable("github.com/pingcap/tidb/session/mockStmtSlow")
+}
+
 func (s *testTxnStateSerialSuite) TestBlocked(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
@@ -4454,15 +4471,13 @@ func (s *testTxnStateSerialSuite) TestCommitting(c *C) {
 		tk2.MustExec("begin pessimistic")
 		c.Assert(tk2.Se.TxnInfo(), NotNil)
 		tk2.MustExec("select * from t where a = 2 for update;")
-		c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "sleep(200)"), IsNil)
-		defer func() {
-			c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit"), IsNil)
-		}()
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "pause"), IsNil)
 		tk2.MustExec("commit;")
 		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
 	c.Assert(tk2.Se.TxnInfo().State, Equals, txninfo.TxnCommitting)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit"), IsNil)
 	tk.MustExec("commit;")
 	<-ch
 }
@@ -4475,12 +4490,12 @@ func (s *testTxnStateSerialSuite) TestRollbacking(c *C) {
 	go func() {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into t(a) values (3);")
-		failpoint.Enable("github.com/pingcap/tidb/session/mockSlowRollback", "sleep(200)")
-		defer failpoint.Disable("github.com/pingcap/tidb/session/mockSlowRollback")
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockSlowRollback", "pause"), IsNil)
 		tk.MustExec("rollback;")
 		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockSlowRollback"), IsNil)
 	c.Assert(tk.Se.TxnInfo().State, Equals, txninfo.TxnRollingBack)
 	<-ch
 }
@@ -4979,6 +4994,99 @@ func (s *testSessionSuite) TestLocalTemporaryTableInsert(c *C) {
 	tk.MustQuery("select * from tmp1 where id=5").Check(testkit.Rows())
 }
 
+func (s *testSessionSuite) TestLocalTemporaryTableDelete(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("use test")
+
+	tk.MustExec("create temporary table tmp1 (id int primary key, u int unique, v int)")
+
+	insertRecords := func(idList []int) {
+		for _, id := range idList {
+			tk.MustExec("insert into tmp1 values (?, ?, ?)", id, id+100, id+1000)
+		}
+	}
+
+	checkAllExistRecords := func(idList []int) {
+		sort.Ints(idList)
+		expectedResult := make([]string, 0, len(idList))
+		expectedIndexResult := make([]string, 0, len(idList))
+		for _, id := range idList {
+			expectedResult = append(expectedResult, fmt.Sprintf("%d %d %d", id, id+100, id+1000))
+			expectedIndexResult = append(expectedIndexResult, fmt.Sprintf("%d", id+100))
+		}
+		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows(expectedResult...))
+
+		// check index deleted
+		tk.MustQuery("select /*+ use_index(tmp1, u) */ u from tmp1 order by u").Check(testkit.Rows(expectedIndexResult...))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	}
+
+	assertDelete := func(sql string, deleted []int) {
+		idList := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
+
+		deletedMap := make(map[int]bool)
+		for _, id := range deleted {
+			deletedMap[id] = true
+		}
+
+		keepList := make([]int, 0)
+		for _, id := range idList {
+			if _, exist := deletedMap[id]; !exist {
+				keepList = append(keepList, id)
+			}
+		}
+
+		// delete records in txn and records are inserted in txn
+		tk.MustExec("begin")
+		insertRecords(idList)
+		tk.MustExec(sql)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		checkAllExistRecords(keepList)
+		tk.MustExec("rollback")
+		checkAllExistRecords([]int{})
+
+		// delete records out of txn
+		insertRecords(idList)
+		tk.MustExec(sql)
+		checkAllExistRecords(keepList)
+
+		// delete records in txn
+		insertRecords(deleted)
+		tk.MustExec("begin")
+		tk.MustExec(sql)
+		checkAllExistRecords(keepList)
+
+		// test rollback
+		tk.MustExec("rollback")
+		checkAllExistRecords(idList)
+
+		// test commit
+		tk.MustExec("begin")
+		tk.MustExec(sql)
+		tk.MustExec("commit")
+		checkAllExistRecords(keepList)
+
+		tk.MustExec("delete from tmp1")
+		checkAllExistRecords([]int{})
+	}
+
+	assertDelete("delete from tmp1 where id=1", []int{1})
+	assertDelete("delete from tmp1 where id in (1, 3, 5)", []int{1, 3, 5})
+	assertDelete("delete from tmp1 where u=102", []int{2})
+	assertDelete("delete from tmp1 where u in (103, 107, 108)", []int{3, 7, 8})
+	assertDelete("delete from tmp1 where id=10", []int{})
+	assertDelete("delete from tmp1 where id in (10, 12)", []int{})
+	assertDelete("delete from tmp1 where u=110", []int{})
+	assertDelete("delete from tmp1 where u in (111, 112)", []int{})
+	assertDelete("delete from tmp1 where id in (1, 11, 5)", []int{1, 5})
+	assertDelete("delete from tmp1 where u in (102, 121, 106)", []int{2, 6})
+	assertDelete("delete from tmp1 where id<3", []int{1, 2})
+	assertDelete("delete from tmp1 where u>107", []int{8, 9})
+	assertDelete("delete /*+ use_index(tmp1, u) */ from tmp1 where u>105 and u<107", []int{6})
+	assertDelete("delete from tmp1 where v>=1006 or v<=1002", []int{1, 2, 6, 7, 8, 9})
+}
+
 func (s *testSessionSuite) TestLocalTemporaryTablePointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_enable_noop_functions=1")
@@ -5148,4 +5256,194 @@ func (s *testSessionSuite) TestLocalTemporaryTableScan(c *C) {
 	assertSelectAsModified()
 	tk.MustExec("commit")
 	assertSelectAsModified()
+}
+
+func (s *testSessionSuite) TestLocalTemporaryTableUpdate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("use test")
+	tk.MustExec("create temporary table tmp1 (id int primary key, u int unique, v int)")
+
+	idList := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
+	insertRecords := func(idList []int) {
+		for _, id := range idList {
+			tk.MustExec("insert into tmp1 values (?, ?, ?)", id, id+100, id+1000)
+		}
+	}
+
+	checkNoChange := func() {
+		expect := make([]string, 0)
+		for _, id := range idList {
+			expect = append(expect, fmt.Sprintf("%d %d %d", id, id+100, id+1000))
+		}
+		tk.MustQuery("select * from tmp1").Check(testkit.Rows(expect...))
+	}
+
+	checkUpdatesAndDeletes := func(updates []string, deletes []int) {
+		modifyMap := make(map[int]string)
+		for _, m := range updates {
+			parts := strings.Split(strings.TrimSpace(m), " ")
+			c.Assert(len(parts) != 0, IsTrue)
+			id, err := strconv.Atoi(parts[0])
+			c.Assert(err, IsNil)
+			modifyMap[id] = m
+		}
+
+		for _, d := range deletes {
+			modifyMap[d] = ""
+		}
+
+		expect := make([]string, 0)
+		for _, id := range idList {
+			modify, exist := modifyMap[id]
+			if !exist {
+				expect = append(expect, fmt.Sprintf("%d %d %d", id, id+100, id+1000))
+				continue
+			}
+
+			if modify != "" {
+				expect = append(expect, modify)
+			}
+
+			delete(modifyMap, id)
+		}
+
+		otherIds := make([]int, 0)
+		for id := range modifyMap {
+			otherIds = append(otherIds, id)
+		}
+
+		sort.Ints(otherIds)
+		for _, id := range otherIds {
+			modify, exist := modifyMap[id]
+			c.Assert(exist, IsTrue)
+			expect = append(expect, modify)
+		}
+
+		tk.MustQuery("select * from tmp1").Check(testkit.Rows(expect...))
+	}
+
+	type checkSuccess struct {
+		update []string
+		delete []int
+	}
+
+	type checkError struct {
+		err error
+	}
+
+	cases := []struct {
+		sql             string
+		checkResult     interface{}
+		additionalCheck func(error)
+	}{
+		// update with point get for primary key
+		{"update tmp1 set v=999 where id=1", checkSuccess{[]string{"1 101 999"}, nil}, nil},
+		{"update tmp1 set id=12 where id=1", checkSuccess{[]string{"12 101 1001"}, []int{1}}, nil},
+		{"update tmp1 set id=1 where id=1", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set u=101 where id=1", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set v=999 where id=100", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set u=102 where id=100", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set u=21 where id=1", checkSuccess{[]string{"1 21 1001"}, nil}, func(_ error) {
+			// check index deleted
+			tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u=101").Check(testkit.Rows())
+			tk.MustQuery("show warnings").Check(testkit.Rows())
+		}},
+		{"update tmp1 set id=2 where id=1", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set u=102 where id=1", checkError{kv.ErrKeyExists}, nil},
+		// update with batch point get for primary key
+		{"update tmp1 set v=v+1000 where id in (1, 3, 5)", checkSuccess{[]string{"1 101 2001", "3 103 2003", "5 105 2005"}, nil}, nil},
+		{"update tmp1 set u=u+1 where id in (9, 100)", checkSuccess{[]string{"9 110 1009"}, nil}, nil},
+		{"update tmp1 set u=101 where id in (100, 101)", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set id=id+1 where id in (8, 9)", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set u=u+1 where id in (8, 9)", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set id=id+20 where id in (1, 3, 5)", checkSuccess{[]string{"21 101 1001", "23 103 1003", "25 105 1005"}, []int{1, 3, 5}}, nil},
+		{"update tmp1 set u=u+100 where id in (1, 3, 5)", checkSuccess{[]string{"1 201 1001", "3 203 1003", "5 205 1005"}, nil}, func(_ error) {
+			// check index deleted
+			tk.MustQuery("select /*+ use_index(tmp1, u) */ * from tmp1 where u in (101, 103, 105)").Check(testkit.Rows())
+			tk.MustQuery("show warnings").Check(testkit.Rows())
+		}},
+		// update with point get for unique key
+		{"update tmp1 set v=888 where u=101", checkSuccess{[]string{"1 101 888"}, nil}, nil},
+		{"update tmp1 set id=21 where u=101", checkSuccess{[]string{"21 101 1001"}, []int{1}}, nil},
+		{"update tmp1 set v=888 where u=201", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set u=201 where u=101", checkSuccess{[]string{"1 201 1001"}, nil}, nil},
+		{"update tmp1 set id=2 where u=101", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set u=102 where u=101", checkError{kv.ErrKeyExists}, nil},
+		// update with batch point get for unique key
+		{"update tmp1 set v=v+1000 where u in (101, 103)", checkSuccess{[]string{"1 101 2001", "3 103 2003"}, nil}, nil},
+		{"update tmp1 set v=v+1000 where u in (201, 203)", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set v=v+1000 where u in (101, 110)", checkSuccess{[]string{"1 101 2001"}, nil}, nil},
+		{"update tmp1 set id=id+1 where u in (108, 109)", checkError{kv.ErrKeyExists}, nil},
+		// update with table scan and index scan
+		{"update tmp1 set v=v+1000 where id<3", checkSuccess{[]string{"1 101 2001", "2 102 2002"}, nil}, nil},
+		{"update /*+ use_index(tmp1, u) */ tmp1 set v=v+1000 where u>107", checkSuccess{[]string{"8 108 2008", "9 109 2009"}, nil}, nil},
+		{"update tmp1 set v=v+1000 where v>=1007 or v<=1002", checkSuccess{[]string{"1 101 2001", "2 102 2002", "7 107 2007", "8 108 2008", "9 109 2009"}, nil}, nil},
+		{"update tmp1 set v=v+1000 where id>=10", checkSuccess{nil, nil}, nil},
+		{"update tmp1 set id=id+1 where id>7", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set id=id+1 where id>8", checkSuccess{[]string{"10 109 1009"}, []int{9}}, nil},
+		{"update tmp1 set u=u+1 where u>107", checkError{kv.ErrKeyExists}, nil},
+		{"update tmp1 set u=u+1 where u>108", checkSuccess{[]string{"9 110 1009"}, nil}, nil},
+		{"update /*+ use_index(tmp1, u) */ tmp1 set v=v+1000 where u>108 or u<102", checkSuccess{[]string{"1 101 2001", "9 109 2009"}, nil}, nil},
+	}
+
+	executeSQL := func(sql string, checkResult interface{}, additionalCheck func(error)) (err error) {
+		switch check := checkResult.(type) {
+		case checkSuccess:
+			tk.MustExec(sql)
+			tk.MustQuery("show warnings").Check(testkit.Rows())
+			checkUpdatesAndDeletes(check.update, check.delete)
+		case checkError:
+			err = tk.ExecToErr(sql)
+			c.Assert(err, NotNil)
+			expectedErr, _ := check.err.(*terror.Error)
+			c.Assert(expectedErr.Equal(err), IsTrue)
+			checkNoChange()
+		default:
+			c.Fail()
+		}
+
+		if additionalCheck != nil {
+			additionalCheck(err)
+		}
+		return
+	}
+
+	for _, sqlCase := range cases {
+		// update records in txn and records are inserted in txn
+		tk.MustExec("begin")
+		insertRecords(idList)
+		_ = executeSQL(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
+		tk.MustExec("rollback")
+		tk.MustQuery("select * from tmp1").Check(testkit.Rows())
+
+		// update records out of txn
+		insertRecords(idList)
+		_ = executeSQL(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
+		tk.MustExec("delete from tmp1")
+
+		// update records in txn and rollback
+		insertRecords(idList)
+		tk.MustExec("begin")
+		_ = executeSQL(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
+		tk.MustExec("rollback")
+		// rollback left records unmodified
+		checkNoChange()
+
+		// update records in txn and commit
+		tk.MustExec("begin")
+		err := executeSQL(sqlCase.sql, sqlCase.checkResult, sqlCase.additionalCheck)
+		tk.MustExec("commit")
+		if err != nil {
+			checkNoChange()
+		} else {
+			r, _ := sqlCase.checkResult.(checkSuccess)
+			checkUpdatesAndDeletes(r.update, r.delete)
+		}
+		if sqlCase.additionalCheck != nil {
+			sqlCase.additionalCheck(err)
+		}
+		tk.MustExec("delete from tmp1")
+		tk.MustQuery("select * from tmp1").Check(testkit.Rows())
+	}
 }
