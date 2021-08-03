@@ -10006,10 +10006,10 @@ func (s *testIntegrationSuite) TestTimestampIssue25093(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(col decimal(45,8) default 13.654 not null);")
 	tk.MustExec("insert  into t set col = 0.4352;")
-	tk.MustQuery("select timestamp(0.123)").Check(testkit.Rows("2000-00-00 00:00:00.123"))
-	tk.MustQuery("select timestamp(col) from t;").Check(testkit.Rows("2000-00-00 00:00:00.435200"))
+	tk.MustQuery("select timestamp(0.123)").Check(testkit.Rows("0000-00-00 00:00:00.123"))
+	tk.MustQuery("select timestamp(col) from t;").Check(testkit.Rows("0000-00-00 00:00:00.435200"))
 	tk.MustQuery("select timestamp(1.234) from t;").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select timestamp(0.12345678) from t;").Check(testkit.Rows("2000-00-00 00:00:00.123457"))
+	tk.MustQuery("select timestamp(0.12345678) from t;").Check(testkit.Rows("0000-00-00 00:00:00.123457"))
 	tk.MustQuery("select timestamp(0.9999999) from t;").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select timestamp(101.234) from t;").Check(testkit.Rows("2000-01-01 00:00:00.000"))
 }

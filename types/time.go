@@ -1131,10 +1131,10 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 		return ZeroDatetime, errors.Trace(err)
 	}
 
-	// If str is sepereated by delimiters, the first one is year, and if the year is 2 digit,
+	// If str is sepereated by delimiters, the first one is year, and if the year is 1/2 digit,
 	// we should adjust it.
 	// TODO: adjust year is very complex, now we only consider the simplest way.
-	if len(seps[0]) <= 2 {
+	if len(seps[0]) <= 2 && !isFloat {
 		if year == 0 && month == 0 && day == 0 && hour == 0 && minute == 0 && second == 0 && fracStr == "" {
 			// Skip a special case "00-00-00".
 		} else {
