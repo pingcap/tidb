@@ -96,6 +96,11 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 // Preprocess resolves table names of the node, and checks some statements validation.
 // preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
 func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
+	_, err := PreprocessReturnStmtType(ctx, node, preprocessOpt)
+	return err
+}
+
+func PreprocessReturnStmtType(ctx sessionctx.Context, node ast.Node, preprocessOpt []PreprocessOpt) (byte, error) {
 	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0), withName: make(map[string]interface{})}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
@@ -107,7 +112,7 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
-	return errors.Trace(v.err)
+	return v.stmtTp, errors.Trace(v.err)
 }
 
 type preprocessorFlag uint8
@@ -280,6 +285,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		for _, cte := range node.CTEs {
 			p.withName[cte.Name.L] = struct{}{}
 		}
+	case *ast.ExecuteStmt:
+		p.stmtTp = TypeExecute
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -327,6 +334,8 @@ const (
 	TypeRepair
 	// TypeShow for ShowStmt
 	TypeShow
+	// TypeExecute for ExecuteStmt
+	TypeExecute
 )
 
 func bindableStmtType(node ast.StmtNode) byte {

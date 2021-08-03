@@ -16,6 +16,7 @@ package session_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/domain"
 	"strconv"
 	"strings"
 	"sync"

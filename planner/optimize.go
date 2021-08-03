@@ -76,6 +76,22 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	return ast.IsReadOnly(node)
 }
 
+func IsExecuteForUpdateRead(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema {
+	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
+		vars := sctx.GetSessionVars()
+		execID := execStmt.ExecID
+		if execStmt.Name != "" {
+			execID = vars.PreparedStmtNameToID[execStmt.Name]
+		}
+		if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
+			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
+				return domain.GetDomain(sctx).InfoSchema()
+			}
+		}
+	}
+	return nil
+}
+
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
