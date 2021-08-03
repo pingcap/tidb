@@ -113,7 +113,7 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionOrderLimit(c *C) 
 		if vals != "" {
 			vals += ", "
 		}
-		vals += fmt.Sprintf("(%v, %v)", i+rand.Intn(2), i+rand.Intn(2))
+		vals += fmt.Sprintf("(%v, %v)", i*2+rand.Intn(2), i*2+rand.Intn(2))
 	}
 	tk.MustExec(`insert into tlist values ` + vals)
 	tk.MustExec(`insert into tnormal values ` + vals)
