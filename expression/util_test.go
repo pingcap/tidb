@@ -588,22 +588,24 @@ func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.Bin
 func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return types.Datum{}, m.err
 }
-func (m *MockExpr) GetType() *types.FieldType                         { return m.t }
-func (m *MockExpr) Clone() Expression                                 { return nil }
-func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool   { return false }
-func (m *MockExpr) IsCorrelated() bool                                { return false }
-func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool        { return false }
-func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
-func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
-func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
-func (m *MockExpr) ExplainInfo() string                               { return "" }
-func (m *MockExpr) ExplainNormalizedInfo() string                     { return "" }
-func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte      { return nil }
-func (m *MockExpr) Vectorized() bool                                  { return false }
-func (m *MockExpr) SupportReverseEval() bool                          { return false }
-func (m *MockExpr) HasCoercibility() bool                             { return false }
-func (m *MockExpr) Coercibility() Coercibility                        { return 0 }
-func (m *MockExpr) SetCoercibility(Coercibility)                      {}
+func (m *MockExpr) GetType() *types.FieldType                                     { return m.t }
+func (m *MockExpr) Clone() Expression                                             { return nil }
+func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool               { return false }
+func (m *MockExpr) IsCorrelated() bool                                            { return false }
+func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool                    { return false }
+func (m *MockExpr) Decorrelate(schema *Schema) Expression                         { return m }
+func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error)             { return m, nil }
+func (m *MockExpr) resolveIndices(schema *Schema) error                           { return nil }
+func (m *MockExpr) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) { return m, true }
+func (m *MockExpr) resolveIndicesByVirtualExpr(schema *Schema) bool               { return true }
+func (m *MockExpr) ExplainInfo() string                                           { return "" }
+func (m *MockExpr) ExplainNormalizedInfo() string                                 { return "" }
+func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte                  { return nil }
+func (m *MockExpr) Vectorized() bool                                              { return false }
+func (m *MockExpr) SupportReverseEval() bool                                      { return false }
+func (m *MockExpr) HasCoercibility() bool                                         { return false }
+func (m *MockExpr) Coercibility() Coercibility                                    { return 0 }
+func (m *MockExpr) SetCoercibility(Coercibility)                                  {}
 
 func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
 	return "", ""
