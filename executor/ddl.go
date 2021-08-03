@@ -831,9 +831,6 @@ func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
 }
 
 func (e *DDLExec) executeRepairTable(s *ast.RepairTableStmt) error {
-	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
-		return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ADMIN REPAIR TABLE")
-	}
 	return domain.GetDomain(e.ctx).DDL().RepairTable(e.ctx, s.Table, s.CreateStmt)
 }
 
