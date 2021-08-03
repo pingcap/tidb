@@ -351,11 +351,6 @@ error = '''
 A primary key index cannot be invisible
 '''
 
-["ddl:3753"]
-error = '''
-Cannot create an expression index on a function that returns a JSON or GEOMETRY value
-'''
-
 ["ddl:3754"]
 error = '''
 Expression index '%s' cannot refer to an auto-increment column
