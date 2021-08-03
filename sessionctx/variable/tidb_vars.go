@@ -679,8 +679,8 @@ const (
 	DefTiDBPointGetCache                  = false
 	DefTiDBEnableAlterPlacement           = false
 	DefTiDBEnableAutoIncrementInGenerated = false
-	DefTiDBHashAggPartialConcurrency      = ConcurrencyUnset
-	DefTiDBHashAggFinalConcurrency        = ConcurrencyUnset
+	DefTiDBHashAggPartialConcurrency      = 1
+	DefTiDBHashAggFinalConcurrency        = 1
 	DefTiDBWindowConcurrency              = ConcurrencyUnset
 	DefTiDBMergeJoinConcurrency           = 1 // disable optimization by default
 	DefTiDBStreamAggConcurrency           = 1
