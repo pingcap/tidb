@@ -86,6 +86,8 @@ func (s *testSuite5) TestAdminCheckIndexInTemporaryMode(c *C) {
 	tk.MustExec("insert temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
 	_, err := tk.Exec("admin check table temporary_admin_test;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table").Error())
+	_, err = tk.Exec("admin check index temporary_admin_test c1;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin check index").Error())
 	tk.MustExec("drop table if exists temporary_admin_test;")
 
 	tk.MustExec("drop table if exists non_temporary_admin_test;")
