@@ -635,6 +635,9 @@ type SessionVars struct {
 	// EnableChangeMultiSchema is used to control whether to enable the multi schema change.
 	EnableChangeMultiSchema bool
 
+	// EnableAutoIncrementInGenerated is used to control whether to allow auto incremented columns in generated columns.
+	EnableAutoIncrementInGenerated bool
+
 	// EnablePointGetCache is used to cache value for point get for read only scenario.
 	EnablePointGetCache bool
 
@@ -914,6 +917,11 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
+	if s.InTxn() {
+		// UnionScan cannot get partition table IDs in dynamic-mode, this is a quick-fix for issues/26719,
+		// please see it for more details.
+		return false
+	}
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 

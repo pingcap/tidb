@@ -234,8 +234,6 @@ var (
 	ErrColumnTypeUnsupportedNextValue = dbterror.ClassDDL.NewStd(mysql.ErrColumnTypeUnsupportedNextValue)
 	// ErrAddColumnWithSequenceAsDefault is returned when the new added column with sequence's nextval as it's default value.
 	ErrAddColumnWithSequenceAsDefault = dbterror.ClassDDL.NewStd(mysql.ErrAddColumnWithSequenceAsDefault)
-	// ErrUnsupportedExpressionIndex is returned when create an expression index without allow-expression-index.
-	ErrUnsupportedExpressionIndex = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "creating expression index without allow-expression-index in config"), nil))
 	// ErrPartitionExchangePartTable is returned when exchange table partition with another table is partitioned.
 	ErrPartitionExchangePartTable = dbterror.ClassDDL.NewStd(mysql.ErrPartitionExchangePartTable)
 	// ErrTablesDifferentMetadata is returned when exchanges tables is not compatible.
@@ -287,4 +285,9 @@ var (
 	errUnsupportedOnCommitPreserve      = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support ON COMMIT PRESERVE ROWS for now", nil))
 	errUnsupportedEngineTemporary       = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("TiDB doesn't support this kind of engine for temporary table", nil))
 	errUnsupportedClusteredSecondaryKey = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("CLUSTERED/NONCLUSTERED keyword is only supported for primary key", nil))
+
+	// ErrInvalidAttributesSpec is returned when meeting invalid attributes.
+	ErrInvalidAttributesSpec = dbterror.ClassDDL.NewStd(mysql.ErrInvalidAttributesSpec)
+	// ErrFunctionalIndexOnJSONOrGeometryFunction returns when creating expression index and the type of the expression is JSON.
+	ErrFunctionalIndexOnJSONOrGeometryFunction = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnJSONOrGeometryFunction)
 )

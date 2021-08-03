@@ -1815,8 +1815,8 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 			sql: "select * from t where a = 2 and b > 10",
 			hist: "column:2 ndv:20 totColSize:20\n" +
 				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0 ndv: 0\n" +
-				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0 ndv: 0\n" +
-				"num: 5 lower_bound: 14 upper_bound: 9223372036854775807 repeats: 0 ndv: 0",
+				"num: 6 lower_bound: 7 upper_bound: 14 repeats: 0 ndv: 0\n" +
+				"num: 8 lower_bound: 14 upper_bound: 9223372036854775807 repeats: 0 ndv: 0",
 			rangeID: tblInfo.Columns[1].ID,
 			idxID:   tblInfo.Indices[0].ID,
 			eqCount: 3,
@@ -2283,4 +2283,48 @@ func (s *testSerialStatsSuite) TestAutoUpdatePartitionInDynamicOnlyMode(c *C) {
 		c.Assert(partitionStats.Count, Equals, int64(3))
 		c.Assert(partitionStats.ModifyCount, Equals, int64(0))
 	})
+}
+
+func (s *testSerialStatsSuite) TestAutoAnalyzeRatio(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	handle.AutoAnalyzeMinCnt = 0
+	defer func() {
+		handle.AutoAnalyzeMinCnt = 1000
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+
+	h := s.do.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	c.Assert(h.HandleDDLEvent(<-h.DDLEventCh()), IsNil)
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19))
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	is := s.do.InfoSchema()
+	c.Assert(h.Update(is), IsNil)
+	// To pass the stats.Pseudo check in autoAnalyzeTable
+	tk.MustExec("analyze table t")
+	tk.MustExec("explain select * from t where a = 1")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
+
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 10))
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	c.Assert(h.HandleAutoAnalyze(is), IsTrue)
+
+	tk.MustExec("delete from t limit 12")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	c.Assert(h.HandleAutoAnalyze(is), IsFalse)
+
+	tk.MustExec("delete from t limit 4")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	c.Assert(h.HandleAutoAnalyze(s.do.InfoSchema()), IsTrue)
 }
