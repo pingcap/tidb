@@ -157,7 +157,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 					Context: kvrpcpb.Context{},
 				}, 2*time.Second)
 
-				if err != nil || resp.Resp.(*mpp.IsAliveResponse).Available == false {
+				if err != nil || !resp.Resp.(*mpp.IsAliveResponse).Available {
 					logutil.BgLogger().Warn("Cannot detect store's availability", zap.String("store address", s.GetAddr()), zap.String("err message", err.Error()))
 					mu.Lock()
 					mppStoreLastFailTime[s.GetAddr()] = time.Now()
