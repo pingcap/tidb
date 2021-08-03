@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -196,10 +195,6 @@ func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx sessio
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	failpoint.Inject("sqlDigestRetrieverSkipGlobal", func() {
-		failpoint.Return(nil)
-	})
 
 	var unknownDigests []interface{}
 	for k, v := range r.SQLDigestsMap {
