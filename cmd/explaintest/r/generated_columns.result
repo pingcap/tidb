@@ -202,8 +202,7 @@ id	estRows	task	access object	operator info
 Point_Get	1.00	root	table:tu, index:uk(c)	
 EXPLAIN format = 'brief' SELECT a, c FROM tu WHERE c = 1;
 id	estRows	task	access object	operator info
-Projection	1.00	root		test.tu.a, test.tu.c
-└─Point_Get	1.00	root	table:tu, index:uk(c)	
+Point_Get	1.00	root	table:tu, index:uk(c)	
 EXPLAIN format = 'brief' SELECT * FROM tu WHERE c in(1, 2, 3);
 id	estRows	task	access object	operator info
 Batch_Point_Get	3.00	root	table:tu, index:uk(c)	keep order:false, desc:false
