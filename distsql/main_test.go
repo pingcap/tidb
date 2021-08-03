@@ -1,9 +1,10 @@
 package distsql
 
 import (
+	"testing"
+
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
-	"testing"
 )
 
 func TestMain(m *testing.M) {

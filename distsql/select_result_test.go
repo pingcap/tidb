@@ -15,7 +15,6 @@ package distsql
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
@@ -24,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestUpdateCopRuntimeStats(t *testing.T) {
