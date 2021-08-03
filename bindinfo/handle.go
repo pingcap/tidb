@@ -225,19 +225,18 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 
 	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 
-	if oldRecord != nil {
-		for _, binding := range oldRecord.Bindings {
-			updateTs := now.String()
-			if binding.BindSQL == "" {
-				_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
-					deleted, updateTs, record.OriginalSQL, updateTs)
-			} else {
-				_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %?`,
-					deleted, updateTs, record.OriginalSQL, updateTs, binding.BindSQL)
-			}
-			if err != nil {
-				return err
-			}
+	// Some bindings may be added by other servers and have not been synchronized to the cache of this server yet
+	for _, binding := range record.Bindings {
+		updateTs := now.String()
+		if binding.BindSQL == "" {
+			_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
+				deleted, updateTs, record.OriginalSQL, updateTs)
+		} else {
+			_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %?`,
+				deleted, updateTs, record.OriginalSQL, updateTs, binding.BindSQL)
+		}
+		if err != nil {
+			return err
 		}
 	}
 
