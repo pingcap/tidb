@@ -141,9 +141,9 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 				s := stores[idx]
 
 				var last time.Time
-
+				var ok bool
 				mu.Lock()
-				if last, ok := mppStoreLastFailTime[s.GetAddr()]; ok && cur.Sub(last) < 100*time.Millisecond {
+				if last, ok = mppStoreLastFailTime[s.GetAddr()]; ok && cur.Sub(last) < 100*time.Millisecond {
 					// The interval time is so short that may happen in a same query, so we needn't to check again.
 					mu.Unlock()
 					return
