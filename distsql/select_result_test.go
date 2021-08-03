@@ -15,8 +15,9 @@ package distsql
 
 import (
 	"context"
+	"github.com/stretchr/testify/require"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/copr"
@@ -25,28 +26,57 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
+func TestUpdateCopRuntimeStats(t *testing.T) {
+	t.Parallel()
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = new(stmtctx.StatementContext)
-	sr := selectResult{ctx: ctx, storeType: kv.TiKV}
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, IsNil)
-	sr.rootPlanID = 1234
-	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "a"}}, 0)
-
 	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
-	t := uint64(1)
-	sr.selectResp = &tipb.SelectResponse{
+
+	sr := selectResult{ctx: ctx, storeType: kv.TiKV, rootPlanID: 1234}
+
+	t.Run("TestNoSelectResponse", func(t *testing.T) {
+		t.Parallel()
+		sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "a"}}, 0)
+		require.Nil(t, sr.copPlanIDs)
+	})
+
+	t.Run("TestSelectResponse", func(t *testing.T) {
+		clean := sr.mockTestSelectResp()
+		defer clean()
+		sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "callee"}}, 0)
+		require.False(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(1234))
+
+		require.NotNil(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl)
+		require.Len(t, sr.selectResp.GetExecutionSummaries(), 1)
+	})
+
+	t.Run("TestSelectResponseAndCopPlanIDs", func(t *testing.T) {
+		cleanSelectResp := sr.mockTestSelectResp()
+		defer cleanSelectResp()
+
+		cleanCopPlanIDs := sr.mockTestCopPlanIDs()
+		defer cleanCopPlanIDs()
+
+		sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "callee"}}, 0)
+		require.Equal(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetOrCreateCopStats(1234, "tikv").String(), "tikv_task:{time:1ns, loops:1}")
+	})
+}
+
+func (r *selectResult) mockTestSelectResp() (f func()) {
+	i := uint64(1)
+	r.selectResp = &tipb.SelectResponse{
 		ExecutionSummaries: []*tipb.ExecutorExecutionSummary{
-			{TimeProcessedNs: &t, NumProducedRows: &t, NumIterations: &t},
+			{TimeProcessedNs: &i, NumProducedRows: &i, NumIterations: &i},
 		},
 	}
-	c.Assert(len(sr.selectResp.GetExecutionSummaries()) != len(sr.copPlanIDs), IsTrue)
-	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "callee"}}, 0)
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(1234), IsFalse)
+	return func() {
+		r.selectResp = nil
+	}
+}
 
-	sr.copPlanIDs = []int{sr.rootPlanID}
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, NotNil)
-	c.Assert(len(sr.selectResp.GetExecutionSummaries()), Equals, len(sr.copPlanIDs))
-	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "callee"}}, 0)
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetOrCreateCopStats(1234, "tikv").String(), Equals, "tikv_task:{time:1ns, loops:1}")
+func (r *selectResult) mockTestCopPlanIDs() func() {
+	r.copPlanIDs = []int{r.rootPlanID}
+	return func() {
+		r.copPlanIDs = nil
+	}
 }
