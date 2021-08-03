@@ -346,7 +346,9 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	str := casted.GetString()
 	utf8Charset := col.Charset == mysql.UTF8Charset
 	doMB4CharCheck := utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUTF8
-	if !utf8.ValidString(str) {
+	fastCheck := (col.Charset == mysql.UTF8MB4Charset) && utf8.ValidString(str)
+	if !fastCheck {
+		// The following check is slow, if we fast check success, we can avoid this.
 		for i, w := 0, 0; i < len(str); i += w {
 			runeValue, width := utf8.DecodeRuneInString(str[i:])
 			if runeValue == utf8.RuneError {

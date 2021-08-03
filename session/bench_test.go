@@ -1772,6 +1772,7 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkRangeColumnPartitionPruning,
 		BenchmarkHashPartitionPruningPointSelect,
 		BenchmarkHashPartitionPruningMultiSelect,
+		BenchmarkInsertIntoSelect,
 	}
 
 	res := make([]BenchResult, 0, len(tests))
