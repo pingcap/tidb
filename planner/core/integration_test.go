@@ -848,7 +848,7 @@ func (s *testIntegrationSerialSuite) TestMPPWithHashExchangeUnderNewCollation(c 
 	tk.MustExec("set @@session.tidb_opt_broadcast_join = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
-	tk.MustExec("set @@session.tidb_hash_exchange_with_new_collation = 0")
+	tk.MustExec("set @@session.tidb_hash_exchange_with_new_collation = 1")
 	var input []string
 	var output []struct {
 		SQL  string
