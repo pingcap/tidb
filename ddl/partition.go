@@ -1111,6 +1111,33 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
+	oldRules := make([]string, 0, len(oldIDs))
+	newRules := make([]*label.Rule, 0, len(oldIDs))
+	for _, newPartition := range newPartitions {
+		oldRules = append(oldRules, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, newPartition.Name.L))
+	}
+
+	rules, err := infosync.GetLabelRules(context.TODO(), oldRules)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to get label rules from PD")
+	}
+
+	for _, r := range rules {
+		for _, newPartition := range newPartitions {
+			if r.ID == fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, newPartition.Name.L) {
+				newRules = append(newRules, r.Clone().Reset(newPartition.ID, job.SchemaName, tblInfo.Name.L, newPartition.Name.L))
+			}
+		}
+	}
+
+	patch := label.NewRulePatch(newRules, nil)
+	err = infosync.UpdateLabelRules(context.TODO(), patch)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
+	}
+
 	newIDs := make([]int64, len(oldIDs))
 	for i := range oldIDs {
 		newIDs[i] = newPartitions[i].ID
