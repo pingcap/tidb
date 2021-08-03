@@ -549,16 +549,12 @@ func (s *Server) checkConnectionCount() error {
 }
 
 // ShowProcessList implements the SessionManager interface.
-func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
+func (s *Server) ShowProcessList(f func(*util.ProcessInfo)) {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
-		if pi := client.ctx.ShowProcess(); pi != nil {
-			rs[pi.ID] = pi
-		}
+		client.ctx.ShowProcess(f)
 	}
-	return rs
 }
 
 // ShowTxnList shows all txn info for displaying in `TIDB_TRX`
@@ -578,14 +574,13 @@ func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
 }
 
 // GetProcessInfo implements the SessionManager interface.
-func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+func (s *Server) GetProcessInfo(id uint64, f func(*util.ProcessInfo)) {
 	s.rwlock.RLock()
 	conn, ok := s.clients[id]
 	s.rwlock.RUnlock()
-	if !ok {
-		return &util.ProcessInfo{}, false
+	if ok {
+		conn.ctx.ShowProcess(f)
 	}
-	return conn.ctx.ShowProcess(), ok
 }
 
 // Kill implements the SessionManager interface.

@@ -2508,14 +2508,14 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		// In which case you require RESTRICTED_CONNECTION_ADMIN to kill connections that belong to RESTRICTED_USER_ADMIN users.
 		sm := b.ctx.GetSessionManager()
 		if sm != nil {
-			if pi, ok := sm.GetProcessInfo(raw.ConnectionID); ok {
+			sm.GetProcessInfo(raw.ConnectionID, func(pi *util2.ProcessInfo) {
 				loginUser := b.ctx.GetSessionVars().User
 				if pi.User != loginUser.Username {
 					err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
 					b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "CONNECTION_ADMIN", false, err)
 					b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_CONNECTION_ADMIN")
 				}
-			}
+			})
 		}
 	case *ast.UseStmt:
 		if raw.DBName == "" {
@@ -3863,8 +3863,11 @@ func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, explainRo
 // buildExplainFor gets *last* (maybe running or finished) query plan from connection #connection id.
 // See https://dev.mysql.com/doc/refman/8.0/en/explain-for-connection.html.
 func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, error) {
-	processInfo, ok := b.ctx.GetSessionManager().GetProcessInfo(explainFor.ConnectionID)
-	if !ok {
+	var processInfo *util2.ProcessInfo
+	b.ctx.GetSessionManager().GetProcessInfo(explainFor.ConnectionID, func(pi *util2.ProcessInfo) {
+		processInfo = pi
+	})
+	if processInfo == nil {
 		return nil, ErrNoSuchThread.GenWithStackByArgs(explainFor.ConnectionID)
 	}
 	if b.ctx.GetSessionVars() != nil && b.ctx.GetSessionVars().User != nil {

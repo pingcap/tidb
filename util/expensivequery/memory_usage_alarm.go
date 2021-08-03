@@ -161,13 +161,12 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 }
 
 func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
-	processInfo := sm.ShowProcessList()
-	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
-	for _, info := range processInfo {
+	pinfo := make([]*util.ProcessInfo, 0, 5)
+	sm.ShowProcessList(func(info *util.ProcessInfo) {
 		if len(info.Info) != 0 {
 			pinfo = append(pinfo, info)
 		}
-	}
+	})
 
 	fileName := filepath.Join(record.tmpDir, "running_sql"+record.lastCheckTime.Format(time.RFC3339))
 	record.lastLogFileName = append(record.lastLogFileName, fileName)

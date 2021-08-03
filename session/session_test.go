@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -4249,10 +4250,11 @@ func (s *testSessionSerialSuite) TestProcessInfoIssue22068(c *C) {
 		wg.Done()
 	}()
 	time.Sleep(2 * time.Second)
-	pi := tk.Se.ShowProcess()
-	c.Assert(pi, NotNil)
-	c.Assert(pi.Info, Equals, "select 1 from t where a = (select sleep(5));")
-	c.Assert(pi.Plan, IsNil)
+	tk.Se.ShowProcess(func(pi *util.ProcessInfo) {
+		c.Assert(pi, NotNil)
+		c.Assert(pi.Info, Equals, "select 1 from t where a = (select sleep(5));")
+		c.Assert(pi.Plan, IsNil)
+	})
 	wg.Wait()
 }
 

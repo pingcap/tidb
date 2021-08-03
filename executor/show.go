@@ -350,16 +350,15 @@ func (e *ShowExec) fetchShowProcessList() error {
 		}
 	}
 
-	pl := sm.ShowProcessList()
-	for _, pi := range pl {
+	sm.ShowProcessList(func(pi *util.ProcessInfo) {
 		// If you have the PROCESS privilege, you can see all threads.
 		// Otherwise, you can see only your own threads.
 		if !hasProcessPriv && pi.User != loginUser.Username {
-			continue
+			return
 		}
 		row := pi.ToRowForShow(e.Full)
 		e.appendRow(row)
-	}
+	})
 	return nil
 }
 

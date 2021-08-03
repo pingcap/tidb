@@ -161,9 +161,9 @@ func serverStatus2Str(state uint16) string {
 // SessionManager is an interface for session manage. Show processlist and
 // kill statement rely on this interface.
 type SessionManager interface {
-	ShowProcessList() map[uint64]*ProcessInfo
+	ShowProcessList(func(*ProcessInfo))
 	ShowTxnList() []*txninfo.TxnInfo
-	GetProcessInfo(id uint64) (*ProcessInfo, bool)
+	GetProcessInfo(id uint64, f func(*ProcessInfo))
 	Kill(connectionID uint64, query bool)
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)

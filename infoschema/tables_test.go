@@ -453,13 +453,17 @@ func (sm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
 	return sm.txnInfo
 }
 
-func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
-	return sm.processInfoMap
+func (sm *mockSessionManager) ShowProcessList(f func(*util.ProcessInfo)) {
+	for _, v := range sm.processInfoMap {
+		f(v)
+	}
 }
 
-func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+func (sm *mockSessionManager) GetProcessInfo(id uint64, f func(pi *util.ProcessInfo)) {
 	rs, ok := sm.processInfoMap[id]
-	return rs, ok
+	if ok {
+		f(rs)
+	}
 }
 
 func (sm *mockSessionManager) Kill(connectionID uint64, query bool) {}

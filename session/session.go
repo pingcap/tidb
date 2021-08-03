@@ -152,7 +152,7 @@ type Session interface {
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
 	AuthWithoutVerification(user *auth.UserIdentity) bool
 	AuthPluginForUser(user *auth.UserIdentity) (string, error)
-	ShowProcess() *util.ProcessInfo
+	ShowProcess(func(*util.ProcessInfo))
 	// Return the information of the txn current running
 	TxnInfo() *txninfo.TxnInfo
 	// PrepareTxnCtx is exported for test.
@@ -191,9 +191,12 @@ func (h *StmtHistory) Count() int {
 }
 
 type session struct {
-	// processInfo is used by ShowProcess(), and should be modified atomically.
-	processInfo atomic.Value
-	txn         LazyTxn
+	// processInfo is used by ShowProcess(), and should be protected by lock.
+	processInfo struct {
+		sync.RWMutex
+		util.ProcessInfo
+	}
+	txn LazyTxn
 
 	mu struct {
 		sync.RWMutex
@@ -466,10 +469,11 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 		return nil
 	}
 
-	processInfo := s.ShowProcess()
-	txnInfo.ConnectionID = processInfo.ID
-	txnInfo.Username = processInfo.User
-	txnInfo.CurrentDB = processInfo.DB
+	s.processInfo.RLock()
+	txnInfo.ConnectionID = s.processInfo.ID
+	txnInfo.Username = s.processInfo.User
+	txnInfo.CurrentDB = s.processInfo.DB
+	s.processInfo.RUnlock()
 
 	return &txnInfo
 }
@@ -1310,22 +1314,26 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		MaxExecutionTime: maxExecutionTime,
 		RedactSQL:        s.sessionVars.EnableRedactLog,
 	}
-	oldPi := s.ShowProcess()
+	_, digest := s.sessionVars.StmtCtx.SQLDigest()
+	pi.Digest = digest.String()
+
+	s.processInfo.Lock()
+	defer s.processInfo.Unlock()
+
+	oldPi := &s.processInfo.ProcessInfo
 	if p == nil {
 		// Store the last valid plan when the current plan is nil.
 		// This is for `explain for connection` statement has the ability to query the last valid plan.
-		if oldPi != nil && oldPi.Plan != nil && len(oldPi.PlanExplainRows) > 0 {
+		if oldPi.Plan != nil && len(oldPi.PlanExplainRows) > 0 {
 			pi.Plan = oldPi.Plan
 			pi.PlanExplainRows = oldPi.PlanExplainRows
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
 		}
 	}
 	// We set process info before building plan, so we extended execution time.
-	if oldPi != nil && oldPi.Info == pi.Info {
+	if oldPi.Info == pi.Info {
 		pi.Time = oldPi.Time
 	}
-	_, digest := s.sessionVars.StmtCtx.SQLDigest()
-	pi.Digest = digest.String()
 	// DO NOT reset the currentPlan to nil until this query finishes execution, otherwise reentrant calls
 	// of SetProcessInfo would override Plan and PlanExplainRows to nil.
 	if command == mysql.ComSleep {
@@ -1335,7 +1343,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		pi.User = s.sessionVars.User.Username
 		pi.Host = s.sessionVars.User.Hostname
 	}
-	s.processInfo.Store(&pi)
+
+	s.processInfo.ProcessInfo = pi
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
@@ -2886,13 +2895,10 @@ func (s *session) GetStore() kv.Storage {
 	return s.store
 }
 
-func (s *session) ShowProcess() *util.ProcessInfo {
-	var pi *util.ProcessInfo
-	tmp := s.processInfo.Load()
-	if tmp != nil {
-		pi = tmp.(*util.ProcessInfo)
-	}
-	return pi
+func (s *session) ShowProcess(f func(*util.ProcessInfo)) {
+	s.processInfo.RLock()
+	defer s.processInfo.RUnlock()
+	f(&s.processInfo.ProcessInfo)
 }
 
 // logStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc and normal SQL

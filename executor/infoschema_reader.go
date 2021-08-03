@@ -1221,20 +1221,18 @@ func (e *memtableRetriever) setDataForProcessList(ctx sessionctx.Context) {
 
 	loginUser := ctx.GetSessionVars().User
 	hasProcessPriv := hasPriv(ctx, mysql.ProcessPriv)
-	pl := sm.ShowProcessList()
-
-	records := make([][]types.Datum, 0, len(pl))
-	for _, pi := range pl {
+	records := make([][]types.Datum, 0, 10)
+	sm.ShowProcessList(func(pi *util.ProcessInfo) {
 		// If you have the PROCESS privilege, you can see all threads.
 		// Otherwise, you can see only your own threads.
 		if !hasProcessPriv && loginUser != nil && pi.User != loginUser.Username {
-			continue
+			return
 		}
 
 		rows := pi.ToRow(ctx.GetSessionVars().StmtCtx.TimeZone)
 		record := types.MakeDatums(rows...)
 		records = append(records, record)
-	}
+	})
 	e.rows = records
 }
 

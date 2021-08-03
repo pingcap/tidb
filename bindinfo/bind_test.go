@@ -76,21 +76,18 @@ func (msm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
 	panic("unimplemented!")
 }
 
-func (msm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
-	ret := make(map[uint64]*util.ProcessInfo)
+func (msm *mockSessionManager) ShowProcessList(f func(*util.ProcessInfo)) {
 	for _, item := range msm.PS {
-		ret[item.ID] = item
+		f(item)
 	}
-	return ret
 }
 
-func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+func (msm *mockSessionManager) GetProcessInfo(id uint64, f func(*util.ProcessInfo)) {
 	for _, item := range msm.PS {
 		if item.ID == id {
-			return item, true
+			f(item)
 		}
 	}
-	return &util.ProcessInfo{}, false
 }
 
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {
@@ -1849,9 +1846,11 @@ func (s *testSuite) TestIssue19836(c *C) {
 	tk.MustExec("set @a=1;")
 	tk.MustExec("set @b=2;")
 	tk.MustExec("EXECUTE stmt USING @a, @b;")
-	tk.Se.SetSessionManager(&mockSessionManager{
-		PS: []*util.ProcessInfo{tk.Se.ShowProcess()},
+	var PS []*util.ProcessInfo
+	tk.Se.ShowProcess(func(pi *util.ProcessInfo) {
+		PS = append(PS, pi)
 	})
+	tk.Se.SetSessionManager(&mockSessionManager{PS})
 	explainResult := testkit.Rows(
 		"Limit_8 2.00 0 root  time:0s, loops:0 offset:1, count:2 N/A N/A",
 		"└─TableReader_13 3.00 0 root  time:0s, loops:0 data:Limit_12 N/A N/A",
@@ -1859,7 +1858,7 @@ func (s *testSuite) TestIssue19836(c *C) {
 		"    └─Selection_11 3.00 0 cop[tikv]   eq(test.t.a, 40) N/A N/A",
 		"      └─TableFullScan_10 3000.00 0 cop[tikv] table:t  keep order:false, stats:pseudo N/A N/A",
 	)
-	tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Se.ShowProcess().ID, 10)).Check(explainResult)
+	tk.MustQuery("explain for connection " + strconv.FormatUint(PS[0].ID, 10)).Check(explainResult)
 }
 
 func (s *testSuite) TestReCreateBind(c *C) {

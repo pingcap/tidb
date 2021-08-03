@@ -7313,11 +7313,14 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 	}
 
 	getRootStats := func() string {
-		info := tk.Se.ShowProcess()
-		c.Assert(info, NotNil)
-		p, ok := info.Plan.(plannercore.Plan)
-		c.Assert(ok, IsTrue)
-		stats := tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(p.ID())
+		var id int
+		tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+			c.Assert(info, NotNil)
+			p, ok := info.Plan.(plannercore.Plan)
+			c.Assert(ok, IsTrue)
+			id = p.ID()
+		})
+		stats := tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(id)
 		return stats.String()
 	}
 	for _, sql := range testSQLs {
@@ -8574,11 +8577,12 @@ func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
 				return
 			}
 			if expectPlanDigest == nil {
-				info := tk.Se.ShowProcess()
-				c.Assert(info, NotNil)
-				p, ok := info.Plan.(plannercore.Plan)
-				c.Assert(ok, IsTrue)
-				_, expectPlanDigest = plannercore.NormalizePlan(p)
+				tk.Se.ShowProcess(func(info *util.ProcessInfo) {
+					c.Assert(info, NotNil)
+					p, ok := info.Plan.(plannercore.Plan)
+					c.Assert(ok, IsTrue)
+					_, expectPlanDigest = plannercore.NormalizePlan(p)
+				})
 			}
 			c.Assert(sqlDigest.String(), Equals, expectSQLDigest.String(), commentf)
 			c.Assert(planDigest.String(), Equals, expectPlanDigest.String())

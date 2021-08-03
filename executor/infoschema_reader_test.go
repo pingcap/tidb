@@ -774,13 +774,17 @@ func (sm *mockSessionManager) ShowTxnList() []*txninfo.TxnInfo {
 	panic("unimplemented!")
 }
 
-func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
-	return sm.processInfoMap
+func (sm *mockSessionManager) ShowProcessList(f func(*util.ProcessInfo)) {
+	for _, item := range sm.processInfoMap {
+		f(item)
+	}
 }
 
-func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+func (sm *mockSessionManager) GetProcessInfo(id uint64, f func(*util.ProcessInfo)) {
 	rs, ok := sm.processInfoMap[id]
-	return rs, ok
+	if ok {
+		f(rs)
+	}
 }
 
 func (sm *mockSessionManager) Kill(connectionID uint64, query bool) {}

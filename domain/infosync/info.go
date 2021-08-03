@@ -551,8 +551,6 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		// Server may not start in time.
 		return
 	}
-	pl := is.manager.ShowProcessList()
-
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
@@ -563,11 +561,11 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
 
 	minStartTS := oracle.GoTimeToTS(now)
-	for _, info := range pl {
+	is.manager.ShowProcessList(func(info *util2.ProcessInfo) {
 		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
 			minStartTS = info.CurTxnStartTS
 		}
-	}
+	})
 
 	is.minStartTS = minStartTS
 	err = is.storeMinStartTS(context.Background())
