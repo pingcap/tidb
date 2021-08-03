@@ -1072,8 +1072,8 @@ func (s *testSuite) TestShowGlobalBindings(c *C) {
 	tk.MustExec("drop database if exists SPM")
 	tk.MustExec("create database SPM")
 	tk.MustExec("use SPM")
-	tk.MustExec("create table t(a int, key(a))")
-	tk.MustExec("create table t0(a int, key(a))")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("create table t0(a int, b int, key(a))")
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 0)
@@ -1097,6 +1097,19 @@ func (s *testSuite) TestShowGlobalBindings(c *C) {
 	c.Assert(rows[2][5], Equals, "2000-01-03 09:00:00.000")
 	c.Assert(rows[3][0], Equals, "select * from `spm` . `t`")
 	c.Assert(rows[3][5], Equals, "2000-01-01 09:00:00.000")
+
+	rows = tk.MustQuery("show session bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+	tk.MustExec("create session binding for select a from t using select a from t")
+	tk.MustExec("create session binding for select a from t0 using select a from t0")
+	tk.MustExec("create session binding for select b from t using select b from t")
+	tk.MustExec("create session binding for select b from t0 using select b from t0")
+	rows = tk.MustQuery("show session bindings").Rows()
+	c.Assert(len(rows), Equals, 4)
+	c.Assert(rows[0][0], Equals, "select `b` from `spm` . `t0`")
+	c.Assert(rows[1][0], Equals, "select `b` from `spm` . `t`")
+	c.Assert(rows[2][0], Equals, "select `a` from `spm` . `t0`")
+	c.Assert(rows[3][0], Equals, "select `a` from `spm` . `t`")
 }
 
 func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {
