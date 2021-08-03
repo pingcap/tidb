@@ -30,8 +30,6 @@ type Obj struct {
 }
 
 func TestPool(t *testing.T) {
-	t.Parallel()
-
 	numWorkers := runtime.GOMAXPROCS(0)
 	wg := new(sync.WaitGroup)
 	wg.Add(numWorkers)
