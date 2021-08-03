@@ -866,7 +866,6 @@ func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
 }
 
 func (s *testStaleTxnSerialSuite) TestStaleSelect(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210702")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
