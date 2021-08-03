@@ -993,46 +993,79 @@
     "Name": "TestMPPWithHashExchangeUnderNewCollation",
     "Cases": [
       {
-        "SQL": "explain format = 'brief' select * from table_1 a, table_1 b where a.id = b.id",
-        "Plan": [
-          "TableReader 2.00 root  data:ExchangeSender",
-          "└─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 2.00 cop[tiflash]  inner join, equal:[eq(test.table_1.id, test.table_1.id)]",
-          "    ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
-          "    │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_1.id, collate: binary]",
-          "    │   └─TableFullScan 2.00 cop[tiflash] table:a keep order:false",
-          "    └─ExchangeReceiver(Probe) 2.00 cop[tiflash]  ",
-          "      └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_1.id, collate: binary]",
-          "        └─TableFullScan 2.00 cop[tiflash] table:b keep order:false"
-        ]
-      },
-      {
-        "SQL": "explain format = 'brief' select /*+ agg_to_cop() */ count(*), id from table_1 group by id",
-        "Plan": [
-          "TableReader 2.00 root  data:ExchangeSender",
-          "└─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 2.00 batchCop[tiflash]  Column#4, test.table_1.id",
-          "    └─HashAgg 2.00 batchCop[tiflash]  group by:test.table_1.id, funcs:sum(Column#7)->Column#4, funcs:firstrow(test.table_1.id)->test.table_1.id",
-          "      └─ExchangeReceiver 2.00 batchCop[tiflash]  ",
-          "        └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_1.id, collate: binary]",
-          "          └─HashAgg 2.00 batchCop[tiflash]  group by:test.table_1.id, funcs:count(1)->Column#7",
-          "            └─TableFullScan 2.00 batchCop[tiflash] table:table_1 keep order:false"
-        ]
-      },
-      {
         "SQL": "explain format = 'brief' select * from table_1 a, table_1 b where a.value = b.value",
         "Plan": [
           "TableReader 2.00 root  data:ExchangeSender",
           "└─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
           "  └─HashJoin 2.00 cop[tiflash]  inner join, equal:[eq(test.table_1.value, test.table_1.value)]",
           "    ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
+          "    │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_1.value, collate: utf8mb4_general_ci]",
+          "    │   └─Selection 2.00 cop[tiflash]  not(isnull(test.table_1.value))",
+          "    │     └─TableFullScan 2.00 cop[tiflash] table:a keep order:false",
+          "    └─ExchangeReceiver(Probe) 2.00 cop[tiflash]  ",
+          "      └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_1.value, collate: utf8mb4_general_ci]",
+          "        └─Selection 2.00 cop[tiflash]  not(isnull(test.table_1.value))",
+          "          └─TableFullScan 2.00 cop[tiflash] table:b keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from table_1 a, table_2 b where a.value = b.value",
+        "Plan": [
+          "TableReader 2.00 root  data:ExchangeSender",
+          "└─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 2.00 cop[tiflash]  inner join, equal:[eq(test.table_1.value, test.table_2.value)]",
+          "    ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
           "    │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_1.value, collate: utf8mb4_bin]",
           "    │   └─Selection 2.00 cop[tiflash]  not(isnull(test.table_1.value))",
           "    │     └─TableFullScan 2.00 cop[tiflash] table:a keep order:false",
           "    └─ExchangeReceiver(Probe) 2.00 cop[tiflash]  ",
+          "      └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_2.value, collate: utf8mb4_bin]",
+          "        └─Selection 2.00 cop[tiflash]  not(isnull(test.table_2.value))",
+          "          └─TableFullScan 2.00 cop[tiflash] table:b keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from table_1 a, table_2 b, table_1 c where a.value = b.value and b.value = c.value",
+        "Plan": [
+          "TableReader 2.00 root  data:ExchangeSender",
+          "└─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 2.00 cop[tiflash]  inner join, equal:[eq(test.table_2.value, test.table_1.value)]",
+          "    ├─HashJoin(Build) 2.00 cop[tiflash]  inner join, equal:[eq(test.table_1.value, test.table_2.value)]",
+          "    │ ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
+          "    │ │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_1.value, collate: utf8mb4_bin]",
+          "    │ │   └─Selection 2.00 cop[tiflash]  not(isnull(test.table_1.value))",
+          "    │ │     └─TableFullScan 2.00 cop[tiflash] table:a keep order:false",
+          "    │ └─ExchangeReceiver(Probe) 2.00 cop[tiflash]  ",
+          "    │   └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_2.value, collate: utf8mb4_bin]",
+          "    │     └─Selection 2.00 cop[tiflash]  not(isnull(test.table_2.value))",
+          "    │       └─TableFullScan 2.00 cop[tiflash] table:b keep order:false",
+          "    └─ExchangeReceiver(Probe) 2.00 cop[tiflash]  ",
           "      └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_1.value, collate: utf8mb4_bin]",
           "        └─Selection 2.00 cop[tiflash]  not(isnull(test.table_1.value))",
-          "          └─TableFullScan 2.00 cop[tiflash] table:b keep order:false"
+          "          └─TableFullScan 2.00 cop[tiflash] table:c keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from table_1 a, table_2 b, table_1 c where a.value = b.value and a.value = c.value",
+        "Plan": [
+          "TableReader 2.00 root  data:ExchangeSender",
+          "└─ExchangeSender 2.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 2.00 cop[tiflash]  inner join, equal:[eq(test.table_1.value, test.table_1.value)]",
+          "    ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
+          "    │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_1.value, collate: utf8mb4_general_ci]",
+          "    │   └─HashJoin 2.00 cop[tiflash]  inner join, equal:[eq(test.table_1.value, test.table_2.value)]",
+          "    │     ├─ExchangeReceiver(Build) 2.00 cop[tiflash]  ",
+          "    │     │ └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_1.value, collate: utf8mb4_bin]",
+          "    │     │   └─Selection 2.00 cop[tiflash]  not(isnull(test.table_1.value))",
+          "    │     │     └─TableFullScan 2.00 cop[tiflash] table:a keep order:false",
+          "    │     └─ExchangeReceiver(Probe) 2.00 cop[tiflash]  ",
+          "    │       └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_2.value, collate: utf8mb4_bin]",
+          "    │         └─Selection 2.00 cop[tiflash]  not(isnull(test.table_2.value))",
+          "    │           └─TableFullScan 2.00 cop[tiflash] table:b keep order:false",
+          "    └─ExchangeReceiver(Probe) 2.00 cop[tiflash]  ",
+          "      └─ExchangeSender 2.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_1.value, collate: utf8mb4_general_ci]",
+          "        └─Selection 2.00 cop[tiflash]  not(isnull(test.table_1.value))",
+          "          └─TableFullScan 2.00 cop[tiflash] table:c keep order:false"
         ]
       },
       {
@@ -1043,9 +1076,22 @@
           "  └─Projection 2.00 batchCop[tiflash]  Column#4, test.table_1.value",
           "    └─HashAgg 2.00 batchCop[tiflash]  group by:test.table_1.value, funcs:sum(Column#7)->Column#4, funcs:firstrow(test.table_1.value)->test.table_1.value",
           "      └─ExchangeReceiver 2.00 batchCop[tiflash]  ",
-          "        └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_1.value, collate: utf8mb4_bin]",
+          "        └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_1.value, collate: utf8mb4_general_ci]",
           "          └─HashAgg 2.00 batchCop[tiflash]  group by:test.table_1.value, funcs:count(1)->Column#7",
           "            └─TableFullScan 2.00 batchCop[tiflash] table:table_1 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ agg_to_cop() */ count(*), value from table_2 group by value",
+        "Plan": [
+          "TableReader 2.00 root  data:ExchangeSender",
+          "└─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 2.00 batchCop[tiflash]  Column#4, test.table_2.value",
+          "    └─HashAgg 2.00 batchCop[tiflash]  group by:test.table_2.value, funcs:sum(Column#7)->Column#4, funcs:firstrow(test.table_2.value)->test.table_2.value",
+          "      └─ExchangeReceiver 2.00 batchCop[tiflash]  ",
+          "        └─ExchangeSender 2.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.table_2.value, collate: utf8mb4_bin]",
+          "          └─HashAgg 2.00 batchCop[tiflash]  group by:test.table_2.value, funcs:count(1)->Column#7",
+          "            └─TableFullScan 2.00 batchCop[tiflash] table:table_2 keep order:false"
         ]
       }
     ]
