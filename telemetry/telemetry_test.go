@@ -75,7 +75,10 @@ func TestPreview(t *testing.T) {
 	jsonParsed, err := gabs.ParseJSON([]byte(r))
 	require.NoError(t, err)
 	require.Equal(t, trackingID, jsonParsed.Path("trackingId").Data().(string))
-	require.True(t, jsonParsed.ExistsP("hostExtra.cpuFlags"))
+	// Apple M1 doesn't contain cpuFlags
+	if !(runtime.GOARCH == "arm" && runtime.GOOS == "darwin") {
+		require.True(t, jsonParsed.ExistsP("hostExtra.cpuFlags"))
+	}
 	require.True(t, jsonParsed.ExistsP("hostExtra.os"))
 	require.Len(t, jsonParsed.Path("instances").Children(), 2)
 	require.Equal(t, "tidb", jsonParsed.Path("instances.0.instanceType").Data().(string))
