@@ -21,7 +21,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type Obj struct {
@@ -30,6 +30,8 @@ type Obj struct {
 }
 
 func TestPool(t *testing.T) {
+	t.Parallel()
+
 	numWorkers := runtime.GOMAXPROCS(0)
 	wg := new(sync.WaitGroup)
 	wg.Add(numWorkers)
@@ -53,8 +55,8 @@ func TestPool(t *testing.T) {
 		putHit += slot.putHit
 		putMiss += slot.putMiss
 	}
-	assert.Greater(t, getHit, getMiss)
-	assert.Greater(t, putHit, putMiss)
+	require.Greater(t, getHit, getMiss)
+	require.Greater(t, putHit, putMiss)
 }
 
 func GetAndPut(pool *LocalPool) {
