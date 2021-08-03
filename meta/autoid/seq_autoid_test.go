@@ -29,6 +29,7 @@ import (
 )
 
 func TestSequenceAutoid(t *testing.T) {
+	t.Parallel()
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
