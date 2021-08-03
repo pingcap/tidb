@@ -14,27 +14,23 @@
 package domain
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testDomainCtxSuite{})
+func TestDomainCtx(t *testing.T) {
+	t.Parallel()
 
-type testDomainCtxSuite struct {
-}
-
-func (s *testDomainCtxSuite) TestDomain(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
-
-	c.Assert(domainKey.String(), Not(Equals), "")
+	require.NotEqual(t, "", domainKey.String())
 
 	BindDomain(ctx, nil)
 	v := GetDomain(ctx)
-	c.Assert(v, IsNil)
+	require.Nil(t, v)
 
 	ctx.ClearValue(domainKey)
 	v = GetDomain(ctx)
-	c.Assert(v, IsNil)
+	require.Nil(t, v)
 }

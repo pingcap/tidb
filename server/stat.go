@@ -52,7 +52,7 @@ func (s *Server) Stats(vars *variable.SessionVars) (map[string]interface{}, erro
 				logutil.BgLogger().Error("Failed to parse TLS certficates to get server status", zap.Error(err))
 			} else {
 				m[serverNotAfter] = pc.NotAfter.Format("Jan _2 15:04:05 2006 MST")
-				m[serverNotBefore] = pc.NotBefore.Format("Jan 2 15:04:05 2006 MST")
+				m[serverNotBefore] = pc.NotBefore.Format("Jan _2 15:04:05 2006 MST")
 			}
 		}
 	}

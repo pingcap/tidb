@@ -15,49 +15,43 @@ package domain_test
 
 import (
 	"context"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-type dbTestSuite struct{}
+func TestIntegration(t *testing.T) {
+	t.Parallel()
 
-var _ = Suite(&dbTestSuite{})
-
-func (ts *dbTestSuite) TestIntegration(c *C) {
-	testleak.BeforeTest()
-	defer testleak.AfterTest(c)()
-	var err error
 	lease := 50 * time.Millisecond
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	session.SetSchemaLease(lease)
 	domain, err := session.BootstrapSession(store)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer domain.Close()
 
 	// for NotifyUpdatePrivilege
 	createRoleSQL := `CREATE ROLE 'test'@'localhost';`
 	se, err := session.CreateSession4Test(store)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), createRoleSQL)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// for BindHandle
 	_, err = se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "drop table if exists t")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "create table t(i int, s varchar(20), index index_t(i, s))")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
-	c.Assert(err, IsNil)
-	c.Assert(err, IsNil, Commentf("err %v", err))
+	require.NoError(t, err)
 }

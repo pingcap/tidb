@@ -842,34 +842,55 @@ func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
 
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 	p.checkDropTableNames(stmt.Tables)
-	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
-	if stmt.TemporaryKeyword == ast.TemporaryLocal && !enableNoopFuncs {
+	if stmt.TemporaryKeyword != ast.TemporaryNone {
+		p.checkDropTemporaryTableGrammar(stmt)
+	}
+}
+
+func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
+	if stmt.TemporaryKeyword == ast.TemporaryLocal && !p.ctx.GetSessionVars().EnableNoopFuncs {
 		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
 		return
 	}
-	if stmt.TemporaryKeyword == ast.TemporaryNone {
-		return
-	}
+
 	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
+	nonExistsTables := make([]string, 0)
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
-		if t.Schema.String() != "" {
-			currentDB = t.Schema
+
+		schema := t.Schema
+		if schema.L == "" {
+			schema = currentDB
 		}
-		tableInfo, err := p.ensureInfoSchema().TableByName(currentDB, t.Name)
+
+		tbl, err := p.ensureInfoSchema().TableByName(schema, t.Name)
+		if infoschema.ErrTableNotExists.Equal(err) {
+			nonExistsTables = append(nonExistsTables, ast.Ident{Schema: schema, Name: t.Name}.String())
+			continue
+		}
+
 		if err != nil {
 			p.err = err
 			return
 		}
-		if tableInfo.Meta().TempTableType != model.TempTableGlobal {
+
+		tblInfo := tbl.Meta()
+		if stmt.TemporaryKeyword == ast.TemporaryGlobal && tblInfo.TempTableType != model.TempTableGlobal {
 			p.err = ErrDropTableOnTemporaryTable
 			return
 		}
+
+		if stmt.TemporaryKeyword == ast.TemporaryLocal && tblInfo.TempTableType != model.TempTableLocal {
+			nonExistsTables = append(nonExistsTables, ast.Ident{Schema: schema, Name: t.Name}.String())
+		}
 	}
 
+	if len(nonExistsTables) > 0 {
+		p.err = infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(nonExistsTables, ","))
+	}
 }
 
 func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
@@ -1567,11 +1588,11 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	p.initedLastSnapshotTS = true
 }
 
-// ensureInfoSchema get the infoschema from the preprecessor.
+// ensureInfoSchema get the infoschema from the preprocessor.
 // there some situations:
 //    - the stmt specifies the schema version.
 //    - session variable
-//    - transcation context
+//    - transaction context
 func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 	if p.InfoSchema == nil {
 		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
