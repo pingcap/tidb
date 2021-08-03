@@ -1855,10 +1855,10 @@ func (s *testSuite) TestIssue19836(c *C) {
 	})
 	explainResult := testkit.Rows(
 		"Limit_8 2.00 0 root  time:0s, loops:0 offset:1, count:2 N/A N/A",
-		"└─TableReader_14 3.00 0 root  time:0s, loops:0 data:Limit_13 N/A N/A",
-		"  └─Limit_13 3.00 0 cop[tikv]   offset:0, count:3 N/A N/A",
-		"    └─Selection_12 3.00 0 cop[tikv]   eq(test.t.a, 40) N/A N/A",
-		"      └─TableFullScan_11 3000.00 0 cop[tikv] table:t  keep order:false, stats:pseudo N/A N/A",
+		"└─TableReader_13 3.00 0 root  time:0s, loops:0 data:Limit_12 N/A N/A",
+		"  └─Limit_12 3.00 0 cop[tikv]   offset:0, count:3 N/A N/A",
+		"    └─Selection_11 3.00 0 cop[tikv]   eq(test.t.a, 40) N/A N/A",
+		"      └─TableFullScan_10 3000.00 0 cop[tikv] table:t  keep order:false, stats:pseudo N/A N/A",
 	)
 	tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Se.ShowProcess().ID, 10)).Check(explainResult)
 }
@@ -1892,6 +1892,24 @@ func (s *testSuite) TestReCreateBind(c *C) {
 	c.Assert(len(rows), Equals, 2)
 	c.Assert(rows[0][1], Equals, "deleted")
 	c.Assert(rows[1][1], Equals, "using")
+}
+
+func (s *testSuite) TestExplainShowBindSQL(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key(a))")
+
+	tk.MustExec("create global binding for select * from t using select * from t use index(a)")
+	tk.MustQuery("select original_sql, bind_sql from mysql.bind_info where default_db != 'mysql'").Check(testkit.Rows(
+		"select * from `test` . `t` SELECT * FROM `test`.`t` USE INDEX (`a`)",
+	))
+
+	tk.MustExec("explain select * from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
+	tk.MustExec("explain analyze select * from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
 }
 
 func (s *testSuite) TestDMLIndexHintBind(c *C) {
@@ -2115,4 +2133,32 @@ func (s *testSuite) TestTemporaryTable(c *C) {
 	tk.MustGetErrCode("create binding for replace into t select * from t2 where t2.b = 1 and t2.c > 1 using replace into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("create binding for update t set a = 1 where b = 1 and c > 1 using update /*+ use_index(t, c) */ t set a = 1 where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("create binding for delete from t where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
+}
+
+func (s *testSuite) TestBindingLastUpdateTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("create table t0(a int, key(a));")
+	tk.MustExec("create global binding for select * from t0 using select * from t0 use index(a);")
+	tk.MustExec("admin reload bindings;")
+
+	bindHandle := bindinfo.NewBindHandle(tk.Se)
+	err := bindHandle.Update(true)
+	c.Check(err, IsNil)
+	sql, hash := parser.NormalizeDigest("select * from test . t0")
+	bindData := bindHandle.GetBindRecord(hash.String(), sql, "test")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind := bindData.Bindings[0]
+	updateTime := bind.UpdateTime.String()
+
+	rows1 := tk.MustQuery("show status like 'last_plan_binding_update_time';").Rows()
+	updateTime1 := rows1[0][1]
+	c.Assert(updateTime1, Equals, updateTime)
+
+	rows2 := tk.MustQuery("show session status like 'last_plan_binding_update_time';").Rows()
+	updateTime2 := rows2[0][1]
+	c.Assert(updateTime2, Equals, updateTime)
+	tk.MustQuery(`show global status like 'last_plan_binding_update_time';`).Check(testkit.Rows())
 }

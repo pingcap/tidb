@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -69,6 +71,39 @@ func (e *DDLExec) toErr(err error) error {
 	return err
 }
 
+// deleteTemporaryTableRecords delete temporary table data.
+func deleteTemporaryTableRecords(memData kv.MemBuffer, tblID int64) error {
+	if memData == nil {
+		return kv.ErrNotExist
+	}
+
+	tblPrefix := tablecodec.EncodeTablePrefix(tblID)
+	endKey := tablecodec.EncodeTablePrefix(tblID + 1)
+
+	iter, err := memData.Iter(tblPrefix, endKey)
+	if err != nil {
+		return err
+	}
+	for iter.Valid() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, tblPrefix) {
+			break
+		}
+
+		err = memData.Delete(key)
+		if err != nil {
+			return err
+		}
+
+		err = iter.Next()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // Next implements the Executor Next interface.
 func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if e.done {
@@ -77,12 +112,35 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.done = true
 
 	// For each DDL, we should commit the previous transaction and create a new transaction.
-	// An exception is create local temporary table.
-	if s, ok := e.stmt.(*ast.CreateTableStmt); ok {
+	// Following cases are exceptions
+	var localTempTablesToDrop []*ast.TableName
+	switch s := e.stmt.(type) {
+	case *ast.CreateTableStmt:
 		if s.TemporaryKeyword == ast.TemporaryLocal {
 			return e.createSessionTemporaryTable(s)
 		}
+	case *ast.DropTableStmt:
+		if s.IsView {
+			break
+		}
+		sessVars := e.ctx.GetSessionVars()
+		sessVarsTempTable := sessVars.LocalTemporaryTables
+		if sessVarsTempTable == nil {
+			break
+		}
+		localTemporaryTables := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
+		for tbIdx := len(s.Tables) - 1; tbIdx >= 0; tbIdx-- {
+			if _, ok := localTemporaryTables.TableByName(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name); ok {
+				localTempTablesToDrop = append(localTempTablesToDrop, s.Tables[tbIdx])
+				s.Tables = append(s.Tables[:tbIdx], s.Tables[tbIdx+1:]...)
+			}
+		}
+		// if all tables are local temporary, directly drop those tables.
+		if len(s.Tables) == 0 {
+			return e.dropLocalTemporaryTables(localTempTablesToDrop)
+		}
 	}
+
 	if err = e.ctx.NewTxn(ctx); err != nil {
 		return err
 	}
@@ -111,6 +169,9 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			err = e.executeDropView(x)
 		} else {
 			err = e.executeDropTable(x)
+			if err == nil {
+				err = e.dropLocalTemporaryTables(localTempTablesToDrop)
+			}
 		}
 	case *ast.RecoverTableStmt:
 		err = e.executeRecoverTable(x)
@@ -143,7 +204,6 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return e.toErr(err)
 		}
 		return err
-
 	}
 
 	dom := domain.GetDomain(e.ctx)
@@ -246,7 +306,11 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 
 	// AutoID is allocated in mocked..
 	alloc := autoid.NewAllocatorFromTempTblInfo(tbInfo)
-	tbl, err := tables.TableFromMeta([]autoid.Allocator{alloc}, tbInfo)
+	allocs := make([]autoid.Allocator, 0, 1)
+	if alloc != nil {
+		allocs = append(allocs, alloc)
+	}
+	tbl, err := tables.TableFromMeta(allocs, tbInfo)
 	if err != nil {
 		return err
 	}
@@ -372,6 +436,7 @@ func (e *DDLExec) executeDropSequence(s *ast.DropSequenceStmt) error {
 // dropTableObject actually applies to `tableObject`, `viewObject` and `sequenceObject`.
 func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifExists bool) error {
 	var notExistTables []string
+	sessVars := e.ctx.GetSessionVars()
 	for _, tn := range objects {
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
 		_, ok := e.is.SchemaByName(tn.Schema)
@@ -438,10 +503,32 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 	if len(notExistTables) > 0 && ifExists {
 		for _, table := range notExistTables {
 			if obt == sequenceObject {
-				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrSequenceDropExists.GenWithStackByArgs(table))
+				sessVars.StmtCtx.AppendNote(infoschema.ErrSequenceDropExists.GenWithStackByArgs(table))
 			} else {
-				e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableDropExists.GenWithStackByArgs(table))
+				sessVars.StmtCtx.AppendNote(infoschema.ErrTableDropExists.GenWithStackByArgs(table))
 			}
+		}
+	}
+	return nil
+}
+
+func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*ast.TableName) error {
+	if len(localTempTables) == 0 {
+		return nil
+	}
+	sessVars := e.ctx.GetSessionVars()
+	sessVarsTempTable := sessVars.LocalTemporaryTables
+	if sessVarsTempTable == nil {
+		return nil
+	}
+	localTemporaryTables := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
+	// if all tables are local temporary, directly drop those tables.
+	for _, tb := range localTempTables {
+		tableInfo, _ := localTemporaryTables.TableByName(tb.Schema, tb.Name)
+		localTemporaryTables.RemoveTable(tb.Schema, tb.Name)
+		err := deleteTemporaryTableRecords(sessVars.TemporaryTableData, tableInfo.Meta().ID)
+		if err != nil {
+			return err
 		}
 	}
 	return nil
