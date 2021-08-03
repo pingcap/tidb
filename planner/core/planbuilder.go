@@ -1366,9 +1366,9 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
 	case ast.AdminEvolveBindings:
 		var err error
-		// The 'baseline evolution' only work in the CI environment before the feature is GA.
+		// The 'baseline evolution' only work in the test environment before the feature is GA.
 		if !config.CheckTableBeforeDrop {
-			err = errors.Errorf("The 'baseline evolution' of TiDB has not been GA yet, so it is forbidden to use it.")
+			err = errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
 		}
 		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
 	case ast.AdminReloadBindings:

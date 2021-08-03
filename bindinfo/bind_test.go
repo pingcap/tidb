@@ -2110,10 +2110,12 @@ func (s *testSuite) TestForbidEvolvePlanBaseLinesBeforeGA(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
-	err := tk.ExecToErr("set @@tidb_evolve_plan_baselines=1")
-	c.Assert(err, ErrorMatches, "The 'baseline evolution' of TiDB has not been GA yet, so it is forbidden to use it.")
+	err := tk.ExecToErr("set @@tidb_evolve_plan_baselines=0")
+	c.Assert(err, Equals, nil)
+	err = tk.ExecToErr("set @@tidb_evolve_plan_baselines=1")
+	c.Assert(err, ErrorMatches, "Cannot enable baseline evolution feature, it is not generally available now")
 	err = tk.ExecToErr("admin evolve bindings")
-	c.Assert(err, ErrorMatches, "The 'baseline evolution' of TiDB has not been GA yet, so it is forbidden to use it.")
+	c.Assert(err, ErrorMatches, "Cannot enable baseline evolution feature, it is not generally available now")
 }
 
 func (s *testSuite) TestCaptureWithZeroSlowLogThreshold(c *C) {

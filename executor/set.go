@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -108,10 +107,6 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	// The 'baseline evolution' only work in the CI environment before the feature is GA.
-	if sysVar.Name == "tidb_evolve_plan_baselines" && !config.CheckTableBeforeDrop {
-		return errors.Errorf("The 'baseline evolution' of TiDB has not been GA yet, so it is forbidden to use it.")
 	}
 	if v.IsGlobal {
 		valStr, err := e.getVarValue(v, sysVar)
