@@ -19,6 +19,7 @@ import (
 	"math"
 	"runtime/trace"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -169,11 +170,17 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if binding != nil && binding.Status == bindinfo.Using {
 		if sctx.GetSessionVars().UsePlanBaselines {
 			stmtHints, warns = handleStmtHints(binding.Hint.GetFirstTableHints())
+			if _, ok := stmtNode.(*ast.ExplainStmt); ok {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Using the bindSQL: %v", binding.BindSQL))
+			}
 		}
 		return bestPlan, names, nil
 	}
 	bestCostAmongHints := math.MaxFloat64
-	var bestPlanAmongHints plannercore.Plan
+	var (
+		bestPlanAmongHints plannercore.Plan
+		bestPlanBindSQL    string
+	)
 	originHints := hint.CollectHint(stmtNode)
 	// Try to find the best binding.
 	for _, binding := range bindRecord.Bindings {
@@ -200,7 +207,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			}
 			bestCostAmongHints = cost
 			bestPlanAmongHints = plan
+			bestPlanBindSQL = binding.BindSQL
 		}
+	}
+	if _, ok := stmtNode.(*ast.ExplainStmt); ok && bestPlanBindSQL != "" {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Using the bindSQL: %v", bestPlanBindSQL))
 	}
 	// 1. If it is a select query.
 	// 2. If there is already a evolution task, we do not need to handle it again.
@@ -220,13 +231,63 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return bestPlan, names, nil
 }
 
+func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil {
+		return true, nil
+	}
+	roles := sctx.GetSessionVars().ActiveRoles
+	// allow replication thread
+	// NOTE: it is required, whether SEM is enabled or not, only user with explicit RESTRICTED_REPLICA_WRITER_ADMIN granted can ignore the restriction, so we need to surpass the case that if SEM is not enabled, SUPER will has all privileges
+	if pm.HasExplicitlyGrantedDynamicPrivilege(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
+		return true, nil
+	}
+
+	switch node.(type) {
+	// allow change variables (otherwise can't unset read-only mode)
+	case *ast.SetStmt,
+		// allow analyze table
+		*ast.AnalyzeTableStmt,
+		*ast.UseStmt,
+		*ast.ShowStmt,
+		*ast.CreateBindingStmt,
+		*ast.DropBindingStmt,
+		*ast.PrepareStmt,
+		*ast.BeginStmt,
+		*ast.RollbackStmt:
+		return true, nil
+	case *ast.CommitStmt:
+		txn, err := sctx.Txn(true)
+		if err != nil {
+			return false, err
+		}
+		if !txn.IsReadOnly() {
+			return false, txn.Rollback()
+		}
+		return true, nil
+	}
+
+	vars := sctx.GetSessionVars()
+	return IsReadOnly(node, vars), nil
+}
+
+var planBuilderPool = sync.Pool{
+	New: func() interface{} {
+		return plannercore.NewPlanBuilder()
+	},
+}
+
 func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, float64, error) {
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
-	builder, _ := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
+
+	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+
+	builder.Init(sctx, is, hintProcessor)
 
 	// reset fields about rewrite
 	sctx.GetSessionVars().RewritePhaseInfo.Reset()
@@ -262,6 +323,16 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	if err := plannercore.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
 		return nil, nil, 0, err
+	}
+
+	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() {
+		allowed, err := allowInReadOnlyMode(sctx, node)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		if !allowed {
+			return nil, nil, 0, errors.Trace(core.ErrSQLInReadOnlyMode)
+		}
 	}
 
 	// Handle the execute statement.
@@ -415,7 +486,11 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
 	defer trace.StartRegion(ctx, "Optimize").End()
 	var err error
-	builder, _ := plannercore.NewPlanBuilder(sctx, is, nil)
+
+	builder := planBuilderPool.Get().(*plannercore.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+
+	builder.Init(sctx, is, nil)
 	p, err := builder.Build(ctx, execAst)
 	if err != nil {
 		return nil, err

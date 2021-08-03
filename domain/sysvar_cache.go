@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	storekv "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
 )
 
@@ -199,6 +200,15 @@ func checkEnableServerGlobalVar(name, sVal string) {
 			break
 		}
 		variable.TopSQLVariable.ReportIntervalSeconds.Store(val)
+	case variable.TiDBRestrictedReadOnly:
+		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBStoreLimit:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		storekv.StoreLimit.Store(val)
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))

@@ -623,12 +623,9 @@ func (do *Domain) Close() {
 	}
 
 	do.slowQuery.Close()
-
 	do.cancel()
 	do.wg.Wait()
-
 	do.sysSessionPool.Close()
-
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -856,8 +853,12 @@ func (do *Domain) GetEtcdClient() *clientv3.Client {
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "set @@autocommit = 1")
+	if err != nil {
+		return err
+	}
 	do.privHandle = privileges.NewHandle()
-	err := do.privHandle.Update(ctx)
+	err = do.privHandle.Update(ctx)
 	if err != nil {
 		return err
 	}
