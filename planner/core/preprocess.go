@@ -1588,11 +1588,11 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	p.initedLastSnapshotTS = true
 }
 
-// ensureInfoSchema get the infoschema from the preprecessor.
+// ensureInfoSchema get the infoschema from the preprocessor.
 // there some situations:
 //    - the stmt specifies the schema version.
 //    - session variable
-//    - transcation context
+//    - transaction context
 func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 	if p.InfoSchema == nil {
 		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)

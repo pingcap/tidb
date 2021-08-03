@@ -113,7 +113,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	// For each DDL, we should commit the previous transaction and create a new transaction.
 	// Following cases are exceptions
-	var localTempTablesToDrop []*model.TableInfo
+	var localTempTablesToDrop []*ast.TableName
 	switch s := e.stmt.(type) {
 	case *ast.CreateTableStmt:
 		if s.TemporaryKeyword == ast.TemporaryLocal {
@@ -130,10 +130,8 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		}
 		localTemporaryTables := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
 		for tbIdx := len(s.Tables) - 1; tbIdx >= 0; tbIdx-- {
-			tb := s.Tables[tbIdx]
-			if tableInfo, ok := localTemporaryTables.TableByName(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name); ok {
-				localTempTablesToDrop = append(localTempTablesToDrop, tableInfo.Meta())
-				localTemporaryTables.RemoveTable(tb.Schema, tb.Name)
+			if _, ok := localTemporaryTables.TableByName(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name); ok {
+				localTempTablesToDrop = append(localTempTablesToDrop, s.Tables[tbIdx])
 				s.Tables = append(s.Tables[:tbIdx], s.Tables[tbIdx+1:]...)
 			}
 		}
@@ -514,13 +512,21 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 	return nil
 }
 
-func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*model.TableInfo) error {
+func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*ast.TableName) error {
 	if len(localTempTables) == 0 {
 		return nil
 	}
 	sessVars := e.ctx.GetSessionVars()
+	sessVarsTempTable := sessVars.LocalTemporaryTables
+	if sessVarsTempTable == nil {
+		return nil
+	}
+	localTemporaryTables := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
+	// if all tables are local temporary, directly drop those tables.
 	for _, tb := range localTempTables {
-		err := deleteTemporaryTableRecords(sessVars.TemporaryTableData, tb.ID)
+		tableInfo, _ := localTemporaryTables.TableByName(tb.Schema, tb.Name)
+		localTemporaryTables.RemoveTable(tb.Schema, tb.Name)
+		err := deleteTemporaryTableRecords(sessVars.TemporaryTableData, tableInfo.Meta().ID)
 		if err != nil {
 			return err
 		}
