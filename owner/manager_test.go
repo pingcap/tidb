@@ -36,10 +36,6 @@ import (
 
 const testLease = 5 * time.Millisecond
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
 func checkOwner(d DDL, fbVal bool) (isOwner bool) {
 	manager := d.OwnerManager()
 	// The longest to wait for 30 seconds to
@@ -196,7 +192,6 @@ func TestCluster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err, IsNil)
 	}
-
 	// d3 (not owner) stop
 	cli3 := clus.Client(3)
 	ic3 := infoschema.NewCache(2)
@@ -232,7 +227,6 @@ func TestCluster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err, IsNil)
 	}
-	time.Sleep(time.Duration(tmpTTL+1) * time.Second)
 	session, err := concurrency.NewSession(cliRW)
 	if err != nil {
 		t.Fatalf("new session failed %v", err)
