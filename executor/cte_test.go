@@ -326,7 +326,7 @@ func (test *CTETestSuite) TestCTEWithLimit(c *check.C) {
 	// Test with table.
 	tk.MustExec("drop table if exists t1;")
 	insertStr := "insert into t1 values(0)"
-	for i := 1; i < 5000; i++ {
+	for i := 1; i < 300; i++ {
 		insertStr += fmt.Sprintf(", (%d)", i)
 	}
 

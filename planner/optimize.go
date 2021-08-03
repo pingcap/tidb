@@ -170,11 +170,17 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if binding != nil && binding.Status == bindinfo.Using {
 		if sctx.GetSessionVars().UsePlanBaselines {
 			stmtHints, warns = handleStmtHints(binding.Hint.GetFirstTableHints())
+			if _, ok := stmtNode.(*ast.ExplainStmt); ok {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Using the bindSQL: %v", binding.BindSQL))
+			}
 		}
 		return bestPlan, names, nil
 	}
 	bestCostAmongHints := math.MaxFloat64
-	var bestPlanAmongHints plannercore.Plan
+	var (
+		bestPlanAmongHints plannercore.Plan
+		bestPlanBindSQL    string
+	)
 	originHints := hint.CollectHint(stmtNode)
 	// Try to find the best binding.
 	for _, binding := range bindRecord.Bindings {
@@ -201,7 +207,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			}
 			bestCostAmongHints = cost
 			bestPlanAmongHints = plan
+			bestPlanBindSQL = binding.BindSQL
 		}
+	}
+	if _, ok := stmtNode.(*ast.ExplainStmt); ok && bestPlanBindSQL != "" {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Using the bindSQL: %v", bestPlanBindSQL))
 	}
 	// 1. If it is a select query.
 	// 2. If there is already a evolution task, we do not need to handle it again.

@@ -1217,7 +1217,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		}
 		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 		c.Assert(col, NotNil)
-		conds = ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
+		conds = ranger.ExtractAccessConditionsForColumn(conds, col)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType, tt.length)
 		c.Assert(err, IsNil)
