@@ -542,8 +542,6 @@ type IsolationRead struct {
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
-	// Whether enable creating expression index.
-	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable global kill.
 	EnableGlobalKill bool `toml:"enable-global-kill" json:"-"`
 }
@@ -667,8 +665,7 @@ var defaultConf = Config{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
-		AllowsExpressionIndex: false,
-		EnableGlobalKill:      false,
+		EnableGlobalKill: false,
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
