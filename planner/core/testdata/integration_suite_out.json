@@ -1731,5 +1731,35 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestMaybeGoodHeuristics",
+    "Cases": [
+      {
+        "SQL": "select * from t where b = 3 order by a limit 10",
+        "Plan": [
+          "IndexLookUp 10.00 root  limit embedded(offset:0, count:10)",
+          "├─Limit(Build) 10.00 cop[tikv]  offset:0, count:10",
+          "│ └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx_b(b) range:[3,3], keep order:true, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Note 1105 index idx_b of t is selected since the path has point ranges and fetches limited number of rows under ORDER BY PK LIMIT N pattern"
+        ]
+      },
+      {
+        "SQL": "select * from t where b in (2, 3, 4) order by a limit 10",
+        "Plan": [
+          "TopN 0.00 root  test.t.a, offset:0, count:10",
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─TopN(Build) 10.00 cop[tikv]  test.t.a, offset:0, count:10",
+          "  │ └─IndexRangeScan 30.00 cop[tikv] table:t, index:idx_b(b) range:[2,2], [3,3], [4,4], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Note 1105 index idx_b of t is selected since the path has point ranges and fetches limited number of rows under ORDER BY PK LIMIT N pattern"
+        ]
+      }
+    ]
   }
 ]

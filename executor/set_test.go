@@ -539,6 +539,16 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec(`set tidb_opt_limit_push_down_threshold = 20`)
 	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
 	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
+
+	tk.MustQuery("select @@tidb_enable_maybe_good_heuristics").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_maybe_good_heuristics = 1")
+	tk.MustQuery("select @@global.tidb_enable_maybe_good_heuristics").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_maybe_good_heuristics = 0")
+	tk.MustQuery("select @@global.tidb_enable_maybe_good_heuristics").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_enable_maybe_good_heuristics = 1")
+	tk.MustQuery("select @@session.tidb_enable_maybe_good_heuristics").Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_enable_maybe_good_heuristics = 0")
+	tk.MustQuery("select @@session.tidb_enable_maybe_good_heuristics").Check(testkit.Rows("0"))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {

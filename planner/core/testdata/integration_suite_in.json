@@ -328,7 +328,14 @@
       "select f, g from t1 where f = 2 and g in (3, 4, 5)",
       "select * from t1 where c = 1 and (d = 2 or d = 3) and e in (4, 5)",
       "select f, g from t1 where f = 2 and g > 3",
-      "select a, b, c from t2 where a = 1 and b = 2 and c in (1, 2, 3, 4, 5);"
+      "select a, b, c from t2 where a = 1 and b = 2 and c in (1, 2, 3, 4, 5)"
+    ]
+  },
+  {
+    "name": "TestMaybeGoodHeuristics",
+    "cases": [
+      "select * from t where b = 3 order by a limit 10",
+      "select * from t where b in (2, 3, 4) order by a limit 10"
     ]
   }
 ]

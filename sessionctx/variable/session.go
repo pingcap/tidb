@@ -871,6 +871,9 @@ type SessionVars struct {
 
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData kv.MemBuffer
+
+	// EnableMaybeGoodHeuristics indicates whether to apply maybe-good heuristics when the optimizer generates plans.
+	EnableMaybeGoodHeuristics bool
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -1087,6 +1090,7 @@ func NewSessionVars() *SessionVars {
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
 		TMPTableSize:                DefTMPTableSize,
 		EnableGlobalTemporaryTable:  DefTiDBEnableGlobalTemporaryTable,
+		EnableMaybeGoodHeuristics:   DefTiDBEnableMaybeGoodHeuristics,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

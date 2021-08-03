@@ -580,6 +580,9 @@ const (
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
+
+	// TiDBEnableMaybeGoodHeuristics indicates whether to apply maybe-good heuristics when the optimizer generates plans.
+	TiDBEnableMaybeGoodHeuristics = "tidb_enable_maybe_good_heuristics"
 )
 
 // TiDB vars that have only global scope
@@ -739,6 +742,7 @@ const (
 	DefTMPTableSize                       = 16777216
 	DefTiDBEnableLocalTxn                 = false
 	DefTiDBEnableOrderedResultMode        = false
+	DefTiDBEnableMaybeGoodHeuristics      = false
 )
 
 // Process global variables.
