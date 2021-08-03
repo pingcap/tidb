@@ -100,6 +100,7 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	return err
 }
 
+// PreprocessReturnStmtType is used to return stmt type result of preprocess back to outer.
 func PreprocessReturnStmtType(ctx sessionctx.Context, node ast.Node, preprocessOpt []PreprocessOpt) (byte, error) {
 	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0), withName: make(map[string]interface{})}
 	for _, optFn := range preprocessOpt {
