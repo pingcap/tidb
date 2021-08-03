@@ -16,36 +16,27 @@ package metrics
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testSuite{})
-
-type testSuite struct {
-}
-
-func (s *testSuite) TestMetrics(c *C) {
+func TestMetrics(t *testing.T) {
 	// Make sure it doesn't panic.
 	PanicCounter.WithLabelValues(LabelDomain).Inc()
 }
 
-func (s *testSuite) TestRegisterMetrics(c *C) {
+func TestRegisterMetrics(t *testing.T) {
 	// Make sure it doesn't panic.
 	RegisterMetrics()
 }
 
-func (s *testSuite) TestRetLabel(c *C) {
-	c.Assert(RetLabel(nil), Equals, opSucc)
-	c.Assert(RetLabel(errors.New("test error")), Equals, opFailed)
+func TestRetLabel(t *testing.T) {
+	require.Equal(t, opSucc, RetLabel(nil))
+	require.Equal(t, opFailed, RetLabel(errors.New("test error")))
 }
 
-func (s *testSuite) TestExecuteErrorToLabel(c *C) {
-	c.Assert(ExecuteErrorToLabel(errors.New("test")), Equals, `unknown`)
-	c.Assert(ExecuteErrorToLabel(terror.ErrResultUndetermined), Equals, `global:2`)
+func TestExecuteErrorToLabel(t *testing.T) {
+	require.Equal(t, `unknown`, ExecuteErrorToLabel(errors.New("test")))
+	require.Equal(t, `global:2`, ExecuteErrorToLabel(terror.ErrResultUndetermined))
 }
