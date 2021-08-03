@@ -3126,4 +3126,11 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 		_ = iter.Next()
 	}
 	c.Assert(iter.Valid(), IsFalse)
+
+	// Check drop not exists table in transaction.
+	tk.MustExec("begin")
+	tk.MustExec("create temporary table a_local_temp_table_8 (id int)")
+	_, err = tk.Exec("drop table a_local_temp_table_8, a_local_temp_table_9_not_exist")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.a_local_temp_table_9_not_exist'")
+	tk.MustQuery("select * from a_local_temp_table_8").Check(testkit.Rows())
 }
