@@ -3160,7 +3160,7 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustExec("create table t1 (id int)")
 	tk.MustExec("create table tn (id int)")
 	tk.MustExec("insert into t1 values(10), (11), (12)")
-	tk.MustExec("create temporary table t1 (id int primary key)")
+	tk.MustExec("create temporary table t1 (id int primary key auto_increment)")
 	tk.MustExec("create temporary table t2 (id int primary key)")
 	tk.MustExec("create database test2")
 	tk.MustExec("create temporary table test2.t2 (id int)")
@@ -3171,13 +3171,16 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustExec("insert into test2.t2 values(7), (8), (9)")
 	tk.MustExec("truncate table t1")
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustExec("insert into t1 values()")
+	// auto_increment will be reset for truncate
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("4", "5", "6"))
 	tk.MustExec("truncate table t2")
 	tk.MustQuery("select * from t2").Check(testkit.Rows())
 	tk.MustQuery("select * from test2.t2").Check(testkit.Rows("7", "8", "9"))
 	tk.MustExec("drop table t1")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("10", "11", "12"))
-	tk.MustExec("create temporary table t1 (id int)")
+	tk.MustExec("create temporary table t1 (id int primary key auto_increment)")
 
 	// truncate table with format dbName.tableName
 	tk.MustExec("insert into t2 values(4), (5), (6)")
@@ -3198,17 +3201,20 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustExec("delete from t2 where id=4")
 	tk.MustExec("truncate table t1")
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustExec("insert into t1 values()")
+	// auto_increment will be reset for truncate
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("5", "6", "24", "25"))
 
 	// since transaction already committed by truncate, so query after rollback will get same result
 	tk.MustExec("rollback")
-	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("5", "6", "24", "25"))
 
 	// truncate a temporary table will not effect the normal table with the same name
 	tk.MustExec("drop table t1")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("10", "11", "12"))
-	tk.MustExec("create temporary table t1 (id int)")
+	tk.MustExec("create temporary table t1 (id int primary key auto_increment)")
 
 	// truncate temporary table will clear session data
 	localTemporaryTables := tk.Se.GetSessionVars().LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
