@@ -27,21 +27,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
 )
-
-// Ignore this test on the windows platform, because calling unix socket with address in
-// host:port format fails on windows.
-func TestT(t *testing.T) {
-	logLevel := os.Getenv("log_level")
-	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-}
 
 var (
 	dialTimeout = 5 * time.Second
@@ -60,9 +49,8 @@ func TestFailNewSession(t *testing.T) {
 	var stop sync.WaitGroup
 	stop.Add(1)
 	go func() {
-		if err = srv.Serve(ln); err != nil {
-			require.Errorf(t, err, "can't serve gRPC requests %v")
-		}
+		err = srv.Serve(ln)
+		require.Errorf(t, err, "can't serve gRPC requests")
 		stop.Done()
 	}()
 

@@ -14,13 +14,26 @@
 package owner
 
 import (
+	"os"
 	"testing"
 
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
+	"go.uber.org/zap"
 )
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
+
+	// Ignore this test on the windows platform, because calling unix socket with address in
+	// host:port format fails on windows.
+	logLevel := os.Getenv("log_level")
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		log.Fatal("put failed", zap.Error(err))
+	}
+
 	goleak.VerifyTestMain(m)
 }
