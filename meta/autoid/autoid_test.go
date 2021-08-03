@@ -416,12 +416,12 @@ func TestUnsignedAutoid(t *testing.T) {
 
 // TestConcurrentAlloc is used for the test that
 // multiple allocators allocate ID with the same table ID concurrently.
-func (*testSuite) TestConcurrentAlloc(c *C) {
+func TestConcurrentAlloc(t *testing.T) {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	autoid.SetStep(100)
 	defer func() {
@@ -433,12 +433,12 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		return nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	var mu sync.Mutex
 	wg := sync.WaitGroup{}
@@ -502,29 +502,29 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 
 	close(errCh)
 	err = <-errCh
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
 // TestRollbackAlloc tests that when the allocation transaction commit failed,
 // the local variable base and end doesn't change.
-func (*testSuite) TestRollbackAlloc(c *C) {
+func TestRollbackAlloc(t *testing.T) {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	dbID := int64(1)
 	tblID := int64(2)
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		return nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	injectConf := new(kv.InjectionConfig)
@@ -532,24 +532,24 @@ func (*testSuite) TestRollbackAlloc(c *C) {
 	injectedStore := kv.NewInjectedStore(store, injectConf)
 	alloc := autoid.NewAllocator(injectedStore, 1, false, autoid.RowIDAllocType)
 	_, _, err = alloc.Alloc(ctx, 2, 1, 1, 1)
-	c.Assert(err, NotNil)
-	c.Assert(alloc.Base(), Equals, int64(0))
-	c.Assert(alloc.End(), Equals, int64(0))
+	require.Error(t, err)
+	require.Equal(t, int64(0), alloc.Base())
+	require.Equal(t, int64(0), alloc.End())
 
 	err = alloc.Rebase(2, 100, true)
-	c.Assert(err, NotNil)
-	c.Assert(alloc.Base(), Equals, int64(0))
-	c.Assert(alloc.End(), Equals, int64(0))
+	require.Error(t, err)
+	require.Equal(t, int64(0), alloc.Base())
+	require.Equal(t, int64(0), alloc.End())
 }
 
 // TestNextStep tests generate next auto id step.
-func (*testSuite) TestNextStep(c *C) {
+func TestNextStep(t *testing.T) {
 	nextStep := autoid.NextStep(2000000, 1*time.Nanosecond)
-	c.Assert(nextStep, Equals, int64(2000000))
+	require.Equal(t, int64(2000000), nextStep)
 	nextStep = autoid.NextStep(678910, 10*time.Second)
-	c.Assert(nextStep, Equals, int64(678910))
+	require.Equal(t, int64(678910), nextStep)
 	nextStep = autoid.NextStep(50000, 10*time.Minute)
-	c.Assert(nextStep, Equals, int64(30000))
+	require.Equal(t, int64(30000), nextStep)
 }
 
 func BenchmarkAllocator_Alloc(b *testing.B) {
