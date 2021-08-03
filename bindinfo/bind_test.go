@@ -2169,3 +2169,31 @@ func (s *testSuite) TestIssue25505(c *C) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 4)
 }
+
+func (s *testSuite) TestBindingLastUpdateTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("create table t0(a int, key(a));")
+	tk.MustExec("create global binding for select * from t0 using select * from t0 use index(a);")
+	tk.MustExec("admin reload bindings;")
+
+	bindHandle := bindinfo.NewBindHandle(tk.Se)
+	err := bindHandle.Update(true)
+	c.Check(err, IsNil)
+	sql, hash := parser.NormalizeDigest("select * from test . t0")
+	bindData := bindHandle.GetBindRecord(hash.String(), sql, "test")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind := bindData.Bindings[0]
+	updateTime := bind.UpdateTime.String()
+
+	rows1 := tk.MustQuery("show status like 'last_plan_binding_update_time';").Rows()
+	updateTime1 := rows1[0][1]
+	c.Assert(updateTime1, Equals, updateTime)
+
+	rows2 := tk.MustQuery("show session status like 'last_plan_binding_update_time';").Rows()
+	updateTime2 := rows2[0][1]
+	c.Assert(updateTime2, Equals, updateTime)
+	tk.MustQuery(`show global status like 'last_plan_binding_update_time';`).Check(testkit.Rows())
+}
