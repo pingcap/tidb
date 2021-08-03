@@ -124,6 +124,11 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 	for _, child := range p.Children() {
 		res = append(res, genHintsFromPhysicalPlan(child, nodeType)...)
 	}
+	if phCte, ok := p.(*PhysicalCTE); ok {
+		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.seedPartPhysicalPlan, nodeType)...)
+		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.recursivePartPhysicalPlan, nodeType)...)
+	}
+
 	qbName, err := utilhint.GenerateQBName(nodeType, p.SelectBlockOffset())
 	if err != nil {
 		return res

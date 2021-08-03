@@ -957,7 +957,7 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	c.Assert(stats, HasKey, "Ssl_server_not_after")
 	c.Assert(stats, HasKey, "Ssl_server_not_before")
 	c.Assert(stats["Ssl_server_not_after"], Equals, serverCert.NotAfter.Format("Jan _2 15:04:05 2006 MST"))
-	c.Assert(stats["Ssl_server_not_before"], Equals, serverCert.NotBefore.Format("Jan 2 15:04:05 2006 MST"))
+	c.Assert(stats["Ssl_server_not_before"], Equals, serverCert.NotBefore.Format("Jan _2 15:04:05 2006 MST"))
 
 	server.Close()
 

@@ -2136,7 +2136,7 @@ func (s *testSuite) TestIssue25505(c *C) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "with `cte` as ( with `cte1` as ( select * from `test` . `t2` where `a` = ? and `b` = ? ) select * from `cte1` ) select * from `cte` join `test` . `t1` on `t1` . `a` = `cte` . `a`")
-	c.Assert(rows[0][1], Equals, "WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` = 1 AND `b` = 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_1` `test`.`t1` `idx_a`), inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `t1` `idx_a`), use_index(@`sel_3` `t2` `idx_a`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`")
+	c.Assert(rows[0][1], Equals, "WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` = 1 AND `b` = 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_a`), use_index(@`sel_1` `test`.`t1` `idx_a`), inl_join(@`sel_1` `test`.`t1`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`")
 
 	tk.MustExec("with cte as (select * from t where b=4) select * from t")
 	tk.MustExec("with cte as (select * from t where b=5) select * from t")

@@ -1094,12 +1094,6 @@ func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool, n
 	}
 	if genHint {
 		hints := plannercore.GenHintsFromPhysicalPlan(p)
-		if n != nil {
-			set := hint.ParseHintsSetFromStmtNode(n)
-			for _, tblHints := range set {
-				hints = append(hints, tblHints...)
-			}
-		}
 		hintStr = hint.RestoreOptimizerHints(hints)
 		sctx.GetSessionVars().StmtCtx.SetPlanHint(hintStr)
 	}
