@@ -1669,6 +1669,33 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 	b.StopTimer()
 }
 
+func BenchmarkInsertIntoSelect(b *testing.B) {
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+
+	mustExecute(se, `set @@tidb_enable_global_temporary_table = 1`)
+	mustExecute(se, `set @@tmp_table_size = 1000000000`)
+	mustExecute(se, `create global temporary table tmp (id int, dt varchar(512)) on commit delete rows`)
+	mustExecute(se, `create table src (id int, dt varchar(512))`)
+	for i := 0; i < 100; i++ {
+		mustExecute(se, "begin")
+		for lines := 0; lines < 100; lines++ {
+			mustExecute(se, "insert into src values (42, repeat('x', 512)), (66, repeat('x', 512))")
+		}
+		mustExecute(se, "commit")
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mustExecute(se, "insert into tmp select * from src")
+	}
+	b.StopTimer()
+}
+
 type BenchOutput struct {
 	Date   string
 	Commit string
@@ -1745,6 +1772,7 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkRangeColumnPartitionPruning,
 		BenchmarkHashPartitionPruningPointSelect,
 		BenchmarkHashPartitionPruningMultiSelect,
+		BenchmarkInsertIntoSelect,
 	}
 
 	res := make([]BenchResult, 0, len(tests))
