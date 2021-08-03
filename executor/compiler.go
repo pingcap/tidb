@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
