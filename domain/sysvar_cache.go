@@ -35,9 +35,10 @@ import (
 
 // SysVarCache represents the cache of system variables broken up into session and global scope.
 type SysVarCache struct {
-	sync.RWMutex
-	global  map[string]string
-	session map[string]string
+	sync.RWMutex // protects global and session maps
+	global       map[string]string
+	session      map[string]string
+	rebuildLock  sync.Mutex // protects concurrent rebuild
 }
 
 // GetSysVarCache gets the global variable cache.
@@ -115,6 +116,10 @@ func (svc *SysVarCache) fetchTableValues(ctx sessionctx.Context) (map[string]str
 func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 	newSessionCache := make(map[string]string)
 	newGlobalCache := make(map[string]string)
+	// Only one rebuild can be in progress at a time, this prevents a lost update race
+	// where an earlier fetchTableValues() finishes last.
+	svc.rebuildLock.Lock()
+	defer svc.rebuildLock.Unlock()
 	tableContents, err := svc.fetchTableValues(ctx)
 	if err != nil {
 		return err
