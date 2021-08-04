@@ -21,27 +21,14 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/testleak"
-	. "github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-var _ = Suite(&testSuite{})
-
-type testSuite struct {
-	CommonHandleSuite
-}
 
 func TestMeta(t *testing.T) {
 	t.Parallel()
@@ -339,172 +326,200 @@ func TestElement(t *testing.T) {
 	require.Equal(t, `invalid encoded element "_col_" length 5`, err.Error())
 }
 
-func (s *testSuite) TestDDL(c *C) {
-	defer testleak.AfterTest(c)()
-	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	defer func() {
-		err := store.Close()
-		c.Assert(err, IsNil)
-	}()
+func TestDDL(t *testing.T) {
+	t.Parallel()
 
-	txn, err := store.Begin()
-	c.Assert(err, IsNil)
-
-	t := meta.NewMeta(txn)
-
-	job := &model.Job{ID: 1}
-	err = t.EnQueueDDLJob(job)
-	c.Assert(err, IsNil)
-	n, err := t.DDLJobQueueLen()
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(1))
-
-	v, err := t.GetDDLJobByIdx(0)
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, job)
-	v, err = t.GetDDLJobByIdx(1)
-	c.Assert(err, IsNil)
-	c.Assert(v, IsNil)
-	job.ID = 2
-	err = t.UpdateDDLJob(0, job, true)
-	c.Assert(err, IsNil)
-
-	element := &meta.Element{ID: 123, TypeKey: meta.IndexElementKey}
-	// There are 3 meta key relate to index reorganization:
-	// start_handle, end_handle and physical_table_id.
-	// Only start_handle is initialized.
-	err = t.UpdateDDLReorgStartHandle(job, element, kv.IntHandle(1).Encoded())
-	c.Assert(err, IsNil)
-
-	// Since physical_table_id is uninitialized, we simulate older TiDB version that doesn't store them.
-	// In this case GetDDLReorgHandle always return maxInt64 as end_handle.
-	e, i, j, k, err := t.GetDDLReorgHandle(job)
-	c.Assert(err, IsNil)
-	c.Assert(e, DeepEquals, element)
-	c.Assert(i, DeepEquals, kv.Key(kv.IntHandle(1).Encoded()))
-	c.Assert(j, DeepEquals, kv.Key(kv.IntHandle(math.MaxInt64).Encoded()))
-	c.Assert(k, Equals, int64(0))
-
-	startHandle := s.NewHandle().Int(1).Common("abc", 1222, "string")
-	endHandle := s.NewHandle().Int(2).Common("dddd", 1222, "string")
-	element = &meta.Element{ID: 222, TypeKey: meta.ColumnElementKey}
-	err = t.UpdateDDLReorgHandle(job, startHandle.Encoded(), endHandle.Encoded(), 3, element)
-	c.Assert(err, IsNil)
-	element1 := &meta.Element{ID: 223, TypeKey: meta.IndexElementKey}
-	err = t.UpdateDDLReorgHandle(job, startHandle.Encoded(), endHandle.Encoded(), 3, element1)
-	c.Assert(err, IsNil)
-
-	e, i, j, k, err = t.GetDDLReorgHandle(job)
-	c.Assert(err, IsNil)
-	c.Assert(e, DeepEquals, element1)
-	c.Assert(i, DeepEquals, kv.Key(startHandle.Encoded()))
-	c.Assert(j, DeepEquals, kv.Key(endHandle.Encoded()))
-	c.Assert(k, Equals, int64(3))
-
-	err = t.RemoveDDLReorgHandle(job, []*meta.Element{element, element1})
-	c.Assert(err, IsNil)
-	e, i, j, k, err = t.GetDDLReorgHandle(job)
-	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
-	c.Assert(e, IsNil)
-	c.Assert(i, IsNil)
-	c.Assert(j, IsNil)
-	c.Assert(k, Equals, int64(0))
-
-	// new TiDB binary running on old TiDB DDL reorg data.
-	e, i, j, k, err = t.GetDDLReorgHandle(job)
-	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
-	c.Assert(e, IsNil)
-	c.Assert(i, IsNil)
-	c.Assert(j, IsNil)
-	c.Assert(k, Equals, int64(0))
-
-	// Test GetDDLReorgHandle failed.
-	_, _, _, _, err = t.GetDDLReorgHandle(job)
-	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
-
-	v, err = t.DeQueueDDLJob()
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, job)
-
-	err = t.AddHistoryDDLJob(job, true)
-	c.Assert(err, IsNil)
-	v, err = t.GetHistoryDDLJob(2)
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, job)
-
-	// Add multiple history jobs.
-	arg := "test arg"
-	historyJob1 := &model.Job{ID: 1234}
-	historyJob1.Args = append(job.Args, arg)
-	err = t.AddHistoryDDLJob(historyJob1, true)
-	c.Assert(err, IsNil)
-	historyJob2 := &model.Job{ID: 123}
-	historyJob2.Args = append(job.Args, arg)
-	err = t.AddHistoryDDLJob(historyJob2, false)
-	c.Assert(err, IsNil)
-	all, err := t.GetAllHistoryDDLJobs()
-	c.Assert(err, IsNil)
-	var lastID int64
-	for _, job := range all {
-		c.Assert(job.ID, Greater, lastID)
-		lastID = job.ID
-		arg1 := ""
-		err := job.DecodeArgs(&arg1)
-		c.Assert(err, IsNil)
-		if job.ID == historyJob1.ID {
-			c.Assert(*(job.Args[0].(*string)), Equals, historyJob1.Args[0])
-		} else {
-			c.Assert(job.Args, HasLen, 0)
-		}
+	testCases := []struct {
+		desc        string
+		startHandle kv.Handle
+		endHandle   kv.Handle
+	}{
+		{
+			"With kv.IntHandle",
+			kv.IntHandle(1),
+			kv.IntHandle(2),
+		},
+		{
+			"With kv.CommonHandle",
+			testkit.MustNewCommonHandle(t, "abc", 1222, "string"),
+			testkit.MustNewCommonHandle(t, "dddd", 1222, "string"),
+		},
 	}
 
-	// Test for get last N history ddl jobs.
-	historyJobs, err := t.GetLastNHistoryDDLJobs(2)
-	c.Assert(err, IsNil)
-	c.Assert(len(historyJobs), Equals, 2)
-	c.Assert(historyJobs[0].ID == 1234, IsTrue)
-	c.Assert(historyJobs[1].ID == 123, IsTrue)
+	for _, tc := range testCases {
+		t.Run(tc.desc, func(t *testing.T) {
+			store, err := mockstore.NewMockStore()
+			require.Nil(t, err)
+			defer func() {
+				err := store.Close()
+				require.Nil(t, err)
+			}()
 
-	// Test GetAllDDLJobsInQueue.
-	err = t.EnQueueDDLJob(job)
-	c.Assert(err, IsNil)
-	job1 := &model.Job{ID: 2}
-	err = t.EnQueueDDLJob(job1)
-	c.Assert(err, IsNil)
-	jobs, err := t.GetAllDDLJobsInQueue()
-	c.Assert(err, IsNil)
-	expectJobs := []*model.Job{job, job1}
-	c.Assert(jobs, DeepEquals, expectJobs)
+			txn, err := store.Begin()
+			require.Nil(t, err)
 
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+			mt := meta.NewMeta(txn)
 
-	// Test for add index job.
-	txn1, err := store.Begin()
-	c.Assert(err, IsNil)
+			job := &model.Job{ID: 1}
+			err = mt.EnQueueDDLJob(job)
+			require.Nil(t, err)
+			n, err := mt.DDLJobQueueLen()
+			require.Nil(t, err)
+			require.Equal(t, int64(1), n)
 
-	m := meta.NewMeta(txn1, meta.AddIndexJobListKey)
-	err = m.EnQueueDDLJob(job)
-	c.Assert(err, IsNil)
-	job.ID = 123
-	err = m.UpdateDDLJob(0, job, true, meta.AddIndexJobListKey)
-	c.Assert(err, IsNil)
-	v, err = m.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, job)
-	l, err := m.DDLJobQueueLen(meta.AddIndexJobListKey)
-	c.Assert(err, IsNil)
-	c.Assert(l, Equals, int64(1))
-	jobs, err = m.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
-	c.Assert(err, IsNil)
-	expectJobs = []*model.Job{job}
-	c.Assert(jobs, DeepEquals, expectJobs)
+			v, err := mt.GetDDLJobByIdx(0)
+			require.Nil(t, err)
+			require.Equal(t, job, v)
+			v, err = mt.GetDDLJobByIdx(1)
+			require.Nil(t, err)
+			require.Nil(t, v)
 
-	err = txn1.Commit(context.Background())
-	c.Assert(err, IsNil)
+			job.ID = 2
+			err = mt.UpdateDDLJob(0, job, true)
+			require.Nil(t, err)
 
-	s.RerunWithCommonHandleEnabled(c, s.TestDDL)
+			element := &meta.Element{ID: 123, TypeKey: meta.IndexElementKey}
+			// There are 3 meta key relate to index reorganization:
+			// start_handle, end_handle and physical_table_id.
+			// Only start_handle is initialized.
+			err = mt.UpdateDDLReorgStartHandle(job, element, kv.IntHandle(1).Encoded())
+			require.Nil(t, err)
+
+			// Since physical_table_id is uninitialized, we simulate older TiDB version that doesn't store them.
+			// In this case GetDDLReorgHandle always return maxInt64 as end_handle.
+			e, i, j, k, err := mt.GetDDLReorgHandle(job)
+			require.Nil(t, err)
+			require.Equal(t, element, e)
+			require.Equal(t, kv.Key(kv.IntHandle(1).Encoded()), i)
+			require.Equal(t, kv.Key(kv.IntHandle(math.MaxInt64).Encoded()), j)
+			require.Equal(t, int64(0), k)
+
+			element = &meta.Element{ID: 222, TypeKey: meta.ColumnElementKey}
+			err = mt.UpdateDDLReorgHandle(job, tc.startHandle.Encoded(), tc.endHandle.Encoded(), 3, element)
+			require.Nil(t, err)
+			element1 := &meta.Element{ID: 223, TypeKey: meta.IndexElementKey}
+			err = mt.UpdateDDLReorgHandle(job, tc.startHandle.Encoded(), tc.endHandle.Encoded(), 3, element1)
+			require.Nil(t, err)
+
+			e, i, j, k, err = mt.GetDDLReorgHandle(job)
+			require.Nil(t, err)
+			require.Equal(t, element1, e)
+			require.Equal(t, kv.Key(tc.startHandle.Encoded()), i)
+			require.Equal(t, kv.Key(tc.endHandle.Encoded()), j)
+			require.Equal(t, int64(3), k)
+
+			err = mt.RemoveDDLReorgHandle(job, []*meta.Element{element, element1})
+			require.Nil(t, err)
+			e, i, j, k, err = mt.GetDDLReorgHandle(job)
+			require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
+			require.Nil(t, e)
+			require.Nil(t, i)
+			require.Nil(t, j)
+			require.Equal(t, k, int64(0))
+
+			// new TiDB binary running on old TiDB DDL reorg data.
+			e, i, j, k, err = mt.GetDDLReorgHandle(job)
+			require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
+			require.Nil(t, e)
+			require.Nil(t, i)
+			require.Nil(t, j)
+			require.Equal(t, k, int64(0))
+
+			// Test GetDDLReorgHandle failed.
+			_, _, _, _, err = mt.GetDDLReorgHandle(job)
+			require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
+
+			v, err = mt.DeQueueDDLJob()
+			require.Nil(t, err)
+			require.Equal(t, job, v)
+
+			err = mt.AddHistoryDDLJob(job, true)
+			require.Nil(t, err)
+			v, err = mt.GetHistoryDDLJob(2)
+			require.Nil(t, err)
+			require.Equal(t, job, v)
+
+			// Add multiple history jobs.
+			arg := "test arg"
+			historyJob1 := &model.Job{ID: 1234}
+			historyJob1.Args = append(job.Args, arg)
+			err = mt.AddHistoryDDLJob(historyJob1, true)
+			require.Nil(t, err)
+			historyJob2 := &model.Job{ID: 123}
+			historyJob2.Args = append(job.Args, arg)
+			err = mt.AddHistoryDDLJob(historyJob2, false)
+			require.Nil(t, err)
+			all, err := mt.GetAllHistoryDDLJobs()
+			require.Nil(t, err)
+			var lastID int64
+			for _, job := range all {
+				require.Greater(t, job.ID, lastID)
+				lastID = job.ID
+				arg1 := ""
+				err := job.DecodeArgs(&arg1)
+				require.Nil(t, err)
+				if job.ID == historyJob1.ID {
+					require.Equal(t, historyJob1.Args[0], *(job.Args[0].(*string)))
+				} else {
+					require.Len(t, job.Args, 0)
+				}
+			}
+
+			// Test for get last N history ddl jobs.
+			historyJobs, err := mt.GetLastNHistoryDDLJobs(2)
+			require.Nil(t, err)
+			require.Len(t, historyJobs, 2)
+			require.Equal(t, int64(1234), historyJobs[0].ID)
+			require.Equal(t, int64(123), historyJobs[1].ID)
+
+			// Test GetAllDDLJobsInQueue.
+			err = mt.EnQueueDDLJob(job)
+			require.Nil(t, err)
+			job1 := &model.Job{ID: 2}
+			err = mt.EnQueueDDLJob(job1)
+			require.Nil(t, err)
+			jobs, err := mt.GetAllDDLJobsInQueue()
+			require.Nil(t, err)
+			expectJobs := []*model.Job{job, job1}
+			require.Equal(t, expectJobs, jobs)
+
+			err = txn.Commit(context.Background())
+			require.Nil(t, err)
+		})
+	}
+
+	t.Run("Test for add index job", func(t *testing.T) {
+		store, err := mockstore.NewMockStore()
+		require.Nil(t, err)
+		defer func() {
+			err := store.Close()
+			require.Nil(t, err)
+		}()
+
+		txn1, err := store.Begin()
+		require.Nil(t, err)
+
+		m := meta.NewMeta(txn1, meta.AddIndexJobListKey)
+		job := &model.Job{ID: 1}
+		err = m.EnQueueDDLJob(job)
+		require.Nil(t, err)
+		job.ID = 123
+		err = m.UpdateDDLJob(0, job, true, meta.AddIndexJobListKey)
+		require.Nil(t, err)
+		v, err := m.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
+		require.Nil(t, err)
+		require.Equal(t, job, v)
+		l, err := m.DDLJobQueueLen(meta.AddIndexJobListKey)
+		require.Nil(t, err)
+		require.Equal(t, int64(1), l)
+		jobs, err := m.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
+		require.Nil(t, err)
+		expectJobs := []*model.Job{job}
+		require.Equal(t, expectJobs, jobs)
+
+		err = txn1.Commit(context.Background())
+		require.Nil(t, err)
+	})
 }
 
 func BenchmarkGenGlobalIDs(b *testing.B) {
