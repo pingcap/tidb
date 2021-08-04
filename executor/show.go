@@ -270,12 +270,20 @@ func (e *ShowExec) fetchShowBind() error {
 		// For the same origin_sql, sort the bindings according to their update time.
 		sort.Slice(bindData.Bindings, func(i int, j int) bool {
 			cmpResult := bindData.Bindings[i].UpdateTime.Compare(bindData.Bindings[j].UpdateTime)
+			if cmpResult == 0 {
+				// Because the create time must be different, the result of sorting is stable.
+				cmpResult = bindData.Bindings[i].CreateTime.Compare(bindData.Bindings[j].CreateTime)
+			}
 			return cmpResult > 0
 		})
 	}
 	// For the different origin_sql, sort the bindRecords according to their max update time.
 	sort.Slice(bindRecords, func(i int, j int) bool {
 		cmpResult := bindRecords[i].Bindings[0].UpdateTime.Compare(bindRecords[j].Bindings[0].UpdateTime)
+		if cmpResult == 0 {
+			// Because the create time must be different, the result of sorting is stable.
+			cmpResult = bindRecords[i].Bindings[0].CreateTime.Compare(bindRecords[j].Bindings[0].CreateTime)
+		}
 		return cmpResult > 0
 	})
 	for _, bindData := range bindRecords {
