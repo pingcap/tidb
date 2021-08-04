@@ -8252,7 +8252,7 @@ func (s *testSerialSuite) TestIssue24210(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSerialSuite) TestDeadlockTable(c *C) {
+func (s *testSerialSuite) TestDeadlocksTable(c *C) {
 	deadlockhistory.GlobalDeadlockHistory.Clear()
 	deadlockhistory.GlobalDeadlockHistory.Resize(10)
 
@@ -8306,6 +8306,11 @@ func (s *testSerialSuite) TestDeadlockTable(c *C) {
 	// to know what it is.
 	id1 := strconv.FormatUint(rec.ID, 10)
 	id2 := strconv.FormatUint(rec2.ID, 10)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/sqlDigestRetrieverSkipRetrieveGlobal", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/sqlDigestRetrieverSkipRetrieveGlobal"), IsNil)
+	}()
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select * from information_schema.deadlocks").Check(
