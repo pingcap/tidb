@@ -562,7 +562,7 @@ func (ds *DataSource) getIndexMergeCandidate(path *util.AccessPath) *candidatePa
 // skylinePruning prunes access paths according to different factors. An access path can be pruned only if
 // there exists a path that is not worse than it at all factors and there is at least one better factor.
 // The first return value indicates the candidate paths for CBO path selection.
-// The second return value indicates which paths are pruned if ds.ctx.GetSessionVars().StmtCtx.InExplainStmt.
+// The second return value indicates which paths are pruned if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain.
 func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) ([]*candidatePath, string) {
 	candidates := make([]*candidatePath, 0, 4)
 	// TODO: don't allocate prunedPaths if not InExplainStmt
@@ -634,7 +634,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) ([]*candid
 	}
 
 	getPruningInfo := func(paths []*util.AccessPath) string {
-		if !ds.ctx.GetSessionVars().StmtCtx.InExplainStmt || len(paths) == 0 {
+		if !ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain || len(paths) == 0 {
 			return ""
 		}
 		names := make([]string, 0, len(paths))

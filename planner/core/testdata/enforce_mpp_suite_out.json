@@ -36,7 +36,9 @@
           "  └─StreamAgg_9 1.00 35.88 cop[tikv]  funcs:count(1)->Column#6",
           "    └─IndexRangeScan_23 10.00 455.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[t] is pruned when selecting path for t given Prop{SortItems: [], TaskTp: copSingleReadTask}"
+        ]
       },
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
@@ -46,7 +48,9 @@
           "  └─StreamAgg_9 1.00 35.88 cop[tikv]  funcs:count(1)->Column#6",
           "    └─IndexRangeScan_16 10.00 455.00 cop[tikv] table:t, index:idx(a) range:[1,1], keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[t] is pruned when selecting path for t given Prop{SortItems: [], TaskTp: copSingleReadTask}c"
+        ]
       },
       {
         "SQL": "explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1",

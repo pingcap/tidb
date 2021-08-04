@@ -185,6 +185,8 @@ type StatementContext struct {
 
 	// OptimInfo maps Plan.ID() to optimization information when generating Plan.
 	OptimInfo map[int]string
+	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
+	InVerboseExplain bool
 }
 
 // StmtHints are SessionVars related sql hints.
