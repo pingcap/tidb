@@ -2555,6 +2555,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	if newCollationEnabled {
 		collate.EnableNewCollations()
+		if cfg.Experimental.EnableCharsetFeat {
+			collate.EnableCharsetFeat()
+		}
 	}
 
 	newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)

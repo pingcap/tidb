@@ -548,6 +548,8 @@ type IsolationRead struct {
 type Experimental struct {
 	// Whether enable global kill.
 	EnableGlobalKill bool `toml:"enable-global-kill" json:"-"`
+	// Whether enable charset feature.
+	EnableCharsetFeat bool `toml:"enable-charset-feat" json:"-"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -669,7 +671,8 @@ var defaultConf = Config{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
-		EnableGlobalKill: false,
+		EnableGlobalKill:  false,
+		EnableCharsetFeat: false,
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,

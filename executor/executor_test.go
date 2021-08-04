@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/israce"
@@ -5625,6 +5626,66 @@ func (s *testSerialSuite2) TestUnsignedFeedback(c *C) {
 	result := tk.MustQuery("explain analyze select count(distinct b) from t")
 	c.Assert(result.Rows()[2][4], Equals, "table:t")
 	c.Assert(result.Rows()[2][6], Equals, "range:[0,+inf], keep order:false")
+}
+
+func (s *testSerialSuite2) TestCharsetFeature(c *C) {
+	collate.SetCharsetFratEnabledForTest(true)
+	defer collate.SetCharsetFratEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("show charset").Check(testkit.Rows(
+		"ascii US ASCII ascii_bin 1",
+		"binary binary binary 1",
+		"gbk Chinese Internal Code Specification gbk_bin 4",
+		"latin1 Latin1 latin1_bin 1",
+		"utf8 UTF-8 Unicode utf8_bin 3",
+		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
+	))
+	tk.MustQuery("show collation").Check(testkit.Rows(
+		"ascii_bin ascii 65 Yes Yes 1",
+		"binary binary 63 Yes Yes 1",
+		"gbk_bin gbk 87  Yes 1",
+		"latin1_bin latin1 47 Yes Yes 1",
+		"utf8_bin utf8 83 Yes Yes 1",
+		"utf8_general_ci utf8 33  Yes 1",
+		"utf8_unicode_ci utf8 192  Yes 1",
+		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
+		"utf8mb4_general_ci utf8mb4 45  Yes 1",
+		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
+	))
+
+	tk.MustExec("set names gbk;")
+	tk.MustQuery("select @@character_set_connection;").Check(testkit.Rows("gbk"))
+	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_bin"))
+	tk.MustExec("set @@character_set_client=gbk;")
+	tk.MustQuery("select @@character_set_client;").Check(testkit.Rows("gbk"))
+	tk.MustExec("set names utf8mb4;")
+	tk.MustExec("set @@character_set_connection=gbk;")
+	tk.MustQuery("select @@character_set_connection;").Check(testkit.Rows("gbk"))
+	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_bin"))
+
+	tk.MustExec("select _gbk 'a'")
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a char(10) charset gbk);")
+	tk.MustExec("create table t2(a char(10) charset gbk collate gbk_bin);")
+	tk.MustExec("create table t3(a char(10)) charset gbk;")
+	tk.MustExec("alter table t3 add column b char(10) charset gbk;")
+	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
+		"  `a` char(10) DEFAULT NULL,\n" +
+		"  `b` char(10) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin",
+	))
+	tk.MustExec("create table t4(a char(10));")
+	tk.MustExec("alter table t4 add column b char(10) charset gbk;")
+	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n" +
+		"  `a` char(10) DEFAULT NULL,\n" +
+		"  `b` char(10) CHARACTER SET gbk COLLATE gbk_bin DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec("create database test_gbk charset gbk;")
 }
 
 func (s *testSerialSuite2) TestIssue23567(c *C) {
