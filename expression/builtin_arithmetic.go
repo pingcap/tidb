@@ -72,7 +72,7 @@ func numericContextResultType(ft *types.FieldType) types.EvalType {
 		}
 		return types.ETInt
 	}
-	if types.IsBinaryStr(ft) {
+	if types.IsBinaryStr(ft) || ft.Tp == mysql.TypeBit {
 		return types.ETInt
 	}
 	evalTp4Ft := types.ETReal

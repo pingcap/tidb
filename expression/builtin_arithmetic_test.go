@@ -191,6 +191,23 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	intResult, _, err = intSig.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(intResult, Equals, int64(9007199254740993))
+
+	bitStr, err := types.NewBitLiteral("0b00011")
+	c.Assert(err, IsNil)
+	args = []interface{}{bitStr, int64(1)}
+
+	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf, NotNil)
+
+	//check the result type is int
+	intSig, ok = bf.(*builtinArithmeticPlusIntSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(intSig, NotNil)
+
+	intResult, _, err = intSig.evalInt(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(intResult, Equals, int64(4))
 }
 
 func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
