@@ -217,6 +217,8 @@ type HashAggExec struct {
 	spillAction *AggSpillDiskAction
 	// isChildDrained indicates whether the all data from child has been taken out.
 	isChildDrained bool
+
+	randomSpillTime int32
 }
 
 // HashAggInput indicates the input of hash agg exec.
@@ -337,6 +339,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.executed, e.isChildDrained = false, false
 	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
 	e.tmpChkForSpill = newFirstChunk(e.children[0])
+	e.randomSpillTime = 10
 	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage && config.GetGlobalConfig().OOMUseTmpStorage {
 		e.diskTracker = disk.NewTracker(e.id, -1)
 		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
@@ -1019,9 +1022,11 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	}
 }
 
-func (e *HashAggExec) randomSpill()  {
-	if rand.Int31n(100) < 5 {
+func (e *HashAggExec) randomSpill() {
+	if atomic.LoadUint32(&e.inSpillMode) == 0 && rand.Int31n(100) < 2 && e.randomSpillTime > 0 {
+		e.randomSpillTime--
 		atomic.StoreUint32(&e.inSpillMode, 1)
+		logutil.BgLogger().Info("Random spill")
 	}
 }
 
