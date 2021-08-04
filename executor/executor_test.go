@@ -7637,6 +7637,58 @@ func (s *testSuite) TestZeroDateTimeCompatibility(c *C) {
 	}
 }
 
+<<<<<<< HEAD
+=======
+// https://github.com/pingcap/tidb/issues/24165.
+func (s *testSuite) TestInvalidDateValueInCreateTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+
+	// Test for sql mode 'NO_ZERO_IN_DATE'.
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES,NO_ZERO_IN_DATE';")
+	tk.MustGetErrCode("create table t (a datetime default '2999-00-00 00:00:00');", errno.ErrInvalidDefault)
+	tk.MustExec("create table t (a datetime);")
+	tk.MustGetErrCode("alter table t modify column a datetime default '2999-00-00 00:00:00';", errno.ErrInvalidDefault)
+	tk.MustExec("drop table if exists t;")
+
+	// Test for sql mode 'NO_ZERO_DATE'.
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES,NO_ZERO_DATE';")
+	tk.MustGetErrCode("create table t (a datetime default '0000-00-00 00:00:00');", errno.ErrInvalidDefault)
+	tk.MustExec("create table t (a datetime);")
+	tk.MustGetErrCode("alter table t modify column a datetime default '0000-00-00 00:00:00';", errno.ErrInvalidDefault)
+	tk.MustExec("drop table if exists t;")
+
+	// Remove NO_ZERO_DATE and NO_ZERO_IN_DATE.
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES';")
+	// Test create table with zero datetime as a default value.
+	tk.MustExec("create table t (a datetime default '2999-00-00 00:00:00');")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a datetime default '0000-00-00 00:00:00');")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a datetime);")
+	tk.MustExec("alter table t modify column a datetime default '2999-00-00 00:00:00';")
+	tk.MustExec("alter table t modify column a datetime default '0000-00-00 00:00:00';")
+	tk.MustExec("drop table if exists t;")
+
+	// Test create table with invalid datetime(02-30) as a default value.
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES';")
+	tk.MustGetErrCode("create table t (a datetime default '2999-02-30 00:00:00');", errno.ErrInvalidDefault)
+	tk.MustExec("drop table if exists t;")
+	// NO_ZERO_IN_DATE and NO_ZERO_DATE have nothing to do with invalid datetime(02-30).
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE';")
+	tk.MustGetErrCode("create table t (a datetime default '2999-02-30 00:00:00');", errno.ErrInvalidDefault)
+	tk.MustExec("drop table if exists t;")
+	// ALLOW_INVALID_DATES allows invalid datetime(02-30).
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES,ALLOW_INVALID_DATES';")
+	tk.MustExec("create table t (a datetime default '2999-02-30 00:00:00');")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a datetime);")
+	tk.MustExec("alter table t modify column a datetime default '2999-02-30 00:00:00';")
+	tk.MustExec("drop table if exists t;")
+}
+
+>>>>>>> 0c7283418... executor: make NO_ZERO_IN_DATE affect the default values (#26828)
 func (s *testSuite) TestOOMActionPriority(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
