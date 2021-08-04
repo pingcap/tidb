@@ -27,12 +27,13 @@ import (
 
 func TestSchemaValidator(t *testing.T) {
 	t.Parallel()
-	t.Run("general", testSchemaValidatorGeneral)
-	t.Run("enqueue", testEnqueue)
-	t.Run("enqueueActionType", testEnqueueActionType)
+	t.Run("general", subTestSchemaValidatorGeneral)
+	t.Run("enqueue", subTestEnqueue)
+	t.Run("enqueueActionType", subTestEnqueueActionType)
 }
 
-func testSchemaValidatorGeneral(t *testing.T) {
+// subTestSchemaValidatorGeneral is batched in TestSchemaValidator
+func subTestSchemaValidatorGeneral(t *testing.T) {
 	lease := 10 * time.Millisecond
 	leaseGrantCh := make(chan leaseGrantItem)
 	oracleCh := make(chan uint64)
@@ -111,7 +112,8 @@ func testSchemaValidatorGeneral(t *testing.T) {
 	wg.Wait()
 }
 
-func testEnqueue(t *testing.T) {
+// subTestEnqueue is batched in TestSchemaValidator
+func subTestEnqueue(t *testing.T) {
 	lease := 10 * time.Millisecond
 	originalCnt := variable.GetMaxDeltaSchemaCount()
 	defer variable.SetMaxDeltaSchemaCount(originalCnt)
@@ -170,7 +172,8 @@ func testEnqueue(t *testing.T) {
 	require.Equal(t, ret[1:], validator.deltaSchemaInfos)
 }
 
-func testEnqueueActionType(t *testing.T) {
+// subTestEnqueueActionType is batched in TestSchemaValidator
+func subTestEnqueueActionType(t *testing.T) {
 	lease := 10 * time.Millisecond
 	originalCnt := variable.GetMaxDeltaSchemaCount()
 	defer variable.SetMaxDeltaSchemaCount(originalCnt)
