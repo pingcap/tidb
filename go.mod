@@ -54,7 +54,7 @@ require (
 	github.com/pingcap/parser v0.0.0-20210823071803-562fed23b4fb
 	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
-	github.com/pingcap/tipb v0.0.0-20210708040514-0f154bb0dc0f
+	github.com/pingcap/tipb v0.0.0-20210802080519-94b831c6db55
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
@@ -97,5 +97,4 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-// FIXME the official repo has some bug makes br_gcs test failed. https://github.com/googleapis/google-cloud-go/pull/3509
-// replace cloud.google.com/go/storage => github.com/3pointer/google-cloud-go/storage v1.6.1-0.20210108125931-b59bfa0720b2
+
