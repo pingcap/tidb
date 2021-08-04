@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 
-	"github.com/pingcap/br/pkg/lightning/metric"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 )
 
 type TableKVDecoder struct {

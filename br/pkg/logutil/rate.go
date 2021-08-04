@@ -10,7 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 
-	"github.com/pingcap/br/pkg/lightning/metric"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 )
 
 // MetricTableCreatedCounter counts how many tables created.
