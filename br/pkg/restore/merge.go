@@ -7,12 +7,12 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/backup"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 
-	berrors "github.com/pingcap/br/pkg/errors"
-	"github.com/pingcap/br/pkg/rtree"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 )
 
 const (

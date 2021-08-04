@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/util/mock"
 
-	"github.com/pingcap/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/br/pkg/lightning/glue"
-	"github.com/pingcap/br/pkg/lightning/metric"
-	"github.com/pingcap/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 )
 
 var _ = Suite(&tidbSuite{})

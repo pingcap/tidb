@@ -12,7 +12,7 @@ import (
 	"github.com/xitongsys/parquet-go-source/local"
 	writer2 "github.com/xitongsys/parquet-go/writer"
 
-	"github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
 type testParquetParserSuite struct{}

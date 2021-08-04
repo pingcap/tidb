@@ -12,7 +12,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	pd "github.com/tikv/pd/client"
 
-	"github.com/pingcap/br/pkg/version/build"
+	"github.com/pingcap/tidb/br/pkg/version/build"
 )
 
 type checkSuite struct{}

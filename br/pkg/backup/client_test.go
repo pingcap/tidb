@@ -9,7 +9,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	backuppb "github.com/pingcap/kvproto/pkg/backup"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
@@ -22,10 +22,10 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
 
-	"github.com/pingcap/br/pkg/backup"
-	"github.com/pingcap/br/pkg/conn"
-	"github.com/pingcap/br/pkg/pdutil"
-	"github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
 type testBackup struct {

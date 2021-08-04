@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	backuppb "github.com/pingcap/kvproto/pkg/backup"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/pingcap/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 )
 
 var _ = Suite(&testLoggingSuite{})

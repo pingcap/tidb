@@ -14,7 +14,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	backuppb "github.com/pingcap/kvproto/pkg/backup"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -24,15 +24,15 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 
-	"github.com/pingcap/br/pkg/backup"
-	"github.com/pingcap/br/pkg/checksum"
-	berrors "github.com/pingcap/br/pkg/errors"
-	"github.com/pingcap/br/pkg/glue"
-	"github.com/pingcap/br/pkg/logutil"
-	"github.com/pingcap/br/pkg/metautil"
-	"github.com/pingcap/br/pkg/storage"
-	"github.com/pingcap/br/pkg/summary"
-	"github.com/pingcap/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/checksum"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/br/pkg/utils"
 )
 
 const (

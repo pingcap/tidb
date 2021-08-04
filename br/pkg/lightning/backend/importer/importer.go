@@ -30,12 +30,12 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
-	"github.com/pingcap/br/pkg/lightning/backend"
-	"github.com/pingcap/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/br/pkg/lightning/common"
-	"github.com/pingcap/br/pkg/lightning/log"
-	"github.com/pingcap/br/pkg/lightning/tikv"
-	"github.com/pingcap/br/pkg/version"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
+	"github.com/pingcap/tidb/br/pkg/version"
 )
 
 const (

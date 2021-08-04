@@ -18,13 +18,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/storage"
 
 	. "github.com/pingcap/check"
 
-	"github.com/pingcap/br/pkg/lightning/config"
-	. "github.com/pingcap/br/pkg/lightning/mydump"
-	"github.com/pingcap/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	. "github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 )
 
 var _ = Suite(&testMydumpRegionSuite{})

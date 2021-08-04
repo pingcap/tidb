@@ -27,9 +27,9 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
-	berrors "github.com/pingcap/br/pkg/errors"
-	"github.com/pingcap/br/pkg/httputil"
-	"github.com/pingcap/br/pkg/lightning/common"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/httputil"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 )
 
 const (

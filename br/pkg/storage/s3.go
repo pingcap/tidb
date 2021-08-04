@@ -23,12 +23,12 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/backup"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 
-	berrors "github.com/pingcap/br/pkg/errors"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
 
 const (

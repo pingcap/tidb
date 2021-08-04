@@ -14,9 +14,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"go.uber.org/zap"
 
-	berrors "github.com/pingcap/br/pkg/errors"
-	"github.com/pingcap/br/pkg/logutil"
-	"github.com/pingcap/br/pkg/rtree"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 )
 
 // Range record start and end key for localStoreDir.DB

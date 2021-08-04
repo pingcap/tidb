@@ -15,7 +15,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/backup"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -26,11 +26,11 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc/keepalive"
 
-	"github.com/pingcap/br/pkg/conn"
-	berrors "github.com/pingcap/br/pkg/errors"
-	"github.com/pingcap/br/pkg/glue"
-	"github.com/pingcap/br/pkg/storage"
-	"github.com/pingcap/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/conn"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
 )
 
 const (

@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 
-	"github.com/pingcap/br/pkg/lightning/config"
-	"github.com/pingcap/br/pkg/lightning/worker"
-	"github.com/pingcap/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/br/pkg/utils"
 )
 
 var (

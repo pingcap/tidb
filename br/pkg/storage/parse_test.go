@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	backuppb "github.com/pingcap/kvproto/pkg/backup"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 )
 
 func Test(t *testing.T) {

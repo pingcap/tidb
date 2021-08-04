@@ -42,24 +42,24 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	tmock "github.com/pingcap/tidb/util/mock"
 
-	"github.com/pingcap/br/pkg/lightning/backend"
-	"github.com/pingcap/br/pkg/lightning/backend/importer"
-	"github.com/pingcap/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/br/pkg/lightning/backend/noop"
-	"github.com/pingcap/br/pkg/lightning/backend/tidb"
-	"github.com/pingcap/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/br/pkg/lightning/common"
-	"github.com/pingcap/br/pkg/lightning/config"
-	"github.com/pingcap/br/pkg/lightning/glue"
-	"github.com/pingcap/br/pkg/lightning/log"
-	"github.com/pingcap/br/pkg/lightning/metric"
-	"github.com/pingcap/br/pkg/lightning/mydump"
-	"github.com/pingcap/br/pkg/lightning/verification"
-	"github.com/pingcap/br/pkg/lightning/web"
-	"github.com/pingcap/br/pkg/lightning/worker"
-	"github.com/pingcap/br/pkg/mock"
-	"github.com/pingcap/br/pkg/storage"
-	"github.com/pingcap/br/pkg/version/build"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/noop"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
+	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/lightning/web"
+	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/version/build"
 )
 
 var _ = Suite(&restoreSuite{})
@@ -405,9 +405,9 @@ func (s *tableRestoreSuiteBase) SetUpTest(c *C) {
 }
 
 func (s *tableRestoreSuite) TestPopulateChunks(c *C) {
-	_ = failpoint.Enable("github.com/pingcap/br/pkg/lightning/restore/PopulateChunkTimestamp", "return(1234567897)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/PopulateChunkTimestamp", "return(1234567897)")
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/br/pkg/lightning/restore/PopulateChunkTimestamp")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/PopulateChunkTimestamp")
 	}()
 
 	cp := &checkpoints.TableCheckpoint{
@@ -566,9 +566,9 @@ func (s *tableRestoreSuite) TestPopulateChunksCSVHeader(c *C) {
 		DataFiles:  fakeDataFiles,
 	}
 
-	_ = failpoint.Enable("github.com/pingcap/br/pkg/lightning/restore/PopulateChunkTimestamp", "return(1234567897)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/PopulateChunkTimestamp", "return(1234567897)")
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/br/pkg/lightning/restore/PopulateChunkTimestamp")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/PopulateChunkTimestamp")
 	}()
 
 	cp := &checkpoints.TableCheckpoint{
@@ -1258,7 +1258,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit(c *C) {
 
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
 	c.Assert(failpoint.Enable(
-		"github.com/pingcap/br/pkg/lightning/restore/mock-kv-size", "return(110000000)"), IsNil)
+		"github.com/pingcap/tidb/br/pkg/lightning/restore/mock-kv-size", "return(110000000)"), IsNil)
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(err, IsNil)
 

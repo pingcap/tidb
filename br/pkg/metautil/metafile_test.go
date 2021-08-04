@@ -9,9 +9,9 @@ import (
 
 	"github.com/golang/mock/gomock"
 	. "github.com/pingcap/check"
-	backuppb "github.com/pingcap/kvproto/pkg/backup"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 
-	mockstorage "github.com/pingcap/br/pkg/mock/storage"
+	mockstorage "github.com/pingcap/tidb/br/pkg/mock/storage"
 )
 
 type metaSuit struct{}

@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 
-	"github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
 // EventPuller pulls next event in ts order.

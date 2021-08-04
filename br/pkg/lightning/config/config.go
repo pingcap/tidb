@@ -38,8 +38,8 @@ import (
 	"github.com/tikv/pd/server/api"
 	"go.uber.org/zap"
 
-	"github.com/pingcap/br/pkg/lightning/common"
-	"github.com/pingcap/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 )
 
 const (

@@ -17,8 +17,8 @@ import (
 	"github.com/xitongsys/parquet-go/source"
 	"go.uber.org/zap"
 
-	"github.com/pingcap/br/pkg/lightning/log"
-	"github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
 const (

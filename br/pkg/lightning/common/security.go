@@ -27,7 +27,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/pingcap/br/pkg/httputil"
+	"github.com/pingcap/tidb/br/pkg/httputil"
 )
 
 // TLS

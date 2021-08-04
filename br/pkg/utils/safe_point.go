@@ -15,7 +15,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	berrors "github.com/pingcap/br/pkg/errors"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
 
 const (

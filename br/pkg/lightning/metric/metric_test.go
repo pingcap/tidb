@@ -21,7 +21,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/pingcap/br/pkg/lightning/metric"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 )
 
 type testMetricSuite struct{}
