@@ -309,7 +309,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		// create table t(a int, b int, c int, unique index idx_b(b), unique index idx_b_c(b, c));
 		// select b, c from t where b = 5 and c > 10;
 		// ```
-		// In the case, `uniqueBest` is `idx_b`. However, `idx_b_c` is better than `idx_b_c`.
+		// In the case, `uniqueBest` is `idx_b`. However, `idx_b_c` is better than `idx_b`.
 		// Hence, for each index in `singleScanIdxs`, we check whether it is better than some index in `uniqueIdxsWithDoubleScan`.
 		// If yes, the index is a refined one. We find the refined index with the minimal number of ranges as `refineBest`.
 		for _, singleScanIdx := range singleScanIdxs {
