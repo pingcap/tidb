@@ -21,7 +21,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
-	"github.com/pingcap/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 )
 
 // connPool is a lazy pool of gRPC channels.
