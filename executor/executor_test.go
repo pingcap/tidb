@@ -8486,9 +8486,19 @@ func (s testSerialSuite) assertTemporaryTableNoNetwork(c *C, temporaryTableType 
 	tk.MustQuery("select /*+ USE_INDEX(tmp_t, a) */ b from tmp_t where a = 1").Check(testkit.Rows("1"))
 	tk.MustExec("rollback")
 
+	// prepare some data for local temporary table, when for global temporary table, the below operations have no effect.
+	tk.MustExec("insert into tmp_t value(10, 10, 10)")
+	tk.MustExec("insert into tmp_t value(11, 11, 11)")
+
 	// Pessimistic lock
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tmp_t values (3, 3, 3)")
+	tk.MustExec("insert ignore into tmp_t values (4, 4, 4)")
+	tk.MustExec("insert into tmp_t values (5, 5, 5) on duplicate key update a=100")
+	tk.MustExec("insert into tmp_t values (10, 10, 10) on duplicate key update a=100")
+	tk.MustExec("insert ignore into tmp_t values (10, 10, 10) on duplicate key update id=11")
+	tk.MustExec("replace into tmp_t values(6, 6, 6)")
+	tk.MustExec("replace into tmp_t values(11, 100, 100)")
 	tk.MustExec("update tmp_t set id = id + 1 where a = 1")
 	tk.MustExec("delete from tmp_t where a > 1")
 	tk.MustQuery("select count(*) from tmp_t where a >= 1 for update")
