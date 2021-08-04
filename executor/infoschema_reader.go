@@ -2251,9 +2251,9 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 		}
 
 		// Fetch the SQL Texts of the digests above if necessary.
-		var sqlRetriever *SQLDigestTextRetriever
+		var sqlRetriever *expression.SQLDigestTextRetriever
 		if needSQLText {
-			sqlRetriever = NewSQLDigestTextRetriever()
+			sqlRetriever = expression.NewSQLDigestTextRetriever()
 			for _, digest := range digests {
 				if len(digest) > 0 {
 					sqlRetriever.SQLDigestsMap[digest] = ""
@@ -2391,11 +2391,11 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 
 	err = r.nextBatch(func(start, end int) error {
 		// Before getting rows, collect the SQL digests that needs to be retrieved first.
-		var sqlRetriever *SQLDigestTextRetriever
+		var sqlRetriever *expression.SQLDigestTextRetriever
 		for _, c := range r.columns {
 			if c.Name.O == deadlockhistory.ColCurrentSQLDigestTextStr {
 				if sqlRetriever == nil {
-					sqlRetriever = NewSQLDigestTextRetriever()
+					sqlRetriever = expression.NewSQLDigestTextRetriever()
 				}
 
 				idx, waitChainIdx := r.currentIdx, r.currentWaitChainIdx
