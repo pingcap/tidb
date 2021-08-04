@@ -77,7 +77,7 @@ func (s *tiflashTestSuite) SetUpSuite(c *C) {
 
 func (s *tiflashTestSuite) TearDownSuite(c *C) {
 	s.dom.Close()
-	s.store.Close()
+	c.Assert(s.store.Close(), IsNil)
 }
 
 func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
