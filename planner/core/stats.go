@@ -306,7 +306,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		}
 		// `uniqueBest` may not always be the best.
 		// ```
-		// create table t(a int, b int, c int, unique index idx_b(b), unique index idx_b_c(b, c));
+		// create table t(a int, b int, c int, unique index idx_b(b), index idx_b_c(b, c));
 		// select b, c from t where b = 5 and c > 10;
 		// ```
 		// In the case, `uniqueBest` is `idx_b`. However, `idx_b_c` is better than `idx_b`.
