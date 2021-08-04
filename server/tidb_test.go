@@ -93,6 +93,10 @@ func (ts *tidbTestSuite) SetUpSuite(c *C) {
 	ts.tidbTestSuiteBase.SetUpSuite(c)
 }
 
+func (ts *tidbTestSuite) TearDownSuite(c *C) {
+	ts.tidbTestSuiteBase.TearDownSuite(c)
+}
+
 func (ts *tidbTestTopSQLSuite) SetUpSuite(c *C) {
 	ts.tidbTestSuiteBase.SetUpSuite(c)
 
@@ -110,6 +114,10 @@ func (ts *tidbTestTopSQLSuite) SetUpSuite(c *C) {
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 
 	tracecpu.GlobalSQLCPUProfiler.Run()
+}
+
+func (ts *tidbTestTopSQLSuite) TearDownSuite(c *C) {
+	ts.tidbTestSuiteBase.TearDownSuite(c)
 }
 
 func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
