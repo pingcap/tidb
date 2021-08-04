@@ -2160,3 +2160,40 @@ func (s *testSuite) TestBindingLastUpdateTime(c *C) {
 	c.Assert(updateTime2, Equals, updateTime)
 	tk.MustQuery(`show global status like 'last_plan_binding_update_time';`).Check(testkit.Rows())
 }
+
+func (s *testSuite) TestGCBindRecord(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key(a))")
+
+	tk.MustExec("create global binding for select * from t where a = 1 using select * from t use index(a) where a = 1")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` = ?")
+	c.Assert(rows[0][3], Equals, "using")
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
+		"using",
+	))
+
+	h := s.domain.BindHandle()
+	// bindinfo.Lease is set to 0 for test env in SetUpSuite.
+	c.Assert(h.GCBindRecord(), IsNil)
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` = ?")
+	c.Assert(rows[0][3], Equals, "using")
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
+		"using",
+	))
+
+	tk.MustExec("drop global binding for select * from t where a = 1")
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
+		"deleted",
+	))
+	c.Assert(h.GCBindRecord(), IsNil)
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows())
+}
