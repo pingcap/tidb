@@ -515,6 +515,11 @@ type SessionVars struct {
 	// Value set to `false` means never use mpp.
 	allowMPPExecution bool
 
+	// HashExchangeWithNewCollation means if we support hash exchange when new collation is enabled.
+	// Default value is `true`, means support hash exchange when new collation is enabled.
+	// Value set to `false` means not use hash exchange when new collation is enabled.
+	HashExchangeWithNewCollation bool
+
 	// enforceMPPExecution means if we should enforce mpp way to execute query.
 	// Default value is `false`, means to be determined by variable `allowMPPExecution`.
 	// Value set to `true` means enforce use mpp.
@@ -1134,6 +1139,7 @@ func NewSessionVars() *SessionVars {
 
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
+	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
 
 	var enableChunkRPC string
