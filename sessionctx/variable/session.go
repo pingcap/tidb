@@ -922,6 +922,11 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
+	if s.InTxn() {
+		// UnionScan cannot get partition table IDs in dynamic-mode, this is a quick-fix for issues/26719,
+		// please see it for more details.
+		return false
+	}
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
@@ -2220,14 +2225,18 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 	return s.seekFactor
 }
 
-// GetTemporaryTableSnapshotValue get temporary table value from session
-func (s *SessionVars) GetTemporaryTableSnapshotValue(ctx context.Context, key kv.Key) ([]byte, error) {
-	memData := s.TemporaryTableData
-	if memData == nil {
+// TemporaryTableSnapshotReader can read the temporary table snapshot data
+type TemporaryTableSnapshotReader struct {
+	memBuffer kv.MemBuffer
+}
+
+// Get gets the value for key k from snapshot.
+func (s *TemporaryTableSnapshotReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	if s.memBuffer == nil {
 		return nil, kv.ErrNotExist
 	}
 
-	v, err := memData.Get(ctx, key)
+	v, err := s.memBuffer.Get(ctx, k)
 	if err != nil {
 		return v, err
 	}
@@ -2239,9 +2248,23 @@ func (s *SessionVars) GetTemporaryTableSnapshotValue(ctx context.Context, key kv
 	return v, nil
 }
 
-// GetTemporaryTableTxnValue returns a kv.Getter to fetch temporary table data in txn
-func (s *SessionVars) GetTemporaryTableTxnValue(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, error) {
-	v, err := txn.GetMemBuffer().Get(ctx, key)
+// TemporaryTableSnapshotReader can read the temporary table snapshot data
+func (s *SessionVars) TemporaryTableSnapshotReader(tblInfo *model.TableInfo) *TemporaryTableSnapshotReader {
+	if tblInfo.TempTableType == model.TempTableGlobal {
+		return &TemporaryTableSnapshotReader{nil}
+	}
+	return &TemporaryTableSnapshotReader{s.TemporaryTableData}
+}
+
+// TemporaryTableTxnReader can read the temporary table txn data
+type TemporaryTableTxnReader struct {
+	memBuffer kv.MemBuffer
+	snapshot  *TemporaryTableSnapshotReader
+}
+
+// Get gets the value for key k from txn.
+func (s *TemporaryTableTxnReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	v, err := s.memBuffer.Get(ctx, k)
 	if err == nil {
 		if len(v) == 0 {
 			return nil, kv.ErrNotExist
@@ -2254,5 +2277,13 @@ func (s *SessionVars) GetTemporaryTableTxnValue(ctx context.Context, txn kv.Tran
 		return v, err
 	}
 
-	return s.GetTemporaryTableSnapshotValue(ctx, key)
+	return s.snapshot.Get(ctx, k)
+}
+
+// TemporaryTableTxnReader can read the temporary table txn data
+func (s *SessionVars) TemporaryTableTxnReader(txn kv.Transaction, tblInfo *model.TableInfo) *TemporaryTableTxnReader {
+	return &TemporaryTableTxnReader{
+		memBuffer: txn.GetMemBuffer(),
+		snapshot:  s.TemporaryTableSnapshotReader(tblInfo),
+	}
 }
