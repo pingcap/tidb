@@ -98,7 +98,6 @@ func TestT(t *testing.T) {
 		conf.Log.SlowThreshold = 30000 // 30s
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
 	tmpDir := config.GetGlobalConfig().TempStoragePath
@@ -5585,7 +5584,7 @@ func (s *testSuiteP2) TestIssue10435(c *C) {
 	)
 }
 
-func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
+func (s *testSerialSuite2) TestUnsignedFeedback(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	oriProbability := statistics.FeedbackProbability.Load()
 	statistics.FeedbackProbability.Store(1.0)
@@ -5601,7 +5600,7 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "range:[0,+inf], keep order:false")
 }
 
-func (s *testSuiteP2) TestIssue23567(c *C) {
+func (s *testSerialSuite2) TestIssue23567(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	oriProbability := statistics.FeedbackProbability.Load()
 	statistics.FeedbackProbability.Store(1.0)
@@ -8464,9 +8463,19 @@ func (s testSerialSuite) assertTemporaryTableNoNetwork(c *C, temporaryTableType 
 	tk.MustQuery("select /*+ USE_INDEX(tmp_t, a) */ b from tmp_t where a = 1").Check(testkit.Rows("1"))
 	tk.MustExec("rollback")
 
+	// prepare some data for local temporary table, when for global temporary table, the below operations have no effect.
+	tk.MustExec("insert into tmp_t value(10, 10, 10)")
+	tk.MustExec("insert into tmp_t value(11, 11, 11)")
+
 	// Pessimistic lock
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tmp_t values (3, 3, 3)")
+	tk.MustExec("insert ignore into tmp_t values (4, 4, 4)")
+	tk.MustExec("insert into tmp_t values (5, 5, 5) on duplicate key update a=100")
+	tk.MustExec("insert into tmp_t values (10, 10, 10) on duplicate key update a=100")
+	tk.MustExec("insert ignore into tmp_t values (10, 10, 10) on duplicate key update id=11")
+	tk.MustExec("replace into tmp_t values(6, 6, 6)")
+	tk.MustExec("replace into tmp_t values(11, 100, 100)")
 	tk.MustExec("update tmp_t set id = id + 1 where a = 1")
 	tk.MustExec("delete from tmp_t where a > 1")
 	tk.MustQuery("select count(*) from tmp_t where a >= 1 for update")
@@ -8842,4 +8851,15 @@ func (s *testSuite) TestIssue26532(c *C) {
 	tk.MustQuery("select least(cast(\"2020-01-01 01:01:01\" as datetime), cast(\"2019-01-01 01:01:01\" as datetime) )union select null;").Sort().Check(testkit.Rows("2019-01-01 01:01:01", "<nil>"))
 	tk.MustQuery("select greatest(\"2020-01-01 01:01:01\" ,\"2019-01-01 01:01:01\" )union select null;").Sort().Check(testkit.Rows("2020-01-01 01:01:01", "<nil>"))
 	tk.MustQuery("select least(\"2020-01-01 01:01:01\" , \"2019-01-01 01:01:01\" )union select null;").Sort().Check(testkit.Rows("2019-01-01 01:01:01", "<nil>"))
+}
+
+func (s *testSuite) TestIssue25447(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b varchar(8))")
+	tk.MustExec("insert into t1 values(1,'1')")
+	tk.MustExec("create table t2(a int , b varchar(8) GENERATED ALWAYS AS (c) VIRTUAL, c varchar(8), PRIMARY KEY (a))")
+	tk.MustExec("insert into t2(a) values(1)")
+	tk.MustQuery("select /*+ tidb_inlj(t2) */ t2.b, t1.b from t1 join t2 ON t2.a=t1.a").Check(testkit.Rows("<nil> 1"))
 }

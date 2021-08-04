@@ -172,6 +172,18 @@ func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, i
 	return
 }
 
+// GetPotentialPartitionKeys return potential partition keys for join, the potential partition keys are
+// the join keys of EqualConditions
+func (p *LogicalJoin) GetPotentialPartitionKeys() (leftKeys, rightKeys []*property.MPPPartitionColumn) {
+	for _, expr := range p.EqualConditions {
+		_, coll := expr.CharsetAndCollation(p.ctx)
+		collateID := property.GetCollateIDByNameForPartition(coll)
+		leftKeys = append(leftKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[0].(*expression.Column), CollateID: collateID})
+		rightKeys = append(rightKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[1].(*expression.Column), CollateID: collateID})
+	}
+	return
+}
+
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
 	for i, cond := range p.LeftConditions {
 		p.LeftConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
@@ -355,6 +367,21 @@ func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
 	for _, item := range la.GroupByItems {
 		if col, ok := item.(*expression.Column); ok {
 			groupByCols = append(groupByCols, col)
+		}
+	}
+	return groupByCols
+}
+
+// GetPotentialPartitionKeys return potential partition keys for aggregation, the potential partition keys are the group by keys
+func (la *LogicalAggregation) GetPotentialPartitionKeys() []*property.MPPPartitionColumn {
+	groupByCols := make([]*property.MPPPartitionColumn, 0, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			_, coll := expression.DeriveCollationFromExprs(la.ctx, col)
+			groupByCols = append(groupByCols, &property.MPPPartitionColumn{
+				Col:       col,
+				CollateID: property.GetCollateIDByNameForPartition(coll),
+			})
 		}
 	}
 	return groupByCols
@@ -675,6 +702,12 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 		path.EqCondCount = res.EqCondCount
 		path.EqOrInCondCount = res.EqOrInCount
 		path.IsDNFCond = res.IsDNFCond
+		path.ConstCols = make([]bool, len(path.IdxCols))
+		if res.ColumnValues != nil {
+			for i := range path.ConstCols {
+				path.ConstCols[i] = res.ColumnValues[i] != nil
+			}
+		}
 		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
 		if err != nil {
 			return false, err
@@ -854,6 +887,12 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 		path.EqCondCount = res.EqCondCount
 		path.EqOrInCondCount = res.EqOrInCount
 		path.IsDNFCond = res.IsDNFCond
+		path.ConstCols = make([]bool, len(path.IdxCols))
+		if res.ColumnValues != nil {
+			for i := range path.ConstCols {
+				path.ConstCols[i] = res.ColumnValues[i] != nil
+			}
+		}
 		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
 		if err != nil {
 			return err
