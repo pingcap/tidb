@@ -55,22 +55,13 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	ret := &plannercore.PreprocessorReturn{}
-	opt := plannercore.WithPreprocessorReturn(ret)
-	stmtType, err := plannercore.PreprocessReturnStmtType(c.Ctx, stmtNode, []plannercore.PreprocessOpt{opt})
+	err := plannercore.Preprocess(c.Ctx, stmtNode, plannercore.WithPreprocessorReturn(ret), plannercore.WithExecuteInfoSchemaUpdate(planner.IsExecuteForUpdateRead))
 	if err != nil {
 		return nil, err
 	}
-	infoSchema := ret.InfoSchema
-	// Since we may need change the old infoSchema in text-protocol `Execute` stmt. We unify
-	// the schema change in the outside, rather than in the deep call chain.
-	if stmtType == plannercore.TypeExecute {
-		if newInfo := planner.IsExecuteForUpdateRead(stmtNode, c.Ctx); newInfo != nil {
-			infoSchema = newInfo
-		}
-	}
 	stmtNode = plannercore.TryAddExtraLimit(c.Ctx, stmtNode)
 
-	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
+	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, ret.InfoSchema)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +84,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		SnapshotTS:    ret.LastSnapshotTS,
 		IsStaleness:   ret.IsStaleness,
 		TxnScope:      ret.TxnScope,
-		InfoSchema:    infoSchema,
+		InfoSchema:    ret.InfoSchema,
 		Plan:          finalPlan,
 		LowerPriority: lowerPriority,
 		Text:          stmtNode.Text(),

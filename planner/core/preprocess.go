@@ -63,6 +63,13 @@ func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 	}
 }
 
+// WithExecuteInfoSchemaUpdate return a PreprocessOpt to update the `Execute` infoSchema under some conditions.
+func WithExecuteInfoSchemaUpdate(f func(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema) PreprocessOpt {
+	return func(p *preprocessor) {
+		p.ExecuteInfoSchemaUpdate = f
+	}
+}
+
 // TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
 func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
@@ -96,12 +103,6 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 // Preprocess resolves table names of the node, and checks some statements validation.
 // preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
 func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
-	_, err := PreprocessReturnStmtType(ctx, node, preprocessOpt)
-	return err
-}
-
-// PreprocessReturnStmtType is used to return stmt type result of preprocess back to outer.
-func PreprocessReturnStmtType(ctx sessionctx.Context, node ast.Node, preprocessOpt []PreprocessOpt) (byte, error) {
 	v := preprocessor{ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0), withName: make(map[string]interface{})}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
@@ -113,7 +114,13 @@ func PreprocessReturnStmtType(ctx sessionctx.Context, node ast.Node, preprocessO
 	node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
-	return v.stmtTp, errors.Trace(v.err)
+	// `Execute` under some conditions need to see the latest information schema.
+	if v.ExecuteInfoSchemaUpdate != nil {
+		if newInfoSchema := v.ExecuteInfoSchemaUpdate(node, ctx); newInfoSchema != nil {
+			v.InfoSchema = newInfoSchema
+		}
+	}
+	return errors.Trace(v.err)
 }
 
 type preprocessorFlag uint8
@@ -163,7 +170,8 @@ type preprocessor struct {
 
 	// values that may be returned
 	*PreprocessorReturn
-	err error
+	ExecuteInfoSchemaUpdate func(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema
+	err                     error
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
