@@ -24,6 +24,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -60,6 +61,7 @@ func TestT(t *testing.T) {
 }
 
 var _ = Suite(&testSuite{})
+var _ = SerialSuites(&testSerialSuite{})
 
 type testSuite struct {
 	cluster testutils.Cluster
@@ -149,6 +151,44 @@ func (s *testSuite) TearDownTest(c *C) {
 }
 
 func (s *testSuite) cleanBindingEnv(tk *testkit.TestKit) {
+	tk.MustExec("delete from mysql.bind_info where source != 'builtin'")
+	s.domain.BindHandle().Clear()
+}
+
+type testSerialSuite struct {
+	cluster testutils.Cluster
+	store   kv.Storage
+	domain  *domain.Domain
+}
+
+func (s *testSerialSuite) SetUpSuite(c *C) {
+	flag.Lookup("mockTikv")
+	useMockTikv := *mockTikv
+	if useMockTikv {
+		store, err := mockstore.NewMockStore(
+			mockstore.WithClusterInspector(func(c testutils.Cluster) {
+				mockstore.BootstrapWithSingleStore(c)
+				s.cluster = c
+			}),
+		)
+		c.Assert(err, IsNil)
+		s.store = store
+		session.SetSchemaLease(0)
+		session.DisableStats4Test()
+	}
+	bindinfo.Lease = 0
+	d, err := session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	d.SetStatsUpdating(true)
+	s.domain = d
+}
+
+func (s *testSerialSuite) TearDownSuite(c *C) {
+	s.domain.Close()
+	s.store.Close()
+}
+
+func (s *testSerialSuite) cleanBindingEnv(tk *testkit.TestKit) {
 	tk.MustExec("delete from mysql.bind_info where source != 'builtin'")
 	s.domain.BindHandle().Clear()
 }
@@ -1306,13 +1346,12 @@ func (s *testSuite) TestRuntimeHintsInEvolveTasks(c *C) {
 	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
 	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))")
 
-	// these runtime hints which don't be contained by the original binding should be ignored
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select * from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
 	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(5000) */ * from t where a >= 4 and b >= 1 and c = 0")
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0") // MAX_EXECUTION_TIME is ignored
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0") // MAX_EXECUTION_TIME is ignored
 
 	s.cleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select /*+ MAX_EXECUTION_TIME(5000) */* from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
@@ -2093,13 +2132,13 @@ func (s *testSuite) TestIssue20417(c *C) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `c` = ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), use_index(`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
 	c.Assert(rows[0][3], Equals, "pending verify")
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `c` = ?")
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), use_index(`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
 	status := rows[0][3].(string)
 	c.Assert(status == "using" || status == "rejected", IsTrue)
 	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
@@ -2206,4 +2245,53 @@ func (s *testSuite) TestBindingLastUpdateTime(c *C) {
 	updateTime2 := rows2[0][1]
 	c.Assert(updateTime2, Equals, updateTime)
 	tk.MustQuery(`show global status like 'last_plan_binding_update_time';`).Check(testkit.Rows())
+}
+
+func (s *testSuite) TestGCBindRecord(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key(a))")
+
+	tk.MustExec("create global binding for select * from t where a = 1 using select * from t use index(a) where a = 1")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` = ?")
+	c.Assert(rows[0][3], Equals, "using")
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
+		"using",
+	))
+
+	h := s.domain.BindHandle()
+	// bindinfo.Lease is set to 0 for test env in SetUpSuite.
+	c.Assert(h.GCBindRecord(), IsNil)
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` = ?")
+	c.Assert(rows[0][3], Equals, "using")
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
+		"using",
+	))
+
+	tk.MustExec("drop global binding for select * from t where a = 1")
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
+		"deleted",
+	))
+	c.Assert(h.GCBindRecord(), IsNil)
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows())
+}
+
+func (s *testSerialSuite) TestOptimizeOnlyOnce(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idxa(a))")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idxa)")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/planner/checkOptimizeCountOne", "return"), IsNil)
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/checkOptimizeCountOne"), IsNil)
 }
