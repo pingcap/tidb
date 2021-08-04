@@ -1351,14 +1351,6 @@ func (s *testSuite) TestRuntimeHintsInEvolveTasks(c *C) {
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0") // MAX_EXECUTION_TIME is ignored
-
-	s.cleanBindingEnv(tk)
-	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select /*+ MAX_EXECUTION_TIME(5000) */* from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
-	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(5000) */* from t where a >= 4 and b >= 1 and c = 0")
-	tk.MustExec("admin flush bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 2)
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0")
 }
 
