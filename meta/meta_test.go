@@ -308,10 +308,10 @@ func TestElement(t *testing.T) {
 		eBytes := e.EncodeElement()
 		resE, err := meta.DecodeElement(eBytes)
 		if resErr == nil {
-			require.Equal(t, resErr, err)
+			require.NoError(t, err)
 			require.Equal(t, resE, e)
 		} else {
-			require.Equal(t, resErr.Error(), err.Error())
+			require.EqualError(t, err, resErr.Error())
 		}
 	}
 	key := []byte("_col")
@@ -322,9 +322,9 @@ func TestElement(t *testing.T) {
 	checkElement(key, errors.Errorf("invalid encoded element key prefix %q", key[:5]))
 
 	_, err := meta.DecodeElement([]byte("_col"))
-	require.Equal(t, `invalid encoded element "_col" length 4`, err.Error())
+	require.EqualError(t, err, `invalid encoded element "_col" length 4`)
 	_, err = meta.DecodeElement(meta.ColumnElementKey)
-	require.Equal(t, `invalid encoded element "_col_" length 5`, err.Error())
+	require.EqualError(t, err, `invalid encoded element "_col_" length 5`)
 }
 
 func TestDDL(t *testing.T) {
@@ -525,17 +525,17 @@ func TestDDL(t *testing.T) {
 
 func BenchmarkGenGlobalIDs(b *testing.B) {
 	store, err := mockstore.NewMockStore()
-	require.Nil(b, err)
+	require.NoError(b, err)
 	defer func() {
 		err := store.Close()
-		require.Nil(b, err)
+		require.NoError(b, err)
 	}()
 
 	txn, err := store.Begin()
-	require.Nil(b, err)
+	require.NoError(b, err)
 	defer func() {
 		err := txn.Rollback()
-		require.Nil(b, err)
+		require.NoError(b, err)
 	}()
 
 	m := meta.NewMeta(txn)
@@ -551,17 +551,17 @@ func BenchmarkGenGlobalIDs(b *testing.B) {
 
 func BenchmarkGenGlobalIDOneByOne(b *testing.B) {
 	store, err := mockstore.NewMockStore()
-	require.Nil(b, err)
+	require.NoError(b, err)
 	defer func() {
 		err := store.Close()
-		require.Nil(b, err)
+		require.NoError(b, err)
 	}()
 
 	txn, err := store.Begin()
-	require.Nil(b, err)
+	require.NoError(b, err)
 	defer func() {
 		err := txn.Rollback()
-		require.Nil(b, err)
+		require.NoError(b, err)
 	}()
 
 	m := meta.NewMeta(txn)
