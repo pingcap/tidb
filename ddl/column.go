@@ -1400,8 +1400,11 @@ func (w *updateColumnWorker) reformatErrors(err error) error {
 
 	if types.ErrWarnDataOutOfRange.Equal(err) {
 		d := w.rowMap[w.oldColInfo.ID]
-		v, _ := d.ToString()
-		err = types.ErrWarnDataOutOfRange.GenWithStack("Out of range value for column '%s' at '%s'", w.oldColInfo.Name, v)
+		if v, err1 := d.ToString(); err1 == nil {
+			err = types.ErrWarnDataOutOfRange.GenWithStack("Out of range value for column '%s' at '%s'", w.oldColInfo.Name, v)
+		} else {
+			err = types.ErrWarnDataOutOfRange.GenWithStack("Out of range value for column '%s'", w.oldColInfo.Name)
+		}
 	}
 	return err
 }
