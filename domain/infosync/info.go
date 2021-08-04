@@ -691,7 +691,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	} else {
 		url = fmt.Sprintf("http://%s%s", pdAddrs[0], pdapi.Config)
 	}
-	resp, err := http.Get(url)
+	resp, err := http.Get(url) // #nosec G107
 	if err != nil {
 		return "", err
 	}
