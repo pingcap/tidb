@@ -105,7 +105,6 @@ func TestSingle(t *testing.T) {
 }
 
 func TestCluster(t *testing.T) {
-	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
