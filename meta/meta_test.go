@@ -15,6 +15,7 @@ package meta_test
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"sync"
@@ -577,19 +578,27 @@ func BenchmarkGenGlobalIDOneByOne(b *testing.B) {
 }
 
 func anyMatch(t *testing.T, ids []int64, candidates ...[]int64) {
-	var match bool
-OUTER:
+	comment := fmt.Sprintf("ids %v cannot match any of %v", ids, candidates)
+
 	for _, candidate := range candidates {
-		if len(ids) != len(candidate) {
-			continue
+		if match(ids, candidate) {
+			return
 		}
-		for i, v := range candidate {
-			if ids[i] != v {
-				continue OUTER
-			}
-		}
-		match = true
-		break
 	}
-	require.True(t, match)
+
+	require.FailNow(t, comment)
+}
+
+func match(ids, candidate []int64) bool {
+	if len(ids) != len(candidate) {
+		return false
+	}
+
+	for i, v := range candidate {
+		if ids[i] != v {
+			return false
+		}
+	}
+
+	return true
 }
