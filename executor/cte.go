@@ -452,7 +452,7 @@ func (e *CTEExec) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) {
 	sel = chk.Sel()
 	var hashBitMap []bool
 	if sel != nil {
-		hashBitMap = make([]bool, chk.RequiredRows())
+		hashBitMap = make([]bool, chk.Capacity())
 		for _, val := range sel {
 			hashBitMap[val] = true
 		}

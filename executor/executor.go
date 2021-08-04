@@ -309,7 +309,7 @@ func (e *CancelDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.cursor >= len(e.jobIDs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(req.RequiredRows(), len(e.jobIDs)-e.cursor)
+	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobIDs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		req.AppendString(0, fmt.Sprintf("%d", e.jobIDs[i]))
 		if e.errs[i] != nil {
@@ -559,7 +559,7 @@ func (e *ShowDDLJobQueriesExec) Next(ctx context.Context, req *chunk.Chunk) erro
 	if len(e.jobIDs) >= len(e.jobs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(req.RequiredRows(), len(e.jobs)-e.cursor)
+	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
 	for _, id := range e.jobIDs {
 		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 			if id == e.jobs[i].ID {
@@ -601,7 +601,7 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	// Append running ddl jobs.
 	if e.cursor < len(e.runningJobs) {
-		numCurBatch := mathutil.Min(req.RequiredRows(), len(e.runningJobs)-e.cursor)
+		numCurBatch := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 			e.appendJobToChunk(req, e.runningJobs[i], nil)
 		}
@@ -611,8 +611,8 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	// Append history ddl jobs.
 	var err error
-	if count < req.RequiredRows() {
-		num := req.RequiredRows() - count
+	if count < req.Capacity() {
+		num := req.Capacity() - count
 		remainNum := e.jobNumber - (e.cursor - len(e.runningJobs))
 		num = mathutil.Min(num, remainNum)
 		e.cacheJobs, err = e.historyJobIter.GetLastJobs(num, e.cacheJobs)
@@ -1844,7 +1844,7 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 // expression using rows from a chunk, and then fill this value into the chunk
 func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnIndex []int,
 	schema *expression.Schema, columns []*model.ColumnInfo, sctx sessionctx.Context, req *chunk.Chunk) error {
-	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.RequiredRows())
+	virCols := chunk.NewChunkWithCapacity(virtualRetTypes, req.Capacity())
 	iter := chunk.NewIterator4Chunk(req)
 	for i, idx := range virtualColumnIndex {
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {

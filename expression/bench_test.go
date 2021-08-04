@@ -992,7 +992,7 @@ func fillColumn(eType types.EvalType, chk *chunk.Chunk, colIdx int, testCase vec
 }
 
 func fillColumnWithGener(eType types.EvalType, chk *chunk.Chunk, colIdx int, gen dataGenerator) {
-	batchSize := chk.RequiredRows()
+	batchSize := chk.Capacity()
 	if gen == nil {
 		gen = newDefaultGener(0.2, eType)
 	}

@@ -456,7 +456,7 @@ func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	if req.NumRows() < req.RequiredRows() {
+	if req.NumRows() < req.Capacity() {
 		if e.curRan == len(e.ranges)-1 {
 			e.seekKey = e.endKey
 		} else {
@@ -492,7 +492,7 @@ func (e *analyzeColumnsExec) Process(key, value []byte) error {
 		e.req.AppendBytes(i, value)
 	}
 	e.chk.Reset()
-	if e.req.NumRows() == e.req.RequiredRows() {
+	if e.req.NumRows() == e.req.Capacity() {
 		e.seekKey = kv.Key(key).PrefixNext()
 		return dbreader.ErrScanBreak
 	}
@@ -652,7 +652,7 @@ func (e *analyzeMixedExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	if req.NumRows() < req.RequiredRows() {
+	if req.NumRows() < req.Capacity() {
 		if e.curRan == len(e.ranges)-1 {
 			e.seekKey = e.endKey
 		} else {

@@ -46,6 +46,7 @@ func NewPool(initCap int) *Pool {
 // GetChunk gets a Chunk from the Pool.
 func (p *Pool) GetChunk(fields []*types.FieldType) *Chunk {
 	chk := new(Chunk)
+	chk.capacity = p.initCap
 	chk.columns = make([]*Column, len(fields))
 	for i, f := range fields {
 		switch elemLen := getFixedLen(f); elemLen {
