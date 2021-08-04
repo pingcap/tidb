@@ -40,7 +40,7 @@ done
 echo "backup meta v2 start..."
 unset BR_LOG_TO_TERM
 rm -f $BACKUPMETAV2_LOG
-export GO_FAILPOINTS="github.com/pingcap/br/pkg/task/progress-call-back=return(\"$PROGRESS_FILE\")"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/progress-call-back=return(\"$PROGRESS_FILE\")"
 run_br backup db --db "$DB" --log-file $BACKUPMETAV2_LOG -s "local://$TEST_DIR/${DB}v2" --pd $PD_ADDR --use-backupmeta-v2 
 backupv2_size=`grep "backup data size" "${BACKUPMETAV2_LOG}" | grep -oP '\[\K[^\]]+' | grep "backup data size" | awk -F '=' '{print $2}' | grep -oP '\d*\.\d+'`
 echo "backup meta v2 backup size is ${backupv2_size}"

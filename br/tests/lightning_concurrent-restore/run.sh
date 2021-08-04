@@ -30,7 +30,7 @@ run_sql 'select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME = "tikv_gc_li
 ORIGINAL_TIKV_GC_LIFE_TIME=$(tail -n 1 "$TEST_DIR/sql_res.$TEST_NAME.txt" | awk '{print $(NF)}')
 
 # add a delay after increasing tikv_gc_life_time, in order to increase confilct possibility
-export GO_FAILPOINTS='github.com/pingcap/br/pkg/lightning/restore/IncreaseGCUpdateDuration=sleep(200)'
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/restore/IncreaseGCUpdateDuration=sleep(200)'
 
 # Start importing
 run_sql 'DROP DATABASE IF EXISTS restore_conc'

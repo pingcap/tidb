@@ -28,7 +28,7 @@ done
 
 # Count OpenEngine and CloseEngine events.
 # Abort if number of unbalanced OpenEngine is >= 4
-export GO_FAILPOINTS='github.com/pingcap/br/pkg/lightning/backend/FailIfEngineCountExceeds=return(4)'
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/backend/FailIfEngineCountExceeds=return(4)'
 
 # Start importing
 run_sql 'DROP DATABASE IF EXISTS restore_tsr'

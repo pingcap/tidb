@@ -67,7 +67,7 @@ run_sql "drop database $DB"
 
 
 echo "restore start..."
-GO_FAILPOINTS="github.com/pingcap/br/pkg/task/small-batch-size=return(2)" \
+GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/small-batch-size=return(2)" \
 run_br restore full -s "local://$backup_dir" --pd $PD_ADDR --ratelimit 1024
 
 for i in $record_counts; do
