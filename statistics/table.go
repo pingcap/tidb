@@ -340,8 +340,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 		}
 		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count)), nil
 	}
-	result, err := c.GetColumnRowCount(sc, intRanges, coll.ModifyCount, true)
-	result *= c.GetIncreaseFactor(coll.Count)
+	result, err := c.GetColumnRowCount(sc, intRanges, coll.Count, true)
 	return result, errors.Trace(err)
 }
 
@@ -351,8 +350,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 	if !ok || c.IsInvalid(sc, coll.Pseudo) {
 		return GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 	}
-	result, err := c.GetColumnRowCount(sc, colRanges, coll.ModifyCount, false)
-	result *= c.GetIncreaseFactor(coll.Count)
+	result, err := c.GetColumnRowCount(sc, colRanges, coll.Count, false)
 	return result, errors.Trace(err)
 }
 
@@ -371,9 +369,8 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	if idx.CMSketch != nil && idx.StatsVer == Version1 {
 		result, err = coll.getIndexRowCount(sc, idxID, indexRanges)
 	} else {
-		result, err = idx.GetRowCount(sc, coll, indexRanges, coll.ModifyCount)
+		result, err = idx.GetRowCount(sc, coll, indexRanges, coll.Count)
 	}
-	result *= idx.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
 
@@ -489,16 +486,17 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 // It assumes all modifications are insertions and all new-inserted rows are uniformly distributed
 // and has the same distribution with analyzed rows, which means each unique value should have the
 // same number of rows(Tot/NDV) of it.
-func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
-	if modifyRows == 0 {
+func outOfRangeEQSelectivity(ndv, realtimeRowCount, columnRowCount int64) float64 {
+	increaseRowCount := realtimeRowCount - columnRowCount
+	if increaseRowCount <= 0 {
 		return 0 // it must be 0 since the histogram contains the whole data
 	}
 	if ndv < outOfRangeBetweenRate {
 		ndv = outOfRangeBetweenRate // avoid inaccurate selectivity caused by small NDV
 	}
-	selectivity := 1 / float64(ndv) // TODO: After extracting TopN from histograms, we can minus the TopN fraction here.
-	if selectivity*float64(totalRows) > float64(modifyRows) {
-		selectivity = float64(modifyRows) / float64(totalRows)
+	selectivity := 1 / float64(ndv)
+	if selectivity*float64(columnRowCount) > float64(increaseRowCount) {
+		selectivity = float64(increaseRowCount) / float64(columnRowCount)
 	}
 	return selectivity
 }
@@ -536,7 +534,7 @@ func (coll *HistColl) crossValidationSelectivity(sc *stmtctx.StatementContext, i
 				HighExclude: highExclude,
 			}
 
-			rowCount, err := col.GetColumnRowCount(sc, []*ranger.Range{&rang}, coll.ModifyCount, col.IsHandle)
+			rowCount, err := col.GetColumnRowCount(sc, []*ranger.Range{&rang}, coll.Count, col.IsHandle)
 			if err != nil {
 				return 0, 0, err
 			}
@@ -562,7 +560,7 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 		// When the value is out of range, we could not found this value in the CM Sketch,
 		// so we use heuristic methods to estimate the selectivity.
 		if idx.NDV > 0 && coverAll {
-			return outOfRangeEQSelectivity(idx.NDV, coll.ModifyCount, int64(idx.TotalRowCount())), nil
+			return outOfRangeEQSelectivity(idx.NDV, coll.Count, int64(idx.TotalRowCount())), nil
 		}
 		// The equal condition only uses prefix columns of the index.
 		colIDs := coll.Idx2ColumnIDs[idx.ID]
@@ -575,7 +573,7 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 				ndv = mathutil.MaxInt64(ndv, col.Histogram.NDV)
 			}
 		}
-		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount())), nil
+		return outOfRangeEQSelectivity(ndv, coll.Count, int64(idx.TotalRowCount())), nil
 	}
 
 	minRowCount, crossValidationSelectivity, err := coll.crossValidationSelectivity(sc, idx, usedColsLen, idxPointRange)
@@ -607,7 +605,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
-			count, err := idx.GetRowCount(sc, nil, []*ranger.Range{ran}, coll.ModifyCount)
+			count, err := idx.GetRowCount(sc, nil, []*ranger.Range{ran}, coll.Count)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
