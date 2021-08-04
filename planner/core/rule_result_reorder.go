@@ -21,29 +21,30 @@ import (
 )
 
 /*
-	resultsStabilizer stabilizes query results.
+	resultReorder reorder query results.
 	NOTE: it's not a common rule for all queries, it's specially implemented for a few customers.
-	Results of some queries are not stable, for example:
+
+	Results of some queries are not ordered, for example:
 		create table t (a int); insert into t values (1), (2); select a from t;
-	In the case above, the result can be `1 2` or `2 1`, which is not stable.
-	This rule stabilizes results by modifying or injecting a Sort operator:
+	In the case above, the result can be `1 2` or `2 1`, which is not ordered.
+	This rule reorders results by modifying or injecting a Sort operator:
 	1. iterate the plan from the root, and ignore all input-order operators (Sel/Proj/Limit);
 	2. when meeting the first non-input-order operator,
 		2.1. if it's a Sort, update it by appending all output columns into its order-by list,
 		2.2. otherwise, inject a new Sort upon this operator.
 */
-type resultsStabilizer struct {
+type resultReorder struct {
 }
 
-func (rs *resultsStabilizer) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
-	stable := rs.completeSort(lp)
-	if !stable {
+func (rs *resultReorder) optimize(ctx context.Context, lp LogicalPlan) (LogicalPlan, error) {
+	ordered := rs.completeSort(lp)
+	if !ordered {
 		lp = rs.injectSort(lp)
 	}
 	return lp, nil
 }
 
-func (rs *resultsStabilizer) completeSort(lp LogicalPlan) bool {
+func (rs *resultReorder) completeSort(lp LogicalPlan) bool {
 	if rs.isInputOrderKeeper(lp) {
 		return rs.completeSort(lp.Children()[0])
 	} else if sort, ok := lp.(*LogicalSort); ok {
@@ -68,7 +69,7 @@ func (rs *resultsStabilizer) completeSort(lp LogicalPlan) bool {
 	return false
 }
 
-func (rs *resultsStabilizer) injectSort(lp LogicalPlan) LogicalPlan {
+func (rs *resultReorder) injectSort(lp LogicalPlan) LogicalPlan {
 	if rs.isInputOrderKeeper(lp) {
 		lp.SetChildren(rs.injectSort(lp.Children()[0]))
 		return lp
@@ -89,7 +90,7 @@ func (rs *resultsStabilizer) injectSort(lp LogicalPlan) LogicalPlan {
 	return sort
 }
 
-func (rs *resultsStabilizer) isInputOrderKeeper(lp LogicalPlan) bool {
+func (rs *resultReorder) isInputOrderKeeper(lp LogicalPlan) bool {
 	switch lp.(type) {
 	case *LogicalSelection, *LogicalProjection, *LogicalLimit:
 		return true
@@ -98,7 +99,7 @@ func (rs *resultsStabilizer) isInputOrderKeeper(lp LogicalPlan) bool {
 }
 
 // extractHandleCols does the best effort to get the handle column.
-func (rs *resultsStabilizer) extractHandleCol(lp LogicalPlan) *expression.Column {
+func (rs *resultReorder) extractHandleCol(lp LogicalPlan) *expression.Column {
 	switch x := lp.(type) {
 	case *LogicalSelection, *LogicalLimit:
 		handleCol := rs.extractHandleCol(lp.Children()[0])
@@ -115,6 +116,6 @@ func (rs *resultsStabilizer) extractHandleCol(lp LogicalPlan) *expression.Column
 	return nil
 }
 
-func (rs *resultsStabilizer) name() string {
-	return "stabilize_results"
+func (rs *resultReorder) name() string {
+	return "result_reorder"
 }

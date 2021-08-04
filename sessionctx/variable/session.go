@@ -1824,7 +1824,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 				s.AllowFallbackToTiKV[kv.TiFlash] = struct{}{}
 			}
 		}
-	case TiDBEnableStableResultMode:
+	case TiDBEnableOrderedResultMode:
 		s.EnableStableResultMode = TiDBOptOn(val)
 	}
 	s.systems[name] = val
