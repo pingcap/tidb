@@ -55,7 +55,8 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	ret := &plannercore.PreprocessorReturn{}
-	err := plannercore.Preprocess(c.Ctx, stmtNode, plannercore.WithPreprocessorReturn(ret), plannercore.WithExecuteInfoSchemaUpdate(planner.IsExecuteForUpdateRead))
+	pe := &plannercore.PreprocessExecuteISUpdate{ExecuteInfoSchemaUpdate: planner.IsExecuteForUpdateRead, Node: stmtNode}
+	err := plannercore.Preprocess(c.Ctx, stmtNode, plannercore.WithPreprocessorReturn(ret), plannercore.WithExecuteInfoSchemaUpdate(pe))
 	if err != nil {
 		return nil, err
 	}

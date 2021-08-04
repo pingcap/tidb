@@ -64,9 +64,9 @@ func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 }
 
 // WithExecuteInfoSchemaUpdate return a PreprocessOpt to update the `Execute` infoSchema under some conditions.
-func WithExecuteInfoSchemaUpdate(f func(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema) PreprocessOpt {
+func WithExecuteInfoSchemaUpdate(pe *PreprocessExecuteISUpdate) PreprocessOpt {
 	return func(p *preprocessor) {
-		p.ExecuteInfoSchemaUpdate = f
+		p.PreprocessExecuteISUpdate = pe
 	}
 }
 
@@ -114,12 +114,6 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
-	// `Execute` under some conditions need to see the latest information schema.
-	if v.ExecuteInfoSchemaUpdate != nil {
-		if newInfoSchema := v.ExecuteInfoSchemaUpdate(node, ctx); newInfoSchema != nil {
-			v.InfoSchema = newInfoSchema
-		}
-	}
 	return errors.Trace(v.err)
 }
 
@@ -156,6 +150,11 @@ type PreprocessorReturn struct {
 	TxnScope       string
 }
 
+type PreprocessExecuteISUpdate struct {
+	ExecuteInfoSchemaUpdate func(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema
+	Node                    ast.Node
+}
+
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
@@ -170,8 +169,8 @@ type preprocessor struct {
 
 	// values that may be returned
 	*PreprocessorReturn
-	ExecuteInfoSchemaUpdate func(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema
-	err                     error
+	*PreprocessExecuteISUpdate
+	err error
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -1614,9 +1613,17 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 //    - session variable
 //    - transaction context
 func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
-	if p.InfoSchema == nil {
-		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	if p.InfoSchema != nil {
+		return p.InfoSchema
 	}
+	// `Execute` under some conditions need to see the latest information schema.
+	if p.PreprocessExecuteISUpdate != nil {
+		if newInfoSchema := p.ExecuteInfoSchemaUpdate(p.Node, p.ctx); newInfoSchema != nil {
+			p.InfoSchema = newInfoSchema
+			return p.InfoSchema
+		}
+	}
+	p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	return p.InfoSchema
 }
 
