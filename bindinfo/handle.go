@@ -658,7 +658,7 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	sctx.GetSessionVars().UsePlanBaselines = origVals
 	if rs != nil {
 		defer func() {
-			// Audit log is collected in Close(), set InRestrictedSQL to avoid 'create sql binding' been recored as 'explain'.
+			// Audit log is collected in Close(), set InRestrictedSQL to avoid 'create sql binding' been recorded as 'explain'.
 			origin := sctx.GetSessionVars().InRestrictedSQL
 			sctx.GetSessionVars().InRestrictedSQL = true
 			terror.Call(rs.Close)
