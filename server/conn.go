@@ -1648,8 +1648,20 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
 	}
+	newParallelHintIdx := strings.Index(sql, "new_parallel")
+	if newParallelHintIdx != -1 {
+		idx1 := newParallelHintIdx + 13
+		idx2 := strings.Index(sql[idx1:], ")")
+		tmpStr := sql[idx1 : idx1+idx2]
+		plannercore.MaxThrNum, err = strconv.Atoi(tmpStr)
+		if err != nil {
+			return errors.Errorf("error MaxThrNum, tmpStr: %v, idx1: %v, idx2: %v, ori sql: %v",
+				tmpStr, idx1, idx2, sql)
+		}
+	}
 	if strings.Contains(sql, "new_parallel") {
 		cc.ctx.GetSessionVars().UseParallel = true
+		// plannercore.MaxThrNum =
 		defer func() {
 			cc.ctx.GetSessionVars().UseParallel = false
 		}()

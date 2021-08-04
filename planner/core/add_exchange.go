@@ -7,6 +7,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
+var MaxThrNum int
+
 var (
 	_ PhysicalPlan = &PhysicalXchg{}
 )
@@ -62,6 +64,7 @@ func (p *PhysicalXchg) isSender() bool {
 
 type XchgProperty struct {
 	output              int
+	available           int
 	isBroadcastHT       bool
 	nonOrderedPartition []*expression.Column
 	// TODO: not implemented yet.
@@ -77,6 +80,7 @@ func newXchgProperty() *XchgProperty {
 func (prop *XchgProperty) Clone() *XchgProperty {
 	res := &XchgProperty{
 		output:              prop.output,
+		available:           prop.available,
 		isBroadcastHT:       prop.isBroadcastHT,
 		nonOrderedPartition: make([]*expression.Column, len(prop.nonOrderedPartition)),
 	}
@@ -110,6 +114,8 @@ func (p *BatchPointGetPlan) GetChildXchgProps() []*XchgProperty {
 
 func FindBestXchgTask(ctx sessionctx.Context, root PhysicalPlan) (task, error) {
 	initProp := newXchgProperty()
+	// 1 means the main thread.
+	initProp.available = MaxThrNum - 1
 	return findBestXchgTask(ctx, root, initProp)
 }
 
@@ -145,29 +151,32 @@ func findBestXchgTask(ctx sessionctx.Context, node PhysicalPlan, reqProp *XchgPr
 
 		childTasks := make([]task, 0, len(planToFind.Children()))
 		childrenXchgProps := planToFind.GetChildXchgProps()
+		bestChildrenTasksFound := true
 		for i, child := range planToFind.Children() {
 			bestChildTask, err := findBestXchgTask(ctx, child, childrenXchgProps[i])
 			if err != nil {
 				return invalidTask, err
 			}
 			if bestChildTask.invalid() {
-				return invalidTask, errors.New("child task is invalid")
+				bestChildrenTasksFound = false
 			}
 			childTasks = append(childTasks, bestChildTask)
 		}
-		curTask := planToFind.attach2Task(childTasks...)
-		if p != planToFind {
-			curTask = p.attach2Task(curTask)
-		}
-		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
-			bestTask = curTask
+		if bestChildrenTasksFound {
+			curTask := planToFind.attach2Task(childTasks...)
+			if p != planToFind {
+				curTask = p.attach2Task(curTask)
+			}
+			if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
+				bestTask = curTask
+			}
 		}
 	}
 	return bestTask, nil
 }
 
 func (p *basePhysicalPlan) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
-	return nil, errors.New("TryAddXchg not implemented yet")
+	return nil, errors.Errorf("TryAddXchg not implemented yet: %v", p.TP())
 }
 
 func (p *PointGetPlan) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) ([]PhysicalPlan, error) {
@@ -187,6 +196,9 @@ func (p *PhysicalProjection) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPro
 }
 
 func (p *PhysicalTableReader) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
+	if !hasAvailableThr(reqProp.available, 0) {
+		return nil, nil
+	}
 	if res, err = tryAddXchgPreWork(p, reqProp, res); err != nil {
 		return nil, err
 	}
@@ -200,17 +212,20 @@ func (p *PhysicalTableReader) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPr
 		}
 		updateChildrenProp(newNode, newXchgProperty())
 
+		var sender *PhysicalXchg
 		var receiver *PhysicalXchg
 		if reqProp.isBroadcastHT {
-			sender := &PhysicalXchg{tp: TypeXchgSenderBroadcastHT}
-			initXchg(ctx, sender, newNode, newNode.Stats())
+			sender = &PhysicalXchg{tp: TypeXchgSenderBroadcastHT}
 			receiver = &PhysicalXchg{tp: TypeXchgReceiverPassThroughHT}
-			initXchg(ctx, receiver, sender, newNode.Stats())
 		} else {
-			sender := &PhysicalXchg{tp: TypeXchgSenderRandom}
-			initXchg(ctx, sender, newNode, newNode.Stats())
+			sender = &PhysicalXchg{tp: TypeXchgSenderRandom}
 			receiver = &PhysicalXchg{tp: TypeXchgReceiverPassThrough}
-			initXchg(ctx, receiver, sender, newNode.Stats())
+		}
+		if err := initXchg(ctx, sender, newNode, newNode.Stats(), reqProp.output); err != nil {
+			return nil, err
+		}
+		if err := initXchg(ctx, receiver, sender, newNode.Stats(), reqProp.output); err != nil {
+			return nil, err
 		}
 
 		res = append(res, receiver)
@@ -247,8 +262,31 @@ func (p *PhysicalLimit) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty
 }
 
 func tryBroadcastHJ(ctx sessionctx.Context, node *PhysicalHashJoin, outStreamCnt int, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
+	if !hasAvailableThr(reqProp.available, 0) {
+		return nil, nil
+	}
 	if res, err = tryAddXchgPreWork(node, reqProp, res); err != nil {
 		return nil, err
+	}
+	buildSideIdx, probeSideIdx := 0, 1
+	if node.InnerChildIdx == 1 {
+		buildSideIdx = 1
+		probeSideIdx = 1
+	}
+	if reqProp.output != 1 {
+		// If parent of HashJoin already requires parallel, build child have to enforce BroadcastHT.
+		node.GetChildXchgProps()[buildSideIdx].isBroadcastHT = true
+		node.GetChildXchgProps()[probeSideIdx].available -= 1
+	}
+
+	avaBuildThr := reqProp.available - outStreamCnt
+	if avaBuildThr <= 0 {
+		return res, nil
+	}
+	// 1 means build side have to use broadcast, so available thread is less.
+	avaProbeThr := reqProp.available - outStreamCnt - 1
+	if avaProbeThr <= 0 {
+		avaBuildThr = 1
 	}
 
 	newNode, err := node.Clone()
@@ -256,20 +294,26 @@ func tryBroadcastHJ(ctx sessionctx.Context, node *PhysicalHashJoin, outStreamCnt
 		return nil, err
 	}
 
-	leftReqProp := &XchgProperty{
+	buildReqProp := &XchgProperty{
 		output:        outStreamCnt,
 		isBroadcastHT: true,
+		available:     avaBuildThr,
 	}
-	rightReqProp := &XchgProperty{
-		output: outStreamCnt,
+	probeReqProp := &XchgProperty{
+		output:    outStreamCnt,
+		available: avaProbeThr,
 	}
-	newNode.GetChildXchgProps()[0] = leftReqProp
-	newNode.GetChildXchgProps()[1] = rightReqProp
+	newNode.GetChildXchgProps()[buildSideIdx] = buildReqProp
+	newNode.GetChildXchgProps()[probeSideIdx] = probeReqProp
 
 	sender := &PhysicalXchg{tp: TypeXchgSenderPassThrough}
-	initXchg(ctx, sender, newNode, newNode.Stats())
+	if err = initXchg(ctx, sender, newNode, newNode.Stats(), outStreamCnt); err != nil {
+		return nil, err
+	}
 	receiver := &PhysicalXchg{tp: TypeXchgReceiverRandom}
-	initXchg(ctx, receiver, sender, newNode.Stats())
+	if err = initXchg(ctx, receiver, sender, newNode.Stats(), outStreamCnt); err != nil {
+		return nil, err
+	}
 
 	res = append(res, receiver)
 	return res, nil
@@ -280,25 +324,34 @@ func tryHashPartitionHJ(ctx sessionctx.Context, node PhysicalHashJoin, outStream
 }
 
 func tryAddXchgForBasicPlan(ctx sessionctx.Context, node PhysicalPlan, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
+	if !hasAvailableThr(reqProp.available, 0) {
+		return nil, nil
+	}
 	if res, err = tryAddXchgPreWork(node, reqProp, res); err != nil {
 		return nil, err
 	}
 
 	var newNode PhysicalPlan
 
-	if reqProp.output == 1 {
+	xchgOutput := ctx.GetSessionVars().ExecutorConcurrency
+	if reqProp.output == 1 && hasAvailableThr(reqProp.available, xchgOutput) {
 		if newNode, err = node.Clone(); err != nil {
 			return nil, err
 		}
 		newProp := newXchgProperty()
-		newProp.output = ctx.GetSessionVars().ExecutorConcurrency
+		newProp.output = xchgOutput
+		newProp.available = reqProp.available - newProp.output
 		updateChildrenProp(newNode, newProp)
 
 		sender := &PhysicalXchg{tp: TypeXchgSenderPassThrough}
-		initXchg(ctx, sender, node, node.Stats())
+		if err = initXchg(ctx, sender, newNode, newNode.Stats(), xchgOutput); err != nil {
+			return nil, err
+		}
 
 		receiver := &PhysicalXchg{tp: TypeXchgReceiverRandom}
-		initXchg(ctx, receiver, sender, newNode.Stats())
+		if err = initXchg(ctx, receiver, sender, newNode.Stats(), xchgOutput); err != nil {
+			return nil, err
+		}
 
 		res = append(res, receiver)
 		return res, nil
@@ -308,32 +361,43 @@ func tryAddXchgForBasicPlan(ctx sessionctx.Context, node PhysicalPlan, reqProp *
 		if newNode, err = node.Clone(); err != nil {
 			return nil, err
 		}
-		updateChildrenProp(newNode, newXchgProperty())
+		newProp := newXchgProperty()
+		newProp.available -= 1
+		updateChildrenProp(newNode, newProp)
 
 		sender := &PhysicalXchg{tp: TypeXchgSenderBroadcastHT}
-		initXchg(ctx, sender, node, node.Stats())
+		if err = initXchg(ctx, sender, newNode, newNode.Stats(), xchgOutput); err != nil {
+			return nil, err
+		}
 
 		receiver := &PhysicalXchg{tp: TypeXchgReceiverPassThroughHT}
-		initXchg(ctx, receiver, sender, newNode.Stats())
+		if err = initXchg(ctx, receiver, sender, newNode.Stats(), xchgOutput); err != nil {
+			return nil, err
+		}
 
 		res = append(res, receiver)
 		return res, nil
 	}
 
 	if len(reqProp.nonOrderedPartition) != 0 {
-		if newNode, err = node.Clone(); err != nil {
-			return nil, err
-		}
-		updateChildrenProp(node, newXchgProperty())
+		// if newNode, err = node.Clone(); err != nil {
+		// 	return nil, err
+		// }
+		// updateChildrenProp(newNode, newXchgProperty())
 
-		sender := &PhysicalXchg{tp: TypeXchgSenderHash}
-		initXchg(ctx, sender, node, node.Stats())
+		// sender := &PhysicalXchg{tp: TypeXchgSenderHash}
+		// if err = initXchg(ctx, sender, newNode, newNode.Stats(), reqProp.output); err != nil {
+		// 	return nil, err
+		// }
 
-		receiver := &PhysicalXchg{tp: TypeXchgReceiverPassThrough}
-		initXchg(ctx, receiver, sender, newNode.Stats())
+		// receiver := &PhysicalXchg{tp: TypeXchgReceiverPassThrough}
+		// if err = initXchg(ctx, receiver, sender, newNode.Stats(), reqProp.output); err != nil {
+		// 	return nil, err
+		// }
 
-		res = append(res, receiver)
-		return res, nil
+		// res = append(res, receiver)
+		// return res, nil
+		return nil, errors.New("hash partition not implemented yet")
 	}
 	return nil, errors.Errorf("invalid reqProp: %v", reqProp)
 }
@@ -343,13 +407,16 @@ func tryAddXchgPreWork(node PhysicalPlan, reqProp *XchgProperty, res []PhysicalP
 		return nil, err
 	}
 	defProp := newXchgProperty()
+	defProp.available = reqProp.available
+	defProp.output = reqProp.output
 	childrenXchgProps := make([]*XchgProperty, len(node.Children()))
 	for i := 0; i < len(childrenXchgProps); i++ {
-		childrenXchgProps[i] = defProp
+		childrenXchgProps[i] = defProp.Clone()
 	}
 	node.SetChildXchgProps(childrenXchgProps)
 
 	res = append(res, node)
+
 	return res, nil
 }
 
@@ -370,26 +437,19 @@ func updateChildrenProp(node PhysicalPlan, newProp *XchgProperty) {
 	}
 }
 
-func initXchg(ctx sessionctx.Context, xchg *PhysicalXchg, child PhysicalPlan, childStat *property.StatsInfo) {
+func initXchg(ctx sessionctx.Context, xchg *PhysicalXchg, child PhysicalPlan, childStat *property.StatsInfo, reqOutput int) (err error) {
 	// TODO: add string name.
 	var tpStr string
 	xchg.basePhysicalPlan = newBasePhysicalPlan(ctx, tpStr, xchg, 0)
 	xchg.basePhysicalPlan.children = []PhysicalPlan{child}
 	xchg.childStat = childStat
 	xchg.stats = childStat
-	// TODO: as arg, this is a bug need to fix!!!
-	concurrency := ctx.GetSessionVars().ExecutorConcurrency
-	// TODO: derive stats for xchg
-	switch xchg.tp {
-	case TypeXchgReceiverPassThrough, TypeXchgReceiverPassThroughHT, TypeXchgReceiverRandom:
-		xchg.inStreamCnt = concurrency
-		xchg.outStreamCnt = 1
-	case TypeXchgSenderPassThrough, TypeXchgSenderBroadcastHT, TypeXchgSenderHash, TypeXchgSenderRandom:
-		xchg.inStreamCnt = 1
-		xchg.outStreamCnt = concurrency
-	default:
-		panic("unexpected kind of xchg")
+
+	xchg.inStreamCnt, xchg.outStreamCnt, err = getReceiverStreamCount(reqOutput, xchg.tp)
+	if err != nil {
+		return err
 	}
+	return nil
 }
 
 func isReaderNode(p PhysicalPlan) bool {
@@ -400,4 +460,29 @@ func isReaderNode(p PhysicalPlan) bool {
 	default:
 		return false
 	}
+}
+
+func getReceiverStreamCount(reqOutput int, tp XchgType) (recvInStreamCnt int, recvOutStreamCnt int, err error) {
+	switch tp {
+	case TypeXchgReceiverPassThrough, TypeXchgReceiverPassThroughHT:
+		return reqOutput, reqOutput, nil
+	case TypeXchgReceiverRandom:
+		return reqOutput, 1, nil
+	case TypeXchgSenderBroadcastHT, TypeXchgSenderRandom:
+		return 1, reqOutput, nil
+	case TypeXchgSenderPassThrough:
+		return reqOutput, reqOutput, nil
+	case TypeXchgSenderHash:
+		// TODO: may be not simple
+		return -1, -1, errors.New("Not implemented Hash Sender for now")
+	default:
+		return -1, -1, errors.Errorf("unexpected xchg receiver type: %v", tp)
+	}
+}
+
+func hasAvailableThr(available int, needed int) bool {
+	if available > needed {
+		return true
+	}
+	return false
 }

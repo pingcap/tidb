@@ -2221,7 +2221,7 @@ func (t *xchgTask) convertToRootTask(ctx sessionctx.Context) *rootTask {
 
 func (p *PhysicalXchg) GetCost(childCost float64, concurrency int) float64 {
 	// TODO: XchgHash not support yet.
-	return (childCost / float64(concurrency)) * 0.03
+	return (childCost / float64(concurrency)) * 1.2
 }
 
 func (p *PhysicalXchg) attach2Task(tasks ...task) task {
@@ -2231,6 +2231,7 @@ func (p *PhysicalXchg) attach2Task(tasks ...task) task {
 
 	var dop int
 	concurrency := p.ctx.GetSessionVars().ExecutorConcurrency
+	// TODO: here!!!
 	if p.tp == TypeXchgReceiverPassThrough || p.tp == TypeXchgReceiverPassThroughHT {
 		dop = concurrency
 	} else {
