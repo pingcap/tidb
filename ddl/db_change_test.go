@@ -1880,4 +1880,5 @@ func (s *testStateChangeSuite) TestExpressionIndexDDLError(c *C) {
 	tk.MustExec("create table t(a int, b int, index idx((a+b)))")
 	tk.MustGetErrCode("alter table t rename column b to b2", errno.ErrDependentByFunctionalIndex)
 	tk.MustGetErrCode("alter table t drop column b", errno.ErrDependentByFunctionalIndex)
+	tk.MustExec("drop table t")
 }
