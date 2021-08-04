@@ -1938,20 +1938,19 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 		}
 	}
 
-	var ruleIDs []string
-	switch historyJob.Type {
-	case model.ActionDropTable:
+	if historyJob.Type == model.ActionDropTable {
 		var (
 			startKey         kv.Key
 			physicalTableIDs []int64
+			ruleIDs          []string
 		)
 		if err = historyJob.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
 			return
 		}
-	}
 
-	patch := label.NewRulePatch(nil, ruleIDs)
-	err = infosync.UpdateLabelRules(context.TODO(), patch)
+		patch := label.NewRulePatch(nil, ruleIDs)
+		err = infosync.UpdateLabelRules(context.TODO(), patch)
+	}
 	return
 }
 
