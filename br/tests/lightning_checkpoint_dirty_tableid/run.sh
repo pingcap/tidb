@@ -19,7 +19,7 @@ set -eux
 rm -f "$TEST_DIR/lightning-checkpoint-dirty-tableid.log"
 run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint'
 
-export GO_FAILPOINTS="github.com/pingcap/br/pkg/lightning/restore/InitializeCheckpointExit=return(true)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/restore/InitializeCheckpointExit=return(true)"
 run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "tests/$TEST_NAME/mysql.toml" -d "tests/$TEST_NAME/data"
 
 run_sql 'DROP DATABASE IF EXISTS cpdt'
@@ -42,7 +42,7 @@ run_sql 'DROP DATABASE IF EXISTS cpdt'
 rm -f "$TEST_DIR/lightning-checkpoint-dirty-tableid.log"
 rm -f "/tmp/tidb_lightning_checkpoint.pb"
 
-export GO_FAILPOINTS="github.com/pingcap/br/pkg/lightning/restore/InitializeCheckpointExit=return(true)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/restore/InitializeCheckpointExit=return(true)"
 run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "tests/$TEST_NAME/file.toml" -d "tests/$TEST_NAME/data"
 
 run_sql 'DROP DATABASE IF EXISTS cpdt'

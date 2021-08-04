@@ -43,8 +43,8 @@ import (
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 
-	"github.com/pingcap/br/pkg/httputil"
-	"github.com/pingcap/br/pkg/task"
+	"github.com/pingcap/tidb/br/pkg/httputil"
+	"github.com/pingcap/tidb/br/pkg/task"
 )
 
 var (

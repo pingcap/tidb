@@ -24,7 +24,7 @@ run_sql 'DROP TABLE IF EXISTS error_summary.a;'
 run_sql 'DROP TABLE IF EXISTS error_summary.c;'
 run_sql 'CREATE TABLE error_summary.a (id INT NOT NULL PRIMARY KEY, k INT NOT NULL);'
 run_sql 'CREATE TABLE error_summary.c (id INT NOT NULL PRIMARY KEY, k INT NOT NULL);'
-export GO_FAILPOINTS="github.com/pingcap/br/pkg/lightning/restore/InitializeCheckpointExit=return(true)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/restore/InitializeCheckpointExit=return(true)"
 run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-error-summary.log"
 run_sql 'INSERT INTO error_summary.a VALUES (2, 4), (6, 8);'
 run_sql 'INSERT INTO error_summary.c VALUES (3, 9), (27, 81);'

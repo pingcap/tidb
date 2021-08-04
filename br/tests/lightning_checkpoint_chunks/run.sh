@@ -50,8 +50,8 @@ done
 # Set the failpoint to kill the lightning instance as soon as
 # one file (after writing totally $ROW_COUNT rows) is imported.
 # If checkpoint does work, this should kill exactly $CHUNK_COUNT instances of lightnings.
-TASKID_FAILPOINTS="github.com/pingcap/br/pkg/lightning/SetTaskID=return(1234567890)"
-export GO_FAILPOINTS="$TASKID_FAILPOINTS;github.com/pingcap/br/pkg/lightning/restore/FailIfImportedChunk=return($ROW_COUNT)"
+TASKID_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/SetTaskID=return(1234567890)"
+export GO_FAILPOINTS="$TASKID_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/restore/FailIfImportedChunk=return($ROW_COUNT)"
 
 # Start importing the tables.
 run_sql 'DROP DATABASE IF EXISTS cpch_tsr'
@@ -75,7 +75,7 @@ run_sql 'DROP DATABASE IF EXISTS `tidb_lightning_checkpoint_test_cpch.1234567890
 
 # Set the failpoint to kill the lightning instance as soon as one chunk is imported, via signal mechanism
 # If checkpoint does work, this should only kill $CHUNK_COUNT instances of lightnings.
-export GO_FAILPOINTS="$TASKID_FAILPOINTS;github.com/pingcap/br/pkg/lightning/restore/KillIfImportedChunk=return($ROW_COUNT)"
+export GO_FAILPOINTS="$TASKID_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/restore/KillIfImportedChunk=return($ROW_COUNT)"
 
 for i in $(seq "$CHUNK_COUNT"); do
     echo "******** Importing Chunk Now (step $i/$CHUNK_COUNT) ********"
@@ -110,7 +110,7 @@ rm -f "$TEST_DIR"/cpch.pb*
 
 # Set the failpoint to kill the lightning instance as soon as one chunk is imported
 # If checkpoint does work, this should only kill $CHUNK_COUNT instances of lightnings.
-export GO_FAILPOINTS="$TASKID_FAILPOINTS;github.com/pingcap/br/pkg/lightning/restore/FailIfImportedChunk=return($ROW_COUNT)"
+export GO_FAILPOINTS="$TASKID_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/restore/FailIfImportedChunk=return($ROW_COUNT)"
 set +e
 for i in $(seq "$CHUNK_COUNT"); do
     echo "******** Importing Chunk using File checkpoint Now (step $i/$CHUNK_COUNT) ********"
