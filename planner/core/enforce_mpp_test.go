@@ -14,6 +14,7 @@
 package core_test
 
 import (
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -105,6 +106,16 @@ func (s *testEnforceMPPSuite) TestEnforceMPP(c *C) {
 		Warn []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
+	filterWarnings := func(originalWarnings []stmtctx.SQLWarn) []stmtctx.SQLWarn {
+		warnings := make([]stmtctx.SQLWarn, 0, 4)
+		for _, warning := range originalWarnings {
+			// filter out warning about skyline pruning
+			if !strings.Contains(warning.Err.Error(), "is pruned when selecting path for") {
+				warnings = append(warnings, warning)
+			}
+		}
+		return warnings
+	}
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -116,11 +127,11 @@ func (s *testEnforceMPPSuite) TestEnforceMPP(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			output[i].Warn = s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings())
+			output[i].Warn = s.testData.ConvertSQLWarnToStrings(filterWarnings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 		})
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
-		c.Assert(s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()), DeepEquals, output[i].Warn)
+		c.Assert(s.testData.ConvertSQLWarnToStrings(filterWarnings(tk.Se.GetSessionVars().StmtCtx.GetWarnings())), DeepEquals, output[i].Warn)
 	}
 }
 

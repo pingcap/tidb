@@ -646,7 +646,11 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) ([]*candid
 		}
 		for _, path := range paths {
 			if path.IsTablePath() {
-				names = append(names, tableName)
+				if path.StoreType == kv.TiFlash {
+					names = append(names, tableName + "(tiflash)")
+				} else {
+					names = append(names, tableName)
+				}
 			} else {
 				names = append(names, path.Index.Name.O)
 			}
