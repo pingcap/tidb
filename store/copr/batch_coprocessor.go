@@ -102,11 +102,11 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 // 2. for the remaining regions:
 //    if there is only 1 available store, then put the region to the related store
 //    otherwise, use a greedy algorithm to put it into the store with highest weight
-func balanceBatchCopTask(ctx context.Context, kvStore *tikv.KVStore, originalTasks []*batchCopTask, blockAddrs map[string]time.Time, ttl time.Duration) []*batchCopTask {
+func balanceBatchCopTask(ctx context.Context, kvStore *tikv.KVStore, originalTasks []*batchCopTask, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) []*batchCopTask {
 	if len(originalTasks) <= 1 {
 		return originalTasks
 	}
-	isMPP := blockAddrs != nil
+	isMPP := mppStoreLastFailTime != nil
 	cache := kvStore.GetRegionCache()
 	storeTaskMap := make(map[uint64]*batchCopTask)
 	// storeCandidateRegionMap stores all the possible store->region map. Its content is
@@ -138,43 +138,31 @@ func balanceBatchCopTask(ctx context.Context, kvStore *tikv.KVStore, originalTas
 			go func(idx int) {
 				defer wg.Done()
 				s := stores[idx]
-				aliveReq := tikvrpc.NewRequest(tikvrpc.CmdMPPAlive, &mpp.IsAliveRequest{}, kvrpcpb.Context{})
-				aliveReq.StoreTp = kv.TiFlash
-				inBlock := false
+				var last time.Time
+				var ok bool
 				mu.Lock()
-				if last, ok := blockAddrs[s.GetAddr()]; ok && cur.Sub(last) < ttl {
-					logutil.BgLogger().Warn("Cannot detect store's availability by blockAddrs", zap.String("store address", s.GetAddr()), zap.Time("last fail", last))
-					inBlock = true
-					if cur.Sub(last) < 100*time.Millisecond {
-						mu.Unlock()
-						return
-					}
+				if last, ok = mppStoreLastFailTime[s.GetAddr()]; ok && cur.Sub(last) < 100*time.Millisecond {
+					mu.Unlock()
+					return
 				}
 				mu.Unlock()
-				alive := false
-				toFresh := false
-				resp, err := kvStore.GetTiKVClient().SendRequest(ctx, s.GetAddr(), aliveReq, 2*time.Second)
-				if err != nil {
+				resp, err := kvStore.GetTiKVClient().SendRequest(ctx, s.GetAddr(), &tikvrpc.Request{
+					Type:    tikvrpc.CmdMPPAlive,
+					StoreTp: kv.TiFlash,
+					Req:     &mpp.IsAliveRequest{},
+					Context: kvrpcpb.Context{},
+				}, 2*time.Second)
+
+				if err != nil || !resp.Resp.(*mpp.IsAliveResponse).Available {
 					logutil.BgLogger().Warn("Cannot detect store's availability", zap.String("store address", s.GetAddr()), zap.String("err message", err.Error()))
-					toFresh = true
-				} else {
-					rpcResp := resp.Resp.(*mpp.IsAliveResponse)
-					if rpcResp.Available {
-						alive = true
-						if inBlock {
-							alive = false
-						}
-					} else {
-						logutil.BgLogger().Warn("Cannot detect store's availability", zap.String("store address", s.GetAddr()))
-						toFresh = true
-					}
+					mu.Lock()
+					mppStoreLastFailTime[s.GetAddr()] = time.Now()
+					mu.Unlock()
+					return
 				}
-				if !alive {
-					if toFresh {
-						mu.Lock()
-						blockAddrs[s.GetAddr()] = cur
-						mu.Unlock()
-					}
+
+				if cur.Sub(last) < ttl {
+					logutil.BgLogger().Warn("Cannot detect store's availability because the current time has not reached MPPStoreLastFailTime + MPPStoreFailTTL", zap.String("store address", s.GetAddr()), zap.Time("last fail time", last))
 					return
 				}
 
