@@ -46,15 +46,10 @@ import (
 )
 
 var _ = SerialSuites(&testColumnTypeChangeSuite{})
-var _ = SerialSuites(&testCTCSerialSuiteWrapper{&testColumnTypeChangeSuite{}})
 
 type testColumnTypeChangeSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
-}
-
-type testCTCSerialSuiteWrapper struct {
-	*testColumnTypeChangeSuite
 }
 
 func (s *testColumnTypeChangeSuite) SetUpSuite(c *C) {
@@ -2129,6 +2124,29 @@ func (s *testColumnTypeChangeSuite) TestCastToTimeStampDecodeError(c *C) {
 
 	// Normal cast datetime to timestamp can succeed.
 	tk.MustQuery("select timestamp(cast('1000-11-11 12-3-1' as date));").Check(testkit.Rows("1000-11-11 00:00:00"))
+}
+
+func (s *testColumnTypeChangeSuite) TestChangeFromTimeToYear(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a date, b datetime, c timestamp, d time);")
+	tk.MustExec("insert into t values ('2020-01-01', '2020-01-01 08:00:00', '2020-01-01 08:00:00', '08:00:00');")
+	tk.MustGetErrCode("alter table t modify column a year;", mysql.ErrWarnDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify column b year;", mysql.ErrWarnDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify column c year;", mysql.ErrWarnDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify column d year;", mysql.ErrWarnDataOutOfRange)
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("alter table t modify column a year;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at '2020-01-01'"))
+	tk.MustExec("alter table t modify column b year;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'b' at '2020-01-01 08:00:00'"))
+	tk.MustExec("alter table t modify column c year;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'c' at '2020-01-01 00:00:00'"))
+	tk.MustExec("alter table t modify column d year;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'd' at '08:00:00'"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("0 0 0 0"))
 }
 
 // Fix issue: https://github.com/pingcap/tidb/issues/26292

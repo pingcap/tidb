@@ -1345,8 +1345,8 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	}
 	w.sessCtx.GetSessionVars().StmtCtx.SetWarnings(oldWarn)
 	newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
-	if err != nil {
-		return w.reformatErrors(err)
+	if err := w.reformatErrors(err); err != nil {
+		return err
 	}
 	if w.sessCtx.GetSessionVars().StmtCtx.GetWarnings() != nil && len(w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()) != 0 {
 		warn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
@@ -1386,6 +1386,9 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 
 // reformatErrors casted error because `convertTo` function couldn't package column name and datum value for some errors.
 func (w *updateColumnWorker) reformatErrors(err error) error {
+	if err == nil {
+		return nil
+	}
 	// Since row count is not precious in concurrent reorganization, here we substitute row count with datum value.
 	if types.ErrTruncated.Equal(err) {
 		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
@@ -1393,6 +1396,12 @@ func (w *updateColumnWorker) reformatErrors(err error) error {
 
 	if types.ErrInvalidYear.Equal(err) {
 		err = types.ErrInvalidYear.GenWithStack("Invalid year value for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
+	}
+
+	if types.ErrWarnDataOutOfRange.Equal(err) {
+		d := w.rowMap[w.oldColInfo.ID]
+		v, _ := d.ToString()
+		err = types.ErrWarnDataOutOfRange.GenWithStack("Out of range value for column '%s' at '%s'", w.oldColInfo.Name, v)
 	}
 	return err
 }
