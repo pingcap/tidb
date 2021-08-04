@@ -258,34 +258,9 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths
 	return stats
 }
 
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-	if ds.stats != nil && len(colGroups) == 0 {
-		return ds.stats, nil
-	}
-	ds.initStats(colGroups)
-	if ds.stats != nil {
-		// Just reload the GroupNDVs.
-		selectivity := ds.stats.RowCount / ds.tableStats.RowCount
-		ds.stats = ds.tableStats.Scale(selectivity)
-		return ds.stats, nil
-	}
-	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
-	for i, expr := range ds.pushedDownConds {
-		ds.pushedDownConds[i] = expression.PushDownNot(ds.ctx, expr)
-	}
-	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath() {
-			continue
-		}
-		err := ds.fillIndexPath(path, ds.pushedDownConds)
-		if err != nil {
-			return nil, err
-		}
-	}
-	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
-	// when ds.possibleAccessPaths are pruned.
-	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds, ds.possibleAccessPaths)
+// We bind logic of derivePathStats and tryHeuristics together. When some path matches the heuristic rule, we don't need
+// to derive stats of subsequent paths. In this way we can save unnecessary computation of derivePathStats.
+func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 	uniqueIdxsWithDoubleScan := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 	singleScanIdxs := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 	var (
@@ -296,7 +271,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		if path.IsTablePath() {
 			err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			path.IsSingleScan = true
 		} else {
@@ -398,6 +373,41 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 				ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(sb.String()))
 			}
 		}
+	}
+	return nil
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+	if ds.stats != nil && len(colGroups) == 0 {
+		return ds.stats, nil
+	}
+	ds.initStats(colGroups)
+	if ds.stats != nil {
+		// Just reload the GroupNDVs.
+		selectivity := ds.stats.RowCount / ds.tableStats.RowCount
+		ds.stats = ds.tableStats.Scale(selectivity)
+		return ds.stats, nil
+	}
+	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
+	for i, expr := range ds.pushedDownConds {
+		ds.pushedDownConds[i] = expression.PushDownNot(ds.ctx, expr)
+	}
+	for _, path := range ds.possibleAccessPaths {
+		if path.IsTablePath() {
+			continue
+		}
+		err := ds.fillIndexPath(path, ds.pushedDownConds)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
+	// when ds.possibleAccessPaths are pruned.
+	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds, ds.possibleAccessPaths)
+	err := ds.derivePathStatsAndTryHeuristics()
+	if err != nil {
+		return nil, err
 	}
 
 	// TODO: implement UnionScan + IndexMerge
