@@ -488,39 +488,39 @@ func TestDDL(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
 
-	t.Run("Test for add index job", func(t *testing.T) {
-		store, err := mockstore.NewMockStore()
+func TestAddIndexJob(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		err := store.Close()
 		require.NoError(t, err)
-		defer func() {
-			err := store.Close()
-			require.NoError(t, err)
-		}()
+	}()
 
-		txn1, err := store.Begin()
-		require.NoError(t, err)
+	txn1, err := store.Begin()
+	require.NoError(t, err)
 
-		m := meta.NewMeta(txn1, meta.AddIndexJobListKey)
-		job := &model.Job{ID: 1}
-		err = m.EnQueueDDLJob(job)
-		require.NoError(t, err)
-		job.ID = 123
-		err = m.UpdateDDLJob(0, job, true, meta.AddIndexJobListKey)
-		require.NoError(t, err)
-		v, err := m.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
-		require.NoError(t, err)
-		require.Equal(t, job, v)
-		l, err := m.DDLJobQueueLen(meta.AddIndexJobListKey)
-		require.NoError(t, err)
-		require.Equal(t, int64(1), l)
-		jobs, err := m.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
-		require.NoError(t, err)
-		expectJobs := []*model.Job{job}
-		require.Equal(t, expectJobs, jobs)
+	m := meta.NewMeta(txn1, meta.AddIndexJobListKey)
+	job := &model.Job{ID: 1}
+	err = m.EnQueueDDLJob(job)
+	require.NoError(t, err)
+	job.ID = 123
+	err = m.UpdateDDLJob(0, job, true, meta.AddIndexJobListKey)
+	require.NoError(t, err)
+	v, err := m.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
+	require.NoError(t, err)
+	require.Equal(t, job, v)
+	l, err := m.DDLJobQueueLen(meta.AddIndexJobListKey)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), l)
+	jobs, err := m.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
+	require.NoError(t, err)
+	expectJobs := []*model.Job{job}
+	require.Equal(t, expectJobs, jobs)
 
-		err = txn1.Commit(context.Background())
-		require.NoError(t, err)
-	})
+	err = txn1.Commit(context.Background())
+	require.NoError(t, err)
 }
 
 func BenchmarkGenGlobalIDs(b *testing.B) {
