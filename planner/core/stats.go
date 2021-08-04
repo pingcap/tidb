@@ -15,8 +15,10 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -256,6 +258,125 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths
 	return stats
 }
 
+// We bind logic of derivePathStats and tryHeuristics together. When some path matches the heuristic rule, we don't need
+// to derive stats of subsequent paths. In this way we can save unnecessary computation of derivePathStats.
+func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
+	uniqueIdxsWithDoubleScan := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
+	singleScanIdxs := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
+	var (
+		selected, uniqueBest, refinedBest *util.AccessPath
+		isRefinedPath                     bool
+	)
+	for _, path := range ds.possibleAccessPaths {
+		if path.IsTablePath() {
+			err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
+			if err != nil {
+				return err
+			}
+			path.IsSingleScan = true
+		} else {
+			ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
+			path.IsSingleScan = ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+		}
+		// Try some heuristic rules to select access path.
+		if len(path.Ranges) == 0 {
+			selected = path
+			break
+		}
+		if path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) {
+			if path.IsTablePath() || path.Index.Unique {
+				if path.IsSingleScan {
+					selected = path
+					break
+				}
+				uniqueIdxsWithDoubleScan = append(uniqueIdxsWithDoubleScan, path)
+			}
+		} else if path.IsSingleScan {
+			singleScanIdxs = append(singleScanIdxs, path)
+		}
+	}
+	if selected == nil && len(uniqueIdxsWithDoubleScan) > 0 {
+		uniqueIdxColumnSets := make([]*intsets.Sparse, 0, len(uniqueIdxsWithDoubleScan))
+		for _, uniqueIdx := range uniqueIdxsWithDoubleScan {
+			uniqueIdxColumnSets = append(uniqueIdxColumnSets, expression.ExtractColumnSet(uniqueIdx.AccessConds))
+			// Find the unique index with the minimal number of ranges as `uniqueBest`.
+			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) {
+				uniqueBest = uniqueIdx
+			}
+		}
+		// `uniqueBest` may not always be the best.
+		// ```
+		// create table t(a int, b int, c int, unique index idx_b(b), index idx_b_c(b, c));
+		// select b, c from t where b = 5 and c > 10;
+		// ```
+		// In the case, `uniqueBest` is `idx_b`. However, `idx_b_c` is better than `idx_b`.
+		// Hence, for each index in `singleScanIdxs`, we check whether it is better than some index in `uniqueIdxsWithDoubleScan`.
+		// If yes, the index is a refined one. We find the refined index with the minimal number of ranges as `refineBest`.
+		for _, singleScanIdx := range singleScanIdxs {
+			columnSet := expression.ExtractColumnSet(singleScanIdx.AccessConds)
+			for _, uniqueIdxColumnSet := range uniqueIdxColumnSets {
+				setsResult, comparable := compareColumnSet(columnSet, uniqueIdxColumnSet)
+				if comparable && setsResult == 1 {
+					if refinedBest == nil || len(singleScanIdx.Ranges) < len(refinedBest.Ranges) {
+						refinedBest = singleScanIdx
+					}
+				}
+			}
+		}
+		// `refineBest` may not always be better than `uniqueBest`.
+		// ```
+		// create table t(a int, b int, c int, d int, unique index idx_a(a), unique index idx_b_c(b, c), unique index idx_b_c_a_d(b, c, a, d));
+		// select a, b, c from t where a = 1 and b = 2 and c in (1, 2, 3, 4, 5);
+		// ```
+		// In the case, `refinedBest` is `idx_b_c_a_d` and `uniqueBest` is `a`. `idx_b_c_a_d` needs to access five points while `idx_a`
+		// only needs one point access and one table access.
+		// Hence we should compare `len(refinedBest.Ranges)` and `2*len(uniqueBest.Ranges)` to select the better one.
+		if refinedBest != nil && (uniqueBest == nil || len(refinedBest.Ranges) < 2*len(uniqueBest.Ranges)) {
+			selected = refinedBest
+			isRefinedPath = true
+		} else {
+			selected = uniqueBest
+		}
+	}
+	// If some path matches a heuristic rule, just remove other possible paths
+	if selected != nil {
+		ds.possibleAccessPaths[0] = selected
+		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
+		// TODO: Can we make a more careful check on whether the optimization depends on mutable constants?
+		ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
+		if ds.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+			var tableName string
+			if ds.TableAsName.O == "" {
+				tableName = ds.tableInfo.Name.O
+			} else {
+				tableName = ds.TableAsName.O
+			}
+			if selected.IsTablePath() {
+				// TODO: primary key / handle / real name?
+				ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(fmt.Sprintf("handle of %s is selected since the path only has point ranges", tableName)))
+			} else {
+				var sb strings.Builder
+				if selected.Index.Unique {
+					sb.WriteString("unique ")
+				}
+				sb.WriteString(fmt.Sprintf("index %s of %s is selected since the path", selected.Index.Name.O, tableName))
+				if isRefinedPath {
+					sb.WriteString(" only fetches limited number of rows")
+				} else {
+					sb.WriteString(" only has point ranges")
+				}
+				if selected.IsSingleScan {
+					sb.WriteString(" with single scan")
+				} else {
+					sb.WriteString(" with double scan")
+				}
+				ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(sb.String()))
+			}
+		}
+	}
+	return nil
+}
+
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
 	if ds.stats != nil && len(colGroups) == 0 {
@@ -284,110 +405,9 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.possibleAccessPaths are pruned.
 	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds, ds.possibleAccessPaths)
-	uniqueIdxsWithDoubleScan := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
-	singleScanIdxs := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
-	var selected, uniqueBest, refinedBest *util.AccessPath
-	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath() {
-			err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
-		}
-		// TODO: Should we handle TiFlash case specially?
-		// Try some heuristic rules to select access path.
-		if len(path.Ranges) == 0 {
-			selected = path
-			break
-		}
-		// TODO: Can we record isSingleScan = ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
-		// as a field of AccessPath? In this way ds.isCoveringIndex only needs to be called once for each path.
-		if path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) {
-			if path.IsTablePath() || path.Index.Unique {
-				var singleScan bool
-				if path.IsTablePath() {
-					singleScan = true
-				} else {
-					singleScan = ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
-				}
-				if singleScan {
-					// TODO: What if multiple paths satisfy all conditions?
-					selected = path
-					break
-				}
-				uniqueIdxsWithDoubleScan = append(uniqueIdxsWithDoubleScan, path)
-			}
-		} else if ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo) {
-			singleScanIdxs = append(singleScanIdxs, path)
-		}
-	}
-	if selected == nil && len(uniqueIdxsWithDoubleScan) > 0 {
-		// TODO: Move accessCondsColSet from candidatePath to AccessPath so that we can use it both here and skyline pruning.
-		uniqueIdxColumnSets := make([]*intsets.Sparse, 0, len(uniqueIdxsWithDoubleScan))
-		for _, uniqueIdx := range uniqueIdxsWithDoubleScan {
-			uniqueIdxColumnSets = append(uniqueIdxColumnSets, expression.ExtractColumnSet(uniqueIdx.AccessConds))
-			// Find the unique index with the minimal number of ranges as `uniqueBest`.
-			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) {
-				uniqueBest = uniqueIdx
-			}
-		}
-		// `uniqueBest` may not always be the best.
-		// ```
-		// create table t(a int, b int, c int, unique index idx_b(b), unique index idx_b_c(b, c));
-		// select b, c from t where b = 5 and c > 10;
-		// ```
-		// In the case, `uniqueBest` is `idx_b`. However, `idx_b_c` is better than `idx_b_c`.
-		// Hence, for each index in `singleScanIdxs`, we check whether it is better than some index in `uniqueIdxsWithDoubleScan`.
-		// If yes, the index is a refined one. We find the refined index with the minimal number of ranges as `refineBest`.
-		for _, singleScanIdx := range singleScanIdxs {
-			columnSet := expression.ExtractColumnSet(singleScanIdx.AccessConds)
-			for _, uniqueIdxColumnSet := range uniqueIdxColumnSets {
-				setsResult, comparable := compareColumnSet(columnSet, uniqueIdxColumnSet)
-				if comparable && setsResult == 1 {
-					if refinedBest == nil || len(singleScanIdx.Ranges) < len(refinedBest.Ranges) {
-						refinedBest = singleScanIdx
-					}
-				}
-			}
-		}
-		// `refineBest` may not always be better than `uniqueBest`.
-		// ```
-		// create table t(a int, b int, c int, d int, unique index idx_a(a), unique index idx_b_c(b, c), unique index idx_b_c_a_d(b, c, a, d));
-		// select a, b, c from t where a = 1 and b = 2 and c in (1, 2, 3, 4, 5);
-		// ```
-		// In the case, `refinedBest` is `idx_b_c_a_d` and `uniqueBest` is `a`. `idx_b_c_a_d` needs to access five points while `idx_a`
-		// only needs one point access and one table access.
-		// Hence we should compare `len(refinedBest.Ranges)` and `2*len(uniqueBest.Ranges)` to select the better one.
-		if refinedBest != nil && (uniqueBest == nil || len(refinedBest.Ranges) < 2*len(uniqueBest.Ranges)) {
-			selected = refinedBest
-		} else {
-			selected = uniqueBest
-		}
-	}
-	// If some path matches a heuristic rule, just remove other possible paths
-	if selected != nil {
-		ds.possibleAccessPaths[0] = selected
-		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
-		// TODO: Can we make a more careful check on whether the optimization depends on mutable constants?
-		ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
-		if ds.ctx.GetSessionVars().StmtCtx.InExplainStmt {
-			var tableName, pathName string
-			if ds.TableAsName.O == "" {
-				tableName = ds.tableInfo.Name.O
-			} else {
-				tableName = ds.TableAsName.O
-			}
-			if selected.IsTablePath() {
-				pathName = "primary key of " + tableName
-			} else {
-				pathName = "index " + selected.Index.Name.O + " of " + tableName
-			}
-			// TODO: Do we need to specify which heuristic rule `selected` matches? It is kind of hard to briefly describe the
-			// three heuristic rules. Besides, we can distinguish the three rules by checking EXPLAIN result.
-			ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(pathName + " is selected by heuristics"))
-		}
+	err := ds.derivePathStatsAndTryHeuristics()
+	if err != nil {
+		return nil, err
 	}
 
 	// TODO: implement UnionScan + IndexMerge

@@ -1684,12 +1684,21 @@
     "Name": "TestHeuristicIndexSelection",
     "Cases": [
       {
+        "SQL": "select * from t1 where a = 3 or a = 5",
+        "Plan": [
+          "Batch_Point_Get 2.00 root table:t1 handle:[3 5], keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 handle of t1 is selected since the path only has point ranges"
+        ]
+      },
+      {
         "SQL": "select f, g from t1 where f = 2 and g in (3, 4, 5)",
         "Plan": [
           "Batch_Point_Get 3.00 root table:t1, index:f_g(f, g) keep order:false, desc:false"
         ],
         "Warnings": [
-          "Note 1105 index f_g of t1 is selected by heuristics"
+          "Note 1105 unique index f_g of t1 is selected since the path only has point ranges with single scan"
         ]
       },
       {
@@ -1698,7 +1707,7 @@
           "Batch_Point_Get 4.00 root table:t1, index:c_d_e(c, d, e) keep order:false, desc:false"
         ],
         "Warnings": [
-          "Note 1105 index c_d_e of t1 is selected by heuristics"
+          "Note 1105 unique index c_d_e of t1 is selected since the path only has point ranges with double scan"
         ]
       },
       {
@@ -1708,7 +1717,7 @@
           "└─IndexRangeScan 33.33 cop[tikv] table:t1, index:f_g(f, g) range:(2 3,2 +inf], keep order:false, stats:pseudo"
         ],
         "Warnings": [
-          "Note 1105 index f_g of t1 is selected by heuristics"
+          "Note 1105 unique index f_g of t1 is selected since the path only fetches limited number of rows with single scan"
         ]
       },
       {
@@ -1718,7 +1727,7 @@
           "└─Point_Get 1.00 root table:t2, index:idx_a(a) "
         ],
         "Warnings": [
-          "Note 1105 index idx_a of t2 is selected by heuristics"
+          "Note 1105 unique index idx_a of t2 is selected since the path only has point ranges with double scan"
         ]
       }
     ]

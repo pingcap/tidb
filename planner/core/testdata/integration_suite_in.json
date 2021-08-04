@@ -324,6 +324,7 @@
   {
     "name": "TestHeuristicIndexSelection",
     "cases": [
+      "select * from t1 where a = 3 or a = 5",
       "select f, g from t1 where f = 2 and g in (3, 4, 5)",
       "select * from t1 where c = 1 and (d = 2 or d = 3) and e in (4, 5)",
       "select f, g from t1 where f = 2 and g > 3",
