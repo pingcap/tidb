@@ -11,31 +11,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package domain_test
+package topsql
 
 import (
 	"testing"
 
-	. "github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
+
+	// set up
+	variable.TopSQLVariable.Enable.Store(true)
+	variable.TopSQLVariable.AgentAddress.Store("mock")
+	variable.TopSQLVariable.PrecisionSeconds.Store(1)
+	tracecpu.GlobalSQLCPUProfiler.Run()
+
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("time.Sleep"),
+		goleak.IgnoreTopFunction("runtime/pprof.readProfile"),
+		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/util/topsql/tracecpu.(*sqlCPUProfiler).startAnalyzeProfileWorker"),
 	}
+
 	goleak.VerifyTestMain(m, opts...)
-}
-
-// TestDomainSerial handles tests in serial
-func TestDomainSerial(t *testing.T) {
-	t.Parallel()
-
-	// these tests should run in serial for failpoint is global
-	t.Run("info", SubTestInfo)
-	t.Run("domain", SubTestDomain)
-	t.Run("domainSession", SubTestDomainSession)
 }
