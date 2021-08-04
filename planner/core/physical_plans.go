@@ -916,7 +916,7 @@ type PhysicalExchangeSender struct {
 
 	TargetTasks  []*kv.MPPTask
 	ExchangeType tipb.ExchangeType
-	HashCols     []*expression.Column
+	HashCols     []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks []*kv.MPPTask
 }
@@ -1018,7 +1018,7 @@ type basePhysicalAgg struct {
 	AggFuncs         []*aggregation.AggFuncDesc
 	GroupByItems     []expression.Expression
 	MppRunMode       AggMppRunMode
-	MppPartitionCols []*expression.Column
+	MppPartitionCols []*property.MPPPartitionColumn
 }
 
 func (p *basePhysicalAgg) isFinalAgg() bool {
