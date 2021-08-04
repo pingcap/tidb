@@ -515,7 +515,7 @@ LOOP:
 			for i := count; i < count+step; i++ {
 				n := rand.Intn(count)
 				// (2048, 2038, 2038) and (2038, 2038, 2038)
-				// Don't delete rows where c1 is 2048 or 2038, otherwise error message would change.
+				// Don't delete rows where c1 is 2048 or 2038, otherwise, the entry value in duplicated error message would change.
 				if n == defaultBatchSize*2-10 || n == defaultBatchSize*2 {
 					continue
 				}
