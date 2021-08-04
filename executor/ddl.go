@@ -105,6 +105,27 @@ func deleteTemporaryTableRecords(memData kv.MemBuffer, tblID int64) error {
 	return nil
 }
 
+func (e *DDLExec) getLocalTemporaryTables() *infoschema.LocalTemporaryTables {
+	tempTables := e.ctx.GetSessionVars().LocalTemporaryTables
+	if tempTables != nil {
+		return tempTables.(*infoschema.LocalTemporaryTables)
+	}
+	return nil
+}
+
+func (e *DDLExec) getLocalTemporaryTable(schema model.CIStr, table model.CIStr) (table.Table, bool) {
+	tbl, err := e.ctx.GetInfoSchema().(infoschema.InfoSchema).TableByName(schema, table)
+	if infoschema.ErrTableNotExists.Equal(err) {
+		return nil, false
+	}
+
+	if tbl.Meta().TempTableType != model.TempTableLocal {
+		return nil, false
+	}
+
+	return tbl, true
+}
+
 // Next implements the Executor Next interface.
 func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if e.done {
@@ -219,8 +240,38 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	if _, exist := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); exist {
+		return e.executeTruncateLocalTemporaryTable(s)
+	}
 	err := domain.GetDomain(e.ctx).DDL().TruncateTable(e.ctx, ident)
 	return err
+}
+
+func (e *DDLExec) executeTruncateLocalTemporaryTable(s *ast.TruncateTableStmt) error {
+	tbl, exists := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	if !exists {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(s.Table.Schema, s.Table.Name)
+	}
+
+	tblInfo := tbl.Meta()
+
+	newTbl, err := e.newTemporaryTableFromTableInfo(tblInfo.Clone())
+	if err != nil {
+		return err
+	}
+
+	localTempTables := e.getLocalTemporaryTables()
+	localTempTables.RemoveTable(s.Table.Schema, s.Table.Name)
+	if err := localTempTables.AddTable(s.Table.Schema, newTbl); err != nil {
+		return err
+	}
+
+	err = deleteTemporaryTableRecords(e.ctx.GetSessionVars().TemporaryTableData, tblInfo.ID)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
@@ -293,31 +344,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		return err
 	}
 
-	dom := domain.GetDomain(e.ctx)
-	// Local temporary table uses a real table ID.
-	// We could mock a table ID, but the mocked ID might be identical to an existing
-	// real table, and then we'll get into trouble.
-	err = kv.RunInNewTxn(context.Background(), dom.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		tblID, err := m.GenGlobalID()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		tbInfo.ID = tblID
-		tbInfo.State = model.StatePublic
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	// AutoID is allocated in mocked..
-	alloc := autoid.NewAllocatorFromTempTblInfo(tbInfo)
-	allocs := make([]autoid.Allocator, 0, 1)
-	if alloc != nil {
-		allocs = append(allocs, alloc)
-	}
-	tbl, err := tables.TableFromMeta(allocs, tbInfo)
+	tbl, err := e.newTemporaryTableFromTableInfo(tbInfo)
 	if err != nil {
 		return err
 	}
@@ -340,7 +367,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		sessVars.TemporaryTableData = bufferTxn.GetMemBuffer()
 	}
 
-	err = localTempTables.AddTable(dbInfo, tbl)
+	err = localTempTables.AddTable(dbInfo.Name, tbl)
 
 	if err != nil && s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
 		e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -348,6 +375,34 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 	}
 
 	return err
+}
+
+func (e *DDLExec) newTemporaryTableFromTableInfo(tbInfo *model.TableInfo) (table.Table, error) {
+	dom := domain.GetDomain(e.ctx)
+	// Local temporary table uses a real table ID.
+	// We could mock a table ID, but the mocked ID might be identical to an existing
+	// real table, and then we'll get into trouble.
+	err := kv.RunInNewTxn(context.Background(), dom.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		tblID, err := m.GenGlobalID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tbInfo.ID = tblID
+		tbInfo.State = model.StatePublic
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// AutoID is allocated in mocked..
+	alloc := autoid.NewAllocatorFromTempTblInfo(tbInfo)
+	allocs := make([]autoid.Allocator, 0, 1)
+	if alloc != nil {
+		allocs = append(allocs, alloc)
+	}
+	return tables.TableFromMeta(allocs, tbInfo)
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
