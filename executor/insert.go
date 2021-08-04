@@ -20,8 +20,9 @@ import (
 	"runtime/trace"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
+
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -168,17 +169,16 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 }
 
 func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("prefetchDataCache", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
 	// Temporary table need not to do prefetch because its all data are stored in the memory.
 	if e.Table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("prefetchDataCache", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
 	values, err := prefetchUniqueIndices(ctx, txn, rows)
 	if err != nil {
 		return err
