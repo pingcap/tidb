@@ -682,19 +682,19 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	return gathers
 }
 
-func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) (bool, error) {
+func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) error {
 	path.CountAfterAccess = float64(ds.statisticTable.Count)
 	path.Ranges = ranger.FullNotNullRange()
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 	if len(conds) == 0 {
-		return false, nil
+		return nil
 	}
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	if len(path.IdxCols) != 0 {
 		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
 		if err != nil {
-			return false, err
+			return err
 		}
 		path.Ranges = res.Ranges
 		path.AccessConds = res.AccessConds
@@ -710,7 +710,7 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 		}
 		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
 		if err != nil {
-			return false, err
+			return err
 		}
 	} else {
 		path.TableFilters = conds
@@ -739,33 +739,12 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 	if path.CountAfterAccess < ds.stats.RowCount && !isIm {
 		path.CountAfterAccess = math.Min(ds.stats.RowCount/SelectionFactor, float64(ds.statisticTable.Count))
 	}
-	// Check whether there's only point query.
-	noIntervalRanges := true
-	haveNullVal := false
-	for _, ran := range path.Ranges {
-		// Not point or the not full matched.
-		if !ran.IsPoint(sc) || len(ran.HighVal) != len(path.Index.Columns) {
-			noIntervalRanges = false
-			break
-		}
-		// Check whether there's null value.
-		for i := 0; i < len(path.Index.Columns); i++ {
-			if ran.HighVal[i].IsNull() {
-				haveNullVal = true
-				break
-			}
-		}
-		if haveNullVal {
-			break
-		}
-	}
-	return noIntervalRanges && !haveNullVal, nil
+	return nil
 }
 
 // deriveTablePathStats will fulfill the information that the AccessPath need.
-// And it will check whether the primary key is covered only by point query.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
-func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) (bool, error) {
+func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) error {
 	if path.IsCommonHandlePath {
 		return ds.deriveCommonHandleTablePathStats(path, conds, isIm)
 	}
@@ -786,12 +765,12 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	}
 	if pkCol == nil {
 		path.Ranges = ranger.FullIntRange(isUnsigned)
-		return false, nil
+		return nil
 	}
 
 	path.Ranges = ranger.FullIntRange(isUnsigned)
 	if len(conds) == 0 {
-		return false, nil
+		return nil
 	}
 	path.AccessConds, path.TableFilters = ranger.DetachCondsForColumn(ds.ctx, conds, pkCol)
 	// If there's no access cond, we try to find that whether there's expression containing correlated column that
@@ -827,11 +806,11 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	}
 	if corColInAccessConds {
 		path.CountAfterAccess = 1
-		return true, nil
+		return nil
 	}
 	path.Ranges, err = ranger.BuildTableRange(path.AccessConds, sc, pkCol.RetType)
 	if err != nil {
-		return false, err
+		return err
 	}
 	path.CountAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.Ranges)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
@@ -839,15 +818,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 	if path.CountAfterAccess < ds.stats.RowCount && !isIm {
 		path.CountAfterAccess = math.Min(ds.stats.RowCount/SelectionFactor, float64(ds.statisticTable.Count))
 	}
-	// Check whether the primary key is covered by point query.
-	noIntervalRange := true
-	for _, ran := range path.Ranges {
-		if !ran.IsPoint(sc) {
-			noIntervalRange = false
-			break
-		}
-	}
-	return noIntervalRange, err
+	return err
 }
 
 func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Expression) error {
@@ -904,12 +875,9 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 }
 
 // deriveIndexPathStats will fulfill the information that the AccessPath need.
-// And it will check whether this index is full matched by point query. We will use this check to
-// determine whether we remove other paths or not.
 // conds is the conditions used to generate the DetachRangeResult for path.
 // isIm indicates whether this function is called to generate the partial path for IndexMerge.
-func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) bool {
-	sc := ds.ctx.GetSessionVars().StmtCtx
+func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) {
 	if path.EqOrInCondCount == len(path.AccessConds) {
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.ctx, path.EqOrInCondCount)
 		path.AccessConds = append(path.AccessConds, accesses...)
@@ -949,27 +917,6 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expres
 			path.CountAfterIndex = math.Max(path.CountAfterAccess*selectivity, ds.stats.RowCount)
 		}
 	}
-	// Check whether there's only point query.
-	noIntervalRanges := true
-	haveNullVal := false
-	for _, ran := range path.Ranges {
-		// Not point or the not full matched.
-		if !ran.IsPoint(sc) || len(ran.HighVal) != len(path.Index.Columns) {
-			noIntervalRanges = false
-			break
-		}
-		// Check whether there's null value.
-		for i := 0; i < len(path.Index.Columns); i++ {
-			if ran.HighVal[i].IsNull() {
-				haveNullVal = true
-				break
-			}
-		}
-		if haveNullVal {
-			break
-		}
-	}
-	return noIntervalRanges && !haveNullVal
 }
 
 func getPKIsHandleColFromSchema(cols []*model.ColumnInfo, schema *expression.Schema, pkIsHandle bool) *expression.Column {
