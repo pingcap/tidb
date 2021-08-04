@@ -1580,3 +1580,143 @@ func (s *testSuite10) TestBinaryLiteralInsertToSet(c *C) {
 	tk.MustExec("insert into bintest(h) values(0x61)")
 	tk.MustQuery("select * from bintest").Check(testkit.Rows("a"))
 }
+<<<<<<< HEAD
+=======
+
+var _ = SerialSuites(&testSuite13{&baseTestSuite{}})
+
+type testSuite13 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite13) TestGlobalTempTableAutoInc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists temp_test")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
+	defer tk.MustExec("drop table if exists temp_test")
+
+	// Data is cleared after transaction auto commits.
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select * from temp_test").Check(testkit.Rows())
+
+	// Data is not cleared inside a transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select * from temp_test").Check(testkit.Rows("1"))
+	tk.MustExec("commit")
+
+	// AutoID allocator is cleared.
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select * from temp_test").Check(testkit.Rows("1"))
+	// Test whether auto-inc is incremental
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select id from temp_test order by id").Check(testkit.Rows("1", "2"))
+	tk.MustExec("commit")
+
+	// multi-value insert
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0), (0)")
+	tk.MustQuery("select id from temp_test order by id").Check(testkit.Rows("1", "2"))
+	tk.MustExec("insert into temp_test(id) values(0), (0)")
+	tk.MustQuery("select id from temp_test order by id").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec("commit")
+
+	// rebase
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(10)")
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select id from temp_test order by id").Check(testkit.Rows("10", "11"))
+	tk.MustExec("insert into temp_test(id) values(20), (30)")
+	tk.MustExec("insert into temp_test(id) values(0), (0)")
+	tk.MustQuery("select id from temp_test order by id").Check(testkit.Rows("10", "11", "20", "30", "31", "32"))
+	tk.MustExec("commit")
+}
+
+func (s *testSuite13) TestGlobalTempTableRowID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists temp_test")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("create global temporary table temp_test(id int) on commit delete rows")
+	defer tk.MustExec("drop table if exists temp_test")
+
+	// Data is cleared after transaction auto commits.
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select _tidb_rowid from temp_test").Check(testkit.Rows())
+
+	// Data is not cleared inside a transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select _tidb_rowid from temp_test").Check(testkit.Rows("1"))
+	tk.MustExec("commit")
+
+	// AutoID allocator is cleared.
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select _tidb_rowid from temp_test").Check(testkit.Rows("1"))
+	// Test whether row id is incremental
+	tk.MustExec("insert into temp_test(id) values(0)")
+	tk.MustQuery("select _tidb_rowid from temp_test order by _tidb_rowid").Check(testkit.Rows("1", "2"))
+	tk.MustExec("commit")
+
+	// multi-value insert
+	tk.MustExec("begin")
+	tk.MustExec("insert into temp_test(id) values(0), (0)")
+	tk.MustQuery("select _tidb_rowid from temp_test order by _tidb_rowid").Check(testkit.Rows("1", "2"))
+	tk.MustExec("insert into temp_test(id) values(0), (0)")
+	tk.MustQuery("select _tidb_rowid from temp_test order by _tidb_rowid").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec("commit")
+}
+
+func (s *testSuite13) TestGlobalTempTableParallel(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists temp_test")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("create global temporary table temp_test(id int primary key auto_increment) on commit delete rows")
+	defer tk.MustExec("drop table if exists temp_test")
+
+	threads := 8
+	loops := 1
+	wg := sync.WaitGroup{}
+	wg.Add(threads)
+
+	insertFunc := func() {
+		defer wg.Done()
+		newTk := testkit.NewTestKitWithInit(c, s.store)
+		newTk.MustExec("begin")
+		for i := 0; i < loops; i++ {
+			newTk.MustExec("insert temp_test value(0)")
+			newTk.MustExec("insert temp_test value(0), (0)")
+		}
+		maxID := strconv.Itoa(loops * 3)
+		newTk.MustQuery("select max(id) from temp_test").Check(testkit.Rows(maxID))
+		newTk.MustExec("commit")
+	}
+
+	for i := 0; i < threads; i++ {
+		go insertFunc()
+	}
+	wg.Wait()
+}
+
+func (s *testSuite13) TestIssue26762(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 date);")
+	_, err := tk.Exec("insert into t1 values('2020-02-31');")
+	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
+
+	tk.MustExec("set @@sql_mode='ALLOW_INVALID_DATES';")
+	tk.MustExec("insert into t1 values('2020-02-31');")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2020-02-31"))
+
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES';")
+	_, err = tk.Exec("insert into t1 values('2020-02-31');")
+	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
+}
+>>>>>>> 31403ad0a... executor: fix unexpected behavior when casting invalid string to date (#26784)
