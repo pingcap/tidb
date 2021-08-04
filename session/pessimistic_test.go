@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = SerialSuites(&testPessimisticSuite{})
@@ -181,6 +183,9 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	deadlockhistory.GlobalDeadlockHistory.Resize(10)
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	// Use the root user so that the statements can be recorded into statements_summary table, which is necessary
+	// for fetching
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
 	tk1.MustExec("drop table if exists deadlock")
 	tk1.MustExec("create table deadlock (k int primary key, v int)")
 	tk1.MustExec("insert into deadlock values (1, 1), (2, 1)")
@@ -190,6 +195,7 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	c.Assert(err, IsNil)
 
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(tk2.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
 	tk2.MustExec("begin pessimistic")
 	ts2, err := strconv.ParseUint(tk2.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
 	c.Assert(err, IsNil)
@@ -218,16 +224,16 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 	_, digest := parser.NormalizeDigest("update deadlock set v = v + 1 where k = 1")
 
 	expectedDeadlockInfo := []string{
-		fmt.Sprintf("%v %v %v", ts1, ts2, digest),
-		fmt.Sprintf("%v %v %v", ts2, ts1, digest),
+		fmt.Sprintf("%v/%v/%v/%v", ts1, ts2, digest, "update `deadlock` set `v` = `v` + ? where `k` = ?"),
+		fmt.Sprintf("%v/%v/%v/%v", ts2, ts1, digest, "update `deadlock` set `v` = `v` + ? where `k` = ?"),
 	}
 	// The last one is the transaction that encountered the deadlock error.
 	if err1 != nil {
 		// Swap the two to match the correct order.
 		expectedDeadlockInfo[0], expectedDeadlockInfo[1] = expectedDeadlockInfo[1], expectedDeadlockInfo[0]
 	}
-	res := tk1.MustQuery("select deadlock_id, try_lock_trx_id, trx_holding_lock, current_sql_digest from information_schema.deadlocks")
-	res.CheckAt([]int{1, 2, 3}, testkit.Rows(expectedDeadlockInfo...))
+	res := tk1.MustQuery("select deadlock_id, try_lock_trx_id, trx_holding_lock, current_sql_digest, current_sql_digest_text from information_schema.deadlocks")
+	res.CheckAt([]int{1, 2, 3, 4}, testutil.RowsWithSep("/", expectedDeadlockInfo...))
 	c.Assert(res.Rows()[0][0], Equals, res.Rows()[1][0])
 }
 
