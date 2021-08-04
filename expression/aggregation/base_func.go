@@ -115,6 +115,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4LeadLag(ctx)
 	case ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncVarSamp, ast.AggFuncStddevSamp:
 		a.typeInfer4PopOrSamp(ctx)
+	case ast.AggFuncJsonArrayagg:
+		a.typeInfer4JsonFuncs(ctx)
 	case ast.AggFuncJsonObjectAgg:
 		a.typeInfer4JsonFuncs(ctx)
 	default:
@@ -362,6 +364,7 @@ var noNeedCastAggFuncs = map[string]struct{}{
 	ast.AggFuncMin:                 {},
 	ast.AggFuncFirstRow:            {},
 	ast.WindowFuncNtile:            {},
+	ast.AggFuncJsonArrayagg:        {},
 	ast.AggFuncJsonObjectAgg:       {},
 }
 

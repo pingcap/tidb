@@ -418,7 +418,7 @@
     "Name": "TestEnforceMPPWarning3",
     "Cases": [
       {
-        "SQL": "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;",
+        "SQL": "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;set @@tidb_hash_exchange_with_new_collation=0;",
         "Plan": null,
         "Warn": null
       },

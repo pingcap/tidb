@@ -366,6 +366,8 @@ type Security struct {
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
 	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
+	// Allow automatic TLS certificate generation
+	AutoTLS bool `toml:"auto-tls" json:"auto-tls"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -674,6 +676,7 @@ var defaultConf = Config{
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
+		AutoTLS:                     true,
 	},
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,
