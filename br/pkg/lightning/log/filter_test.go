@@ -10,7 +10,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/pingcap/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 )
 
 var _ = Suite(&testFilterSuite{})
@@ -26,13 +26,13 @@ func (s *testFilterSuite) TestFilter(c *C) {
 	)
 
 	logger, buffer = log.MakeTestLogger(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
-		return log.NewFilterCore(c, "github.com/pingcap/br/")
+		return log.NewFilterCore(c, "github.com/pingcap/tidb/br/")
 	}), zap.AddCaller())
 	logger.Warn("the message", zap.Int("number", 123456), zap.Ints("array", []int{7, 8, 9}))
 	c.Assert(buffer.Stripped(), HasLen, 0)
 
 	logger, buffer = log.MakeTestLogger(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
-		return log.NewFilterCore(c, "github.com/pingcap/tidb/").With([]zap.Field{zap.String("a", "b")})
+		return log.NewFilterCore(c, "github.com/pingcap/br/").With([]zap.Field{zap.String("a", "b")})
 	}), zap.AddCaller())
 	logger.Warn("the message", zap.Int("number", 123456), zap.Ints("array", []int{7, 8, 9}))
 	c.Assert(
@@ -41,7 +41,7 @@ func (s *testFilterSuite) TestFilter(c *C) {
 	)
 
 	logger, buffer = log.MakeTestLogger(zap.WrapCore(func(c zapcore.Core) zapcore.Core {
-		return log.NewFilterCore(c, "github.com/pingcap/br/").With([]zap.Field{zap.String("a", "b")})
+		return log.NewFilterCore(c, "github.com/pingcap/tidb/br/").With([]zap.Field{zap.String("a", "b")})
 	}), zap.AddCaller())
 	logger.Warn("the message", zap.Int("number", 123456), zap.Ints("array", []int{7, 8, 9}))
 	c.Assert(buffer.Stripped(), HasLen, 0)
@@ -60,14 +60,14 @@ func (s *testFilterSuite) TestFilter(c *C) {
 // PASS: filter_test.go:82: testFilterSuite.BenchmarkFilterRegexMatchString 1000000               1163 ns/op
 // PASS: filter_test.go:64: testFilterSuite.BenchmarkFilterStringsContains  10000000               159 ns/op
 //
-// Run `go test github.com/pingcap/br/pkg/lightning/log -check.b -test.v` to get benchmark result.
+// Run `go test github.com/pingcap/tidb/br/pkg/lightning/log -check.b -test.v` to get benchmark result.
 func (s *testFilterSuite) BenchmarkFilterStringsContains(c *C) {
 	c.ResetTimer()
 
 	inputs := []string{
 		"github.com/pingcap/tidb/some/package/path",
 		"github.com/tikv/pd/some/package/path",
-		"github.com/pingcap/br/some/package/path",
+		"github.com/pingcap/tidb/br/some/package/path",
 	}
 	filters := []string{"github.com/pingcap/tidb/", "github.com/tikv/pd/"}
 	for i := 0; i < c.N; i++ {
@@ -85,7 +85,7 @@ func (s *testFilterSuite) BenchmarkFilterRegexMatchString(c *C) {
 	inputs := []string{
 		"github.com/pingcap/tidb/some/package/path",
 		"github.com/tikv/pd/some/package/path",
-		"github.com/pingcap/br/some/package/path",
+		"github.com/pingcap/tidb/br/some/package/path",
 	}
 	filters := regexp.MustCompile(`github.com/(pingcap/tidb|tikv/pd)/`)
 	for i := 0; i < c.N; i++ {

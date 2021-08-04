@@ -9,10 +9,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 
-	"github.com/pingcap/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/br/pkg/lightning/config"
-	"github.com/pingcap/br/pkg/lightning/mydump"
-	"github.com/pingcap/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 )
 
 func Test(t *testing.T) {

@@ -6,15 +6,15 @@ import (
 	"context"
 	"sync"
 
-	"github.com/pingcap/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"go.uber.org/zap"
 
-	"github.com/pingcap/br/pkg/glue"
-	"github.com/pingcap/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 )
 
 const (

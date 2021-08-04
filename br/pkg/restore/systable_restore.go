@@ -14,9 +14,9 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 
-	berrors "github.com/pingcap/br/pkg/errors"
-	"github.com/pingcap/br/pkg/logutil"
-	"github.com/pingcap/br/pkg/utils"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 )
 
 var statsTables = map[string]struct{}{

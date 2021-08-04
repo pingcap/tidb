@@ -42,12 +42,12 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 
-	"github.com/pingcap/br/pkg/lightning/backend"
-	"github.com/pingcap/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/br/pkg/lightning/common"
-	"github.com/pingcap/br/pkg/lightning/mydump"
-	"github.com/pingcap/br/pkg/mock"
-	"github.com/pingcap/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/restore"
 )
 
 type localSuite struct{}

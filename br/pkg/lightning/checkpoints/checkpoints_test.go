@@ -6,9 +6,9 @@ import (
 
 	. "github.com/pingcap/check"
 
-	"github.com/pingcap/br/pkg/lightning/checkpoints/checkpointspb"
-	"github.com/pingcap/br/pkg/lightning/mydump"
-	"github.com/pingcap/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints/checkpointspb"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 )
 
 func Test(t *testing.T) {

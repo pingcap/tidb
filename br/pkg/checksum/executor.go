@@ -5,7 +5,7 @@ package checksum
 import (
 	"context"
 
-	"github.com/pingcap/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"

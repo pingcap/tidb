@@ -32,7 +32,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 
-	"github.com/pingcap/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 )
 
 func Test(t *testing.T) {

@@ -30,10 +30,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/pingcap/br/pkg/lightning/common"
-	"github.com/pingcap/br/pkg/lightning/log"
-	"github.com/pingcap/br/pkg/pdutil"
-	"github.com/pingcap/br/pkg/version"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/br/pkg/version"
 )
 
 // StoreState is the state of a TiKV store. The numerical value is sorted by

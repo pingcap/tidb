@@ -7,7 +7,7 @@ import (
 	"context"
 	"io"
 
-	berrors "github.com/pingcap/br/pkg/errors"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 
 	"github.com/pingcap/errors"
 )

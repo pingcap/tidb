@@ -15,17 +15,17 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/backup"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/tablecodec"
 	"go.uber.org/zap"
 
-	berrors "github.com/pingcap/br/pkg/errors"
-	"github.com/pingcap/br/pkg/logutil"
-	"github.com/pingcap/br/pkg/storage"
-	"github.com/pingcap/br/pkg/summary"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/summary"
 )
 
 const (

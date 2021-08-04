@@ -17,8 +17,8 @@ import (
 	"github.com/tikv/pd/pkg/codec"
 	"github.com/tikv/pd/server/schedule/placement"
 
-	berrors "github.com/pingcap/br/pkg/errors"
-	"github.com/pingcap/br/pkg/httputil"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/httputil"
 )
 
 // UndoFunc is a 'undo' operation of some undoable command.

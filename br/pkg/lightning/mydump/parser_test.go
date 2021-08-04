@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 
-	"github.com/pingcap/br/pkg/lightning/config"
-	"github.com/pingcap/br/pkg/lightning/mydump"
-	"github.com/pingcap/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 )
 
 var _ = Suite(&testMydumpParserSuite{})

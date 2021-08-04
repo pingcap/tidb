@@ -36,8 +36,8 @@ import (
 	"github.com/tikv/pd/server/schedule/placement"
 	"go.uber.org/atomic"
 
-	"github.com/pingcap/br/pkg/lightning/glue"
-	"github.com/pingcap/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/lightning/glue"
+	"github.com/pingcap/tidb/br/pkg/restore"
 )
 
 type testClient struct {

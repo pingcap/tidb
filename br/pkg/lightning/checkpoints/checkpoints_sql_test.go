@@ -10,10 +10,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 
-	"github.com/pingcap/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/br/pkg/lightning/mydump"
-	"github.com/pingcap/br/pkg/lightning/verification"
-	"github.com/pingcap/br/pkg/version/build"
+	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/version/build"
 )
 
 var _ = Suite(&cpSQLSuite{})

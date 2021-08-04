@@ -13,14 +13,15 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/golang/mock/gomock"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/backup"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 
-	"github.com/pingcap/br/pkg/mock"
-	. "github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/mock"
+	. "github.com/pingcap/tidb/br/pkg/storage"
 )
 
 type s3Suite struct {
@@ -442,7 +443,7 @@ func (s *s3Suite) TestWriteNoError(c *C) {
 
 	putCall := s.s3.EXPECT().
 		PutObjectWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
+		DoAndReturn(func(_ context.Context, input *s3.PutObjectInput, opt ...request.Option) (*s3.PutObjectOutput, error) {
 			c.Assert(aws.StringValue(input.Bucket), Equals, "bucket")
 			c.Assert(aws.StringValue(input.Key), Equals, "prefix/file")
 			c.Assert(aws.StringValue(input.ACL), Equals, "acl")
@@ -455,7 +456,7 @@ func (s *s3Suite) TestWriteNoError(c *C) {
 		})
 	s.s3.EXPECT().
 		WaitUntilObjectExistsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.HeadObjectInput) error {
+		DoAndReturn(func(_ context.Context, input *s3.HeadObjectInput, opt ...request.Option) error {
 			c.Assert(aws.StringValue(input.Bucket), Equals, "bucket")
 			c.Assert(aws.StringValue(input.Key), Equals, "prefix/file")
 			return nil
@@ -475,7 +476,7 @@ func (s *s3Suite) TestReadNoError(c *C) {
 
 	s.s3.EXPECT().
 		GetObjectWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
 			c.Assert(aws.StringValue(input.Bucket), Equals, "bucket")
 			c.Assert(aws.StringValue(input.Key), Equals, "prefix/file")
 			return &s3.GetObjectOutput{
@@ -497,7 +498,7 @@ func (s *s3Suite) TestFileExistsNoError(c *C) {
 
 	s.s3.EXPECT().
 		HeadObjectWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.HeadObjectInput) (*s3.HeadObjectOutput, error) {
+		DoAndReturn(func(_ context.Context, input *s3.HeadObjectInput, opt ...request.Option) (*s3.HeadObjectOutput, error) {
 			c.Assert(aws.StringValue(input.Bucket), Equals, "bucket")
 			c.Assert(aws.StringValue(input.Key), Equals, "prefix/file")
 			return &s3.HeadObjectOutput{}, nil
@@ -582,7 +583,7 @@ func (s *s3Suite) TestOpenAsBufio(c *C) {
 
 	s.s3.EXPECT().
 		GetObjectWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
+		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
 			c.Assert(aws.StringValue(input.Range), Equals, "bytes=0-")
 			return &s3.GetObjectOutput{
 				Body:         io.NopCloser(bytes.NewReader([]byte("plain text\ncontent"))),
@@ -720,7 +721,7 @@ func (s *s3Suite) expectedCalls(ctx context.Context, c *C, data []byte, startOff
 		thisOffset := offset
 		thisCall := s.s3.EXPECT().
 			GetObjectWithContext(ctx, gomock.Any()).
-			DoAndReturn(func(_ context.Context, input *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
+			DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, opt ...request.Option) (*s3.GetObjectOutput, error) {
 				c.Assert(aws.StringValue(input.Range), Equals, fmt.Sprintf("bytes=%d-", thisOffset))
 				return &s3.GetObjectOutput{
 					Body:         newReader(data, thisOffset),
@@ -847,7 +848,7 @@ func (s *s3Suite) TestWalkDir(c *C) {
 	// first call serve item #0, #1; second call #2, #3; third call #4.
 	firstCall := s.s3.EXPECT().
 		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput) (*s3.ListObjectsOutput, error) {
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
 			c.Assert(aws.StringValue(input.Bucket), Equals, "bucket")
 			c.Assert(aws.StringValue(input.Prefix), Equals, "prefix/sp/")
 			c.Assert(aws.StringValue(input.Marker), Equals, "")
@@ -860,7 +861,7 @@ func (s *s3Suite) TestWalkDir(c *C) {
 		})
 	secondCall := s.s3.EXPECT().
 		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput) (*s3.ListObjectsOutput, error) {
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
 			c.Assert(aws.StringValue(input.Marker), Equals, aws.StringValue(contents[1].Key))
 			c.Assert(aws.Int64Value(input.MaxKeys), Equals, int64(2))
 			return &s3.ListObjectsOutput{
@@ -871,7 +872,7 @@ func (s *s3Suite) TestWalkDir(c *C) {
 		After(firstCall)
 	thirdCall := s.s3.EXPECT().
 		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput) (*s3.ListObjectsOutput, error) {
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
 			c.Assert(aws.StringValue(input.Marker), Equals, aws.StringValue(contents[3].Key))
 			c.Assert(aws.Int64Value(input.MaxKeys), Equals, int64(2))
 			return &s3.ListObjectsOutput{
@@ -882,7 +883,7 @@ func (s *s3Suite) TestWalkDir(c *C) {
 		After(secondCall)
 	fourthCall := s.s3.EXPECT().
 		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput) (*s3.ListObjectsOutput, error) {
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
 			c.Assert(aws.StringValue(input.Bucket), Equals, "bucket")
 			c.Assert(aws.StringValue(input.Prefix), Equals, "prefix/")
 			c.Assert(aws.StringValue(input.Marker), Equals, "")
@@ -896,7 +897,7 @@ func (s *s3Suite) TestWalkDir(c *C) {
 		After(thirdCall)
 	s.s3.EXPECT().
 		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput) (*s3.ListObjectsOutput, error) {
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
 			c.Assert(aws.StringValue(input.Marker), Equals, aws.StringValue(contents[3].Key))
 			c.Assert(aws.Int64Value(input.MaxKeys), Equals, int64(4))
 			return &s3.ListObjectsOutput{
@@ -969,7 +970,7 @@ func (s *s3SuiteCustom) TestWalkDirWithEmptyPrefix(c *C) {
 	}
 	firstCall := s3API.EXPECT().
 		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput) (*s3.ListObjectsOutput, error) {
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
 			c.Assert(aws.StringValue(input.Bucket), Equals, "bucket")
 			c.Assert(aws.StringValue(input.Prefix), Equals, "")
 			c.Assert(aws.StringValue(input.Marker), Equals, "")
@@ -982,7 +983,7 @@ func (s *s3SuiteCustom) TestWalkDirWithEmptyPrefix(c *C) {
 		})
 	s3API.EXPECT().
 		ListObjectsWithContext(ctx, gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput) (*s3.ListObjectsOutput, error) {
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
 			c.Assert(aws.StringValue(input.Bucket), Equals, "bucket")
 			c.Assert(aws.StringValue(input.Prefix), Equals, "sp/")
 			c.Assert(aws.StringValue(input.Marker), Equals, "")

@@ -15,10 +15,10 @@ import (
 	tmock "github.com/pingcap/tidb/util/mock"
 	"go.uber.org/zap"
 
-	"github.com/pingcap/br/pkg/lightning/checkpoints"
-	"github.com/pingcap/br/pkg/lightning/common"
-	"github.com/pingcap/br/pkg/lightning/log"
-	"github.com/pingcap/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 )
 
 var _ = Suite(&metaMgrSuite{})

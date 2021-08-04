@@ -9,7 +9,7 @@ import (
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 
-	"github.com/pingcap/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 )
 
 // checkDupFiles checks if there are any files are duplicated.

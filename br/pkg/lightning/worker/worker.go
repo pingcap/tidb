@@ -17,7 +17,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/br/pkg/lightning/metric"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 )
 
 type Pool struct {

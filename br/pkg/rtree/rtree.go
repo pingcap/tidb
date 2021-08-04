@@ -6,10 +6,10 @@ import (
 	"bytes"
 
 	"github.com/google/btree"
-	backuppb "github.com/pingcap/kvproto/pkg/backup"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 
-	"github.com/pingcap/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 )
 
 // Range represents a backup response.

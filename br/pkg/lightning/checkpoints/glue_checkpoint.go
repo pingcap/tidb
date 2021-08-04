@@ -27,12 +27,12 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 
-	"github.com/pingcap/br/pkg/lightning/common"
-	"github.com/pingcap/br/pkg/lightning/config"
-	"github.com/pingcap/br/pkg/lightning/log"
-	"github.com/pingcap/br/pkg/lightning/mydump"
-	verify "github.com/pingcap/br/pkg/lightning/verification"
-	"github.com/pingcap/br/pkg/version/build"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/version/build"
 )
 
 type Session interface {
