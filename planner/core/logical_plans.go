@@ -1195,6 +1195,9 @@ type CTEClass struct {
 	// seedPartLogicalPlan and recursivePartLogicalPlan are the logical plans for the seed part and recursive part of this CTE.
 	seedPartLogicalPlan      LogicalPlan
 	recursivePartLogicalPlan LogicalPlan
+	// seedPartPhysicalPlan and recursivePartPhysicalPlan are the physical plans for the seed part and recursive part of this CTE.
+	seedPartPhysicalPlan      PhysicalPlan
+	recursivePartPhysicalPlan PhysicalPlan
 	// cteTask is the physical plan for this CTE, is a wrapper of the PhysicalCTE.
 	cteTask task
 	// storageID for this CTE.
@@ -1212,12 +1215,14 @@ type LogicalCTE struct {
 
 	cte       *CTEClass
 	cteAsName model.CIStr
+	seedStat  *property.StatsInfo
 }
 
 // LogicalCTETable is for CTE table
 type LogicalCTETable struct {
 	logicalSchemaProducer
 
+	seedStat     *property.StatsInfo
 	name         string
 	idForStorage int
 }
