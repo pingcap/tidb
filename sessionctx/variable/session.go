@@ -1064,7 +1064,7 @@ func NewSessionVars() *SessionVars {
 		AnalyzeVersion:              DefTiDBAnalyzeVersion,
 		EnableIndexMergeJoin:        DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:         make(map[kv.StoreType]struct{}),
-		MPPStoreLastFailTime:      make(map[string]time.Time),
+		MPPStoreLastFailTime:        make(map[string]time.Time),
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
