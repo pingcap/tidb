@@ -310,6 +310,11 @@ const (
 	// Value set to `false` means never use mpp.
 	TiDBAllowMPPExecution = "tidb_allow_mpp"
 
+	// TiDBHashExchangeWithNewCollation means if hash exchange is supported when new collation is on.
+	// Default value is `true`, means support hash exchange when new collation is on.
+	// Value set to `false` means not support hash exchange when new collation is on.
+	TiDBHashExchangeWithNewCollation = "tidb_hash_exchange_with_new_collation"
+
 	// TiDBEnforceMPPExecution means if we should enforce mpp way to execute query or not.
 	// Default value is `false`, means to be determined by variable `tidb_allow_mpp`.
 	// Value set to `true` means enforce use mpp.
@@ -667,6 +672,7 @@ const (
 	DefTiDBOptimizerSelectivityLevel      = 0
 	DefTiDBAllowBatchCop                  = 1
 	DefTiDBAllowMPPExecution              = true
+	DefTiDBHashExchangeWithNewCollation   = true
 	DefTiDBEnforceMPPExecution            = false
 	DefTiDBTxnMode                        = ""
 	DefTiDBRowFormatV1                    = 1
