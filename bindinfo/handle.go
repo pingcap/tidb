@@ -198,9 +198,6 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		return
 	}
 
-	normalizedSQL := parser.DigestNormalized(record.OriginalSQL)
-	oldRecord := h.GetBindRecord(normalizedSQL.String(), record.OriginalSQL, record.Db)
-
 	defer func() {
 		if err != nil {
 			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
@@ -213,10 +210,8 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 			return
 		}
 
-		if oldRecord != nil {
-			h.removeBindRecord(normalizedSQL.String(), oldRecord)
-		}
-		h.appendBindRecord(normalizedSQL.String(), record)
+		normalizedSQL := parser.DigestNormalized(record.OriginalSQL)
+		h.setBindRecord(normalizedSQL.String(), record)
 	}()
 
 	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
@@ -226,19 +221,11 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 
 	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 
-	// Some bindings may be added by other servers and have not been synchronized to the cache of this server yet
-	for _, binding := range record.Bindings {
-		updateTs := now.String()
-		if binding.BindSQL == "" {
-			_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
-				deleted, updateTs, record.OriginalSQL, updateTs)
-		} else {
-			_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %?`,
-				deleted, updateTs, record.OriginalSQL, updateTs, binding.BindSQL)
-		}
-		if err != nil {
-			return err
-		}
+	updateTs := now.String()
+	_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? and status = 'using'`,
+		deleted, updateTs, record.OriginalSQL, updateTs)
+	if err != nil {
+		return err
 	}
 
 	for i := range record.Bindings {
@@ -532,6 +519,16 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 	h.sctx.GetSessionVars().CurrentDB = bindRecord.Db
 	err := bindRecord.prepareHints(h.sctx.Context)
 	return hash.String(), bindRecord, err
+}
+
+// setBindRecord sets the BindRecord to the cache, if there already exists a BindRecord,
+// it will be overridden.
+func (h *BindHandle) setBindRecord(hash string, meta *BindRecord) {
+	newCache := h.bindInfo.Value.Load().(cache).copy()
+	oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
+	newCache.setBindRecord(hash, meta)
+	h.bindInfo.Value.Store(newCache)
+	updateMetrics(metrics.ScopeGlobal, oldRecord, meta, false)
 }
 
 // appendBindRecord addes the BindRecord to the cache, all the stale BindRecords are
