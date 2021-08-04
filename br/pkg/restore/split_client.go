@@ -32,9 +32,9 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
-	berrors "github.com/pingcap/br/pkg/errors"
-	"github.com/pingcap/br/pkg/httputil"
-	"github.com/pingcap/br/pkg/logutil"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/httputil"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 )
 
 const (

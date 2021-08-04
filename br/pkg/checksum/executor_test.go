@@ -7,7 +7,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/pingcap/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -16,9 +16,9 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 
-	"github.com/pingcap/br/pkg/backup"
-	"github.com/pingcap/br/pkg/checksum"
-	"github.com/pingcap/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/checksum"
+	"github.com/pingcap/tidb/br/pkg/mock"
 )
 
 func TestT(t *testing.T) {

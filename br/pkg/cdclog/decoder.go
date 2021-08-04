@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"go.uber.org/zap"
 
-	berrors "github.com/pingcap/br/pkg/errors"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
 
 // ColumnFlagType represents the type of Column.

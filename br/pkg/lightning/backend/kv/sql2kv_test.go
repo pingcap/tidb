@@ -34,9 +34,9 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/pingcap/br/pkg/lightning/common"
-	"github.com/pingcap/br/pkg/lightning/log"
-	"github.com/pingcap/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 )
 
 func (s *kvSuite) TestMarshal(c *C) {
@@ -592,7 +592,7 @@ func (s *benchSQL2KVSuite) SetUpTest(c *C) {
 	s.colPerm = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, -1}
 }
 
-// Run `go test github.com/pingcap/br/pkg/lightning/backend -check.b -test.v` to get benchmark result.
+// Run `go test github.com/pingcap/tidb/br/pkg/lightning/backend -check.b -test.v` to get benchmark result.
 func (s *benchSQL2KVSuite) BenchmarkSQL2KV(c *C) {
 	for i := 0; i < c.N; i++ {
 		rows, err := s.encoder.Encode(s.logger, s.row, 1, s.colPerm, 0)

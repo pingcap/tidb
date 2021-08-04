@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/errors"
 	kvpb "github.com/pingcap/kvproto/pkg/import_kvpb"
 
-	"github.com/pingcap/br/pkg/lightning/backend"
-	"github.com/pingcap/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/br/pkg/lightning/common"
-	"github.com/pingcap/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/mock"
 )
 
 type importerSuite struct {

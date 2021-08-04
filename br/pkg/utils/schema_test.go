@@ -9,12 +9,12 @@ import (
 
 	"github.com/golang/protobuf/proto"
 
-	"github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/storage"
 
-	"github.com/pingcap/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 
 	. "github.com/pingcap/check"
-	backuppb "github.com/pingcap/kvproto/pkg/backup"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/tablecodec"
@@ -242,7 +242,7 @@ func buildBenchmarkBackupmeta(c *C, dbName string, tableCount, fileCountPerTable
 	return mockBackupMeta(mockSchemas, mockFiles)
 }
 
-// Run `go test github.com/pingcap/br/pkg/utils -check.b -test.v` to get benchmark result.
+// Run `go test github.com/pingcap/tidb/br/pkg/utils -check.b -test.v` to get benchmark result.
 func (r *testSchemaSuite) BenchmarkLoadBackupMeta64(c *C) {
 	meta := buildBenchmarkBackupmeta(c, "bench", 64, 64)
 	c.ResetTimer()

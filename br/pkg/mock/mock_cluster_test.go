@@ -8,7 +8,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
 
-	"github.com/pingcap/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/mock"
 )
 
 func Test(t *testing.T) {

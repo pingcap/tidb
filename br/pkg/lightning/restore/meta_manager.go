@@ -14,12 +14,12 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"go.uber.org/zap"
 
-	"github.com/pingcap/br/pkg/lightning/backend/tidb"
-	"github.com/pingcap/br/pkg/lightning/common"
-	"github.com/pingcap/br/pkg/lightning/log"
-	verify "github.com/pingcap/br/pkg/lightning/verification"
-	"github.com/pingcap/br/pkg/pdutil"
-	"github.com/pingcap/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/br/pkg/redact"
 )
 
 type metaMgrBuilder interface {

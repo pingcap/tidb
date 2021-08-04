@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/opentracing/opentracing-go"
-	backuppb "github.com/pingcap/kvproto/pkg/backup"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 
-	"github.com/pingcap/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 )
 
 // SendType is the 'type' of a send.

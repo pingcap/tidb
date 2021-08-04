@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 
-	"github.com/pingcap/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 )
 
 const (

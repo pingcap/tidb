@@ -75,7 +75,12 @@ var (
 
 // InitLogger initializes Lightning's and also the TiDB library's loggers.
 func InitLogger(cfg *Config, tidbLoglevel string) error {
-	if err := logutil.InitLogger(&logutil.LogConfig{Config: pclog.Config{Level: tidbLoglevel}}); err != nil {
+	tidbLogCfg := logutil.LogConfig{}
+	// Disable annoying TiDB Log.
+	// TODO: some error logs outputs randomly, we need to fix them in TiDB.
+	tidbLogCfg.Level = "fatal"
+	err := logutil.InitLogger(&tidbLogCfg)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -85,8 +90,9 @@ func InitLogger(cfg *Config, tidbLoglevel string) error {
 	}
 	filterTiDBLog := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
 		// Filter logs from TiDB and PD.
-		return NewFilterCore(core, "github.com/pingcap/tidb/", "github.com/tikv/pd/")
+		return NewFilterCore(core, "github.com/tikv/pd/")
 	})
+
 	if len(cfg.File) > 0 {
 		logCfg.File = pclog.FileLogConfig{
 			Filename:   cfg.File,

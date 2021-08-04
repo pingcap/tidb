@@ -10,9 +10,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/backup"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 
-	berrors "github.com/pingcap/br/pkg/errors"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
 
 // BackendOptions further configures the storage backend not expressed by the

@@ -17,12 +17,12 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/spf13/cobra"
 
-	"github.com/pingcap/br/pkg/gluetidb"
-	"github.com/pingcap/br/pkg/redact"
-	"github.com/pingcap/br/pkg/summary"
-	"github.com/pingcap/br/pkg/task"
-	"github.com/pingcap/br/pkg/utils"
-	"github.com/pingcap/br/pkg/version/build"
+	"github.com/pingcap/tidb/br/pkg/gluetidb"
+	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/version/build"
 )
 
 var (

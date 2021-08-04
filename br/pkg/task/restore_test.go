@@ -5,7 +5,7 @@ package task
 import (
 	. "github.com/pingcap/check"
 
-	"github.com/pingcap/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore"
 )
 
 type testRestoreSuite struct{}

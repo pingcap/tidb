@@ -27,7 +27,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 
-	. "github.com/pingcap/br/pkg/lightning/checkpoints"
+	. "github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 )
 
 var _ = Suite(&checksumSuite{})

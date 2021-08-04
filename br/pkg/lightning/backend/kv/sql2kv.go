@@ -38,12 +38,12 @@ import (
 	// Import tidb/planner/core to initialize expression.RewriteAstExpr
 	_ "github.com/pingcap/tidb/planner/core"
 
-	"github.com/pingcap/br/pkg/lightning/common"
-	"github.com/pingcap/br/pkg/lightning/log"
-	"github.com/pingcap/br/pkg/lightning/metric"
-	"github.com/pingcap/br/pkg/lightning/verification"
-	"github.com/pingcap/br/pkg/logutil"
-	"github.com/pingcap/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/redact"
 )
 
 var ExtraHandleColumnInfo = model.NewExtraHandleColInfo()

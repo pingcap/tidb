@@ -10,10 +10,10 @@ import (
 	"testing"
 
 	"github.com/golang/protobuf/proto"
-	backuppb "github.com/pingcap/kvproto/pkg/backup"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 
-	"github.com/pingcap/br/pkg/metautil"
-	"github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/storage"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -22,10 +22,10 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/tikv/client-go/v2/oracle"
 
-	"github.com/pingcap/br/pkg/backup"
-	"github.com/pingcap/br/pkg/gluetidb"
-	"github.com/pingcap/br/pkg/mock"
-	"github.com/pingcap/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/backup"
+	"github.com/pingcap/tidb/br/pkg/gluetidb"
+	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/restore"
 )
 
 func TestT(t *testing.T) {
