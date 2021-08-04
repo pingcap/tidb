@@ -558,7 +558,11 @@ func (s *testSuite1) TestIssue15752(c *C) {
 	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
 }
 
+<<<<<<< HEAD
 func (s *testSuite1) TestAnalyzeIndex(c *C) {
+=======
+func (s *testSerialSuite2) TestAnalyzeIndex(c *C) {
+>>>>>>> f8d420b2c... executor: fix several analyze related unstable tests (#26875)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -581,7 +585,7 @@ func (s *testSuite1) TestAnalyzeIndex(c *C) {
 	}()
 }
 
-func (s *testSuite1) TestAnalyzeIncremental(c *C) {
+func (s *testSerialSuite2) TestAnalyzeIncremental(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_version = 1")
@@ -589,7 +593,7 @@ func (s *testSuite1) TestAnalyzeIncremental(c *C) {
 	s.testAnalyzeIncremental(tk, c)
 }
 
-func (s *testSuite1) TestAnalyzeIncrementalStreaming(c *C) {
+func (s *testSerialSuite2) TestAnalyzeIncrementalStreaming(c *C) {
 	c.Skip("unistore hasn't support streaming yet.")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -597,7 +601,12 @@ func (s *testSuite1) TestAnalyzeIncrementalStreaming(c *C) {
 	s.testAnalyzeIncremental(tk, c)
 }
 
+<<<<<<< HEAD
 func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
+=======
+// nolint:unused
+func (s *testSerialSuite2) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
+>>>>>>> f8d420b2c... executor: fix several analyze related unstable tests (#26875)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, primary key(a), index idx(b))")
@@ -937,6 +946,7 @@ func (s *testSerialSuite2) TestIssue20874(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci not null, b char(20) collate utf8mb4_general_ci not null, key idxa(a), key idxb(b))")
 	tk.MustExec("insert into t values ('#', 'C'), ('$', 'c'), ('a', 'a')")
 	tk.MustExec("set @@tidb_analyze_version=1")
@@ -981,7 +991,7 @@ func (s *testSerialSuite2) TestIssue20874(c *C) {
 	))
 }
 
-func (s *testSuite1) TestAnalyzeClusteredIndexPrimary(c *C) {
+func (s *testSerialSuite2) TestAnalyzeClusteredIndexPrimary(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
