@@ -22,9 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
-
-
 type mockCacheKey struct {
 	hash []byte
 	key  int64
