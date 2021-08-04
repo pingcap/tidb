@@ -1891,6 +1891,24 @@ func (s *testSuite) TestReCreateBind(c *C) {
 	c.Assert(rows[0][3], Equals, "using")
 }
 
+func (s *testSuite) TestExplainShowBindSQL(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key(a))")
+
+	tk.MustExec("create global binding for select * from t using select * from t use index(a)")
+	tk.MustQuery("select original_sql, bind_sql from mysql.bind_info where default_db != 'mysql'").Check(testkit.Rows(
+		"select * from `test` . `t` SELECT * FROM `test`.`t` USE INDEX (`a`)",
+	))
+
+	tk.MustExec("explain select * from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
+	tk.MustExec("explain analyze select * from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
+}
+
 func (s *testSuite) TestDMLIndexHintBind(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -2113,4 +2131,69 @@ func (s *testSuite) TestTemporaryTable(c *C) {
 	tk.MustGetErrCode("create binding for replace into t select * from t2 where t2.b = 1 and t2.c > 1 using replace into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("create binding for update t set a = 1 where b = 1 and c > 1 using update /*+ use_index(t, c) */ t set a = 1 where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("create binding for delete from t where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
+}
+
+func (s *testSuite) TestBindingLastUpdateTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("create table t0(a int, key(a));")
+	tk.MustExec("create global binding for select * from t0 using select * from t0 use index(a);")
+	tk.MustExec("admin reload bindings;")
+
+	bindHandle := bindinfo.NewBindHandle(tk.Se)
+	err := bindHandle.Update(true)
+	c.Check(err, IsNil)
+	sql, hash := parser.NormalizeDigest("select * from test . t0")
+	bindData := bindHandle.GetBindRecord(hash.String(), sql, "test")
+	c.Assert(len(bindData.Bindings), Equals, 1)
+	bind := bindData.Bindings[0]
+	updateTime := bind.UpdateTime.String()
+
+	rows1 := tk.MustQuery("show status like 'last_plan_binding_update_time';").Rows()
+	updateTime1 := rows1[0][1]
+	c.Assert(updateTime1, Equals, updateTime)
+
+	rows2 := tk.MustQuery("show session status like 'last_plan_binding_update_time';").Rows()
+	updateTime2 := rows2[0][1]
+	c.Assert(updateTime2, Equals, updateTime)
+	tk.MustQuery(`show global status like 'last_plan_binding_update_time';`).Check(testkit.Rows())
+}
+
+func (s *testSuite) TestGCBindRecord(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key(a))")
+
+	tk.MustExec("create global binding for select * from t where a = 1 using select * from t use index(a) where a = 1")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` = ?")
+	c.Assert(rows[0][3], Equals, "using")
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
+		"using",
+	))
+
+	h := s.domain.BindHandle()
+	// bindinfo.Lease is set to 0 for test env in SetUpSuite.
+	c.Assert(h.GCBindRecord(), IsNil)
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` = ?")
+	c.Assert(rows[0][3], Equals, "using")
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
+		"using",
+	))
+
+	tk.MustExec("drop global binding for select * from t where a = 1")
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
+		"deleted",
+	))
+	c.Assert(h.GCBindRecord(), IsNil)
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows())
 }

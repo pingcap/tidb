@@ -248,7 +248,8 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 		return types.NewDatum(zeroV), true, nil
 	} else if tm.IsZero() || tm.InvalidZero() {
 		if tm.IsZero() {
-			if !mode.HasNoZeroDateMode() {
+			// Don't care NoZeroDate mode if time val is invalid.
+			if !tmIsInvalid && !mode.HasNoZeroDateMode() {
 				return types.NewDatum(zeroV), true, nil
 			}
 		} else if tm.InvalidZero() {
@@ -345,21 +346,25 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	str := casted.GetString()
 	utf8Charset := col.Charset == mysql.UTF8Charset
 	doMB4CharCheck := utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUTF8
-	for i, w := 0, 0; i < len(str); i += w {
-		runeValue, width := utf8.DecodeRuneInString(str[i:])
-		if runeValue == utf8.RuneError {
-			if strings.HasPrefix(str[i:], string(utf8.RuneError)) {
-				w = width
-				continue
+	fastCheck := (col.Charset == mysql.UTF8MB4Charset) && utf8.ValidString(str)
+	if !fastCheck {
+		// The following check is slow, if we fast check success, we can avoid this.
+		for i, w := 0, 0; i < len(str); i += w {
+			runeValue, width := utf8.DecodeRuneInString(str[i:])
+			if runeValue == utf8.RuneError {
+				if strings.HasPrefix(str[i:], string(utf8.RuneError)) {
+					w = width
+					continue
+				}
+				casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
+				break
+			} else if width > 3 && doMB4CharCheck {
+				// Handle non-BMP characters.
+				casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
+				break
 			}
-			casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
-			break
-		} else if width > 3 && doMB4CharCheck {
-			// Handle non-BMP characters.
-			casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
-			break
+			w = width
 		}
-		w = width
 	}
 
 	if forceIgnoreTruncate {
