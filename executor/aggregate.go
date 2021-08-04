@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/rand"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -992,6 +993,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 				}
 				allMemDelta += e.groupSet.Insert(groupKey)
 				e.groupKeys = append(e.groupKeys, groupKey)
+				e.randomSpill()
 			}
 			partialResults := e.getPartialResults(groupKey)
 			for i, af := range e.PartialAggFuncs {
@@ -1014,6 +1016,12 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(allMemDelta)
+	}
+}
+
+func (e *HashAggExec) randomSpill()  {
+	if rand.Int31n(100) < 5 {
+		atomic.StoreUint32(&e.inSpillMode, 1)
 	}
 }
 
