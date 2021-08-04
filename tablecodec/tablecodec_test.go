@@ -478,7 +478,6 @@ func TestDecodeIndexKey(t *testing.T) {
 			str = fmt.Sprintf("%d-%v", v.Kind(), v.GetValue())
 		}
 		valueStrs = append(valueStrs, str)
-		fmt.Println(valueStrs)
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	encodedValue, err := codec.EncodeKey(sc, nil, values...)

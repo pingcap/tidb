@@ -20,10 +20,6 @@ package tables
 
 import (
 	"context"
-	"fmt"
-	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/pingcap/tipb/go-binlog"
-	"github.com/pingcap/tipb/go-tipb"
 	"math"
 	"strconv"
 	"strings"
@@ -52,6 +48,8 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
+	"github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -421,6 +419,9 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	}
 	if err = memBuffer.Set(key, value); err != nil {
 		return err
+	}
+	if err = CheckIndexConsistency(sc, sessVars, t, newData, oldData, memBuffer, sh); err != nil {
+		return errors.Trace(err)
 	}
 	memBuffer.Release(sh)
 	if shouldWriteBinlog(sctx, t.meta) {
@@ -838,95 +839,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		return h, err
 	}
 
-	// double check the data consistency
-	type Mutation = struct {
-		key   kv.Key
-		flags kv.KeyFlags
-		value []byte
-	}
-	mutations := make([]Mutation, 0)
-	inspector := func(key kv.Key, flags kv.KeyFlags, data []byte) {
-		mutations = append(mutations, Mutation{key, flags, data})
-	}
-	memBuffer.InspectStage(sh, inspector)
-
-	// get the handle
-	handles := make([]kv.Handle, 0)
-	for _, m := range mutations {
-		handle, err := tablecodec.DecodeRowKey(m.key)
-		if err != nil {
-			handles = append(handles, handle)
-		}
-	}
-	logutil.BgLogger().Info("handles in AddRecord", zap.Any("handles", handles))
-	//handle := handles[0]
-
-	// index_id -> index
-	type IndexHelperInfo = struct {
-		indexInfo *model.IndexInfo
-		colInfos  []rowcodec.ColInfo
-	}
-	indexIdMap := make(map[int64]IndexHelperInfo)
-	for _, index := range t.indices {
-		indexIdMap[index.Meta().ID] = IndexHelperInfo{
-			index.Meta(),
-			BuildRowcodecColInfoForIndexColumns(index.Meta(), t.Meta()),
-		}
-	}
-
-	// check each mutation
-	for _, m := range mutations {
-		if !tablecodec.IsIndexKey(m.key) {
-			continue
-		}
-
-		tableId, indexId, _, err := tablecodec.DecodeIndexKey(m.key)
-		if err != nil {
-			continue
-		}
-		if tableId != t.tableID {
-			logutil.BgLogger().Info("different table id", zap.Int64("expected", t.tableID), zap.Int64("in mutation", tableId))
-			continue
-		}
-
-		indexHelperInfo, ok := indexIdMap[indexId]
-		if !ok {
-			return nil, errors.New("index not found")
-		}
-
-		colInfos := BuildRowcodecColInfoForIndexColumns(indexHelperInfo.indexInfo, t.Meta())
-		decodedIndexValues, err := tablecodec.DecodeIndexKV(m.key, m.value, len(indexHelperInfo.indexInfo.Columns), tablecodec.HandleNotNeeded, colInfos)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		indexData := make([]types.Datum, 0)
-		for i, v := range decodedIndexValues {
-			d, err := tablecodec.DecodeColumnValue(v, &t.Columns[indexHelperInfo.indexInfo.Columns[i].Offset].FieldType, sessVars.TimeZone)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			indexData = append(indexData, d)
-			logutil.BgLogger().Warn("decoded index value", zap.String("datum", d.String()))
-		}
-
-		for i, decodedMutationDatum := range indexData {
-			expectedDatum := r[indexHelperInfo.indexInfo.Columns[i].Offset]
-			// FIXME: should we truncate index?
-			//tablecodec.TruncateIndexValue(&expectedDatum, indexHelperInfo.indexInfo.Columns[i],
-			//	t.Columns[indexHelperInfo.indexInfo.Columns[i].Offset].ColumnInfo)
-
-			comparison, err := decodedMutationDatum.CompareDatum(sc, &expectedDatum)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-
-			if comparison != 0 {
-				logutil.BgLogger().Error("inconsistent index values",
-					zap.String("mutation datum", fmt.Sprintf("%v", decodedMutationDatum)),
-					zap.String("input datum", fmt.Sprintf("%v", expectedDatum)))
-				return nil, errors.New("inconsistent index values")
-			}
-		}
+	if err = CheckIndexConsistency(sc, sessVars, t, r, nil, memBuffer, sh); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	memBuffer.Release(sh)
@@ -999,9 +913,6 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, idxMeta.Name.String())
 		}
 		rsData := TryGetHandleRestoredDataWrapper(t, r, nil, v.Meta())
-		for _, datum := range indexVals {
-			logutil.BgLogger().Warn("creating index", zap.String("datum", datum.String()))
-		}
 		if dupHandle, err := v.Create(sctx, txn, indexVals, recordID, rsData, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
