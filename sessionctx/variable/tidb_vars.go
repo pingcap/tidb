@@ -26,13 +26,7 @@ import (
 
 	1. Add a new variable name with comment in this file.
 	2. Add the default value of the new variable in this file.
-	3. Add SysVar instance in 'defaultSysVars' slice with the default value.
-	4. Add a field in `SessionVars`.
-	5. Update the `NewSessionVars` function to set the field to its default value.
-	6. Update the `variable.SetSessionSystemVar` function to use the new value when SET statement is executed.
-	7. If it is a global variable, add it in `session.loadCommonGlobalVarsSQL`.
-	8. Update ValidateSetSystemVar if the variable's value need to be validated.
-	9. Use this variable to control the behavior in code.
+	3. Add SysVar instance in 'defaultSysVars' slice.
 */
 
 // TiDB system variable names that only in session scope.
