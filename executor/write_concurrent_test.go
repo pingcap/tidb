@@ -19,14 +19,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/testkit"
-	"go.uber.org/goleak"
 )
 
 func TestBatchInsertWithOnDuplicate(t *testing.T) {
 	t.Parallel()
-	defer goleak.VerifyNone(t, executor.IgnoreFunctions...)
 
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

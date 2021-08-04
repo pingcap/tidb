@@ -18,15 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/util/testbridge"
-	"go.uber.org/goleak"
 )
-
-var IgnoreFunctions = []goleak.Option{
-	goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
-	goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-	goleak.IgnoreTopFunction("testing.runTests.func1.1"),
-	goleak.IgnoreTopFunction("testing.tRunner.func1"),
-}
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
