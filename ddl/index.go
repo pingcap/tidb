@@ -130,7 +130,7 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	// JSON column cannot index.
 	if col.FieldType.Tp == mysql.TypeJSON {
 		if col.Hidden {
-			return ErrFunctionalIndexOnJSONOrGeometryFunction
+			return errFunctionalIndexOnJSONOrGeometryFunction
 		}
 		return errors.Trace(errJSONUsedAsKey.GenWithStackByArgs(col.Name.O))
 	}
