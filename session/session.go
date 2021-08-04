@@ -2254,6 +2254,9 @@ func (s *session) Close() {
 	if bindValue != nil {
 		bindValue.(*bindinfo.SessionHandle).Close()
 	}
+	if s.Value(executor.PlanRecreatorFileList) != nil {
+		executor.CleanUpPlanRecreatorFile(s.GetSessionVars().ConnectionID)
+	}
 	ctx := context.WithValue(context.TODO(), inCloseSession{}, struct{}{})
 	s.RollbackTxn(ctx)
 	if s.sessionVars != nil {

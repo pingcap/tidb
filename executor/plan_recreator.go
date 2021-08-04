@@ -163,17 +163,18 @@ func (e *PlanRecreatorSingleInfo) Process() (string, error) {
 
 func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
 	// Create path
-	err := os.MkdirAll(recreatorPath, os.ModePerm)
+	path := fmt.Sprintf("%s/%v", recreatorPath, e.Ctx.GetSessionVars().ConnectionID)
+	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
-		return "", errors.New("plan Recreator: cannot create plan recreator path")
+		return "", errors.New("Plan Recreator: cannot create plan recreator path")
 	}
 
 	// Create zip file
 	startTime := time.Now()
 	fileName := fmt.Sprintf("recreator_single_%v.zip", startTime.UnixNano())
-	zf, err := os.Create(recreatorPath + "/" + fileName)
+	zf, err := os.Create(path + "/" + fileName)
 	if err != nil {
-		return "", errors.New("plan Recreator: cannot create zip file")
+		return "", errors.New("Plan Recreator: cannot create zip file")
 	}
 	val := e.Ctx.Value(PlanRecreatorFileList)
 	if val == nil {
@@ -184,7 +185,7 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
 		TList := val.(fileList).TokenMap
 		for k, v := range Flist {
 			if time.Since(v.StartTime).Minutes() > remainedInterval {
-				err := os.Remove(recreatorPath + "/" + k)
+				err := os.Remove(path + "/" + k)
 				if err != nil {
 					logutil.BgLogger().Warn(fmt.Sprintf("Cleaning outdated file %s failed.", k))
 				}
@@ -305,7 +306,7 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
 		return "", err
 	}
 
-	// Dump bindings
+	// Dump session bindings
 	recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "show bindings")
 	if err != nil {
 		return "", err
@@ -314,7 +315,29 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	bf, err := zw.Create("bindings.sql")
+	bf, err := zw.Create("session_bindings.sql")
+	if err != nil {
+		return "", err
+	}
+	for _, row := range sRows {
+		fmt.Fprintf(bf, "%s\n", strings.Join(row, "\t"))
+	}
+	if len(recordSets) > 0 {
+		if err := recordSets[0].Close(); err != nil {
+			return "", err
+		}
+	}
+
+	// Dump global bindings
+	recordSets, err = e.Ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "show global bindings")
+	if err != nil {
+		return "", err
+	}
+	sRows, err = resultSetToStringSlice(context.Background(), recordSets[0])
+	if err != nil {
+		return "", err
+	}
+	bf, err = zw.Create("global_bindings.sql")
 	if err != nil {
 		return "", err
 	}
@@ -454,4 +477,13 @@ func getRows4Test(ctx context.Context, rs sqlexec.RecordSet) ([]chunk.Row, error
 		}
 	}
 	return rows, nil
+}
+
+// CleanUpPlanRecreatorFile cleans files corresponding to the session.
+func CleanUpPlanRecreatorFile(id uint64) {
+	path := fmt.Sprintf("%s/%v", recreatorPath, id)
+	err := os.RemoveAll(path)
+	if err != nil {
+		logutil.BgLogger().Warn(fmt.Sprintf("Cleaning up plan recreator file %s failed.", path))
+	}
 }
