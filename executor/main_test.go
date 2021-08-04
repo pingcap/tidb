@@ -47,6 +47,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/domain.(*Domain).topNSlowQueryLoop"),
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/domain.(*Domain).topologySyncerKeeper"),
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/executor_test.testSerialSuite.TestTemporaryTableNoNetwork.func2"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/executor_test.testSerialSuite.assertTemporaryTableNoNetwork.func2"),
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/store/mockstore/unistore/tikv.(*MVCCStore).StartDeadlockDetection.func1"),
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/store/mockstore/unistore/tikv.(*MVCCStore).runUpdateSafePointLoop"),
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/store/mockstore/unistore/tikv.writeDBWorker.run"),
