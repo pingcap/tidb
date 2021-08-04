@@ -150,6 +150,7 @@ type PreprocessorReturn struct {
 	TxnScope       string
 }
 
+// PreprocessExecuteISUpdate is used to update information schema for special Execute statement in the preprocessor.
 type PreprocessExecuteISUpdate struct {
 	ExecuteInfoSchemaUpdate func(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema
 	Node                    ast.Node
