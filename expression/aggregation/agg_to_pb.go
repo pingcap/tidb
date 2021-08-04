@@ -59,6 +59,8 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 		tp = tipb.ExprType_Agg_BitAnd
 	case ast.AggFuncVarPop:
 		tp = tipb.ExprType_VarPop
+	case ast.AggFuncJsonArrayagg:
+		tp = tipb.ExprType_JsonArrayAgg
 	case ast.AggFuncJsonObjectAgg:
 		tp = tipb.ExprType_JsonObjectAgg
 	case ast.AggFuncStddevPop:
