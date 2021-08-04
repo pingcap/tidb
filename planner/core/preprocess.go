@@ -294,8 +294,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		for _, cte := range node.CTEs {
 			p.withName[cte.Name.L] = struct{}{}
 		}
-	case *ast.ExecuteStmt:
-		p.stmtTp = TypeExecute
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -343,8 +341,6 @@ const (
 	TypeRepair
 	// TypeShow for ShowStmt
 	TypeShow
-	// TypeExecute for ExecuteStmt
-	TypeExecute
 )
 
 func bindableStmtType(node ast.StmtNode) byte {
