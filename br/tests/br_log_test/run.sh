@@ -28,12 +28,12 @@ for i in $(seq $DB_COUNT); do
 done
 
 echo "backup with tikv permission error start..." 
-export GO_FAILPOINTS="github.com/pingcap/br/pkg/backup/tikv-rw-error=return(\"Io(Os { code: 13, kind: PermissionDenied...})\")"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/tikv-rw-error=return(\"Io(Os { code: 13, kind: PermissionDenied...})\")"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB-tikverr" || echo "br log test done!"
 export GO_FAILPOINTS=""
 
 echo "backup with tikv file or directory not found error start..."
-export GO_FAILPOINTS="github.com/pingcap/br/pkg/backup/tikv-rw-error=return(\"Io(Os { code: 2, kind:NotFound...})\")"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/tikv-rw-error=return(\"Io(Os { code: 2, kind:NotFound...})\")"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB-tikverr2" || echo "br log test done!"
 export GO_FAILPOINTS=""
 

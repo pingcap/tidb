@@ -39,7 +39,7 @@ run_sql "CREATE TABLE $DB.usertable2 ( \
 run_sql "INSERT INTO $DB.usertable2 VALUES (\"c\", \"d\");"
 # backup db
 echo "backup start..."
-export GO_FAILPOINTS="github.com/pingcap/br/pkg/task/progress-call-back=return(\"$PROGRESS_FILE\")"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/progress-call-back=return(\"$PROGRESS_FILE\")"
 run_br --pd $PD_ADDR backup db --db "$DB" -s "local://$TEST_DIR/$DB"
 export GO_FAILPOINTS=""
 

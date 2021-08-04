@@ -29,13 +29,13 @@ done
 
 # backup full and kill tikv to test reset connection
 echo "backup with limit start..."
-export GO_FAILPOINTS="github.com/pingcap/br/pkg/backup/reset-retryable-error=1*return(true)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/reset-retryable-error=1*return(true)"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB-limit" --concurrency 4
 export GO_FAILPOINTS=""
 
 # backup full and let TiKV returns an unknown error, to test whether we can gracefully stop.
 echo "backup with unretryable error start..."
-export GO_FAILPOINTS="github.com/pingcap/br/pkg/backup/reset-not-retryable-error=1*return(true)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/reset-not-retryable-error=1*return(true)"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB-no-retryable" --concurrency 4 &
 pid=$!
 export GO_FAILPOINTS=""
@@ -48,7 +48,7 @@ fi
 
 # backup full
 echo "backup with lz4 start..."
-export GO_FAILPOINTS="github.com/pingcap/br/pkg/backup/backup-storage-error=1*return(\"connection refused\")"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/backup-storage-error=1*return(\"connection refused\")"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB-lz4" --concurrency 4 --compression lz4
 export GO_FAILPOINTS=""
 size_lz4=$(du -d 0 $TEST_DIR/$DB-lz4 | awk '{print $1}')
@@ -69,7 +69,7 @@ for ct in limit lz4 zstd; do
 
   # restore full
   echo "restore with $ct backup start..."
-  export GO_FAILPOINTS="github.com/pingcap/br/pkg/restore/restore-storage-error=1*return(\"connection refused\")"
+  export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/restore-storage-error=1*return(\"connection refused\")"
   run_br restore full -s "local://$TEST_DIR/$DB-$ct" --pd $PD_ADDR --ratelimit 1024
   export GO_FAILPOINTS=""
 

@@ -16,9 +16,9 @@ cases=${cases:-'shutdown scale-out'}
 
 for failure in $cases; do
     rm -f "$hint_finegrained" "$hint_backup_start" "$hint_get_backup_client"
-    export GO_FAILPOINTS="github.com/pingcap/br/pkg/backup/hint-backup-start=1*return(\"$hint_backup_start\");\
-github.com/pingcap/br/pkg/backup/hint-fine-grained-backup=1*return(\"$hint_finegrained\");\
-github.com/pingcap/br/pkg/conn/hint-get-backup-client=1*return(\"$hint_get_backup_client\")"
+    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/hint-backup-start=1*return(\"$hint_backup_start\");\
+github.com/pingcap/tidb/br/pkg/backup/hint-fine-grained-backup=1*return(\"$hint_finegrained\");\
+github.com/pingcap/tidb/br/pkg/conn/hint-get-backup-client=1*return(\"$hint_get_backup_client\")"
 
     backup_dir=${TEST_DIR:?}/"backup{test:${TEST_NAME}|with:${failure}}"
     rm -rf "${backup_dir:?}"

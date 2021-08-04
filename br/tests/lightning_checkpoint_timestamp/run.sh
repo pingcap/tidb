@@ -18,7 +18,7 @@ set -eu
 run_sql 'DROP DATABASE IF EXISTS cpts'
 rm -f "$TEST_DIR"/cpts.pb*
 
-export GO_FAILPOINTS="github.com/pingcap/br/pkg/lightning/SetTaskID=return(1234567890);github.com/pingcap/br/pkg/lightning/restore/FailIfImportedChunk=return(28)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/SetTaskID=return(1234567890);github.com/pingcap/tidb/br/pkg/lightning/restore/FailIfImportedChunk=return(28)"
 
 for i in $(seq 5); do
     echo "******** Importing Chunk Now (file step $i) ********"

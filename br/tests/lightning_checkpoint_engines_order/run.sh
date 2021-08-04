@@ -11,7 +11,7 @@ run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint;'
 rm -rf "$TEST_DIR/$TEST_NAME.sorted"
 
 # force crash when anything is written...
-export GO_FAILPOINTS='github.com/pingcap/br/pkg/lightning/restore/FailAfterWriteRows=panic'
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/restore/FailAfterWriteRows=panic'
 
 # ensure only 2 engines (index + one data) are open all the time no matter
 # how many times we restart from beginning, since nothing was written.
@@ -27,7 +27,7 @@ for i in $(seq 5); do
 done
 
 # allow one file to be written at a time,
-export GO_FAILPOINTS='github.com/pingcap/br/pkg/lightning/restore/FailAfterWriteRows=1*return->panic'
+export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/restore/FailAfterWriteRows=1*return->panic'
 
 # and now we should have 3 engines since one engine will be successfully imported.
 set +e

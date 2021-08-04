@@ -57,7 +57,7 @@ for BACKEND in importer local; do
   rm -f "/tmp/tidb_lightning_checkpoint.pb"
 
   # Data engine part
-  export GO_FAILPOINTS='github.com/pingcap/br/pkg/lightning/restore/SlowDownImport=sleep(500);github.com/pingcap/br/pkg/lightning/restore/FailIfStatusBecomes=return(120);github.com/pingcap/br/pkg/lightning/restore/FailIfIndexEngineImported=return(140)'
+  export GO_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownImport=sleep(500);github.com/pingcap/tidb/br/pkg/lightning/restore/FailIfStatusBecomes=return(120);github.com/pingcap/tidb/br/pkg/lightning/restore/FailIfIndexEngineImported=return(140)'
   for i in $(seq "$ENGINE_COUNT"); do
       echo "******** Importing Table Now (step $i/$ENGINE_COUNT) ********"
       ! do_run_lightning $BACKEND config 2> /dev/null
