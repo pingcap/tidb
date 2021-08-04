@@ -1,4 +1,4 @@
-module github.com/pingcap/br/_tools
+module github.com/pingcap/tidb/br/_tools
 
 go 1.16
 
