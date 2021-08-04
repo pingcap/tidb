@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testleak"
 	. "github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 func TestT(t *testing.T) {
@@ -42,145 +43,146 @@ type testSuite struct {
 	CommonHandleSuite
 }
 
-func (s *testSuite) TestMeta(c *C) {
-	defer testleak.AfterTest(c)()
+func TestMeta(t *testing.T) {
+	t.Parallel()
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
+
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.Nil(t, err)
 	}()
 
 	txn, err := store.Begin()
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
-	t := meta.NewMeta(txn)
+	mt := meta.NewMeta(txn)
 
-	n, err := t.GenGlobalID()
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(1))
+	n, err := mt.GenGlobalID()
+	require.Nil(t, err)
+	require.Equal(t, int64(1), n)
 
-	n, err = t.GetGlobalID()
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(1))
+	n, err = mt.GetGlobalID()
+	require.Nil(t, err)
+	require.Equal(t, int64(1), n)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ids, err := t.GenGlobalIDs(3)
-		c.Assert(err, IsNil)
-		anyMatch(c, ids, []int64{2, 3, 4}, []int64{6, 7, 8})
+		ids, err := mt.GenGlobalIDs(3)
+		require.Nil(t, err)
+		anyMatch(t, ids, []int64{2, 3, 4}, []int64{6, 7, 8})
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ids, err := t.GenGlobalIDs(4)
-		c.Assert(err, IsNil)
-		anyMatch(c, ids, []int64{5, 6, 7, 8}, []int64{2, 3, 4, 5})
+		ids, err := mt.GenGlobalIDs(4)
+		require.Nil(t, err)
+		anyMatch(t, ids, []int64{5, 6, 7, 8}, []int64{2, 3, 4, 5})
 	}()
 	wg.Wait()
 
-	n, err = t.GetSchemaVersion()
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(0))
+	n, err = mt.GetSchemaVersion()
+	require.Nil(t, err)
+	require.Equal(t, int64(0), n)
 
-	n, err = t.GenSchemaVersion()
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(1))
+	n, err = mt.GenSchemaVersion()
+	require.Nil(t, err)
+	require.Equal(t, int64(1), n)
 
-	n, err = t.GetSchemaVersion()
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(1))
+	n, err = mt.GetSchemaVersion()
+	require.Nil(t, err)
+	require.Equal(t, int64(1), n)
 
 	dbInfo := &model.DBInfo{
 		ID:   1,
 		Name: model.NewCIStr("a"),
 	}
-	err = t.CreateDatabase(dbInfo)
-	c.Assert(err, IsNil)
+	err = mt.CreateDatabase(dbInfo)
+	require.Nil(t, err)
 
-	err = t.CreateDatabase(dbInfo)
-	c.Assert(err, NotNil)
-	c.Assert(meta.ErrDBExists.Equal(err), IsTrue)
+	err = mt.CreateDatabase(dbInfo)
+	require.NotNil(t, err)
+	require.True(t, meta.ErrDBExists.Equal(err))
 
-	v, err := t.GetDatabase(1)
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, dbInfo)
+	v, err := mt.GetDatabase(1)
+	require.Nil(t, err)
+	require.Equal(t, dbInfo, v)
 
 	dbInfo.Name = model.NewCIStr("aa")
-	err = t.UpdateDatabase(dbInfo)
-	c.Assert(err, IsNil)
+	err = mt.UpdateDatabase(dbInfo)
+	require.Nil(t, err)
 
-	v, err = t.GetDatabase(1)
-	c.Assert(err, IsNil)
-	c.Assert(v, DeepEquals, dbInfo)
+	v, err = mt.GetDatabase(1)
+	require.Nil(t, err)
+	require.Equal(t, dbInfo, v)
 
-	dbs, err := t.ListDatabases()
-	c.Assert(err, IsNil)
-	c.Assert(dbs, DeepEquals, []*model.DBInfo{dbInfo})
+	dbs, err := mt.ListDatabases()
+	require.Nil(t, err)
+	require.Equal(t, []*model.DBInfo{dbInfo}, dbs)
 
 	tbInfo := &model.TableInfo{
 		ID:   1,
 		Name: model.NewCIStr("t"),
 	}
-	err = t.CreateTableOrView(1, tbInfo)
-	c.Assert(err, IsNil)
+	err = mt.CreateTableOrView(1, tbInfo)
+	require.Nil(t, err)
 
-	n, err = t.GenAutoTableID(1, 1, 10)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(10))
+	n, err = mt.GenAutoTableID(1, 1, 10)
+	require.Nil(t, err)
+	require.Equal(t, int64(10), n)
 
-	n, err = t.GetAutoTableID(1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(10))
+	n, err = mt.GetAutoTableID(1, 1)
+	require.Nil(t, err)
+	require.Equal(t, int64(10), n)
 
-	err = t.CreateTableOrView(1, tbInfo)
-	c.Assert(err, NotNil)
-	c.Assert(meta.ErrTableExists.Equal(err), IsTrue)
+	err = mt.CreateTableOrView(1, tbInfo)
+	require.NotNil(t, err)
+	require.True(t, meta.ErrTableExists.Equal(err))
 
 	tbInfo.Name = model.NewCIStr("tt")
-	err = t.UpdateTable(1, tbInfo)
-	c.Assert(err, IsNil)
+	err = mt.UpdateTable(1, tbInfo)
+	require.Nil(t, err)
 
-	table, err := t.GetTable(1, 1)
-	c.Assert(err, IsNil)
-	c.Assert(table, DeepEquals, tbInfo)
+	table, err := mt.GetTable(1, 1)
+	require.Nil(t, err)
+	require.Equal(t, tbInfo, table)
 
-	table, err = t.GetTable(1, 2)
-	c.Assert(err, IsNil)
-	c.Assert(table, IsNil)
+	table, err = mt.GetTable(1, 2)
+	require.Nil(t, err)
+	require.Nil(t, table)
 
 	tbInfo2 := &model.TableInfo{
 		ID:   2,
 		Name: model.NewCIStr("bb"),
 	}
-	err = t.CreateTableOrView(1, tbInfo2)
-	c.Assert(err, IsNil)
+	err = mt.CreateTableOrView(1, tbInfo2)
+	require.Nil(t, err)
 
-	tables, err := t.ListTables(1)
-	c.Assert(err, IsNil)
-	c.Assert(tables, DeepEquals, []*model.TableInfo{tbInfo, tbInfo2})
+	tables, err := mt.ListTables(1)
+	require.Nil(t, err)
+	require.Equal(t, []*model.TableInfo{tbInfo, tbInfo2}, tables)
 	// Generate an auto id.
-	n, err = t.GenAutoTableID(1, 2, 10)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(10))
+	n, err = mt.GenAutoTableID(1, 2, 10)
+	require.Nil(t, err)
+	require.Equal(t, int64(10), n)
 	// Make sure the auto id key-value entry is there.
-	n, err = t.GetAutoTableID(1, 2)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(10))
+	n, err = mt.GetAutoTableID(1, 2)
+	require.Nil(t, err)
+	require.Equal(t, int64(10), n)
 
-	err = t.DropTableOrView(1, tbInfo2.ID, true)
-	c.Assert(err, IsNil)
+	err = mt.DropTableOrView(1, tbInfo2.ID, true)
+	require.Nil(t, err)
 	// Make sure auto id key-value entry is gone.
-	n, err = t.GetAutoTableID(1, 2)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(0))
+	n, err = mt.GetAutoTableID(1, 2)
+	require.Nil(t, err)
+	require.Equal(t, int64(0), n)
 
-	tables, err = t.ListTables(1)
-	c.Assert(err, IsNil)
-	c.Assert(tables, DeepEquals, []*model.TableInfo{tbInfo})
+	tables, err = mt.ListTables(1)
+	require.Nil(t, err)
+	require.Equal(t, []*model.TableInfo{tbInfo}, tables)
 
 	// Test case for drop a table without delete auto id key-value entry.
 	tid := int64(100)
@@ -189,66 +191,67 @@ func (s *testSuite) TestMeta(c *C) {
 		Name: model.NewCIStr("t_rename"),
 	}
 	// Create table.
-	err = t.CreateTableOrView(1, tbInfo100)
-	c.Assert(err, IsNil)
+	err = mt.CreateTableOrView(1, tbInfo100)
+	require.Nil(t, err)
 	// Update auto ID.
 	currentDBID := int64(1)
-	n, err = t.GenAutoTableID(currentDBID, tid, 10)
-	c.Assert(err, IsNil)
-	c.Assert(n, Equals, int64(10))
+	n, err = mt.GenAutoTableID(currentDBID, tid, 10)
+	require.Nil(t, err)
+	require.Equal(t, int64(10), n)
 	// Fail to update auto ID.
 	// The table ID doesn't exist.
 	nonExistentID := int64(1234)
-	_, err = t.GenAutoTableID(currentDBID, nonExistentID, 10)
-	c.Assert(err, NotNil)
-	c.Assert(meta.ErrTableNotExists.Equal(err), IsTrue)
+	_, err = mt.GenAutoTableID(currentDBID, nonExistentID, 10)
+	require.NotNil(t, err)
+	require.True(t, meta.ErrTableNotExists.Equal(err))
 	// Fail to update auto ID.
 	// The current database ID doesn't exist.
 	currentDBID = nonExistentID
-	_, err = t.GenAutoTableID(currentDBID, tid, 10)
-	c.Assert(err, NotNil)
-	c.Assert(meta.ErrDBNotExists.Equal(err), IsTrue)
+	_, err = mt.GenAutoTableID(currentDBID, tid, 10)
+	require.NotNil(t, err)
+	require.True(t, meta.ErrDBNotExists.Equal(err))
 	// Test case for CreateTableAndSetAutoID.
 	tbInfo3 := &model.TableInfo{
 		ID:   3,
 		Name: model.NewCIStr("tbl3"),
 	}
-	err = t.CreateTableAndSetAutoID(1, tbInfo3, 123, 0)
-	c.Assert(err, IsNil)
-	id, err := t.GetAutoTableID(1, tbInfo3.ID)
-	c.Assert(err, IsNil)
-	c.Assert(id, Equals, int64(123))
+	err = mt.CreateTableAndSetAutoID(1, tbInfo3, 123, 0)
+	require.Nil(t, err)
+	id, err := mt.GetAutoTableID(1, tbInfo3.ID)
+	require.Nil(t, err)
+	require.Equal(t, int64(123), id)
 	// Test case for GenAutoTableIDKeyValue.
-	key, val := t.GenAutoTableIDKeyValue(1, tbInfo3.ID, 1234)
-	c.Assert(val, DeepEquals, []byte(strconv.FormatInt(1234, 10)))
-	c.Assert(key, DeepEquals, []byte{0x6d, 0x44, 0x42, 0x3a, 0x31, 0x0, 0x0, 0x0, 0x0, 0xfb, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x33, 0x0, 0x0, 0x0, 0xfc})
+	key, val := mt.GenAutoTableIDKeyValue(1, tbInfo3.ID, 1234)
+	require.Equal(t, []byte(strconv.FormatInt(1234, 10)), val)
+	require.Equal(t, []byte{0x6d, 0x44, 0x42, 0x3a, 0x31, 0x0, 0x0, 0x0, 0x0, 0xfb, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x33, 0x0, 0x0, 0x0, 0xfc}, key)
 
-	err = t.DropDatabase(1)
-	c.Assert(err, IsNil)
-	err = t.DropDatabase(currentDBID)
-	c.Assert(err, IsNil)
+	err = mt.DropDatabase(1)
+	require.Nil(t, err)
+	err = mt.DropDatabase(currentDBID)
+	require.Nil(t, err)
 
-	dbs, err = t.ListDatabases()
-	c.Assert(err, IsNil)
-	c.Assert(dbs, HasLen, 0)
+	dbs, err = mt.ListDatabases()
+	require.Nil(t, err)
+	require.Len(t, dbs, 0)
 
-	bootstrapVer, err := t.GetBootstrapVersion()
-	c.Assert(err, IsNil)
-	c.Assert(bootstrapVer, Equals, int64(0))
+	bootstrapVer, err := mt.GetBootstrapVersion()
+	require.Nil(t, err)
+	require.Equal(t, int64(0), bootstrapVer)
 
-	err = t.FinishBootstrap(int64(1))
-	c.Assert(err, IsNil)
+	err = mt.FinishBootstrap(int64(1))
+	require.Nil(t, err)
 
-	bootstrapVer, err = t.GetBootstrapVersion()
-	c.Assert(err, IsNil)
-	c.Assert(bootstrapVer, Equals, int64(1))
+	bootstrapVer, err = mt.GetBootstrapVersion()
+	require.Nil(t, err)
+	require.Equal(t, int64(1), bootstrapVer)
 
 	// Test case for meta.FinishBootstrap with a version.
-	err = t.FinishBootstrap(int64(10))
-	c.Assert(err, IsNil)
-	bootstrapVer, err = t.GetBootstrapVersion()
-	c.Assert(err, IsNil)
-	c.Assert(bootstrapVer, Equals, int64(10))
+	err = mt.FinishBootstrap(int64(10))
+	require.Nil(t, err)
+	bootstrapVer, err = mt.GetBootstrapVersion()
+	require.Nil(t, err)
+
+	require.Equal(t, int64(10), bootstrapVer)
 
 	// Test case for SchemaDiff.
 	schemaDiff := &model.SchemaDiff{
@@ -258,68 +261,69 @@ func (s *testSuite) TestMeta(c *C) {
 		TableID:    2,
 		OldTableID: 3,
 	}
-	err = t.SetSchemaDiff(schemaDiff)
-	c.Assert(err, IsNil)
-	readDiff, err := t.GetSchemaDiff(schemaDiff.Version)
-	c.Assert(err, IsNil)
-	c.Assert(readDiff, DeepEquals, schemaDiff)
+	err = mt.SetSchemaDiff(schemaDiff)
+	require.Nil(t, err)
+	readDiff, err := mt.GetSchemaDiff(schemaDiff.Version)
+	require.Nil(t, err)
+	require.Equal(t, schemaDiff, readDiff)
 
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	// Test for DDLJobHistoryKey.
-	key = meta.DDLJobHistoryKey(t, 888)
-	c.Assert(key, DeepEquals, []byte{0x6d, 0x44, 0x44, 0x4c, 0x4a, 0x6f, 0x62, 0x48, 0x69, 0xff, 0x73, 0x74, 0x6f, 0x72, 0x79, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3, 0x78, 0xff, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf7})
+	key = meta.DDLJobHistoryKey(mt, 888)
+	require.Equal(t, []byte{0x6d, 0x44, 0x44, 0x4c, 0x4a, 0x6f, 0x62, 0x48, 0x69, 0xff, 0x73, 0x74, 0x6f, 0x72, 0x79, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3, 0x78, 0xff, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xf7}, key)
 }
 
-func (s *testSuite) TestSnapshot(c *C) {
-	defer testleak.AfterTest(c)()
+func TestSnapshot(t *testing.T) {
+	t.Parallel()
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.Nil(t, err)
 	}()
 
 	txn, _ := store.Begin()
 	m := meta.NewMeta(txn)
 	_, err = m.GenGlobalID()
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	n, _ := m.GetGlobalID()
-	c.Assert(n, Equals, int64(1))
+	require.Equal(t, int64(1), n)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	ver1, _ := store.CurrentVersion(kv.GlobalTxnScope)
 	time.Sleep(time.Millisecond)
 	txn, _ = store.Begin()
 	m = meta.NewMeta(txn)
 	_, err = m.GenGlobalID()
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	n, _ = m.GetGlobalID()
-	c.Assert(n, Equals, int64(2))
+	require.Equal(t, int64(2), n)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	snapshot := store.GetSnapshot(ver1)
 	snapMeta := meta.NewSnapshotMeta(snapshot)
 	n, _ = snapMeta.GetGlobalID()
-	c.Assert(n, Equals, int64(1))
+	require.Equal(t, int64(1), n)
 	_, err = snapMeta.GenGlobalID()
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[structure:8220]write on snapshot")
+	require.NotNil(t, err)
+	require.Equal(t, "[structure:8220]write on snapshot", err.Error())
 }
 
-func (s *testSuite) TestElement(c *C) {
+func TestElement(t *testing.T) {
+	t.Parallel()
 	checkElement := func(key []byte, resErr error) {
 		e := &meta.Element{ID: 123, TypeKey: key}
 		eBytes := e.EncodeElement()
 		resE, err := meta.DecodeElement(eBytes)
 		if resErr == nil {
-			c.Assert(err, Equals, resErr)
-			c.Assert(e, DeepEquals, resE)
+			require.Equal(t, resErr, err)
+			require.Equal(t, resE, e)
 		} else {
-			c.Assert(err.Error(), Equals, resErr.Error())
+			require.Equal(t, resErr.Error(), err.Error())
 		}
 	}
 	key := []byte("_col")
@@ -330,9 +334,9 @@ func (s *testSuite) TestElement(c *C) {
 	checkElement(key, errors.Errorf("invalid encoded element key prefix %q", key[:5]))
 
 	_, err := meta.DecodeElement([]byte("_col"))
-	c.Assert(err.Error(), Equals, `invalid encoded element "_col" length 4`)
+	require.Equal(t, `invalid encoded element "_col" length 4`, err.Error())
 	_, err = meta.DecodeElement(meta.ColumnElementKey)
-	c.Assert(err.Error(), Equals, `invalid encoded element "_col_" length 5`)
+	require.Equal(t, `invalid encoded element "_col_" length 5`, err.Error())
 }
 
 func (s *testSuite) TestDDL(c *C) {
@@ -503,62 +507,60 @@ func (s *testSuite) TestDDL(c *C) {
 	s.RerunWithCommonHandleEnabled(c, s.TestDDL)
 }
 
-func (s *testSuite) BenchmarkGenGlobalIDs(c *C) {
-	defer testleak.AfterTest(c)()
+func BenchmarkGenGlobalIDs(b *testing.B) {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.Nil(b, err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.Nil(b, err)
 	}()
 
 	txn, err := store.Begin()
-	c.Assert(err, IsNil)
+	require.Nil(b, err)
 	defer func() {
 		err := txn.Rollback()
-		c.Assert(err, IsNil)
+		require.Nil(b, err)
 	}()
 
 	t := meta.NewMeta(txn)
 
-	c.ResetTimer()
+	b.ResetTimer()
 	var ids []int64
-	for i := 0; i < c.N; i++ {
+	for i := 0; i < b.N; i++ {
 		ids, _ = t.GenGlobalIDs(10)
 	}
-	c.Assert(ids, HasLen, 10)
-	c.Assert(ids[9], Equals, int64(c.N)*10)
+	require.Len(b, ids, 10)
+	require.Equal(b, int64(b.N)*10, ids[9])
 }
 
-func (s *testSuite) BenchmarkGenGlobalIDOneByOne(c *C) {
-	defer testleak.AfterTest(c)()
+func BenchmarkGenGlobalIDOneByOne(b *testing.B) {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.Nil(b, err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.Nil(b, err)
 	}()
 
 	txn, err := store.Begin()
-	c.Assert(err, IsNil)
+	require.Nil(b, err)
 	defer func() {
 		err := txn.Rollback()
-		c.Assert(err, IsNil)
+		require.Nil(b, err)
 	}()
 
 	t := meta.NewMeta(txn)
 
-	c.ResetTimer()
+	b.ResetTimer()
 	var id int64
-	for i := 0; i < c.N; i++ {
+	for i := 0; i < b.N; i++ {
 		for j := 0; j < 10; j++ {
 			id, _ = t.GenGlobalID()
 		}
 	}
-	c.Assert(id, Equals, int64(c.N)*10)
+	require.Equal(b, int64(b.N)*10, id)
 }
 
-func anyMatch(c *C, ids []int64, candidates ...[]int64) {
+func anyMatch(t *testing.T, ids []int64, candidates ...[]int64) {
 	var match bool
 OUTER:
 	for _, cand := range candidates {
@@ -573,5 +575,5 @@ OUTER:
 		match = true
 		break
 	}
-	c.Assert(match, IsTrue)
+	require.True(t, match)
 }
