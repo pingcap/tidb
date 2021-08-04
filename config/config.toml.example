@@ -205,6 +205,9 @@ spilled-file-encryption-method = "plaintext"
 # Security Enhanced Mode (SEM) restricts the "SUPER" privilege and requires fine-grained privileges instead.
 enable-sem = false
 
+# Automatic creation of TLS certificates
+auto-tls = true
+
 [status]
 # If enable status report HTTP service.
 report-status = true

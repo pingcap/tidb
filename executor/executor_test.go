@@ -5584,7 +5584,7 @@ func (s *testSuiteP2) TestIssue10435(c *C) {
 	)
 }
 
-func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
+func (s *testSerialSuite2) TestUnsignedFeedback(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	oriProbability := statistics.FeedbackProbability.Load()
 	statistics.FeedbackProbability.Store(1.0)
@@ -5600,7 +5600,7 @@ func (s *testSuiteP2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "range:[0,+inf], keep order:false")
 }
 
-func (s *testSuiteP2) TestIssue23567(c *C) {
+func (s *testSerialSuite2) TestIssue23567(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	oriProbability := statistics.FeedbackProbability.Load()
 	statistics.FeedbackProbability.Store(1.0)
