@@ -336,12 +336,12 @@ func TestDDL(t *testing.T) {
 		endHandle   kv.Handle
 	}{
 		{
-			"With kv.IntHandle",
+			"kv.IntHandle",
 			kv.IntHandle(1),
 			kv.IntHandle(2),
 		},
 		{
-			"With kv.CommonHandle",
+			"kv.CommonHandle",
 			testkit.MustNewCommonHandle(t, "abc", 1222, "string"),
 			testkit.MustNewCommonHandle(t, "dddd", 1222, "string"),
 		},
