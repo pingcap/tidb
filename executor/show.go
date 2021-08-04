@@ -1738,11 +1738,11 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl); err == nil {
 			viewSchema := viewLogicalPlan.Schema()
 			viewOutputNames := viewLogicalPlan.OutputNames()
-			for _, col := range tbl.Columns {
+			for i, col := range tbl.Columns {
 				idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
+				col = col.Clone()
+				col.FieldType, tbl.Columns[i] = *(col.FieldType.Clone()), col
 				if idx >= 0 {
-					col = col.Clone()
-					col.FieldType = *(col.FieldType.Clone())
 					col.FieldType = *viewSchema.Columns[idx].GetType()
 				}
 				if col.Tp == mysql.TypeVarString {
