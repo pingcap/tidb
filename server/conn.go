@@ -1658,7 +1658,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		capabilities := cc.ctx.GetSessionVars().ClientCapability
 		if capabilities&mysql.ClientMultiStatements < 1 {
 			// The client does not have multi-statement enabled. We now need to determine
-			// how to handle an unsafe sitution based on the multiStmt sysvar.
+			// how to handle an unsafe situation based on the multiStmt sysvar.
 			switch cc.ctx.GetSessionVars().MultiStatementMode {
 			case variable.OffInt:
 				err = errMultiStatementDisabled

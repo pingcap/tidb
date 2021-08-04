@@ -40,6 +40,8 @@ import (
 )
 
 const recreatorPath string = "/tmp/recreator"
+
+// TTL of plan recreator files
 const remainedInterval float64 = 3
 
 // PlanRecreatorInfo saves the information of plan recreator operation.

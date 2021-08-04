@@ -4207,7 +4207,10 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		dependedColNames := findColumnNamesInExpr(col.GeneratedExpr)
 		for _, name := range dependedColNames {
 			if name.Name.L == oldColName.L {
-				return ErrBadField.GenWithStackByArgs(oldColName.O, "generated column function")
+				if col.Hidden {
+					return errDependentByFunctionalIndex.GenWithStackByArgs(oldColName.O)
+				}
+				return errDependentByGeneratedColumn.GenWithStackByArgs(oldColName.O)
 			}
 		}
 	}
@@ -5099,9 +5102,6 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		idxPart.Expr = nil
 		hiddenCols = append(hiddenCols, colInfo)
 	}
-	if len(hiddenCols) > 0 && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
-		return nil, ErrUnsupportedExpressionIndex
-	}
 	return hiddenCols, nil
 }
 
@@ -5442,7 +5442,10 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 }
 
 func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
-	if ok, dep := hasDependentByGeneratedColumn(tblInfo, colName); ok {
+	if ok, dep, isHidden := hasDependentByGeneratedColumn(tblInfo, colName); ok {
+		if isHidden {
+			return errDependentByFunctionalIndex.GenWithStackByArgs(dep)
+		}
 		return errDependentByGeneratedColumn.GenWithStackByArgs(dep)
 	}
 

@@ -1636,5 +1636,100 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIsMatchProp",
+    "Cases": [
+      {
+        "SQL": "select a, b, c from t1 where a > 3 and b = 4 order by a, c",
+        "Plan": [
+          "IndexReader 3.33 root  index:Selection",
+          "└─Selection 3.33 cop[tikv]  eq(test.t1.b, 4)",
+          "  └─IndexRangeScan 3333.33 cop[tikv] table:t1, index:idx_a_b_c(a, b, c) range:(3,+inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where a = 1 and c = 2 order by b, d",
+        "Plan": [
+          "IndexReader 0.01 root  index:Selection",
+          "└─Selection 0.01 cop[tikv]  eq(test.t2.c, 2)",
+          "  └─IndexRangeScan 10.00 cop[tikv] table:t2, index:idx_a_b_c_d(a, b, c, d) range:[1,1], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a, b, c from t1 where (a = 1 and b = 1 and c = 1) or (a = 1 and b = 1 and c = 2) order by c",
+        "Plan": [
+          "IndexReader 0.03 root  index:IndexRangeScan",
+          "└─IndexRangeScan 0.03 cop[tikv] table:t1, index:idx_a_b_c(a, b, c) range:[1 1 1,1 1 2], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a, b, c from t1 where (a = 1 and b = 1 and c < 3) or (a = 1 and b = 1 and c > 6) order by c",
+        "Plan": [
+          "IndexReader 0.67 root  index:IndexRangeScan",
+          "└─IndexRangeScan 0.67 cop[tikv] table:t1, index:idx_a_b_c(a, b, c) range:[1 1 -inf,1 1 3), (1 1 6,1 1 +inf], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where ((a = 1 and b = 1 and d < 3) or (a = 1 and b = 1 and d > 6)) and c = 3 order by d",
+        "Plan": [
+          "IndexReader 0.00 root  index:Selection",
+          "└─Selection 0.00 cop[tikv]  eq(test.t2.c, 3), or(and(eq(test.t2.a, 1), and(eq(test.t2.b, 1), lt(test.t2.d, 3))), and(eq(test.t2.a, 1), and(eq(test.t2.b, 1), gt(test.t2.d, 6))))",
+          "  └─IndexRangeScan 10.00 cop[tikv] table:t2, index:idx_a_b_c_d(a, b, c, d) range:[1,1], keep order:true, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestHeuristicIndexSelection",
+    "Cases": [
+      {
+        "SQL": "select * from t1 where a = 3 or a = 5",
+        "Plan": [
+          "Batch_Point_Get 2.00 root table:t1 handle:[3 5], keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 handle of t1 is selected since the path only has point ranges"
+        ]
+      },
+      {
+        "SQL": "select f, g from t1 where f = 2 and g in (3, 4, 5)",
+        "Plan": [
+          "Batch_Point_Get 3.00 root table:t1, index:f_g(f, g) keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 unique index f_g of t1 is selected since the path only has point ranges with single scan"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where c = 1 and (d = 2 or d = 3) and e in (4, 5)",
+        "Plan": [
+          "Batch_Point_Get 4.00 root table:t1, index:c_d_e(c, d, e) keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 unique index c_d_e of t1 is selected since the path only has point ranges with double scan"
+        ]
+      },
+      {
+        "SQL": "select f, g from t1 where f = 2 and g > 3",
+        "Plan": [
+          "IndexReader 33.33 root  index:IndexRangeScan",
+          "└─IndexRangeScan 33.33 cop[tikv] table:t1, index:f_g(f, g) range:(2 3,2 +inf], keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Note 1105 unique index f_g of t1 is selected since the path only fetches limited number of rows with single scan"
+        ]
+      },
+      {
+        "SQL": "select a, b, c from t2 where a = 1 and b = 2 and c in (1, 2, 3, 4, 5)",
+        "Plan": [
+          "Selection 0.01 root  eq(test.t2.b, 2), in(test.t2.c, 1, 2, 3, 4, 5)",
+          "└─Point_Get 1.00 root table:t2, index:idx_a(a) "
+        ],
+        "Warnings": [
+          "Note 1105 unique index idx_a of t2 is selected since the path only has point ranges with double scan"
+        ]
+      }
+    ]
   }
 ]
