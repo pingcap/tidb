@@ -499,15 +499,6 @@ func (e *DDLExec) executeDropSequence(s *ast.DropSequenceStmt) error {
 	return e.dropTableObject(s.Sequences, sequenceObject, s.IfExists)
 }
 
-func (e *DDLExec) getLocalTemporaryTable(schema model.CIStr, table model.CIStr) (table.Table, bool) {
-	temporaryTables := e.ctx.GetSessionVars().LocalTemporaryTables
-	if temporaryTables == nil {
-		return nil, false
-	}
-
-	return temporaryTables.(*infoschema.LocalTemporaryTables).TableByName(schema, table)
-}
-
 // dropTableObject actually applies to `tableObject`, `viewObject` and `sequenceObject`.
 func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifExists bool) error {
 	var notExistTables []string
