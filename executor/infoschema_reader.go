@@ -2324,6 +2324,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 	return res, nil
 }
 
+// deadlocksTableRetriever is the memtable retriever for the DEADLOCKS and CLUSTER_DEADLOCKS table.
 type deadlocksTableRetriever struct {
 	dummyCloser
 	batchRetrieverHelper
@@ -2337,6 +2338,9 @@ type deadlocksTableRetriever struct {
 	initialized bool
 }
 
+// nextIndexPair advances a index pair (where `idx` is the index of the DeadlockRecord, and `waitChainIdx` is the index
+// of the wait chain item in the `idx`-th DeadlockRecord. This function helps iterate over each wait chain item
+// in all DeadlockRecords.
 func (r *deadlocksTableRetriever) nextIndexPair(idx, waitChainIdx int) (int, int) {
 	waitChainIdx++
 	if waitChainIdx >= len(r.deadlocks[idx].WaitChain) {
@@ -2395,6 +2399,10 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 
 				idx, waitChainIdx := r.currentIdx, r.currentWaitChainIdx
 				for i := start; i < end; i++ {
+					if idx >= len(r.deadlocks) {
+						return errors.New("reading information_schema.(cluster_)deadlocks table meets corrupted index")
+					}
+
 					sqlRetriever.SQLDigestsMap[r.deadlocks[idx].WaitChain[waitChainIdx].SQLDigest] = ""
 					// Step to the next entry
 					idx, waitChainIdx = r.nextIndexPair(idx, waitChainIdx)
@@ -2412,6 +2420,10 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 		res = make([][]types.Datum, 0, end-start)
 
 		for i := start; i < end; i++ {
+			if r.currentIdx >= len(r.deadlocks) {
+				return errors.New("reading information_schema.(cluster_)deadlocks table meets corrupted index")
+			}
+
 			row := make([]types.Datum, 0, len(r.columns))
 			deadlock := r.deadlocks[r.currentIdx]
 			waitChainItem := deadlock.WaitChain[r.currentWaitChainIdx]
