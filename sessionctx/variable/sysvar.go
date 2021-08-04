@@ -177,7 +177,7 @@ func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
 		}
 	}
 	// The 'baseline evolution' only work in the test environment before the feature is GA.
-	if sv.Name == "tidb_evolve_plan_baselines" && strings.EqualFold("ON", val) && !config.CheckTableBeforeDrop {
+	if sv.Name == TiDBEvolvePlanBaselines && val == "ON" && !config.CheckTableBeforeDrop {
 		return errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
 	}
 	s.systems[sv.Name] = val
