@@ -227,7 +227,7 @@ func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
 				if err != nil {
 					return err
 				}
-				if handles != nil && len(handles) > 0 {
+				if len(handles) > 0 {
 					indexHandles = append(indexHandles, handles...)
 				}
 			}
