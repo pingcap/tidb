@@ -170,6 +170,8 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 					return
 				}
 
+				mu.Lock()
+				defer mu.Unlock()
 				storeTaskMap[s.StoreID()] = &batchCopTask{
 					storeAddr: s.GetAddr(),
 					cmdType:   originalTasks[0].cmdType,
