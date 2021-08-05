@@ -852,6 +852,7 @@ import (
 	DropStatisticsStmt     "DROP STATISTICS statement"
 	DropStatsStmt          "DROP STATS statement"
 	DropTableStmt          "DROP TABLE statement"
+	DropPolicyStmt         "DROP PLACEMENT POLICY statement"
 	DropSequenceStmt       "DROP SEQUENCE statement"
 	DropUserStmt           "DROP USER"
 	DropRoleStmt           "DROP ROLE"
@@ -1351,6 +1352,7 @@ import (
 	CollationName                   "Collation name"
 	ColumnFormat                    "Column format"
 	DBName                          "Database Name"
+	PolicyName                      "Placement Policy Name"
 	ExplainFormatType               "explain format type"
 	FieldAsName                     "Field alias name"
 	FieldAsNameOpt                  "Field alias name opt"
@@ -3577,6 +3579,9 @@ CreateDatabaseStmt:
 	}
 
 DBName:
+	Identifier
+
+PolicyName:
 	Identifier
 
 DatabaseOption:
@@ -10620,6 +10625,7 @@ Statement:
 |	DropImportStmt
 |	DropIndexStmt
 |	DropTableStmt
+|	DropPolicyStmt
 |	DropSequenceStmt
 |	DropViewStmt
 |	DropUserStmt
@@ -12941,6 +12947,15 @@ LoadStatsStmt:
 	{
 		$$ = &ast.LoadStatsStmt{
 			Path: $3,
+		}
+	}
+
+DropPolicyStmt:
+	"DROP" "PLACEMENT" "POLICY" IfExists PolicyName
+	{
+		$$ = &ast.DropPlacementPolicyStmt{
+			IfExists:   $4.(bool),
+			PolicyName: model.NewCIStr($5),
 		}
 	}
 
