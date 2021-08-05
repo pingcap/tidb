@@ -365,7 +365,6 @@ func TestError(t *testing.T) {
 	t.Parallel()
 
 	kvErrs := []*terror.Error{
-		ErrDataInConsistent,
 		ErrDDLJobNotFound,
 		ErrCancelFinishedDDLJob,
 		ErrCannotCancelDDLJob,

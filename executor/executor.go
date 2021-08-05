@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil/inconsist"
 	"math"
 	"runtime"
 	"runtime/pprof"
@@ -760,7 +761,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		} else if greater == admin.TblCntGreater {
 			err = e.checkTableRecord(idxOffset)
 		}
-		if err != nil && admin.ErrDataInConsistent.Equal(err) {
+		if err != nil && inconsist.ErrDataInConsistent.Equal(err) {
 			return ErrAdminCheckTable.GenWithStack("%v err:%v", e.table.Meta().Name, err)
 		}
 		return errors.Trace(err)

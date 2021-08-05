@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"runtime/trace"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/inconsist"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -1127,7 +1129,34 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 		if chk.NumRows() == 0 {
 			task.indexOrder.Range(func(h kv.Handle, val interface{}) bool {
 				idxRow := task.idxRows.GetRow(val.(int))
-				err = ErrDataInConsistentExtraIndex.GenWithStackByArgs(h, idxRow.GetDatum(0, w.idxColTps[0]), nil)
+				err = (&inconsist.ReportHelper{
+					HandleEncode: func(handle kv.Handle) kv.Key {
+						return tablecodec.EncodeRecordKey(w.idxLookup.table.RecordPrefix(), handle)
+					},
+					IndexEncode: func(idxRow *inconsist.RecordData) kv.Key {
+						var idx table.Index
+						for _, v := range w.idxLookup.table.Indices() {
+							if strings.EqualFold(v.Meta().Name.String(), w.idxLookup.index.Name.O) {
+								idx = v
+								break
+							}
+						}
+						if idx == nil {
+							return nil // TODO: ...
+						}
+						k, _, err := idx.GenIndexKey(w.idxLookup.ctx.GetSessionVars().StmtCtx, idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
+						if err != nil {
+							return nil
+						}
+						return k
+					},
+				}).ReportValueMismatchInconsistent(ctx,
+					w.idxLookup.ctx,
+					tblInfo.Name.O,
+					w.idxLookup.index.Name.O,
+					h,
+					&inconsist.RecordData{Handle: h, Values: idxRow.GetDatumRow(w.idxColTps)},
+					nil)
 				return false
 			})
 			if err != nil {
@@ -1162,12 +1191,80 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
 				cmpRes, err := idxVal.CompareDatum(sctx, &val)
 				if err != nil {
-					return ErrDataInConsistentMisMatchIndex.GenWithStackByArgs(col.Name,
-						handle, idxRow.GetDatum(i, tp), val, err)
+					fts := make([]*types.FieldType, 0, len(w.idxTblCols))
+					for _, c := range w.idxTblCols {
+						fts = append(fts, &c.FieldType)
+					}
+					return (&inconsist.ReportHelper{
+						HandleEncode: func(handle kv.Handle) kv.Key {
+							return tablecodec.EncodeRecordKey(w.idxLookup.table.RecordPrefix(), handle)
+						},
+						IndexEncode: func(idxRow *inconsist.RecordData) kv.Key {
+							var idx table.Index
+							for _, v := range w.idxLookup.table.Indices() {
+								if strings.EqualFold(v.Meta().Name.String(), w.idxLookup.index.Name.O) {
+									idx = v
+									break
+								}
+							}
+							if idx == nil {
+								return nil // TODO: ...
+							}
+							k, _, err := idx.GenIndexKey(w.idxLookup.ctx.GetSessionVars().StmtCtx, idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
+							if err != nil {
+								return nil
+							}
+							return k
+						},
+					}).ReportColValMismatchInconsistent(ctx,
+						w.idxLookup.ctx,
+						w.idxLookup.index.Table.O,
+						w.idxLookup.index.Name.O,
+						handle,
+						col.Name.O,
+						idxRow.GetDatum(i, tp),
+						val,
+						err,
+						&inconsist.RecordData{Handle: handle, Values: idxRow.GetDatumRow(fts)},
+					)
 				}
 				if cmpRes != 0 {
-					return ErrDataInConsistentMisMatchIndex.GenWithStackByArgs(col.Name,
-						handle, idxRow.GetDatum(i, tp), val, err)
+					fts := make([]*types.FieldType, 0, len(w.idxTblCols))
+					for _, c := range w.idxTblCols {
+						fts = append(fts, &c.FieldType)
+					}
+					return (&inconsist.ReportHelper{
+						HandleEncode: func(handle kv.Handle) kv.Key {
+							return tablecodec.EncodeRecordKey(w.idxLookup.table.RecordPrefix(), handle)
+						},
+						IndexEncode: func(idxRow *inconsist.RecordData) kv.Key {
+							var idx table.Index
+							for _, v := range w.idxLookup.table.Indices() {
+								if strings.EqualFold(v.Meta().Name.String(), w.idxLookup.index.Name.O) {
+									idx = v
+									break
+								}
+							}
+							if idx == nil {
+								return nil // TODO: ...
+							}
+							k, _, err := idx.GenIndexKey(w.idxLookup.ctx.GetSessionVars().StmtCtx, idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
+							if err != nil {
+								return nil
+							}
+							return k
+						},
+					}).ReportColValMismatchInconsistent(ctx,
+						w.idxLookup.ctx,
+						w.idxLookup.index.Table.O,
+						w.idxLookup.index.Name.O,
+						handle,
+						col.Name.O,
+						idxRow.GetDatum(i, tp),
+						val,
+						err,
+						&inconsist.RecordData{Handle: handle, Values: idxRow.GetDatumRow(fts)},
+					)
 				}
 			}
 		}
@@ -1244,26 +1341,47 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				}
 				obtainedHandlesMap.Set(handle, true)
 			}
-
-			if w.idxLookup.ctx.GetSessionVars().EnableRedactLog {
-				logutil.Logger(ctx).Error("inconsistent index handles",
-					zap.String("table_name", w.idxLookup.index.Table.O),
-					zap.String("index", w.idxLookup.index.Name.O),
-					zap.Int("index_cnt", handleCnt),
-					zap.Int("table_cnt", len(task.rows)))
-			} else {
-				logutil.Logger(ctx).Error("inconsistent index handles",
-					zap.String("table_name", w.idxLookup.index.Table.O),
-					zap.String("index", w.idxLookup.index.Name.O),
-					zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", len(task.rows)),
-					zap.String("missing_handles", fmt.Sprint(GetLackHandles(task.handles, obtainedHandlesMap))),
-					zap.String("total_handles", fmt.Sprint(task.handles)))
-			}
-
-			// table scan in double read can never has conditions according to convertToIndexScan.
-			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
-			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d",
-				w.idxLookup.index.Name.O, handleCnt, len(task.rows))
+			missHds := GetLackHandles(task.handles, obtainedHandlesMap)
+			//var missRecords []inconsist.RecordData
+			//for _, hd := range missHds {
+			//	rowIdx, _ := task.indexOrder.Get(hd)
+			//	missRecords = append(missRecords, inconsist.RecordData{
+			//		Handle: hd,
+			//		Values: task.idxRows.GetRow(rowIdx.(int)).GetDatumRow(w.idxColTps),
+			//	})
+			//}
+			return (&inconsist.ReportHelper{
+				HandleEncode: func(hd kv.Handle) kv.Key {
+					return tablecodec.EncodeRecordKey(w.idxLookup.table.RecordPrefix(), hd)
+				},
+				//IndexEncode: func(idxRow *inconsist.RecordData) kv.Key {
+				//	var idx table.Index
+				//	for _, v := range w.idxLookup.table.Indices() {
+				//		if strings.EqualFold(v.Meta().Name.String(), idx.Meta().Name.O) {
+				//			idx = v
+				//			break
+				//		}
+				//	}
+				//	if idx == nil {
+				//		return nil // TODO: ...
+				//	}
+				//	k, _, err := idx.GenIndexKey(w.idxLookup.ctx.GetSessionVars().StmtCtx, idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
+				//	if err != nil {
+				//		return nil
+				//	}
+				//	return k
+				//},
+			}).ReportCountMismatchInconsistent(ctx,
+				w.idxLookup.ctx,
+				w.idxLookup.index.Table.O,
+				w.idxLookup.index.Name.O,
+				handleCnt,
+				len(task.rows),
+				missHds,
+				task.handles,
+				nil,
+				//missRecords,
+			)
 		}
 	}
 
