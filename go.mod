@@ -49,7 +49,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20210425183316-da1aaba5fb63
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
-	github.com/pingcap/kvproto v0.0.0-20210727084215-fc14848b62e7
+	github.com/pingcap/kvproto v0.0.0-20210805052247-76981389e818
 	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
 	github.com/pingcap/parser v0.0.0-20210802034743-dd9b189324ce
 	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
@@ -90,7 +90,8 @@ require (
 	golang.org/x/sys v0.0.0-20210630005230-0f9fa26af87c
 	golang.org/x/text v0.3.6
 	golang.org/x/tools v0.1.5
-	google.golang.org/grpc v1.27.1
+	google.golang.org/api v0.22.0
+	google.golang.org/grpc v1.29.1
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v2 v2.4.0
 	modernc.org/mathutil v1.2.2
