@@ -19,9 +19,10 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/types"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/pingcap/tidb/types"
 )
 
 type rowSuite struct{}

@@ -13,11 +13,12 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/statistics/handle"
 
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/glue"

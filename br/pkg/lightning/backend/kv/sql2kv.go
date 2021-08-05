@@ -24,6 +24,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -32,8 +35,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 
 	// Import tidb/planner/core to initialize expression.RewriteAstExpr
 	_ "github.com/pingcap/tidb/planner/core"

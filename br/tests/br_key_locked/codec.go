@@ -20,8 +20,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/util/codec"
 	pd "github.com/tikv/pd/client"
+
+	"github.com/pingcap/tidb/util/codec"
 )
 
 type codecPDClient struct {

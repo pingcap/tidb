@@ -12,8 +12,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/kv"
 	"go.uber.org/zap"
+
+	"github.com/pingcap/tidb/kv"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/utils"

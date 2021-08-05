@@ -19,8 +19,9 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/multierr"
+
+	"github.com/pingcap/tidb/util/codec"
 
 	"github.com/pingcap/tidb/br/pkg/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"

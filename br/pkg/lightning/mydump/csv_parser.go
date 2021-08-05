@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+
 	"github.com/pingcap/tidb/types"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/config"

@@ -33,10 +33,11 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	tmysql "github.com/pingcap/tidb/errno"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	tmysql "github.com/pingcap/tidb/errno"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 )

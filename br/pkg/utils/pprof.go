@@ -10,15 +10,16 @@ import (
 
 	// #nosec
 	// register HTTP handler for /debug/pprof
-	_ "net/http/pprof"
 	"net/http"
+	_ "net/http/pprof"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	tidbutils "github.com/pingcap/tidb-tools/pkg/utils"
 	"go.uber.org/zap"
+
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
 
 var (
