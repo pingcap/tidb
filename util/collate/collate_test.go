@@ -14,22 +14,11 @@
 package collate
 
 import (
+	"fmt"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-var (
-	_ = SerialSuites(&testCollateSuite{})
-)
-
-type testCollateSuite struct {
-}
 
 type compareTable struct {
 	Left   string
@@ -42,22 +31,21 @@ type keyTable struct {
 	Expect []byte
 }
 
-func testCompareTable(table []compareTable, collate string, c *C) {
-	for i, t := range table {
-		comment := Commentf("%d %v %v", i, t.Left, t.Right)
-		c.Assert(GetCollator(collate).Compare(t.Left, t.Right), Equals, t.Expect, comment)
+func testCompareTable(tables []compareTable, collate string, t *testing.T) {
+	for i, table := range tables {
+		comment := fmt.Sprintf("%d %v %v", i, table.Left, table.Right)
+		require.Equal(t, table.Expect, GetCollator(collate).Compare(table.Left, table.Right), comment)
 	}
 }
 
-func testKeyTable(table []keyTable, collate string, c *C) {
-	for i, t := range table {
-		comment := Commentf("%d %s", i, t.Str)
-		c.Assert(GetCollator(collate).Key(t.Str), DeepEquals, t.Expect, comment)
+func testKeyTable(tables []keyTable, collate string, t *testing.T) {
+	for i, table := range tables {
+		comment := fmt.Sprintf("%d %s", i, table.Str)
+		require.Equal(t, GetCollator(collate).Key(table.Str), table.Expect, comment)
 	}
 }
 
-func (s *testCollateSuite) TestBinCollator(c *C) {
-	defer testleak.AfterTest(c)()
+func TestBinCollator(t *testing.T) {
 	SetNewCollationEnabledForTest(false)
 	compareTable := []compareTable{
 		{"a", "b", -1},
@@ -76,12 +64,11 @@ func (s *testCollateSuite) TestBinCollator(c *C) {
 		{"a ", []byte{0x61, 0x20}},
 		{"a", []byte{0x61}},
 	}
-	testCompareTable(compareTable, "utf8mb4_bin", c)
-	testKeyTable(keyTable, "utf8mb4_bin", c)
+	testCompareTable(compareTable, "utf8mb4_bin", t)
+	testKeyTable(keyTable, "utf8mb4_bin", t)
 }
 
-func (s *testCollateSuite) TestBinPaddingCollator(c *C) {
-	defer testleak.AfterTest(c)()
+func TestBinPaddingCollator(t *testing.T) {
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)
 	compareTable := []compareTable{
@@ -101,12 +88,11 @@ func (s *testCollateSuite) TestBinPaddingCollator(c *C) {
 		{"a ", []byte{0x61}},
 		{"a", []byte{0x61}},
 	}
-	testCompareTable(compareTable, "utf8mb4_bin", c)
-	testKeyTable(keyTable, "utf8mb4_bin", c)
+	testCompareTable(compareTable, "utf8mb4_bin", t)
+	testKeyTable(keyTable, "utf8mb4_bin", t)
 }
 
-func (s *testCollateSuite) TestGeneralCICollator(c *C) {
-	defer testleak.AfterTest(c)()
+func TestGeneralCICollator(t *testing.T) {
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)
 	compareTable := []compareTable{
@@ -129,12 +115,11 @@ func (s *testCollateSuite) TestGeneralCICollator(c *C) {
 		{"a ", []byte{0x0, 0x41}},
 		{"a", []byte{0x0, 0x41}},
 	}
-	testCompareTable(compareTable, "utf8mb4_general_ci", c)
-	testKeyTable(keyTable, "utf8mb4_general_ci", c)
+	testCompareTable(compareTable, "utf8mb4_general_ci", t)
+	testKeyTable(keyTable, "utf8mb4_general_ci", t)
 }
 
-func (s *testCollateSuite) TestUnicodeCICollator(c *C) {
-	defer testleak.AfterTest(c)()
+func TestUnicodeCICollator(t *testing.T) {
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)
 
@@ -162,71 +147,70 @@ func (s *testCollateSuite) TestUnicodeCICollator(c *C) {
 		{"ﷻ", []byte{0x13, 0x5E, 0x13, 0xAB, 0x02, 0x09, 0x13, 0x5E, 0x13, 0xAB, 0x13, 0x50, 0x13, 0xAB, 0x13, 0xB7}},
 	}
 
-	testCompareTable(compareTable, "utf8mb4_unicode_ci", c)
-	testKeyTable(keyTable, "utf8mb4_unicode_ci", c)
+	testCompareTable(compareTable, "utf8mb4_unicode_ci", t)
+	testKeyTable(keyTable, "utf8mb4_unicode_ci", t)
 }
 
-func (s *testCollateSuite) TestSetNewCollateEnabled(c *C) {
+func TestSetNewCollateEnabled(t *testing.T) {
 	defer SetNewCollationEnabledForTest(false)
 
 	SetNewCollationEnabledForTest(true)
-	c.Assert(NewCollationEnabled(), Equals, true)
+	require.True(t, NewCollationEnabled())
 }
 
-func (s *testCollateSuite) TestRewriteAndRestoreCollationID(c *C) {
+func TestRewriteAndRestoreCollationID(t *testing.T) {
 	SetNewCollationEnabledForTest(true)
-	c.Assert(RewriteNewCollationIDIfNeeded(5), Equals, int32(-5))
-	c.Assert(RewriteNewCollationIDIfNeeded(-5), Equals, int32(-5))
-	c.Assert(RestoreCollationIDIfNeeded(-5), Equals, int32(5))
-	c.Assert(RestoreCollationIDIfNeeded(5), Equals, int32(5))
+	require.Equal(t, int32(-5), RewriteNewCollationIDIfNeeded(5))
+	require.Equal(t, int32(-5), RewriteNewCollationIDIfNeeded(-5))
+	require.Equal(t, int32(5), RestoreCollationIDIfNeeded(-5))
+	require.Equal(t, int32(5), RestoreCollationIDIfNeeded(5))
 
 	SetNewCollationEnabledForTest(false)
-	c.Assert(RewriteNewCollationIDIfNeeded(5), Equals, int32(5))
-	c.Assert(RewriteNewCollationIDIfNeeded(-5), Equals, int32(-5))
-	c.Assert(RestoreCollationIDIfNeeded(5), Equals, int32(5))
-	c.Assert(RestoreCollationIDIfNeeded(-5), Equals, int32(-5))
+	require.Equal(t, int32(5), RewriteNewCollationIDIfNeeded(5))
+	require.Equal(t, int32(-5), RewriteNewCollationIDIfNeeded(-5))
+	require.Equal(t, int32(5), RestoreCollationIDIfNeeded(5))
+	require.Equal(t, int32(-5), RestoreCollationIDIfNeeded(-5))
 }
 
-func (s *testCollateSuite) TestGetCollator(c *C) {
-	defer testleak.AfterTest(c)()
+func TestGetCollator(t *testing.T) {
 	SetNewCollationEnabledForTest(true)
 	defer SetNewCollationEnabledForTest(false)
-	c.Assert(GetCollator("binary"), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollator("utf8mb4_bin"), FitsTypeOf, &binPaddingCollator{})
-	c.Assert(GetCollator("utf8_bin"), FitsTypeOf, &binPaddingCollator{})
-	c.Assert(GetCollator("utf8mb4_general_ci"), FitsTypeOf, &generalCICollator{})
-	c.Assert(GetCollator("utf8_general_ci"), FitsTypeOf, &generalCICollator{})
-	c.Assert(GetCollator("utf8mb4_unicode_ci"), FitsTypeOf, &unicodeCICollator{})
-	c.Assert(GetCollator("utf8_unicode_ci"), FitsTypeOf, &unicodeCICollator{})
-	c.Assert(GetCollator("utf8mb4_zh_pinyin_tidb_as_cs"), FitsTypeOf, &zhPinyinTiDBASCSCollator{})
-	c.Assert(GetCollator("default_test"), FitsTypeOf, &binPaddingCollator{})
-	c.Assert(GetCollatorByID(63), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollatorByID(46), FitsTypeOf, &binPaddingCollator{})
-	c.Assert(GetCollatorByID(83), FitsTypeOf, &binPaddingCollator{})
-	c.Assert(GetCollatorByID(45), FitsTypeOf, &generalCICollator{})
-	c.Assert(GetCollatorByID(33), FitsTypeOf, &generalCICollator{})
-	c.Assert(GetCollatorByID(224), FitsTypeOf, &unicodeCICollator{})
-	c.Assert(GetCollatorByID(192), FitsTypeOf, &unicodeCICollator{})
-	c.Assert(GetCollatorByID(2048), FitsTypeOf, &zhPinyinTiDBASCSCollator{})
-	c.Assert(GetCollatorByID(9999), FitsTypeOf, &binPaddingCollator{})
+	require.IsType(t, &binCollator{}, GetCollator("binary"))
+	require.IsType(t, &binPaddingCollator{}, GetCollator("utf8mb4_bin"))
+	require.IsType(t, &binPaddingCollator{}, GetCollator("utf8_bin"))
+	require.IsType(t, &generalCICollator{}, GetCollator("utf8mb4_general_ci"))
+	require.IsType(t, &generalCICollator{}, GetCollator("utf8_general_ci"))
+	require.IsType(t, &unicodeCICollator{}, GetCollator("utf8mb4_unicode_ci"))
+	require.IsType(t, &unicodeCICollator{}, GetCollator("utf8_unicode_ci"))
+	require.IsType(t, &zhPinyinTiDBASCSCollator{}, GetCollator("utf8mb4_zh_pinyin_tidb_as_cs"))
+	require.IsType(t, &binPaddingCollator{}, GetCollator("default_test"))
+	require.IsType(t, &binCollator{}, GetCollatorByID(63))
+	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(46))
+	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(83))
+	require.IsType(t, &generalCICollator{}, GetCollatorByID(45))
+	require.IsType(t, &generalCICollator{}, GetCollatorByID(33))
+	require.IsType(t, &unicodeCICollator{}, GetCollatorByID(224))
+	require.IsType(t, &unicodeCICollator{}, GetCollatorByID(192))
+	require.IsType(t, &zhPinyinTiDBASCSCollator{}, GetCollatorByID(2048))
+	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(9999))
 
 	SetNewCollationEnabledForTest(false)
-	c.Assert(GetCollator("binary"), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollator("utf8mb4_bin"), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollator("utf8_bin"), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollator("utf8mb4_general_ci"), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollator("utf8_general_ci"), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollator("utf8mb4_unicode_ci"), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollator("utf8_unicode_ci"), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollator("utf8mb4_zh_pinyin_tidb_as_cs"), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollator("default_test"), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollatorByID(63), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollatorByID(46), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollatorByID(83), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollatorByID(45), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollatorByID(33), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollatorByID(224), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollatorByID(192), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollatorByID(2048), FitsTypeOf, &binCollator{})
-	c.Assert(GetCollatorByID(9999), FitsTypeOf, &binCollator{})
+	require.IsType(t, &binCollator{}, GetCollator("binary"))
+	require.IsType(t, &binCollator{}, GetCollator("utf8mb4_bin"))
+	require.IsType(t, &binCollator{}, GetCollator("utf8_bin"))
+	require.IsType(t, &binCollator{}, GetCollator("utf8mb4_general_ci"))
+	require.IsType(t, &binCollator{}, GetCollator("utf8_general_ci"))
+	require.IsType(t, &binCollator{}, GetCollator("utf8mb4_unicode_ci"))
+	require.IsType(t, &binCollator{}, GetCollator("utf8_unicode_ci"))
+	require.IsType(t, &binCollator{}, GetCollator("utf8mb4_zh_pinyin_tidb_as_cs"))
+	require.IsType(t, &binCollator{}, GetCollator("default_test"))
+	require.IsType(t, &binCollator{}, GetCollatorByID(63))
+	require.IsType(t, &binCollator{}, GetCollatorByID(46))
+	require.IsType(t, &binCollator{}, GetCollatorByID(83))
+	require.IsType(t, &binCollator{}, GetCollatorByID(45))
+	require.IsType(t, &binCollator{}, GetCollatorByID(33))
+	require.IsType(t, &binCollator{}, GetCollatorByID(224))
+	require.IsType(t, &binCollator{}, GetCollatorByID(192))
+	require.IsType(t, &binCollator{}, GetCollatorByID(2048))
+	require.IsType(t, &binCollator{}, GetCollatorByID(9999))
 }

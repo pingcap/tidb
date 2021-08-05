@@ -30,7 +30,7 @@ import (
 	"go.uber.org/atomic"
 )
 
-var idGenerator atomic.Uint64
+var testKitIDGenerator atomic.Uint64
 
 // TestKit is a utility to run sql test.
 type TestKit struct {
@@ -64,6 +64,29 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	if res != nil {
 		tk.require.Nil(res.Close())
 	}
+}
+
+// MustQuery query the statements and returns result rows.
+// If expected result is set it asserts the query result equals expected result.
+func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
+	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
+	rs, err := tk.Exec(sql, args...)
+	tk.require.NoError(err, comment)
+	tk.require.NotNil(rs, comment)
+	return tk.ResultSetToResult(rs, comment)
+}
+
+// ResultSetToResult converts sqlexec.RecordSet to testkit.Result.
+// It is used to check results of execute statement in binary mode.
+func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment string) *Result {
+	return tk.ResultSetToResultWithCtx(context.Background(), rs, comment)
+}
+
+// ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
+func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment string) *Result {
+	rows, err := session.ResultSetToStringSlice(ctx, tk.session, rs)
+	tk.require.NoError(err, comment)
+	return &Result{rows: rows, comment: comment, assert: tk.assert, require: tk.require}
 }
 
 // Exec executes a sql statement using the prepared stmt API
@@ -117,6 +140,6 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 func newSession(t *testing.T, store kv.Storage) session.Session {
 	se, err := session.CreateSession4Test(store)
 	require.Nil(t, err)
-	se.SetConnectionID(idGenerator.Inc())
+	se.SetConnectionID(testKitIDGenerator.Inc())
 	return se
 }
