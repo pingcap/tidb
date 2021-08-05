@@ -75,6 +75,11 @@ func (s *tiflashTestSuite) SetUpSuite(c *C) {
 	s.dom.SetStatsUpdating(true)
 }
 
+func (s *tiflashTestSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	c.Assert(s.store.Close(), IsNil)
+}
+
 func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

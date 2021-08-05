@@ -417,7 +417,6 @@ type candidatePath struct {
 	path               *util.AccessPath
 	accessCondsColSet  *intsets.Sparse // accessCondsColSet is the set of columns that occurred in the access conditions.
 	indexFiltersColSet *intsets.Sparse // indexFiltersColSet is the set of columns that occurred in the index filters.
-	isSingleScan       bool
 	isMatchProp        bool
 }
 
@@ -452,8 +451,8 @@ func compareBool(l, r bool) int {
 }
 
 func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
-	result := compareBool(lhs.isSingleScan, rhs.isSingleScan)
-	if result == 0 && !lhs.isSingleScan {
+	result := compareBool(lhs.path.IsSingleScan, rhs.path.IsSingleScan)
+	if result == 0 && !lhs.path.IsSingleScan {
 		// if both lhs and rhs need to access table after IndexScan, we use the set of columns that occurred in IndexFilters
 		// to compare how many table rows will be accessed.
 		return compareColumnSet(lhs.indexFiltersColSet, rhs.indexFiltersColSet)
@@ -542,11 +541,10 @@ func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.Ph
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
 	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
-	candidate.isSingleScan = true
 	return candidate
 }
 
-func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.PhysicalProperty, isSingleScan bool) *candidatePath {
+func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	all, _ := prop.AllSameOrder()
 	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
@@ -564,7 +562,6 @@ func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.Ph
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
 	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
 	candidate.indexFiltersColSet = expression.ExtractColumnSet(path.IndexFilters)
-	candidate.isSingleScan = isSingleScan
 	return candidate
 }
 
@@ -607,14 +604,13 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 				continue
 			}
 		} else {
-			coveredByIdx := ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
-			if len(path.AccessConds) > 0 || !prop.IsEmpty() || path.Forced || coveredByIdx {
+			if len(path.AccessConds) > 0 || !prop.IsEmpty() || path.Forced || path.IsSingleScan {
 				// We will use index to generate physical plan if any of the following conditions is satisfied:
 				// 1. This path's access cond is not nil.
 				// 2. We have a non-empty prop to match.
 				// 3. This index is forced to choose.
 				// 4. The needed columns are all covered by index columns(and handleCol).
-				currentCandidate = ds.getIndexCandidate(path, prop, coveredByIdx)
+				currentCandidate = ds.getIndexCandidate(path, prop)
 			} else {
 				continue
 			}
@@ -1120,7 +1116,7 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (*expression.C
 
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
-	if !candidate.isSingleScan {
+	if !candidate.path.IsSingleScan {
 		// If it's parent requires single read task, return max cost.
 		if prop.TaskTp == property.CopSingleReadTaskType {
 			return invalidTask, nil
@@ -1133,7 +1129,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	path := candidate.path
-	is, cost, _ := ds.getOriginalPhysicalIndexScan(prop, path, candidate.isMatchProp, candidate.isSingleScan)
+	is, cost, _ := ds.getOriginalPhysicalIndexScan(prop, path, candidate.isMatchProp, candidate.path.IsSingleScan)
 	cop := &copTask{
 		indexPlan:   is,
 		tblColHists: ds.TblColHists,
@@ -1145,7 +1141,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
-	if !candidate.isSingleScan {
+	if !candidate.path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
 			Columns:         ds.Columns,
@@ -1711,8 +1707,8 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
-	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.isSingleScan ||
-		prop.TaskTp == property.CopSingleReadTaskType && !candidate.isSingleScan {
+	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.path.IsSingleScan ||
+		prop.TaskTp == property.CopSingleReadTaskType && !candidate.path.IsSingleScan {
 		return invalidTask
 	}
 
@@ -1768,7 +1764,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.IdxColLens = candidate.path.IdxColLens
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
 		pointGetPlan.PartitionInfo = partitionInfo
-		if candidate.isSingleScan {
+		if candidate.path.IsSingleScan {
 			cost = pointGetPlan.GetCost(candidate.path.IdxCols)
 		} else {
 			cost = pointGetPlan.GetCost(ds.TblCols)
@@ -1794,8 +1790,8 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
-	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.isSingleScan ||
-		prop.TaskTp == property.CopSingleReadTaskType && !candidate.isSingleScan {
+	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.path.IsSingleScan ||
+		prop.TaskTp == property.CopSingleReadTaskType && !candidate.path.IsSingleScan {
 		return invalidTask
 	}
 
@@ -1842,7 +1838,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 			batchPointGetPlan.KeepOrder = true
 			batchPointGetPlan.Desc = prop.SortItems[0].Desc
 		}
-		if candidate.isSingleScan {
+		if candidate.path.IsSingleScan {
 			cost = batchPointGetPlan.GetCost(candidate.path.IdxCols)
 		} else {
 			cost = batchPointGetPlan.GetCost(ds.TblCols)
