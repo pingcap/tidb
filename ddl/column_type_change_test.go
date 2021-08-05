@@ -2179,3 +2179,16 @@ func (s *testColumnTypeChangeSuite) TestCastDateToTimestampInReorgAttribute(c *C
 	c.Assert(checkErr2.Error(), Equals, "[types:1292]Incorrect timestamp value: '3977-02-22'")
 	tk.MustExec("drop table if exists t")
 }
+
+// https://github.com/pingcap/tidb/issues/25282.
+func (s *testColumnTypeChangeSuite) TestChangeFromUnsignedIntToTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a mediumint unsigned);")
+	tk.MustExec("insert into t values (180857);")
+	tk.MustExec("alter table t modify column a time;")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("18:08:57"))
+	tk.MustExec("drop table if exists t;")
+}

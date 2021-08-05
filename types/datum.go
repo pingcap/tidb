@@ -1255,7 +1255,7 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
-	case KindInt64, KindFloat32, KindFloat64, KindMysqlDecimal:
+	case KindInt64, KindUint64, KindFloat32, KindFloat64, KindMysqlDecimal:
 		// TODO: We need a ParseDurationFromNum to avoid the cost of converting a num to string.
 		timeStr, err := d.ToString()
 		if err != nil {
