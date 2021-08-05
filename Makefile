@@ -30,44 +30,19 @@ parser:
 dev: checklist check test
 
 # Install the check tools.
-check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
+check-setup:tools/bin/revive tools/bin/goword
 
-check: fmt errcheck unconvert lint tidy testSuite check-static vet staticcheck errdoc
-
-# These need to be fixed before they can be ran regularly
-check-fail: goword check-slow
+check: fmt unconvert lint tidy testSuite check-static vet errdoc
 
 fmt:
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
-	@cd cmd/importcheck && $(GO) run . ../..
 
 goword:tools/bin/goword
 	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-gosec:tools/bin/gosec
-	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
-
 check-static: tools/bin/golangci-lint
-	tools/bin/golangci-lint run -v --disable-all --deadline=3m \
-	  --enable=misspell \
-	  --enable=ineffassign \
-	  --enable=typecheck \
-	  --enable=varcheck \
-	  --enable=unused \
-	  --enable=structcheck \
-	  --enable=deadcode \
-	  --enable=gosimple \
-	  $$($(PACKAGE_DIRECTORIES))
-
-check-slow:tools/bin/gometalinter tools/bin/gosec
-	tools/bin/gometalinter --disable-all \
-	  --enable errcheck \
-	  $$($(PACKAGE_DIRECTORIES))
-
-errcheck:tools/bin/errcheck
-	@echo "errcheck"
-	@GO111MODULE=on tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -ignoretests -blank $(PACKAGES)
+	tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES))
 
 unconvert:tools/bin/unconvert
 	@echo "unconvert check"
@@ -89,10 +64,6 @@ vet:
 	@echo "vet"
 	$(GO) vet -all $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
 
-staticcheck:
-	$(GO) get honnef.co/go/tools/cmd/staticcheck
-	$(STATICCHECK) ./...
-
 tidy:
 	@echo "go mod tidy"
 	./tools/check/check-tidy.sh
@@ -110,7 +81,7 @@ test: test_part_1 test_part_2
 
 test_part_1: checklist explaintest
 
-test_part_2: checkdep gotest gogenerate
+test_part_2: gotest gogenerate
 
 explaintest: server_check
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
@@ -139,7 +110,9 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 else
 	@echo "Running in native mode."
 	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -v -cover $(PACKAGES) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
+	@echo "timeout-check"
+	grep '^PASS:' gotest.log | go run tools/check/check-timeout.go || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
 
@@ -151,10 +124,6 @@ race: failpoint-enable
 leak: failpoint-enable
 	@export log_level=debug; \
 	$(GOTEST) -tags leak $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
-	@$(FAILPOINT_DISABLE)
-
-tikv_integration_test: failpoint-enable
-	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 
 server:
@@ -208,9 +177,6 @@ failpoint-disable: tools/bin/failpoint-ctl
 # Restoring gofail failpoints...
 	@$(FAILPOINT_DISABLE)
 
-checkdep:
-	$(GO) list -f '{{ join .Imports "\n" }}' github.com/pingcap/tidb/store/tikv | grep ^github.com/pingcap/parser$$ || exit 0; exit 1
-
 tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck
@@ -222,18 +188,6 @@ tools/bin/revive: tools/check/go.mod
 tools/bin/goword: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/goword github.com/chzchzchz/goword
-
-tools/bin/gometalinter: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/gometalinter gopkg.in/alecthomas/gometalinter.v3
-
-tools/bin/gosec: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/gosec github.com/securego/gosec/cmd/gosec
-
-tools/bin/errcheck: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/errcheck github.com/kisielk/errcheck
 
 tools/bin/unconvert: tools/check/go.mod
 	cd tools/check; \
@@ -248,7 +202,7 @@ tools/bin/errdoc-gen: tools/check/go.mod
 	$(GO) build -o ../bin/errdoc-gen github.com/pingcap/errors/errdoc-gen
 
 tools/bin/golangci-lint:
-	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.29.0
+	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.41.1
 
 # Usage:
 #
@@ -269,3 +223,10 @@ else
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover github.com/pingcap/tidb/$(pkg) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
+
+# Collect the daily benchmark data.
+# Usage:
+#	make bench-daily TO=/path/to/file.json
+bench-daily:
+	cd ./session && \
+	go test -run TestBenchDaily --date `git log -n1 --date=unix --pretty=format:%cd` --commit `git log -n1 --pretty=format:%h` --outfile $(TO)

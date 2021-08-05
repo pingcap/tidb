@@ -21,9 +21,8 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
+	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -84,7 +83,7 @@ const (
 )
 
 type mockOptions struct {
-	clusterInspector func(cluster.Cluster)
+	clusterInspector func(testutils.Cluster)
 	clientHijacker   func(tikv.Client) tikv.Client
 	pdClientHijacker func(pd.Client) pd.Client
 	path             string
@@ -112,7 +111,7 @@ func WithPDClientHijacker(hijacker func(pd.Client) pd.Client) MockTiKVStoreOptio
 }
 
 // WithClusterInspector lets user to inspect the mock cluster handler.
-func WithClusterInspector(inspector func(cluster.Cluster)) MockTiKVStoreOption {
+func WithClusterInspector(inspector func(testutils.Cluster)) MockTiKVStoreOption {
 	return func(c *mockOptions) {
 		c.clusterInspector = inspector
 	}
@@ -143,7 +142,7 @@ func WithTxnLocalLatches(capacity uint) MockTiKVStoreOption {
 // If path is an empty string, a memory storage will be created.
 func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 	opt := mockOptions{
-		clusterInspector: func(c cluster.Cluster) {
+		clusterInspector: func(c testutils.Cluster) {
 			BootstrapWithSingleStore(c)
 		},
 		storeType: defaultStoreType,
@@ -163,10 +162,10 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 }
 
 // BootstrapWithSingleStore initializes a Cluster with 1 Region and 1 Store.
-func BootstrapWithSingleStore(cluster cluster.Cluster) (storeID, peerID, regionID uint64) {
+func BootstrapWithSingleStore(cluster testutils.Cluster) (storeID, peerID, regionID uint64) {
 	switch x := cluster.(type) {
-	case *mocktikv.Cluster:
-		return mocktikv.BootstrapWithSingleStore(x)
+	case *testutils.MockCluster:
+		return testutils.BootstrapWithSingleStore(x)
 	case *unistore.Cluster:
 		return unistore.BootstrapWithSingleStore(x)
 	default:
@@ -175,10 +174,10 @@ func BootstrapWithSingleStore(cluster cluster.Cluster) (storeID, peerID, regionI
 }
 
 // BootstrapWithMultiStores initializes a Cluster with 1 Region and n Stores.
-func BootstrapWithMultiStores(cluster cluster.Cluster, n int) (storeIDs, peerIDs []uint64, regionID uint64, leaderPeer uint64) {
+func BootstrapWithMultiStores(cluster testutils.Cluster, n int) (storeIDs, peerIDs []uint64, regionID uint64, leaderPeer uint64) {
 	switch x := cluster.(type) {
-	case *mocktikv.Cluster:
-		return mocktikv.BootstrapWithMultiStores(x, n)
+	case *testutils.MockCluster:
+		return testutils.BootstrapWithMultiStores(x, n)
 	case *unistore.Cluster:
 		return unistore.BootstrapWithMultiStores(x, n)
 	default:
@@ -188,10 +187,10 @@ func BootstrapWithMultiStores(cluster cluster.Cluster, n int) (storeIDs, peerIDs
 
 // BootstrapWithMultiRegions initializes a Cluster with multiple Regions and 1
 // Store. The number of Regions will be len(splitKeys) + 1.
-func BootstrapWithMultiRegions(cluster cluster.Cluster, splitKeys ...[]byte) (storeID uint64, regionIDs, peerIDs []uint64) {
+func BootstrapWithMultiRegions(cluster testutils.Cluster, splitKeys ...[]byte) (storeID uint64, regionIDs, peerIDs []uint64) {
 	switch x := cluster.(type) {
-	case *mocktikv.Cluster:
-		return mocktikv.BootstrapWithMultiRegions(x, splitKeys...)
+	case *testutils.MockCluster:
+		return testutils.BootstrapWithMultiRegions(x, splitKeys...)
 	case *unistore.Cluster:
 		return unistore.BootstrapWithMultiRegions(x, splitKeys...)
 	default:

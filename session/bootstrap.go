@@ -177,6 +177,7 @@ const (
 		table_id 		BIGINT(64) NOT NULL,
 		modify_count	BIGINT(64) NOT NULL DEFAULT 0,
 		count 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		snapshot        BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		INDEX idx_ver(version),
 		UNIQUE INDEX tbl(table_id)
 	);`
@@ -492,11 +493,16 @@ const (
 	version69 = 69
 	// version70 adds mysql.user.plugin to allow multiple authentication plugins
 	version70 = 70
+	// version71 forces tidb_multi_statement_mode=OFF when tidb_multi_statement_mode=WARN
+	// This affects upgrades from v4.0 where the default was WARN.
+	version71 = 71
+	// version72 adds snapshot column for mysql.stats_meta
+	version72 = 72
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version70
+var currentBootstrapVersion int64 = version72
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -570,6 +576,8 @@ var (
 		upgradeToVer68,
 		upgradeToVer69,
 		upgradeToVer70,
+		upgradeToVer71,
+		upgradeToVer72,
 	}
 )
 
@@ -1507,6 +1515,20 @@ func upgradeToVer70(s Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET plugin='mysql_native_password'")
 }
 
+func upgradeToVer71(s Session, ver int64) {
+	if ver >= version71 {
+		return
+	}
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='OFF' WHERE VARIABLE_NAME = 'tidb_multi_statement_mode' AND VARIABLE_VALUE = 'WARN'")
+}
+
+func upgradeToVer72(s Session, ver int64) {
+	if ver >= version72 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN snapshot BIGINT(64) UNSIGNED NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1610,7 +1632,7 @@ func doDMLWorks(s Session) {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
 			}
 			if v.Name == variable.TiDBPartitionPruneMode {
-				vVal = string(variable.Static)
+				vVal = variable.DefTiDBPartitionPruneMode
 				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
 					// enable Dynamic Prune by default in test case.
 					vVal = string(variable.Dynamic)

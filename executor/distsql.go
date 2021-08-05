@@ -166,10 +166,11 @@ type IndexReaderExecutor struct {
 	partRangeMap    map[int64][]*ranger.Range // each partition may have different ranges
 
 	// kvRanges are only used for union scan.
-	kvRanges []kv.KeyRange
-	dagPB    *tipb.DAGRequest
-	startTS  uint64
-
+	kvRanges    []kv.KeyRange
+	dagPB       *tipb.DAGRequest
+	startTS     uint64
+	txnScope    string
+	isStaleness bool
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result distsql.SelectResult
 	// columns are only required by union scan.
@@ -290,6 +291,8 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
+		SetTxnScope(e.txnScope).
+		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
 		SetMemTracker(e.memTracker)
@@ -366,6 +369,9 @@ type IndexLookUpExecutor struct {
 	PushedLimit *plannercore.PushedDownLimit
 
 	stats *IndexLookUpRunTimeStats
+
+	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column, default -1
+	extraPIDColumnIndex offsetOptional
 }
 
 type getHandleType int8
@@ -397,7 +403,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	}
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
-	if e.table.Meta().TempTableType == model.TempTableGlobal {
+	if e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
@@ -545,6 +551,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.indexStreaming).
+			SetTxnScope(e.txnScope).
+			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
 			SetMemTracker(tracker)
@@ -638,15 +646,18 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		table = task.partitionTable
 	}
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
-		table:          table,
-		dagPB:          e.tableRequest,
-		startTS:        e.startTS,
-		columns:        e.columns,
-		streaming:      e.tableStreaming,
-		feedback:       statistics.NewQueryFeedback(0, nil, 0, false),
-		corColInFilter: e.corColInTblSide,
-		plans:          e.tblPlans,
+		baseExecutor:        newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
+		table:               table,
+		dagPB:               e.tableRequest,
+		startTS:             e.startTS,
+		txnScope:            e.txnScope,
+		isStaleness:         e.isStaleness,
+		columns:             e.columns,
+		streaming:           e.tableStreaming,
+		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),
+		corColInFilter:      e.corColInTblSide,
+		plans:               e.tblPlans,
+		extraPIDColumnIndex: e.extraPIDColumnIndex,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, task.handles, true)
@@ -683,7 +694,7 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.table.Meta().TempTableType == model.TempTableGlobal {
+	if e.table.Meta().TempTableType != model.TempTableNone {
 		req.Reset()
 		return nil
 	}

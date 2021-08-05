@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -55,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
 	"go.uber.org/zap"
@@ -125,7 +125,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < 100 {
 		is, relatedChanges, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion)
 		if err == nil {
-			do.infoCache.Insert(is)
+			do.infoCache.Insert(is, startTS)
 			logutil.BgLogger().Info("diff load InfoSchema success",
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
 				zap.Int64("neededSchemaVersion", neededSchemaVersion),
@@ -158,7 +158,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		zap.Duration("start time", time.Since(startTime)))
 
 	is := newISBuilder.Build()
-	do.infoCache.Insert(is)
+	do.infoCache.Insert(is, startTS)
 	return is, false, currentSchemaVersion, nil, nil
 }
 
@@ -290,6 +290,10 @@ func (do *Domain) InfoSchema() infoschema.InfoSchema {
 
 // GetSnapshotInfoSchema gets a snapshot information schema.
 func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchema, error) {
+	// if the snapshotTS is new enough, we can get infoschema directly through sanpshotTS.
+	if is := do.infoCache.GetBySnapshotTS(snapshotTS); is != nil {
+		return is, nil
+	}
 	is, _, _, _, err := do.loadInfoSchema(snapshotTS)
 	return is, err
 }
@@ -618,10 +622,10 @@ func (do *Domain) Close() {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
 
-	do.sysSessionPool.Close()
 	do.slowQuery.Close()
 	do.cancel()
 	do.wg.Wait()
+	do.sysSessionPool.Close()
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
@@ -849,8 +853,12 @@ func (do *Domain) GetEtcdClient() *clientv3.Client {
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "set @@autocommit = 1")
+	if err != nil {
+		return err
+	}
 	do.privHandle = privileges.NewHandle()
-	err := do.privHandle.Update(ctx)
+	err = do.privHandle.Update(ctx)
 	if err != nil {
 		return err
 	}
@@ -927,6 +935,19 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			case _, ok = <-watchCh:
 			case <-time.After(duration):
 			}
+
+			failpoint.Inject("skipLoadSysVarCacheLoop", func(val failpoint.Value) {
+				// In some pkg integration test, there are many testSuite, and each testSuite has separate storage and
+				// `LoadSysVarCacheLoop` background goroutine. Then each testSuite `RebuildSysVarCache` from it's
+				// own storage.
+				// Each testSuit will also call `checkEnableServerGlobalVar` to update some local variables.
+				// That's the problem, each testSuit use different storage to update some same local variables.
+				// So just skip `RebuildSysVarCache` in some integration testing.
+				if val.(bool) {
+					failpoint.Continue()
+				}
+			})
+
 			if !ok {
 				logutil.BgLogger().Error("LoadSysVarCacheLoop loop watch channel closed")
 				watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
@@ -969,12 +990,13 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 		return err
 	}
 
-	do.globalBindHandleWorkerLoop()
-	do.handleEvolvePlanTasksLoop(ctxForEvolve)
+	owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
+	do.globalBindHandleWorkerLoop(owner)
+	do.handleEvolvePlanTasksLoop(ctxForEvolve, owner)
 	return nil
 }
 
-func (do *Domain) globalBindHandleWorkerLoop() {
+func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 	do.wg.Add(1)
 	go func() {
 		defer func() {
@@ -983,10 +1005,15 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 			util.Recover(metrics.LabelDomain, "globalBindHandleWorkerLoop", nil, false)
 		}()
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
-		defer bindWorkerTicker.Stop()
+		gcBindTicker := time.NewTicker(100 * bindinfo.Lease)
+		defer func() {
+			bindWorkerTicker.Stop()
+			gcBindTicker.Stop()
+		}()
 		for {
 			select {
 			case <-do.exit:
+				owner.Cancel()
 				return
 			case <-bindWorkerTicker.C:
 				err := do.bindHandle.Update(false)
@@ -998,12 +1025,20 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 					do.bindHandle.CaptureBaselines()
 				}
 				do.bindHandle.SaveEvolveTasksToStore()
+			case <-gcBindTicker.C:
+				if !owner.IsOwner() {
+					continue
+				}
+				err := do.bindHandle.GCBindRecord()
+				if err != nil {
+					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
+				}
 			}
 		}
 	}()
 }
 
-func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
+func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.Manager) {
 	do.wg.Add(1)
 	go func() {
 		defer func() {
@@ -1011,7 +1046,6 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 			logutil.BgLogger().Info("handleEvolvePlanTasksLoop exited.")
 			util.Recover(metrics.LabelDomain, "handleEvolvePlanTasksLoop", nil, false)
 		}()
-		owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
 		for {
 			select {
 			case <-do.exit:

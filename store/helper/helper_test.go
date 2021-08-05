@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/tikv/client-go/v2/testutils"
 	"go.uber.org/zap"
 )
 
@@ -72,14 +72,14 @@ func (s *HelperTestSuite) SetUpSuite(c *C) {
 	url := s.mockPDHTTPServer(c)
 	time.Sleep(100 * time.Millisecond)
 	mockTikvStore, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithMultiRegions(c, []byte("x"))
 		}),
 	)
 
 	s.store = &mockStore{
 		mockTikvStore.(helper.Storage),
-		[]string{url[len("http://"):]},
+		[]string{"invalid_pd_address", url[len("http://"):]},
 	}
 	c.Assert(err, IsNil)
 }

@@ -236,6 +236,10 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE t IGNORE SELECT * FROM u UNION SELECT * from v", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
 		{"CREATE TABLE t (m int) REPLACE AS (SELECT * FROM u) UNION (SELECT * FROM v)", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
 
+		// issue 24309
+		{"SELECT * FROM t INTO OUTFILE 'ttt' UNION SELECT * FROM u", false, core.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
+		{"(SELECT * FROM t INTO OUTFILE 'ttt') UNION SELECT * FROM u", false, core.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
+
 		{"select * from ( select 1 ) a, (select 2) a;", false, core.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) a;", false, core.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) A;", false, core.ErrNonUniqTable},
@@ -336,4 +340,82 @@ func (s *testValidatorSuite) TestForeignKey(c *C) {
 	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES t2 (d)", false, nil)
 
 	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (c) REFERENCES test2.t (e)", false, nil)
+}
+
+func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
+	defer testleak.AfterTest(c)()
+	defer func() {
+		s.dom.Close()
+		s.store.Close()
+	}()
+
+	ctx := context.Background()
+	execSQLList := []string{
+		"use test",
+		"set tidb_enable_global_temporary_table=true",
+		"set tidb_enable_noop_functions=true",
+		"create table tb(id int);",
+		"create global temporary table temp(id int) on commit delete rows;",
+		"create global temporary table temp1(id int) on commit delete rows;",
+		"create temporary table ltemp1(id int);",
+		"create database test2",
+		"create global temporary table test2.temp2(id int) on commit delete rows;",
+	}
+	for _, execSQL := range execSQLList {
+		_, err := s.se.Execute(ctx, execSQL)
+		c.Assert(err, IsNil)
+	}
+	s.is = s.se.GetInfoSchema().(infoschema.InfoSchema)
+	s.runSQL(c, "drop global temporary table tb;", false, core.ErrDropTableOnTemporaryTable)
+	s.runSQL(c, "drop global temporary table temp", false, nil)
+	s.runSQL(c, "drop global temporary table test.tb;", false, core.ErrDropTableOnTemporaryTable)
+	s.runSQL(c, "drop global temporary table test.temp1", false, nil)
+	s.runSQL(c, "drop global temporary table ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	s.runSQL(c, "drop global temporary table test.ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	s.runSQL(c, "drop global temporary table temp, temp1", false, nil)
+	s.runSQL(c, "drop global temporary table temp, tb", false, core.ErrDropTableOnTemporaryTable)
+	s.runSQL(c, "drop global temporary table temp, ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	s.runSQL(c, "drop temporary table xxxx, ltemp1", false, infoschema.ErrTableDropExists)
+	s.runSQL(c, "drop global temporary table test2.temp2, temp1", false, nil)
+}
+
+func (s *testValidatorSuite) TestDropLocalTempTable(c *C) {
+	defer testleak.AfterTest(c)()
+	defer func() {
+		s.dom.Close()
+		s.store.Close()
+	}()
+
+	ctx := context.Background()
+	execSQLList := []string{
+		"use test",
+		"set tidb_enable_global_temporary_table=true",
+		"set tidb_enable_noop_functions=true",
+		"create table tb(id int);",
+		"create table tb2(id int);",
+		"create global temporary table temp(id int) on commit delete rows;",
+		"create global temporary table temp1(id int) on commit delete rows;",
+		"create temporary table ltemp1(id int);",
+		"create temporary table ltemp2(id int);",
+		"create temporary table tb2(id int);",
+		"create database test2",
+		"create temporary table test2.ltemp3(id int);",
+	}
+	for _, execSQL := range execSQLList {
+		_, err := s.se.Execute(ctx, execSQL)
+		c.Assert(err, IsNil)
+	}
+	s.is = s.se.GetInfoSchema().(infoschema.InfoSchema)
+	s.runSQL(c, "drop temporary table tb;", false, infoschema.ErrTableDropExists)
+	s.runSQL(c, "drop temporary table ltemp1", false, nil)
+	s.runSQL(c, "drop temporary table test.tb;", false, infoschema.ErrTableDropExists)
+	s.runSQL(c, "drop temporary table test.ltemp1", false, nil)
+	s.runSQL(c, "drop temporary table temp1", false, infoschema.ErrTableDropExists)
+	s.runSQL(c, "drop temporary table test.temp1", false, infoschema.ErrTableDropExists)
+	s.runSQL(c, "drop temporary table ltemp1, ltemp2", false, nil)
+	s.runSQL(c, "drop temporary table ltemp1, tb", false, infoschema.ErrTableDropExists)
+	s.runSQL(c, "drop temporary table temp, ltemp1", false, infoschema.ErrTableDropExists)
+	s.runSQL(c, "drop temporary table xxxx, ltemp1", false, infoschema.ErrTableDropExists)
+	s.runSQL(c, "drop temporary table test2.ltemp3, ltemp1", false, nil)
+	s.runSQL(c, "drop temporary table tb2", false, nil)
 }

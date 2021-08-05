@@ -16,29 +16,19 @@ package telemetry
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testUtilSuite{})
+func TestHashString(t *testing.T) {
+	t.Parallel()
 
-type testUtilSuite struct{}
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-func (s *testUtilSuite) TestHashString(c *C) {
-	c.Parallel()
 	actual, err := hashString("127.0.0.1")
-	c.Assert(err, IsNil)
-	c.Assert(actual, Equals, "4b84b15bff6ee5796152495a230e45e3d7e947d9")
+	require.NoError(t, err)
+	require.Equal(t, "4b84b15bff6ee5796152495a230e45e3d7e947d9", actual)
 }
 
-func (s *testUtilSuite) TestParseAddress(c *C) {
-	c.Parallel()
-
-	cases := []struct {
+func TestParseAddress(t *testing.T) {
+	tests := []struct {
 		src          string
 		expectedHost string
 		expectedPort string
@@ -54,15 +44,19 @@ func (s *testUtilSuite) TestParseAddress(c *C) {
 		{"my_addr:12345x", "my_addr:12345x", ""},
 		{"[2001:db8:85a3:8d3:1319:8a2e:370:7348]:443", "[2001:db8:85a3:8d3:1319:8a2e:370:7348]", "443"},
 	}
-	for _, tt := range cases {
-		host, port, err := parseAddressAndHash(tt.src)
-		c.Assert(err, IsNil)
-		exp, err := hashString(tt.expectedHost)
-		c.Assert(err, IsNil)
-		c.Assert(host, Equals, exp)
-		c.Assert(port, Equals, tt.expectedPort)
+
+	for _, test := range tests {
+		t.Run(test.src, func(t *testing.T) {
+			t.Parallel()
+
+			host, port, err := parseAddressAndHash(test.src)
+			require.NoError(t, err)
+
+			expectedHost, err := hashString(test.expectedHost)
+			require.NoError(t, err)
+
+			require.Equal(t, expectedHost, host)
+			require.Equal(t, test.expectedPort, port)
+		})
 	}
 }
-
-// GetFeatureUsage exports getFeatureUsage for testing.
-var GetFeatureUsage func(ctx sessionctx.Context) (*featureUsage, error) = getFeatureUsage

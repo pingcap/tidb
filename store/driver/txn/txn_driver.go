@@ -25,10 +25,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/options"
-	"github.com/pingcap/tidb/store/tikv"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
 	"github.com/pingcap/tidb/tablecodec"
+	tikverr "github.com/tikv/client-go/v2/error"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 type tikvTxn struct {
@@ -55,7 +56,6 @@ func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 	txn.idxNameCache[id] = info
 }
 
-// lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	keys := toTiKVKeys(keysInput)
 	err := txn.KVTxn.LockKeys(ctx, lockCtx, keys...)
@@ -154,7 +154,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		if val == nil {
 			txn.KVTxn.GetSnapshot().SetRuntimeStats(nil)
 		} else {
-			txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+			txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*txnsnapshot.SnapshotRuntimeStats))
 		}
 	case kv.SchemaAmender:
 		txn.SetSchemaAmender(val.(tikv.SchemaAmender))
@@ -176,6 +176,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.GetSnapshot().SetMatchStoreLabels(val.([]*metapb.StoreLabel))
 	case kv.ResourceGroupTag:
 		txn.KVTxn.SetResourceGroupTag(val.([]byte))
+	case kv.KVFilter:
+		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
 	}
 }
 

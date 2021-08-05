@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 var _ = Suite(&testSuite{})
@@ -323,6 +324,7 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		SyncLog:        false,
 		Streaming:      false,
 		ReplicaRead:    kv.ReplicaReadLeader,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -399,6 +401,7 @@ func (s *testSuite) TestRequestBuilder2(c *C) {
 		SyncLog:        false,
 		Streaming:      false,
 		ReplicaRead:    kv.ReplicaReadLeader,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -446,6 +449,7 @@ func (s *testSuite) TestRequestBuilder3(c *C) {
 		SyncLog:        false,
 		Streaming:      false,
 		ReplicaRead:    kv.ReplicaReadLeader,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -493,6 +497,7 @@ func (s *testSuite) TestRequestBuilder4(c *C) {
 		NotFillCache:   false,
 		SyncLog:        false,
 		ReplicaRead:    kv.ReplicaReadLeader,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -536,6 +541,7 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 		NotFillCache:   true,
 		SyncLog:        false,
 		Streaming:      false,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }
@@ -569,6 +575,7 @@ func (s *testSuite) TestRequestBuilder6(c *C) {
 		NotFillCache:   true,
 		SyncLog:        false,
 		Streaming:      false,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 
 	c.Assert(actual, DeepEquals, expect)
@@ -603,6 +610,7 @@ func (s *testSuite) TestRequestBuilder7(c *C) {
 			SyncLog:        false,
 			Streaming:      false,
 			ReplicaRead:    replicaRead,
+			TxnScope:       oracle.GlobalTxnScope,
 		}
 
 		c.Assert(actual, DeepEquals, expect)
@@ -624,6 +632,7 @@ func (s *testSuite) TestRequestBuilder8(c *C) {
 		Priority:       0,
 		MemTracker:     (*memory.Tracker)(nil),
 		SchemaVar:      0,
+		TxnScope:       oracle.GlobalTxnScope,
 	}
 	c.Assert(actual, DeepEquals, expect)
 }

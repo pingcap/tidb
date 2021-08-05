@@ -472,6 +472,8 @@ type PhysicalTableScan struct {
 	IsGlobalRead bool
 
 	// The table scan may be a partition, rather than a real table.
+	// TODO: clean up this field. After we support dynamic partitioning, table scan
+	// works on the whole partition table, and `isPartition` is not used.
 	isPartition bool
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
@@ -914,7 +916,7 @@ type PhysicalExchangeSender struct {
 
 	TargetTasks  []*kv.MPPTask
 	ExchangeType tipb.ExchangeType
-	HashCols     []*expression.Column
+	HashCols     []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks []*kv.MPPTask
 }
@@ -953,6 +955,7 @@ type PhysicalLock struct {
 
 	TblID2Handle     map[int64][]HandleCols
 	PartitionedTable []table.PartitionedTable
+	ExtraPIDInfo     extraPIDInfo
 }
 
 // PhysicalLimit is the physical operator of Limit.
@@ -1005,6 +1008,8 @@ const (
 	Mpp2Phase
 	// MppTiDB runs agg on TiDB (and a partial agg on TiFlash if in 2 phase agg)
 	MppTiDB
+	// MppScalar also has 2 phases. The second phase runs in a single task.
+	MppScalar
 )
 
 type basePhysicalAgg struct {
@@ -1013,7 +1018,7 @@ type basePhysicalAgg struct {
 	AggFuncs         []*aggregation.AggFuncDesc
 	GroupByItems     []expression.Expression
 	MppRunMode       AggMppRunMode
-	MppPartitionCols []*expression.Column
+	MppPartitionCols []*property.MPPPartitionColumn
 }
 
 func (p *basePhysicalAgg) isFinalAgg() bool {
@@ -1048,7 +1053,7 @@ func (p *basePhysicalAgg) numDistinctFunc() (num int) {
 	return
 }
 
-func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
+func (p *basePhysicalAgg) getAggFuncCostFactor(isMPP bool) (factor float64) {
 	factor = 0.0
 	for _, agg := range p.AggFuncs {
 		if fac, ok := aggFuncFactor[agg.Name]; ok {
@@ -1058,7 +1063,15 @@ func (p *basePhysicalAgg) getAggFuncCostFactor() (factor float64) {
 		}
 	}
 	if factor == 0 {
-		factor = 1.0
+		if isMPP {
+			// The default factor 1.0 will lead to 1-phase agg in pseudo stats settings.
+			// But in mpp cases, 2-phase is more usual. So we change this factor.
+			// TODO: This is still a little tricky and might cause regression. We should
+			// calibrate these factors and polish our cost model in the future.
+			factor = aggFuncFactor[ast.AggFuncFirstRow]
+		} else {
+			factor = 1.0
+		}
 	}
 	return
 }

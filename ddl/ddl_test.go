@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type DDLForTest interface {
@@ -75,6 +76,7 @@ func TestT(t *testing.T) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
+	tikv.EnableFailpoints()
 
 	_, err = infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
 	if err != nil {
@@ -89,7 +91,7 @@ func TestT(t *testing.T) {
 func testNewDDLAndStart(ctx context.Context, c *C, options ...Option) *ddl {
 	// init infoCache and a stub infoSchema
 	ic := infoschema.NewCache(2)
-	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0))
+	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	options = append(options, WithInfoCache(ic))
 	d := newDDL(ctx, options...)
 	err := d.Start(nil)

@@ -73,4 +73,13 @@ func (s *testDistsqlSuite) TestColumnToProto(c *C) {
 	}
 	pc = util.ColumnToProto(col1)
 	c.Assert(pc.Collation, Equals, int32(-8))
+
+	tp = types.NewFieldType(mysql.TypeEnum)
+	tp.Flag = 10
+	tp.Elems = []string{"a", "b"}
+	col2 := &model.ColumnInfo{
+		FieldType: *tp,
+	}
+	pc = util.ColumnToProto(col2)
+	c.Assert(len(pc.Elems), Equals, 2)
 }

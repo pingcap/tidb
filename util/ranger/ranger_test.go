@@ -1217,7 +1217,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		}
 		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 		c.Assert(col, NotNil)
-		conds = ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
+		conds = ranger.ExtractAccessConditionsForColumn(conds, col)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType, tt.length)
 		c.Assert(err, IsNil)
@@ -1736,6 +1736,44 @@ func (s *testRangerSuite) TestIndexRangeForDecimal(c *C) {
 	testKit.MustExec("insert into t1 values(0),(null);")
 	testKit.MustExec("create table t2(a int, b decimal unsigned, key idx(a,b));")
 	testKit.MustExec("insert into t2 values(1,0),(1,null);")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testRangerSuite) TestPrefixIndexAppendPointRanges(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("USE test")
+	testKit.MustExec("DROP TABLE IF EXISTS IDT_20755")
+	testKit.MustExec("CREATE TABLE `IDT_20755` (\n" +
+		"  `COL1` varchar(20) DEFAULT NULL,\n" +
+		"  `COL2` tinyint(16) DEFAULT NULL,\n" +
+		"  `COL3` timestamp NULL DEFAULT NULL,\n" +
+		"  KEY `u_m_col` (`COL1`(10),`COL2`,`COL3`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	testKit.MustExec("INSERT INTO IDT_20755 VALUES(\"牾窓螎刳闌蜹瑦詬鍖湪槢壿玟瞏膍敗特森撇縆\", 73, \"2010-06-03 07:29:05\")")
+	testKit.MustExec("INSERT INTO IDT_20755 VALUES(\"xxxxxxxxxxxxxxx\", 73, \"2010-06-03 07:29:05\")")
 
 	var input []string
 	var output []struct {

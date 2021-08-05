@@ -38,24 +38,24 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
-	"github.com/pingcap/tidb/store/tikv/retry"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/oracle/oracles"
+	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
 )
 
 func TestT(t *testing.T) {
+	tikv.EnableFailpoints()
 	TestingT(t)
 }
 
 type testGCWorkerSuite struct {
 	store      kv.Storage
 	tikvStore  tikv.Storage
-	cluster    cluster.Cluster
+	cluster    testutils.Cluster
 	oracle     *oracles.MockOracle
 	gcWorker   *GCWorker
 	dom        *domain.Domain
@@ -81,7 +81,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 
 	store, err := mockstore.NewMockStore(
 		mockstore.WithStoreType(mockstore.MockTiKV),
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			s.initRegion.storeIDs, s.initRegion.peerIDs, s.initRegion.regionID, _ = mockstore.BootstrapWithMultiStores(c, 3)
 			s.cluster = c
 		}),
@@ -424,23 +424,23 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	c.Assert(err, IsNil)
 	s.checkCollected(c, p)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")`), IsNil)
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/tikvStoreSendReqResult"), IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCNotLeader")`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("GCNotLeader")`), IsNil)
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr.GetNotLeader(), NotNil)
 	c.Assert(err, IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/tikvStoreSendReqResult"), IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("GCServerIsBusy")`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("GCServerIsBusy")`), IsNil)
 	regionErr, err = s.gcWorker.doGCForRegion(bo, s.mustAllocTs(c), loc.Region)
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/tikvStoreSendReqResult"), IsNil)
 }
 
 func (s *testGCWorkerSuite) TestGetGCConcurrency(c *C) {
@@ -870,10 +870,10 @@ func (s *testGCWorkerSuite) TestLeaderTick(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestResolveLockRangeInfine(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry", "return(true)"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/invalidCacheAndRetry", "return(true)"), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff", "return(1)"), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/invalidCacheAndRetry"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/invalidCacheAndRetry"), IsNil)
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/setGcResolveMaxBackoff"), IsNil)
 	}()
 	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte{0}, []byte{1})
@@ -887,9 +887,9 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionCacheMiss(c *C) {
 		resolveCnt    int
 		resolveCntRef = &resolveCnt
 	)
-	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
+	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*txnlock.Lock {
 		*scanCntRef++
-		return []*tikv.Lock{
+		return []*txnlock.Lock{
 			{
 				Key: []byte{1},
 			},
@@ -898,7 +898,7 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionCacheMiss(c *C) {
 			},
 		}
 	}
-	s.gcWorker.testingKnobs.resolveLocks = func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
+	s.gcWorker.testingKnobs.resolveLocks = func(locks []*txnlock.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
 		*resolveCntRef++
 		if *resolveCntRef == 1 {
 			s.gcWorker.tikvStore.GetRegionCache().InvalidateCachedRegion(regionID)
@@ -926,32 +926,32 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 	s.cluster.Split(s.initRegion.regionID, region2, []byte("m"), newPeers, newPeers[0])
 
 	// init a, b lock in region1 and o, p locks in region2
-	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
+	s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*txnlock.Lock {
 		if regionID == s.initRegion.regionID {
-			return []*tikv.Lock{{Key: []byte("a")}, {Key: []byte("b")}}
+			return []*txnlock.Lock{{Key: []byte("a")}, {Key: []byte("b")}}
 		}
 		if regionID == region2 {
-			return []*tikv.Lock{{Key: []byte("o")}, {Key: []byte("p")}}
+			return []*txnlock.Lock{{Key: []byte("o")}, {Key: []byte("p")}}
 		}
-		return []*tikv.Lock{}
+		return []*txnlock.Lock{}
 	}
 
-	s.gcWorker.testingKnobs.resolveLocks = func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
+	s.gcWorker.testingKnobs.resolveLocks = func(locks []*txnlock.Lock, regionID tikv.RegionVerID) (ok bool, err error) {
 		if regionID.GetID() == s.initRegion.regionID && *firstAccessRef {
 			*firstAccessRef = false
 			// merge region2 into region1 and return EpochNotMatch error.
-			mCluster := s.cluster.(*mocktikv.Cluster)
+			mCluster := s.cluster.(*testutils.MockCluster)
 			mCluster.Merge(s.initRegion.regionID, region2)
 			regionMeta, _ := mCluster.GetRegion(s.initRegion.regionID)
 			_, err := s.tikvStore.GetRegionCache().OnRegionEpochNotMatch(
-				retry.NewNoopBackoff(context.Background()),
+				tikv.NewNoopBackoff(context.Background()),
 				&tikv.RPCContext{Region: regionID, Store: &tikv.Store{}},
 				[]*metapb.Region{regionMeta})
 			c.Assert(err, IsNil)
 			// also let region1 contains all 4 locks
-			s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*tikv.Lock {
+			s.gcWorker.testingKnobs.scanLocks = func(key []byte, regionID uint64) []*txnlock.Lock {
 				if regionID == s.initRegion.regionID {
-					locks := []*tikv.Lock{
+					locks := []*txnlock.Lock{
 						{Key: []byte("a")},
 						{Key: []byte("b")},
 						{Key: []byte("o")},
@@ -963,7 +963,7 @@ func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionEnlargeCausedByRegionM
 						}
 					}
 				}
-				return []*tikv.Lock{}
+				return []*txnlock.Lock{}
 			}
 			return false, nil
 		}
@@ -1103,7 +1103,7 @@ func (s *testGCWorkerSuite) loadEtcdSafePoint(c *C) uint64 {
 	return res
 }
 
-func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*tikv.Lock) {
+func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*txnlock.Lock) {
 	scanner := &mergeLockScanner{}
 	channels := make([]chan scanLockResult, 0, count)
 	receivers := make([]*receiver, 0, count)
@@ -1121,7 +1121,7 @@ func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResul
 		storeIDs = append(storeIDs, uint64(i))
 	}
 
-	resultCh := make(chan []*tikv.Lock)
+	resultCh := make(chan []*txnlock.Lock)
 	// Initializing and getting result from scanner is blocking operations. Collect the result in a separated thread.
 	go func() {
 		scanner.startWithReceivers(receivers)
@@ -1134,7 +1134,7 @@ func makeMergedChannel(c *C, count int) (*mergeLockScanner, []chan scanLockResul
 	return scanner, channels, storeIDs, resultCh
 }
 
-func (s *testGCWorkerSuite) makeMergedMockClient(c *C, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*tikv.Lock) {
+func (s *testGCWorkerSuite) makeMergedMockClient(c *C, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*txnlock.Lock) {
 	stores := s.cluster.GetAllStores()
 	c.Assert(count, Equals, len(stores))
 	storeIDs := make([]uint64, count)
@@ -1186,7 +1186,7 @@ func (s *testGCWorkerSuite) makeMergedMockClient(c *C, count int) (*mergeLockSca
 		return nil, errors.Errorf("No store in the cluster has address %v", addr)
 	}
 
-	resultCh := make(chan []*tikv.Lock)
+	resultCh := make(chan []*txnlock.Lock)
 	// Initializing and getting result from scanner is blocking operations. Collect the result in a separated thread.
 	go func() {
 		err := scanner.Start(context.Background())
@@ -1212,32 +1212,32 @@ func (s *testGCWorkerSuite) TestMergeLockScanner(c *C) {
 		return res
 	}
 
-	makeLock := func(key string, ts uint64) *tikv.Lock {
-		return &tikv.Lock{Key: []byte(key), TxnID: ts}
+	makeLock := func(key string, ts uint64) *txnlock.Lock {
+		return &txnlock.Lock{Key: []byte(key), TxnID: ts}
 	}
 
-	makeLockList := func(locks ...*tikv.Lock) []*tikv.Lock {
-		res := make([]*tikv.Lock, 0, len(locks))
+	makeLockList := func(locks ...*txnlock.Lock) []*txnlock.Lock {
+		res := make([]*txnlock.Lock, 0, len(locks))
 		res = append(res, locks...)
 		return res
 	}
 
-	makeLockListByKey := func(keys ...string) []*tikv.Lock {
-		res := make([]*tikv.Lock, 0, len(keys))
+	makeLockListByKey := func(keys ...string) []*txnlock.Lock {
+		res := make([]*txnlock.Lock, 0, len(keys))
 		for _, key := range keys {
 			res = append(res, makeLock(key, 0))
 		}
 		return res
 	}
 
-	sendLocks := func(ch chan<- scanLockResult, locks ...*tikv.Lock) {
+	sendLocks := func(ch chan<- scanLockResult, locks ...*txnlock.Lock) {
 		for _, lock := range locks {
 			ch <- scanLockResult{Lock: lock}
 		}
 	}
 
-	sendLocksByKey := func(ch chan<- scanLockResult, keys ...string) []*tikv.Lock {
-		locks := make([]*tikv.Lock, 0, len(keys))
+	sendLocksByKey := func(ch chan<- scanLockResult, keys ...string) []*txnlock.Lock {
+		locks := make([]*txnlock.Lock, 0, len(keys))
 		for _, key := range keys {
 			locks = append(locks, makeLock(key, 0))
 		}

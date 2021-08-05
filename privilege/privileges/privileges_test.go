@@ -275,20 +275,20 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	gs, err := pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
-	c.Assert(gs[0], Equals, `GRANT Index ON *.* TO 'show'@'localhost'`)
+	c.Assert(gs[0], Equals, `GRANT INDEX ON *.* TO 'show'@'localhost'`)
 
 	mustExec(c, se, `GRANT Select ON *.* TO  'show'@'localhost';`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
-	c.Assert(gs[0], Equals, `GRANT Select,Index ON *.* TO 'show'@'localhost'`)
+	c.Assert(gs[0], Equals, `GRANT SELECT,INDEX ON *.* TO 'show'@'localhost'`)
 
 	// The order of privs is the same with AllGlobalPrivs
 	mustExec(c, se, `GRANT Update ON *.* TO  'show'@'localhost';`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 1)
-	c.Assert(gs[0], Equals, `GRANT Select,Update,Index ON *.* TO 'show'@'localhost'`)
+	c.Assert(gs[0], Equals, `GRANT SELECT,UPDATE,INDEX ON *.* TO 'show'@'localhost'`)
 
 	// All privileges
 	mustExec(c, se, `GRANT ALL ON *.* TO  'show'@'localhost';`)
@@ -317,7 +317,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 2)
 	expected := []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT Select ON test.* TO 'show'@'localhost'`}
+		`GRANT SELECT ON test.* TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
 	mustExec(c, se, `GRANT Index ON test1.* TO  'show'@'localhost';`)
@@ -325,8 +325,8 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT Select ON test.* TO 'show'@'localhost'`,
-		`GRANT Index ON test1.* TO 'show'@'localhost'`}
+		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
+		`GRANT INDEX ON test1.* TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
 	mustExec(c, se, `GRANT ALL ON test1.* TO  'show'@'localhost';`)
@@ -334,7 +334,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT Select ON test.* TO 'show'@'localhost'`,
+		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
 		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
@@ -344,9 +344,9 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 4)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT Select ON test.* TO 'show'@'localhost'`,
+		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
 		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
-		`GRANT Update ON test.test TO 'show'@'localhost'`}
+		`GRANT UPDATE ON test.test TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
 	// Expected behavior: Usage still exists after revoking all privileges
@@ -422,7 +422,7 @@ func (s *testPrivilegeSuite) TestShowColumnGrants(c *C) {
 	pc := privilege.GetPrivilegeManager(se)
 	gs, err := pc.ShowGrants(se, &auth.UserIdentity{Username: "column", Hostname: "%"}, nil)
 	c.Assert(err, IsNil)
-	c.Assert(strings.Join(gs, " "), Equals, "GRANT USAGE ON *.* TO 'column'@'%' GRANT Select(a), Insert(c), Update(a, b) ON test.column_table TO 'column'@'%'")
+	c.Assert(strings.Join(gs, " "), Equals, "GRANT USAGE ON *.* TO 'column'@'%' GRANT SELECT(a), INSERT(c), UPDATE(a, b) ON test.column_table TO 'column'@'%'")
 }
 
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
@@ -466,6 +466,105 @@ func (s *testPrivilegeSuite) TestSetPasswdStmt(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser", Hostname: "localhost", AuthUsername: "nobodyuser", AuthHostname: "%"}, nil, nil), IsTrue)
 	_, err := se.ExecuteInternal(context.Background(), "SET PASSWORD for 'superuser' = 'newpassword'")
 	c.Assert(err, NotNil)
+}
+
+func (s *testPrivilegeSuite) TestAlterUserStmt(c *C) {
+	se := newSession(c, s.store, s.dbName)
+
+	// high privileged user setting password for other user (passes)
+	mustExec(c, se, "CREATE USER superuser2, nobodyuser2, nobodyuser3, nobodyuser4, nobodyuser5, semuser1, semuser2, semuser3, semuser4")
+	mustExec(c, se, "GRANT ALL ON *.* TO superuser2")
+	mustExec(c, se, "GRANT CREATE USER ON *.* TO nobodyuser2")
+	mustExec(c, se, "GRANT SYSTEM_USER ON *.* TO nobodyuser4")
+	mustExec(c, se, "GRANT UPDATE ON mysql.user TO nobodyuser5, semuser1")
+	mustExec(c, se, "GRANT RESTRICTED_TABLES_ADMIN ON *.* TO semuser1")
+	mustExec(c, se, "GRANT RESTRICTED_USER_ADMIN ON *.* TO semuser1, semuser2, semuser3")
+	mustExec(c, se, "GRANT SYSTEM_USER ON *.* to semuser3") // user is both restricted + has SYSTEM_USER (or super)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+
+	// low privileged user trying to set password for others
+	// nobodyuser3 = SUCCESS (not a SYSTEM_USER)
+	// nobodyuser4 = FAIL (has SYSTEM_USER)
+	// superuser2  = FAIL (has SYSTEM_USER privilege implied by SUPER)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser2", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+	_, err := se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'superuser2' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+
+	// Nobody3 has no privileges at all, but they can still alter their own password.
+	// Any other user fails.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser3", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'superuser2' IDENTIFIED BY 'newpassword'") // it checks create user before SYSTEM_USER
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+
+	// Nobody5 doesn't explicitly have CREATE USER, but mysql also accepts UDPATE on mysql.user
+	// as a substitute so it can modify nobody2 and nobody3 but not nobody4
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser5", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "semuser1", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'semuser1' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'semuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'semuser3' IDENTIFIED BY ''")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	// When SEM is enabled, even though we have UPDATE privilege on mysql.user, it explicitly
+	// denies writeable privileges to system schemas unless RESTRICTED_TABLES_ADMIN is granted.
+	// so the previous method of granting to the table instead of CREATE USER will fail now.
+	// This is intentional because SEM plugs directly into the privilege manager to DENY
+	// any request for UpdatePriv on mysql.user even if the privilege exists in the internal mysql.user table.
+
+	// UpdatePriv on mysql.user
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser5", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+
+	// actual CreateUserPriv
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser2", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+
+	// UpdatePriv on mysql.user but also has RESTRICTED_TABLES_ADMIN
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "semuser1", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'nobodyuser3' IDENTIFIED BY ''")
+
+	// As it has (RESTRICTED_TABLES_ADMIN + UpdatePriv on mysql.user) + RESTRICTED_USER_ADMIN it can modify other restricted_user_admins like semuser2
+	// and it can modify semuser3 because RESTRICTED_USER_ADMIN does not also need SYSTEM_USER
+	mustExec(c, se, "ALTER USER 'semuser1' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'semuser2' IDENTIFIED BY ''")
+	mustExec(c, se, "ALTER USER 'semuser3' IDENTIFIED BY ''")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'semuser1' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_USER_ADMIN privilege(s) for this operation")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "semuser4", Hostname: "localhost"}, nil, nil), IsTrue)
+	// has restricted_user_admin but not CREATE USER or (update on mysql.user + RESTRICTED_TABLES_ADMIN)
+	mustExec(c, se, "ALTER USER 'semuser4' IDENTIFIED BY ''") // can modify self
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'nobodyuser3' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'semuser1' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), "ALTER USER 'semuser3' IDENTIFIED BY 'newpassword'")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
 }
 
 func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
@@ -902,9 +1001,12 @@ func (s *testPrivilegeSuite) TestConfigPrivilege(c *C) {
 	mustExec(c, se, `REVOKE CONFIG ON *.* FROM tcd2`)
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthHostname: "tcd1", AuthUsername: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, `SHOW CONFIG`)
 	mustExec(c, se, `SET CONFIG TIKV testkey="testval"`)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthHostname: "tcd2", AuthUsername: "%"}, nil, nil), IsTrue)
-	_, err := se.ExecuteInternal(context.Background(), `SET CONFIG TIKV testkey="testval"`)
+	_, err := se.ExecuteInternal(context.Background(), `SHOW CONFIG`)
+	c.Assert(err, ErrorMatches, ".*you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), `SET CONFIG TIKV testkey="testval"`)
 	c.Assert(err, ErrorMatches, ".*you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation")
 	mustExec(c, se, `DROP USER tcd1, tcd2`)
 }
@@ -1347,10 +1449,8 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
 	tk.MustExec("GRANT SUPER ON *.* to uroot1 WITH GRANT OPTION") // super not process
 	tk.MustExec("GRANT SUPER, PROCESS, RESTRICTED_TABLES_ADMIN ON *.* to uroot2 WITH GRANT OPTION")
 	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "uroot1",
-		Hostname:     "localhost",
-		AuthUsername: "uroot",
-		AuthHostname: "%",
+		Username: "uroot1",
+		Hostname: "localhost",
 	}, nil, nil)
 
 	sem.Enable()
@@ -1358,22 +1458,99 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeInfoschema(c *C) {
 
 	// Even though we have super, we still can't read protected information from tidb_servers_info, cluster_* tables
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NOT NULL`).Check(testkit.Rows("0"))
-	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NOT NULL`).Check(testkit.Rows("0"))
-	// 36 = a UUID. Normally it is an IP address.
-	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.CLUSTER_STATEMENTS_SUMMARY WHERE length(instance) != 36`).Check(testkit.Rows("0"))
+	err := tk.QueryToErr(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NOT NULL`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
 	// That is unless we have the RESTRICTED_TABLES_ADMIN privilege
 	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "uroot2",
-		Hostname:     "localhost",
-		AuthUsername: "uroot",
-		AuthHostname: "%",
+		Username: "uroot2",
+		Hostname: "localhost",
 	}, nil, nil)
 
 	// flip from is NOT NULL etc
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.tidb_servers_info WHERE ip IS NULL`).Check(testkit.Rows("0"))
 	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.cluster_info WHERE status_address IS NULL`).Check(testkit.Rows("0"))
-	tk.MustQuery(`SELECT COUNT(*) FROM information_schema.CLUSTER_STATEMENTS_SUMMARY WHERE length(instance) = 36`).Check(testkit.Rows("0"))
+}
+
+func (s *testPrivilegeSuite) TestClusterConfigInfoschema(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER ccnobody, ccconfig, ccprocess")
+	tk.MustExec("GRANT CONFIG ON *.* TO ccconfig")
+	tk.MustExec("GRANT Process ON *.* TO ccprocess")
+
+	// incorrect/no permissions
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "ccnobody",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT USAGE ON *.* TO 'ccnobody'@'%'"))
+
+	err := tk.QueryToErr("SELECT * FROM information_schema.cluster_config")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CONFIG privilege(s) for this operation")
+
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_hardware")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CONFIG privilege(s) for this operation")
+
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_info")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_load")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_systeminfo")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_log WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	// With correct/CONFIG permissions
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "ccconfig",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT CONFIG ON *.* TO 'ccconfig'@'%'"))
+	// Needs CONFIG privilege
+	tk.MustQuery("SELECT * FROM information_schema.cluster_config")
+	tk.MustQuery("SELECT * FROM information_schema.cluster_HARDWARE")
+	// Missing Process privilege
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_INFO")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_LOAD")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_SYSTEMINFO")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+	err = tk.QueryToErr("SELECT * FROM information_schema.cluster_LOG WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	// With correct/Process permissions
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "ccprocess",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT PROCESS ON *.* TO 'ccprocess'@'%'"))
+	// Needs Process privilege
+	tk.MustQuery("SELECT * FROM information_schema.CLUSTER_info")
+	tk.MustQuery("SELECT * FROM information_schema.CLUSTER_load")
+	tk.MustQuery("SELECT * FROM information_schema.CLUSTER_systeminfo")
+	tk.MustQuery("SELECT * FROM information_schema.CLUSTER_log WHERE time BETWEEN '1970-07-13 00:00:00' AND '1970-07-13 02:00:00' AND message like '%'")
+	// Missing CONFIG privilege
+	err = tk.QueryToErr("SELECT * FROM information_schema.CLUSTER_config")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CONFIG privilege(s) for this operation")
+	err = tk.QueryToErr("SELECT * FROM information_schema.CLUSTER_hardware")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the CONFIG privilege(s) for this operation")
 }
 
 func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
@@ -1385,11 +1562,38 @@ func (s *testPrivilegeSuite) TestSecurityEnhancedModeStatusVars(c *C) {
 	tk.MustExec("CREATE USER unostatus, ustatus")
 	tk.MustExec("GRANT RESTRICTED_STATUS_ADMIN ON *.* to ustatus")
 	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "unostatus",
-		Hostname:     "localhost",
-		AuthUsername: "uroot",
-		AuthHostname: "%",
+		Username: "unostatus",
+		Hostname: "localhost",
 	}, nil, nil)
+
+}
+
+func (s *testPrivilegeSuite) TestSecurityEnhancedLocalBackupRestore(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER backuprestore")
+	tk.MustExec("GRANT BACKUP_ADMIN,RESTORE_ADMIN ON *.* to backuprestore")
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "backuprestore",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	// Prior to SEM nolocal has permission, the error should be because backup requires tikv
+	_, err := tk.Se.ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
+	c.Assert(err.Error(), Equals, "BACKUP requires tikv store, not unistore")
+
+	_, err = tk.Se.ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
+	c.Assert(err.Error(), Equals, "RESTORE requires tikv store, not unistore")
+
+	sem.Enable()
+	defer sem.Disable()
+
+	// With SEM enabled nolocal does not have permission, but yeslocal does.
+	_, err = tk.Se.ExecuteInternal(context.Background(), "BACKUP DATABASE * TO 'Local:///tmp/test';")
+	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
+
+	_, err = tk.Se.ExecuteInternal(context.Background(), "RESTORE DATABASE * FROM 'LOCAl:///tmp/test';")
+	c.Assert(err.Error(), Equals, "[planner:8132]Feature 'local://' is not supported when security enhanced mode is enabled")
+
 }
 
 func (s *testPrivilegeSuite) TestRenameUser(c *C) {
@@ -1597,4 +1801,108 @@ func (s *testPrivilegeSuite) TestDynamicPrivsRegistration(c *C) {
 		c.Assert(err, IsNil)
 		tk.MustExec(sqlGrant)
 	}
+}
+
+func (s *testPrivilegeSuite) TestInfoschemaUserPrivileges(c *C) {
+	// Being able to read all privileges from information_schema.user_privileges requires a very specific set of permissions.
+	// SUPER user is not sufficient. It was observed in MySQL to require SELECT on mysql.*
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER isnobody, isroot, isselectonmysqluser, isselectonmysql")
+	tk.MustExec("GRANT SUPER ON *.* TO isroot")
+	tk.MustExec("GRANT SELECT ON mysql.user TO isselectonmysqluser")
+	tk.MustExec("GRANT SELECT ON mysql.* TO isselectonmysql")
+
+	// First as Nobody
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "isnobody",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	// I can see myself, but I can not see other users
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows("'isnobody'@'%' def USAGE NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows())
+
+	// Basically the same result as as isselectonmysqluser
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "isselectonmysqluser",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	// Now as isselectonmysqluser
+	// Tests discovered issue that SELECT on mysql.user is not sufficient. It must be on mysql.*
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows("'isselectonmysqluser'@'%' def USAGE NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysql'@'%'"`).Check(testkit.Rows())
+
+	// Now as root
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "isroot",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	// I can see myself, but I can not see other users
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows())
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows("'isroot'@'%' def SUPER NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows())
+
+	// Now as isselectonmysqluser
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "isselectonmysql",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	// Now as isselectonmysqluser
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isnobody'@'%'"`).Check(testkit.Rows("'isnobody'@'%' def USAGE NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows("'isroot'@'%' def SUPER NO"))
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows("'isselectonmysqluser'@'%' def USAGE NO"))
+}
+
+// Issues https://github.com/pingcap/tidb/issues/25972 and https://github.com/pingcap/tidb/issues/26451
+func (s *testPrivilegeSuite) TestGrantOptionAndRevoke(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("DROP USER IF EXISTS u1, u2, u3, ruser")
+	tk.MustExec("CREATE USER u1, u2, u3, ruser")
+	tk.MustExec("GRANT ALL ON *.* TO ruser WITH GRANT OPTION")
+	tk.MustExec("GRANT SELECT ON *.* TO u1 WITH GRANT OPTION")
+	tk.MustExec("GRANT UPDATE, DELETE on db.* TO u1")
+
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "ruser",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	tk.MustQuery(`SHOW GRANTS FOR u1`).Check(testkit.Rows("GRANT SELECT ON *.* TO 'u1'@'%' WITH GRANT OPTION", "GRANT UPDATE,DELETE ON db.* TO 'u1'@'%'"))
+
+	tk.MustExec("GRANT SELECT ON d1.* to u2")
+	tk.MustExec("GRANT SELECT ON d2.* to u2 WITH GRANT OPTION")
+	tk.MustExec("GRANT SELECT ON d3.* to u2")
+	tk.MustExec("GRANT SELECT ON d4.* to u2")
+	tk.MustExec("GRANT SELECT ON d5.* to u2")
+	tk.MustQuery(`SHOW GRANTS FOR u2;`).Sort().Check(testkit.Rows(
+		"GRANT SELECT ON d1.* TO 'u2'@'%'",
+		"GRANT SELECT ON d2.* TO 'u2'@'%' WITH GRANT OPTION",
+		"GRANT SELECT ON d3.* TO 'u2'@'%'",
+		"GRANT SELECT ON d4.* TO 'u2'@'%'",
+		"GRANT SELECT ON d5.* TO 'u2'@'%'",
+		"GRANT USAGE ON *.* TO 'u2'@'%'",
+	))
+
+	tk.MustExec("grant all on hchwang.* to u3 with grant option")
+	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT ALL PRIVILEGES ON hchwang.* TO 'u3'@'%' WITH GRANT OPTION"))
+	tk.MustExec("revoke all on hchwang.* from u3")
+	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT USAGE ON hchwang.* TO 'u3'@'%' WITH GRANT OPTION"))
+
+	// Same again but with column privileges.
+
+	tk.MustExec("DROP TABLE IF EXISTS test.testgrant")
+	tk.MustExec("CREATE TABLE test.testgrant (a int)")
+	tk.MustExec("grant all on test.testgrant to u3 with grant option")
+	tk.MustExec("revoke all on test.testgrant from u3")
+	tk.MustQuery(`SHOW GRANTS FOR u3`).Sort().Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'u3'@'%'",
+		"GRANT USAGE ON hchwang.* TO 'u3'@'%' WITH GRANT OPTION",
+		"GRANT USAGE ON test.testgrant TO 'u3'@'%' WITH GRANT OPTION",
+	))
 }

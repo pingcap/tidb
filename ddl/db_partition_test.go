@@ -2081,9 +2081,6 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 }
 
 func (s *testSerialDBSuite1) TestExchangePartitionExpressIndex(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
@@ -2992,7 +2989,7 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 	info := tbl.Meta().GetPartitionInfo()
 	for _, def := range info.Definitions {
 		pid := def.ID
-		partition := tbl.(table.PartitionedTable).GetPartition(pid)
+		partition := tbl.GetPartition(pid)
 		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		err := tables.IterRecords(partition, ctx, partition.Cols(),
 			func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -3418,4 +3415,37 @@ func (s *testSerialDBSuite1) TestAddTableWithPartition(c *C) {
 	    partition p3 values in (5,null)
 	) ON COMMIT DELETE ROWS;`, errno.ErrPartitionNoTemporary)
 	tk.MustExec("drop table if exists partition_list_table;")
+}
+
+func (s *testSerialDBSuite1) TestTruncatePartitionMultipleTimes(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists test.t;")
+	tk.MustExec(`create table test.t (a int primary key) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (maxvalue));`)
+	dom := domain.GetDomain(tk.Se)
+	originHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originHook)
+	hook := &ddl.TestDDLCallback{}
+	dom.DDL().SetHook(hook)
+	injected := false
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionTruncateTablePartition && job.SnapshotVer == 0 && !injected {
+			injected = true
+			time.Sleep(30 * time.Millisecond)
+		}
+	}
+	var errCount int32
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if job.Type == model.ActionTruncateTablePartition && job.Error != nil {
+			atomic.AddInt32(&errCount, 1)
+		}
+	}
+	done1 := make(chan error, 1)
+	go backgroundExec(s.store, "alter table test.t truncate partition p0;", done1)
+	done2 := make(chan error, 1)
+	go backgroundExec(s.store, "alter table test.t truncate partition p0;", done2)
+	<-done1
+	<-done2
+	c.Assert(errCount, LessEqual, int32(1))
 }

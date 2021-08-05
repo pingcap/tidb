@@ -22,6 +22,7 @@ import (
 	"time"
 
 	pingcapErrors "github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
@@ -91,7 +92,7 @@ func updateCurrentSQB(ctx sessionctx.Context) (err error) {
 	pQueryCtx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 	defer cancel()
 	pQueryTs := time.Now().Add(-time.Minute)
-	promQL := "tidb_server_slow_query_process_duration_seconds_bucket{sql_type=\"general\"}"
+	promQL := "avg(tidb_server_slow_query_process_duration_seconds_bucket{sql_type=\"general\"}) by (le)"
 	value, err := querySQLMetric(pQueryCtx, pQueryTs, promQL)
 
 	if err != nil && err != infosync.ErrPrometheusAddrIsNotSet {
@@ -141,7 +142,9 @@ func init() {
 	lastSQBInfo["+Inf"] = 0
 	currentSQBInfo["+Inf"] = 0
 
-	logutil.BgLogger().Info("Telemetry slow query stats initialized", zap.String("currentSQBInfo", currentSQBInfo.String()), zap.String("lastSQBInfo", lastSQBInfo.String()))
+	if mysql.TiDBReleaseVersion != "None" {
+		logutil.BgLogger().Debug("Telemetry slow query stats initialized", zap.String("currentSQBInfo", currentSQBInfo.String()), zap.String("lastSQBInfo", lastSQBInfo.String()))
+	}
 }
 
 // postReportSlowQueryStats copy currentSQBInfo to lastSQBInfo to be ready for next report

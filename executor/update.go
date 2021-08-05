@@ -24,11 +24,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 // UpdateExec represents a new update executor.
@@ -441,7 +441,7 @@ func (e *UpdateExec) setMessage() {
 func (e *UpdateExec) collectRuntimeStatsEnabled() bool {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
-			snapshotStats := &tikv.SnapshotRuntimeStats{}
+			snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 			e.stats = &runtimeStatsWithSnapshot{
 				SnapshotRuntimeStats: snapshotStats,
 			}

@@ -381,7 +381,7 @@ func driveRunCmd() {
 }
 
 func init() {
-	err := logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	terror.MustNil(err)
 	cwd, err1 := os.Getwd()
 	terror.MustNil(err1)

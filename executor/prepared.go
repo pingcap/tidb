@@ -182,7 +182,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	if variable.TopSQLEnabled() {
-		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil)
+		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, vars.InRestrictedSQL)
 	}
 
 	if !plannercore.PreparedPlanCacheEnabled() {
@@ -204,7 +204,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	var p plannercore.Plan
 	e.ctx.GetSessionVars().PlanID = 0
 	e.ctx.GetSessionVars().PlanColumnID = 0
-	destBuilder, _ := plannercore.NewPlanBuilder(e.ctx, ret.InfoSchema, &hint.BlockHintProcessor{})
+	destBuilder, _ := plannercore.NewPlanBuilder().Init(e.ctx, ret.InfoSchema, &hint.BlockHintProcessor{})
 	p, err = destBuilder.Build(ctx, stmt)
 	if err != nil {
 		return err
@@ -220,11 +220,12 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	preparedObj := &plannercore.CachedPrepareStmt{
-		PreparedAst:   prepared,
-		VisitInfos:    destBuilder.GetVisitInfo(),
-		NormalizedSQL: normalizedSQL,
-		SQLDigest:     digest,
-		ForUpdateRead: destBuilder.GetIsForUpdateRead(),
+		PreparedAst:         prepared,
+		VisitInfos:          destBuilder.GetVisitInfo(),
+		NormalizedSQL:       normalizedSQL,
+		SQLDigest:           digest,
+		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
+		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 	}
 	return vars.AddPreparedStmt(e.ID, preparedObj)
 }
@@ -314,7 +315,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, args []types.Datum) (sqlexec.Statement, bool, bool, error) {
+	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, args []types.Datum) (*ExecStmt, bool, bool, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
@@ -324,7 +325,6 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		return nil, false, false, err
 	}
 	execStmt.BinaryArgs = args
-	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
 		return nil, false, false, err
@@ -338,6 +338,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		Ctx:         sctx,
 		OutputNames: names,
 		Ti:          &TelemetryInfo{},
+		SnapshotTS:  snapshotTS,
 	}
 	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
 		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)

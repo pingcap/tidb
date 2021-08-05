@@ -18,7 +18,6 @@ import (
 	"math"
 	"os"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -33,8 +32,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/parser/terror"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
 )
@@ -51,12 +50,6 @@ type RPCClient struct {
 	rawHandler *rawHandler
 	persistent bool
 	closed     int32
-
-	// rpcCli uses to redirects RPC request to TiDB rpc server, It is only use for test.
-	// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
-	// sync.Once uses to avoid concurrency initialize rpcCli.
-	sync.Once
-	rpcCli Client
 }
 
 // UnistoreRPCClientSendHook exports for test.
@@ -75,10 +68,6 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			UnistoreRPCClientSendHook(req)
 		}
 	})
-
-	if req.StoreTp == tikvrpc.TiDB {
-		return c.redirectRequestToRPCServer(ctx, addr, req, timeout)
-	}
 
 	select {
 	case <-ctx.Done():
@@ -250,6 +239,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		})
 		resp.Resp, err = c.handleBatchCop(ctx, req.BatchCop(), timeout)
 	case tikvrpc.CmdMPPConn:
+		failpoint.Inject("mppConnTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(nil, errors.New("rpc error"))
+			}
+		})
 		resp.Resp, err = c.handleEstablishMPPConnection(ctx, req.EstablishMPPConn(), timeout, storeID)
 	case tikvrpc.CmdMPPTask:
 		failpoint.Inject("mppDispatchTimeout", func(val failpoint.Value) {
@@ -396,36 +390,11 @@ type Client interface {
 	SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error)
 }
 
-// GRPCClientFactory is the GRPC client factory.
-// Use global variable to avoid circle import.
-// TODO: remove this global variable.
-var GRPCClientFactory func() Client
-
-// redirectRequestToRPCServer redirects RPC request to TiDB rpc server, It is only use for test.
-// Mock TiDB rpc service will have circle import problem, so just use a real RPC client to send this RPC  server.
-func (c *RPCClient) redirectRequestToRPCServer(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
-	c.Once.Do(func() {
-		if GRPCClientFactory != nil {
-			c.rpcCli = GRPCClientFactory()
-		}
-	})
-	if c.rpcCli == nil {
-		return nil, errors.Errorf("GRPCClientFactory is nil")
-	}
-	return c.rpcCli.SendRequest(ctx, addr, req, timeout)
-}
-
 // Close closes RPCClient and cleanup temporal resources.
 func (c *RPCClient) Close() error {
 	atomic.StoreInt32(&c.closed, 1)
 	if c.usSvr != nil {
 		c.usSvr.Stop()
-	}
-	if c.rpcCli != nil {
-		err := c.rpcCli.Close()
-		if err != nil {
-			return err
-		}
 	}
 	if !c.persistent && c.path != "" {
 		err := os.RemoveAll(c.path)

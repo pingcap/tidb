@@ -31,7 +31,8 @@
       "select count(1) from t join (select max(a) from t where false group by a) as tmp",
       "select count(1) from t join (select min(a) from t where false group by a) as tmp",
       "select count(1) from t join (select sum(a) from t where false group by a) as tmp",
-      "select count(1) from t join (select avg(a) from t where false group by a) as tmp"
+      "select count(1) from t join (select avg(a) from t where false group by a) as tmp",
+      "SELECT avg(2) FROM(SELECT min(c) FROM t JOIN(SELECT 1 c) d ORDER BY a) e"
     ]
   },
   {
@@ -308,6 +309,26 @@
       "select count(*) from s1",
       "select sum(1) from s1",
       "select count(1) as cnt from s1 union select count(1) as cnt from s2"
+    ]
+  },
+  {
+    "name": "TestIsMatchProp",
+    "cases": [
+      "select a, b, c from t1 where a > 3 and b = 4 order by a, c",
+      "select * from t2 where a = 1 and c = 2 order by b, d",
+      "select a, b, c from t1 where (a = 1 and b = 1 and c = 1) or (a = 1 and b = 1 and c = 2) order by c",
+      "select a, b, c from t1 where (a = 1 and b = 1 and c < 3) or (a = 1 and b = 1 and c > 6) order by c",
+      "select * from t2 where ((a = 1 and b = 1 and d < 3) or (a = 1 and b = 1 and d > 6)) and c = 3 order by d"
+    ]
+  },
+  {
+    "name": "TestHeuristicIndexSelection",
+    "cases": [
+      "select * from t1 where a = 3 or a = 5",
+      "select f, g from t1 where f = 2 and g in (3, 4, 5)",
+      "select * from t1 where c = 1 and (d = 2 or d = 3) and e in (4, 5)",
+      "select f, g from t1 where f = 2 and g > 3",
+      "select a, b, c from t2 where a = 1 and b = 2 and c in (1, 2, 3, 4, 5);"
     ]
   }
 ]

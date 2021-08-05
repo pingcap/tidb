@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/collate"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	. "github.com/pingcap/tidb/util/testutil"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 // Make it serial because config is modified in test cases.
@@ -61,7 +61,7 @@ var _ = Suite(&testIntegrationSuite7{&testIntegrationSuite{}})
 type testSerialSuite struct {
 	CommonHandleSuite
 	store   kv.Storage
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	dom     *domain.Domain
 }
 
@@ -76,7 +76,7 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 
 	var err error
 	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
@@ -525,6 +525,10 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 
 	tk.MustExec("drop database ctwl_db")
 	tk.MustExec("drop database ctwl_db1")
+}
+
+func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 
 	// Test create table like at temporary mode.
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
@@ -532,9 +536,116 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	tk.MustExec("drop table if exists temporary_table;")
 	tk.MustExec("create global temporary table temporary_table (a int, b int,index(a)) on commit delete rows")
 	tk.MustExec("drop table if exists temporary_table_t1;")
-	_, err = tk.Exec("create table temporary_table_t1 like temporary_table")
+	_, err := tk.Exec("create table temporary_table_t1 like temporary_table")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
 	tk.MustExec("drop table if exists temporary_table;")
+
+	// Test create temporary table like.
+	// Test auto_random.
+	tk.MustExec("drop table if exists auto_random_table")
+	_, err = tk.Exec("create table auto_random_table (a bigint primary key auto_random(3), b varchar(255));")
+	defer tk.MustExec("drop table if exists auto_random_table")
+	tk.MustExec("drop table if exists auto_random_temporary_global")
+	_, err = tk.Exec("create global temporary table auto_random_temporary_global like auto_random_table on commit delete rows;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error())
+
+	// Test pre split regions.
+	tk.MustExec("drop table if exists table_pre_split")
+	_, err = tk.Exec("create table table_pre_split(id int) shard_row_id_bits = 2 pre_split_regions=2;")
+	defer tk.MustExec("drop table if exists table_pre_split")
+	tk.MustExec("drop table if exists temporary_table_pre_split")
+	_, err = tk.Exec("create global temporary table temporary_table_pre_split like table_pre_split ON COMMIT DELETE ROWS;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error())
+
+	// Test shard_row_id_bits.
+	tk.MustExec("drop table if exists shard_row_id_table, shard_row_id_temporary_table, shard_row_id_table_plus, shard_row_id_temporary_table_plus")
+	_, err = tk.Exec("create table shard_row_id_table (a int) shard_row_id_bits = 5;")
+	_, err = tk.Exec("create global temporary table shard_row_id_temporary_table like shard_row_id_table on commit delete rows;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
+	tk.MustExec("create table shard_row_id_table_plus (a int);")
+	tk.MustExec("create global temporary table shard_row_id_temporary_table_plus (a int) on commit delete rows;")
+	defer tk.MustExec("drop table if exists shard_row_id_table, shard_row_id_temporary_table, shard_row_id_table_plus, shard_row_id_temporary_table_plus")
+	_, err = tk.Exec("alter table shard_row_id_temporary_table_plus shard_row_id_bits = 4;")
+	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
+
+	// Test partition.
+	tk.MustExec("drop table if exists global_partition_table;")
+	tk.MustExec("create table global_partition_table (a int, b int) partition by hash(a) partitions 3;")
+	defer tk.MustExec("drop table if exists global_partition_table;")
+	tk.MustGetErrCode("create global temporary table global_partition_temp_table like global_partition_table ON COMMIT DELETE ROWS;",
+		errno.ErrPartitionNoTemporary)
+	// Test virtual columns.
+	tk.MustExec("drop table if exists test_gv_ddl, test_gv_ddl_temp")
+	tk.MustExec(`create table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored)`)
+	tk.MustExec(`create global temporary table test_gv_ddl_temp like test_gv_ddl on commit delete rows;`)
+	defer tk.MustExec("drop table if exists test_gv_ddl_temp, test_gv_ddl")
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
+	c.Assert(err, IsNil)
+	testCases := []struct {
+		generatedExprString string
+		generatedStored     bool
+	}{
+		{"", false},
+		{"`a` + 8", false},
+		{"`b` + 2", true},
+	}
+	for i, column := range table.Meta().Columns {
+		c.Assert(column.GeneratedExprString, Equals, testCases[i].generatedExprString)
+		c.Assert(column.GeneratedStored, Equals, testCases[i].generatedStored)
+	}
+	result := tk.MustQuery(`DESC test_gv_ddl_temp`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test_gv_ddl_temp values (1, default, default)")
+	tk.MustQuery("select * from test_gv_ddl_temp").Check(testkit.Rows("1 9 11"))
+	_, err = tk.Exec("commit")
+	c.Assert(err, IsNil)
+
+	// Test foreign key.
+	tk.MustExec("drop table if exists test_foreign_key, t1")
+	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustExec("create table test_foreign_key (c int,d int,foreign key (d) references t1 (b));")
+	defer tk.MustExec("drop table if exists test_foreign_key, t1;")
+	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows;")
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_foreign_key_temp"))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	c.Assert(len(tableInfo.ForeignKeys), Equals, 0)
+
+	// Issue 25613.
+	// Test from->normal, to->normal.
+	tk.MustExec("drop table if exists tb1, tb2")
+	tk.MustExec("create table tb1(id int);")
+	tk.MustExec("create table tb2 like tb1")
+	defer tk.MustExec("drop table if exists tb1, tb2")
+	tk.MustQuery("show create table tb2;").Check(testkit.Rows("tb2 CREATE TABLE `tb2` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Test from->normal, to->global temporary.
+	tk.MustExec("drop table if exists tb3, tb4")
+	tk.MustExec("create table tb3(id int);")
+	tk.MustExec("create global temporary table tb4 like tb3 on commit delete rows;")
+	defer tk.MustExec("drop table if exists tb3, tb4")
+	tk.MustQuery("show create table tb4;").Check(testkit.Rows("tb4 CREATE GLOBAL TEMPORARY TABLE `tb4` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"))
+
+	// Test from->global temporary, to->normal.
+	tk.MustExec("drop table if exists tb5, tb6")
+	tk.MustExec("create global temporary table tb5(id int) on commit delete rows;")
+	_, err = tk.Exec("create table tb6 like tb5;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
+	defer tk.MustExec("drop table if exists tb5, tb6")
+
+	// Test from->global temporary, to->global temporary.
+	tk.MustExec("drop table if exists tb7, tb8")
+	tk.MustExec("create global temporary table tb7(id int) on commit delete rows;")
+	_, err = tk.Exec("create global temporary table tb8 like tb7 on commit delete rows;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
+	defer tk.MustExec("drop table if exists tb7, tb8")
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
@@ -764,7 +875,7 @@ func (s *testSerialSuite) TestRecoverTableByJobIDFail(c *C) {
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
-			c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`), IsNil)
+			c.Assert(failpoint.Enable("tikvclient/mockCommitError", `return(true)`), IsNil)
 			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`), IsNil)
 		}
 	}
@@ -774,7 +885,7 @@ func (s *testSerialSuite) TestRecoverTableByJobIDFail(c *C) {
 
 	// do recover table.
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/mockCommitError"), IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr"), IsNil)
 
 	// make sure enable GC after recover table.
@@ -824,7 +935,7 @@ func (s *testSerialSuite) TestRecoverTableByTableNameFail(c *C) {
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
-			c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`), IsNil)
+			c.Assert(failpoint.Enable("tikvclient/mockCommitError", `return(true)`), IsNil)
 			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`), IsNil)
 		}
 	}
@@ -834,7 +945,7 @@ func (s *testSerialSuite) TestRecoverTableByTableNameFail(c *C) {
 
 	// do recover table.
 	tk.MustExec("recover table t_recover")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/mockCommitError"), IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr"), IsNil)
 
 	// make sure enable GC after recover table.
@@ -1579,4 +1690,30 @@ func (s *testSerialSuite) TestCheckEnumLength(c *C) {
 	tk.MustGetErrCode("create table t5 (a enum('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))", errno.ErrTooLongValueForType)
 	tk.MustGetErrCode("create table t5 (a set('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))", errno.ErrTooLongValueForType)
 	tk.MustExec("drop table if exists t1,t2,t3,t4,t5")
+}
+
+func (s *testSerialDBSuite) TestLocalTemporaryTableBlockedDDL(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_enable_noop_functions = 1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create temporary table tmp1 (id int primary key, a int unique, b int)")
+	err := tk.ExecToErr("rename table tmp1 to tmp2")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("alter table tmp1 add column c int")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("alter table tmp1 add index b(b)")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("create index a on tmp1(b)")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("drop index a on tmp1")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("lock tables tmp1 read")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("lock tables tmp1 write")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("lock tables t1 read, tmp1 read")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("admin cleanup table lock tmp1")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
 }

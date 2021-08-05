@@ -1071,7 +1071,7 @@ func (s *testSuite3) TestInsertFloatOverflow(c *C) {
 	tk.MustExec("drop table if exists t,t1")
 }
 
-// There is a potential issue in MySQL: when the value of auto_increment_offset is greater
+// TestAutoIDIncrementAndOffset There is a potential issue in MySQL: when the value of auto_increment_offset is greater
 // than that of auto_increment_increment, the value of auto_increment_offset is ignored
 // (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
 // This issue is a flaw of the implementation of MySQL and it doesn't exist in TiDB.
@@ -1571,6 +1571,22 @@ func combination(items []string) func() []string {
 	}
 }
 
+// TestDuplicatedEntryErr See https://github.com/pingcap/tidb/issues/24582
+func (s *testSuite10) TestDuplicatedEntryErr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a int, b varchar(20), primary key(a,b(3)) clustered);")
+	tk.MustExec("insert into t1 values(1,'aaaaa');")
+	err := tk.ExecToErr("insert into t1 values(1,'aaaaa');")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'")
+	err = tk.ExecToErr("insert into t1 select 1, 'aaa'")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-aaa' for key 'PRIMARY'")
+	tk.MustExec("insert into t1 select 1, 'bb'")
+	err = tk.ExecToErr("insert into t1 select 1, 'bb'")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-bb' for key 'PRIMARY'")
+}
+
 func (s *testSuite10) TestBinaryLiteralInsertToEnum(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
@@ -1709,4 +1725,21 @@ func (s *testSuite13) TestGlobalTempTableParallel(c *C) {
 		go insertFunc()
 	}
 	wg.Wait()
+}
+
+func (s *testSuite13) TestIssue26762(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 date);")
+	_, err := tk.Exec("insert into t1 values('2020-02-31');")
+	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
+
+	tk.MustExec("set @@sql_mode='ALLOW_INVALID_DATES';")
+	tk.MustExec("insert into t1 values('2020-02-31');")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2020-02-31"))
+
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES';")
+	_, err = tk.Exec("insert into t1 values('2020-02-31');")
+	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
 }

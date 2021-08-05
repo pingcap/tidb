@@ -346,3 +346,17 @@ func (s *testBatchPointGetSuite) TestPointGetForTemporaryTable(c *C) {
 	tk.MustQuery("select * from t1 where id = 1").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select * from t1 where id = 2").Check(testkit.Rows())
 }
+
+func (s *testBatchPointGetSuite) TestBatchPointGetIssue25167(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	defer func() {
+		tk.MustExec("drop table if exists t")
+	}()
+	time.Sleep(50 * time.Millisecond)
+	tk.MustExec("set @a=(select current_timestamp(3))")
+	tk.MustExec("insert into t values (1)")
+	tk.MustQuery("select * from t as of timestamp @a where a in (1,2,3)").Check(testkit.Rows())
+}

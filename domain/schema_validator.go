@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -234,7 +234,8 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 
 	// Schema changed, result decided by whether related tables change.
 	if schemaVer < s.latestSchemaVer {
-		// When a transaction executes a DDL, relatedPhysicalTableIDs is nil.
+		// When a transaction executes a DDL and got an error, it should manually call this method to check if it is caused by schema change.
+		// And then it will pass a nil for relatedPhysicalTableIDs to indicate just check schema version.
 		// When a transaction only contains DML on temporary tables, relatedPhysicalTableIDs is [].
 		if relatedPhysicalTableIDs == nil {
 			logutil.BgLogger().Info("the related physical table ID is empty", zap.Int64("schemaVer", schemaVer),

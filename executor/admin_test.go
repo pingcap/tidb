@@ -86,6 +86,8 @@ func (s *testSuite5) TestAdminCheckIndexInTemporaryMode(c *C) {
 	tk.MustExec("insert temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
 	_, err := tk.Exec("admin check table temporary_admin_test;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table").Error())
+	_, err = tk.Exec("admin check index temporary_admin_test c1;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin check index").Error())
 	tk.MustExec("drop table if exists temporary_admin_test;")
 
 	tk.MustExec("drop table if exists non_temporary_admin_test;")
@@ -103,6 +105,28 @@ func (s *testSuite5) TestAdminCheckIndexInTemporaryMode(c *C) {
 	_, err = tk.Exec("admin checksum table temporary_admin_checksum_table_without_index_test;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
 	tk.MustExec("drop table if exists temporary_admin_checksum_table_with_index_test,temporary_admin_checksum_table_without_index_test;")
+}
+
+func (s *testSuite5) TestAdminCheckIndexInLocalTemporaryMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_noop_functions = 1")
+	tk.MustExec("drop table if exists local_temporary_admin_test;")
+	tk.MustExec("create temporary table local_temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2))")
+	tk.MustExec("insert local_temporary_admin_test (c1, c2) values (1,1), (2,2), (3,3);")
+	_, err := tk.Exec("admin check table local_temporary_admin_test;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table").Error())
+	tk.MustExec("drop table if exists temporary_admin_test;")
+
+	tk.MustExec("drop table if exists local_temporary_admin_checksum_table_with_index_test;")
+	tk.MustExec("drop table if exists local_temporary_admin_checksum_table_without_index_test;")
+	tk.MustExec("create temporary table local_temporary_admin_checksum_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count))")
+	tk.MustExec("create temporary table local_temporary_admin_checksum_table_without_index_test (id int, count int, PRIMARY KEY(id))")
+	_, err = tk.Exec("admin checksum table local_temporary_admin_checksum_table_with_index_test;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
+	_, err = tk.Exec("admin checksum table local_temporary_admin_checksum_table_without_index_test;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
+	tk.MustExec("drop table if exists local_temporary_admin_checksum_table_with_index_test,local_temporary_admin_checksum_table_without_index_test;")
 }
 
 func (s *testSuite5) TestAdminRecoverIndex(c *C) {
@@ -1076,8 +1100,7 @@ func (s *testSuite8) TestAdminCheckTable(c *C) {
 	tk.MustExec(`create table t1 (a decimal(2,1), index(a))`)
 	tk.MustExec(`insert into t1 set a='1.9'`)
 	err = tk.ExecToErr(`alter table t1 modify column a decimal(3,2);`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: decimal change from decimal(2, 1) to decimal(3, 2), and tidb_enable_change_column_type is false")
+	c.Assert(err, IsNil)
 	tk.MustExec(`delete from t1;`)
 	tk.MustExec(`admin check table t1;`)
 }

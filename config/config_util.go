@@ -24,7 +24,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
-	tikvcfg "github.com/pingcap/tidb/store/tikv/config"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 )
 
 // CloneConf deeply clones this config.
@@ -155,7 +155,7 @@ func flatten(flatMap map[string]interface{}, nested interface{}, prefix string) 
 	}
 }
 
-// GetTxnScopeFromConfig extracts @@txn_scope value from config
-func GetTxnScopeFromConfig() (bool, string) {
+// GetTxnScopeFromConfig extracts @@txn_scope value from the config.
+func GetTxnScopeFromConfig() string {
 	return tikvcfg.GetTxnScopeFromConfig()
 }

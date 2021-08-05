@@ -62,7 +62,7 @@ func (s *testSessionSerialSuite) TestGetTSFailDirtyState(c *C) {
 func (s *testSessionSerialSuite) TestGetTSFailDirtyStateInretry(c *C) {
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitError"), IsNil)
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockGetTSErrorInRetry"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/mockGetTSErrorInRetry"), IsNil)
 	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -71,7 +71,7 @@ func (s *testSessionSerialSuite) TestGetTSFailDirtyStateInretry(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitError", `return(true)`), IsNil)
 	// This test will mock a PD timeout error, and recover then.
 	// Just make mockGetTSErrorInRetry return true once, and then return false.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockGetTSErrorInRetry",
+	c.Assert(failpoint.Enable("tikvclient/mockGetTSErrorInRetry",
 		`1*return(true)->return(false)`), IsNil)
 	tk.MustExec("insert into t values (2)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("2"))
@@ -83,8 +83,8 @@ func (s *testSessionSerialSuite) TestKillFlagInBackoff(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table kill_backoff (id int)")
 	// Inject 1 time timeout. If `Killed` is not successfully passed, it will retry and complete query.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("timeout")->return("")`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+	c.Assert(failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")->return("")`), IsNil)
+	defer failpoint.Disable("tikvclient/tikvStoreSendReqResult")
 	// Set kill flag and check its passed to backoffer.
 	tk.Se.GetSessionVars().Killed = 1
 	rs, err := tk.Exec("select * from kill_backoff")
@@ -96,8 +96,8 @@ func (s *testSessionSerialSuite) TestKillFlagInBackoff(c *C) {
 
 func (s *testSessionSerialSuite) TestClusterTableSendError(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", `return("requestTiDBStoreError")`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+	c.Assert(failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("requestTiDBStoreError")`), IsNil)
+	defer failpoint.Disable("tikvclient/tikvStoreSendReqResult")
 	tk.MustQuery("select * from information_schema.cluster_slow_query")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err, ErrorMatches, ".*TiDB server timeout, address is.*")
@@ -109,9 +109,9 @@ func (s *testSessionSerialSuite) TestAutoCommitNeedNotLinearizability(c *C) {
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (c int)`)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/getMinCommitTSFromTSO", `panic`), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/getMinCommitTSFromTSO", `panic`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/getMinCommitTSFromTSO"), IsNil)
+		c.Assert(failpoint.Disable("tikvclient/getMinCommitTSFromTSO"), IsNil)
 	}()
 
 	c.Assert(tk.Se.GetSessionVars().SetSystemVar("tidb_enable_async_commit", "1"), IsNil)
