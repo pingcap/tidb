@@ -9976,6 +9976,13 @@ ShowStmt:
 			Table: $4.(*ast.TableName),
 		}
 	}
+|	"SHOW" "CREATE" "PLACEMENT" "POLICY" PolicyName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:     ast.ShowCreatePlacementPolicy,
+			DBName: $5,
+		}
+	}
 |	"SHOW" "CREATE" "USER" Username
 	{
 		// See https://dev.mysql.com/doc/refman/5.7/en/show-create-user.html

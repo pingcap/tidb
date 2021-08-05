@@ -3266,6 +3266,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop placement policy x, y", false, ""},
 		{"drop placement policy if exists x", true, "DROP PLACEMENT POLICY IF EXISTS `x`"},
 		{"drop placement policy if exists x, y", false, ""},
+		// for show create placement policy
+		{"show create placement policy x", true, "SHOW CREATE PLACEMENT POLICY `x`"},
+		{"show create placement policy if exists x", false, ""},
+		{"show create placement policy x, y", false, ""},
+		{"show create placement policy `placement`", true, "SHOW CREATE PLACEMENT POLICY `placement`"},
 	}
 	s.RunTest(c, table)
 }
