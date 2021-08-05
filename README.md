@@ -46,9 +46,9 @@ For more details and latest updates, see [TiDB docs](https://docs.pingcap.com/ti
 
 You can join these groups and chats to discuss and ask TiDB related questions:
 
-- [Contributors Mailing list](https://lists.tidb.io/g/contributors)
+- [TiDB Internals Forum](https://internals.tidb.io/)
 - [Slack Channel](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb)
-- [Chinese Forum](https://asktug.com)
+- [Chinese User Forum](https://asktug.com)
 
 In addition, you may enjoy following:
 
