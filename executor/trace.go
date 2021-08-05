@@ -59,10 +59,14 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
+	// Make Audit log record the correct data.
 	stmtCtx := e.ctx.GetSessionVars().StmtCtx
+	internal := e.ctx.GetSessionVars().InRestrictedSQL
 	defer func() {
 		e.ctx.GetSessionVars().StmtCtx = stmtCtx
+		e.ctx.GetSessionVars().InRestrictedSQL = internal
 	}()
+	e.ctx.GetSessionVars().InRestrictedSQL = true
 
 	store := appdash.NewMemoryStore()
 	tracer := traceImpl.NewTracer(store)
