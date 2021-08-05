@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	tmysql "github.com/pingcap/parser/mysql"
+
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/util/mock"
 

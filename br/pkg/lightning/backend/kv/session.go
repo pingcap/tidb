@@ -25,6 +25,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"

@@ -27,14 +27,15 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/parser/mysql"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/schedule/placement"
+	"go.uber.org/atomic"
+
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/tikv/pd/server/core"
-	"github.com/tikv/pd/server/schedule/placement"
-	"go.uber.org/atomic"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/restore"

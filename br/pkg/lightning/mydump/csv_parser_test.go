@@ -10,8 +10,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/types"
 	"go.uber.org/zap"
+
+	"github.com/pingcap/tidb/types"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"

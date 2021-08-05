@@ -27,10 +27,11 @@ import (
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/tidb/errno"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	tmysql "github.com/pingcap/tidb/errno"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"

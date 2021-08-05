@@ -22,11 +22,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"

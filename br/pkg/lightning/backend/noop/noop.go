@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/parser/model"
+
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 

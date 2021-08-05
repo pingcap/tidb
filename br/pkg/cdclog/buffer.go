@@ -18,10 +18,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/br/pkg/kv"
 )

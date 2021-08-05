@@ -22,10 +22,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
