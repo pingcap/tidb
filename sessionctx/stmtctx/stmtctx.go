@@ -182,6 +182,9 @@ type StatementContext struct {
 		DiskTracker disk.Tracker
 		LogOnExceed [2]memory.LogOnExceed
 	}
+
+	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
+	InVerboseExplain bool
 }
 
 // StmtHints are SessionVars related sql hints.
