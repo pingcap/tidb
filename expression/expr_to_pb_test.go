@@ -747,8 +747,108 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+<<<<<<< HEAD
 	// StrToDateDateTime
 	function, err = NewFunction(mock.NewContext(), ast.StrToDate, types.NewFieldType(mysql.TypeDatetime), stringColumn, stringColumn)
+=======
+	// sqrt
+	function, err = NewFunction(mock.NewContext(), ast.Sqrt, types.NewFieldType(mysql.TypeDouble), realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_CeilReal
+	function, err = NewFunction(mock.NewContext(), ast.Ceil, types.NewFieldType(mysql.TypeDouble), realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_CeilIntToInt
+	function, err = NewFunction(mock.NewContext(), ast.Ceil, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_CeilDecimalToInt
+	function, err = NewFunction(mock.NewContext(), ast.Ceil, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_CeilDecToDec
+	function, err = NewFunction(mock.NewContext(), ast.Ceil, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_FloorReal
+	function, err = NewFunction(mock.NewContext(), ast.Floor, types.NewFieldType(mysql.TypeDouble), realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_FloorIntToInt
+	function, err = NewFunction(mock.NewContext(), ast.Floor, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_FloorDecToInt
+	function, err = NewFunction(mock.NewContext(), ast.Floor, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_FloorDecToDec
+	function, err = NewFunction(mock.NewContext(), ast.Floor, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_Log1Arg
+	function, err = NewFunction(mock.NewContext(), ast.Log, types.NewFieldType(mysql.TypeDouble), realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_Log2Args
+	function, err = NewFunction(mock.NewContext(), ast.Log, types.NewFieldType(mysql.TypeDouble), realColumn, realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_Log2
+	function, err = NewFunction(mock.NewContext(), ast.Log2, types.NewFieldType(mysql.TypeDouble), realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_Log10
+	function, err = NewFunction(mock.NewContext(), ast.Log10, types.NewFieldType(mysql.TypeDouble), realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_Exp
+	function, err = NewFunction(mock.NewContext(), ast.Exp, types.NewFieldType(mysql.TypeDouble), realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_Pow
+	function, err = NewFunction(mock.NewContext(), ast.Pow, types.NewFieldType(mysql.TypeDouble), realColumn, realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_Radians
+	function, err = NewFunction(mock.NewContext(), ast.Radians, types.NewFieldType(mysql.TypeDouble), realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_Degrees
+	function, err = NewFunction(mock.NewContext(), ast.Degrees, types.NewFieldType(mysql.TypeDouble), realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_CRC32
+	function, err = NewFunction(mock.NewContext(), ast.CRC32, types.NewFieldType(mysql.TypeLonglong), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// ScalarFuncSig_Conv
+	function, err = NewFunction(mock.NewContext(), ast.Conv, types.NewFieldType(mysql.TypeDouble), stringColumn, intColumn, intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Replace
+	function, err = NewFunction(mock.NewContext(), ast.Replace, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn, stringColumn)
+>>>>>>> ebb7d7026... expression: Support mathematical functions pushdown to tiflash (#25596)
 	c.Assert(err, IsNil)
 	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_StrToDateDatetime)
 	exprs = append(exprs, function)
