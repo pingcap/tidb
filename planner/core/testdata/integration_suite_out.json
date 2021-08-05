@@ -1729,6 +1729,42 @@
         "Warnings": [
           "Note 1105 unique index idx_a of t2 is selected since the path only has point ranges with double scan"
         ]
+      },
+      {
+        "SQL": "select * from t3 where (a = 1 or a = 3) and b = 'xx'",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 7.60 root table:t3, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 handle of t3 is selected since the path only has point ranges"
+        ]
+      },
+      {
+        "SQL": "select * from t4 where (a = 1 or a = 3) and b = 'xx'",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 10.00 root table:t4, index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 unique index PRIMARY of t4 is selected since the path only has point ranges with double scan"
+        ]
+      },
+      {
+        "SQL": "select a, b from t3 where (a = 1 or a = 3) and b = 'xx'",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 7.60 root table:t3, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 handle of t3 is selected since the path only has point ranges"
+        ]
+      },
+      {
+        "SQL": "select a, b from t4 where (a = 1 or a = 3) and b = 'xx'",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 7.60 root table:t4, index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 unique index PRIMARY of t4 is selected since the path only has point ranges with single scan"
+        ]
       }
     ]
   },
