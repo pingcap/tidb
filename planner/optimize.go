@@ -186,8 +186,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			if err := setFoundInBinding(sctx, true); err != nil {
 				logutil.BgLogger().Warn("set tidb_found_in_binding failed", zap.Error(err))
 			}
-			if _, ok := stmtNode.(*ast.ExplainStmt); ok {
-				sessVars.StmtCtx.AppendWarning(errors.Errorf("Using the bindSQL: %v", chosenBinding.BindSQL))
+			if sessVars.StmtCtx.InVerboseExplain {
+				sessVars.StmtCtx.AppendNote(errors.Errorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			}
 		}
 		// Restore the hint to avoid changing the stmt node.
