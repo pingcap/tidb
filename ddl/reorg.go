@@ -734,7 +734,7 @@ func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key) error {
 	}
 
 	err := kv.RunInNewTxn(context.Background(), r.d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		t := meta.NewMeta(txn)
 		return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
 	})

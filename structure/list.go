@@ -118,16 +118,16 @@ func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	t.readWriter.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+	t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	if err = t.readWriter.Delete(dataKey); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	if !meta.IsEmpty() {
-		t.readWriter.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+		t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		err = t.readWriter.Set(metaKey, meta.Value())
 	} else {
-		t.readWriter.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+		t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		err = t.readWriter.Delete(metaKey)
 	}
 

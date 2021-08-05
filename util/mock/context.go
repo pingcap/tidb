@@ -84,11 +84,12 @@ func (c *Context) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	return nil, errors.Errorf("Not Supported.")
 }
 
-// set operations allowed when tikv disk full happens.
+// SetDiskFullOpt sets allowed options of current operation in each TiKV disk usage level.
 func (c *Context) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
-	c.txn.Transaction.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+	c.txn.Transaction.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 }
 
+// ClearDiskFullOpt clears allowed options of current operation in each TiKV disk usage level.
 func (c *Context) ClearDiskFullOpt() {
 	c.txn.Transaction.ClearDiskFullOpt()
 }

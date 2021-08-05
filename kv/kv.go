@@ -92,7 +92,7 @@ var (
 type RetrieverMutator interface {
 	Retriever
 	Mutator
-	// set operations allowed when tikv disk full happens.
+	// set allowed options of current operation in each TiKV disk usage level.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 }
 
@@ -135,7 +135,7 @@ type MemBuffer interface {
 	// Len returns the number of entries in the DB.
 	Len() int
 
-	// set operations allowed when tikv disk full happens.
+	// set allowed options of current operation in each TiKV disk usage level.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 }
 
@@ -193,7 +193,7 @@ type Transaction interface {
 	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
 	GetTableInfo(id int64) *model.TableInfo
 
-	// set operations allowed when tikv disk full happens.
+	// set allowed options of current operation in each TiKV disk usage level.
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// clear allowed flag
 	ClearDiskFullOpt()

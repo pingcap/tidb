@@ -695,7 +695,7 @@ func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *CleanupIndexExec) cleanTableIndex(ctx context.Context) error {
 	for {
 		errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
-			txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+			txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 			err := e.fetchIndex(ctx, txn)
 			if err != nil {
 				return err

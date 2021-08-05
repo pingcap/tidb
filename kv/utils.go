@@ -23,7 +23,7 @@ import (
 
 // IncInt64 increases the value for key k in kv store by step.
 func IncInt64(rm RetrieverMutator, k Key, step int64) (int64, error) {
-	rm.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+	rm.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	val, err := rm.Get(context.TODO(), k)
 	if IsErrNotFound(err) {
 		err = rm.Set(k, []byte(strconv.FormatInt(step, 10)))

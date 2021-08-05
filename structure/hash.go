@@ -34,7 +34,7 @@ func (t *TxStructure) HSet(key []byte, field []byte, value []byte) error {
 	if t.readWriter == nil {
 		return ErrWriteOnSnapshot
 	}
-	t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+	t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	return t.updateHash(key, field, func([]byte) ([]byte, error) {
 		return value, nil
 	})
@@ -65,7 +65,7 @@ func (t *TxStructure) HInc(key []byte, field []byte, step int64) (int64, error) 
 	if t.readWriter == nil {
 		return 0, ErrWriteOnSnapshot
 	}
-	t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+	t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	base := int64(0)
 	err := t.updateHash(key, field, func(oldValue []byte) ([]byte, error) {
 		if oldValue != nil {
@@ -111,7 +111,7 @@ func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []by
 		return nil
 	}
 
-	t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+	t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 
 	if err = t.readWriter.Set(dataKey, newValue); err != nil {
 		return errors.Trace(err)
@@ -126,7 +126,7 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 		return ErrWriteOnSnapshot
 	}
 
-	t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+	t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	for _, field := range fields {
 		dataKey := t.encodeHashDataKey(key, field)
 
@@ -190,7 +190,7 @@ func (t *TxStructure) HGetLastN(key []byte, num int) ([]HashPair, error) {
 
 // HClear removes the hash value of the key.
 func (t *TxStructure) HClear(key []byte) error {
-	t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+	t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	err := t.iterateHash(key, func(field []byte, value []byte) error {
 		k := t.encodeHashDataKey(key, field)
 		return errors.Trace(t.readWriter.Delete(k))

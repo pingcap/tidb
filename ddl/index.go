@@ -1337,7 +1337,7 @@ func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
-		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 
 		n := len(w.indexes)
 		for i, idxRecord := range idxRecords {

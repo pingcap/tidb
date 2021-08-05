@@ -1528,7 +1528,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*ast.ResultField, error) {
 	// allowed all restricted sql executed when tikv disk full happens.
-	s.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+	s.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 
 	if variable.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)

@@ -221,7 +221,7 @@ func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 	startTime := time.Now()
 	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		var err1 error
-		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		m := meta.NewMeta(txn)
 		autoID, err1 = GetAutoID(m, alloc.dbID, tableID, alloc.allocType)
 		if err1 != nil {

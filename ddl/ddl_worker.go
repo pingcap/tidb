@@ -287,8 +287,9 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			return errors.Trace(err)
 		}
 
-		// set ddl job allowed when tikv disk full.
-		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+		// Drop table need to be supported when tikv is disk full, which depends on ddl job queue.
+		// So should let ddl job queue operations set.
+		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		for i, task := range tasks {
 			job := task.job
 			job.Version = currentVersion
@@ -374,7 +375,7 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 			zap.String("job", job.String()))
 		updateRawArgs = false
 	}
-	t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+	t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
 }
 
@@ -541,22 +542,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 
 			// allow drop table when disk full
 			switch job.Type {
-			case model.ActionDropSchema:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
-			case model.ActionDropTable:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
-			case model.ActionDropIndex:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
-			case model.ActionTruncateTable:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
-			case model.ActionDropTablePartition:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
-			case model.ActionDropView:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
-			case model.ActionDropSequence:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
-			case model.ActionDropIndexes:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+			case model.ActionDropSchema, model.ActionDropTable, model.ActionDropIndex, model.ActionTruncateTable, model.ActionDropTablePartition, model.ActionDropView, model.ActionDropSequence, model.ActionDropIndexes, model.ActionTruncateTablePartition:
+				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 			default:
 				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 			}
@@ -586,7 +573,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				return errors.Trace(err)
 			}
 			writeBinlog(d.binlogCli, txn, job)
-
 			return nil
 		})
 
