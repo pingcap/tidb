@@ -26,6 +26,7 @@ import (
 )
 
 // AppendDuration appends a duration value into this Column.
+// Fsp is ignored.
 func (c *Column) AppendDuration(dur types.Duration) {
 	c.AppendInt64(int64(dur.Duration))
 }
@@ -60,8 +61,8 @@ func (c *Column) AppendSet(set types.Set) {
 // See https://arrow.apache.org/docs/format/Columnar.html#format-columnar
 type Column struct {
 	length     int
-	nullBitmap []byte // bit 0 is null, 1 is not null
-	offsets    []int64
+	nullBitmap []byte  // bit 0 is null, 1 is not null
+	offsets    []int64 // used for varLen column. Row i starts from data[offsets[i]]
 	data       []byte
 	elemBuf    []byte
 }

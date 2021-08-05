@@ -29,6 +29,8 @@ var msgErrSelNotNil = "The selection vector of Chunk is not nil. Please file a b
 // See https://arrow.apache.org/docs/format/Columnar.html#physical-memory-layout
 // Values are appended in compact format and can be directly accessed without decoding.
 // When the chunk is done processing, we can reuse the allocated memory by resetting it.
+//
+// All Chunk’s API should not do the validation work, and the user should ensure it is used correctly.
 type Chunk struct {
 	// sel indicates which rows are selected.
 	// If it is nil, all rows are selected.
@@ -349,7 +351,7 @@ func (c *Chunk) AppendRow(row Row) {
 	c.numVirtualRows++
 }
 
-// AppendPartialRow appends a row to the chunk.
+// AppendPartialRow appends a row to the chunk, starting from colOff.
 func (c *Chunk) AppendPartialRow(colOff int, row Row) {
 	c.appendSel(colOff)
 	for i, rowCol := range row.c.columns {
@@ -358,7 +360,7 @@ func (c *Chunk) AppendPartialRow(colOff int, row Row) {
 	}
 }
 
-// AppendRowByColIdxs appends a row by its colIdxs to the chunk.
+// AppendRowByColIdxs appends a row to the chunk, using the row‘s columns specified by colIdxs.
 // 1. every columns are used if colIdxs is nil.
 // 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
 func (c *Chunk) AppendRowByColIdxs(row Row, colIdxs []int) (wide int) {
@@ -367,7 +369,8 @@ func (c *Chunk) AppendRowByColIdxs(row Row, colIdxs []int) (wide int) {
 	return
 }
 
-// AppendPartialRowByColIdxs appends a row by its colIdxs to the chunk.
+// AppendPartialRowByColIdxs appends a row to the chunk starting from colOff,
+// using the row‘s columns specified by colIdxs.
 // 1. every columns are used if colIdxs is nil.
 // 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
 func (c *Chunk) AppendPartialRowByColIdxs(colOff int, row Row, colIdxs []int) (wide int) {
@@ -584,6 +587,7 @@ func (c *Chunk) AppendTime(colIdx int, t types.Time) {
 }
 
 // AppendDuration appends a Duration value to the chunk.
+// Fsp is ignored.
 func (c *Chunk) AppendDuration(colIdx int, dur types.Duration) {
 	c.appendSel(colIdx)
 	c.columns[colIdx].AppendDuration(dur)
