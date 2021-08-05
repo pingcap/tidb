@@ -10,11 +10,9 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-
-	"github.com/pingcap/tidb/br/pkg/restore"
 )
 
 var _ = Suite(&testRestoreUtilSuite{})

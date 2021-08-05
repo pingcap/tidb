@@ -24,11 +24,9 @@ import (
 	"github.com/pingcap/log"
 	timodel "github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"go.uber.org/zap"
-
-	"github.com/pingcap/tidb/types"
-
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/types"
+	"go.uber.org/zap"
 )
 
 // ColumnFlagType represents the type of Column.

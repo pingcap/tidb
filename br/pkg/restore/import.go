@@ -16,6 +16,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/conn"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/pkg/codec"
 	"go.uber.org/multierr"
@@ -26,12 +31,6 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
-
-	"github.com/pingcap/tidb/br/pkg/conn"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/br/pkg/utils"
 )
 
 const (

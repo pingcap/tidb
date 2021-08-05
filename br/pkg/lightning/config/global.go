@@ -23,7 +23,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/carlmjohnson/flagext"
 	"github.com/pingcap/errors"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 )

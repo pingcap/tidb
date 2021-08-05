@@ -18,15 +18,13 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
-	"go.uber.org/zap"
-
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/tablecodec"
-
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/tablecodec"
+	"go.uber.org/zap"
 )
 
 const (

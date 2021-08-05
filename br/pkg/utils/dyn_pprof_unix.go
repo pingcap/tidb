@@ -8,9 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	tidbutils "github.com/pingcap/tidb-tools/pkg/utils"
-
 	"github.com/pingcap/log"
+	tidbutils "github.com/pingcap/tidb-tools/pkg/utils"
 	"go.uber.org/zap"
 )
 

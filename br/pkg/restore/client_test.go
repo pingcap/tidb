@@ -8,22 +8,19 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/metautil"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/types"
-	pd "github.com/tikv/pd/client"
-	"google.golang.org/grpc/keepalive"
-
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/testleak"
-
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/testleak"
+	pd "github.com/tikv/pd/client"
+	"google.golang.org/grpc/keepalive"
 )
 
 var _ = Suite(&testRestoreClientSuite{})

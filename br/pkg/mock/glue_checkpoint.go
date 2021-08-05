@@ -6,11 +6,12 @@ package mock
 
 import (
 	context "context"
+	reflect "reflect"
+
 	gomock "github.com/golang/mock/gomock"
 	ast "github.com/pingcap/parser/ast"
 	types "github.com/pingcap/tidb/types"
 	sqlexec "github.com/pingcap/tidb/util/sqlexec"
-	reflect "reflect"
 )
 
 // MockSession is a mock of Session interface

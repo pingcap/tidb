@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-
 	"github.com/pingcap/tidb/br/pkg/rtree"
 )
 

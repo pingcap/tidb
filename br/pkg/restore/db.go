@@ -7,17 +7,14 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/pingcap/tidb/br/pkg/metautil"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
-	"go.uber.org/zap"
-
-	"github.com/pingcap/tidb/kv"
-
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/kv"
+	"go.uber.org/zap"
 )
 
 // DB is a TiDB instance, not thread-safe.

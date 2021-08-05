@@ -25,16 +25,13 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/utils"
-
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"go.uber.org/zap"
 )
 

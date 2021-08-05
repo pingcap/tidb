@@ -24,19 +24,17 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
 	"github.com/pingcap/parser/model"
-	"github.com/tikv/client-go/v2/oracle"
-	pd "github.com/tikv/pd/client"
-	"go.uber.org/zap"
-	"google.golang.org/grpc"
-
-	"github.com/pingcap/tidb/table"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/table"
+	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 const (

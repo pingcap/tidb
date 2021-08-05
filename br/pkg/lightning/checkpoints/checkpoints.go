@@ -26,9 +26,6 @@ import (
 
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
-	"go.uber.org/zap"
-	"modernc.org/mathutil"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints/checkpointspb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -36,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"go.uber.org/zap"
+	"modernc.org/mathutil"
 )
 
 type CheckpointStatus uint8

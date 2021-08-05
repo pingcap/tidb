@@ -8,14 +8,15 @@ package mock
 
 import (
 	context "context"
+	reflect "reflect"
+	time "time"
+
 	gomock "github.com/golang/mock/gomock"
 	uuid "github.com/google/uuid"
 	model "github.com/pingcap/parser/model"
 	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
 	kv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	table "github.com/pingcap/tidb/table"
-	reflect "reflect"
-	time "time"
 )
 
 // MockBackend is a mock of AbstractBackend interface

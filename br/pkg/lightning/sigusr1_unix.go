@@ -20,9 +20,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"go.uber.org/zap"
 )
 
 // handleSigUsr1 listens for the SIGUSR1 signal and executes `handler()` every time it is received.

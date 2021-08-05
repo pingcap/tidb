@@ -18,20 +18,18 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
+	"github.com/pingcap/tidb/br/pkg/conn"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/pkg/transport"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/keepalive"
-
-	"github.com/pingcap/tidb/sessionctx/variable"
-
-	"github.com/pingcap/tidb/br/pkg/conn"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/utils"
 )
 
 const (

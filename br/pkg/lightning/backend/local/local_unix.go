@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 )
 

@@ -17,10 +17,9 @@ import (
 	"github.com/coreos/go-semver/semver"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/pd/server/core"
 	"github.com/tikv/pd/server/statistics"
-
-	"github.com/pingcap/tidb/util/codec"
 )
 
 func TestT(t *testing.T) {

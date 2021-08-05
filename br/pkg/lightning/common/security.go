@@ -23,11 +23,10 @@ import (
 	"os"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/httputil"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-
-	"github.com/pingcap/tidb/br/pkg/httputil"
 )
 
 // TLS

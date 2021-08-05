@@ -19,13 +19,11 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
-	"go.uber.org/multierr"
-
-	"github.com/pingcap/tidb/util/codec"
-
 	"github.com/pingcap/tidb/br/pkg/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/util/codec"
+	"go.uber.org/multierr"
 )
 
 type pebbleIter struct {
