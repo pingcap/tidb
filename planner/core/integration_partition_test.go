@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
@@ -55,6 +56,31 @@ func (s *testIntegrationPartitionSerialSuite) TearDownTest(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
 }
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionPushDown(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_push_down")
+	tk.MustExec("use list_push_down")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`create table tlist (a int) partition by list (a) (
+    partition p0 values in (0, 1, 2),
+    partition p1 values in (3, 4, 5))`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionPruning(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -87,6 +113,36 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionPruning(c *C) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].DynamicPlan...))
 		tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].StaticPlan...))
+	}
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionFunctions(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_pruning")
+	tk.MustExec("use list_partition_pruning")
+	tk.MustExec("set tidb_enable_list_partition = 1")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+
+	var input []string
+	var output []struct {
+		SQL     string
+		Results []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Results = nil
+			if strings.Contains(tt, "select") {
+				output[i].Results = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+			}
+		})
+
+		if strings.Contains(tt, "select") {
+			tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Results...))
+		} else {
+			tk.MustExec(tt)
+		}
 	}
 }
 
@@ -178,6 +234,62 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionAgg(c *C) {
 			rs.Check(rsStatic.Rows())
 		}
 	}
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionDML(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_dml")
+	tk.MustExec("use list_partition_dml")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`create table tlist (a int) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
+
+	tk.MustExec("insert into tlist partition(p0) values (0), (1)")
+	tk.MustExec("insert into tlist partition(p0, p1) values (2), (3), (8), (9)")
+	c.Assert(tk.ExecToErr("insert into tlist partition(p0) values (9)"), ErrorMatches, ".*Found a row not matching the given partition set.*")
+	c.Assert(tk.ExecToErr("insert into tlist partition(p3) values (20)"), ErrorMatches, ".*Unknown partition.*")
+
+	tk.MustExec("update tlist partition(p0) set a=a+1")
+	tk.MustQuery("select a from tlist order by a").Check(testkit.Rows("1", "2", "3", "4", "8", "9"))
+	tk.MustExec("update tlist partition(p0, p1) set a=a-1")
+	tk.MustQuery("select a from tlist order by a").Check(testkit.Rows("0", "1", "2", "3", "7", "8"))
+
+	tk.MustExec("delete from tlist partition(p1)")
+	tk.MustQuery("select a from tlist order by a").Check(testkit.Rows("0", "1", "2", "3"))
+	tk.MustExec("delete from tlist partition(p0, p2)")
+	tk.MustQuery("select a from tlist order by a").Check(testkit.Rows())
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionDDL(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_dml")
+	tk.MustExec("use list_partition_dml")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+
+	// with UK
+	tk.MustExec("create table tuk1 (a int, b int, unique key(a)) partition by list (a) (partition p0 values in (0))")
+	c.Assert(tk.ExecToErr("create table tuk2 (a int, b int, unique key(a)) partition by list (b) (partition p0 values in (0))"), ErrorMatches, ".*UNIQUE INDEX must include all columns.*")
+	c.Assert(tk.ExecToErr("create table tuk2 (a int, b int, unique key(a), unique key(b)) partition by list (a) (partition p0 values in (0))"), ErrorMatches, ".*UNIQUE INDEX must include all columns.*")
+
+	// with PK
+	tk.MustExec("create table tpk1 (a int, b int, primary key(a)) partition by list (a) (partition p0 values in (0))")
+	tk.MustExec("create table tpk2 (a int, b int, primary key(a, b)) partition by list (a) (partition p0 values in (0))")
+
+	// with IDX
+	tk.MustExec("create table tidx1 (a int, b int, key(a), key(b)) partition by list (a) (partition p0 values in (0))")
+	tk.MustExec("create table tidx2 (a int, b int, key(a, b), key(b)) partition by list (a) (partition p0 values in (0))")
+
+	// with expression
+	tk.MustExec("create table texp1 (a int, b int) partition by list(a-10000) (partition p0 values in (0))")
+	tk.MustExec("create table texp2 (a int, b int) partition by list(a%b) (partition p0 values in (0))")
+	tk.MustExec("create table texp3 (a int, b int) partition by list(a*b) (partition p0 values in (0))")
+	c.Assert(tk.ExecToErr("create table texp4 (a int, b int) partition by list(a|b) (partition p0 values in (0))"), ErrorMatches, ".*This partition function is not allowed.*")
+	c.Assert(tk.ExecToErr("create table texp4 (a int, b int) partition by list(a^b) (partition p0 values in (0))"), ErrorMatches, ".*This partition function is not allowed.*")
+	c.Assert(tk.ExecToErr("create table texp4 (a int, b int) partition by list(a&b) (partition p0 values in (0))"), ErrorMatches, ".*This partition function is not allowed.*")
 }
 
 func genListPartition(begin, end int) string {
