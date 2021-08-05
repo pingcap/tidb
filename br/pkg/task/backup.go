@@ -17,14 +17,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
-	"github.com/spf13/pflag"
-	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/zap"
-
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/types"
-
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -34,6 +26,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/types"
+	"github.com/spf13/pflag"
+	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 const (

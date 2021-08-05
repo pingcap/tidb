@@ -5,18 +5,16 @@ package main
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/spf13/cobra"
-	"go.uber.org/zap"
-	"sourcegraph.com/sourcegraph/appdash"
-
-	"github.com/pingcap/tidb/session"
-
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/session"
+	"github.com/spf13/cobra"
+	"go.uber.org/zap"
+	"sourcegraph.com/sourcegraph/appdash"
 )
 
 func runRestoreCommand(command *cobra.Command, cmdName string) error {

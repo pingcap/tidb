@@ -11,12 +11,6 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/spf13/pflag"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
-
-	"github.com/pingcap/tidb/config"
-
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -27,6 +21,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/config"
+	"github.com/spf13/pflag"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
 )
 
 const (

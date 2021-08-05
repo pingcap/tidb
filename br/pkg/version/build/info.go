@@ -8,9 +8,8 @@ import (
 	"runtime"
 
 	"github.com/pingcap/log"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/util/israce"
+	"go.uber.org/zap"
 )
 
 // Version information.

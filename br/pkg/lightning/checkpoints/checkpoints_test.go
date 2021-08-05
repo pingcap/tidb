@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints/checkpointspb"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"

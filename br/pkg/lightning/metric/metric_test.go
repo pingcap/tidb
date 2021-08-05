@@ -18,10 +18,8 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-
-	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type testMetricSuite struct{}

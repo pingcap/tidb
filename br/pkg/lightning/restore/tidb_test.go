@@ -24,14 +24,12 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	tmysql "github.com/pingcap/parser/mysql"
-
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/util/mock"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 var _ = Suite(&tidbSuite{})

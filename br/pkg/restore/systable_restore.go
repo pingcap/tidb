@@ -11,12 +11,11 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
-
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
 )
 
 var statsTables = map[string]struct{}{

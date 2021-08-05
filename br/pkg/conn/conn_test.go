@@ -6,10 +6,9 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/pdutil"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	pd "github.com/tikv/pd/client"
 )
 

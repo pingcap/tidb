@@ -5,20 +5,18 @@ package checksum
 import (
 	"context"
 
-	"github.com/pingcap/tidb/br/pkg/metautil"
-
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
-
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // ExecutorBuilder is used to build a "kv.Request".

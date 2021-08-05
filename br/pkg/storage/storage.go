@@ -9,7 +9,6 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
 

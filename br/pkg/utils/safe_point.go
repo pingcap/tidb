@@ -10,12 +10,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/pkg/tsoutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
 
 const (

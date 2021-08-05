@@ -15,7 +15,6 @@ package common_test
 
 import (
 	. "github.com/pingcap/check"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 )
 

@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
 

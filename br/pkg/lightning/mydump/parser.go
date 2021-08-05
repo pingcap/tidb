@@ -25,15 +25,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
-
-	"github.com/pingcap/tidb/types"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/types"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 type blockParser struct {

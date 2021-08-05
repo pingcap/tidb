@@ -6,9 +6,8 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
-
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func Test(t *testing.T) {

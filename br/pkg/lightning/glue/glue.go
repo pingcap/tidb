@@ -22,14 +22,12 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/sqlexec"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 type Glue interface {

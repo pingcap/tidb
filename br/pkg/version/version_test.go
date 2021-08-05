@@ -10,9 +10,8 @@ import (
 	"github.com/coreos/go-semver/semver"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	pd "github.com/tikv/pd/client"
-
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	pd "github.com/tikv/pd/client"
 )
 
 type checkSuite struct{}
