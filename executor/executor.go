@@ -1701,6 +1701,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
 		sc.InExplainStmt = true
 		sc.IgnoreExplainIDSuffix = (strings.ToLower(explainStmt.Format) == types.ExplainFormatBrief)
+		sc.InVerboseExplain = strings.ToLower(explainStmt.Format) == types.ExplainFormatVerbose
 		s = explainStmt.Stmt
 	}
 	if _, ok := s.(*ast.ExplainForStmt); ok {
