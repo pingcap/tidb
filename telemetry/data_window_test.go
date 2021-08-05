@@ -27,6 +27,8 @@ func TestBuiltinFunctionsUsage(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
+	// Clear builtin functions usage
+	telemetry.GlobalBuiltinFunctionsUsage.Dump()
 	usage := telemetry.GlobalBuiltinFunctionsUsage.Dump()
 	require.Equal(t, map[string]uint32{}, usage)
 
