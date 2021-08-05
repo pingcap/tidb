@@ -85,10 +85,6 @@ View the current list of in-production TiDB adopters [here](https://docs.pingcap
 - [English](https://pingcap.com/case-studies)
 - [简体中文](https://pingcap.com/cases-cn/)
 
-## Roadmap
-
-Read the [Roadmap](https://pingcap.com/docs/ROADMAP).
-
 ## Architecture
 
 ![architecture](./docs/architecture.png)
