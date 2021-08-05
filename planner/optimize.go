@@ -77,9 +77,9 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	return ast.IsReadOnly(node)
 }
 
-// IsExecuteForUpdateRead is used to check whether the statement is `execute` and target statement has a forUpdateRead flag.
+// GetExecuteForUpdateReadIS is used to check whether the statement is `execute` and target statement has a forUpdateRead flag.
 // If so, we will return the latest information schema.
-func IsExecuteForUpdateRead(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema {
+func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema {
 	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
 		vars := sctx.GetSessionVars()
 		execID := execStmt.ExecID
