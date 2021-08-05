@@ -388,9 +388,6 @@ func (s *testSerialDBSuite) TestWriteReorgForColumnTypeChangeOnAmendTxn(c *C) {
 }
 
 func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
@@ -2522,7 +2519,7 @@ func (s *testDBSuite5) TestRenameColumn(c *C) {
 	assertColNames("test_rename_column", "id", "col2")
 	s.mustExec(tk, c, "alter table test_rename_column rename column col2 to col1")
 	assertColNames("test_rename_column", "id", "col1")
-	tk.MustGetErrCode("alter table test_rename_column rename column id to id1", errno.ErrBadField)
+	tk.MustGetErrCode("alter table test_rename_column rename column id to id1", errno.ErrDependentByGeneratedColumn)
 
 	// Test renaming view columns.
 	tk.MustExec("drop table test_rename_column")

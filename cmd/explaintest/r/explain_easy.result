@@ -191,7 +191,7 @@ TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	IN
 test	t4	0	PRIMARY	1	a	NULL		NULL	0	YES	YES
 test	t4	1	idx	1	a	NULL		NULL	1	YES	NO
 test	t4	1	idx	2	b	NULL		NULL	1	YES	NO
-test	t4	1	expr_idx	1	NULL	NULL		(`a` + `b` + 1)	2	YES	NO
+test	t4	1	expr_idx	1	NULL	NULL		`a` + `b` + 1	2	YES	NO
 explain format = 'brief' select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#5

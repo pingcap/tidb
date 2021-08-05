@@ -933,6 +933,15 @@ type LoadStats struct {
 	Path string
 }
 
+// PlanRecreatorSingle represents a plan recreator plan.
+type PlanRecreatorSingle struct {
+	baseSchemaProducer
+	ExecStmt ast.StmtNode
+	Analyze  bool
+	Load     bool
+	File     string
+}
+
 // IndexAdvise represents a index advise plan.
 type IndexAdvise struct {
 	baseSchemaProducer
