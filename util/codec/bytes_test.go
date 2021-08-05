@@ -14,16 +14,14 @@
 package codec
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testBytesSuite{})
+func TestFastSlowFastReverse(t *testing.T) {
+	t.Parallel()
 
-type testBytesSuite struct {
-}
-
-func (s *testBytesSuite) TestFastSlowFastReverse(c *C) {
 	if !supportsUnaligned {
 		return
 	}
@@ -32,11 +30,12 @@ func (s *testBytesSuite) TestFastSlowFastReverse(c *C) {
 	fastReverseBytes(b)
 	r2 := b
 	reverseBytes(r2)
-	c.Assert(r1, BytesEquals, r2)
+	require.Equal(t, r1, r2)
 }
 
-func (s *testBytesSuite) TestBytesCodec(c *C) {
-	defer testleak.AfterTest(c)()
+func TestBytesCodec(t *testing.T) {
+	t.Parallel()
+
 	inputs := []struct {
 		enc  []byte
 		dec  []byte
@@ -61,21 +60,22 @@ func (s *testBytesSuite) TestBytesCodec(c *C) {
 	}
 
 	for _, input := range inputs {
-
-		c.Assert(EncodedBytesLength(len(input.enc)), Equals, len(input.dec))
+		require.Equal(t, len(input.dec), EncodedBytesLength(len(input.enc)))
 
 		if input.desc {
 			b := EncodeBytesDesc(nil, input.enc)
-			c.Assert(b, BytesEquals, input.dec)
+			require.Equal(t, input.dec, b)
+
 			_, d, err := DecodeBytesDesc(b, nil)
-			c.Assert(err, IsNil)
-			c.Assert(d, BytesEquals, input.enc)
+			require.NoError(t, err)
+			require.Equal(t, input.enc, d)
 		} else {
 			b := EncodeBytes(nil, input.enc)
-			c.Assert(b, BytesEquals, input.dec)
+			require.Equal(t, input.dec, b)
+
 			_, d, err := DecodeBytes(b, nil)
-			c.Assert(err, IsNil)
-			c.Assert(d, BytesEquals, input.enc)
+			require.NoError(t, err)
+			require.Equal(t, input.enc, d)
 		}
 	}
 
@@ -94,6 +94,6 @@ func (s *testBytesSuite) TestBytesCodec(c *C) {
 
 	for _, input := range errInputs {
 		_, _, err := DecodeBytes(input, nil)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 }

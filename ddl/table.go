@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	field_types "github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -1117,4 +1118,31 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	default:
 		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
+}
+
+func onAlterTableAttributes(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	rule := label.NewRule()
+	err = job.DecodeArgs(&rule)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return 0, err
+	}
+
+	err = infosync.PutLabelRule(context.TODO(), rule)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Wrapf(err, "failed to notify PD label rule")
+	}
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+
+	return ver, nil
 }
