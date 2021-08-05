@@ -419,6 +419,8 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 
 	if _, ok := a.StmtNode.(*ast.ShutdownStmt); ok {
 		// Next() will make the process exit, so logAudit here.
+		// Avoid the event class to be TABLE_ACCESS
+		sctx.GetSessionVars().StmtCtx.Tables = nil
 		a.logAudit()
 	}
 	var err error
