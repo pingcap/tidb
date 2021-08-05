@@ -11,8 +11,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// +build !windows
-
 package owner
 
 import (
@@ -21,6 +19,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -39,6 +38,10 @@ var (
 )
 
 func TestFailNewSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+
 	_ = os.Remove("new_session:0")
 	ln, err := net.Listen("unix", "new_session:0")
 	require.NoError(t, err)

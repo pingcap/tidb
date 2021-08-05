@@ -11,13 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// +build !windows
-
 package owner_test
 
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"testing"
 	"time"
 
@@ -38,6 +37,10 @@ import (
 const testLease = 5 * time.Millisecond
 
 func TestSingle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -93,6 +96,10 @@ func TestSingle(t *testing.T) {
 }
 
 func TestCluster(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+
 	originalTTL := owner.ManagerSessionTTL
 	owner.ManagerSessionTTL = 3
 	defer func() {
