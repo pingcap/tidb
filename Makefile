@@ -30,12 +30,9 @@ parser:
 dev: checklist check test
 
 # Install the check tools.
-check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
+check-setup:tools/bin/revive tools/bin/goword
 
-check: fmt errcheck unconvert lint tidy testSuite check-static vet staticcheck errdoc
-
-# These need to be fixed before they can be ran regularly
-check-fail: goword check-slow
+check: fmt unconvert lint tidy testSuite check-static vet errdoc
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -44,30 +41,8 @@ fmt:
 goword:tools/bin/goword
 	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-gosec:tools/bin/gosec
-	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
-
 check-static: tools/bin/golangci-lint
-	tools/bin/golangci-lint run -v --disable-all --deadline=3m \
-	  --enable=misspell \
-	  --enable=ineffassign \
-	  --enable=typecheck \
-	  --enable=varcheck \
-	  --enable=unused \
-	  --enable=structcheck \
-	  --enable=deadcode \
-	  --enable=gosimple \
-	  --enable=goimports \
-	  $$($(PACKAGE_DIRECTORIES))
-
-check-slow:tools/bin/gometalinter tools/bin/gosec
-	tools/bin/gometalinter --disable-all \
-	  --enable errcheck \
-	  $$($(PACKAGE_DIRECTORIES))
-
-errcheck:tools/bin/errcheck
-	@echo "errcheck"
-	@GO111MODULE=on tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -ignoretests -blank $(PACKAGES)
+	tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES))
 
 unconvert:tools/bin/unconvert
 	@echo "unconvert check"
@@ -88,10 +63,6 @@ lint:tools/bin/revive
 vet:
 	@echo "vet"
 	$(GO) vet -all $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
-
-staticcheck:
-	$(GO) get honnef.co/go/tools/cmd/staticcheck
-	$(STATICCHECK) ./...
 
 tidy:
 	@echo "go mod tidy"
@@ -217,18 +188,6 @@ tools/bin/revive: tools/check/go.mod
 tools/bin/goword: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/goword github.com/chzchzchz/goword
-
-tools/bin/gometalinter: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/gometalinter gopkg.in/alecthomas/gometalinter.v3
-
-tools/bin/gosec: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/gosec github.com/securego/gosec/cmd/gosec
-
-tools/bin/errcheck: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/errcheck github.com/kisielk/errcheck
 
 tools/bin/unconvert: tools/check/go.mod
 	cd tools/check; \

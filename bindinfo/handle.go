@@ -114,6 +114,7 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 		// BindSQL has already been validated when coming here, so we use nil sctx parameter.
 		return handle.AddBindRecord(nil, record)
 	}
+	variable.RegisterStatistics(handle)
 	return handle
 }
 
@@ -386,6 +387,45 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 	}
 
 	deleteRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())
+	return err
+}
+
+// GCBindRecord physically removes the deleted bind records in mysql.bind_info.
+func (h *BindHandle) GCBindRecord() (err error) {
+	h.bindInfo.Lock()
+	h.sctx.Lock()
+	defer func() {
+		h.sctx.Unlock()
+		h.bindInfo.Unlock()
+	}()
+	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN PESSIMISTIC")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
+			terror.Log(err1)
+			return
+		}
+
+		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
+		if err != nil {
+			return
+		}
+	}()
+
+	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
+	if err = h.lockBindInfoTable(); err != nil {
+		return err
+	}
+
+	// To make sure that all the deleted bind records have been acknowledged to all tidb,
+	// we only garbage collect those records with update_time before 10 leases.
+	updateTime := time.Now().Add(-(10 * Lease))
+	updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
+	_, err = exec.ExecuteInternal(context.TODO(), `DELETE FROM mysql.bind_info WHERE status = 'deleted' and update_time < %?`, updateTimeStr)
 	return err
 }
 

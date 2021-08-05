@@ -43,7 +43,7 @@ require (
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20210722091755-91a52cd9e8db
 	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
-	github.com/pingcap/parser v0.0.0-20210728071818-915a01041dbb
+	github.com/pingcap/parser v0.0.0-20210802034743-dd9b189324ce
 	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
 	github.com/pingcap/tipb v0.0.0-20210708040514-0f154bb0dc0f
@@ -72,9 +72,9 @@ require (
 	go.uber.org/zap v1.18.1
 	golang.org/x/net v0.0.0-20210405180319-a5a99cb37ef4
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	golang.org/x/sys v0.0.0-20210510120138-977fb7262007
+	golang.org/x/sys v0.0.0-20210630005230-0f9fa26af87c
 	golang.org/x/text v0.3.6
-	golang.org/x/tools v0.1.4
+	golang.org/x/tools v0.1.5
 	google.golang.org/grpc v1.27.1
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v2 v2.4.0

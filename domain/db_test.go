@@ -23,9 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIntegration(t *testing.T) {
-	t.Parallel()
-
+// SubTestDomainSession is batched in TestDomainSerial
+func SubTestDomainSession(t *testing.T) {
 	lease := 50 * time.Millisecond
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
