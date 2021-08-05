@@ -29,12 +29,13 @@ import (
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/util/collate"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
+
+	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/util/collate"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"

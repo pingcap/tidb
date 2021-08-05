@@ -11,9 +11,10 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/ddl"
 	tmock "github.com/pingcap/tidb/util/mock"
-	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"

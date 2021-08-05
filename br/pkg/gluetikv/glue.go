@@ -5,11 +5,12 @@ package gluetikv
 import (
 	"context"
 
+	pd "github.com/tikv/pd/client"
+
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver"
-	pd "github.com/tikv/pd/client"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/summary"

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/types"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
+
 	"github.com/pingcap/tidb/ddl"
 	tmock "github.com/pingcap/tidb/util/mock"
 

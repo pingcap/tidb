@@ -5,11 +5,12 @@ package main
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/session"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"sourcegraph.com/sourcegraph/appdash"
+
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/session"
 
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/summary"

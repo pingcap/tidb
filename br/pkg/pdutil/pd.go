@@ -21,11 +21,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/util/codec"
 	pd "github.com/tikv/pd/client"
 	pdapi "github.com/tikv/pd/server/api"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+
+	"github.com/pingcap/tidb/util/codec"
 
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"

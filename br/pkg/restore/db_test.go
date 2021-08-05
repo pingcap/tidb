@@ -17,10 +17,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
+	"github.com/tikv/client-go/v2/oracle"
+
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/tikv/client-go/v2/oracle"
 
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"

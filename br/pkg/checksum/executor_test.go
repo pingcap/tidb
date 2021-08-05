@@ -11,6 +11,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
+
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"

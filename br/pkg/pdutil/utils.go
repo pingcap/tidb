@@ -13,9 +13,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/tikv/pd/pkg/codec"
 	"github.com/tikv/pd/server/schedule/placement"
+
+	"github.com/pingcap/tidb/tablecodec"
 
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
