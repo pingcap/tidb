@@ -699,6 +699,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildLoadStats(x), nil
 	case *ast.IndexAdviseStmt:
 		return b.buildIndexAdvise(x), nil
+	case *ast.PlanRecreatorStmt:
+		return b.buildPlanRecreator(x), nil
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x), nil
 	case *ast.SelectStmt:
@@ -1006,8 +1008,20 @@ func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[i
 		return nil, false, nil
 	}
 	latestIndexes := make(map[int64]*model.IndexInfo)
-	latestTbl, exist := is.TableByID(id)
-	if exist {
+
+	var latestTbl table.Table
+	latestTblExist := false
+
+	localTemporaryTables := ctx.GetSessionVars().LocalTemporaryTables
+	if localTemporaryTables != nil {
+		latestTbl, latestTblExist = localTemporaryTables.(*infoschema.LocalTemporaryTables).TableByID(id)
+	}
+
+	if !latestTblExist {
+		latestTbl, latestTblExist = is.TableByID(id)
+	}
+
+	if latestTblExist {
 		latestTblInfo := latestTbl.Meta()
 		for _, index := range latestTblInfo.Indices {
 			latestIndexes[index.ID] = index
@@ -1353,7 +1367,12 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 	case ast.AdminCaptureBindings:
 		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
 	case ast.AdminEvolveBindings:
-		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, nil
+		var err error
+		// The 'baseline evolution' only work in the test environment before the feature is GA.
+		if !config.CheckTableBeforeDrop {
+			err = errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
+		}
+		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
 	case ast.AdminReloadBindings:
 		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
 	case ast.AdminShowTelemetry:
@@ -4123,6 +4142,11 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		schema.Append(col)
 	}
 	return
+}
+
+func (b *PlanBuilder) buildPlanRecreator(pc *ast.PlanRecreatorStmt) Plan {
+	p := &PlanRecreatorSingle{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File}
+	return p
 }
 
 func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {

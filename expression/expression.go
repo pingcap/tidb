@@ -156,6 +156,12 @@ type Expression interface {
 	// resolveIndices is called inside the `ResolveIndices` It will perform on the expression itself.
 	resolveIndices(schema *Schema) error
 
+	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virual expression. It will copy the original expression and return the copied one.
+	ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool)
+
+	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
+	resolveIndicesByVirtualExpr(schema *Schema) bool
+
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
@@ -1011,7 +1017,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Concat, ast.ConcatWS,
 		ast.Year, ast.Month, ast.Day,
 		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
-		ast.Sqrt,
+		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
+		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
 		ast.JSONLength:
 		return true
 	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength:
