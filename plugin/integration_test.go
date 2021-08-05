@@ -17,12 +17,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"runtime/debug"
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/check"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -30,14 +27,10 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
-
-func TestT(t *testing.T) {
-	check.CustomVerboseFlag = true
-	check.TestingT(t)
-}
 
 type testAuditLogSuite struct {
 	cluster testutils.Cluster
@@ -47,9 +40,7 @@ type testAuditLogSuite struct {
 	bytes.Buffer
 }
 
-var _ = SerialSuites(&testAuditLogSuite{})
-
-func (s *testAuditLogSuite) SetUpSuite(c *C) {
+func (s *testAuditLogSuite) setup(t *testing.T) {
 	pluginName := "test_audit_log"
 	pluginVersion := uint16(1)
 	pluginSign := pluginName + "-" + strconv.Itoa(int(pluginVersion))
@@ -84,58 +75,63 @@ func (s *testAuditLogSuite) SetUpSuite(c *C) {
 			s.cluster = c
 		}),
 	)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	s.store = store
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 
 	d, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	d.SetStatsUpdating(true)
 	s.dom = d
 }
 
-func (s *testAuditLogSuite) TearDownSuite(c *C) {
+func (s *testAuditLogSuite) teardown() {
 	s.dom.Close()
 	s.store.Close()
 }
 
-func (s *testAuditLogSuite) TestAuditLog(c *C) {
-	debug.PrintStack()
+func TestAuditLog(t *testing.T) {
+	var s testAuditLogSuite
+	s.setup(t)
+	defer s.teardown()
 
 	var buf1 bytes.Buffer
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
+	tk := testkit.NewAsyncTestKit(t, s.store)
+	ctx := tk.OpenSession(context.Background(), "test")
+	buf1.WriteString("Use use `test`\n") // Workaround for the testing framework.
+
+	tk.MustExec(ctx, "use test")
 	buf1.WriteString("Use use `test`\n")
 
-	tk.MustExec("create table t (id int primary key, a int, b int unique)")
+	tk.MustExec(ctx, "create table t (id int primary key, a int, b int unique)")
 	buf1.WriteString("CreateTable create table `t` ( `id` int primary key , `a` int , `b` int unique )\n")
 
-	tk.MustExec("create view v1 as select * from t where id > 2")
+	tk.MustExec(ctx, "create view v1 as select * from t where id > 2")
 	buf1.WriteString("CreateView create view `v1` as select * from `t` where `id` > ?\n")
 
-	tk.MustExec("drop view v1")
+	tk.MustExec(ctx, "drop view v1")
 	buf1.WriteString("DropView drop view `v1`\n")
 
-	tk.MustExec("create session binding for select * from t where b = 123 using select * from t ignore index(b) where b = 123")
+	tk.MustExec(ctx, "create session binding for select * from t where b = 123 using select * from t ignore index(b) where b = 123")
 	buf1.WriteString("CreateBinding create session binding for select * from `t` where `b` = ? using select * from `t` where `b` = ?\n")
 
-	tk.MustExec("prepare mystmt from 'select ? as num from DUAL'")
+	tk.MustExec(ctx, "prepare mystmt from 'select ? as num from DUAL'")
 	buf1.WriteString("Prepare prepare `mystmt` from ?\n")
 
-	tk.MustExec("set @number = 5")
+	tk.MustExec(ctx, "set @number = 5")
 	buf1.WriteString("Set set @number = ?\n")
 
-	tk.MustExec("execute mystmt using @number")
+	tk.MustExec(ctx, "execute mystmt using @number")
 	buf1.WriteString("Select select ? as `num` from dual\n")
 
-	tk.MustQuery("trace format = 'row' select * from t")
+	tk.MustQuery(ctx, "trace format = 'row' select * from t")
 	buf1.WriteString("Trace trace format = ? select * from `t`\n")
 
-	tk.MustExec("shutdown")
+	tk.MustExec(ctx, "shutdown")
 	buf1.WriteString("Shutdown shutdown\n")
 
-	c.Assert(buf1.String(), Equals, s.Buffer.String())
+	require.Equal(t, buf1.String(), s.Buffer.String())
 }
 
 func Validate(ctx context.Context, m *plugin.Manifest) error {
