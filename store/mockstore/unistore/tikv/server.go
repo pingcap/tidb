@@ -788,7 +788,7 @@ func (svr *Server) EstablishMPPConnectionWithStoreID(req *mpp.EstablishMPPConnec
 		}
 	}
 	if mppHandler == nil {
-		return errors.New("tatsk not found")
+		return errors.New("task not found")
 	}
 	ctx1, cancel := context.WithCancel(context.Background())
 	defer cancel()

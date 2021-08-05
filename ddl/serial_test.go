@@ -1748,3 +1748,29 @@ func (s *testSerialSuite) TestGetReverseKey(c *C) {
 	endKey = maxKey
 	checkRet(startKey, endKey, endKey)
 }
+
+func (s *testSerialDBSuite) TestLocalTemporaryTableBlockedDDL(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_enable_noop_functions = 1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create temporary table tmp1 (id int primary key, a int unique, b int)")
+	err := tk.ExecToErr("rename table tmp1 to tmp2")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("alter table tmp1 add column c int")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("alter table tmp1 add index b(b)")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("create index a on tmp1(b)")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("drop index a on tmp1")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("lock tables tmp1 read")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("lock tables tmp1 write")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("lock tables t1 read, tmp1 read")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("admin cleanup table lock tmp1")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+}
