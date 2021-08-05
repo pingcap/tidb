@@ -1787,6 +1787,10 @@ func (s *testTableSuite) TestTiDBTrx(c *C) {
 		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"]"))
 
 	// Test the all_sql_digests column can be directly passed to the tidb_decode_sql_digests function.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal"), IsNil)
+	}()
 	tk.MustQuery("select tidb_decode_sql_digests(all_sql_digests) from information_schema.tidb_trx").Check(testkit.Rows(
 		"[]",
 		"[null,null,\"update `test_tidb_trx` set `i` = `i` + ?\"]"))
