@@ -1886,10 +1886,13 @@ type AggSpillDiskAction struct {
 
 // Action set HashAggExec spill mode.
 func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
-	if atomic.LoadUint32(&a.e.inSpillMode) == 0 && a.spillTimes < maxSpillTimes {
+	// Guarantee that processed data is at least 20% of the threshold, to avoid opening too many files.
+	if atomic.LoadUint32(&a.e.inSpillMode) == 0 && a.spillTimes < maxSpillTimes && a.e.memTracker.BytesConsumed() >= t.GetBytesLimit()/5 {
 		a.spillTimes++
 		logutil.BgLogger().Info("memory exceeds quota, set aggregate mode to spill-mode",
-			zap.Uint32("spillTimes", a.spillTimes))
+			zap.Uint32("spillTimes", a.spillTimes),
+			zap.Int64("consumed", t.BytesConsumed()),
+			zap.Int64("quota", t.GetBytesLimit()))
 		atomic.StoreUint32(&a.e.inSpillMode, 1)
 		return
 	}
