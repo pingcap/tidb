@@ -457,7 +457,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*backfillWorker
 			logutil.BgLogger().Info("[ddl] send range task to workers, get reverse key failed", zap.Error(err))
 		} else {
 			logutil.BgLogger().Info("[ddl] send range task to workers, change end key",
-				zap.ByteString("end key", endKey), zap.ByteString("current end key", endK))
+				zap.String("end key", tryDecodeToHandleString(endKey)), zap.String("current end key", tryDecodeToHandleString(endK)))
 			endKey = endK
 		}
 

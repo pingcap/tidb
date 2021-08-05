@@ -1486,7 +1486,7 @@ func (s *testDBSuite1) testAddIndexWithSplitTable(c *C, createSQL, splitTableSQL
 		return err
 	}
 
-	isSplitTableSQL := len(splitTableSQL) > 0
+	hasAutoRadomField := len(splitTableSQL) > 0
 	done := make(chan error, 1)
 	start := -20
 	num := defaultBatchSize
@@ -1498,7 +1498,7 @@ func (s *testDBSuite1) testAddIndexWithSplitTable(c *C, createSQL, splitTableSQL
 		go func(b int, eCh chan error) {
 			tk1 := testkit.NewTestKit(c, s.store)
 			tk1.MustExec("use test_db")
-			eCh <- batchInsertRows(tk1, !isSplitTableSQL, "test_add_index", base+start, base+num)
+			eCh <- batchInsertRows(tk1, !hasAutoRadomField, "test_add_index", base+start, base+num)
 		}(base, errCh)
 	}
 	for i := 0; i < goCnt; i++ {
@@ -1506,7 +1506,7 @@ func (s *testDBSuite1) testAddIndexWithSplitTable(c *C, createSQL, splitTableSQL
 		c.Assert(e, IsNil)
 	}
 
-	if isSplitTableSQL {
+	if hasAutoRadomField {
 		tk.MustQuery(splitTableSQL).Check(testkit.Rows("15 1"))
 	}
 	tk.MustQuery("select @@session.tidb_wait_split_region_finish;").Check(testkit.Rows("1"))
@@ -1516,7 +1516,7 @@ func (s *testDBSuite1) testAddIndexWithSplitTable(c *C, createSQL, splitTableSQL
 	addIdxSQL := "alter table test_add_index add index idx(a)"
 	testddlutil.SessionExecInGoroutine(c, s.store, addIdxSQL, done)
 
-	ticker := time.NewTicker(s.lease / 2)
+	ticker := time.NewTicker(s.lease / 20)
 	defer ticker.Stop()
 	num = 0
 LOOP:
@@ -1534,12 +1534,16 @@ LOOP:
 			if num >= 1000 {
 				break
 			}
-			step := 50
+			step := 30
 			// delete, insert and update some data
 			for i := num; i < num+step; i++ {
 				sql := fmt.Sprintf("delete from test_add_index where a = %d", i+1)
 				tk.MustExec(sql)
-				sql = fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
+				if hasAutoRadomField {
+					sql = "insert into test_add_index values ()"
+				} else {
+					sql = fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
+				}
 				tk.MustExec(sql)
 				sql = fmt.Sprintf("update test_add_index set b = %d", i*10)
 				tk.MustExec(sql)
