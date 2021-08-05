@@ -1263,6 +1263,11 @@ func (s *testClusterTableSuite) TestStmtSummaryHistoryTable(c *C) {
 // Test statements_summary_history.
 func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	tk := s.newTestKitWithRoot(c)
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")

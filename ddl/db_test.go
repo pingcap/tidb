@@ -294,7 +294,6 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 
 // TestAddPrimaryKeyRollback1 is used to test scenarios that will roll back when a duplicate primary key is encountered.
 func (s *testDBSuite8) TestAddPrimaryKeyRollback1(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210705")
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
@@ -312,7 +311,6 @@ func (s *testDBSuite8) TestAddPrimaryKeyRollback2(c *C) {
 }
 
 func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210702")
 	hasNullValsInKey := false
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
@@ -513,8 +511,9 @@ LOOP:
 			// delete some rows, and add some data
 			for i := count; i < count+step; i++ {
 				n := rand.Intn(count)
-				// Don't delete this row, otherwise error message would change.
-				if n == defaultBatchSize*2-10 {
+				// (2048, 2038, 2038) and (2038, 2038, 2038)
+				// Don't delete rows where c1 is 2048 or 2038, otherwise, the entry value in duplicated error message would change.
+				if n == defaultBatchSize*2-10 || n == defaultBatchSize*2 {
 					continue
 				}
 				tk.MustExec("delete from t1 where c1 = ?", n)
