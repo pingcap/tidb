@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -195,6 +196,13 @@ func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx sessio
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// In some unit test environments it's unable to retrieve global info, and this function blocks it for tens of
+	// seconds, which wastes much time during unit test. In this case, enable this failpoint to bypass retrieving
+	// globally.
+	failpoint.Inject("sqlDigestRetrieverSkipRetrieveGlobal", func() {
+		failpoint.Return(nil)
+	})
 
 	var unknownDigests []interface{}
 	for k, v := range r.SQLDigestsMap {
