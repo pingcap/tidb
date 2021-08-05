@@ -11,23 +11,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package plugin
+package executor
 
 import (
+	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/util/testbridge"
-	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
-
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-		goleak.IgnoreTopFunction("time.Sleep"),
-	}
-
-	goleak.VerifyTestMain(m, opts...)
+	os.Exit(m.Run())
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -1105,6 +1106,53 @@ func (s *testSuite) TestBaselineDBLowerCase(c *C) {
 	))
 }
 
+func (s *testSuite) TestShowGlobalBindings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("drop database if exists SPM")
+	tk.MustExec("create database SPM")
+	tk.MustExec("use SPM")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	tk.MustExec("create table t0(a int, b int, key(a))")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+	// Simulate existing bindings in the mysql.bind_info.
+	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t` USE INDEX (`a`)', 'SPM', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+		bindinfo.Manual + "')")
+	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t0`', 'select * from `spm` . `t0` USE INDEX (`a`)', 'SPM', 'using', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
+		bindinfo.Manual + "')")
+	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select /*+ use_index(`t` `a`)*/ * from `spm` . `t`', 'SPM', 'using', '2000-01-03 09:00:00', '2000-01-03 09:00:00', '', '','" +
+		bindinfo.Manual + "')")
+	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t0`', 'select /*+ use_index(`t0` `a`)*/ * from `spm` . `t0`', 'SPM', 'using', '2000-01-04 09:00:00', '2000-01-04 09:00:00', '', '','" +
+		bindinfo.Manual + "')")
+	tk.MustExec("admin reload bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 4)
+	c.Assert(rows[0][0], Equals, "select * from `spm` . `t0`")
+	c.Assert(rows[0][5], Equals, "2000-01-04 09:00:00.000")
+	c.Assert(rows[1][0], Equals, "select * from `spm` . `t0`")
+	c.Assert(rows[1][5], Equals, "2000-01-02 09:00:00.000")
+	c.Assert(rows[2][0], Equals, "select * from `spm` . `t`")
+	c.Assert(rows[2][5], Equals, "2000-01-03 09:00:00.000")
+	c.Assert(rows[3][0], Equals, "select * from `spm` . `t`")
+	c.Assert(rows[3][5], Equals, "2000-01-01 09:00:00.000")
+
+	rows = tk.MustQuery("show session bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+	tk.MustExec("create session binding for select a from t using select a from t")
+	tk.MustExec("create session binding for select a from t0 using select a from t0")
+	tk.MustExec("create session binding for select b from t using select b from t")
+	tk.MustExec("create session binding for select b from t0 using select b from t0")
+	rows = tk.MustQuery("show session bindings").Rows()
+	c.Assert(len(rows), Equals, 4)
+	c.Assert(rows[0][0], Equals, "select `b` from `spm` . `t0`")
+	c.Assert(rows[1][0], Equals, "select `b` from `spm` . `t`")
+	c.Assert(rows[2][0], Equals, "select `a` from `spm` . `t0`")
+	c.Assert(rows[3][0], Equals, "select `a` from `spm` . `t`")
+}
+
 func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -1133,6 +1181,12 @@ func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {
 }
 
 func (s *testSuite) TestCapturePreparedStmt(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -1206,6 +1260,12 @@ func (s *testSuite) TestDropSingleBindings(c *C) {
 }
 
 func (s *testSuite) TestDMLEvolveBaselines(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1266,6 +1326,12 @@ func (s *testSuite) TestDMLEvolveBaselines(c *C) {
 }
 
 func (s *testSuite) TestAddEvolveTasks(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1281,17 +1347,23 @@ func (s *testSuite) TestAddEvolveTasks(c *C) {
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0")
-	c.Assert(rows[1][3], Equals, "pending verify")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0")
+	c.Assert(rows[0][3], Equals, "pending verify")
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0")
-	status := rows[1][3].(string)
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0")
+	status := rows[0][3].(string)
 	c.Assert(status == "using" || status == "rejected", IsTrue)
 }
 
 func (s *testSuite) TestRuntimeHintsInEvolveTasks(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1300,11 +1372,11 @@ func (s *testSuite) TestRuntimeHintsInEvolveTasks(c *C) {
 	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))")
 
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select * from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
-	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(5000) */* from t where a >= 4 and b >= 1 and c = 0")
+	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(5000) */ * from t where a >= 4 and b >= 1 and c = 0")
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0")
 }
 
 func (s *testSuite) TestBindingCache(c *C) {
@@ -1478,6 +1550,12 @@ func (s *testSuite) TestDefaultDB(c *C) {
 }
 
 func (s *testSuite) TestEvolveInvalidBindings(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1538,6 +1616,12 @@ func (s *testSuite) TestPrivileges(c *C) {
 }
 
 func (s *testSuite) TestHintsSetEvolveTask(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1662,6 +1746,12 @@ func (s *testSuite) TestCapturePlanBaselineIgnoreTiFlash(c *C) {
 }
 
 func (s *testSuite) TestNotEvolvePlanForReadStorageHint(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1735,6 +1825,12 @@ func (s *testSuite) TestBindingWithIsolationRead(c *C) {
 }
 
 func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1752,8 +1848,8 @@ func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 0 AND `b` >= 0")
-	c.Assert(rows[1][3], Equals, "pending verify")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 0 AND `b` >= 0")
+	c.Assert(rows[0][3], Equals, "pending verify")
 
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 using select * from t use index(idx_b) where a >= 1 and b >= 1")
 	rows = tk.MustQuery("show global bindings").Rows()
@@ -1796,6 +1892,12 @@ func (s *testSuite) TestInvisibleIndex(c *C) {
 }
 
 func (s *testSuite) TestBindingSource(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1934,10 +2036,9 @@ func (s *testSuite) TestExplainShowBindSQL(c *C) {
 		"select * from `test` . `t` SELECT * FROM `test`.`t` USE INDEX (`a`)",
 	))
 
-	tk.MustExec("explain select * from t")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
-	tk.MustExec("explain analyze select * from t")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
+	tk.MustExec("explain format = 'verbose' select * from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
+	// explain analyze do not support verbose yet.
 }
 
 func (s *testSuite) TestDMLIndexHintBind(c *C) {
@@ -2021,6 +2122,12 @@ func (s *testSuite) TestUpdateSubqueryCapture(c *C) {
 }
 
 func (s *testSuite) TestIssue20417(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -2076,17 +2183,36 @@ func (s *testSuite) TestIssue20417(c *C) {
 	tk.MustExec("admin flush bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][0], Equals, "select * from `test` . `t` where `c` = ?")
-	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
-	c.Assert(rows[1][3], Equals, "pending verify")
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `c` = ?")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
+	c.Assert(rows[0][3], Equals, "pending verify")
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 2)
-	c.Assert(rows[1][0], Equals, "select * from `test` . `t` where `c` = ?")
-	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
-	status := rows[1][3].(string)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `c` = ?")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `c` = 3924541")
+	status := rows[0][3].(string)
 	c.Assert(status == "using" || status == "rejected", IsTrue)
 	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
+}
+
+func (s *testSuite) TestForbidEvolvePlanBaseLinesBeforeGA(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = false
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	err := tk.ExecToErr("set @@tidb_evolve_plan_baselines=0")
+	c.Assert(err, Equals, nil)
+	err = tk.ExecToErr("set @@TiDB_Evolve_pLan_baselines=1")
+	c.Assert(err, ErrorMatches, "Cannot enable baseline evolution feature, it is not generally available now")
+	err = tk.ExecToErr("set @@TiDB_Evolve_pLan_baselines=oN")
+	c.Assert(err, ErrorMatches, "Cannot enable baseline evolution feature, it is not generally available now")
+	err = tk.ExecToErr("admin evolve bindings")
+	c.Assert(err, ErrorMatches, "Cannot enable baseline evolution feature, it is not generally available now")
 }
 
 func (s *testSuite) TestCaptureWithZeroSlowLogThreshold(c *C) {
