@@ -853,8 +853,12 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(row chunk.Row) (string, bool
 	}
 
 	// Querying may take some time and it takes a context.Context as argument, which is not available here.
-	// We simply create a context with 1s timeout here.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	// We simply create a context with a timeout here.
+	timeout := time.Duration(b.ctx.GetSessionVars().MaxExecutionTime) * time.Millisecond
+	if timeout == 0 || timeout > 20*time.Second {
+		timeout = 20 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	err = retriever.RetrieveGlobal(ctx, b.ctx)
 	if err != nil {
