@@ -365,19 +365,19 @@
         ]
       },
       {
-        "SQL": "EXPLAIN SELECT count(a) from t group by inet_aton(a); -- 12. scalar func not supported (without pbcode)",
+        "SQL": "EXPLAIN SELECT count(a) from t group by is_ipv4(a); -- 12. scalar func not supported (without pbcode)",
         "Plan": [
           "HashAgg_6 8000.00 root  group by:Column#7, funcs:count(Column#6)->Column#5",
-          "└─Projection_19 10000.00 root  test.t.a, inet_aton(cast(test.t.a, var_string(20)))->Column#7",
+          "└─Projection_19 10000.00 root  test.t.a, is_ipv4(cast(test.t.a, var_string(20)))->Column#7",
           "  └─TableReader_12 10000.00 root  data:TableFullScan_10",
           "    └─TableFullScan_10 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "Scalar function 'inet_aton'(signature: Unspecified) can not be pushed to tiflash",
+          "Scalar function 'is_ipv4'(signature: Unspecified) can not be pushed to tiflash",
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
-          "Scalar function 'inet_aton'(signature: Unspecified) can not be pushed to tiflash",
+          "Scalar function 'is_ipv4'(signature: Unspecified) can not be pushed to tiflash",
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
-          "Scalar function 'inet_aton'(signature: Unspecified) can not be pushed to tiflash",
+          "Scalar function 'is_ipv4'(signature: Unspecified) can not be pushed to tiflash",
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"
         ]
       }
