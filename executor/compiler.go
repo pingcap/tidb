@@ -337,6 +337,9 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 	case *ast.DropIndexStmt:
 		return "DropIndex"
 	case *ast.DropTableStmt:
+		if x.IsView {
+			return "DropView"
+		}
 		return "DropTable"
 	case *ast.ExplainStmt:
 		return "Explain"
@@ -375,6 +378,12 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "CreateBinding"
 	case *ast.IndexAdviseStmt:
 		return "IndexAdvise"
+	case *ast.DropBindingStmt:
+		return "DropBinding"
+	case *ast.TraceStmt:
+		return "Trace"
+	case *ast.ShutdownStmt:
+		return "Shutdown"
 	}
 	return "other"
 }
