@@ -561,12 +561,8 @@ func (ds *DataSource) getIndexMergeCandidate(path *util.AccessPath) *candidatePa
 
 // skylinePruning prunes access paths according to different factors. An access path can be pruned only if
 // there exists a path that is not worse than it at all factors and there is at least one better factor.
-// The first return value indicates the candidate paths for CBO path selection.
-// The second return value indicates which paths are pruned if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain.
-func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) ([]*candidatePath, string) {
+func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candidatePath {
 	candidates := make([]*candidatePath, 0, 4)
-	// TODO: don't allocate prunedPaths if not InExplainStmt
-	prunedPaths := make([]*util.AccessPath, 0, 4)
 	for _, path := range ds.possibleAccessPaths {
 		if path.PartialIndexPaths != nil {
 			candidates = append(candidates, ds.getIndexMergeCandidate(path))
@@ -574,10 +570,9 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) ([]*candid
 		}
 		// if we already know the range of the scan is empty, just return a TableDual
 		if len(path.Ranges) == 0 {
-			return []*candidatePath{{path: path}}, ""
+			return []*candidatePath{{path: path}}
 		}
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
-			prunedPaths = append(prunedPaths, path)
 			continue
 		}
 		var currentCandidate *candidatePath
@@ -595,7 +590,6 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) ([]*candid
 				}
 			}
 			if currentCandidate == nil {
-				prunedPaths = append(prunedPaths, path)
 				continue
 			}
 		} else {
@@ -607,7 +601,6 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) ([]*candid
 				// 4. The needed columns are all covered by index columns(and handleCol).
 				currentCandidate = ds.getIndexCandidate(path, prop)
 			} else {
-				prunedPaths = append(prunedPaths, path)
 				continue
 			}
 		}
@@ -622,61 +615,72 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) ([]*candid
 				// We can break here because the current candidate cannot prune others anymore.
 				break
 			} else if result == -1 {
-				prunedPaths = append(prunedPaths, candidates[i].path)
 				candidates = append(candidates[:i], candidates[i+1:]...)
 			}
 		}
-		if pruned {
-			prunedPaths = append(prunedPaths, currentCandidate.path)
-		} else {
+		if !pruned {
 			candidates = append(candidates, currentCandidate)
 		}
 	}
 
-	getPruningInfo := func(paths []*util.AccessPath) string {
-		if !ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain || len(paths) == 0 {
-			return ""
-		}
-		names := make([]string, 0, len(paths))
-		var tableName string
-		if ds.TableAsName.O == "" {
-			tableName = ds.tableInfo.Name.O
-		} else {
-			tableName = ds.TableAsName.O
-		}
-		for _, path := range paths {
-			if path.IsTablePath() {
-				if path.StoreType == kv.TiFlash {
-					names = append(names, tableName+"(tiflash)")
-				} else {
-					names = append(names, tableName)
-				}
-			} else {
-				names = append(names, path.Index.Name.O)
-			}
-		}
-		items := make([]string, 0, len(prop.SortItems))
-		for _, item := range prop.SortItems {
-			items = append(items, item.String())
-		}
-		return fmt.Sprintf("[%s] is pruned when selecting path for %s given Prop{SortItems: [%s], TaskTp: %s}",
-			strings.Join(names, ","), tableName, strings.Join(items, " "), prop.TaskTp)
-	}
 
 	if ds.ctx.GetSessionVars().GetAllowPreferRangeScan() && len(candidates) > 1 {
 		// remove the table/index full scan path
 		for i, c := range candidates {
 			for _, ran := range c.path.Ranges {
 				if ran.IsFullRange() {
-					prunedPaths = append(prunedPaths, candidates[i].path)
 					candidates = append(candidates[:i], candidates[i+1:]...)
-					return candidates, getPruningInfo(prunedPaths)
+					return candidates
 				}
 			}
 		}
 	}
 
-	return candidates, getPruningInfo(prunedPaths)
+	return candidates
+}
+
+func (ds *DataSource) getPruningInfo(candidates []*candidatePath, prop *property.PhysicalProperty) string {
+	if !ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain || len(candidates) == len(ds.possibleAccessPaths) {
+		return ""
+	}
+	if len(candidates) == 1 && len(candidates[0].path.Ranges) == 0 {
+		// For TableDual, we don't need to output pruning info.
+		return ""
+	}
+	names := make([]string, 0, len(candidates))
+	var tableName string
+	if ds.TableAsName.O == "" {
+		tableName = ds.tableInfo.Name.O
+	} else {
+		tableName = ds.TableAsName.O
+	}
+	getSimplePathName := func(path *util.AccessPath) string {
+		if path.IsTablePath() {
+			if path.StoreType == kv.TiFlash {
+				return tableName+"(tiflash)"
+			}
+			return tableName
+		}
+		return path.Index.Name.O
+	}
+	for _, cand := range candidates {
+		if cand.path.PartialIndexPaths != nil {
+			partialNames := make([]string, 0, len(cand.path.PartialIndexPaths))
+			for _, partialPath := range cand.path.PartialIndexPaths {
+				partialNames = append(partialNames, getSimplePathName(partialPath))
+			}
+			names = append(names, fmt.Sprintf("IndexMerge{%s}", strings.Join(partialNames, ",")))
+		} else {
+			names = append(names, getSimplePathName(cand.path))
+		}
+	}
+	items := make([]string, 0, len(prop.SortItems))
+	for _, item := range prop.SortItems {
+		items = append(items, item.String())
+	}
+	return fmt.Sprintf("[%s] remain after pruning paths for %s given Prop{SortItems: [%s], TaskTp: %s}",
+		strings.Join(names, ","), tableName, strings.Join(items, " "), prop.TaskTp)
+
 }
 
 // findBestTask implements the PhysicalPlan interface.
@@ -743,7 +747,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	}
 
 	t = invalidTask
-	candidates, pruningInfo := ds.skylinePruning(prop)
+	candidates := ds.skylinePruning(prop)
+	pruningInfo := ds.getPruningInfo(candidates, prop)
 	defer func() {
 		if err == nil && t != nil && !t.invalid() && pruningInfo != "" {
 			if ds.ctx.GetSessionVars().StmtCtx.OptimInfo == nil {

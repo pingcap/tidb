@@ -1760,7 +1760,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 				lp = lp.Children()[0]
 			}
 		}
-		paths, _ := ds.skylinePruning(byItemsToProperty(byItems))
+		paths := ds.skylinePruning(byItemsToProperty(byItems))
 		c.Assert(pathsName(paths), Equals, tt.result, comment)
 	}
 }

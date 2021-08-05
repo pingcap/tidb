@@ -110,7 +110,7 @@ func (s *testEnforceMPPSuite) TestEnforceMPP(c *C) {
 		warnings := make([]stmtctx.SQLWarn, 0, 4)
 		for _, warning := range originalWarnings {
 			// filter out warning about skyline pruning
-			if !strings.Contains(warning.Err.Error(), "is pruned when selecting path for") {
+			if !strings.Contains(warning.Err.Error(), "remain after pruning paths for") {
 				warnings = append(warnings, warning)
 			}
 		}
