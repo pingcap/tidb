@@ -671,6 +671,52 @@
     ]
   },
   {
+    "name": "TestPushDownProjectionForTiKV",
+    "cases": [
+      "desc format = 'brief' select i * 2 from t",
+      "desc format = 'brief' select DATE_FORMAT(t, '%Y-%m-%d %H') as date from t",
+      "desc format = 'brief' select md5(s) from t",
+      "desc format = 'brief' select c from t where a+1=3",
+      "desc format = 'brief' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+      "desc format = 'brief' select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
+      "desc format = 'brief' select * from t join (select id-2 as b from t) A on A.b=t.id",
+      "desc format = 'brief' select * from t left join (select id-2 as b from t) A on A.b=t.id",
+      "desc format = 'brief' select * from t right join (select id-2 as b from t) A on A.b=t.id",
+      "desc format = 'brief' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
+      "desc format = 'brief' select A.id from t as A where exists (select 1 from t where t.id=A.id)",
+      "desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id)",
+      "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;"
+    ]
+  },
+  {
+    "name": "TestPushDownProjectionForTiFlashCoprocessor",
+    "cases": [
+      "desc format = 'brief' select i * 2 from t",
+      "desc format = 'brief' select DATE_FORMAT(t, '%Y-%m-%d %H') as date from t",
+      "desc format = 'brief' select md5(s) from t",
+      "desc format = 'brief' select c from t where a+1=3",
+      "desc format = 'brief' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A",
+      "desc format = 'brief' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A",
+      "desc format = 'brief' select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
+      "desc format = 'brief' select * from t join (select id-2 as b from t) A on A.b=t.id",
+      "desc format = 'brief' select * from t left join (select id-2 as b from t) A on A.b=t.id",
+      "desc format = 'brief' select * from t right join (select id-2 as b from t) A on A.b=t.id",
+      "desc format = 'brief' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b",
+      "desc format = 'brief' select A.id from t as A where exists (select 1 from t where t.id=A.id)",
+      "desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id)",
+      "desc format = 'brief' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;"
+    ]
+  },
+  {
     "name": "TestPushDownProjectionForTiFlash",
     "cases": [
       "desc format = 'brief' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
