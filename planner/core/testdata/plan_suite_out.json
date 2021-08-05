@@ -1886,6 +1886,38 @@
     ]
   },
   {
+    "Name": "TestPushdownProjection",
+    "Cases": [
+      {
+        "SQL": "select i + 1 from t;",
+        "Plan": [
+          "TableReader 10000.00 root  data:Projection",
+          "└─Projection 10000.00 cop[tikv]  plus(test.t.i, 1)->Column#6",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select DATE_FORMAT(t, '%Y-%m-%d %H') as date from t;",
+        "Plan": [
+          "TableReader 10000.00 root  data:Projection",
+          "└─Projection 10000.00 cop[tikv]  date_format(test.t.t, %Y-%m-%d %H)->Column#6",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select md5(s) from t;",
+        "Plan": [
+          "TableReader 10000.00 root  data:Projection",
+          "└─Projection 10000.00 cop[tikv]  md5(test.t.s)->Column#6",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
     "Name": "TestPushdownDistinctEnableAggPushDownDisable",
     "Cases": [
       {

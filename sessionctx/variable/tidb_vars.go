@@ -456,6 +456,9 @@ const (
 	// TiDBEnableStrictDoubleTypeCheck is used to control table field double type syntax check.
 	TiDBEnableStrictDoubleTypeCheck = "tidb_enable_strict_double_type_check"
 
+	// TiDBOptProjectionPushDown is used to control whether to pushdown projection to coprocessor.
+	TiDBOptProjectionPushDown = "tidb_opt_projection_push_down"
+
 	// TiDBEnableVectorizedExpression is used to control whether to enable the vectorized expression evaluation.
 	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
 

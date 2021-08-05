@@ -485,8 +485,10 @@ type Performance struct {
 	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
 	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
-	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
-	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	// Whether enable projection push down to tikv
+	ProjectionPushDown   bool   `toml:"projection-push-down" json:"projection-push-down"`
+	CommitterConcurrency int    `toml:"committer-concurrency" json:"committer-concurrency"`
+	MaxTxnTTL            uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
 	MemProfileInterval   string `toml:"-" json:"-"`
 	IndexUsageSyncLease  string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
@@ -693,6 +695,7 @@ var defaultConf = Config{
 		TxnEntrySizeLimit:     DefTxnEntrySizeLimit,
 		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
 		DistinctAggPushDown:   false,
+		ProjectionPushDown:    false,
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
