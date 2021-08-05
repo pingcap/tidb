@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
@@ -298,14 +300,17 @@ func (e *HashAggExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *HashAggExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
 	failpoint.Inject("mockHashAggExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.New("mock HashAggExec.baseExecutor.Open returned error"))
 		}
 	})
+
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+	// If panic here, the children executor should be closed because they are open.
+	defer closeBaseExecutor(&e.baseExecutor)
 	e.prepared = false
 
 	e.memTracker = memory.NewTracker(e.id, -1)
@@ -341,6 +346,15 @@ func (e *HashAggExec) initForUnparallelExec() {
 		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
+	}
+}
+
+func closeBaseExecutor(b *baseExecutor) {
+	if r := recover(); r != nil {
+		if str, ok := r.(string); ok && strings.Contains(str, memory.PanicMemoryExceed) {
+			terror.Log(b.Close())
+			panic(r)
+		}
 	}
 }
 
@@ -1218,14 +1232,18 @@ type StreamAggExec struct {
 
 // Open implements the Executor Open interface.
 func (e *StreamAggExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
 	failpoint.Inject("mockStreamAggExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.New("mock StreamAggExec.baseExecutor.Open returned error"))
 		}
 	})
+
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+	// If panic in Open, the children executor should be closed because they are open.
+	defer closeBaseExecutor(&e.baseExecutor)
+
 	e.childResult = newFirstChunk(e.children[0])
 	e.executed = false
 	e.isChildReturnEmpty = true

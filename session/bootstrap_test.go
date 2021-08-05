@@ -60,10 +60,14 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
-	mustExecSQL(c, se, "SELECT * from mysql.global_priv;")
-	mustExecSQL(c, se, "SELECT * from mysql.db;")
-	mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
-	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
+	rs := mustExecSQL(c, se, "SELECT * from mysql.global_priv;")
+	rs.Close()
+	rs = mustExecSQL(c, se, "SELECT * from mysql.db;")
+	rs.Close()
+	rs = mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
+	rs.Close()
+	rs = mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
+	rs.Close()
 	// Check privilege tables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	c.Assert(r, NotNil)
