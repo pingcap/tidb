@@ -21,8 +21,6 @@ import (
 )
 
 func TestBuiltinFunctionsUsage(t *testing.T) {
-	t.Parallel()
-
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -30,12 +28,12 @@ func TestBuiltinFunctionsUsage(t *testing.T) {
 	tk.MustExec("use test")
 
 	usage := telemetry.GlobalBuiltinFunctionsUsage.Dump()
-	require.Equal(t, usage, map[string]uint32{})
+	require.Equal(t, map[string]uint32{}, usage)
 
 	tk.MustExec("create table t (id int)")
 	tk.MustQuery("select id + 1 - 2 from t")
 	// Should manually invoke `Session.Close()` to report the usage information
 	tk.Session().Close()
 	usage = telemetry.GlobalBuiltinFunctionsUsage.Dump()
-	require.Equal(t, usage, map[string]uint32{"PlusInt": 1, "MinusInt": 1})
+	require.Equal(t, map[string]uint32{"PlusInt": 1, "MinusInt": 1}, usage)
 }
