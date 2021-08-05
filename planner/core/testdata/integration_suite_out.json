@@ -1765,6 +1765,48 @@
         "Warnings": [
           "Note 1105 unique index PRIMARY of t4 is selected since the path only has point ranges with single scan"
         ]
+      },
+      {
+        "SQL": "update t1 set b = 2 where a = 4 or a = 6",
+        "Plan": [
+          "Update_4 N/A N/A root  N/A",
+          "└─Batch_Point_Get_6 2.00 12.53 root table:t1 handle:[4 6], keep order:false, desc:false"
+        ],
+        "Warnings": [
+          "Note 1105 handle of t1 is selected since the path only has point ranges"
+        ]
+      },
+      {
+        "SQL": "delete from t1 where f = 2 and g in (3, 4)",
+        "Plan": [
+          "Delete_4 N/A N/A root  N/A",
+          "└─Selection_7 2.00 0.00 root  in(test.t1.g, 3, 4)",
+          "  └─Point_Get_6 1.00 9.80 root table:t1, index:f(f) "
+        ],
+        "Warnings": [
+          "Note 1105 unique index f of t1 is selected since the path only has point ranges with double scan"
+        ]
+      },
+      {
+        "SQL": "insert into t3 select a, b, c from t1 where f = 2",
+        "Plan": [
+          "Insert_1 N/A N/A root  N/A",
+          "└─Projection_6 1.00 25.40 root  test.t1.a, test.t1.b, test.t1.c",
+          "  └─Point_Get_7 1.00 6.80 root table:t1, index:f(f) "
+        ],
+        "Warnings": [
+          "Note 1105 unique index f of t1 is selected since the path only has point ranges with double scan"
+        ]
+      },
+      {
+        "SQL": "replace into t3 select a, b, c from t1 where a = 3",
+        "Plan": [
+          "Insert_1 N/A N/A root  N/A",
+          "└─Point_Get_7 1.00 6.27 root table:t1 handle:3"
+        ],
+        "Warnings": [
+          "Note 1105 handle of t1 is selected since the path only has point ranges"
+        ]
       }
     ]
   },

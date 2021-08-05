@@ -332,7 +332,11 @@
       "select * from t3 where (a = 1 or a = 3) and b = 'xx'",
       "select * from t4 where (a = 1 or a = 3) and b = 'xx'",
       "select a, b from t3 where (a = 1 or a = 3) and b = 'xx'",
-      "select a, b from t4 where (a = 1 or a = 3) and b = 'xx'"
+      "select a, b from t4 where (a = 1 or a = 3) and b = 'xx'",
+      "update t1 set b = 2 where a = 4 or a = 6",
+      "delete from t1 where f = 2 and g in (3, 4)",
+      "insert into t3 select a, b, c from t1 where f = 2",
+      "replace into t3 select a, b, c from t1 where a = 3"
     ]
   },
   {
