@@ -623,7 +623,6 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		}
 	}
 
-
 	if ds.ctx.GetSessionVars().GetAllowPreferRangeScan() && len(candidates) > 1 {
 		// remove the table/index full scan path
 		for i, c := range candidates {
@@ -657,7 +656,7 @@ func (ds *DataSource) getPruningInfo(candidates []*candidatePath, prop *property
 	getSimplePathName := func(path *util.AccessPath) string {
 		if path.IsTablePath() {
 			if path.StoreType == kv.TiFlash {
-				return tableName+"(tiflash)"
+				return tableName + "(tiflash)"
 			}
 			return tableName
 		}
