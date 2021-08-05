@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -1180,6 +1181,12 @@ func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {
 }
 
 func (s *testSuite) TestCapturePreparedStmt(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -1253,6 +1260,12 @@ func (s *testSuite) TestDropSingleBindings(c *C) {
 }
 
 func (s *testSuite) TestDMLEvolveBaselines(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1313,6 +1326,12 @@ func (s *testSuite) TestDMLEvolveBaselines(c *C) {
 }
 
 func (s *testSuite) TestAddEvolveTasks(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1339,6 +1358,12 @@ func (s *testSuite) TestAddEvolveTasks(c *C) {
 }
 
 func (s *testSuite) TestRuntimeHintsInEvolveTasks(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1525,6 +1550,12 @@ func (s *testSuite) TestDefaultDB(c *C) {
 }
 
 func (s *testSuite) TestEvolveInvalidBindings(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1585,6 +1616,12 @@ func (s *testSuite) TestPrivileges(c *C) {
 }
 
 func (s *testSuite) TestHintsSetEvolveTask(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1709,6 +1746,12 @@ func (s *testSuite) TestCapturePlanBaselineIgnoreTiFlash(c *C) {
 }
 
 func (s *testSuite) TestNotEvolvePlanForReadStorageHint(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1782,6 +1825,12 @@ func (s *testSuite) TestBindingWithIsolationRead(c *C) {
 }
 
 func (s *testSuite) TestReCreateBindAfterEvolvePlan(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -1843,6 +1892,12 @@ func (s *testSuite) TestInvisibleIndex(c *C) {
 }
 
 func (s *testSuite) TestBindingSource(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -2068,6 +2123,12 @@ func (s *testSuite) TestUpdateSubqueryCapture(c *C) {
 }
 
 func (s *testSuite) TestIssue20417(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
@@ -2134,6 +2195,25 @@ func (s *testSuite) TestIssue20417(c *C) {
 	status := rows[0][3].(string)
 	c.Assert(status == "using" || status == "rejected", IsTrue)
 	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
+}
+
+func (s *testSuite) TestForbidEvolvePlanBaseLinesBeforeGA(c *C) {
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = false
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	err := tk.ExecToErr("set @@tidb_evolve_plan_baselines=0")
+	c.Assert(err, Equals, nil)
+	err = tk.ExecToErr("set @@TiDB_Evolve_pLan_baselines=1")
+	c.Assert(err, ErrorMatches, "Cannot enable baseline evolution feature, it is not generally available now")
+	err = tk.ExecToErr("set @@TiDB_Evolve_pLan_baselines=oN")
+	c.Assert(err, ErrorMatches, "Cannot enable baseline evolution feature, it is not generally available now")
+	err = tk.ExecToErr("admin evolve bindings")
+	c.Assert(err, ErrorMatches, "Cannot enable baseline evolution feature, it is not generally available now")
 }
 
 func (s *testSuite) TestCaptureWithZeroSlowLogThreshold(c *C) {

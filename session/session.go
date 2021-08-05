@@ -1143,6 +1143,9 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	if value, err = sv.Validate(s.sessionVars, value, variable.ScopeGlobal); err != nil {
 		return err
 	}
+	if sv.Name == variable.TiDBEvolvePlanBaselines && value == "ON" && !config.CheckTableBeforeDrop {
+		return errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
+	}
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
 		return err
 	}
