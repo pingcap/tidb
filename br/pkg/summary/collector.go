@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
-
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )

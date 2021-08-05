@@ -10,14 +10,12 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"go.uber.org/zap"
-
-	"github.com/pingcap/tidb/types"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/types"
+	"go.uber.org/zap"
 )
 
 var _ = Suite(&testMydumpCSVParserSuite{})

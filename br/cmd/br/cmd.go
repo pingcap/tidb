@@ -14,16 +14,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	tidbutils "github.com/pingcap/tidb-tools/pkg/utils"
-	"github.com/spf13/cobra"
-
-	"github.com/pingcap/tidb/util/logutil"
-
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/spf13/cobra"
 )
 
 var (

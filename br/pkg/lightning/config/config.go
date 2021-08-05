@@ -33,12 +33,10 @@ import (
 	"github.com/pingcap/parser/mysql"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
-	"go.uber.org/zap"
-
-	tidbcfg "github.com/pingcap/tidb/config"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	tidbcfg "github.com/pingcap/tidb/config"
+	"go.uber.org/zap"
 )
 
 const (

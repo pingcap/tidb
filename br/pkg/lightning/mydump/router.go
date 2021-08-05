@@ -5,12 +5,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/tidb/util/slice"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-tools/pkg/filter"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/util/slice"
 )
 
 type SourceType int

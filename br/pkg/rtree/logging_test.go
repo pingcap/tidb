@@ -8,10 +8,9 @@ import (
 
 	. "github.com/pingcap/check"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-
-	"github.com/pingcap/tidb/br/pkg/rtree"
 )
 
 var _ = Suite(&testLoggingSuite{})

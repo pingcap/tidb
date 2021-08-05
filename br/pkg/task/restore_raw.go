@@ -5,17 +5,15 @@ package task
 import (
 	"context"
 
-	"github.com/pingcap/tidb/br/pkg/metautil"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
-
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // RestoreRawConfig is the configuration specific for raw kv restore tasks.

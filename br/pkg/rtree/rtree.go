@@ -8,7 +8,6 @@ import (
 	"github.com/google/btree"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-
 	"github.com/pingcap/tidb/br/pkg/logutil"
 )
 

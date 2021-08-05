@@ -6,12 +6,11 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
-
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 const (

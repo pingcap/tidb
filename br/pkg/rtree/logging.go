@@ -5,11 +5,10 @@ package rtree
 import (
 	"fmt"
 
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
-
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // String formats a range to a string.

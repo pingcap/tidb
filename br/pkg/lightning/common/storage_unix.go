@@ -21,9 +21,8 @@ import (
 	"reflect"
 	"syscall"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/pingcap/errors"
+	"golang.org/x/sys/unix"
 )
 
 // GetStorageSize gets storage's capacity and available size

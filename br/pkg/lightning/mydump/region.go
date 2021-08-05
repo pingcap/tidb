@@ -20,15 +20,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/utils"
-
 	"github.com/pingcap/errors"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"go.uber.org/zap"
 )
 
 const tableRegionSizeWarningThreshold int64 = 1024 * 1024 * 1024

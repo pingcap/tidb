@@ -5,9 +5,8 @@ package task
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/config"
-
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/spf13/pflag"
 )
 

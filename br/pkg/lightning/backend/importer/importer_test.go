@@ -26,7 +26,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	kvpb "github.com/pingcap/kvproto/pkg/import_kvpb"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"

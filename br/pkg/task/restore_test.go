@@ -4,7 +4,6 @@ package task
 
 import (
 	. "github.com/pingcap/check"
-
 	"github.com/pingcap/tidb/br/pkg/restore"
 )
 

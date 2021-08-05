@@ -19,12 +19,11 @@ import (
 
 	"github.com/pingcap/errors"
 	pclog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-
-	"github.com/pingcap/tidb/util/logutil"
 )
 
 const (

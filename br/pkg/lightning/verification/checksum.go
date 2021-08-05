@@ -17,9 +17,8 @@ import (
 	"fmt"
 	"hash/crc64"
 
-	"go.uber.org/zap/zapcore"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"go.uber.org/zap/zapcore"
 )
 
 var ecmaTable = crc64.MakeTable(crc64.ECMA)

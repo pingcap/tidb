@@ -39,10 +39,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/types"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
-
-	"github.com/pingcap/tidb/ddl"
-	tmock "github.com/pingcap/tidb/util/mock"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -61,6 +57,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/ddl"
+	tmock "github.com/pingcap/tidb/util/mock"
 )
 
 var _ = Suite(&restoreSuite{})

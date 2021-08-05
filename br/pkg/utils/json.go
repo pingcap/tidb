@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
-
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 )
 
