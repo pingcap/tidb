@@ -853,8 +853,12 @@ func (do *Domain) GetEtcdClient() *clientv3.Client {
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "set @@autocommit = 1")
+	if err != nil {
+		return err
+	}
 	do.privHandle = privileges.NewHandle()
-	err := do.privHandle.Update(ctx)
+	err = do.privHandle.Update(ctx)
 	if err != nil {
 		return err
 	}
@@ -986,12 +990,13 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 		return err
 	}
 
-	do.globalBindHandleWorkerLoop()
-	do.handleEvolvePlanTasksLoop(ctxForEvolve)
+	owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
+	do.globalBindHandleWorkerLoop(owner)
+	do.handleEvolvePlanTasksLoop(ctxForEvolve, owner)
 	return nil
 }
 
-func (do *Domain) globalBindHandleWorkerLoop() {
+func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 	do.wg.Add(1)
 	go func() {
 		defer func() {
@@ -1000,10 +1005,15 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 			util.Recover(metrics.LabelDomain, "globalBindHandleWorkerLoop", nil, false)
 		}()
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
-		defer bindWorkerTicker.Stop()
+		gcBindTicker := time.NewTicker(100 * bindinfo.Lease)
+		defer func() {
+			bindWorkerTicker.Stop()
+			gcBindTicker.Stop()
+		}()
 		for {
 			select {
 			case <-do.exit:
+				owner.Cancel()
 				return
 			case <-bindWorkerTicker.C:
 				err := do.bindHandle.Update(false)
@@ -1015,12 +1025,20 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 					do.bindHandle.CaptureBaselines()
 				}
 				do.bindHandle.SaveEvolveTasksToStore()
+			case <-gcBindTicker.C:
+				if !owner.IsOwner() {
+					continue
+				}
+				err := do.bindHandle.GCBindRecord()
+				if err != nil {
+					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
+				}
 			}
 		}
 	}()
 }
 
-func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
+func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.Manager) {
 	do.wg.Add(1)
 	go func() {
 		defer func() {
@@ -1028,7 +1046,6 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 			logutil.BgLogger().Info("handleEvolvePlanTasksLoop exited.")
 			util.Recover(metrics.LabelDomain, "handleEvolvePlanTasksLoop", nil, false)
 		}()
-		owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
 		for {
 			select {
 			case <-do.exit:

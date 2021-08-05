@@ -435,6 +435,8 @@ type cteInfo struct {
 	limitLP       LogicalPlan
 	// seedStat is shared between logicalCTE and logicalCTETable.
 	seedStat *property.StatsInfo
+	// The LogicalCTEs that reference the same table should share the same CteClass.
+	cteClass *CTEClass
 }
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -697,6 +699,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildLoadStats(x), nil
 	case *ast.IndexAdviseStmt:
 		return b.buildIndexAdvise(x), nil
+	case *ast.PlanRecreatorStmt:
+		return b.buildPlanRecreator(x), nil
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x), nil
 	case *ast.SelectStmt:
@@ -1004,8 +1008,20 @@ func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[i
 		return nil, false, nil
 	}
 	latestIndexes := make(map[int64]*model.IndexInfo)
-	latestTbl, exist := is.TableByID(id)
-	if exist {
+
+	var latestTbl table.Table
+	latestTblExist := false
+
+	localTemporaryTables := ctx.GetSessionVars().LocalTemporaryTables
+	if localTemporaryTables != nil {
+		latestTbl, latestTblExist = localTemporaryTables.(*infoschema.LocalTemporaryTables).TableByID(id)
+	}
+
+	if !latestTblExist {
+		latestTbl, latestTblExist = is.TableByID(id)
+	}
+
+	if latestTblExist {
 		latestTblInfo := latestTbl.Meta()
 		for _, index := range latestTblInfo.Indices {
 			latestIndexes[index.ID] = index
@@ -1351,7 +1367,12 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 	case ast.AdminCaptureBindings:
 		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
 	case ast.AdminEvolveBindings:
-		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, nil
+		var err error
+		// The 'baseline evolution' only work in the test environment before the feature is GA.
+		if !config.CheckTableBeforeDrop {
+			err = errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
+		}
+		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
 	case ast.AdminReloadBindings:
 		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
 	case ast.AdminShowTelemetry:
@@ -2939,12 +2960,13 @@ func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Inse
 		// 2. `INSERT INTO tbl_name (col_name [, col_name] ...) SELECT ...`.
 		colName := make([]string, 0, len(insertStmt.Columns))
 		for _, col := range insertStmt.Columns {
-			colName = append(colName, col.Name.O)
+			colName = append(colName, col.Name.L)
 		}
-		var missingColName string
-		affectedValuesCols, missingColName = table.FindCols(insertPlan.Table.VisibleCols(), colName, insertPlan.Table.Meta().PKIsHandle)
-		if missingColName != "" {
-			return nil, ErrUnknownColumn.GenWithStackByArgs(missingColName, clauseMsg[fieldList])
+		var missingColIdx int
+		affectedValuesCols, missingColIdx = table.FindColumns(insertPlan.Table.VisibleCols(), colName, insertPlan.Table.Meta().PKIsHandle)
+		if missingColIdx >= 0 {
+			return nil, ErrUnknownColumn.GenWithStackByArgs(
+				insertStmt.Columns[missingColIdx].Name.O, clauseMsg[fieldList])
 		}
 	} else if len(insertStmt.Setlist) == 0 {
 		// This branch is for the following scenarios:
@@ -2972,9 +2994,9 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	}
 
 	// Check whether the column to be updated is the generated column.
-	tCols, missingColName := table.FindCols(insertPlan.Table.VisibleCols(), colNames, tableInfo.PKIsHandle)
-	if missingColName != "" {
-		return ErrUnknownColumn.GenWithStackByArgs(missingColName, clauseMsg[fieldList])
+	tCols, missingColIdx := table.FindColumns(insertPlan.Table.VisibleCols(), colNames, tableInfo.PKIsHandle)
+	if missingColIdx >= 0 {
+		return ErrUnknownColumn.GenWithStackByArgs(insert.Setlist[missingColIdx].Column.Name.O, clauseMsg[fieldList])
 	}
 	generatedColumns := make(map[string]struct{}, len(tCols))
 	for _, tCol := range tCols {
@@ -4099,8 +4121,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Supported_builtin_functions"}
 		ftypes = []byte{mysql.TypeVarchar}
 	case ast.ShowBackups, ast.ShowRestores:
-		names = []string{"Destination", "State", "Progress", "Queue_time", "Execution_time", "Finish_time", "Connection"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDouble, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeLonglong}
+		names = []string{"Destination", "State", "Progress", "Queue_time", "Execution_time", "Finish_time", "Connection", "Message"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDouble, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
@@ -4120,6 +4142,11 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		schema.Append(col)
 	}
 	return
+}
+
+func (b *PlanBuilder) buildPlanRecreator(pc *ast.PlanRecreatorStmt) Plan {
+	p := &PlanRecreatorSingle{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File}
+	return p
 }
 
 func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {
