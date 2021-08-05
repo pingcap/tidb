@@ -10,6 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 // +build !windows
 
 package owner
@@ -26,32 +27,34 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
-
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
 )
 
 var (
-	dialTimeout = 5 * time.Second
+	dialTimeout = 3 * time.Second
 	retryCnt    = math.MaxInt32
 )
 
 func TestFailNewSession(t *testing.T) {
-	t.Parallel()
-	os.Remove("new_session:0")
+	_ = os.Remove("new_session:0")
 	ln, err := net.Listen("unix", "new_session:0")
 	require.NoError(t, err)
+
 	addr := ln.Addr()
 	endpoints := []string{fmt.Sprintf("%s://%s", addr.Network(), addr.String())}
-	require.Nil(t, err)
+	require.NoError(t, err)
+
 	srv := grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
 	var stop sync.WaitGroup
 	stop.Add(1)
+
 	go func() {
+		defer stop.Done()
 		err = srv.Serve(ln)
-		require.Errorf(t, err, "can't serve gRPC requests")
-		stop.Done()
+		assert.NoError(t, err)
 	}()
 
 	defer func() {
@@ -67,11 +70,11 @@ func TestFailNewSession(t *testing.T) {
 		require.NoError(t, err)
 		defer func() {
 			if cli != nil {
-				cli.Close()
+				_ = cli.Close()
 			}
-			require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/owner/closeClient"))
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/owner/closeClient"))
 		}()
-		require.NoError(t, err, failpoint.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`))
 
 		// TODO: It takes more than 2s here in etcd client, the CI takes 5s to run this test.
 		// The config is hard coded, not way to control it outside.
@@ -79,9 +82,9 @@ func TestFailNewSession(t *testing.T) {
 		// https://github.com/etcd-io/etcd/blob/ae9734e/clientv3/concurrency/session.go#L38
 		// https://github.com/etcd-io/etcd/blob/ae9734ed278b7a1a7dfc82e800471ebbf9fce56f/clientv3/client.go#L253
 		// https://github.com/etcd-io/etcd/blob/ae9734ed278b7a1a7dfc82e800471ebbf9fce56f/clientv3/retry_interceptor.go#L63
-		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
+		_, err = NewSession(context.Background(), "fail_new_session", cli, retryCnt, ManagerSessionTTL)
 		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
-		require.True(t, isContextDone, "err %v", err)
+		require.Truef(t, isContextDone, "err %v", err)
 	}()
 
 	func() {
@@ -92,16 +95,16 @@ func TestFailNewSession(t *testing.T) {
 		require.NoError(t, err)
 		defer func() {
 			if cli != nil {
-				cli.Close()
+				_ = cli.Close()
 			}
-			require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/owner/closeGrpc"))
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/owner/closeGrpc"))
 		}()
-		require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(false)`))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`))
 
 		// TODO: It takes more than 2s here in etcd client, the CI takes 5s to run this test.
 		// The config is hard coded, not way to control it outside.
-		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
+		_, err = NewSession(context.Background(), "fail_new_session", cli, retryCnt, ManagerSessionTTL)
 		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
-		require.True(t, isContextDone, "err %v", err)
+		require.Truef(t, isContextDone, "err %v", err)
 	}()
 }
