@@ -508,7 +508,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 		c.Check(err, IsNil)
 		c.Check(chk.NumRows(), Equals, 0)
 
-		_, err = tk.Exec("delete from mysql.bind_info")
+		_, err = tk.Exec("delete from mysql.bind_info where source != 'builtin'")
 		c.Assert(err, IsNil)
 	}
 }
