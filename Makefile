@@ -13,7 +13,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest br_web
+.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest
 
 default: server buildsucc
 
