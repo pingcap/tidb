@@ -978,10 +978,8 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		// encryption functions.
 		ast.MD5, ast.SHA1, ast.UncompressedLength,
 
-		ast.Cast:
-		return true
-
-	case
+		ast.Cast,
+		
 		// misc functions.
 		// TODO(#26942): enable functions below after them are fully tested in TiKV.
 		/*ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6,*/ast.UUID:
