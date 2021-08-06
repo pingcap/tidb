@@ -125,11 +125,11 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 
 	for _, t := range tbl {
 		f, err := newFunctionForTest(s.ctx, ast.Ifnull, s.primitiveValsToConstants([]interface{}{t.arg1, t.arg2})...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
+			c.Assert(err, IsNil)
+			d, err := f.Eval(chunk.Row{})
 			c.Assert(err, IsNil)
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)

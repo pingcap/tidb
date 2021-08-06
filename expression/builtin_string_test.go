@@ -264,12 +264,12 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 	c.Assert(err, NotNil)
 
 	for _, t := range cases {
-		f, err := newFunctionForTest(s.ctx, fcName, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		val, err1 := f.Eval(chunk.Row{})
+		f, err1 := newFunctionForTest(s.ctx, fcName, s.primitiveValsToConstants(t.args)...)
 		if t.getErr {
 			c.Assert(err1, NotNil)
 		} else {
+			c.Assert(err1, IsNil)
+			val, err1 := f.Eval(chunk.Row{})
 			c.Assert(err1, IsNil)
 			if t.isNil {
 				c.Assert(val.Kind(), Equals, types.KindNull)
@@ -361,11 +361,11 @@ func (s *testEvaluatorSuite) TestLeft(c *C) {
 	}
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Left, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		v, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
+			c.Assert(err, IsNil)
+			v, err := f.Eval(chunk.Row{})
 			c.Assert(err, IsNil)
 			if t.isNil {
 				c.Assert(v.Kind(), Equals, types.KindNull)
@@ -410,11 +410,11 @@ func (s *testEvaluatorSuite) TestRight(c *C) {
 	}
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Right, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		v, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
+			c.Assert(err, IsNil)
+			v, err := f.Eval(chunk.Row{})
 			c.Assert(err, IsNil)
 			if t.isNil {
 				c.Assert(v.Kind(), Equals, types.KindNull)
@@ -652,11 +652,11 @@ func (s *testEvaluatorSuite) TestStrcmp(c *C) {
 	}
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Strcmp, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
+			c.Assert(err, IsNil)
+			d, err := f.Eval(chunk.Row{})
 			c.Assert(err, IsNil)
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)
@@ -688,12 +688,12 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 	}
 	for i, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Replace, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil, Commentf("test %v", i))
-		c.Assert(f.GetType().Flen, Equals, t.flen, Commentf("test %v", i))
-		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil, Commentf("test %v", i))
 		} else {
+			c.Assert(err, IsNil, Commentf("test %v", i))
+			c.Assert(f.GetType().Flen, Equals, t.flen, Commentf("test %v", i))
+			d, err := f.Eval(chunk.Row{})
 			c.Assert(err, IsNil, Commentf("test %v", i))
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull, Commentf("test %v", i))
@@ -733,11 +733,11 @@ func (s *testEvaluatorSuite) TestSubstring(c *C) {
 	}
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Substring, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
+			c.Assert(err, IsNil)
+			d, err := f.Eval(chunk.Row{})
 			c.Assert(err, IsNil)
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)
@@ -841,11 +841,11 @@ func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
 	}
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.SubstringIndex, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
+			c.Assert(err, IsNil)
+			d, err := f.Eval(chunk.Row{})
 			c.Assert(err, IsNil)
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)

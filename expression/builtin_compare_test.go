@@ -332,11 +332,11 @@ func (s *testEvaluatorSuite) TestGreatestLeastFunc(c *C) {
 		},
 	} {
 		f0, err := newFunctionForTest(s.ctx, ast.Greatest, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		d, err := f0.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
+			c.Assert(err, IsNil)
+			d, err := f0.Eval(chunk.Row{})
 			c.Assert(err, IsNil)
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)
@@ -346,11 +346,11 @@ func (s *testEvaluatorSuite) TestGreatestLeastFunc(c *C) {
 		}
 
 		f1, err := newFunctionForTest(s.ctx, ast.Least, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		d, err = f1.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
+			c.Assert(err, IsNil)
+			d, err := f1.Eval(chunk.Row{})
 			c.Assert(err, IsNil)
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)

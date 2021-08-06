@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -117,14 +118,65 @@ func CheckIllegalMixCollation(funcName string, args []Expression, evalType types
 	if len(args) < 2 {
 		return nil
 	}
-	_, _, coercibility, legal := inferCollation(args...)
+	_, dstCharset, coercibility, legal := inferCollation(args...)
 	if !legal {
 		return illegalMixCollationErr(funcName, args)
 	}
 	if coercibility == CoercibilityNone && evalType != types.ETString {
 		return illegalMixCollationErr(funcName, args)
 	}
+
+	// For every constant and string type arguments, MySQL will try to convert its charset to the inferred charset,
+	// return illegalMixCollationErr if convert failed.
+	// e.g.
+	// 		select _utf8 'a' collate utf8_general_ci = '😁'; # error
+	// 		select _utf8 'a' collate utf8_general_ci = 'ㅂ'; # fine
+	// it is because '😁' cannot convert to utf8mb3, it is both fine in tidb for now, and I would not change the
+	// behavior because we tread utf8mb3 same as utf8mb4 except insert, just keep things simple.
+	// Since we only have utf8mb4 and its subset charset for now, so that just check the data's validity is ok, no
+	// need to convert it.
+	// For the future, we may add more charsets support, but it actually still utf8mb4 encoding at runtime, so we
+	// also no need to do the convert.
+	for _, arg := range args {
+		_, ok := arg.(*Constant)
+		if ok && arg.GetType().EvalType() == types.ETString {
+			val, isNull, err := arg.EvalString(nil, chunk.Row{})
+			if err != nil || isNull {
+				return err
+			}
+
+			if !isValidString(val, arg.GetType().Charset, dstCharset) {
+				return illegalMixCollationErr(funcName, args)
+			}
+		}
+	}
+
 	return nil
+}
+
+// isValidString test if the val is valid for charset dstChs.
+// todo: remove this function when full charset is supported, we will have better way to do this job.
+func isValidString(val string, srcChs, dstChs string) bool {
+	if srcChs == dstChs {
+		return true
+	}
+	switch dstChs {
+	case charset.CharsetASCII:
+		for _, c := range val {
+			if !(c < 0x80) {
+				return false
+			}
+		}
+	case charset.CharsetLatin1:
+		// todo: for latin, we now have no convenience way to check it, just let it go.
+		// todo: will fix it after full charset is supported.
+	default:
+		// the charset in tidb are all utf8mb4 or its subset except binary, so that we just check binary charset is enough.
+		if srcChs == charset.CharsetBin {
+			return utf8.ValidString(val)
+		}
+	}
+	return true
 }
 
 func illegalMixCollationErr(funcName string, args []Expression) error {
