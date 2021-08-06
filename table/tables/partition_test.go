@@ -453,6 +453,8 @@ func (ts *testSuite) TestRangePartitionUnderNoUnsigned(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("drop table if exists tu;")
+	defer tk.MustExec("drop table if exists t2;")
+	defer tk.MustExec("drop table if exists tu;")
 	tk.MustExec("SET @@sql_mode='NO_UNSIGNED_SUBTRACTION';")
 	tk.MustExec(`create table t2 (a bigint unsigned) partition by range (a) (
   						  partition p1 values less than (0),
