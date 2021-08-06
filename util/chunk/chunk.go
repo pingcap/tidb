@@ -303,12 +303,13 @@ func (c *Chunk) GrowAndReset(maxChunkSize int) {
 // reCalcCapacity calculates the capacity for another Chunk based on the current
 // Chunk. The new capacity is doubled only when the current Chunk is full.
 func reCalcCapacity(c *Chunk, maxChunkSize int) int {
-	if !c.IsFull() {
-		return c.requiredRows
+	if c.NumRows() < c.capacity {
+		return c.capacity
 	}
-	return mathutil.Min(c.requiredRows*2, maxChunkSize)
+	return mathutil.Min(c.capacity*2, maxChunkSize)
 }
 
+// Capacity returns the capacity of the Chunk.
 func (c *Chunk) Capacity() int {
 	return c.capacity
 }
