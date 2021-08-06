@@ -18,7 +18,6 @@
 package session
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -64,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/session/temptable"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -71,7 +71,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -83,9 +82,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
-	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
@@ -549,111 +546,13 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.GuaranteeLinearizability,
 			sessVars.TxnCtx.IsExplicit && sessVars.GuaranteeLinearizability)
 	}
-	if tables := sessVars.TxnCtx.TemporaryTables; len(tables) > 0 {
-		s.txn.SetOption(kv.KVFilter, temporaryTableKVFilter(tables))
+
+	ctx = tikvutil.SetSessionID(ctx, sessVars.ConnectionID)
+	if txnTemporaryTables := s.sessionVars.TxnCtx.TemporaryTables; len(txnTemporaryTables) > 0 {
+		return temptable.GetTemporaryTableManager(s).CommitTxnWithTemporaryData(ctx, &s.txn)
 	}
 
-	return s.commitTxnWithTemporaryData(tikvutil.SetSessionID(ctx, sessVars.ConnectionID), &s.txn)
-}
-
-func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transaction) error {
-	sessVars := s.sessionVars
-	txnTempTables := sessVars.TxnCtx.TemporaryTables
-	if len(txnTempTables) == 0 {
-		return txn.Commit(ctx)
-	}
-
-	sessionData := sessVars.TemporaryTableData
-	var (
-		stage           kv.StagingHandle
-		localTempTables *infoschema.LocalTemporaryTables
-	)
-
-	if sessVars.LocalTemporaryTables != nil {
-		localTempTables = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
-	} else {
-		localTempTables = new(infoschema.LocalTemporaryTables)
-	}
-
-	defer func() {
-		// stage != kv.InvalidStagingHandle means error occurs, we need to cleanup sessionData
-		if stage != kv.InvalidStagingHandle {
-			sessionData.Cleanup(stage)
-		}
-	}()
-
-	for tblID, tbl := range txnTempTables {
-		if !tbl.GetModified() {
-			continue
-		}
-
-		if tbl.GetMeta().TempTableType != model.TempTableLocal {
-			continue
-		}
-		if _, ok := localTempTables.TableByID(tblID); !ok {
-			continue
-		}
-
-		if stage == kv.InvalidStagingHandle {
-			stage = sessionData.Staging()
-		}
-
-		tblPrefix := tablecodec.EncodeTablePrefix(tblID)
-		endKey := tablecodec.EncodeTablePrefix(tblID + 1)
-
-		txnMemBuffer := s.txn.GetMemBuffer()
-		iter, err := txnMemBuffer.Iter(tblPrefix, endKey)
-		if err != nil {
-			return err
-		}
-
-		for iter.Valid() {
-			key := iter.Key()
-			if !bytes.HasPrefix(key, tblPrefix) {
-				break
-			}
-
-			value := iter.Value()
-			if len(value) == 0 {
-				err = sessionData.Delete(key)
-			} else {
-				err = sessionData.Set(key, iter.Value())
-			}
-
-			if err != nil {
-				return err
-			}
-
-			err = iter.Next()
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	err := txn.Commit(ctx)
-	if err != nil {
-		return err
-	}
-
-	if stage != kv.InvalidStagingHandle {
-		sessionData.Release(stage)
-		stage = kv.InvalidStagingHandle
-	}
-
-	return nil
-}
-
-type temporaryTableKVFilter map[int64]tableutil.TempTable
-
-func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) bool {
-	tid := tablecodec.DecodeTableID(key)
-	if _, ok := m[tid]; ok {
-		return true
-	}
-
-	// This is the default filter for all tables.
-	return tablecodec.IsUntouchedIndexKValue(key, value)
+	return s.txn.Commit(ctx)
 }
 
 // errIsNoisy is used to filter DUPLCATE KEY errors.
@@ -2099,6 +1998,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
 			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
+		updateSnapshotTemporaryTableOptions(s, s.txn.GetSnapshot())
 	}
 	return &s.txn, nil
 }
@@ -2162,6 +2062,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		IsStaleness: false,
 		TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
 	}
+	updateSnapshotTemporaryTableOptions(s, txn.GetSnapshot())
 	return nil
 }
 
@@ -2207,7 +2108,14 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 		IsStaleness: true,
 		TxnScope:    txnScope,
 	}
+	updateSnapshotTemporaryTableOptions(s, txn.GetSnapshot())
 	return nil
+}
+
+func (s *session) GetSnapshot(ver uint64) (kv.Snapshot, error) {
+	snap := s.store.GetSnapshot(kv.Version{Ver: ver})
+	updateSnapshotTemporaryTableOptions(s, snap)
+	return snap, nil
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
@@ -2877,6 +2785,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 		return err
 	}
 	txn.SetVars(s.sessionVars.KVVars)
+	updateSnapshotTemporaryTableOptions(s, txn.GetSnapshot())
 	s.txn.changeInvalidToValid(txn)
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
@@ -3089,7 +2998,7 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	}
 
 	// Override the infoschema if the session has temporary table.
-	return wrapWithTemporaryTable(s, is)
+	return temptable.GetTemporaryTableManager(s).WrapInformationSchema(is)
 }
 
 func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
@@ -3099,24 +3008,7 @@ func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.
 	}
 	// Set snapshot does not affect the witness of the local temporary table.
 	// The session always see the latest temporary tables.
-	return wrapWithTemporaryTable(s, is), nil
-}
-
-func wrapWithTemporaryTable(s sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
-	// Already a wrapped one.
-	if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
-		return is
-	}
-	// No temporary table.
-	local := s.GetSessionVars().LocalTemporaryTables
-	if local == nil {
-		return is
-	}
-
-	return &infoschema.TemporaryTableAttachedInfoSchema{
-		InfoSchema:           is,
-		LocalTemporaryTables: local.(*infoschema.LocalTemporaryTables),
-	}
+	return temptable.GetTemporaryTableManager(s).WrapInformationSchema(is), nil
 }
 
 func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
@@ -3139,4 +3031,8 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 
 func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
 	return s.builtinFunctionUsage
+}
+
+func updateSnapshotTemporaryTableOptions(ctx sessionctx.Context, snapshot kv.Snapshot) {
+	temptable.GetTemporaryTableManager(ctx).UpdateSnapshotOptions(snapshot, ctx.GetInfoSchema().(infoschema.InfoSchema))
 }

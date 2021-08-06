@@ -55,6 +55,8 @@ type InfoSchema interface {
 	SetBundle(*placement.Bundle)
 	// RuleBundles will return a copy of all rule bundles.
 	RuleBundles() []*placement.Bundle
+	// SortedGlobalTemporaryTables will return the sorted global temporary table list
+	SortedGlobalTemporaryTables() []table.Table
 }
 
 type sortedTables []table.Table
@@ -97,6 +99,9 @@ type infoSchema struct {
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
+
+	// sortedGlobalTemporaryTables is a slice of all global temporary tables.
+	sortedGlobalTemporaryTables sortedTables
 
 	// schemaMetaVersion is the version of schema, and we should check version when change schema.
 	schemaMetaVersion int64
@@ -290,6 +295,14 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 	return nil, nil, nil
 }
 
+// SortedGlobalTemporaryTables will return the sorted global temporary table list
+func (is *infoSchema) SortedGlobalTemporaryTables() (tbls []table.Table) {
+	for _, tbl := range is.sortedGlobalTemporaryTables {
+		tbls = append(tbls, tbl)
+	}
+	return tbls
+}
+
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
 	for _, v := range is.schemaMap {
 		result = append(result, v.dbInfo.Clone())
@@ -410,8 +423,9 @@ type schemaLocalTempSchemaTables struct {
 
 // LocalTemporaryTables store local temporary tables
 type LocalTemporaryTables struct {
-	schemaMap map[string]*schemaLocalTempSchemaTables
-	idx2table map[int64]table.Table
+	schemaMap    map[string]*schemaLocalTempSchemaTables
+	idx2table    map[int64]table.Table
+	sortedTables []table.Table
 }
 
 // NewLocalTemporaryTables creates a new NewLocalTemporaryTables object
@@ -459,6 +473,7 @@ func (is *LocalTemporaryTables) AddTable(schema model.CIStr, tbl table.Table) er
 
 	schemaTables.tables[tblMeta.Name.L] = tbl
 	is.idx2table[tblMeta.ID] = tbl
+	is.sortedTables = appendSortedTables(is.sortedTables, tbl)
 
 	return nil
 }
@@ -477,6 +492,14 @@ func (is *LocalTemporaryTables) RemoveTable(schema, table model.CIStr) (exist bo
 
 	delete(tbls.tables, table.L)
 	delete(is.idx2table, oldTable.Meta().ID)
+
+	oldTblID := oldTable.Meta().ID
+	sortedTables := is.sortedTables
+	idx := sort.Search(len(sortedTables), func(i int) bool { return sortedTables[i].Meta().ID >= oldTblID })
+	if idx < len(sortedTables) {
+		is.sortedTables = append(sortedTables[:idx], sortedTables[idx+1:]...)
+	}
+
 	return true
 }
 
@@ -495,6 +518,11 @@ func (is *LocalTemporaryTables) SchemaByTable(tableInfo *model.TableInfo) (strin
 	}
 
 	return "", false
+}
+
+// SortedTables returns the sorted tables
+func (is *LocalTemporaryTables) SortedTables() []table.Table {
+	return is.sortedTables
 }
 
 func (is *LocalTemporaryTables) ensureSchema(schema model.CIStr) *schemaLocalTempSchemaTables {
@@ -517,6 +545,25 @@ func (is *LocalTemporaryTables) schemaTables(schema model.CIStr) *schemaLocalTem
 	}
 
 	return nil
+}
+
+func appendSortedTables(tbls []table.Table, items ...table.Table) []table.Table {
+	newTbls := make([]table.Table, len(tbls), len(items)+1)
+	copy(newTbls, tbls)
+
+	sorted := true
+	for _, tbl := range items {
+		if len(newTbls) > 0 && tbl.Meta().ID < newTbls[len(newTbls)-1].Meta().ID {
+			sorted = false
+		}
+		newTbls = append(newTbls, tbl)
+	}
+
+	if !sorted {
+		sort.Slice(newTbls, func(i, j int) bool { return newTbls[i].Meta().ID < newTbls[j].Meta().ID })
+	}
+
+	return newTbls
 }
 
 // TemporaryTableAttachedInfoSchema implements InfoSchema

@@ -112,7 +112,10 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		// The snapshot may contains cache that can reduce RPC call.
 		snapshot = txn.GetSnapshot()
 	} else {
-		snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
+		snapshot, err = e.ctx.GetSnapshot(e.snapshotTS)
+		if err != nil {
+			return err
+		}
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
@@ -146,12 +149,6 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		})
 	}
 	setResourceGroupTagForTxn(stmtCtx, snapshot)
-	// Avoid network requests for the temporary table.
-	if e.tblInfo.TempTableType == model.TempTableGlobal {
-		snapshot = temporaryTableSnapshot{snapshot, nil}
-	} else if e.tblInfo.TempTableType == model.TempTableLocal {
-		snapshot = temporaryTableSnapshot{snapshot, e.ctx.GetSessionVars().TemporaryTableData}
-	}
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
@@ -166,39 +163,6 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	e.snapshot = snapshot
 	e.batchGetter = batchGetter
 	return nil
-}
-
-// Temporary table would always use memBuffer in session as snapshot.
-// temporaryTableSnapshot inherits kv.Snapshot and override the BatchGet methods to return empty.
-type temporaryTableSnapshot struct {
-	kv.Snapshot
-	memBuffer kv.MemBuffer
-}
-
-func (s temporaryTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
-	values := make(map[string][]byte)
-	if s.memBuffer == nil {
-		return values, nil
-	}
-
-	for _, key := range keys {
-		val, err := s.memBuffer.Get(ctx, key)
-		if err == kv.ErrNotExist {
-			continue
-		}
-
-		if err != nil {
-			return nil, err
-		}
-
-		if len(val) == 0 {
-			continue
-		}
-
-		values[string(key)] = val
-	}
-
-	return values, nil
 }
 
 // Close implements the Executor interface.

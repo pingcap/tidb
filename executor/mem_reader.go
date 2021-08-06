@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session/temptable"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -323,11 +324,11 @@ func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn process
 		return err
 	}
 
-	tempTableData := ctx.GetSessionVars().TemporaryTableData
+	sessionData := temptable.GetTemporaryTableManager(ctx).GetSessionData()
 	for _, rg := range kvRanges {
 		iter := txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
-		if tempTableData != nil {
-			snapIter, err := tempTableData.Iter(rg.StartKey, rg.EndKey)
+		if sessionData != nil {
+			snapIter, err := sessionData.Iter(rg.StartKey, rg.EndKey)
 			if err != nil {
 				return err
 			}

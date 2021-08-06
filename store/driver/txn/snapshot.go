@@ -21,6 +21,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/options"
+	tikvkv "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/txnkv/txnutil"
 )
@@ -97,6 +99,10 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetResourceGroupTag(val.([]byte))
 	case kv.TxnScope:
 		s.KVSnapshot.SetTxnScope(val.(string))
+	case kv.MemSnapshotSortedRanges:
+		s.KVSnapshot.SetSortedMemScanRanges(val.([]*tikvkv.KeyRange))
+	case kv.MemSnapshotDB:
+		s.KVSnapshot.SetMemSnapshotDB(val.(*tikv.MemDB))
 	}
 }
 

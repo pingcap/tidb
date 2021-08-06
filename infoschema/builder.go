@@ -195,6 +195,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			return []int64{}, nil
 		}
 	}
+
+	b.rebuildSortedGlobalTemporaryTables()
 	return tblIDs, nil
 }
 
@@ -298,6 +300,7 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 		b.applyPlacementDelete(placement.GroupID(id))
 		b.applyDropTable(di, id, nil)
 	}
+	b.rebuildSortedGlobalTemporaryTables()
 	return tableIDs
 }
 
@@ -517,6 +520,21 @@ func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 	return newSchemaTables.dbInfo
 }
 
+func (b *Builder) rebuildSortedGlobalTemporaryTables() {
+	tbls := make(sortedTables, 0)
+	for _, bucket := range b.is.sortedTablesBuckets {
+		for _, tbl := range bucket {
+			tblInfo := tbl.Meta()
+			if tblInfo.TempTableType == model.TempTableGlobal {
+				tbls = append(tbls, tbl)
+			}
+		}
+	}
+
+	sort.Sort(tbls)
+	b.is.sortedGlobalTemporaryTables = tbls
+}
+
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
 func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.Bundle, schemaVersion int64) (*Builder, error) {
 	info := b.is
@@ -544,6 +562,8 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.
 	for _, v := range info.sortedTablesBuckets {
 		sort.Sort(v)
 	}
+
+	b.rebuildSortedGlobalTemporaryTables()
 	return b, nil
 }
 

@@ -212,6 +212,14 @@ func (c *Context) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 	return c.NewTxn(ctx)
 }
 
+func (c *Context) GetSnapshot(ver uint64) (kv.Snapshot, error) {
+	if c.Store == nil {
+		return nil, errors.New("store is not set")
+	}
+
+	return c.Store.GetSnapshot(kv.Version{Ver: ver}), nil
+}
+
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn(ctx))

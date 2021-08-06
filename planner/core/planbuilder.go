@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/session/temptable"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1009,18 +1010,8 @@ func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[i
 	}
 	latestIndexes := make(map[int64]*model.IndexInfo)
 
-	var latestTbl table.Table
-	latestTblExist := false
-
-	localTemporaryTables := ctx.GetSessionVars().LocalTemporaryTables
-	if localTemporaryTables != nil {
-		latestTbl, latestTblExist = localTemporaryTables.(*infoschema.LocalTemporaryTables).TableByID(id)
-	}
-
-	if !latestTblExist {
-		latestTbl, latestTblExist = is.TableByID(id)
-	}
-
+	is = temptable.GetTemporaryTableManager(ctx).WrapInformationSchema(is)
+	latestTbl, latestTblExist := is.TableByID(id)
 	if latestTblExist {
 		latestTblInfo := latestTbl.Meta()
 		for _, index := range latestTblInfo.Indices {

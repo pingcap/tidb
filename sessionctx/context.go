@@ -54,6 +54,9 @@ type Context interface {
 	// to become valid.
 	Txn(active bool) (kv.Transaction, error)
 
+	// GetSnapshot returns a snapshot with specified version.
+	GetSnapshot(ver uint64) (kv.Snapshot, error)
+
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/tablecodec"
 	tikverr "github.com/tikv/client-go/v2/error"
+	tikvkv "github.com/tikv/client-go/v2/kv"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
@@ -118,7 +119,7 @@ func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
-	return newMemBuffer(txn.KVTxn.GetMemBuffer())
+	return NewMemBuffer(txn.KVTxn.GetMemBuffer())
 }
 
 func (txn *tikvTxn) SetOption(opt int, val interface{}) {
@@ -178,6 +179,10 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetResourceGroupTag(val.([]byte))
 	case kv.KVFilter:
 		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
+	case kv.MemSnapshotSortedRanges:
+		txn.KVTxn.GetSnapshot().SetSortedMemScanRanges(val.([]*tikvkv.KeyRange))
+	case kv.MemSnapshotDB:
+		txn.KVTxn.GetSnapshot().SetMemSnapshotDB(val.(*tikv.MemDB))
 	}
 }
 

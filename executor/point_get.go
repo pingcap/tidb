@@ -147,7 +147,10 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if e.txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
 		e.snapshot = e.txn.GetSnapshot()
 	} else {
-		e.snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
+		e.snapshot, err = e.ctx.GetSnapshot(snapshotTS)
+		if err != nil {
+			return err
+		}
 	}
 	if err := e.verifyTxnScope(); err != nil {
 		return err
@@ -401,16 +404,6 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 			}
 		}
 		// fallthrough to snapshot get.
-	}
-
-	// Global temporary table is always empty, so no need to send the request.
-	if e.tblInfo.TempTableType == model.TempTableGlobal {
-		return nil, nil
-	}
-
-	// Local temporary table always get snapshot value from session
-	if e.tblInfo.TempTableType == model.TempTableLocal {
-		return e.ctx.GetSessionVars().TemporaryTableSnapshotReader(e.tblInfo).Get(ctx, key)
 	}
 
 	lock := e.tblInfo.Lock

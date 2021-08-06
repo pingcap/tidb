@@ -61,9 +61,9 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 
 // removeRow removes the duplicate row and cleanup its keys in the key-value map,
 // but if the to-be-removed row equals to the to-be-added row, no remove or add things to do.
-func (e *ReplaceExec) removeRow(ctx context.Context, kvGetter kv.Getter, handle kv.Handle, r toBeCheckedRow) (bool, error) {
+func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle kv.Handle, r toBeCheckedRow) (bool, error) {
 	newRow := r.row
-	oldRow, err := getOldRow(ctx, e.ctx, kvGetter, r.t, handle, e.GenExprs)
+	oldRow, err := getOldRow(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
 	if err != nil {
 		logutil.BgLogger().Error("get old row failed when replace",
 			zap.String("handle", handle.String()),
@@ -119,15 +119,14 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 		return err
 	}
 
-	txnValueGetter := e.txnValueGetter(txn)
 	if r.handleKey != nil {
 		handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
 		if err != nil {
 			return err
 		}
 
-		if _, err := txnValueGetter.Get(ctx, r.handleKey.newKey); err == nil {
-			rowUnchanged, err := e.removeRow(ctx, txnValueGetter, handle, r)
+		if _, err := txn.Get(ctx, r.handleKey.newKey); err == nil {
+			rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
 			if err != nil {
 				return err
 			}
@@ -143,7 +142,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 
 	// Keep on removing duplicated rows.
 	for {
-		rowUnchanged, foundDupKey, err := e.removeIndexRow(ctx, txnValueGetter, r)
+		rowUnchanged, foundDupKey, err := e.removeIndexRow(ctx, txn, r)
 		if err != nil {
 			return err
 		}
@@ -170,9 +169,9 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 //     2. bool: true when found the duplicated key. This only means that duplicated key was found,
 //              and the row was removed.
 //     3. error: the error.
-func (e *ReplaceExec) removeIndexRow(ctx context.Context, kvGetter kv.Getter, r toBeCheckedRow) (bool, bool, error) {
+func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (bool, bool, error) {
 	for _, uk := range r.uniqueKeys {
-		val, err := kvGetter.Get(ctx, uk.newKey)
+		val, err := txn.Get(ctx, uk.newKey)
 		if err != nil {
 			if kv.IsErrNotFound(err) {
 				continue
@@ -183,7 +182,7 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, kvGetter kv.Getter, r 
 		if err != nil {
 			return false, true, err
 		}
-		rowUnchanged, err := e.removeRow(ctx, kvGetter, handle, r)
+		rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
 		if err != nil {
 			return false, true, err
 		}

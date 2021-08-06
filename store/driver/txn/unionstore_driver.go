@@ -27,7 +27,8 @@ type memBuffer struct {
 	*tikv.MemDB
 }
 
-func newMemBuffer(m *tikv.MemDB) kv.MemBuffer {
+// NewMemBuffer creates a new memBuffer
+func NewMemBuffer(m *tikv.MemDB) kv.MemBuffer {
 	if m == nil {
 		return nil
 	}
@@ -109,6 +110,11 @@ func (m *memBuffer) SnapshotIter(k, upperbound kv.Key) kv.Iterator {
 // SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 func (m *memBuffer) SnapshotGetter() kv.Getter {
 	return newKVGetter(m.MemDB.SnapshotGetter())
+}
+
+// GetMemDB returns the under layer MemDB
+func (m *memBuffer) GetMemDB() *tikv.MemDB {
+	return m.MemDB
 }
 
 type tikvGetter struct {

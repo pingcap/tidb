@@ -15,7 +15,6 @@ package variable
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -870,12 +869,8 @@ type SessionVars struct {
 	// EnableStableResultMode if stabilize query results.
 	EnableStableResultMode bool
 
-	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
-	// It's nil if there is no local temporary table.
-	LocalTemporaryTables interface{}
-
-	// TemporaryTableData stores committed kv values for temporary table for current session.
-	TemporaryTableData kv.MemBuffer
+	// TemporaryTableManager is used to manage temporary tables
+	TemporaryTableManager interface{}
 
 	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed.
 	MPPStoreLastFailTime map[string]time.Time
@@ -2232,67 +2227,4 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		}
 	}
 	return s.seekFactor
-}
-
-// TemporaryTableSnapshotReader can read the temporary table snapshot data
-type TemporaryTableSnapshotReader struct {
-	memBuffer kv.MemBuffer
-}
-
-// Get gets the value for key k from snapshot.
-func (s *TemporaryTableSnapshotReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	if s.memBuffer == nil {
-		return nil, kv.ErrNotExist
-	}
-
-	v, err := s.memBuffer.Get(ctx, k)
-	if err != nil {
-		return v, err
-	}
-
-	if len(v) == 0 {
-		return nil, kv.ErrNotExist
-	}
-
-	return v, nil
-}
-
-// TemporaryTableSnapshotReader can read the temporary table snapshot data
-func (s *SessionVars) TemporaryTableSnapshotReader(tblInfo *model.TableInfo) *TemporaryTableSnapshotReader {
-	if tblInfo.TempTableType == model.TempTableGlobal {
-		return &TemporaryTableSnapshotReader{nil}
-	}
-	return &TemporaryTableSnapshotReader{s.TemporaryTableData}
-}
-
-// TemporaryTableTxnReader can read the temporary table txn data
-type TemporaryTableTxnReader struct {
-	memBuffer kv.MemBuffer
-	snapshot  *TemporaryTableSnapshotReader
-}
-
-// Get gets the value for key k from txn.
-func (s *TemporaryTableTxnReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	v, err := s.memBuffer.Get(ctx, k)
-	if err == nil {
-		if len(v) == 0 {
-			return nil, kv.ErrNotExist
-		}
-
-		return v, nil
-	}
-
-	if !kv.IsErrNotFound(err) {
-		return v, err
-	}
-
-	return s.snapshot.Get(ctx, k)
-}
-
-// TemporaryTableTxnReader can read the temporary table txn data
-func (s *SessionVars) TemporaryTableTxnReader(txn kv.Transaction, tblInfo *model.TableInfo) *TemporaryTableTxnReader {
-	return &TemporaryTableTxnReader{
-		memBuffer: txn.GetMemBuffer(),
-		snapshot:  s.TemporaryTableSnapshotReader(tblInfo),
-	}
 }
