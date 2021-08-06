@@ -279,57 +279,58 @@ func TestTruncateTo(t *testing.T) {
 	assert.True(t, chk.GetRow(1).IsNull(0))
 }
 
-func (s *testChunkSuite) TestChunkSizeControl(c *check.C) {
+func TestChunkSizeControl(t *testing.T) {
 	maxChunkSize := 10
 	chk := New([]*types.FieldType{types.NewFieldType(mysql.TypeLong)}, maxChunkSize, maxChunkSize)
-	c.Assert(chk.RequiredRows(), check.Equals, maxChunkSize)
+	assert.Equal(t, maxChunkSize, chk.RequiredRows())
 
 	for i := 0; i < maxChunkSize; i++ {
 		chk.AppendInt64(0, 1)
 	}
 	maxChunkSize += maxChunkSize / 3
 	chk.GrowAndReset(maxChunkSize)
-	c.Assert(chk.RequiredRows(), check.Equals, maxChunkSize)
+	assert.Equal(t, maxChunkSize, chk.RequiredRows())
 
 	maxChunkSize2 := maxChunkSize + maxChunkSize/3
 	chk2 := Renew(chk, maxChunkSize2)
-	c.Assert(chk2.RequiredRows(), check.Equals, maxChunkSize2)
+	assert.Equal(t, maxChunkSize2, chk2.RequiredRows())
 
 	chk.Reset()
 	for i := 1; i < maxChunkSize*2; i++ {
 		chk.SetRequiredRows(i, maxChunkSize)
-		c.Assert(chk.RequiredRows(), check.Equals, mathutil.Min(maxChunkSize, i))
+		assert.Equal(t, mathutil.Min(maxChunkSize, i), chk.RequiredRows())
 	}
 
 	chk.SetRequiredRows(1, maxChunkSize).
 		SetRequiredRows(2, maxChunkSize).
 		SetRequiredRows(3, maxChunkSize)
-	c.Assert(chk.RequiredRows(), check.Equals, 3)
+	assert.Equal(t, 3, chk.RequiredRows())
 
 	chk.SetRequiredRows(-1, maxChunkSize)
-	c.Assert(chk.RequiredRows(), check.Equals, maxChunkSize)
+	assert.Equal(t, maxChunkSize, chk.RequiredRows())
 
 	chk.SetRequiredRows(5, maxChunkSize)
 	chk.AppendInt64(0, 1)
 	chk.AppendInt64(0, 1)
 	chk.AppendInt64(0, 1)
 	chk.AppendInt64(0, 1)
-	c.Assert(chk.NumRows(), check.Equals, 4)
-	c.Assert(chk.IsFull(), check.IsFalse)
+	assert.Equal(t, 4, chk.NumRows())
+
+	assert.False(t, chk.IsFull())
 
 	chk.AppendInt64(0, 1)
-	c.Assert(chk.NumRows(), check.Equals, 5)
-	c.Assert(chk.IsFull(), check.IsTrue)
+	assert.Equal(t, 5, chk.NumRows())
+	assert.True(t, chk.IsFull())
 
 	chk.AppendInt64(0, 1)
 	chk.AppendInt64(0, 1)
 	chk.AppendInt64(0, 1)
-	c.Assert(chk.NumRows(), check.Equals, 8)
-	c.Assert(chk.IsFull(), check.IsTrue)
+	assert.Equal(t, 8, chk.NumRows())
+	assert.True(t, chk.IsFull())
 
 	chk.SetRequiredRows(maxChunkSize, maxChunkSize)
-	c.Assert(chk.NumRows(), check.Equals, 8)
-	c.Assert(chk.IsFull(), check.IsFalse)
+	assert.Equal(t, 8, chk.NumRows())
+	assert.False(t, chk.IsFull())
 }
 
 // newChunk creates a new chunk and initialize columns with element length.
