@@ -69,19 +69,18 @@ func TestAppendRow(t *testing.T) {
 	require.Equal(t, numRows, chk.NumRows())
 	for i := 0; i < numRows; i++ {
 		row := chk.GetRow(i)
-		require.True(t, row.IsNull(0))
-		require.False(t, row.IsNull(1))
-		require.False(t, row.IsNull(2))
-		require.False(t, row.IsNull(3))
-		require.False(t, row.IsNull(4))
-		require.False(t, row.IsNull(5))
-
 		require.Equal(t, int64(0), row.GetInt64(0))
+		require.True(t, row.IsNull(0))
 		require.Equal(t, int64(i), row.GetInt64(1))
+		require.False(t, row.IsNull(1))
 		str := fmt.Sprintf(strFmt, i)
+		require.False(t, row.IsNull(2))
 		require.Equal(t, str, row.GetString(2))
+		require.False(t, row.IsNull(3))
 		require.Equal(t, []byte(str), row.GetBytes(3))
+		require.False(t, row.IsNull(4))
 		require.Equal(t, str, row.GetMyDecimal(4).String())
+		require.False(t, row.IsNull(5))
 		require.Equal(t, str, string(row.GetJSON(5).GetString()))
 	}
 
@@ -120,9 +119,11 @@ func TestAppendRow(t *testing.T) {
 
 	// AppendPartialRow can append a row with different number of columns, useful for join.
 	chk = newChunk(8, 8)
-	row = MutRowFromValues(1).ToRow()
-	chk.AppendPartialRow(0, row)
-	chk.AppendPartialRow(1, row)
+	chk2 = newChunk(8)
+	chk2.AppendInt64(0, 1)
+	chk2.AppendInt64(0, -1)
+	chk.AppendPartialRow(0, chk2.GetRow(0))
+	chk.AppendPartialRow(1, chk2.GetRow(0))
 	require.Equal(t, int64(1), chk.GetRow(0).GetInt64(0))
 	require.Equal(t, int64(1), chk.GetRow(0).GetInt64(1))
 	require.Equal(t, 1, chk.NumRows())
@@ -149,6 +150,13 @@ func TestAppendRow(t *testing.T) {
 	chk.AppendString(0, "def")
 	require.Equal(t, "def", chk.GetRow(0).GetString(0))
 	require.Equal(t, 1, chk.NumRows())
+
+	// Test float32
+	chk = newChunk(4)
+	chk.AppendFloat32(0, 1)
+	chk.AppendFloat32(0, 1)
+	chk.AppendFloat32(0, 1)
+	require.Equal(t, float32(1), chk.GetRow(2).GetFloat32(0))
 }
 
 func TestAppendChunk(t *testing.T) {
@@ -206,7 +214,7 @@ func TestAppendChunk(t *testing.T) {
 	require.Equal(t, (len(jsonObj.Value)+int(unsafe.Sizeof(jsonObj.TypeCode)))*6, len(col.data))
 	require.Equal(t, 0, len(col.elemBuf))
 	for i := 0; i < 12; i += 2 {
-		jsonElem := col.GetJSON(i)
+		jsonElem := dst.GetRow(i).GetJSON(2)
 		require.Zero(t, json.CompareBinary(jsonElem, jsonObj))
 	}
 }
@@ -267,7 +275,8 @@ func TestTruncateTo(t *testing.T) {
 	require.Equal(t, (len(jsonObj.Value)+int(unsafe.Sizeof(jsonObj.TypeCode)))*6, len(col.data))
 	require.Equal(t, 0, len(col.elemBuf))
 	for i := 0; i < 12; i += 2 {
-		jsonElem := col.GetJSON(i)
+		row := src.GetRow(i)
+		jsonElem := row.GetJSON(2)
 		require.Zero(t, json.CompareBinary(jsonElem, jsonObj))
 	}
 
@@ -316,7 +325,6 @@ func TestChunkSizeControl(t *testing.T) {
 	chk.AppendInt64(0, 1)
 	chk.AppendInt64(0, 1)
 	require.Equal(t, 4, chk.NumRows())
-
 	require.False(t, chk.IsFull())
 
 	chk.AppendInt64(0, 1)
@@ -484,16 +492,12 @@ func TestCompare(t *testing.T) {
 	for i := 0; i < len(allTypes); i++ {
 		cmpFunc := GetCompareFunc(allTypes[i])
 		require.Equal(t, 0, cmpFunc(rowNull, i, rowNull, i))
-		require.Equal(t, 0, cmpFunc(rowSmall, i, rowSmall, i))
-		require.Equal(t, 0, cmpFunc(rowBig, i, rowBig, i))
-
 		require.Equal(t, -1, cmpFunc(rowNull, i, rowSmall, i))
-		require.Equal(t, -1, cmpFunc(rowNull, i, rowBig, i))
-		require.Equal(t, -1, cmpFunc(rowSmall, i, rowBig, i))
-
 		require.Equal(t, 1, cmpFunc(rowSmall, i, rowNull, i))
-		require.Equal(t, 1, cmpFunc(rowBig, i, rowNull, i))
+		require.Equal(t, 0, cmpFunc(rowSmall, i, rowSmall, i))
+		require.Equal(t, -1, cmpFunc(rowSmall, i, rowBig, i))
 		require.Equal(t, 1, cmpFunc(rowBig, i, rowSmall, i))
+		require.Equal(t, 0, cmpFunc(rowBig, i, rowBig, i))
 	}
 }
 
@@ -648,26 +652,20 @@ func TestSwapColumn(t *testing.T) {
 	chk2 := NewChunkWithCapacity(fieldTypes, 1)
 	chk2.AppendFloat32(0, 12)
 	chk2.MakeRef(0, 1)
-	chk2.AppendFloat32(2, 32)
+	chk2.AppendFloat32(2, 3)
 	row2 := chk2.GetRow(0)
 
 	// swap preserves ref
 	checkRef := func() {
 		require.Same(t, chk1.Column(0), chk1.Column(1))
+		require.NotSame(t, chk1.Column(0), chk2.Column(0))
 		require.Same(t, chk2.Column(0), chk2.Column(1))
-		require.NotSame(t, chk2.Column(0), chk1.Column(0))
-		require.NotSame(t, chk1.Column(0), chk1.Column(2))
-		require.NotSame(t, chk2.Column(0), chk2.Column(2))
 	}
 	checkRef()
 
 	// swap two chunk's columns
 	require.NoError(t, chk1.SwapColumn(0, chk2, 0))
 	checkRef()
-	require.Equal(t, row1.GetFloat32(0), float32(12))
-	require.Equal(t, row1.GetFloat32(1), float32(12))
-	require.Equal(t, row2.GetFloat32(0), float32(1))
-	require.Equal(t, row2.GetFloat32(1), float32(1))
 
 	require.NoError(t, chk1.SwapColumn(0, chk2, 0))
 	checkRef()
@@ -675,29 +673,17 @@ func TestSwapColumn(t *testing.T) {
 	// swap reference and referenced columns
 	require.NoError(t, chk2.SwapColumn(1, chk2, 0))
 	checkRef()
-	require.Equal(t, row2.GetFloat32(0), float32(12))
-	require.Equal(t, row2.GetFloat32(1), float32(12))
-	require.Equal(t, row2.GetFloat32(2), float32(32))
 
 	// swap src = dst
 	require.NoError(t, chk2.SwapColumn(1, chk2, 1))
 	checkRef()
-	require.Equal(t, row2.GetFloat32(0), float32(12))
-	require.Equal(t, row2.GetFloat32(1), float32(12))
-	require.Equal(t, row2.GetFloat32(2), float32(32))
 
 	// swap reference and another column
 	require.NoError(t, chk2.SwapColumn(1, chk2, 2))
 	checkRef()
-	require.Equal(t, row2.GetFloat32(0), float32(32))
-	require.Equal(t, row2.GetFloat32(1), float32(32))
-	require.Equal(t, row2.GetFloat32(2), float32(12))
 
 	require.NoError(t, chk2.SwapColumn(2, chk2, 0))
 	checkRef()
-	require.Equal(t, row2.GetFloat32(0), float32(12))
-	require.Equal(t, row2.GetFloat32(1), float32(12))
-	require.Equal(t, row2.GetFloat32(2), float32(32))
 }
 
 func (s *testChunkSuite) TestPreAlloc4RowAndInsert(c *check.C) {
