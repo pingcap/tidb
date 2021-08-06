@@ -106,6 +106,14 @@ func (m *SessionTemporaryTableManager) LocalTemporaryTableByID(tblID int64) (tab
 	return m.localTables.TableByID(tblID)
 }
 
+// LocalTemporaryTableByName get the local temporary table by name
+func (m *SessionTemporaryTableManager) LocalTemporaryTableByName(schema model.CIStr, name model.CIStr) (table.Table, bool) {
+	if m.localTables == nil {
+		return nil, false
+	}
+	return m.localTables.TableByName(schema, name)
+}
+
 // ClearTemporaryTableRecords clear a local table's data in session
 func (m *SessionTemporaryTableManager) ClearTemporaryTableRecords(tblID int64) error {
 	if m.memData == nil {

@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/session/temptable"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -3095,10 +3097,8 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 		err := txn.Rollback()
 		c.Assert(err, IsNil)
 	}()
-	sessionVars := tk.Se.GetSessionVars()
-	sessVarsTempTable := sessionVars.LocalTemporaryTables
-	localTemporaryTable := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
-	tbl, exist := localTemporaryTable.TableByName(model.NewCIStr("test"), model.NewCIStr("a_local_temp_table_7"))
+	mgr := temptable.GetTemporaryTableManager(tk.Se)
+	tbl, exist := mgr.LocalTemporaryTableByName(model.NewCIStr("test"), model.NewCIStr("a_local_temp_table_7"))
 	c.Assert(exist, IsTrue)
 	tblInfo := tbl.Meta()
 	tablePrefix := tablecodec.EncodeTablePrefix(tblInfo.ID)
@@ -3113,7 +3113,7 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 
 	_, err = tk.Exec("select * from a_local_temp_table_7")
 	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.a_local_temp_table_7' doesn't exist")
-	memData := sessionVars.TemporaryTableData
+	memData := mgr.GetSessionData()
 	iter, err := memData.Iter(tablePrefix, endTablePrefix)
 	c.Assert(err, IsNil)
 	for iter.Valid() {
@@ -3201,8 +3201,8 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustExec("create temporary table t1 (id int primary key auto_increment)")
 
 	// truncate temporary table will clear session data
-	localTemporaryTables := tk.Se.GetSessionVars().LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
-	tb1, exist := localTemporaryTables.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	mgr := temptable.GetTemporaryTableManager(tk.Se)
+	tb1, exist := mgr.LocalTemporaryTableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	tbl1Info := tb1.Meta()
 	tablePrefix := tablecodec.EncodeTablePrefix(tbl1Info.ID)
 	endTablePrefix := tablecodec.EncodeTablePrefix(tbl1Info.ID + 1)
@@ -3211,7 +3211,7 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 values(5), (6), (7)")
 	tk.MustExec("truncate table t1")
-	iter, err := tk.Se.GetSessionVars().TemporaryTableData.Iter(tablePrefix, endTablePrefix)
+	iter, err := mgr.GetSessionData().Iter(tablePrefix, endTablePrefix)
 	c.Assert(err, IsNil)
 	for iter.Valid() {
 		key := iter.Key()
