@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -96,9 +96,6 @@ func (s *testStateChangeSuiteBase) TearDownSuite(c *C) {
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
 func (s *serialTestStateChangeSuite) TestShowCreateTable(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
@@ -755,12 +752,6 @@ func (s *testStateChangeSuite) TestDeleteOnlyForDropColumnWithIndexes(c *C) {
 
 // TestDeleteOnlyForDropExpressionIndex tests for deleting data when the hidden column is delete-only state.
 func (s *serialTestStateChangeSuite) TestDeleteOnlyForDropExpressionIndex(c *C) {
-	originalVal := config.GetGlobalConfig().Experimental.AllowsExpressionIndex
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
-	defer func() {
-		config.GetGlobalConfig().Experimental.AllowsExpressionIndex = originalVal
-	}()
-
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), `create table tt (a int, b int)`)
@@ -1061,8 +1052,9 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, IsNil)
-		_, err := s.se.Execute(context.Background(), "select * from t")
+		rs, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
+		c.Assert(rs[0].Close(), IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
@@ -1073,8 +1065,9 @@ func (s *testStateChangeSuite) TestParallelAddGeneratedColumnAndAlterModifyColum
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
-		_, err := s.se.Execute(context.Background(), "select * from t")
+		rs, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
+		c.Assert(rs[0].Close(), IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -1085,8 +1078,9 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: this column has primary key flag")
-		_, err := s.se.Execute(context.Background(), "select * from t")
+		rs, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
+		c.Assert(rs[0].Close(), IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -1161,9 +1155,6 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 }
 
 func (s *serialTestStateChangeSuite) TestParallelAlterAddExpressionIndex(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
 	sql1 := "ALTER TABLE t add index expr_index_b((b+1));"
 	sql2 := "CREATE INDEX expr_index_b ON t ((c+1));"
 	f := func(c *C, err1, err2 error) {
@@ -1373,12 +1364,24 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, err1 = se.Execute(context.Background(), sql1)
+		var rss []sqlexec.RecordSet
+		rss, err1 = se.Execute(context.Background(), sql1)
+		if err1 == nil && len(rss) > 0 {
+			for _, rs := range rss {
+				c.Assert(rs.Close(), IsNil)
+			}
+		}
 	}()
 	go func() {
 		defer wg.Done()
 		<-ch
-		_, err2 = se1.Execute(context.Background(), sql2)
+		var rss []sqlexec.RecordSet
+		rss, err2 = se1.Execute(context.Background(), sql2)
+		if err2 == nil && len(rss) > 0 {
+			for _, rs := range rss {
+				c.Assert(rs.Close(), IsNil)
+			}
+		}
 	}()
 
 	wg.Wait()
@@ -1799,12 +1802,6 @@ func (s *testStateChangeSuite) TestWriteReorgForColumnTypeChange(c *C) {
 }
 
 func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
-	originalVal := config.GetGlobalConfig().Experimental.AllowsExpressionIndex
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
-	defer func() {
-		config.GetGlobalConfig().Experimental.AllowsExpressionIndex = originalVal
-	}()
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db_state")
 	tk.MustExec("drop table if exists t")
@@ -1889,4 +1886,14 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 	tk.MustExec("alter table t add index idx((b+1))")
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10", "10 10"))
+}
+
+func (s *testStateChangeSuite) TestExpressionIndexDDLError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx((a+b)))")
+	tk.MustGetErrCode("alter table t rename column b to b2", errno.ErrDependentByFunctionalIndex)
+	tk.MustGetErrCode("alter table t drop column b", errno.ErrDependentByFunctionalIndex)
+	tk.MustExec("drop table t")
 }
