@@ -785,6 +785,11 @@ func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx sessionctx.Context, 
 		return nil, err
 	}
 
+	pm := privilege.GetPrivilegeManager(ctx)
+	if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
+		return nil, errSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
+
 	var argTps []types.EvalType
 	if len(args) > 1 {
 		argTps = []types.EvalType{types.ETString, types.ETInt}

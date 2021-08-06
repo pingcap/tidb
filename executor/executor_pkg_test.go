@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/tableutil"
 )
 
-var _ = Suite(&testExecSuite{})
+var _ = SerialSuites(&testExecSuite{})
 var _ = SerialSuites(&testExecSerialSuite{})
 
 // Note: it's a tricky way to export the `inspectionSummaryRules` and `inspectionRules` for unit test but invisible for normal code
