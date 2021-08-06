@@ -777,7 +777,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	if (t.meta.IsCommonHandle || t.meta.PKIsHandle) && !skipCheck && !opt.SkipHandleCheck {
 		if t.meta.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
-			_, err = sctx.GetSessionVars().GetTemporaryTableTxnValue(ctx, txn, key)
+			_, err = sctx.GetSessionVars().TemporaryTableTxnReader(txn, t.meta).Get(ctx, key)
 		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
 			var v []byte
 			v, err = txn.GetMemBuffer().Get(ctx, key)

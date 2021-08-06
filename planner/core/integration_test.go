@@ -350,8 +350,7 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key)")
 
-	_, err := tk.Exec("select * from t")
-	c.Assert(err, IsNil)
+	tk.MustExec("select * from t")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 
@@ -360,7 +359,7 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 		"TableReader 10000.00 root  data:TableFullScan",
 		"└─TableFullScan 10000.00 cop[tikv] table:stats_meta keep order:false, stats:pseudo"))
 
-	_, err = tk.Exec("select * from t")
+	_, err := tk.Exec("select * from t")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tikv'.")
 
@@ -817,12 +816,17 @@ func (s *testIntegrationSerialSuite) TestJoinNotSupportedByTiFlash(c *C) {
 
 func (s *testIntegrationSerialSuite) TestMPPWithHashExchangeUnderNewCollation(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
+	collate.SetNewCollationEnabledForTest(true)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists table_1")
-	tk.MustExec("create table table_1(id int not null, value char(10))")
+	tk.MustExec("create table table_1(id int not null, value char(10)) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;")
 	tk.MustExec("insert into table_1 values(1,'1'),(2,'2')")
+	tk.MustExec("drop table if exists table_2")
+	tk.MustExec("create table table_2(id int not null, value char(10)) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;")
+	tk.MustExec("insert into table_2 values(1,'1'),(2,'2')")
 	tk.MustExec("analyze table table_1")
+	tk.MustExec("analyze table table_2")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Se)
@@ -830,7 +834,7 @@ func (s *testIntegrationSerialSuite) TestMPPWithHashExchangeUnderNewCollation(c 
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	c.Assert(exists, IsTrue)
 	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "table_1" {
+		if tblInfo.Name.L == "table_1" || tblInfo.Name.L == "table_2" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
 				Available: true,
@@ -838,12 +842,12 @@ func (s *testIntegrationSerialSuite) TestMPPWithHashExchangeUnderNewCollation(c 
 		}
 	}
 
-	collate.SetNewCollationEnabledForTest(true)
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
 	tk.MustExec("set @@session.tidb_opt_broadcast_join = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+	tk.MustExec("set @@session.tidb_hash_exchange_with_new_collation = 1")
 	var input []string
 	var output []struct {
 		SQL  string
@@ -2207,6 +2211,7 @@ func (s *testIntegrationSuite) TestSelectLimit(c *C) {
 	// normal test
 	tk.MustExec("set @@session.sql_select_limit=1")
 	result := tk.MustQuery("select * from t order by a")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select * from t order by a limit 2")
 	result.Check(testkit.Rows("1", "1"))
@@ -3161,6 +3166,20 @@ func (s *testIntegrationSuite) TestIssue22892(c *C) {
 	tk.MustExec("create table t2(a int) partition by hash (a) partitions 5;")
 	tk.MustExec("insert into t2 values (0);")
 	tk.MustQuery("select * from t2 where a not between 1 and 2;").Check(testkit.Rows("0"))
+}
+
+func (s *testIntegrationSuite) TestIssue26719(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table tx (a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))`)
+	tk.MustExec(`insert into tx values (1)`)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+
+	tk.MustExec(`begin`)
+	tk.MustExec(`delete from tx where a in (1)`)
+	tk.MustQuery(`select * from tx PARTITION(p0)`).Check(testkit.Rows())
+	tk.MustQuery(`select * from tx`).Check(testkit.Rows())
+	tk.MustExec(`rollback`)
 }
 
 func (s *testIntegrationSerialSuite) TestPushDownProjectionForTiFlash(c *C) {
@@ -4132,4 +4151,29 @@ func (s *testIntegrationSuite) TestIssue26559(c *C) {
 	tk.MustExec("create table t(a timestamp, b datetime);")
 	tk.MustExec("insert into t values('2020-07-29 09:07:01', '2020-07-27 16:57:36');")
 	tk.MustQuery("select greatest(a, b) from t union select null;").Sort().Check(testkit.Rows("2020-07-29 09:07:01", "<nil>"))
+}
+
+func (s *testIntegrationSuite) TestHeuristicIndexSelection(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c int, d int, e int, f int, g int, primary key (a), unique key c_d_e (c, d, e), unique key f (f), unique key f_g (f, g), key g (g))")
+	tk.MustExec("create table t2(a int, b int, c int, d int, unique index idx_a (a), unique index idx_b_c (b, c), unique index idx_b_c_a_d (b, c, a, d))")
+
+	var input []string
+	var output []struct {
+		SQL      string
+		Plan     []string
+		Warnings []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Warnings = s.testData.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warnings...))
+	}
 }

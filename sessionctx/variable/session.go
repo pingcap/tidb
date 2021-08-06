@@ -515,6 +515,11 @@ type SessionVars struct {
 	// Value set to `false` means never use mpp.
 	allowMPPExecution bool
 
+	// HashExchangeWithNewCollation means if we support hash exchange when new collation is enabled.
+	// Default value is `true`, means support hash exchange when new collation is enabled.
+	// Value set to `false` means not use hash exchange when new collation is enabled.
+	HashExchangeWithNewCollation bool
+
 	// enforceMPPExecution means if we should enforce mpp way to execute query.
 	// Default value is `false`, means to be determined by variable `allowMPPExecution`.
 	// Value set to `true` means enforce use mpp.
@@ -872,6 +877,12 @@ type SessionVars struct {
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData kv.MemBuffer
 
+	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed.
+	MPPStoreLastFailTime map[string]time.Time
+
+	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
+	MPPStoreFailTTL string
+
 	// cached is used to optimze the object allocation.
 	cached struct {
 		curr int8
@@ -930,6 +941,11 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
+	if s.InTxn() {
+		// UnionScan cannot get partition table IDs in dynamic-mode, this is a quick-fix for issues/26719,
+		// please see it for more details.
+		return false
+	}
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
@@ -1100,6 +1116,8 @@ func NewSessionVars() *SessionVars {
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
 		TMPTableSize:                DefTMPTableSize,
 		EnableGlobalTemporaryTable:  DefTiDBEnableGlobalTemporaryTable,
+		MPPStoreLastFailTime:        make(map[string]time.Time),
+		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1147,7 +1165,9 @@ func NewSessionVars() *SessionVars {
 
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
+	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
+	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
@@ -2227,14 +2247,18 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 	return s.seekFactor
 }
 
-// GetTemporaryTableSnapshotValue get temporary table value from session
-func (s *SessionVars) GetTemporaryTableSnapshotValue(ctx context.Context, key kv.Key) ([]byte, error) {
-	memData := s.TemporaryTableData
-	if memData == nil {
+// TemporaryTableSnapshotReader can read the temporary table snapshot data
+type TemporaryTableSnapshotReader struct {
+	memBuffer kv.MemBuffer
+}
+
+// Get gets the value for key k from snapshot.
+func (s *TemporaryTableSnapshotReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	if s.memBuffer == nil {
 		return nil, kv.ErrNotExist
 	}
 
-	v, err := memData.Get(ctx, key)
+	v, err := s.memBuffer.Get(ctx, k)
 	if err != nil {
 		return v, err
 	}
@@ -2246,9 +2270,23 @@ func (s *SessionVars) GetTemporaryTableSnapshotValue(ctx context.Context, key kv
 	return v, nil
 }
 
-// GetTemporaryTableTxnValue returns a kv.Getter to fetch temporary table data in txn
-func (s *SessionVars) GetTemporaryTableTxnValue(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, error) {
-	v, err := txn.GetMemBuffer().Get(ctx, key)
+// TemporaryTableSnapshotReader can read the temporary table snapshot data
+func (s *SessionVars) TemporaryTableSnapshotReader(tblInfo *model.TableInfo) *TemporaryTableSnapshotReader {
+	if tblInfo.TempTableType == model.TempTableGlobal {
+		return &TemporaryTableSnapshotReader{nil}
+	}
+	return &TemporaryTableSnapshotReader{s.TemporaryTableData}
+}
+
+// TemporaryTableTxnReader can read the temporary table txn data
+type TemporaryTableTxnReader struct {
+	memBuffer kv.MemBuffer
+	snapshot  *TemporaryTableSnapshotReader
+}
+
+// Get gets the value for key k from txn.
+func (s *TemporaryTableTxnReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	v, err := s.memBuffer.Get(ctx, k)
 	if err == nil {
 		if len(v) == 0 {
 			return nil, kv.ErrNotExist
@@ -2261,5 +2299,13 @@ func (s *SessionVars) GetTemporaryTableTxnValue(ctx context.Context, txn kv.Tran
 		return v, err
 	}
 
-	return s.GetTemporaryTableSnapshotValue(ctx, key)
+	return s.snapshot.Get(ctx, k)
+}
+
+// TemporaryTableTxnReader can read the temporary table txn data
+func (s *SessionVars) TemporaryTableTxnReader(txn kv.Transaction, tblInfo *model.TableInfo) *TemporaryTableTxnReader {
+	return &TemporaryTableTxnReader{
+		memBuffer: txn.GetMemBuffer(),
+		snapshot:  s.TemporaryTableSnapshotReader(tblInfo),
+	}
 }
