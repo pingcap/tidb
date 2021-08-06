@@ -346,6 +346,7 @@ func (pp *ParquetParser) Close() error {
 
 func (pp *ParquetParser) ReadRow() error {
 	pp.lastRow.RowID++
+	pp.lastRow.Length = 0
 	if pp.curIndex >= len(pp.rows) {
 		if pp.readRows >= pp.Reader.GetNumRows() {
 			return io.EOF
@@ -376,11 +377,26 @@ func (pp *ParquetParser) ReadRow() error {
 		pp.lastRow.Row = pp.lastRow.Row[:length]
 	}
 	for i := 0; i < length; i++ {
+		pp.lastRow.Length += getDatumLen(v.Field(i))
 		if err := setDatumValue(&pp.lastRow.Row[i], v.Field(i), pp.columnMetas[i]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func getDatumLen(v reflect.Value) int {
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return 0
+		} else {
+			return getDatumLen(v.Elem())
+		}
+	}
+	if v.Kind() == reflect.String {
+		return len(v.String())
+	}
+	return 8
 }
 
 // convert a parquet value to Datum

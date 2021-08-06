@@ -82,6 +82,7 @@ func (s *configTestSuite) TestAdjustPdAddrAndPort(c *C) {
 	cfg.Mydumper.SourceDir = "."
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.SortedKVDir = "."
+	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
@@ -101,6 +102,7 @@ func (s *configTestSuite) TestAdjustPdAddrAndPortViaAdvertiseAddr(c *C) {
 	cfg.Mydumper.SourceDir = "."
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.SortedKVDir = "."
+	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
@@ -117,6 +119,7 @@ func (s *configTestSuite) TestAdjustPageNotFound(c *C) {
 	cfg.TiDB.StatusPort = port
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.SortedKVDir = "."
+	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
 	c.Assert(err, ErrorMatches, "cannot fetch settings from TiDB.*")
@@ -130,6 +133,7 @@ func (s *configTestSuite) TestAdjustConnectRefused(c *C) {
 	cfg.TiDB.StatusPort = port
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.SortedKVDir = "."
+	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	ts.Close() // immediately close to ensure connection refused.
 
@@ -139,6 +143,7 @@ func (s *configTestSuite) TestAdjustConnectRefused(c *C) {
 
 func (s *configTestSuite) TestAdjustBackendNotSet(c *C) {
 	cfg := config.NewConfig()
+	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
 	c.Assert(err, ErrorMatches, "tikv-importer.backend must not be empty!")
 }
@@ -146,6 +151,7 @@ func (s *configTestSuite) TestAdjustBackendNotSet(c *C) {
 func (s *configTestSuite) TestAdjustInvalidBackend(c *C) {
 	cfg := config.NewConfig()
 	cfg.TikvImporter.Backend = "no_such_backend"
+	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
 	c.Assert(err, ErrorMatches, "invalid config: unsupported `tikv-importer\\.backend` \\(no_such_backend\\)")
 }
@@ -160,6 +166,7 @@ func (s *configTestSuite) TestAdjustFileRoutePath(c *C) {
 	invalidPath := filepath.Join(tmpDir, "../test123/1.sql")
 	rule := &config.FileRouteRule{Path: invalidPath, Type: "sql", Schema: "test", Table: "tbl"}
 	cfg.Mydumper.FileRouters = []*config.FileRouteRule{rule}
+	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(ctx)
 	c.Assert(err, ErrorMatches, fmt.Sprintf("\\Qfile route path '%s' is not in source dir '%s'\\E", invalidPath, tmpDir))
 
@@ -179,6 +186,7 @@ func (s *configTestSuite) TestDecodeError(c *C) {
 	cfg.TiDB.StatusPort = port
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.SortedKVDir = "."
+	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
 	c.Assert(err, ErrorMatches, "cannot fetch settings from TiDB.*")
@@ -193,6 +201,7 @@ func (s *configTestSuite) TestInvalidSetting(c *C) {
 	cfg.TiDB.StatusPort = port
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.SortedKVDir = "."
+	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
 	c.Assert(err, ErrorMatches, "invalid `tidb.port` setting")
@@ -207,6 +216,7 @@ func (s *configTestSuite) TestInvalidPDAddr(c *C) {
 	cfg.TiDB.StatusPort = port
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.SortedKVDir = "."
+	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
 	c.Assert(err, ErrorMatches, "invalid `tidb.pd-addr` setting")
@@ -215,6 +225,7 @@ func (s *configTestSuite) TestInvalidPDAddr(c *C) {
 func (s *configTestSuite) TestAdjustWillNotContactServerIfEverythingIsDefined(c *C) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
+	cfg.TiDB.DistSQLScanConcurrency = 1
 
 	err := cfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
@@ -226,6 +237,7 @@ func (s *configTestSuite) TestAdjustWillBatchImportRatioInvalid(c *C) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 	cfg.Mydumper.BatchImportRatio = -1
+	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(cfg.Mydumper.BatchImportRatio, Equals, 0.75)
@@ -302,6 +314,7 @@ func (s *configTestSuite) TestAdjustSecuritySection(c *C) {
 
 		cfg := config.NewConfig()
 		assignMinimalLegalValue(cfg)
+		cfg.TiDB.DistSQLScanConcurrency = 1
 		err := cfg.LoadFromTOML([]byte(tc.input))
 		c.Assert(err, IsNil, comment)
 
@@ -443,6 +456,7 @@ func (s *configTestSuite) TestInvalidCSV(c *C) {
 		cfg.TiDB.PdAddr = "test.invalid:2379"
 		cfg.TikvImporter.Backend = config.BackendLocal
 		cfg.TikvImporter.SortedKVDir = "."
+		cfg.TiDB.DistSQLScanConcurrency = 1
 		err := cfg.LoadFromTOML([]byte(tc.input))
 		c.Assert(err, IsNil)
 
@@ -546,6 +560,7 @@ func (s *configTestSuite) TestLoadConfig(c *C) {
 
 	taskCfg.Checkpoint.DSN = ""
 	taskCfg.Checkpoint.Driver = config.CheckpointDriverMySQL
+	taskCfg.TiDB.DistSQLScanConcurrency = 1
 	err = taskCfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(taskCfg.Checkpoint.DSN, Equals, "guest:12345@tcp(172.16.30.11:4001)/?charset=utf8mb4&sql_mode='"+mysql.DefaultSQLMode+"'&maxAllowedPacket=67108864&tls=false")
@@ -558,6 +573,7 @@ func (s *configTestSuite) TestDefaultImporterBackendValue(c *C) {
 	cfg := config.NewConfig()
 	assignMinimalLegalValue(cfg)
 	cfg.TikvImporter.Backend = "importer"
+	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(cfg.App.IndexConcurrency, Equals, 2)
@@ -569,9 +585,9 @@ func (s *configTestSuite) TestDefaultTidbBackendValue(c *C) {
 	assignMinimalLegalValue(cfg)
 	cfg.TikvImporter.Backend = "tidb"
 	cfg.App.RegionConcurrency = 123
+	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
-	c.Assert(cfg.App.IndexConcurrency, Equals, 123)
 	c.Assert(cfg.App.TableConcurrency, Equals, 123)
 }
 
@@ -581,6 +597,7 @@ func (s *configTestSuite) TestDefaultCouldBeOverwritten(c *C) {
 	cfg.TikvImporter.Backend = "importer"
 	cfg.App.IndexConcurrency = 20
 	cfg.App.TableConcurrency = 60
+	cfg.TiDB.DistSQLScanConcurrency = 1
 	err := cfg.Adjust(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(cfg.App.IndexConcurrency, Equals, 20)
@@ -668,6 +685,7 @@ func (s *configTestSuite) TestAdjustWithLegacyBlackWhiteList(c *C) {
 
 	ctx := context.Background()
 	cfg.Mydumper.Filter = []string{"test.*"}
+	cfg.TiDB.DistSQLScanConcurrency = 1
 	c.Assert(cfg.Adjust(ctx), IsNil)
 	c.Assert(cfg.HasLegacyBlackWhiteList(), IsFalse)
 
@@ -688,7 +706,7 @@ func (s *configTestSuite) TestAdjustDiskQuota(c *C) {
 	cfg.TikvImporter.Backend = config.BackendLocal
 	cfg.TikvImporter.DiskQuota = 0
 	cfg.TikvImporter.SortedKVDir = base
+	cfg.TiDB.DistSQLScanConcurrency = 1
 	c.Assert(cfg.Adjust(ctx), IsNil)
-	// DiskQuota must greater than 0 after adjust
-	c.Assert(int64(cfg.TikvImporter.DiskQuota), Greater, int64(0))
+	c.Assert(int64(cfg.TikvImporter.DiskQuota), Equals, int64(0))
 }
