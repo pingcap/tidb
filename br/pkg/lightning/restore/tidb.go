@@ -28,17 +28,15 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-
-	"github.com/pingcap/br/pkg/lightning/glue"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/br/pkg/lightning/common"
 	"github.com/pingcap/br/pkg/lightning/config"
+	"github.com/pingcap/br/pkg/lightning/glue"
 	"github.com/pingcap/br/pkg/lightning/log"
 	"github.com/pingcap/br/pkg/lightning/metric"
 	"github.com/pingcap/br/pkg/lightning/mydump"
-
-	"go.uber.org/zap"
 )
 
 // defaultImportantVariables is used in ObtainImportantVariables to retrieve the system
@@ -198,7 +196,7 @@ func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName s
 	}
 
 	var res strings.Builder
-	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
+	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment, &res)
 
 	retStmts := make([]string, 0, len(stmts))
 	for _, stmt := range stmts {

@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"os"
@@ -34,6 +35,7 @@ import (
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	tidbcfg "github.com/pingcap/tidb/config"
+	"github.com/tikv/pd/server/api"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/br/pkg/lightning/common"
@@ -67,9 +69,12 @@ const (
 	ErrorOnDup = "error"
 
 	defaultDistSQLScanConcurrency     = 15
+	distSQLScanConcurrencyPerStore    = 4
 	defaultBuildStatsConcurrency      = 20
 	defaultIndexSerialScanConcurrency = 20
 	defaultChecksumTableConcurrency   = 2
+	defaultTableConcurrency           = 6
+	defaultIndexConcurrency           = 2
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName = "lightning_metadata"
@@ -84,6 +89,10 @@ const (
 	autoDiskQuotaLocalReservedSpeed uint64 = 1 * units.KiB
 	defaultEngineMemCacheSize              = 512 * units.MiB
 	defaultLocalWriterMemCacheSize         = 128 * units.MiB
+
+	maxRetryTimes           = 4
+	defaultRetryBackoffTime = 100 * time.Millisecond
+	pdStores                = "/pd/api/v1/stores"
 )
 
 var (
@@ -428,6 +437,7 @@ func NewConfig() *Config {
 			MaxKVPairs:      4096,
 			SendKVPairs:     32768,
 			RegionSplitSize: SplitRegionSize,
+			DiskQuota:       ByteSize(math.MaxInt64),
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
@@ -586,7 +596,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		if cfg.App.RegionConcurrency > cpuCount {
 			cfg.App.RegionConcurrency = cpuCount
 		}
-		cfg.DefaultVarsForImporterAndLocalBackend()
+		cfg.DefaultVarsForImporterAndLocalBackend(ctx)
 	default:
 		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
 	}
@@ -672,45 +682,58 @@ func (cfg *Config) CheckAndAdjustForLocalBackend() error {
 		return errors.Annotate(err, "invalid tikv-importer.sorted-kv-dir")
 	}
 
-	// we need to calculate quota if disk-quota == 0
-	if cfg.TikvImporter.DiskQuota == 0 {
-		enginesCount := uint64(cfg.App.IndexConcurrency + cfg.App.TableConcurrency)
-		writeAmount := uint64(cfg.App.RegionConcurrency) * uint64(cfg.Cron.CheckDiskQuota.Milliseconds())
-		reservedSize := enginesCount*uint64(cfg.TikvImporter.EngineMemCacheSize) + writeAmount*autoDiskQuotaLocalReservedSpeed
-
-		storageSize, err := common.GetStorageSize(storageSizeDir)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if storageSize.Available <= reservedSize {
-			return errors.Errorf(
-				"insufficient disk free space on `%s` (only %s, expecting >%s), please use a storage with enough free space, or specify `tikv-importer.disk-quota`",
-				cfg.TikvImporter.SortedKVDir,
-				units.BytesSize(float64(storageSize.Available)),
-				units.BytesSize(float64(reservedSize)))
-		}
-		cfg.TikvImporter.DiskQuota = ByteSize(storageSize.Available - reservedSize)
-	}
-
 	return nil
 }
 
 func (cfg *Config) DefaultVarsForTiDBBackend() {
-	if cfg.App.IndexConcurrency == 0 {
-		cfg.App.IndexConcurrency = cfg.App.RegionConcurrency
-	}
 	if cfg.App.TableConcurrency == 0 {
 		cfg.App.TableConcurrency = cfg.App.RegionConcurrency
 	}
+	if cfg.App.IndexConcurrency == 0 {
+		cfg.App.IndexConcurrency = cfg.App.RegionConcurrency
+	}
 }
 
-func (cfg *Config) DefaultVarsForImporterAndLocalBackend() {
+func (cfg *Config) adjustDistSQLConcurrency(ctx context.Context) error {
+	tls, err := cfg.ToTLS()
+	if err != nil {
+		return err
+	}
+	result := &api.StoresInfo{}
+	err = tls.WithHost(cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.TiDB.DistSQLScanConcurrency = len(result.Stores) * distSQLScanConcurrencyPerStore
+	if cfg.TiDB.DistSQLScanConcurrency < defaultDistSQLScanConcurrency {
+		cfg.TiDB.DistSQLScanConcurrency = defaultDistSQLScanConcurrency
+	}
+	log.L().Info("adjust scan concurrency success", zap.Int("DistSQLScanConcurrency", cfg.TiDB.DistSQLScanConcurrency))
+	return nil
+}
+
+func (cfg *Config) DefaultVarsForImporterAndLocalBackend(ctx context.Context) {
+	if cfg.TiDB.DistSQLScanConcurrency == defaultDistSQLScanConcurrency {
+		var e error
+		for i := 0; i < maxRetryTimes; i++ {
+			e = cfg.adjustDistSQLConcurrency(ctx)
+			if e == nil {
+				break
+			}
+			time.Sleep(defaultRetryBackoffTime)
+		}
+		if e != nil {
+			log.L().Error("failed to adjust scan concurrency", zap.Error(e))
+		}
+	}
+
 	if cfg.App.IndexConcurrency == 0 {
-		cfg.App.IndexConcurrency = 2
+		cfg.App.IndexConcurrency = defaultIndexConcurrency
 	}
 	if cfg.App.TableConcurrency == 0 {
-		cfg.App.TableConcurrency = 6
+		cfg.App.TableConcurrency = defaultTableConcurrency
 	}
+
 	if len(cfg.App.MetaSchemaName) == 0 {
 		cfg.App.MetaSchemaName = defaultMetaSchemaName
 	}
@@ -719,9 +742,6 @@ func (cfg *Config) DefaultVarsForImporterAndLocalBackend() {
 	}
 	if cfg.TikvImporter.RegionSplitSize == 0 {
 		cfg.TikvImporter.RegionSplitSize = SplitRegionSize
-	}
-	if cfg.TiDB.DistSQLScanConcurrency == 0 {
-		cfg.TiDB.DistSQLScanConcurrency = defaultDistSQLScanConcurrency
 	}
 	if cfg.TiDB.BuildStatsConcurrency == 0 {
 		cfg.TiDB.BuildStatsConcurrency = defaultBuildStatsConcurrency
@@ -840,11 +860,6 @@ func (cfg *Config) AdjustCheckPoint() {
 }
 
 func (cfg *Config) AdjustMydumper() {
-	if cfg.Mydumper.BatchSize <= 0 {
-		// if rows in source files are not sorted by primary key(if primary is number or cluster index enabled),
-		// the key range in each data engine may have overlap, thus a bigger engine size can somewhat alleviate it.
-		cfg.Mydumper.BatchSize = defaultBatchSize
-	}
 	if cfg.Mydumper.BatchImportRatio < 0.0 || cfg.Mydumper.BatchImportRatio >= 1.0 {
 		cfg.Mydumper.BatchImportRatio = 0.75
 	}
