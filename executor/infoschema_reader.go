@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -158,10 +159,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByUser,
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
-		case infoschema.TableDeadlocks:
-			err = e.setDataForDeadlock(sctx)
-		case infoschema.ClusterTableDeadlocks:
-			err = e.setDataForClusterDeadlock(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -2043,28 +2040,6 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 	return nil
 }
 
-func (e *memtableRetriever) setDataForDeadlock(ctx sessionctx.Context) error {
-	if !hasPriv(ctx, mysql.ProcessPriv) {
-		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
-	}
-	infoSchema := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	e.rows = deadlockhistory.GlobalDeadlockHistory.GetAllDatum(infoSchema)
-	return nil
-}
-
-func (e *memtableRetriever) setDataForClusterDeadlock(ctx sessionctx.Context) error {
-	err := e.setDataForDeadlock(ctx)
-	if err != nil {
-		return err
-	}
-	rows, err := infoschema.AppendHostInfoToRows(ctx, e.rows)
-	if err != nil {
-		return err
-	}
-	e.rows = rows
-	return nil
-}
-
 type stmtSummaryTableRetriever struct {
 	dummyCloser
 	table     *model.TableInfo
@@ -2163,11 +2138,11 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	var res [][]types.Datum
 	err = e.nextBatch(func(start, end int) error {
 		// Before getting rows, collect the SQL digests that needs to be retrieved first.
-		var sqlRetriever *SQLDigestTextRetriever
+		var sqlRetriever *expression.SQLDigestTextRetriever
 		for _, c := range e.columns {
 			if c.Name.O == txninfo.CurrentSQLDigestTextStr {
 				if sqlRetriever == nil {
-					sqlRetriever = NewSQLDigestTextRetriever()
+					sqlRetriever = expression.NewSQLDigestTextRetriever()
 				}
 
 				for i := start; i < end; i++ {
@@ -2276,9 +2251,9 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 		}
 
 		// Fetch the SQL Texts of the digests above if necessary.
-		var sqlRetriever *SQLDigestTextRetriever
+		var sqlRetriever *expression.SQLDigestTextRetriever
 		if needSQLText {
-			sqlRetriever = NewSQLDigestTextRetriever()
+			sqlRetriever = expression.NewSQLDigestTextRetriever()
 			for _, digest := range digests {
 				if len(digest) > 0 {
 					sqlRetriever.SQLDigestsMap[digest] = ""
@@ -2338,6 +2313,155 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 			}
 
 			res = append(res, row)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return res, nil
+}
+
+// deadlocksTableRetriever is the memtable retriever for the DEADLOCKS and CLUSTER_DEADLOCKS table.
+type deadlocksTableRetriever struct {
+	dummyCloser
+	batchRetrieverHelper
+
+	currentIdx          int
+	currentWaitChainIdx int
+
+	table       *model.TableInfo
+	columns     []*model.ColumnInfo
+	deadlocks   []*deadlockhistory.DeadlockRecord
+	initialized bool
+}
+
+// nextIndexPair advances a index pair (where `idx` is the index of the DeadlockRecord, and `waitChainIdx` is the index
+// of the wait chain item in the `idx`-th DeadlockRecord. This function helps iterate over each wait chain item
+// in all DeadlockRecords.
+func (r *deadlocksTableRetriever) nextIndexPair(idx, waitChainIdx int) (int, int) {
+	waitChainIdx++
+	if waitChainIdx >= len(r.deadlocks[idx].WaitChain) {
+		waitChainIdx = 0
+		idx++
+		for idx < len(r.deadlocks) && len(r.deadlocks[idx].WaitChain) == 0 {
+			idx++
+		}
+	}
+	return idx, waitChainIdx
+}
+
+func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if r.retrieved {
+		return nil, nil
+	}
+
+	if !r.initialized {
+		if !hasPriv(sctx, mysql.ProcessPriv) {
+			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		}
+
+		r.initialized = true
+		r.deadlocks = deadlockhistory.GlobalDeadlockHistory.GetAll()
+
+		r.batchRetrieverHelper.totalRows = 0
+		for _, d := range r.deadlocks {
+			r.batchRetrieverHelper.totalRows += len(d.WaitChain)
+		}
+		r.batchRetrieverHelper.batchSize = 1024
+	}
+
+	// The current TiDB node's address is needed by the CLUSTER_DEADLOCKS table.
+	var err error
+	var instanceAddr string
+	switch r.table.Name.O {
+	case infoschema.ClusterTableDeadlocks:
+		instanceAddr, err = infoschema.GetInstanceAddr(sctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	infoSchema := sctx.GetInfoSchema().(infoschema.InfoSchema)
+
+	var res [][]types.Datum
+
+	err = r.nextBatch(func(start, end int) error {
+		// Before getting rows, collect the SQL digests that needs to be retrieved first.
+		var sqlRetriever *expression.SQLDigestTextRetriever
+		for _, c := range r.columns {
+			if c.Name.O == deadlockhistory.ColCurrentSQLDigestTextStr {
+				if sqlRetriever == nil {
+					sqlRetriever = expression.NewSQLDigestTextRetriever()
+				}
+
+				idx, waitChainIdx := r.currentIdx, r.currentWaitChainIdx
+				for i := start; i < end; i++ {
+					if idx >= len(r.deadlocks) {
+						return errors.New("reading information_schema.(cluster_)deadlocks table meets corrupted index")
+					}
+
+					sqlRetriever.SQLDigestsMap[r.deadlocks[idx].WaitChain[waitChainIdx].SQLDigest] = ""
+					// Step to the next entry
+					idx, waitChainIdx = r.nextIndexPair(idx, waitChainIdx)
+				}
+			}
+		}
+		// Retrieve the SQL texts if necessary.
+		if sqlRetriever != nil {
+			err1 := sqlRetriever.RetrieveGlobal(ctx, sctx)
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
+		}
+
+		res = make([][]types.Datum, 0, end-start)
+
+		for i := start; i < end; i++ {
+			if r.currentIdx >= len(r.deadlocks) {
+				return errors.New("reading information_schema.(cluster_)deadlocks table meets corrupted index")
+			}
+
+			row := make([]types.Datum, 0, len(r.columns))
+			deadlock := r.deadlocks[r.currentIdx]
+			waitChainItem := deadlock.WaitChain[r.currentWaitChainIdx]
+
+			for _, c := range r.columns {
+				if c.Name.O == util.ClusterTableInstanceColumnName {
+					row = append(row, types.NewDatum(instanceAddr))
+				} else if c.Name.O == deadlockhistory.ColCurrentSQLDigestTextStr {
+					if text, ok := sqlRetriever.SQLDigestsMap[waitChainItem.SQLDigest]; ok && len(text) > 0 {
+						row = append(row, types.NewDatum(text))
+					} else {
+						row = append(row, types.NewDatum(nil))
+					}
+				} else if c.Name.O == deadlockhistory.ColKeyInfoStr {
+					value := types.NewDatum(nil)
+					if len(waitChainItem.Key) > 0 {
+						decodedKey, err := keydecoder.DecodeKey(waitChainItem.Key, infoSchema)
+						if err == nil {
+							decodedKeyJSON, err := json.Marshal(decodedKey)
+							if err != nil {
+								logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
+							} else {
+								value = types.NewDatum(string(decodedKeyJSON))
+							}
+						} else {
+							logutil.BgLogger().Warn("decode key failed", zap.Error(err))
+						}
+					}
+					row = append(row, value)
+				} else {
+					row = append(row, deadlock.ToDatum(r.currentWaitChainIdx, c.Name.O))
+				}
+			}
+
+			res = append(res, row)
+			// Step to the next entry
+			r.currentIdx, r.currentWaitChainIdx = r.nextIndexPair(r.currentIdx, r.currentWaitChainIdx)
 		}
 
 		return nil
