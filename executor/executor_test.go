@@ -6769,7 +6769,7 @@ func (s *testClusterTableSuite) TestFunctionDecodeSQLDigestsPrivilege(c *C) {
 		Username: "testuser",
 		Hostname: "localhost",
 	}, nil, nil), IsTrue)
-	err := tk.QueryToErr("select tidb_decode_sql_digests('[\"aa\"]')")
+	err := tk.ExecToErr("select tidb_decode_sql_digests('[\"aa\"]')")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[expression:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 

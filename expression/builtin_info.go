@@ -785,6 +785,11 @@ func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx sessionctx.Context, 
 		return nil, err
 	}
 
+	pm := privilege.GetPrivilegeManager(ctx)
+	if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
+		return nil, errSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
+
 	var argTps []types.EvalType
 	if len(args) > 1 {
 		argTps = []types.EvalType{types.ETString, types.ETInt}
@@ -810,11 +815,6 @@ func (b *builtinTiDBDecodeSQLDigestsSig) Clone() builtinFunc {
 }
 
 func (b *builtinTiDBDecodeSQLDigestsSig) evalString(row chunk.Row) (string, bool, error) {
-	pm := privilege.GetPrivilegeManager(b.ctx)
-	if pm != nil && !pm.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
-		return "", true, errSpecificAccessDenied.GenWithStackByArgs("PROCESS")
-	}
-
 	args := b.getArgs()
 	digestsStr, isNull, err := args[0].EvalString(b.ctx, row)
 	if err != nil {
