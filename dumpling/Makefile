@@ -29,7 +29,7 @@ test: failpoint-enable
 
 integration_test: bins failpoint-enable bin/dumpling
 	@make failpoint-disable
-	./tests/run.sh
+	./tests/run.sh $(CASE)
 
 tools:
 	@echo "install tools..."
