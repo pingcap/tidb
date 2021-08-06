@@ -3917,6 +3917,7 @@ func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 
 func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 	// only run BR SQL integration test with tikv store.
+	// TODO move this test to BR integration tests.
 	if *withTiKV {
 		cfg := config.GetGlobalConfig()
 		cfg.Store = "tikv"
@@ -3938,7 +3939,7 @@ func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 		tmpDir := path.Join(os.TempDir(), "bk1")
 		os.RemoveAll(tmpDir)
 		// backup database to tmp dir
-		tk.MustQuery("backup database * to 'local://" + tmpDir + "'")
+		tk.MustQuery("backup database br to 'local://" + tmpDir + "'")
 
 		// remove database for recovery
 		tk.MustExec("drop database br")
@@ -3949,7 +3950,6 @@ func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 		tk.MustExec("use br")
 		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
 		tk.MustExec("drop database br")
-		tk.MustExec("drop database br02")
 	}
 }
 
