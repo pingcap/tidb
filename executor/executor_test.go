@@ -8754,8 +8754,8 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 		return strings.Replace(sql, "tmp1", "tmp2", -1)
 	}
 	for _, query := range queries {
-		localSql := genLocalTemporarySQL(query.sql)
-		queries = append(queries, struct{ sql string }{sql: localSql})
+		localSQL := genLocalTemporarySQL(query.sql)
+		queries = append(queries, struct{ sql string }{sql: localSQL})
 	}
 
 	for _, query := range queries {
