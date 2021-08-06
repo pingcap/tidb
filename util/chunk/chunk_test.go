@@ -716,7 +716,6 @@ func TestAppendSel(t *testing.T) {
 	assert.Equal(t, 1024/2/2+1, chk.NumRows())
 	sel = chk.Sel()
 	assert.Equal(t, 1024/2, sel[len(sel)-1])
-
 }
 
 func TestMakeRefTo(t *testing.T) {

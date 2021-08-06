@@ -25,7 +25,9 @@ import (
 var msgErrSelNotNil = "The selection vector of Chunk is not nil. Please file a bug to the TiDB Team"
 
 // Chunk stores multiple rows of data in columns. Columns are in Apache Arrow format.
-// See https://arrow.apache.org/docs/format/Columnar.html#physical-memory-layout
+// See https://arrow.apache.org/docs/format/Columnar.html#physical-memory-layout.
+// Apache Arrow is not used directly because we want to access MySQL types without decoding.
+//
 // Values are appended in compact format and can be directly accessed without decoding.
 // When the chunk is done processing, we can reuse the allocated memory by resetting it.
 //
