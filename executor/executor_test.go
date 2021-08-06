@@ -6766,7 +6766,7 @@ func (s *testClusterTableSuite) TestFunctionDecodeSQLDigestsPrivilege(c *C) {
 		Username: "testuser",
 		Hostname: "localhost",
 	}, nil, nil), IsTrue)
-	err := tk.QueryToErr("select tidb_decode_sql_digests('[]')")
+	err := tk.QueryToErr("select tidb_decode_sql_digests('[\"aa\"]')")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[expression:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
@@ -6779,7 +6779,7 @@ func (s *testClusterTableSuite) TestFunctionDecodeSQLDigestsPrivilege(c *C) {
 		Username: "testuser2",
 		Hostname: "localhost",
 	}, nil, nil), IsTrue)
-	_ = tk.MustQuery("select tidb_decode_sql_digests('[]')")
+	_ = tk.MustQuery("select tidb_decode_sql_digests('[\"aa\"]')")
 }
 
 func prepareLogs(c *C, logData []string, fileNames []string) {
