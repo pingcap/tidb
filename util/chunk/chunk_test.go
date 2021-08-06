@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,24 +65,24 @@ func TestAppendRow(t *testing.T) {
 		chk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
 		chk.AppendJSON(5, json.CreateBinary(str))
 	}
-	assert.Equal(t, numCols, chk.NumCols())
-	assert.Equal(t, numRows, chk.NumRows())
+	require.Equal(t, numCols, chk.NumCols())
+	require.Equal(t, numRows, chk.NumRows())
 	for i := 0; i < numRows; i++ {
 		row := chk.GetRow(i)
-		assert.True(t, row.IsNull(0))
-		assert.False(t, row.IsNull(1))
-		assert.False(t, row.IsNull(2))
-		assert.False(t, row.IsNull(3))
-		assert.False(t, row.IsNull(4))
-		assert.False(t, row.IsNull(5))
+		require.True(t, row.IsNull(0))
+		require.False(t, row.IsNull(1))
+		require.False(t, row.IsNull(2))
+		require.False(t, row.IsNull(3))
+		require.False(t, row.IsNull(4))
+		require.False(t, row.IsNull(5))
 
-		assert.Equal(t, int64(0), row.GetInt64(0))
-		assert.Equal(t, int64(i), row.GetInt64(1))
+		require.Equal(t, int64(0), row.GetInt64(0))
+		require.Equal(t, int64(i), row.GetInt64(1))
 		str := fmt.Sprintf(strFmt, i)
-		assert.Equal(t, str, row.GetString(2))
-		assert.Equal(t, []byte(str), row.GetBytes(3))
-		assert.Equal(t, str, row.GetMyDecimal(4).String())
-		assert.Equal(t, str, string(row.GetJSON(5).GetString()))
+		require.Equal(t, str, row.GetString(2))
+		require.Equal(t, []byte(str), row.GetBytes(3))
+		require.Equal(t, str, row.GetMyDecimal(4).String())
+		require.Equal(t, str, string(row.GetJSON(5).GetString()))
 	}
 
 	chk2 := newChunk(8, 8, 0, 0, 40, 0)
@@ -94,7 +93,7 @@ func TestAppendRow(t *testing.T) {
 	for i := 0; i < numCols; i++ {
 		col2, col1 := chk2.columns[i], chk.columns[i]
 		col2.elemBuf, col1.elemBuf = nil, nil
-		assert.Equal(t, col1, col2)
+		require.Equal(t, col1, col2)
 	}
 
 	// Test more types
@@ -113,20 +112,20 @@ func TestAppendRow(t *testing.T) {
 	chk.AppendSet(5, setVal)
 
 	row := chk.GetRow(0)
-	assert.Equal(t, f32Val, row.GetFloat32(0))
-	assert.Equal(t, 0, row.GetTime(2).Compare(tVal))
-	assert.Equal(t, durVal.Duration, row.GetDuration(3, 0).Duration)
-	assert.Equal(t, enumVal, row.GetEnum(4))
-	assert.Equal(t, setVal, row.GetSet(5))
+	require.Equal(t, f32Val, row.GetFloat32(0))
+	require.Equal(t, 0, row.GetTime(2).Compare(tVal))
+	require.Equal(t, durVal.Duration, row.GetDuration(3, 0).Duration)
+	require.Equal(t, enumVal, row.GetEnum(4))
+	require.Equal(t, setVal, row.GetSet(5))
 
 	// AppendPartialRow can append a row with different number of columns, useful for join.
 	chk = newChunk(8, 8)
 	row = MutRowFromValues(1).ToRow()
 	chk.AppendPartialRow(0, row)
 	chk.AppendPartialRow(1, row)
-	assert.Equal(t, int64(1), chk.GetRow(0).GetInt64(0))
-	assert.Equal(t, int64(1), chk.GetRow(0).GetInt64(1))
-	assert.Equal(t, 1, chk.NumRows())
+	require.Equal(t, int64(1), chk.GetRow(0).GetInt64(0))
+	require.Equal(t, int64(1), chk.GetRow(0).GetInt64(1))
+	require.Equal(t, 1, chk.NumRows())
 
 	// AppendRowByColIdxs and AppendPartialRowByColIdxs can do projection from row.
 	chk = newChunk(8, 8)
@@ -134,22 +133,22 @@ func TestAppendRow(t *testing.T) {
 	chk.AppendRowByColIdxs(row, []int{3})
 	chk.AppendRowByColIdxs(row, []int{1})
 	chk.AppendRowByColIdxs(row, []int{})
-	assert.Equal(t, []int64{3, 1}, chk.Column(0).Int64s())
-	assert.Equal(t, 3, chk.numVirtualRows)
+	require.Equal(t, []int64{3, 1}, chk.Column(0).Int64s())
+	require.Equal(t, 3, chk.numVirtualRows)
 	chk.AppendPartialRowByColIdxs(1, row, []int{2})
 	chk.AppendPartialRowByColIdxs(1, row, []int{0})
 	chk.AppendPartialRowByColIdxs(0, row, []int{1, 3})
-	assert.Equal(t, []int64{3, 1, 1}, chk.Column(0).Int64s())
-	assert.Equal(t, []int64{2, 0, 3}, chk.Column(1).Int64s())
-	assert.Equal(t, 3, chk.numVirtualRows)
+	require.Equal(t, []int64{3, 1, 1}, chk.Column(0).Int64s())
+	require.Equal(t, []int64{2, 0, 3}, chk.Column(1).Int64s())
+	require.Equal(t, 3, chk.numVirtualRows)
 
 	// Test Reset.
 	chk = newChunk(0)
 	chk.AppendString(0, "abcd")
 	chk.Reset()
 	chk.AppendString(0, "def")
-	assert.Equal(t, "def", chk.GetRow(0).GetString(0))
-	assert.Equal(t, 1, chk.NumRows())
+	require.Equal(t, "def", chk.GetRow(0).GetString(0))
+	require.Equal(t, 1, chk.NumRows())
 }
 
 func TestAppendChunk(t *testing.T) {
@@ -180,35 +179,35 @@ func TestAppendChunk(t *testing.T) {
 	dst.Append(dst, 2, 6)
 	dst.Append(dst, 6, 6)
 
-	assert.Equal(t, 3, dst.NumCols())
-	assert.Equal(t, 12, dst.NumRows())
+	require.Equal(t, 3, dst.NumCols())
+	require.Equal(t, 12, dst.NumRows())
 
 	col := dst.Column(0)
-	assert.Equal(t, 12, col.length)
-	assert.Equal(t, 6, col.nullCount())
-	assert.Equal(t, string([]byte{0b1010101, 0b0000101}), string(col.nullBitmap))
-	assert.Equal(t, 0, len(col.offsets))
-	assert.Equal(t, 4*12, len(col.data))
-	assert.Equal(t, 4, len(col.elemBuf))
+	require.Equal(t, 12, col.length)
+	require.Equal(t, 6, col.nullCount())
+	require.Equal(t, string([]byte{0b1010101, 0b0000101}), string(col.nullBitmap))
+	require.Equal(t, 0, len(col.offsets))
+	require.Equal(t, 4*12, len(col.data))
+	require.Equal(t, 4, len(col.elemBuf))
 
 	col = dst.Column(1)
-	assert.Equal(t, 12, col.length)
-	assert.Equal(t, 6, col.nullCount())
-	assert.Equal(t, string([]byte{0b1010101, 0b0000101}), string(col.nullBitmap))
-	assert.Equal(t, fmt.Sprintf("%v", []int64{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}), fmt.Sprintf("%v", col.offsets))
-	assert.Equal(t, "abcabcabcabcabcabc", string(col.data))
-	assert.Equal(t, 0, len(col.elemBuf))
+	require.Equal(t, 12, col.length)
+	require.Equal(t, 6, col.nullCount())
+	require.Equal(t, string([]byte{0b1010101, 0b0000101}), string(col.nullBitmap))
+	require.Equal(t, fmt.Sprintf("%v", []int64{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}), fmt.Sprintf("%v", col.offsets))
+	require.Equal(t, "abcabcabcabcabcabc", string(col.data))
+	require.Equal(t, 0, len(col.elemBuf))
 
 	col = dst.Column(2)
-	assert.Equal(t, 12, col.length)
-	assert.Equal(t, 6, col.nullCount())
-	assert.Equal(t, string([]byte{0b1010101, 0b0000101}), string(col.nullBitmap))
-	assert.Equal(t, 13, len(col.offsets))
-	assert.Equal(t, (len(jsonObj.Value)+int(unsafe.Sizeof(jsonObj.TypeCode)))*6, len(col.data))
-	assert.Equal(t, 0, len(col.elemBuf))
+	require.Equal(t, 12, col.length)
+	require.Equal(t, 6, col.nullCount())
+	require.Equal(t, string([]byte{0b1010101, 0b0000101}), string(col.nullBitmap))
+	require.Equal(t, 13, len(col.offsets))
+	require.Equal(t, (len(jsonObj.Value)+int(unsafe.Sizeof(jsonObj.TypeCode)))*6, len(col.data))
+	require.Equal(t, 0, len(col.elemBuf))
 	for i := 0; i < 12; i += 2 {
 		jsonElem := col.GetJSON(i)
-		assert.Zero(t, json.CompareBinary(jsonElem, jsonObj))
+		require.Zero(t, json.CompareBinary(jsonElem, jsonObj))
 	}
 }
 
@@ -234,105 +233,105 @@ func TestTruncateTo(t *testing.T) {
 		src.AppendNull(2)
 	}
 
-	assert.Equal(t, 16, src.NumRows())
+	require.Equal(t, 16, src.NumRows())
 	src.TruncateTo(16)
 	src.TruncateTo(16)
-	assert.Equal(t, 16, src.NumRows())
+	require.Equal(t, 16, src.NumRows())
 	src.TruncateTo(14)
-	assert.Equal(t, 14, src.NumRows())
+	require.Equal(t, 14, src.NumRows())
 	src.TruncateTo(12)
-	assert.Equal(t, 3, src.NumCols())
-	assert.Equal(t, 12, src.NumRows())
+	require.Equal(t, 3, src.NumCols())
+	require.Equal(t, 12, src.NumRows())
 
 	col := src.Column(0)
-	assert.Equal(t, 12, col.length)
-	assert.Equal(t, 6, col.nullCount())
-	assert.Equal(t, string([]byte{0b1010101, 0b0000101}), string(col.nullBitmap))
-	assert.Equal(t, 0, len(col.offsets))
-	assert.Equal(t, 4*12, len(col.data))
-	assert.Equal(t, 4, len(col.elemBuf))
+	require.Equal(t, 12, col.length)
+	require.Equal(t, 6, col.nullCount())
+	require.Equal(t, string([]byte{0b1010101, 0b0000101}), string(col.nullBitmap))
+	require.Equal(t, 0, len(col.offsets))
+	require.Equal(t, 4*12, len(col.data))
+	require.Equal(t, 4, len(col.elemBuf))
 
 	col = src.Column(1)
-	assert.Equal(t, 12, col.length)
-	assert.Equal(t, 6, col.nullCount())
-	assert.Equal(t, string([]byte{0b1010101, 0b0000101}), string(col.nullBitmap))
-	assert.Equal(t, fmt.Sprintf("%v", []int64{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}), fmt.Sprintf("%v", col.offsets))
-	assert.Equal(t, "abcabcabcabcabcabc", string(col.data))
-	assert.Equal(t, 0, len(col.elemBuf))
+	require.Equal(t, 12, col.length)
+	require.Equal(t, 6, col.nullCount())
+	require.Equal(t, string([]byte{0b1010101, 0b0000101}), string(col.nullBitmap))
+	require.Equal(t, fmt.Sprintf("%v", []int64{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}), fmt.Sprintf("%v", col.offsets))
+	require.Equal(t, "abcabcabcabcabcabc", string(col.data))
+	require.Equal(t, 0, len(col.elemBuf))
 
 	col = src.Column(2)
-	assert.Equal(t, 12, col.length)
-	assert.Equal(t, 6, col.nullCount())
-	assert.Equal(t, string([]byte{0b1010101, 0b0000101}), string(col.nullBitmap))
-	assert.Equal(t, 13, len(col.offsets))
-	assert.Equal(t, (len(jsonObj.Value)+int(unsafe.Sizeof(jsonObj.TypeCode)))*6, len(col.data))
-	assert.Equal(t, 0, len(col.elemBuf))
+	require.Equal(t, 12, col.length)
+	require.Equal(t, 6, col.nullCount())
+	require.Equal(t, string([]byte{0b1010101, 0b0000101}), string(col.nullBitmap))
+	require.Equal(t, 13, len(col.offsets))
+	require.Equal(t, (len(jsonObj.Value)+int(unsafe.Sizeof(jsonObj.TypeCode)))*6, len(col.data))
+	require.Equal(t, 0, len(col.elemBuf))
 	for i := 0; i < 12; i += 2 {
 		jsonElem := col.GetJSON(i)
-		assert.Zero(t, json.CompareBinary(jsonElem, jsonObj))
+		require.Zero(t, json.CompareBinary(jsonElem, jsonObj))
 	}
 
 	chk := NewChunkWithCapacity(fieldTypes[:1], 1)
 	chk.AppendFloat32(0, 1.0)
 	chk.AppendFloat32(0, 1.0)
 	chk.TruncateTo(1)
-	assert.Equal(t, 1, chk.NumRows())
+	require.Equal(t, 1, chk.NumRows())
 	chk.AppendNull(0)
-	assert.True(t, chk.GetRow(1).IsNull(0))
+	require.True(t, chk.GetRow(1).IsNull(0))
 }
 
 func TestChunkSizeControl(t *testing.T) {
 	maxChunkSize := 10
 	chk := New([]*types.FieldType{types.NewFieldType(mysql.TypeLong)}, maxChunkSize, maxChunkSize)
-	assert.Equal(t, maxChunkSize, chk.RequiredRows())
+	require.Equal(t, maxChunkSize, chk.RequiredRows())
 
 	for i := 0; i < maxChunkSize; i++ {
 		chk.AppendInt64(0, 1)
 	}
 	maxChunkSize += maxChunkSize / 3
 	chk.GrowAndReset(maxChunkSize)
-	assert.Equal(t, maxChunkSize, chk.RequiredRows())
+	require.Equal(t, maxChunkSize, chk.RequiredRows())
 
 	maxChunkSize2 := maxChunkSize + maxChunkSize/3
 	chk2 := Renew(chk, maxChunkSize2)
-	assert.Equal(t, maxChunkSize2, chk2.RequiredRows())
+	require.Equal(t, maxChunkSize2, chk2.RequiredRows())
 
 	chk.Reset()
 	for i := 1; i < maxChunkSize*2; i++ {
 		chk.SetRequiredRows(i, maxChunkSize)
-		assert.Equal(t, mathutil.Min(maxChunkSize, i), chk.RequiredRows())
+		require.Equal(t, mathutil.Min(maxChunkSize, i), chk.RequiredRows())
 	}
 
 	chk.SetRequiredRows(1, maxChunkSize).
 		SetRequiredRows(2, maxChunkSize).
 		SetRequiredRows(3, maxChunkSize)
-	assert.Equal(t, 3, chk.RequiredRows())
+	require.Equal(t, 3, chk.RequiredRows())
 
 	chk.SetRequiredRows(-1, maxChunkSize)
-	assert.Equal(t, maxChunkSize, chk.RequiredRows())
+	require.Equal(t, maxChunkSize, chk.RequiredRows())
 
 	chk.SetRequiredRows(5, maxChunkSize)
 	chk.AppendInt64(0, 1)
 	chk.AppendInt64(0, 1)
 	chk.AppendInt64(0, 1)
 	chk.AppendInt64(0, 1)
-	assert.Equal(t, 4, chk.NumRows())
+	require.Equal(t, 4, chk.NumRows())
 
-	assert.False(t, chk.IsFull())
-
-	chk.AppendInt64(0, 1)
-	assert.Equal(t, 5, chk.NumRows())
-	assert.True(t, chk.IsFull())
+	require.False(t, chk.IsFull())
 
 	chk.AppendInt64(0, 1)
+	require.Equal(t, 5, chk.NumRows())
+	require.True(t, chk.IsFull())
+
 	chk.AppendInt64(0, 1)
 	chk.AppendInt64(0, 1)
-	assert.Equal(t, 8, chk.NumRows())
-	assert.True(t, chk.IsFull())
+	chk.AppendInt64(0, 1)
+	require.Equal(t, 8, chk.NumRows())
+	require.True(t, chk.IsFull())
 
 	chk.SetRequiredRows(maxChunkSize, maxChunkSize)
-	assert.Equal(t, 8, chk.NumRows())
-	assert.False(t, chk.IsFull())
+	require.Equal(t, 8, chk.NumRows())
+	require.False(t, chk.IsFull())
 }
 
 // newChunk creates a new chunk and initialize columns with element length.
@@ -484,17 +483,17 @@ func TestCompare(t *testing.T) {
 	rowBig := chunk.GetRow(2)
 	for i := 0; i < len(allTypes); i++ {
 		cmpFunc := GetCompareFunc(allTypes[i])
-		assert.Equal(t, 0, cmpFunc(rowNull, i, rowNull, i))
-		assert.Equal(t, 0, cmpFunc(rowSmall, i, rowSmall, i))
-		assert.Equal(t, 0, cmpFunc(rowBig, i, rowBig, i))
+		require.Equal(t, 0, cmpFunc(rowNull, i, rowNull, i))
+		require.Equal(t, 0, cmpFunc(rowSmall, i, rowSmall, i))
+		require.Equal(t, 0, cmpFunc(rowBig, i, rowBig, i))
 
-		assert.Equal(t, -1, cmpFunc(rowNull, i, rowSmall, i))
-		assert.Equal(t, -1, cmpFunc(rowNull, i, rowBig, i))
-		assert.Equal(t, -1, cmpFunc(rowSmall, i, rowBig, i))
+		require.Equal(t, -1, cmpFunc(rowNull, i, rowSmall, i))
+		require.Equal(t, -1, cmpFunc(rowNull, i, rowBig, i))
+		require.Equal(t, -1, cmpFunc(rowSmall, i, rowBig, i))
 
-		assert.Equal(t, 1, cmpFunc(rowSmall, i, rowNull, i))
-		assert.Equal(t, 1, cmpFunc(rowBig, i, rowNull, i))
-		assert.Equal(t, 1, cmpFunc(rowBig, i, rowSmall, i))
+		require.Equal(t, 1, cmpFunc(rowSmall, i, rowNull, i))
+		require.Equal(t, 1, cmpFunc(rowBig, i, rowNull, i))
+		require.Equal(t, 1, cmpFunc(rowBig, i, rowSmall, i))
 	}
 }
 
@@ -548,7 +547,7 @@ func TestCopyTo(t *testing.T) {
 		r1 := ck1.GetRow(k)
 		for i := 0; i < len(allTypes); i++ {
 			cmpFunc := GetCompareFunc(allTypes[i])
-			assert.Zero(t, cmpFunc(row, i, r1, i))
+			require.Zero(t, cmpFunc(row, i, r1, i))
 		}
 
 	}
@@ -568,8 +567,8 @@ func TestGetDecimalDatum(t *testing.T) {
 	chk := NewChunkWithCapacity([]*types.FieldType{decType}, 32)
 	chk.AppendMyDecimal(0, decDatum.GetMysqlDecimal())
 	decFromChk := chk.GetRow(0).GetDatum(0, decType)
-	assert.Equal(t, decFromChk.Length(), decDatum.Length())
-	assert.Equal(t, decFromChk.Frac(), decDatum.Frac())
+	require.Equal(t, decFromChk.Length(), decDatum.Length())
+	require.Equal(t, decFromChk.Frac(), decDatum.Frac())
 }
 
 func TestChunkMemoryUsage(t *testing.T) {
@@ -598,7 +597,7 @@ func TestChunkMemoryUsage(t *testing.T) {
 		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
 	}
 	// empty chunk with initial capactiy
-	assert.Equal(t, int64(expectedUsage), chk.MemoryUsage())
+	require.Equal(t, int64(expectedUsage), chk.MemoryUsage())
 
 	jsonObj, err := json.ParseBinaryFromString("1")
 	require.NoError(t, err)
@@ -613,7 +612,7 @@ func TestChunkMemoryUsage(t *testing.T) {
 	chk.AppendTime(3, timeObj)
 	chk.AppendDuration(4, durationObj)
 
-	assert.Equal(t, int64(expectedUsage), chk.MemoryUsage())
+	require.Equal(t, int64(expectedUsage), chk.MemoryUsage())
 
 	// append another row, only column 1 exceeds capacity
 	chk.AppendFloat32(0, 12.4)
@@ -627,7 +626,7 @@ func TestChunkMemoryUsage(t *testing.T) {
 	for i := range colUsage {
 		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
 	}
-	assert.Equal(t, int64(expectedUsage), chk.MemoryUsage())
+	require.Equal(t, int64(expectedUsage), chk.MemoryUsage())
 }
 
 func TestSwapColumn(t *testing.T) {
@@ -654,21 +653,21 @@ func TestSwapColumn(t *testing.T) {
 
 	// swap preserves ref
 	checkRef := func() {
-		assert.Same(t, chk1.Column(0), chk1.Column(1))
-		assert.Same(t, chk2.Column(0), chk2.Column(1))
-		assert.NotSame(t, chk2.Column(0), chk1.Column(0))
-		assert.NotSame(t, chk1.Column(0), chk1.Column(2))
-		assert.NotSame(t, chk2.Column(0), chk2.Column(2))
+		require.Same(t, chk1.Column(0), chk1.Column(1))
+		require.Same(t, chk2.Column(0), chk2.Column(1))
+		require.NotSame(t, chk2.Column(0), chk1.Column(0))
+		require.NotSame(t, chk1.Column(0), chk1.Column(2))
+		require.NotSame(t, chk2.Column(0), chk2.Column(2))
 	}
 	checkRef()
 
 	// swap two chunk's columns
 	require.NoError(t, chk1.SwapColumn(0, chk2, 0))
 	checkRef()
-	assert.Equal(t, row1.GetFloat32(0), float32(12))
-	assert.Equal(t, row1.GetFloat32(1), float32(12))
-	assert.Equal(t, row2.GetFloat32(0), float32(1))
-	assert.Equal(t, row2.GetFloat32(1), float32(1))
+	require.Equal(t, row1.GetFloat32(0), float32(12))
+	require.Equal(t, row1.GetFloat32(1), float32(12))
+	require.Equal(t, row2.GetFloat32(0), float32(1))
+	require.Equal(t, row2.GetFloat32(1), float32(1))
 
 	require.NoError(t, chk1.SwapColumn(0, chk2, 0))
 	checkRef()
@@ -676,29 +675,29 @@ func TestSwapColumn(t *testing.T) {
 	// swap reference and referenced columns
 	require.NoError(t, chk2.SwapColumn(1, chk2, 0))
 	checkRef()
-	assert.Equal(t, row2.GetFloat32(0), float32(12))
-	assert.Equal(t, row2.GetFloat32(1), float32(12))
-	assert.Equal(t, row2.GetFloat32(2), float32(32))
+	require.Equal(t, row2.GetFloat32(0), float32(12))
+	require.Equal(t, row2.GetFloat32(1), float32(12))
+	require.Equal(t, row2.GetFloat32(2), float32(32))
 
 	// swap src = dst
 	require.NoError(t, chk2.SwapColumn(1, chk2, 1))
 	checkRef()
-	assert.Equal(t, row2.GetFloat32(0), float32(12))
-	assert.Equal(t, row2.GetFloat32(1), float32(12))
-	assert.Equal(t, row2.GetFloat32(2), float32(32))
+	require.Equal(t, row2.GetFloat32(0), float32(12))
+	require.Equal(t, row2.GetFloat32(1), float32(12))
+	require.Equal(t, row2.GetFloat32(2), float32(32))
 
 	// swap reference and another column
 	require.NoError(t, chk2.SwapColumn(1, chk2, 2))
 	checkRef()
-	assert.Equal(t, row2.GetFloat32(0), float32(32))
-	assert.Equal(t, row2.GetFloat32(1), float32(32))
-	assert.Equal(t, row2.GetFloat32(2), float32(12))
+	require.Equal(t, row2.GetFloat32(0), float32(32))
+	require.Equal(t, row2.GetFloat32(1), float32(32))
+	require.Equal(t, row2.GetFloat32(2), float32(12))
 
 	require.NoError(t, chk2.SwapColumn(2, chk2, 0))
 	checkRef()
-	assert.Equal(t, row2.GetFloat32(0), float32(12))
-	assert.Equal(t, row2.GetFloat32(1), float32(12))
-	assert.Equal(t, row2.GetFloat32(2), float32(32))
+	require.Equal(t, row2.GetFloat32(0), float32(12))
+	require.Equal(t, row2.GetFloat32(1), float32(12))
+	require.Equal(t, row2.GetFloat32(2), float32(32))
 }
 
 func (s *testChunkSuite) TestPreAlloc4RowAndInsert(c *check.C) {
@@ -815,11 +814,11 @@ func TestAppendSel(t *testing.T) {
 		}
 	}
 	chk.SetSel(sel)
-	assert.Equal(t, 1024/2/2, chk.NumRows())
+	require.Equal(t, 1024/2/2, chk.NumRows())
 	chk.AppendInt64(0, int64(1))
-	assert.Equal(t, 1024/2/2+1, chk.NumRows())
+	require.Equal(t, 1024/2/2+1, chk.NumRows())
 	sel = chk.Sel()
-	assert.Equal(t, 1024/2, sel[len(sel)-1])
+	require.Equal(t, 1024/2, sel[len(sel)-1])
 }
 
 func TestMakeRefTo(t *testing.T) {
@@ -840,8 +839,8 @@ func TestMakeRefTo(t *testing.T) {
 	err = chk2.MakeRefTo(1, chk1, 0)
 	require.NoError(t, err)
 
-	assert.Same(t, chk1.Column(1), chk2.Column(0))
-	assert.Same(t, chk1.Column(0), chk2.Column(1))
+	require.Same(t, chk1.Column(1), chk2.Column(0))
+	require.Same(t, chk1.Column(0), chk2.Column(1))
 }
 
 func TestToString(t *testing.T) {
@@ -867,7 +866,7 @@ func TestToString(t *testing.T) {
 	chk.AppendTime(3, types.ZeroDatetime)
 	chk.AppendInt64(4, 2)
 
-	assert.Equal(t, "1, 1, 1, 0000-00-00, 1\n2, 2, 2, 0000-00-00 00:00:00, 2\n", chk.ToString(fieldTypes))
+	require.Equal(t, "1, 1, 1, 0000-00-00, 1\n2, 2, 2, 0000-00-00 00:00:00, 2\n", chk.ToString(fieldTypes))
 }
 
 func BenchmarkAppendInt(b *testing.B) {
