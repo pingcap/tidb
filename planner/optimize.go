@@ -77,6 +77,24 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	return ast.IsReadOnly(node)
 }
 
+// GetExecuteForUpdateReadIS is used to check whether the statement is `execute` and target statement has a forUpdateRead flag.
+// If so, we will return the latest information schema.
+func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema {
+	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
+		vars := sctx.GetSessionVars()
+		execID := execStmt.ExecID
+		if execStmt.Name != "" {
+			execID = vars.PreparedStmtNameToID[execStmt.Name]
+		}
+		if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
+			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
+				return domain.GetDomain(sctx).InfoSchema()
+			}
+		}
+	}
+	return nil
+}
+
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
@@ -127,10 +145,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if !ok {
 		useBinding = false
 	}
-	if useBinding && sessVars.SelectLimit != math.MaxUint64 {
-		sessVars.StmtCtx.AppendWarning(errors.New("sql_select_limit is set, ignore SQL bindings"))
-		useBinding = false
-	}
 	var (
 		bindRecord *bindinfo.BindRecord
 		scope      string
@@ -141,6 +155,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		if err != nil || bindRecord == nil || len(bindRecord.Bindings) == 0 {
 			useBinding = false
 		}
+	}
+	if useBinding && sessVars.SelectLimit != math.MaxUint64 {
+		sessVars.StmtCtx.AppendWarning(errors.New("sql_select_limit is set, ignore SQL bindings"))
+		useBinding = false
 	}
 
 	var names types.NameSlice
@@ -186,8 +204,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			if err := setFoundInBinding(sctx, true); err != nil {
 				logutil.BgLogger().Warn("set tidb_found_in_binding failed", zap.Error(err))
 			}
-			if _, ok := stmtNode.(*ast.ExplainStmt); ok {
-				sessVars.StmtCtx.AppendWarning(errors.Errorf("Using the bindSQL: %v", chosenBinding.BindSQL))
+			if sessVars.StmtCtx.InVerboseExplain {
+				sessVars.StmtCtx.AppendNote(errors.Errorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			}
 		}
 		// Restore the hint to avoid changing the stmt node.
@@ -317,18 +335,6 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return nil, nil, 0, err
 	}
 	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
-
-	if execPlan, ok := p.(*plannercore.Execute); ok {
-		execID := execPlan.ExecID
-		if execPlan.Name != "" {
-			execID = sctx.GetSessionVars().PreparedStmtNameToID[execPlan.Name]
-		}
-		if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execID]; ok {
-			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
-				is = domain.GetDomain(sctx).InfoSchema()
-			}
-		}
-	}
 
 	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
 	activeRoles := sctx.GetSessionVars().ActiveRoles

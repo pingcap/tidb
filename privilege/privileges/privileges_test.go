@@ -1858,3 +1858,51 @@ func (s *testPrivilegeSuite) TestInfoschemaUserPrivileges(c *C) {
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isroot'@'%'"`).Check(testkit.Rows("'isroot'@'%' def SUPER NO"))
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee = "'isselectonmysqluser'@'%'"`).Check(testkit.Rows("'isselectonmysqluser'@'%' def USAGE NO"))
 }
+
+// Issues https://github.com/pingcap/tidb/issues/25972 and https://github.com/pingcap/tidb/issues/26451
+func (s *testPrivilegeSuite) TestGrantOptionAndRevoke(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("DROP USER IF EXISTS u1, u2, u3, ruser")
+	tk.MustExec("CREATE USER u1, u2, u3, ruser")
+	tk.MustExec("GRANT ALL ON *.* TO ruser WITH GRANT OPTION")
+	tk.MustExec("GRANT SELECT ON *.* TO u1 WITH GRANT OPTION")
+	tk.MustExec("GRANT UPDATE, DELETE on db.* TO u1")
+
+	tk.Se.Auth(&auth.UserIdentity{
+		Username: "ruser",
+		Hostname: "localhost",
+	}, nil, nil)
+
+	tk.MustQuery(`SHOW GRANTS FOR u1`).Check(testkit.Rows("GRANT SELECT ON *.* TO 'u1'@'%' WITH GRANT OPTION", "GRANT UPDATE,DELETE ON db.* TO 'u1'@'%'"))
+
+	tk.MustExec("GRANT SELECT ON d1.* to u2")
+	tk.MustExec("GRANT SELECT ON d2.* to u2 WITH GRANT OPTION")
+	tk.MustExec("GRANT SELECT ON d3.* to u2")
+	tk.MustExec("GRANT SELECT ON d4.* to u2")
+	tk.MustExec("GRANT SELECT ON d5.* to u2")
+	tk.MustQuery(`SHOW GRANTS FOR u2;`).Sort().Check(testkit.Rows(
+		"GRANT SELECT ON d1.* TO 'u2'@'%'",
+		"GRANT SELECT ON d2.* TO 'u2'@'%' WITH GRANT OPTION",
+		"GRANT SELECT ON d3.* TO 'u2'@'%'",
+		"GRANT SELECT ON d4.* TO 'u2'@'%'",
+		"GRANT SELECT ON d5.* TO 'u2'@'%'",
+		"GRANT USAGE ON *.* TO 'u2'@'%'",
+	))
+
+	tk.MustExec("grant all on hchwang.* to u3 with grant option")
+	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT ALL PRIVILEGES ON hchwang.* TO 'u3'@'%' WITH GRANT OPTION"))
+	tk.MustExec("revoke all on hchwang.* from u3")
+	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT USAGE ON hchwang.* TO 'u3'@'%' WITH GRANT OPTION"))
+
+	// Same again but with column privileges.
+
+	tk.MustExec("DROP TABLE IF EXISTS test.testgrant")
+	tk.MustExec("CREATE TABLE test.testgrant (a int)")
+	tk.MustExec("grant all on test.testgrant to u3 with grant option")
+	tk.MustExec("revoke all on test.testgrant from u3")
+	tk.MustQuery(`SHOW GRANTS FOR u3`).Sort().Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'u3'@'%'",
+		"GRANT USAGE ON hchwang.* TO 'u3'@'%' WITH GRANT OPTION",
+		"GRANT USAGE ON test.testgrant TO 'u3'@'%' WITH GRANT OPTION",
+	))
+}

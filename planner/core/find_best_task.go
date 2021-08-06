@@ -679,7 +679,16 @@ func (ds *DataSource) getPruningInfo(candidates []*candidatePath, prop *property
 	}
 	return fmt.Sprintf("[%s] remain after pruning paths for %s given Prop{SortItems: [%s], TaskTp: %s}",
 		strings.Join(names, ","), tableName, strings.Join(items, " "), prop.TaskTp)
+}
 
+func (ds *DataSource) isPointGetConvertableSchema() bool {
+	for _, col := range ds.Columns {
+		// Only handle tables that all columns are public.
+		if col.State != model.StatePublic {
+			return false
+		}
+	}
+	return true
 }
 
 // findBestTask implements the PhysicalPlan interface.
@@ -787,7 +796,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				p: dual,
 			}, cntPlan, nil
 		}
-		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV
+		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
 		if canConvertPointGet && !path.IsIntHandlePath {
 			// We simply do not build [batch] point get for prefix indexes. This can be optimized.
 			canConvertPointGet = path.Index.Unique && !path.Index.HasPrefixIndex()
