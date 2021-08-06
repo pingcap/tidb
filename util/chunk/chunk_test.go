@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestT(t *testing.T) {
@@ -160,7 +161,7 @@ func TestAppendChunk(t *testing.T) {
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
 
 	jsonObj, err := json.ParseBinaryFromString("{\"k1\":\"v1\"}")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	src := NewChunkWithCapacity(fieldTypes, 32)
 	dst := NewChunkWithCapacity(fieldTypes, 32)
@@ -212,13 +213,15 @@ func TestAppendChunk(t *testing.T) {
 }
 
 func TestTruncateTo(t *testing.T) {
+	t.Parallel()
+
 	fieldTypes := make([]*types.FieldType, 0, 3)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
 
 	jsonObj, err := json.ParseBinaryFromString("{\"k1\":\"v1\"}")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	src := NewChunkWithCapacity(fieldTypes, 32)
 
@@ -402,7 +405,9 @@ var allTypes = []*types.FieldType{
 	types.NewFieldType(mysql.TypeJSON),
 }
 
-func (s *testChunkSuite) TestCompare(c *check.C) {
+func TestCompare(t *testing.T) {
+	t.Parallel()
+
 	chunk := NewChunkWithCapacity(allTypes, 32)
 	for i := 0; i < len(allTypes); i++ {
 		chunk.AppendNull(i)
@@ -437,7 +442,7 @@ func (s *testChunkSuite) TestCompare(c *check.C) {
 		case mysql.TypeJSON:
 			chunk.AppendJSON(i, json.CreateBinary(int64(0)))
 		default:
-			c.FailNow()
+			t.FailNow()
 		}
 	}
 	for i := 0; i < len(allTypes); i++ {
@@ -470,7 +475,7 @@ func (s *testChunkSuite) TestCompare(c *check.C) {
 		case mysql.TypeJSON:
 			chunk.AppendJSON(i, json.CreateBinary(int64(1)))
 		default:
-			c.FailNow()
+			t.FailNow()
 		}
 	}
 	rowNull := chunk.GetRow(0)
@@ -478,17 +483,23 @@ func (s *testChunkSuite) TestCompare(c *check.C) {
 	rowBig := chunk.GetRow(2)
 	for i := 0; i < len(allTypes); i++ {
 		cmpFunc := GetCompareFunc(allTypes[i])
-		c.Assert(cmpFunc(rowNull, i, rowNull, i), check.Equals, 0)
-		c.Assert(cmpFunc(rowNull, i, rowSmall, i), check.Equals, -1)
-		c.Assert(cmpFunc(rowSmall, i, rowNull, i), check.Equals, 1)
-		c.Assert(cmpFunc(rowSmall, i, rowSmall, i), check.Equals, 0)
-		c.Assert(cmpFunc(rowSmall, i, rowBig, i), check.Equals, -1, check.Commentf("%d", allTypes[i].Tp))
-		c.Assert(cmpFunc(rowBig, i, rowSmall, i), check.Equals, 1)
-		c.Assert(cmpFunc(rowBig, i, rowBig, i), check.Equals, 0)
+		assert.Equal(t, 0, cmpFunc(rowNull, i, rowNull, i))
+		assert.Equal(t, 0, cmpFunc(rowSmall, i, rowSmall, i))
+		assert.Equal(t, 0, cmpFunc(rowBig, i, rowBig, i))
+
+		assert.Equal(t, -1, cmpFunc(rowNull, i, rowSmall, i))
+		assert.Equal(t, -1, cmpFunc(rowNull, i, rowBig, i))
+		assert.Equal(t, -1, cmpFunc(rowSmall, i, rowBig, i))
+
+		assert.Equal(t, 1, cmpFunc(rowSmall, i, rowNull, i))
+		assert.Equal(t, 1, cmpFunc(rowBig, i, rowNull, i))
+		assert.Equal(t, 1, cmpFunc(rowBig, i, rowSmall, i))
 	}
 }
 
-func (s *testChunkSuite) TestCopyTo(c *check.C) {
+func TestCopyTo(t *testing.T) {
+	t.Parallel()
+
 	chunk := NewChunkWithCapacity(allTypes, 101)
 	for i := 0; i < len(allTypes); i++ {
 		chunk.AppendNull(i)
@@ -524,7 +535,7 @@ func (s *testChunkSuite) TestCopyTo(c *check.C) {
 			case mysql.TypeJSON:
 				chunk.AppendJSON(i, json.CreateBinary(int64(k)))
 			default:
-				c.FailNow()
+				t.FailNow()
 			}
 		}
 	}
@@ -536,28 +547,33 @@ func (s *testChunkSuite) TestCopyTo(c *check.C) {
 		r1 := ck1.GetRow(k)
 		for i := 0; i < len(allTypes); i++ {
 			cmpFunc := GetCompareFunc(allTypes[i])
-			c.Assert(cmpFunc(row, i, r1, i), check.Equals, 0)
+			assert.Zero(t, cmpFunc(row, i, r1, i))
 		}
 
 	}
 }
 
-func (s *testChunkSuite) TestGetDecimalDatum(c *check.C) {
+func TestGetDecimalDatum(t *testing.T) {
+	t.Parallel()
+
 	datum := types.NewDatum(1.01)
 	decType := types.NewFieldType(mysql.TypeNewDecimal)
 	decType.Flen = 4
 	decType.Decimal = 2
 	sc := new(stmtctx.StatementContext)
 	decDatum, err := datum.ConvertTo(sc, decType)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
+
 	chk := NewChunkWithCapacity([]*types.FieldType{decType}, 32)
 	chk.AppendMyDecimal(0, decDatum.GetMysqlDecimal())
 	decFromChk := chk.GetRow(0).GetDatum(0, decType)
-	c.Assert(decDatum.Length(), check.Equals, decFromChk.Length())
-	c.Assert(decDatum.Frac(), check.Equals, decFromChk.Frac())
+	assert.Equal(t, decFromChk.Length(), decDatum.Length())
+	assert.Equal(t, decFromChk.Frac(), decDatum.Frac())
 }
 
-func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
+func TestChunkMemoryUsage(t *testing.T) {
+	t.Parallel()
+
 	fieldTypes := make([]*types.FieldType, 0, 5)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
@@ -580,39 +596,42 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	for i := range colUsage {
 		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
 	}
-	memUsage := chk.MemoryUsage()
-	c.Assert(memUsage, check.Equals, int64(expectedUsage))
+	// empty chunk with initial capactiy
+	assert.Equal(t, int64(expectedUsage), chk.MemoryUsage())
 
 	jsonObj, err := json.ParseBinaryFromString("1")
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
+
 	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
+	// append one row, not exceed capacity
 	chk.AppendFloat32(0, 12.4)
 	chk.AppendString(1, "123")
 	chk.AppendJSON(2, jsonObj)
 	chk.AppendTime(3, timeObj)
 	chk.AppendDuration(4, durationObj)
 
-	memUsage = chk.MemoryUsage()
-	c.Assert(memUsage, check.Equals, int64(expectedUsage))
+	assert.Equal(t, int64(expectedUsage), chk.MemoryUsage())
 
+	// append another row, only column 1 exceeds capacity
 	chk.AppendFloat32(0, 12.4)
 	chk.AppendString(1, "123111111111111111111111111111111111111111111111")
 	chk.AppendJSON(2, jsonObj)
 	chk.AppendTime(3, timeObj)
 	chk.AppendDuration(4, durationObj)
 
-	memUsage = chk.MemoryUsage()
 	colUsage[1] = (initCap+7)>>3 + (initCap+1)*8 + cap(chk.columns[1].data) + 0
 	expectedUsage = 0
 	for i := range colUsage {
 		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
 	}
-	c.Assert(memUsage, check.Equals, int64(expectedUsage))
+	assert.Equal(t, int64(expectedUsage), chk.MemoryUsage())
 }
 
-func (s *testChunkSuite) TestSwapColumn(c *check.C) {
+func TestSwapColumn(t *testing.T) {
+	t.Parallel()
+
 	fieldTypes := make([]*types.FieldType, 0, 2)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
@@ -623,45 +642,62 @@ func (s *testChunkSuite) TestSwapColumn(c *check.C) {
 	chk1.AppendFloat32(0, 1)
 	chk1.MakeRef(0, 1)
 	chk1.AppendFloat32(2, 3)
+	row1 := chk1.GetRow(0)
 
 	// chk2: column1 refers to column0
 	chk2 := NewChunkWithCapacity(fieldTypes, 1)
-	chk2.AppendFloat32(0, 1)
+	chk2.AppendFloat32(0, 12)
 	chk2.MakeRef(0, 1)
-	chk2.AppendFloat32(2, 3)
+	chk2.AppendFloat32(2, 32)
+	row2 := chk2.GetRow(0)
 
-	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
-	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
-
+	// swap preserves ref
 	checkRef := func() {
-		c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
-		c.Assert(chk1.columns[0] == chk2.columns[0], check.IsFalse)
-		c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
+		assert.Same(t, chk1.Column(0), chk1.Column(1))
+		assert.Same(t, chk2.Column(0), chk2.Column(1))
+		assert.NotSame(t, chk2.Column(0), chk1.Column(0))
+		assert.NotSame(t, chk1.Column(0), chk1.Column(2))
+		assert.NotSame(t, chk2.Column(0), chk2.Column(2))
 	}
-
-	err := chk1.SwapColumn(0, chk2, 0)
-	c.Assert(err, check.IsNil)
 	checkRef()
 
-	err = chk1.SwapColumn(0, chk2, 1)
-	c.Assert(err, check.IsNil)
+	// swap two chunk's columns
+	require.NoError(t, chk1.SwapColumn(0, chk2, 0))
+	checkRef()
+	assert.Equal(t, row1.GetFloat32(0), float32(12))
+	assert.Equal(t, row1.GetFloat32(1), float32(12))
+	assert.Equal(t, row2.GetFloat32(0), float32(1))
+	assert.Equal(t, row2.GetFloat32(1), float32(1))
+
+	require.NoError(t, chk1.SwapColumn(0, chk2, 0))
 	checkRef()
 
-	err = chk2.SwapColumn(1, chk2, 0)
-	c.Assert(err, check.IsNil)
+	// swap reference and referenced columns
+	require.NoError(t, chk2.SwapColumn(1, chk2, 0))
 	checkRef()
+	assert.Equal(t, row2.GetFloat32(0), float32(12))
+	assert.Equal(t, row2.GetFloat32(1), float32(12))
+	assert.Equal(t, row2.GetFloat32(2), float32(32))
 
-	err = chk2.SwapColumn(1, chk2, 1)
-	c.Assert(err, check.IsNil)
+	// swap src = dst
+	require.NoError(t, chk2.SwapColumn(1, chk2, 1))
 	checkRef()
+	assert.Equal(t, row2.GetFloat32(0), float32(12))
+	assert.Equal(t, row2.GetFloat32(1), float32(12))
+	assert.Equal(t, row2.GetFloat32(2), float32(32))
 
-	err = chk2.SwapColumn(1, chk2, 2)
-	c.Assert(err, check.IsNil)
+	// swap reference and another column
+	require.NoError(t, chk2.SwapColumn(1, chk2, 2))
 	checkRef()
+	assert.Equal(t, row2.GetFloat32(0), float32(32))
+	assert.Equal(t, row2.GetFloat32(1), float32(32))
+	assert.Equal(t, row2.GetFloat32(2), float32(12))
 
-	err = chk2.SwapColumn(2, chk2, 0)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, chk2.SwapColumn(2, chk2, 0))
 	checkRef()
+	assert.Equal(t, row2.GetFloat32(0), float32(12))
+	assert.Equal(t, row2.GetFloat32(1), float32(12))
+	assert.Equal(t, row2.GetFloat32(2), float32(32))
 }
 
 func (s *testChunkSuite) TestPreAlloc4RowAndInsert(c *check.C) {
@@ -765,7 +801,9 @@ func (s *testChunkSuite) TestPreAlloc4RowAndInsert(c *check.C) {
 	}
 }
 
-func (s *testChunkSuite) TestAppendSel(c *check.C) {
+func TestAppendSel(t *testing.T) {
+	t.Parallel()
+
 	tll := &types.FieldType{Tp: mysql.TypeLonglong}
 	chk := NewChunkWithCapacity([]*types.FieldType{tll}, 1024)
 	sel := make([]int, 0, 1024/2)
@@ -776,14 +814,17 @@ func (s *testChunkSuite) TestAppendSel(c *check.C) {
 		}
 	}
 	chk.SetSel(sel)
-	c.Assert(chk.NumRows(), check.Equals, 1024/2/2)
+	assert.Equal(t, 1024/2/2, chk.NumRows())
 	chk.AppendInt64(0, int64(1))
-	c.Assert(chk.NumRows(), check.Equals, 1024/2/2+1)
+	assert.Equal(t, 1024/2/2+1, chk.NumRows())
 	sel = chk.Sel()
-	c.Assert(sel[len(sel)-1], check.Equals, 1024/2)
+	assert.Equal(t, 1024/2, sel[len(sel)-1])
+
 }
 
-func (s *testChunkSuite) TestMakeRefTo(c *check.C) {
+func TestMakeRefTo(t *testing.T) {
+	t.Parallel()
+
 	fieldTypes := make([]*types.FieldType, 0, 2)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
@@ -794,15 +835,18 @@ func (s *testChunkSuite) TestMakeRefTo(c *check.C) {
 
 	chk2 := NewChunkWithCapacity(fieldTypes, 1)
 	err := chk2.MakeRefTo(0, chk1, 1)
-	c.Assert(err, check.IsNil)
-	err = chk2.MakeRefTo(1, chk1, 0)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
-	c.Assert(chk2.columns[0] == chk1.columns[1], check.IsTrue)
-	c.Assert(chk2.columns[1] == chk1.columns[0], check.IsTrue)
+	err = chk2.MakeRefTo(1, chk1, 0)
+	require.NoError(t, err)
+
+	assert.Same(t, chk1.Column(1), chk2.Column(0))
+	assert.Same(t, chk1.Column(0), chk2.Column(1))
 }
 
-func (s *testChunkSuite) TestToString(c *check.C) {
+func TestToString(t *testing.T) {
+	t.Parallel()
+
 	fieldTypes := make([]*types.FieldType, 0, 4)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDouble})
@@ -823,7 +867,7 @@ func (s *testChunkSuite) TestToString(c *check.C) {
 	chk.AppendTime(3, types.ZeroDatetime)
 	chk.AppendInt64(4, 2)
 
-	c.Assert(chk.ToString(fieldTypes), check.Equals, "1, 1, 1, 0000-00-00, 1\n2, 2, 2, 0000-00-00 00:00:00, 2\n")
+	assert.Equal(t, "1, 1, 1, 0000-00-00, 1\n2, 2, 2, 0000-00-00 00:00:00, 2\n", chk.ToString(fieldTypes))
 }
 
 func BenchmarkAppendInt(b *testing.B) {
