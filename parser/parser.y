@@ -7533,6 +7533,14 @@ CastType:
 		x.Flag |= mysql.BinaryFlag
 		$$ = x
 	}
+|	"YEAR"
+	{
+		x := types.NewFieldType(mysql.TypeYear)
+		x.Charset = charset.CharsetBin
+		x.Collate = charset.CollationBin
+		x.Flag |= mysql.BinaryFlag
+		$$ = x
+	}
 |	"DATETIME" OptFieldLen
 	{
 		x := types.NewFieldType(mysql.TypeDatetime)

@@ -332,6 +332,8 @@ func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx, explicitCharset b
 		ctx.WriteKeyWord("DOUBLE")
 	case mysql.TypeFloat:
 		ctx.WriteKeyWord("FLOAT")
+	case mysql.TypeYear:
+		ctx.WriteKeyWord("YEAR")
 	}
 }
 
