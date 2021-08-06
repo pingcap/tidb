@@ -1263,6 +1263,11 @@ func (s *testClusterTableSuite) TestStmtSummaryHistoryTable(c *C) {
 // Test statements_summary_history.
 func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	tk := s.newTestKitWithRoot(c)
+	originalVal := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = originalVal
+	}()
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
@@ -1749,9 +1754,14 @@ func (s *testTableSuite) TestInfoschemaClientErrors(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RELOAD privilege(s) for this operation")
 }
 
-func (s *testTableSuite) TestTrx(c *C) {
+func (s *testTableSuite) TestTiDBTrx(c *C) {
 	tk := s.newTestKitWithRoot(c)
-	_, digest := parser.NormalizeDigest("select * from trx for update;")
+	tk.MustExec("drop table if exists test_tidb_trx")
+	tk.MustExec("create table test_tidb_trx(i int)")
+	// Execute the statement once so that the statement will be collected into statements_summary and able to be found
+	// by digest.
+	tk.MustExec("update test_tidb_trx set i = i + 1")
+	_, digest := parser.NormalizeDigest("update test_tidb_trx set i = i + 1")
 	sm := &mockSessionManager{nil, make([]*txninfo.TxnInfo, 2)}
 	sm.txnInfo[0] = &txninfo.TxnInfo{
 		StartTS:          424768545227014155,
@@ -1767,7 +1777,7 @@ func (s *testTableSuite) TestTrx(c *C) {
 	sm.txnInfo[1] = &txninfo.TxnInfo{
 		StartTS:          425070846483628033,
 		CurrentSQLDigest: "",
-		AllSQLDigests:    []string{"sql1", "sql2"},
+		AllSQLDigests:    []string{"sql1", "sql2", digest.String()},
 		State:            txninfo.TxnLockWaiting,
 		ConnectionID:     10,
 		Username:         "user1",
@@ -1776,9 +1786,19 @@ func (s *testTableSuite) TestTrx(c *C) {
 	sm.txnInfo[1].BlockStartTime.Valid = true
 	sm.txnInfo[1].BlockStartTime.Time = blockTime2
 	tk.Se.SetSessionManager(sm)
+
 	tk.MustQuery("select * from information_schema.TIDB_TRX;").Check(testkit.Rows(
-		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" <nil> Idle <nil> 1 19 2 root test []",
-		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [\"sql1\",\"sql2\"]"))
+		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test []",
+		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 0 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"]"))
+
+	// Test the all_sql_digests column can be directly passed to the tidb_decode_sql_digests function.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal"), IsNil)
+	}()
+	tk.MustQuery("select tidb_decode_sql_digests(all_sql_digests) from information_schema.tidb_trx").Check(testkit.Rows(
+		"[]",
+		"[null,null,\"update `test_tidb_trx` set `i` = `i` + ?\"]"))
 }
 
 func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
