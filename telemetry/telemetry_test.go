@@ -76,7 +76,7 @@ func TestPreview(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, trackingID, jsonParsed.Path("trackingId").Data().(string))
 	// Apple M1 doesn't contain cpuFlags
-	if runtime.GOARCH != "arm" && runtime.GOOS != "darwin" {
+	if !(runtime.GOARCH == "arm" && runtime.GOOS == "darwin") {
 		require.True(t, jsonParsed.ExistsP("hostExtra.cpuFlags"))
 	}
 	require.True(t, jsonParsed.ExistsP("hostExtra.os"))

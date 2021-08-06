@@ -94,26 +94,20 @@ func substituteExpression(cond expression.Expression, sctx *stmtctx.StatementCon
 	var tp types.EvalType
 	switch sf.FuncName.L {
 	case ast.EQ, ast.LT, ast.LE, ast.GT, ast.GE:
-		if sf.GetArgs()[0].ConstItem(sctx) {
-			expr = &sf.GetArgs()[1]
-			tp = sf.GetArgs()[0].GetType().EvalType()
-		} else if sf.GetArgs()[1].ConstItem(sctx) {
-			expr = &sf.GetArgs()[0]
-			tp = sf.GetArgs()[1].GetType().EvalType()
-		} else {
-			return
+		for candidateExpr, column := range exprToColumn {
+			tryToSubstituteExpr(&sf.GetArgs()[1], sessionCtx, candidateExpr, sf.GetArgs()[0].GetType().EvalType(), schema, column)
 		}
 		for candidateExpr, column := range exprToColumn {
-			tryToSubstituteExpr(expr, sessionCtx, candidateExpr, tp, schema, column)
+			tryToSubstituteExpr(&sf.GetArgs()[0], sessionCtx, candidateExpr, sf.GetArgs()[1].GetType().EvalType(), schema, column)
 		}
 	case ast.In:
 		expr = &sf.GetArgs()[0]
 		tp = sf.GetArgs()[1].GetType().EvalType()
 		canSubstitute := true
 		// Can only substitute if all the operands on the right-hand
-		// side are constants of the same type.
+		// side are the same type.
 		for i := 1; i < len(sf.GetArgs()); i++ {
-			if !sf.GetArgs()[i].ConstItem(sctx) || sf.GetArgs()[i].GetType().EvalType() != tp {
+			if sf.GetArgs()[i].GetType().EvalType() != tp {
 				canSubstitute = false
 				break
 			}
