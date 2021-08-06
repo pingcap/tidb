@@ -508,7 +508,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 		c.Check(err, IsNil)
 		c.Check(chk.NumRows(), Equals, 0)
 
-		_, err = tk.Exec("delete from mysql.bind_info")
+		_, err = tk.Exec("delete from mysql.bind_info where source != 'builtin'")
 		c.Assert(err, IsNil)
 	}
 }
@@ -1102,6 +1102,7 @@ func (s *testSuite) TestBaselineDBLowerCase(c *C) {
 	// default_db should have lower case.
 	c.Assert(rows[0][2], Equals, "spm")
 	tk.MustQuery("select original_sql, default_db, status from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
+		"select * from `spm` . `t` SPM deleted",
 		"select * from `spm` . `t` spm using",
 	))
 }
@@ -2015,13 +2016,15 @@ func (s *testSuite) TestReCreateBind(c *C) {
 	c.Assert(rows[0][3], Equals, "using")
 
 	tk.MustExec("create global binding for select * from t using select * from t")
-	tk.MustQuery("select original_sql, status from mysql.bind_info").Check(testkit.Rows(
-		"select * from `test` . `t` using",
-	))
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t`")
 	c.Assert(rows[0][3], Equals, "using")
+
+	rows = tk.MustQuery("select original_sql, status from mysql.bind_info where source != 'builtin';").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][1], Equals, "deleted")
+	c.Assert(rows[1][1], Equals, "using")
 }
 
 func (s *testSuite) TestExplainShowBindSQL(c *C) {
@@ -2036,10 +2039,9 @@ func (s *testSuite) TestExplainShowBindSQL(c *C) {
 		"select * from `test` . `t` SELECT * FROM `test`.`t` USE INDEX (`a`)",
 	))
 
-	tk.MustExec("explain select * from t")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
-	tk.MustExec("explain analyze select * from t")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
+	tk.MustExec("explain format = 'verbose' select * from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
+	// explain analyze do not support verbose yet.
 }
 
 func (s *testSuite) TestDMLIndexHintBind(c *C) {
@@ -2097,8 +2099,9 @@ func (s *testSuite) TestConcurrentCapture(c *C) {
 	tk.MustExec("select * from t")
 	tk.MustExec("select * from t")
 	tk.MustExec("admin capture bindings")
-	tk.MustQuery("select original_sql, source from mysql.bind_info where source != 'builtin'").Check(testkit.Rows(
-		"select * from `test` . `t` capture",
+	tk.MustQuery("select original_sql, source, status from mysql.bind_info where source != 'builtin'").Check(testkit.Rows(
+		"select * from `test` . `t` manual deleted",
+		"select * from `test` . `t` capture using",
 	))
 }
 

@@ -1950,7 +1950,8 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	if b.err != nil {
 		return nil
 	}
-	b.err = plannercore.CheckUpdateList(assignFlag, v)
+	// should use the new tblID2table, since the update's schema may have been changed in Execstmt.
+	b.err = plannercore.CheckUpdateList(assignFlag, v, tblID2table)
 	if b.err != nil {
 		return nil
 	}
