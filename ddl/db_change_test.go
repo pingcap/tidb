@@ -1054,7 +1054,7 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 		c.Assert(err2, IsNil)
 		rs, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
-		rs[0].Close()
+		c.Assert(rs[0].Close(), IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
@@ -1067,7 +1067,7 @@ func (s *testStateChangeSuite) TestParallelAddGeneratedColumnAndAlterModifyColum
 		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
 		rs, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
-		rs[0].Close()
+		c.Assert(rs[0].Close(), IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -1080,7 +1080,7 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C) {
 		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: this column has primary key flag")
 		rs, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
-		rs[0].Close()
+		c.Assert(rs[0].Close(), IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -1368,7 +1368,7 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 		rss, err1 = se.Execute(context.Background(), sql1)
 		if err1 == nil && len(rss) > 0 {
 			for _, rs := range rss {
-				rs.Close()
+				c.Assert(rs.Close(), IsNil)
 			}
 		}
 	}()
@@ -1379,7 +1379,7 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 		rss, err2 = se1.Execute(context.Background(), sql2)
 		if err2 == nil && len(rss) > 0 {
 			for _, rs := range rss {
-				rs.Close()
+				c.Assert(rs.Close(), IsNil)
 			}
 		}
 	}()

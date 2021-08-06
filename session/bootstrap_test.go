@@ -61,13 +61,13 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
 	rs := mustExecSQL(c, se, "SELECT * from mysql.global_priv;")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	rs = mustExecSQL(c, se, "SELECT * from mysql.db;")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	rs = mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	rs = mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
-	rs.Close()
+	c.Assert(rs.Close(), IsNil)
 	// Check privilege tables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	c.Assert(r, NotNil)

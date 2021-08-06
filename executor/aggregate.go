@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -351,10 +350,10 @@ func (e *HashAggExec) initForUnparallelExec() {
 
 func closeBaseExecutor(b *baseExecutor) {
 	if r := recover(); r != nil {
-		if str, ok := r.(string); ok && strings.Contains(str, memory.PanicMemoryExceed) {
-			terror.Log(b.Close())
-			panic(r)
-		}
+		// Release the resource, but throw the panic again and let the top level handle it.
+		terror.Log(b.Close())
+		logutil.BgLogger().Warn("panic in Open(), close base executor and throw exception again")
+		panic(r)
 	}
 }
 
