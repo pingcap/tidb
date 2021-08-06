@@ -548,7 +548,7 @@ func (is *LocalTemporaryTables) schemaTables(schema model.CIStr) *schemaLocalTem
 }
 
 func appendSortedTables(tbls []table.Table, items ...table.Table) []table.Table {
-	newTbls := make([]table.Table, len(tbls), len(items)+1)
+	newTbls := make([]table.Table, len(tbls), len(tbls)+len(items)+1)
 	copy(newTbls, tbls)
 
 	sorted := true
