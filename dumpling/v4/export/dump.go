@@ -851,6 +851,19 @@ func extractTiDBRowIDFromDecodedKey(indexField, key string) (string, error) {
 	return "", errors.Errorf("decoded key %s doesn't have %s field", key, indexField)
 }
 
+func getListTableTypeByConf(conf *Config) listTableType {
+	// use listTableByShowTableStatus by default because it has better performance
+	listType := listTableByShowTableStatus
+	if conf.Consistency == consistencyTypeLock {
+		// for consistency lock, we need to build the tables to dump as soon as possible
+		listType = listTableByInfoSchema
+	} else if conf.Consistency == consistencyTypeFlush && matchMysqlBugversion(conf.ServerInfo) {
+		// For some buggy versions of mysql, we need a workaround to get a list of table names.
+		listType = listTableByShowFullTables
+	}
+	return listType
+}
+
 func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) error {
 	databases, err := prepareDumpingDatabases(conf, db)
 	if err != nil {
@@ -861,9 +874,7 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 	if !conf.NoViews {
 		tableTypes = append(tableTypes, TableTypeView)
 	}
-	// for consistency lock, we need to build the tables to dump as soon as possible
-	asap := conf.Consistency == consistencyTypeLock
-	conf.Tables, err = ListAllDatabasesTables(tctx, db, databases, asap, tableTypes...)
+	conf.Tables, err = ListAllDatabasesTables(tctx, db, databases, getListTableTypeByConf(conf), tableTypes...)
 	if err != nil {
 		return err
 	}
@@ -1045,16 +1056,16 @@ func detectServerInfo(d *Dumper) error {
 // resolveAutoConsistency is an initialization step of Dumper.
 func resolveAutoConsistency(d *Dumper) error {
 	conf := d.conf
-	if conf.Consistency != "auto" {
+	if conf.Consistency != consistencyTypeAuto {
 		return nil
 	}
 	switch conf.ServerInfo.ServerType {
 	case ServerTypeTiDB:
-		conf.Consistency = "snapshot"
+		conf.Consistency = consistencyTypeSnapshot
 	case ServerTypeMySQL, ServerTypeMariaDB:
-		conf.Consistency = "flush"
+		conf.Consistency = consistencyTypeFlush
 	default:
-		conf.Consistency = "none"
+		conf.Consistency = consistencyTypeNone
 	}
 	return nil
 }

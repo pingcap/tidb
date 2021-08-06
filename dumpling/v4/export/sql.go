@@ -22,7 +22,17 @@ import (
 	"go.uber.org/zap"
 )
 
-const orderByTiDBRowID = "ORDER BY `_tidb_rowid`"
+const (
+	orderByTiDBRowID = "ORDER BY `_tidb_rowid`"
+)
+
+type listTableType int
+
+const (
+	listTableByInfoSchema listTableType = iota
+	listTableByShowFullTables
+	listTableByShowTableStatus
+)
 
 // ShowDatabases shows the databases of a database server.
 func ShowDatabases(db *sql.Conn) ([]string, error) {
@@ -152,9 +162,11 @@ func RestoreCharset(w io.StringWriter) {
 }
 
 // ListAllDatabasesTables lists all the databases and tables from the database
-// if asap is true, will use information_schema to get table info in one query
-// if asap is false, will use show table status for each database because it has better performance according to our tests
-func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames []string, asap bool, tableTypes ...TableType) (DatabaseTables, error) { // revive:disable-line:flag-parameter
+// listTableByInfoSchema list tables by table information_schema in MySQL
+// listTableByShowTableStatus has better performance than listTableByInfoSchema
+// listTableByShowFullTables is used in mysql8 version [8.0.3,8.0.23), more details can be found in the comments of func matchMysqlBugversion
+func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames []string,
+	listType listTableType, tableTypes ...TableType) (DatabaseTables, error) { // revive:disable-line:flag-parameter
 	dbTables := DatabaseTables{}
 	var (
 		schema, table, tableTypeStr string
@@ -162,11 +174,13 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 		avgRowLength                uint64
 		err                         error
 	)
-	if asap {
-		tableTypeConditions := make([]string, len(tableTypes))
-		for i, tableType := range tableTypes {
-			tableTypeConditions[i] = fmt.Sprintf("TABLE_TYPE='%s'", tableType)
-		}
+
+	tableTypeConditions := make([]string, len(tableTypes))
+	for i, tableType := range tableTypes {
+		tableTypeConditions[i] = fmt.Sprintf("TABLE_TYPE='%s'", tableType)
+	}
+	switch listType {
+	case listTableByInfoSchema:
 		query := fmt.Sprintf("SELECT TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE %s", strings.Join(tableTypeConditions, " OR "))
 		for _, schema := range databaseNames {
 			dbTables[schema] = make([]*TableInfo, 0)
@@ -197,7 +211,28 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 		}, query); err != nil {
 			return nil, errors.Annotatef(err, "sql: %s", query)
 		}
-	} else {
+	case listTableByShowFullTables:
+		for _, schema = range databaseNames {
+			dbTables[schema] = make([]*TableInfo, 0)
+			query := fmt.Sprintf("SHOW FULL TABLES FROM `%s` WHERE %s",
+				escapeString(schema), strings.Join(tableTypeConditions, " OR "))
+			if err = simpleQueryWithArgs(db, func(rows *sql.Rows) error {
+				var err2 error
+				if err2 = rows.Scan(&table, &tableTypeStr); err != nil {
+					return errors.Trace(err2)
+				}
+				tableType, err2 = ParseTableType(tableTypeStr)
+				if err2 != nil {
+					return errors.Trace(err2)
+				}
+				avgRowLength = 0 // can't get avgRowLength from the result of `show full tables` so hardcode to 0 here
+				dbTables[schema] = append(dbTables[schema], &TableInfo{table, avgRowLength, tableType})
+				return nil
+			}, query); err != nil {
+				return nil, errors.Annotatef(err, "sql: %s", query)
+			}
+		}
+	default:
 		queryTemplate := "SHOW TABLE STATUS FROM `%s`"
 		selectedTableType := make(map[TableType]struct{})
 		for _, tableType = range tableTypes {
