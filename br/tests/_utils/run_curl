@@ -1,0 +1,32 @@
+#!/bin/sh
+#
+# Copyright 2020 PingCAP, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Usage: run_curl https://url '{"json":"data"}'
+
+set -eu
+
+if [ -z "${2-}" ]; then
+    POST_ARGS=
+else
+    POST_ARGS="--post-data $2"
+fi
+
+# FIXME: use `wget` instead of `curl` because the latter rejects ECC certs on our CI.
+# CentOS is re~~ally old.
+wget -q -O - \
+    --ca-certificate="$TEST_DIR/certs/ca.pem" \
+    --certificate="$TEST_DIR/certs/curl.pem" \
+    --private-key="$TEST_DIR/certs/curl.key" \
+    $POST_ARGS "$1"
