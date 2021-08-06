@@ -31,7 +31,7 @@ var msgErrSelNotNil = "The selection vector of Chunk is not nil. Please file a b
 // Values are appended in compact format and can be directly accessed without decoding.
 // When the chunk is done processing, we can reuse the allocated memory by resetting it.
 //
-// All Chunk’s API should not do the validation work, and the user should ensure it is used correctly.
+// All Chunk's API should not do the validation work, and the user should ensure it is used correctly.
 type Chunk struct {
 	// sel indicates which rows are selected.
 	// If it is nil, all rows are selected.
@@ -362,7 +362,7 @@ func (c *Chunk) AppendPartialRow(colOff int, row Row) {
 	}
 }
 
-// AppendRowByColIdxs appends a row to the chunk, using the row‘s columns specified by colIdxs.
+// AppendRowByColIdxs appends a row to the chunk, using the row's columns specified by colIdxs.
 // 1. every columns are used if colIdxs is nil.
 // 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
 func (c *Chunk) AppendRowByColIdxs(row Row, colIdxs []int) (wide int) {
@@ -372,7 +372,7 @@ func (c *Chunk) AppendRowByColIdxs(row Row, colIdxs []int) (wide int) {
 }
 
 // AppendPartialRowByColIdxs appends a row to the chunk starting from colOff,
-// using the row‘s columns specified by colIdxs.
+// using the row's columns specified by colIdxs.
 // 1. every columns are used if colIdxs is nil.
 // 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
 func (c *Chunk) AppendPartialRowByColIdxs(colOff int, row Row, colIdxs []int) (wide int) {
