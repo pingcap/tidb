@@ -16,6 +16,8 @@ package chunk
 import (
 	"math"
 	"math/rand"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,6 +118,47 @@ func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
 	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, memUsage+srcChk.MemoryUsage())
 }
 
+func (s *testChunkSuite) TestListPrePreAlloc4RowAndInsert(c *check.C) {
+	fieldTypes := make([]*types.FieldType, 0, 4)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeNewDecimal})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+
+	srcChk := NewChunkWithCapacity(fieldTypes, 10)
+	for i := int64(0); i < 10; i++ {
+		srcChk.AppendFloat32(0, float32(i))
+		srcChk.AppendInt64(1, i)
+		srcChk.AppendMyDecimal(2, types.NewDecFromInt(i))
+		srcChk.AppendString(3, strings.Repeat(strconv.FormatInt(i, 10), int(i)))
+	}
+
+	srcList := NewList(fieldTypes, 3, 3)
+	destList := NewList(fieldTypes, 5, 5)
+	destRowPtr := make([]RowPtr, srcChk.NumRows())
+	for i := 0; i < srcChk.NumRows(); i++ {
+		srcList.AppendRow(srcChk.GetRow(i))
+		destRowPtr[i] = destList.preAlloc4Row(srcChk.GetRow(i))
+	}
+
+	c.Assert(srcList.NumChunks(), check.Equals, 4)
+	c.Assert(destList.NumChunks(), check.Equals, 2)
+
+	iter4Src := NewIterator4List(srcList)
+	for row, i := iter4Src.Begin(), 0; row != iter4Src.End(); row, i = iter4Src.Next(), i+1 {
+		destList.Insert(destRowPtr[i], row)
+	}
+
+	iter4Dest := NewIterator4List(destList)
+	srcRow, destRow := iter4Src.Begin(), iter4Dest.Begin()
+	for ; srcRow != iter4Src.End(); srcRow, destRow = iter4Src.Next(), iter4Dest.Next() {
+		c.Assert(srcRow.GetFloat32(0), check.Equals, destRow.GetFloat32(0))
+		c.Assert(srcRow.GetInt64(1), check.Equals, destRow.GetInt64(1))
+		c.Assert(srcRow.GetMyDecimal(2).Compare(destRow.GetMyDecimal(2)) == 0, check.IsTrue)
+		c.Assert(srcRow.GetString(3), check.Equals, destRow.GetString(3))
+	}
+}
+
 func BenchmarkListMemoryUsage(b *testing.B) {
 	fieldTypes := make([]*types.FieldType, 0, 4)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
@@ -140,6 +183,41 @@ func BenchmarkListMemoryUsage(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		list.GetMemTracker().BytesConsumed()
+	}
+}
+
+func BenchmarkPreAllocList(b *testing.B) {
+	fieldTypes := make([]*types.FieldType, 0, 1)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	chk := NewChunkWithCapacity(fieldTypes, 1)
+	chk.AppendInt64(0, 1)
+	row := chk.GetRow(0)
+
+	b.ResetTimer()
+	list := NewList(fieldTypes, 1024, 1024)
+	for i := 0; i < b.N; i++ {
+		list.Reset()
+		// 32768 indicates the number of int64 rows to fill 256KB L2 cache.
+		for j := 0; j < 32768; j++ {
+			list.preAlloc4Row(row)
+		}
+	}
+}
+
+func BenchmarkPreAllocChunk(b *testing.B) {
+	fieldTypes := make([]*types.FieldType, 0, 1)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	chk := NewChunkWithCapacity(fieldTypes, 1)
+	chk.AppendInt64(0, 1)
+	row := chk.GetRow(0)
+
+	b.ResetTimer()
+	finalChk := New(fieldTypes, 33000, 1024)
+	for i := 0; i < b.N; i++ {
+		finalChk.Reset()
+		for j := 0; j < 32768; j++ {
+			finalChk.preAlloc(row)
+		}
 	}
 }
 

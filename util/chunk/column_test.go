@@ -188,7 +188,7 @@ func (s *testChunkSuite) TestColumnCopyReconstructVarLen(c *check.C) {
 
 func (s *testChunkSuite) TestLargeStringColumnOffset(c *check.C) {
 	numRows := 1
-	col := newVarLenColumn(numRows)
+	col := newVarLenColumn(numRows, nil)
 	col.offsets[0] = 6 << 30
 	c.Check(col.offsets[0], check.Equals, int64(6<<30)) // test no overflow.
 }
@@ -740,7 +740,7 @@ func (s *testChunkSuite) TestResizeReserve(c *check.C) {
 	c.Assert(cI64s.length, check.Equals, 0)
 	c.Assert(len(cI64s.Int64s()), check.Equals, 0)
 
-	cStrs := newVarLenColumn(0)
+	cStrs := newVarLenColumn(0, nil)
 	for i := 0; i < 100; i++ {
 		t := rand.Intn(1024)
 		cStrs.ReserveString(t)

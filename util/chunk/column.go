@@ -26,7 +26,6 @@ import (
 )
 
 // AppendDuration appends a duration value into this Column.
-// Fsp is ignored.
 func (c *Column) AppendDuration(dur types.Duration) {
 	c.AppendInt64(int64(dur.Duration))
 }
@@ -61,13 +60,13 @@ func (c *Column) AppendSet(set types.Set) {
 // See https://arrow.apache.org/docs/format/Columnar.html#format-columnar
 type Column struct {
 	length     int
-	nullBitmap []byte  // bit 0 is null, 1 is not null
-	offsets    []int64 // used for varLen column. Row i starts from data[offsets[i]]
+	nullBitmap []byte // bit 0 is null, 1 is not null
+	offsets    []int64
 	data       []byte
 	elemBuf    []byte
 }
 
-// NewColumn creates a new column with the specific type and capacity.
+// NewColumn creates a new column with the specific length and capacity.
 func NewColumn(ft *types.FieldType, cap int) *Column {
 	return newColumn(getFixedLen(ft), cap)
 }
@@ -75,33 +74,11 @@ func NewColumn(ft *types.FieldType, cap int) *Column {
 func newColumn(typeSize, cap int) *Column {
 	var col *Column
 	if typeSize == varElemLen {
-		col = newVarLenColumn(cap)
+		col = newVarLenColumn(cap, nil)
 	} else {
 		col = newFixedLenColumn(typeSize, cap)
 	}
 	return col
-}
-
-// newFixedLenColumn creates a fixed length Column with elemLen and initial data capacity.
-func newFixedLenColumn(elemLen, cap int) *Column {
-	return &Column{
-		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, cap*elemLen),
-		nullBitmap: make([]byte, 0, (cap+7)>>3),
-	}
-}
-
-// newVarLenColumn creates a variable length Column with initial data capacity.
-func newVarLenColumn(cap int) *Column {
-	estimatedElemLen := 8
-	// For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
-	// Therefore, in the first executor.Next we use an experience value -- 8 (so it may make runtime.growslice)
-
-	return &Column{
-		offsets:    make([]int64, 1, cap+1),
-		data:       make([]byte, 0, cap*estimatedElemLen),
-		nullBitmap: make([]byte, 0, (cap+7)>>3),
-	}
 }
 
 func (c *Column) typeSize() int {
