@@ -42,8 +42,7 @@
       "EXPLAIN SELECT count(*) from t group by b; -- 8. group by virtual column",
       "EXPLAIN SELECT group_concat(a) from t; -- 9. agg func not supported",
       "EXPLAIN SELECT count(a) from t group by md5(a); -- 10. scalar func not supported",
-      "EXPLAIN SELECT count(a) from t where c=1; -- 11. type not supported",
-      "EXPLAIN SELECT count(a) from t group by is_ipv4(a); -- 12. scalar func not supported (without pbcode)"
+      "EXPLAIN SELECT count(a) from t where c=1; -- 11. type not supported"
     ]
   },
   {
