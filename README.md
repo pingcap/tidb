@@ -48,7 +48,7 @@ You can join these groups and chats to discuss and ask TiDB related questions:
 
 - [TiDB Internals Forum](https://internals.tidb.io/)
 - [Slack Channel](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb)
-- [Chinese User Forum](https://asktug.com)
+- [TiDB User Group Forum (Chinese)](https://asktug.com)
 
 In addition, you may enjoy following:
 
