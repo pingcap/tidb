@@ -539,7 +539,7 @@ func TestCopyTo(t *testing.T) {
 			case mysql.TypeJSON:
 				chunk.AppendJSON(i, json.CreateBinary(int64(k)))
 			default:
-				t.FailNow()
+				require.FailNow(t, "type not handled", allTypes[i].Tp)
 			}
 		}
 	}
