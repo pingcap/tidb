@@ -975,7 +975,9 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.Cast,
 
 		// misc functions.
-		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6, ast.UUID:
+		// TODO(#26942): enable functions below after them are fully tested in TiKV.
+		/*ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6,*/
+		ast.UUID:
 
 		return true
 
@@ -1146,15 +1148,14 @@ func init() {
 
 func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {
 	pbCode := scalarFunc.Function.PbCode()
-	if pbCode <= tipb.ScalarFuncSig_Unspecified {
-		failpoint.Inject("PanicIfPbCodeUnspecified", func() {
-			panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
-		})
-		return false
-	}
 
 	// Check whether this function can be pushed.
-	if !canFuncBePushed(scalarFunc, storeType) {
+	if unspecified := pbCode <= tipb.ScalarFuncSig_Unspecified; unspecified || !canFuncBePushed(scalarFunc, storeType) {
+		if unspecified {
+			failpoint.Inject("PanicIfPbCodeUnspecified", func() {
+				panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
+			})
+		}
 		if pc.sc.InExplainStmt {
 			storageName := storeType.Name()
 			if storeType == kv.UnSpecified {

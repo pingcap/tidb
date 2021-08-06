@@ -1394,7 +1394,6 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 	}
 
 	if !ret && sc.InExplainStmt {
-		sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because " + reason)
 		storageName := storeType.Name()
 		if storeType == kv.UnSpecified {
 			storageName = "storage layer"
