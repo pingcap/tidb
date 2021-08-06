@@ -8705,6 +8705,11 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
 		"on commit delete rows")
 
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tmp2")
+	tk.MustExec("create temporary table tmp2 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+
 	// sleep 1us to make test stale
 	time.Sleep(time.Microsecond)
 
@@ -8743,6 +8748,14 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 			return ""
 		}
 		return sql[0:idx] + " as of timestamp NOW(6)" + sql[idx:]
+	}
+
+	genLocalTemporarySQL := func(sql string) string {
+		return strings.Replace(sql, "tmp1", "tmp2", -1)
+	}
+	for _, query := range queries {
+		localSql := genLocalTemporarySQL(query.sql)
+		queries = append(queries, struct{sql string}{sql: localSql} )
 	}
 
 	for _, query := range queries {
