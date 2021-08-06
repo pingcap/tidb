@@ -733,3 +733,16 @@ func adjustFileFormat(conf *Config) error {
 	}
 	return nil
 }
+
+func matchMysqlBugversion(info ServerInfo) bool {
+	// if 8.0.3 <= mysql8 version < 8.0.23
+	// FLUSH TABLES WITH READ LOCK could block other sessions from executing SHOW TABLE STATUS.
+	// see more in https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-23.html
+	if info.ServerType != ServerTypeMySQL {
+		return false
+	}
+	currentVersion := info.ServerVersion
+	bugVersionStart := semver.New("8.0.2")
+	bugVersionEnd := semver.New("8.0.23")
+	return bugVersionStart.LessThan(*currentVersion) && currentVersion.LessThan(*bugVersionEnd)
+}
