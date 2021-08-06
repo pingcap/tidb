@@ -810,6 +810,11 @@ func (b *builtinTiDBDecodeSQLDigestsSig) Clone() builtinFunc {
 }
 
 func (b *builtinTiDBDecodeSQLDigestsSig) evalString(row chunk.Row) (string, bool, error) {
+	pm := privilege.GetPrivilegeManager(b.ctx)
+	if pm != nil && !pm.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
+		return "", true, errSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
+
 	args := b.getArgs()
 	digestsStr, isNull, err := args[0].EvalString(b.ctx, row)
 	if err != nil {
