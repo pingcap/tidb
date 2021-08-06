@@ -28,8 +28,8 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/kvproto v0.0.0-20210722091755-91a52cd9e8db
 	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
-	github.com/pingcap/parser v0.0.0-20210707071004-31c87e37af5c
-	github.com/pingcap/tidb v0.0.0-20210727021217-150fe0c37755
+	github.com/pingcap/parser v0.0.0-20210805052952-eda5e763a66e
+	github.com/pingcap/tidb v1.1.0-beta.0.20210805015907-39aae6a455d5
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
 	github.com/pingcap/tipb v0.0.0-20210708040514-0f154bb0dc0f
 	github.com/prometheus/client_golang v1.5.1
@@ -37,7 +37,7 @@ require (
 	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/spf13/cobra v1.0.0
 	github.com/spf13/pflag v1.0.5
-	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210726054004-ce977e34b0dd
+	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210727120905-55155ad2e543
 	github.com/tikv/pd v1.1.0-beta.0.20210323121136-78679e5e209d
 	github.com/xitongsys/parquet-go v1.5.5-0.20201110004701-b09c49d6d457
 	github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0

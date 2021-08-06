@@ -60,7 +60,9 @@ func (s *testMydumpCSVParserSuite) runTestCases(c *C, cfg *config.CSVConfig, blo
 			comment := Commentf("input = %q, row = %d", tc.input, i+1)
 			e := parser.ReadRow()
 			c.Assert(e, IsNil, Commentf("input = %q, row = %d, error = %s", tc.input, i+1, errors.ErrorStack(e)))
-			c.Assert(parser.LastRow(), DeepEquals, mydump.Row{RowID: int64(i) + 1, Row: row}, comment)
+			c.Assert(parser.LastRow().RowID, DeepEquals, int64(i)+1, comment)
+			c.Assert(parser.LastRow().Row, DeepEquals, row, comment)
+
 		}
 		c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF, Commentf("input = %q", tc.input))
 	}
@@ -150,22 +152,25 @@ func (s *testMydumpCSVParserSuite) TestTPCH(c *C) {
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
-		RowID: 1,
-		Row:   datums[0],
+		RowID:  1,
+		Row:    datums[0],
+		Length: 116,
 	})
 	c.Assert(parser, posEq, 126, 1)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
-		RowID: 2,
-		Row:   datums[1],
+		RowID:  2,
+		Row:    datums[1],
+		Length: 104,
 	})
 	c.Assert(parser, posEq, 241, 2)
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
-		RowID: 3,
-		Row:   datums[2],
+		RowID:  3,
+		Row:    datums[2],
+		Length: 117,
 	})
 	c.Assert(parser, posEq, 369, 3)
 
@@ -225,10 +230,9 @@ func (s *testMydumpCSVParserSuite) TestTPCHMultiBytes(c *C) {
 
 		for i, expectedParserPos := range allExpectedParserPos {
 			c.Assert(parser.ReadRow(), IsNil)
-			c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
-				RowID: int64(i + 1),
-				Row:   datums[i],
-			})
+			c.Assert(parser.LastRow().RowID, DeepEquals, int64(i+1))
+			c.Assert(parser.LastRow().Row, DeepEquals, datums[i])
+
 			c.Assert(parser, posEq, expectedParserPos, i+1)
 		}
 
@@ -254,6 +258,7 @@ func (s *testMydumpCSVParserSuite) TestRFC4180(c *C) {
 			types.NewStringDatum("bbb"),
 			types.NewStringDatum("ccc"),
 		},
+		Length: 9,
 	})
 	c.Assert(parser, posEq, 12, 1)
 
@@ -265,6 +270,7 @@ func (s *testMydumpCSVParserSuite) TestRFC4180(c *C) {
 			types.NewStringDatum("yyy"),
 			types.NewStringDatum("xxx"),
 		},
+		Length: 9,
 	})
 	c.Assert(parser, posEq, 24, 2)
 
@@ -282,6 +288,7 @@ func (s *testMydumpCSVParserSuite) TestRFC4180(c *C) {
 			types.NewStringDatum("bbb"),
 			types.NewStringDatum("ccc"),
 		},
+		Length: 9,
 	})
 	c.Assert(parser, posEq, 12, 1)
 
@@ -293,6 +300,7 @@ func (s *testMydumpCSVParserSuite) TestRFC4180(c *C) {
 			types.NewStringDatum("yyy"),
 			types.NewStringDatum("xxx"),
 		},
+		Length: 9,
 	})
 	c.Assert(parser, posEq, 23, 2)
 
@@ -310,6 +318,7 @@ func (s *testMydumpCSVParserSuite) TestRFC4180(c *C) {
 			types.NewStringDatum("bbb"),
 			types.NewStringDatum("ccc"),
 		},
+		Length: 9,
 	})
 	c.Assert(parser, posEq, 18, 1)
 
@@ -321,6 +330,7 @@ func (s *testMydumpCSVParserSuite) TestRFC4180(c *C) {
 			types.NewStringDatum("yyy"),
 			types.NewStringDatum("xxx"),
 		},
+		Length: 9,
 	})
 	c.Assert(parser, posEq, 29, 2)
 
@@ -340,6 +350,7 @@ zzz,yyy,xxx`), int64(config.ReadBlockSize), s.ioWorkers, false)
 			types.NewStringDatum("b\nbb"),
 			types.NewStringDatum("ccc"),
 		},
+		Length: 10,
 	})
 	c.Assert(parser, posEq, 19, 1)
 
@@ -351,6 +362,7 @@ zzz,yyy,xxx`), int64(config.ReadBlockSize), s.ioWorkers, false)
 			types.NewStringDatum("yyy"),
 			types.NewStringDatum("xxx"),
 		},
+		Length: 9,
 	})
 	c.Assert(parser, posEq, 30, 2)
 
@@ -368,6 +380,7 @@ zzz,yyy,xxx`), int64(config.ReadBlockSize), s.ioWorkers, false)
 			types.NewStringDatum("b\"bb"),
 			types.NewStringDatum("ccc"),
 		},
+		Length: 10,
 	})
 	c.Assert(parser, posEq, 19, 1)
 
@@ -395,6 +408,7 @@ func (s *testMydumpCSVParserSuite) TestMySQL(c *C) {
 			types.NewStringDatum(`\`),
 			types.NewStringDatum("?"),
 		},
+		Length: 6,
 	})
 	c.Assert(parser, posEq, 15, 1)
 
@@ -406,6 +420,7 @@ func (s *testMydumpCSVParserSuite) TestMySQL(c *C) {
 			nullDatum,
 			types.NewStringDatum(`\N`),
 		},
+		Length: 7,
 	})
 	c.Assert(parser, posEq, 26, 2)
 
@@ -463,6 +478,7 @@ func (s *testMydumpCSVParserSuite) TestTSV(c *C) {
 			types.NewStringDatum("foo"),
 			types.NewStringDatum("0000-00-00"),
 		},
+		Length: 14,
 	})
 	c.Assert(parser, posEq, 32, 1)
 	c.Assert(parser.Columns(), DeepEquals, []string{"a", "b", "c", "d", "e", "f"})
@@ -478,6 +494,7 @@ func (s *testMydumpCSVParserSuite) TestTSV(c *C) {
 			types.NewStringDatum("foo"),
 			types.NewStringDatum("0000-00-00"),
 		},
+		Length: 14,
 	})
 	c.Assert(parser, posEq, 52, 2)
 
@@ -492,6 +509,7 @@ func (s *testMydumpCSVParserSuite) TestTSV(c *C) {
 			types.NewStringDatum("bar"),
 			types.NewStringDatum("1999-12-31"),
 		},
+		Length: 23,
 	})
 	c.Assert(parser, posEq, 80, 3)
 
@@ -513,6 +531,7 @@ func (s *testMydumpCSVParserSuite) TestCsvWithWhiteSpaceLine(c *C) {
 			nullDatum,
 			types.NewStringDatum("abc"),
 		},
+		Length: 4,
 	})
 
 	c.Assert(parser, posEq, 12, 1)
@@ -524,6 +543,7 @@ func (s *testMydumpCSVParserSuite) TestCsvWithWhiteSpaceLine(c *C) {
 			types.NewStringDatum("1999-12-31"),
 			types.NewStringDatum("test"),
 		},
+		Length: 17,
 	})
 	c.Assert(parser.Close(), IsNil)
 
@@ -539,6 +559,7 @@ func (s *testMydumpCSVParserSuite) TestCsvWithWhiteSpaceLine(c *C) {
 			nullDatum,
 			types.NewStringDatum("abc"),
 		},
+		Length: 4,
 	})
 
 	c.Assert(parser, posEq, 17, 1)
@@ -574,26 +595,30 @@ func (s *testMydumpCSVParserSuite) TestCRLF(c *C) {
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
-		RowID: 1,
-		Row:   []types.Datum{types.NewStringDatum("a")},
+		RowID:  1,
+		Row:    []types.Datum{types.NewStringDatum("a")},
+		Length: 1,
 	})
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
-		RowID: 2,
-		Row:   []types.Datum{types.NewStringDatum("b")},
+		RowID:  2,
+		Row:    []types.Datum{types.NewStringDatum("b")},
+		Length: 1,
 	})
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
-		RowID: 3,
-		Row:   []types.Datum{types.NewStringDatum("c")},
+		RowID:  3,
+		Row:    []types.Datum{types.NewStringDatum("c")},
+		Length: 1,
 	})
 
 	c.Assert(parser.ReadRow(), IsNil)
 	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
-		RowID: 4,
-		Row:   []types.Datum{types.NewStringDatum("d")},
+		RowID:  4,
+		Row:    []types.Datum{types.NewStringDatum("d")},
+		Length: 1,
 	})
 
 	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
@@ -614,6 +639,7 @@ func (s *testMydumpCSVParserSuite) TestQuotedSeparator(c *C) {
 			types.NewStringDatum("'"),
 			types.NewStringDatum("'"),
 		},
+		Length: 3,
 	})
 
 	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
