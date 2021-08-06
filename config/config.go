@@ -723,6 +723,7 @@ var deprecatedConfig = map[string]struct{}{
 	"tikv-client.copr-cache.enable":  {},
 	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
 	"enable-streaming":               {},
+	"allow-expression-index":         {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
