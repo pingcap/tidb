@@ -212,6 +212,7 @@ func (c *Context) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 	return c.NewTxn(ctx)
 }
 
+// GetSnapshot returns a snapshot with specified version.
 func (c *Context) GetSnapshot(ver uint64) (kv.Snapshot, error) {
 	if c.Store == nil {
 		return nil, errors.New("store is not set")

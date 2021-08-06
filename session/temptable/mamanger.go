@@ -165,6 +165,7 @@ func (m *SessionTemporaryTableManager) WrapInformationSchema(is infoschema.InfoS
 	}
 }
 
+// CommitTxnWithTemporaryData write dirty data to session memory and filter it out before committing the txn.
 func (m *SessionTemporaryTableManager) CommitTxnWithTemporaryData(ctx context.Context, txn kv.Transaction) error {
 	sessionData := m.GetSessionData()
 	var stage kv.StagingHandle
