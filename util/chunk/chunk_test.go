@@ -646,14 +646,15 @@ func TestSwapColumn(t *testing.T) {
 	chk1.AppendFloat32(0, 1)
 	chk1.MakeRef(0, 1)
 	chk1.AppendFloat32(2, 3)
-	row1 := chk1.GetRow(0)
 
 	// chk2: column1 refers to column0
 	chk2 := NewChunkWithCapacity(fieldTypes, 1)
-	chk2.AppendFloat32(0, 12)
+	chk2.AppendFloat32(0, 1)
 	chk2.MakeRef(0, 1)
 	chk2.AppendFloat32(2, 3)
-	row2 := chk2.GetRow(0)
+
+	require.Same(t, chk1.Column(0), chk1.Column(1))
+	require.Same(t, chk2.Column(0), chk2.Column(1))
 
 	// swap preserves ref
 	checkRef := func() {
