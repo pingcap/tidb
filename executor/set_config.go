@@ -153,15 +153,15 @@ func (s *SetConfigExec) doRequest(url string) (retErr error) {
 }
 
 func isValidInstance(instance string) bool {
-	ip, port, err := net.SplitHostPort(instance)
+	host, port, err := net.SplitHostPort(instance)
 	if err != nil {
 		return false
 	}
 	if port == "" {
 		return false
 	}
-	v := net.ParseIP(ip)
-	return v != nil
+	_, err = net.LookupIP(host)
+	return err == nil
 }
 
 // ConvertConfigItem2JSON converts the config item specified by key and val to json.

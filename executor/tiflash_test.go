@@ -75,6 +75,11 @@ func (s *tiflashTestSuite) SetUpSuite(c *C) {
 	s.dom.SetStatsUpdating(true)
 }
 
+func (s *tiflashTestSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	c.Assert(s.store.Close(), IsNil)
+}
+
 func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -526,9 +531,6 @@ func (s *tiflashTestSuite) TestDispatchTaskRetry(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "3*return(true)"), IsNil)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout"), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppConnTimeout", "3*return(true)"), IsNil)
-	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppConnTimeout"), IsNil)
 }
 
 func (s *tiflashTestSuite) TestCancelMppTasks(c *C) {

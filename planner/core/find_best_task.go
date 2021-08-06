@@ -414,10 +414,10 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 
 // candidatePath is used to maintain required info for skyline pruning.
 type candidatePath struct {
-	path         *util.AccessPath
-	columnSet    *intsets.Sparse // columnSet is the set of columns that occurred in the access conditions.
-	isSingleScan bool
-	isMatchProp  bool
+	path               *util.AccessPath
+	accessCondsColSet  *intsets.Sparse // accessCondsColSet is the set of columns that occurred in the access conditions.
+	indexFiltersColSet *intsets.Sparse // indexFiltersColSet is the set of columns that occurred in the index filters.
+	isMatchProp        bool
 }
 
 // compareColumnSet will compares the two set. The last return value is used to indicate
@@ -450,6 +450,16 @@ func compareBool(l, r bool) int {
 	return 1
 }
 
+func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
+	result := compareBool(lhs.path.IsSingleScan, rhs.path.IsSingleScan)
+	if result == 0 && !lhs.path.IsSingleScan {
+		// if both lhs and rhs need to access table after IndexScan, we use the set of columns that occurred in IndexFilters
+		// to compare how many table rows will be accessed.
+		return compareColumnSet(lhs.indexFiltersColSet, rhs.indexFiltersColSet)
+	}
+	return result, true
+}
+
 // compareCandidates is the core of skyline pruning. It compares the two candidate paths on three dimensions:
 // (1): the set of columns that occurred in the access condition,
 // (2): whether or not it matches the physical property
@@ -457,11 +467,14 @@ func compareBool(l, r bool) int {
 // If `x` is not worse than `y` at all factors,
 // and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 func compareCandidates(lhs, rhs *candidatePath) int {
-	setsResult, comparable := compareColumnSet(lhs.columnSet, rhs.columnSet)
+	setsResult, comparable := compareColumnSet(lhs.accessCondsColSet, rhs.accessCondsColSet)
 	if !comparable {
 		return 0
 	}
-	scanResult := compareBool(lhs.isSingleScan, rhs.isSingleScan)
+	scanResult, comparable := compareIndexBack(lhs, rhs)
+	if !comparable {
+		return 0
+	}
 	matchResult := compareBool(lhs.isMatchProp, rhs.isMatchProp)
 	sum := setsResult + scanResult + matchResult
 	if setsResult >= 0 && scanResult >= 0 && matchResult >= 0 && sum > 0 {
@@ -473,44 +486,72 @@ func compareCandidates(lhs, rhs *candidatePath) int {
 	return 0
 }
 
-func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
-	candidate := &candidatePath{path: path}
+func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.PhysicalProperty) bool {
+	var isMatchProp bool
 	if path.IsIntHandlePath {
 		pkCol := ds.getPKIsHandleCol()
 		if len(prop.SortItems) == 1 && pkCol != nil {
-			candidate.isMatchProp = prop.SortItems[0].Col.Equal(nil, pkCol)
+			isMatchProp = prop.SortItems[0].Col.Equal(nil, pkCol)
 			if path.StoreType == kv.TiFlash {
-				candidate.isMatchProp = candidate.isMatchProp && !prop.SortItems[0].Desc
+				isMatchProp = isMatchProp && !prop.SortItems[0].Desc
 			}
 		}
-	} else {
-		all, _ := prop.AllSameOrder()
-		// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
-		// it needs not to keep order for index scan.
-		if !prop.IsEmpty() && all {
-			for i, col := range path.IdxCols {
-				if col.Equal(nil, prop.SortItems[0].Col) {
-					candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.SortItems)
+		return isMatchProp
+	}
+	all, _ := prop.AllSameOrder()
+	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
+	// it needs not to keep order for index scan.
+
+	// Basically, if `prop.SortItems` is the prefix of `path.IdxCols`, then `isMatchProp` is true. However, we need to consider
+	// the situations when some columns of `path.IdxCols` are evaluated as constant. For example:
+	// ```
+	// create table t(a int, b int, c int, d int, index idx_a_b_c(a, b, c), index idx_d_c_b_a(d, c, b, a));
+	// select * from t where a = 1 order by b, c;
+	// select * from t where b = 1 order by a, c;
+	// select * from t where d = 1 and b = 2 order by c, a;
+	// select * from t where d = 1 and b = 2 order by c, b, a;
+	// ```
+	// In the first two `SELECT` statements, `idx_a_b_c` matches the sort order. In the last two `SELECT` statements, `idx_d_c_b_a`
+	// matches the sort order. Hence, we use `path.ConstCols` to deal with the above situations.
+	if !prop.IsEmpty() && all && len(path.IdxCols) >= len(prop.SortItems) {
+		isMatchProp = true
+		i := 0
+		for _, sortItem := range prop.SortItems {
+			found := false
+			for ; i < len(path.IdxCols); i++ {
+				if path.IdxColLens[i] == types.UnspecifiedLength && sortItem.Col.Equal(nil, path.IdxCols[i]) {
+					found = true
+					i++
 					break
-				} else if i >= path.EqCondCount {
+				}
+				if path.ConstCols == nil || i >= len(path.ConstCols) || !path.ConstCols[i] {
 					break
 				}
 			}
+			if !found {
+				isMatchProp = false
+				break
+			}
 		}
 	}
-	candidate.columnSet = expression.ExtractColumnSet(path.AccessConds)
-	candidate.isSingleScan = true
+	return isMatchProp
+}
+
+func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
+	candidate := &candidatePath{path: path}
+	candidate.isMatchProp = ds.isMatchProp(path, prop)
+	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
 	return candidate
 }
 
-func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.PhysicalProperty, isSingleScan bool) *candidatePath {
+func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	all, _ := prop.AllSameOrder()
 	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
 	// it needs not to keep order for index scan.
 	if !prop.IsEmpty() && all {
 		for i, col := range path.IdxCols {
-			if col.Equal(nil, prop.SortItems[0].Col) {
+			if col.EqualByExprAndID(nil, prop.SortItems[0].Col) {
 				candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.SortItems)
 				break
 			} else if i >= path.EqCondCount {
@@ -518,8 +559,9 @@ func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.Ph
 			}
 		}
 	}
-	candidate.columnSet = expression.ExtractColumnSet(path.AccessConds)
-	candidate.isSingleScan = isSingleScan
+	candidate.isMatchProp = ds.isMatchProp(path, prop)
+	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
+	candidate.indexFiltersColSet = expression.ExtractColumnSet(path.IndexFilters)
 	return candidate
 }
 
@@ -562,14 +604,13 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 				continue
 			}
 		} else {
-			coveredByIdx := ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
-			if len(path.AccessConds) > 0 || !prop.IsEmpty() || path.Forced || coveredByIdx {
+			if len(path.AccessConds) > 0 || !prop.IsEmpty() || path.Forced || path.IsSingleScan {
 				// We will use index to generate physical plan if any of the following conditions is satisfied:
 				// 1. This path's access cond is not nil.
 				// 2. We have a non-empty prop to match.
 				// 3. This index is forced to choose.
 				// 4. The needed columns are all covered by index columns(and handleCol).
-				currentCandidate = ds.getIndexCandidate(path, prop, coveredByIdx)
+				currentCandidate = ds.getIndexCandidate(path, prop)
 			} else {
 				continue
 			}
@@ -606,6 +647,16 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 	}
 
 	return candidates
+}
+
+func (ds *DataSource) isPointGetConvertableSchema() bool {
+	for _, col := range ds.Columns {
+		// Only handle tables that all columns are public.
+		if col.State != model.StatePublic {
+			return false
+		}
+	}
+	return true
 }
 
 // findBestTask implements the PhysicalPlan interface.
@@ -704,7 +755,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				p: dual,
 			}, cntPlan, nil
 		}
-		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV
+		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
 		if canConvertPointGet && !path.IsIntHandlePath {
 			// We simply do not build [batch] point get for prefix indexes. This can be optimized.
 			canConvertPointGet = path.Index.Unique && !path.Index.HasPrefixIndex()
@@ -1021,7 +1072,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
 	for i, indexCol := range indexCols {
 		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
-		if indexCol != nil && col.Equal(nil, indexCol) && isFullLen {
+		if indexCol != nil && col.EqualByExprAndID(nil, indexCol) && isFullLen {
 			return true
 		}
 	}
@@ -1065,7 +1116,7 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) (*expression.C
 
 // convertToIndexScan converts the DataSource to index scan with idx.
 func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
-	if !candidate.isSingleScan {
+	if !candidate.path.IsSingleScan {
 		// If it's parent requires single read task, return max cost.
 		if prop.TaskTp == property.CopSingleReadTaskType {
 			return invalidTask, nil
@@ -1078,7 +1129,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	path := candidate.path
-	is, cost, _ := ds.getOriginalPhysicalIndexScan(prop, path, candidate.isMatchProp, candidate.isSingleScan)
+	is, cost, _ := ds.getOriginalPhysicalIndexScan(prop, path, candidate.isMatchProp, candidate.path.IsSingleScan)
 	cop := &copTask{
 		indexPlan:   is,
 		tblColHists: ds.TblColHists,
@@ -1090,7 +1141,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
-	if !candidate.isSingleScan {
+	if !candidate.path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
 			Columns:         ds.Columns,
@@ -1280,7 +1331,7 @@ func matchIndicesProp(idxCols []*expression.Column, colLens []int, propItems []p
 		return false
 	}
 	for i, item := range propItems {
-		if colLens[i] != types.UnspecifiedLength || !item.Col.Equal(nil, idxCols[i]) {
+		if colLens[i] != types.UnspecifiedLength || !item.Col.EqualByExprAndID(nil, idxCols[i]) {
 			return false
 		}
 	}
@@ -1656,8 +1707,8 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
-	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.isSingleScan ||
-		prop.TaskTp == property.CopSingleReadTaskType && !candidate.isSingleScan {
+	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.path.IsSingleScan ||
+		prop.TaskTp == property.CopSingleReadTaskType && !candidate.path.IsSingleScan {
 		return invalidTask
 	}
 
@@ -1713,7 +1764,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.IdxColLens = candidate.path.IdxColLens
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
 		pointGetPlan.PartitionInfo = partitionInfo
-		if candidate.isSingleScan {
+		if candidate.path.IsSingleScan {
 			cost = pointGetPlan.GetCost(candidate.path.IdxCols)
 		} else {
 			cost = pointGetPlan.GetCost(ds.TblCols)
@@ -1739,8 +1790,8 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask
 	}
-	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.isSingleScan ||
-		prop.TaskTp == property.CopSingleReadTaskType && !candidate.isSingleScan {
+	if prop.TaskTp == property.CopDoubleReadTaskType && candidate.path.IsSingleScan ||
+		prop.TaskTp == property.CopSingleReadTaskType && !candidate.path.IsSingleScan {
 		return invalidTask
 	}
 
@@ -1787,7 +1838,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 			batchPointGetPlan.KeepOrder = true
 			batchPointGetPlan.Desc = prop.SortItems[0].Desc
 		}
-		if candidate.isSingleScan {
+		if candidate.path.IsSingleScan {
 			cost = batchPointGetPlan.GetCost(candidate.path.IdxCols)
 		} else {
 			cost = batchPointGetPlan.GetCost(ds.TblCols)
