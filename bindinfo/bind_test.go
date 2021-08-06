@@ -2039,10 +2039,9 @@ func (s *testSuite) TestExplainShowBindSQL(c *C) {
 		"select * from `test` . `t` SELECT * FROM `test`.`t` USE INDEX (`a`)",
 	))
 
-	tk.MustExec("explain select * from t")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
-	tk.MustExec("explain analyze select * from t")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
+	tk.MustExec("explain format = 'verbose' select * from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
+	// explain analyze do not support verbose yet.
 }
 
 func (s *testSuite) TestDMLIndexHintBind(c *C) {

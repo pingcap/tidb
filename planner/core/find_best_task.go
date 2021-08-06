@@ -649,6 +649,16 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 	return candidates
 }
 
+func (ds *DataSource) isPointGetConvertableSchema() bool {
+	for _, col := range ds.Columns {
+		// Only handle tables that all columns are public.
+		if col.State != model.StatePublic {
+			return false
+		}
+	}
+	return true
+}
+
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
 func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (t task, cntPlan int64, err error) {
@@ -745,7 +755,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				p: dual,
 			}, cntPlan, nil
 		}
-		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV
+		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && ds.isPointGetConvertableSchema()
 		if canConvertPointGet && !path.IsIntHandlePath {
 			// We simply do not build [batch] point get for prefix indexes. This can be optimized.
 			canConvertPointGet = path.Index.Unique && !path.Index.HasPrefixIndex()

@@ -699,7 +699,13 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("EXPLAIN FORMAT='hint' %s", sql))
 	sctx.GetSessionVars().UsePlanBaselines = origVals
 	if rs != nil {
-		defer terror.Call(rs.Close)
+		defer func() {
+			// Audit log is collected in Close(), set InRestrictedSQL to avoid 'create sql binding' been recorded as 'explain'.
+			origin := sctx.GetSessionVars().InRestrictedSQL
+			sctx.GetSessionVars().InRestrictedSQL = true
+			terror.Call(rs.Close)
+			sctx.GetSessionVars().InRestrictedSQL = origin
+		}()
 	}
 	if err != nil {
 		return "", err
