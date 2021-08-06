@@ -6758,10 +6758,13 @@ func (s *testClusterTableSuite) TestFunctionDecodeSQLDigests(c *C) {
 }
 
 func (s *testClusterTableSuite) TestFunctionDecodeSQLDigestsPrivilege(c *C) {
+	dropUserTk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(dropUserTk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
 	tk.MustExec("create user 'testuser'@'localhost'")
-	defer tk.MustExec("drop user 'testuser'@'localhost'")
+	defer dropUserTk.MustExec("drop user 'testuser'@'localhost'")
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
 		Username: "testuser",
 		Hostname: "localhost",
@@ -6773,7 +6776,7 @@ func (s *testClusterTableSuite) TestFunctionDecodeSQLDigestsPrivilege(c *C) {
 	tk = testkit.NewTestKitWithInit(c, s.store)
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
 	tk.MustExec("create user 'testuser2'@'localhost'")
-	defer tk.MustExec("drop user 'testuser2'@'localhost'")
+	defer dropUserTk.MustExec("drop user 'testuser2'@'localhost'")
 	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
 		Username: "testuser2",
