@@ -442,7 +442,7 @@ func TestCompare(t *testing.T) {
 		case mysql.TypeJSON:
 			chunk.AppendJSON(i, json.CreateBinary(int64(0)))
 		default:
-			t.FailNow()
+			require.FailNow(t, "type not handled", allTypes[i].Tp)
 		}
 	}
 	for i := 0; i < len(allTypes); i++ {
@@ -475,7 +475,7 @@ func TestCompare(t *testing.T) {
 		case mysql.TypeJSON:
 			chunk.AppendJSON(i, json.CreateBinary(int64(1)))
 		default:
-			t.FailNow()
+			require.FailNow(t, "type not handled", allTypes[i].Tp)
 		}
 	}
 	rowNull := chunk.GetRow(0)
@@ -1066,7 +1066,7 @@ func (x *seqNumberGenerateExec) Next(chk *Chunk, resize bool) {
 	} else {
 		chk.Reset()
 	}
-	for chk.NumRows() < chk.RequiredRows() {
+	for chk.NumRows() < chk.Capacity() {
 		x.seq++
 		if x.seq > x.genCountSize {
 			break
