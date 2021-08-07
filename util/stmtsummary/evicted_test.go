@@ -87,19 +87,18 @@ func TestMapToEvictedCountDatum(t *testing.T) {
 	}
 
 	// test stmtSummaryByDigestMap.toEvictedCountDatum
-
 	match(t, ssMap.ToEvictedCountDatum()[0], expectedEvictedCount...)
 
 	// test multiple intervals
 	ssMap.Clear()
 	err = ssMap.SetRefreshInterval("60", false)
 	interval = ssMap.refreshInterval()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = ssMap.SetMaxStmtCount("1", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	err = ssMap.SetHistorySize("100", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	ssMap.beginTimeForCurInterval = now + interval
 	// insert one statement per interval.
@@ -114,7 +113,7 @@ func TestMapToEvictedCountDatum(t *testing.T) {
 	require.Equal(t, 50, digest.history.Len())
 
 	err = ssMap.SetHistorySize("25", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	// update begin time
 	ssMap.beginTimeForCurInterval += interval * 2
 	banditSei := generateAnyExecInfo()
@@ -245,7 +244,6 @@ func TestStmtSummaryByDigestEvictedElement(t *testing.T) {
 	digestValue = evictedValue.history.Back().Value.(*stmtSummaryByDigestElement)
 	record.addEvicted(evictedKey, digestValue)
 	require.Equal(t, "{begin: 0, end: 1, count: 2}", getEvicted(record))
-
 }
 
 // test stmtSummaryByDigestEvicted.addEvicted
@@ -255,15 +253,15 @@ func TestEvictedCountDetailed(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()
 	ssMap.Clear()
 	err := ssMap.SetRefreshInterval("60", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = ssMap.SetHistorySize("100", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	now := time.Now().Unix()
 	interval := int64(60)
 	ssMap.beginTimeForCurInterval = now + interval
 	// set capacity to 1
 	err = ssMap.summaryMap.SetCapacity(1)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	// test stmtSummaryByDigest's history length
 	for i := 0; i < 100; i++ {
