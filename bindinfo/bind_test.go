@@ -508,7 +508,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 		c.Check(err, IsNil)
 		c.Check(chk.NumRows(), Equals, 0)
 
-		_, err = tk.Exec("delete from mysql.bind_info")
+		_, err = tk.Exec("delete from mysql.bind_info where source != 'builtin'")
 		c.Assert(err, IsNil)
 	}
 }
@@ -1102,6 +1102,7 @@ func (s *testSuite) TestBaselineDBLowerCase(c *C) {
 	// default_db should have lower case.
 	c.Assert(rows[0][2], Equals, "spm")
 	tk.MustQuery("select original_sql, default_db, status from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
+		"select * from `spm` . `t` SPM deleted",
 		"select * from `spm` . `t` spm using",
 	))
 }
@@ -1512,9 +1513,9 @@ func (s *testSuite) TestReloadBindings(c *C) {
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
 	rows := tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
-	rows = tk.MustQuery("select * from mysql.bind_info").Rows()
+	rows = tk.MustQuery("select * from mysql.bind_info where source != 'builtin'").Rows()
 	c.Assert(len(rows), Equals, 1)
-	tk.MustExec("truncate table mysql.bind_info")
+	tk.MustExec("delete from mysql.bind_info where source != 'builtin'")
 	c.Assert(s.domain.BindHandle().Update(false), IsNil)
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
@@ -1595,7 +1596,7 @@ func (s *testSuite) TestOutdatedInfoSchema(c *C) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
 	c.Assert(s.domain.BindHandle().Update(false), IsNil)
-	tk.MustExec("truncate table mysql.bind_info")
+	s.cleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
 }
 
@@ -2002,11 +2003,11 @@ func (s *testSuite) TestReCreateBind(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 
-	tk.MustQuery("select * from mysql.bind_info").Check(testkit.Rows())
+	tk.MustQuery("select * from mysql.bind_info where source != 'builtin'").Check(testkit.Rows())
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 
 	tk.MustExec("create global binding for select * from t using select * from t")
-	tk.MustQuery("select original_sql, status from mysql.bind_info").Check(testkit.Rows(
+	tk.MustQuery("select original_sql, status from mysql.bind_info where source != 'builtin';").Check(testkit.Rows(
 		"select * from `test` . `t` using",
 	))
 	rows := tk.MustQuery("show global bindings").Rows()
@@ -2015,13 +2016,15 @@ func (s *testSuite) TestReCreateBind(c *C) {
 	c.Assert(rows[0][3], Equals, "using")
 
 	tk.MustExec("create global binding for select * from t using select * from t")
-	tk.MustQuery("select original_sql, status from mysql.bind_info").Check(testkit.Rows(
-		"select * from `test` . `t` using",
-	))
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from `test` . `t`")
 	c.Assert(rows[0][3], Equals, "using")
+
+	rows = tk.MustQuery("select original_sql, status from mysql.bind_info where source != 'builtin';").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][1], Equals, "deleted")
+	c.Assert(rows[1][1], Equals, "using")
 }
 
 func (s *testSuite) TestExplainShowBindSQL(c *C) {
@@ -2096,8 +2099,9 @@ func (s *testSuite) TestConcurrentCapture(c *C) {
 	tk.MustExec("select * from t")
 	tk.MustExec("select * from t")
 	tk.MustExec("admin capture bindings")
-	tk.MustQuery("select original_sql, source from mysql.bind_info where source != 'builtin'").Check(testkit.Rows(
-		"select * from `test` . `t` capture",
+	tk.MustQuery("select original_sql, source, status from mysql.bind_info where source != 'builtin'").Check(testkit.Rows(
+		"select * from `test` . `t` manual deleted",
+		"select * from `test` . `t` capture using",
 	))
 }
 
