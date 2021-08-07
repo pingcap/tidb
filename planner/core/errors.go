@@ -104,4 +104,8 @@ var (
 	// ErrPartitionNoTemporary returns when partition at temporary mode
 	ErrPartitionNoTemporary     = dbterror.ClassOptimizer.NewStd(mysql.ErrPartitionNoTemporary)
 	ErrViewSelectTemporaryTable = dbterror.ClassOptimizer.NewStd(mysql.ErrViewSelectTmptable)
+
+	// Used by SQL_CALC_FOUND_ROWS
+	ErrFunctionLimitedSupport = dbterror.ClassOptimizer.NewStd(mysql.ErrFunctionLimitedSupport)
+	ErrWarnDeprecatedSyntax   = dbterror.ClassOptimizer.NewStd(mysql.ErrWarnDeprecatedSyntax)
 )

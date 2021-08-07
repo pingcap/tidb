@@ -1007,6 +1007,7 @@ const (
 	ErrDataInConsistentExtraIndex          = 8133
 	ErrDataInConsistentMisMatchIndex       = 8134
 	ErrAsOf                                = 8135
+	ErrFunctionLimitedSupport              = 8136
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

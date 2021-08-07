@@ -3369,6 +3369,10 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	tk.MustQuery("select * from t where a = 1 LIMIT 999999,1").Check(testkit.Rows())
 	tk.MustQuery("select found_rows()").Check(testkit.Rows("0"))
 
+	// test for warning
+	tk.MustQuery("select sql_calc_found_rows * from t where a = 1 LIMIT 999999,1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1287 'SQL_CALC_FOUND_ROWS' is deprecated and will be removed in a future release. Please use two separate queries instead"))
+
 	// for topN executor
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(a int, b int);")
@@ -8120,21 +8124,26 @@ func (s *testIntegrationSerialSuite) TestNoopFunctions(c *C) {
 	tk.MustExec("CREATE TABLE t1 (a INT NOT NULL PRIMARY KEY)")
 	tk.MustExec("INSERT INTO t1 VALUES (1),(2),(3)")
 
-	message := `.* has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
-	stmts := []string{
-		"SELECT SQL_CALC_FOUND_ROWS * FROM t1",                                 // NO LIMIT
-		"SELECT SQL_CALC_FOUND_ROWS 'foo' LIMIT 0",                             // NO TABLE
-		"SELECT SQL_CALC_FOUND_ROWS * FROM t1 a  UNION ALL SELECT * FROM t1 b", // UNION
-		"SELECT * FROM t1 LOCK IN SHARE MODE",
-		"SELECT * FROM t1 GROUP BY a DESC",
-		"SELECT * FROM t1 GROUP BY a ASC",
+	partiallySupported := `.* has only limited support. SET tidb_enable_noop_functions=1 to allow unsupported cases`
+	unsupported := `.* has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
+
+	stmts := []struct {
+		stmt string
+		err  string
+	}{
+		{"SELECT SQL_CALC_FOUND_ROWS * FROM t1", partiallySupported},                                 // NO LIMIT
+		{"SELECT SQL_CALC_FOUND_ROWS 'foo' LIMIT 0", partiallySupported},                             // NO TABLE
+		{"SELECT SQL_CALC_FOUND_ROWS * FROM t1 a  UNION ALL SELECT * FROM t1 b", partiallySupported}, // UNION
+		{"SELECT * FROM t1 LOCK IN SHARE MODE", unsupported},
+		{"SELECT * FROM t1 GROUP BY a DESC", unsupported},
+		{"SELECT * FROM t1 GROUP BY a ASC", unsupported},
 	}
-	for _, stmt := range stmts {
+	for _, testcase := range stmts {
 		tk.MustExec("SET tidb_enable_noop_functions=1")
-		tk.MustExec(stmt)
+		tk.MustExec(testcase.stmt)
 		tk.MustExec("SET tidb_enable_noop_functions=0")
-		_, err := tk.Exec(stmt)
-		c.Assert(err.Error(), Matches, message)
+		_, err := tk.Exec(testcase.stmt)
+		c.Assert(err.Error(), Matches, testcase.err)
 	}
 }
 

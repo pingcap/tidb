@@ -1053,6 +1053,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPlacementPolicyCheck:   mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
 	ErrMultiStatementDisabled: mysql.Message("client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk", nil),
 	ErrAsOf:                   mysql.Message("invalid as of timestamp: %s", nil),
+	ErrFunctionLimitedSupport: mysql.Message("function %s has only limited support. SET tidb_enable_noop_functions=1 to allow unsupported cases", nil),
 	ErrInvalidAttributesSpec:  mysql.Message("Invalid attributes '%s': %s", nil),
 
 	// TiKV/PD errors.

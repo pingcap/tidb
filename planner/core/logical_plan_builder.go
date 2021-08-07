@@ -3432,8 +3432,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if sel.SelectStmtOpts.CalcFoundRows && !enableNoopFuncs {
 			// In some limited contexts we support SQL_CALC_FOUND_ROWS.
 			if !b.detectSQLCalcFoundRowsSupported(sel) {
-				return nil, expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
+				return nil, ErrFunctionLimitedSupport.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
 			}
+			// If it is supported, we should warn it's not a good idea.
+			// This is the same as in MySQL.
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrWarnDeprecatedSyntax.FastGenByArgs("SQL_CALC_FOUND_ROWS", "two separate queries"))
 		}
 		origin := b.inStraightJoin
 		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
