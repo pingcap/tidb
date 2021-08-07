@@ -108,11 +108,6 @@ func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 	}
 }
 
-// SetDiskFullOpt sets allowed options of current operation in each TiKV disk usage level.
-func (m *Meta) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
-	m.txn.SetDiskFullOpt(level)
-}
-
 // NewSnapshotMeta creates a Meta with snapshot.
 func NewSnapshotMeta(snapshot kv.Snapshot) *Meta {
 	t := structure.NewStructure(snapshot, nil, mMetaPrefix)
@@ -610,7 +605,6 @@ func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
 
 // EnQueueDDLJob adds a DDL job to the list.
 func (m *Meta) EnQueueDDLJob(job *model.Job, jobListKeys ...JobListKeyType) error {
-	m.txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	listKey := m.jobListKey
 	if len(jobListKeys) != 0 {
 		listKey = jobListKeys[0]
@@ -620,7 +614,6 @@ func (m *Meta) EnQueueDDLJob(job *model.Job, jobListKeys ...JobListKeyType) erro
 }
 
 func (m *Meta) deQueueDDLJob(key []byte) (*model.Job, error) {
-	m.txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	value, err := m.txn.LPop(key)
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)
@@ -674,7 +667,6 @@ func (m *Meta) GetDDLJobByIdx(index int64, jobListKeys ...JobListKeyType) (*mode
 // updateDDLJob updates the DDL job with index and key.
 // updateRawArgs is used to determine whether to update the raw args when encode the job.
 func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte, updateRawArgs bool) error {
-	m.txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	b, err := job.Encode(updateRawArgs)
 	if err == nil {
 		err = m.txn.LSet(key, index, b)
@@ -794,7 +786,6 @@ func (m *Meta) addHistoryDDLJob(key []byte, job *model.Job, updateRawArgs bool) 
 
 // AddHistoryDDLJob adds DDL job to history.
 func (m *Meta) AddHistoryDDLJob(job *model.Job, updateRawArgs bool) error {
-	m.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	return m.addHistoryDDLJob(mDDLJobHistoryKey, job, updateRawArgs)
 }
 
@@ -981,7 +972,6 @@ func DecodeElement(b []byte) (*Element, error) {
 
 // UpdateDDLReorgStartHandle saves the job reorganization latest processed element and start handle for later resuming.
 func (m *Meta) UpdateDDLReorgStartHandle(job *model.Job, element *Element, startKey kv.Key) error {
-	m.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID), element.EncodeElement())
 	if err != nil {
 		return errors.Trace(err)
@@ -997,26 +987,22 @@ func (m *Meta) UpdateDDLReorgStartHandle(job *model.Job, element *Element, start
 
 // UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
 func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, physicalTableID int64, element *Element) error {
-	m.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID), element.EncodeElement())
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if startKey != nil {
-		m.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID, element), startKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	if endKey != nil {
-		m.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID, element), endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	m.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID, element), []byte(strconv.FormatInt(physicalTableID, 10)))
 	return errors.Trace(err)
 }
@@ -1024,7 +1010,6 @@ func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startKey, endKey kv.Key, phy
 // RemoveReorgElement removes the element of the reorganization information.
 // It's used for testing.
 func (m *Meta) RemoveReorgElement(job *model.Job) error {
-	m.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID))
 	if err != nil {
 		return errors.Trace(err)
@@ -1038,23 +1023,19 @@ func (m *Meta) RemoveDDLReorgHandle(job *model.Job, elements []*Element) error {
 		return nil
 	}
 
-	m.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID))
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	for _, element := range elements {
-		m.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID, element))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		m.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID, element)); err != nil {
 			logutil.BgLogger().Warn("remove DDL reorg end handle", zap.Error(err))
 		}
-		m.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID, element)); err != nil {
 			logutil.BgLogger().Warn("remove DDL reorg physical ID", zap.Error(err))
 		}
@@ -1064,7 +1045,6 @@ func (m *Meta) RemoveDDLReorgHandle(job *model.Job, elements []*Element) error {
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
 func (m *Meta) GetDDLReorgHandle(job *model.Job) (element *Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
-	m.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	elementBytes, err := m.txn.HGet(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID))
 	if err != nil {
 		return nil, nil, nil, 0, errors.Trace(err)
@@ -1147,7 +1127,6 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 	}
 	diffKey := m.schemaDiffKey(diff.Version)
 	startTime := time.Now()
-	m.txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	err = m.txn.Set(diffKey, data)
 	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
