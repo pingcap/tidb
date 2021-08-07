@@ -572,8 +572,7 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 	sessVars := s.sessionVars
 	txnTempTables := sessVars.TxnCtx.TemporaryTables
 	if len(txnTempTables) == 0 {
-		err := txn.Commit(ctx)
-		return err
+		return txn.Commit(ctx)
 	}
 
 	sessionData := sessVars.TemporaryTableData
