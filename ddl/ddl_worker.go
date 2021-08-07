@@ -287,9 +287,6 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			return errors.Trace(err)
 		}
 
-		// Drop table need to be supported when tikv is disk full, which depends on ddl job queue.
-		// So should let ddl job queue operations set.
-		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		for i, task := range tasks {
 			job := task.job
 			job.Version = currentVersion
@@ -375,7 +372,6 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 			zap.String("job", job.String()))
 		updateRawArgs = false
 	}
-	t.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
 }
 
@@ -540,7 +536,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			d.mu.hook.OnJobRunBefore(job)
 			d.mu.RUnlock()
 
-			// allow drop table when disk full
+			// Meta releated txn default is DiskFullOpt_AllowedOnAlmostFull to support all the ddl job queue operations or other meta change.
+			// But we only wants to support the Drop Table like ddls to be executed when TiKV is disk full.
 			switch job.Type {
 			case model.ActionDropSchema, model.ActionDropTable, model.ActionDropIndex, model.ActionTruncateTable, model.ActionDropTablePartition, model.ActionDropView, model.ActionDropSequence, model.ActionDropIndexes, model.ActionTruncateTablePartition:
 				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)

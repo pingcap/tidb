@@ -234,7 +234,7 @@ type session struct {
 
 	builtinFunctionUsage telemetry.BuiltinFunctionsUsage
 	// allowed when tikv disk full happened.
-	allowedLevel kvrpcpb.DiskFullOpt
+	diskFullOpt kvrpcpb.DiskFullOpt
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -487,7 +487,10 @@ func (s *session) doCommit(ctx context.Context) error {
 		return nil
 	}
 
-	s.txn.SetDiskFullOpt(s.GetDiskFullOpt())
+	// to avoid session set overlap the txn set.
+	if s.GetDiskFullOpt() != kvrpcpb.DiskFullOpt_NotAllowedOnFull {
+		s.txn.SetDiskFullOpt(s.GetDiskFullOpt())
+	}
 
 	defer func() {
 		s.txn.changeToInvalid()
@@ -1354,15 +1357,15 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 }
 
 func (s *session) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
-	s.allowedLevel = level
+	s.diskFullOpt = level
 }
 
 func (s *session) GetDiskFullOpt() kvrpcpb.DiskFullOpt {
-	return s.allowedLevel
+	return s.diskFullOpt
 }
 
 func (s *session) ClearDiskFullOpt() {
-	s.allowedLevel = kvrpcpb.DiskFullOpt_NotAllowedOnFull
+	s.diskFullOpt = kvrpcpb.DiskFullOpt_NotAllowedOnFull
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
@@ -1526,9 +1529,6 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
 func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*ast.ResultField, error) {
-	// allowed all restricted sql executed when tikv disk full happens.
-	s.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-
 	if variable.TopSQLEnabled() {
 		defer pprof.SetGoroutineLabels(ctx)
 	}

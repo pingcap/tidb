@@ -14,7 +14,6 @@
 package structure
 
 import (
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -46,11 +45,4 @@ type TxStructure struct {
 	reader     kv.Retriever
 	readWriter kv.RetrieverMutator
 	prefix     []byte
-}
-
-// SetDiskFullOpt set the allowed option of current operation in each TiKV disk usage level.
-func (t *TxStructure) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
-	if t.readWriter != nil {
-		t.readWriter.SetDiskFullOpt(level)
-	}
 }

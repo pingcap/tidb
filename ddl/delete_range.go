@@ -426,10 +426,10 @@ func doInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID int64, elementID
 	logutil.BgLogger().Info("[ddl] insert into delete-range table", zap.Int64("jobID", jobID), zap.Int64("elementID", elementID))
 	startKeyEncoded := hex.EncodeToString(startKey)
 	endKeyEncoded := hex.EncodeToString(endKey)
-	// session set txn disk-full-allowed flag
+	// set session disk full opt
 	s.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := s.ExecuteInternal(ctx, insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
-	// session clear txn disk-full-allowed flag
+	// clear session disk full opt
 	s.ClearDiskFullOpt()
 	return errors.Trace(err)
 }
@@ -450,8 +450,11 @@ func doBatchInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID int64, tabl
 		}
 		paramsList = append(paramsList, jobID, tableID, startKeyEncoded, endKeyEncoded, ts)
 	}
+	// set session disk full opt
 	s.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := s.ExecuteInternal(ctx, buf.String(), paramsList...)
+	// clear session disk full opt
+	s.ClearDiskFullOpt()
 	return errors.Trace(err)
 }
 
