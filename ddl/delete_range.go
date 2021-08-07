@@ -427,6 +427,7 @@ func doInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID int64, elementID
 	startKeyEncoded := hex.EncodeToString(startKey)
 	endKeyEncoded := hex.EncodeToString(endKey)
 	// set session disk full opt
+	// TODO ddl txn func including an session pool txn, there may be a problem?
 	s.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := s.ExecuteInternal(ctx, insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
 	// clear session disk full opt

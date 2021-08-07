@@ -536,8 +536,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			d.mu.hook.OnJobRunBefore(job)
 			d.mu.RUnlock()
 
-			// Meta releated txn default is DiskFullOpt_AllowedOnAlmostFull to support all the ddl job queue operations or other meta change.
-			// But we only wants to support the Drop Table like ddls to be executed when TiKV is disk full.
+			// Meta releated txn default is DiskFullOpt_AllowedOnAlmostFull to support
+			// all the ddl job queue operations or other meta change. But we only want
+			// to support the Drop Table like ddls to be executed when TiKV is disk full.
 			switch job.Type {
 			case model.ActionDropSchema, model.ActionDropTable, model.ActionDropIndex, model.ActionTruncateTable, model.ActionDropTablePartition, model.ActionDropView, model.ActionDropSequence, model.ActionDropIndexes, model.ActionTruncateTablePartition:
 				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
