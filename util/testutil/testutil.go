@@ -239,7 +239,6 @@ type testCases struct {
 	decodedOut interface{}      // For generate output.
 }
 
-
 // TestData stores all the data of a test suite.
 // TODO: please use testkit.TestData to migrate to testify
 type TestData struct {
