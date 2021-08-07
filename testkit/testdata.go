@@ -136,7 +136,7 @@ func (td *TestData) ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
 }
 
 // GenerateOutputIfNeeded generate the output file.
-func (t *TestData) GenerateOutputIfNeeded() error {
+func (td *TestData) GenerateOutputIfNeeded() error {
 	if !record {
 		return nil
 	}
@@ -145,7 +145,7 @@ func (t *TestData) GenerateOutputIfNeeded() error {
 	enc := json.NewEncoder(buf)
 	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
-	for i, test := range t.output {
+	for i, test := range td.output {
 		err := enc.Encode(test.decodedOut)
 		if err != nil {
 			return err
@@ -154,13 +154,13 @@ func (t *TestData) GenerateOutputIfNeeded() error {
 		copy(res, buf.Bytes())
 		buf.Reset()
 		rm := json.RawMessage(res)
-		t.output[i].Cases = &rm
+		td.output[i].Cases = &rm
 	}
-	err := enc.Encode(t.output)
+	err := enc.Encode(td.output)
 	if err != nil {
 		return err
 	}
-	file, err := os.Create(fmt.Sprintf("%s_out.json", t.filePathPrefix))
+	file, err := os.Create(fmt.Sprintf("%s_out.json", td.filePathPrefix))
 	if err != nil {
 		return err
 	}
