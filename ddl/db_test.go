@@ -1205,7 +1205,7 @@ func (s *testDBSuite6) TestAddIndex1(c *C) {
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))", "")
 }
 
-func (s *testDBSuite5) TestAddIndex1WithShardRowID(c *C) {
+func (s *testSerialDBSuite1) TestAddIndex1WithShardRowID(c *C) {
 	testAddIndex(c, s.store, s.lease, testPartition|testShardRowID,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint) SHARD_ROW_ID_BITS = 4 pre_split_regions = 4;", "")
 }
@@ -1221,7 +1221,7 @@ func (s *testDBSuite2) TestAddIndex2(c *C) {
 			      partition p4 values less than maxvalue)`, "")
 }
 
-func (s *testDBSuite1) TestAddIndex2WithShardRowID(c *C) {
+func (s *testSerialDBSuite) TestAddIndex2WithShardRowID(c *C) {
 	testAddIndex(c, s.store, s.lease, testPartition|testShardRowID,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint)
 				  SHARD_ROW_ID_BITS = 4 pre_split_regions = 4
@@ -1239,7 +1239,7 @@ func (s *testDBSuite3) TestAddIndex3(c *C) {
 			      partition by hash (c1) partitions 4;`, "")
 }
 
-func (s *testDBSuite2) TestAddIndex3WithShardRowID(c *C) {
+func (s *testSerialDBSuite1) TestAddIndex3WithShardRowID(c *C) {
 	testAddIndex(c, s.store, s.lease, testPartition|testShardRowID,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint)
 				  SHARD_ROW_ID_BITS = 4 pre_split_regions = 4
@@ -1257,7 +1257,7 @@ func (s *testDBSuite8) TestAddIndex4(c *C) {
 			      partition p4 values less than maxvalue)`, "")
 }
 
-func (s *testDBSuite7) TestAddIndex4WithShardRowID(c *C) {
+func (s *testSerialDBSuite) TestAddIndex4WithShardRowID(c *C) {
 	testAddIndex(c, s.store, s.lease, testPartition|testShardRowID,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint)
 				  SHARD_ROW_ID_BITS = 4 pre_split_regions = 4
@@ -1284,11 +1284,14 @@ const (
 )
 
 func testAddIndex(c *C, store kv.Storage, lease time.Duration, tp testAddIndexType, createTableSQL, idxTp string) {
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
 	isTestPartition := (testPartition & tp) > 0
 	isTestShardRowID := (testShardRowID & tp) > 0
+	if isTestShardRowID {
+		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+		tk.MustExec("set global tidb_scatter_region = 1")
+	}
 	if isTestPartition {
 		tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	} else if (testClusteredIndex & tp) > 0 {
@@ -1455,19 +1458,23 @@ LOOP:
 func (s *testDBSuite1) TestAddIndexWithSplitTable(c *C) {
 	createSQL := "CREATE TABLE test_add_index(a bigint PRIMARY KEY AUTO_RANDOM(4), b varchar(255), c bigint)"
 	stSQL := fmt.Sprintf("SPLIT TABLE test_add_index BETWEEN (%d) AND (%d) REGIONS 16;", math.MinInt64, math.MaxInt64)
-	s.testAddIndexWithSplitTable(c, createSQL, stSQL)
+	testAddIndexWithSplitTable(c, s.store, s.lease, createSQL, stSQL)
 }
 
-func (s *testDBSuite1) TestAddIndexWithShardRowID(c *C) {
+func (s *testSerialDBSuite) TestAddIndexWithShardRowID(c *C) {
 	createSQL := "create table test_add_index(a bigint, b bigint, c bigint) SHARD_ROW_ID_BITS = 4 pre_split_regions = 4;"
-	s.testAddIndexWithSplitTable(c, createSQL, "")
+	testAddIndexWithSplitTable(c, s.store, s.lease, createSQL, "")
 }
 
-func (s *testDBSuite1) testAddIndexWithSplitTable(c *C, createSQL, splitTableSQL string) {
-	tk := testkit.NewTestKit(c, s.store)
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+func testAddIndexWithSplitTable(c *C, store kv.Storage, lease time.Duration, createSQL, splitTableSQL string) {
+	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists test_add_index")
+	hasAutoRadomField := len(splitTableSQL) > 0
+	if !hasAutoRadomField {
+		tk.MustExec("set global tidb_scatter_region = 1")
+		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	}
 	tk.MustExec(createSQL)
 
 	batchInsertRows := func(tk *testkit.TestKit, needVal bool, tbl string, start, end int) error {
@@ -1486,7 +1493,6 @@ func (s *testDBSuite1) testAddIndexWithSplitTable(c *C, createSQL, splitTableSQL
 		return err
 	}
 
-	hasAutoRadomField := len(splitTableSQL) > 0
 	done := make(chan error, 1)
 	start := -20
 	num := defaultBatchSize
@@ -1496,7 +1502,7 @@ func (s *testDBSuite1) testAddIndexWithSplitTable(c *C, createSQL, splitTableSQL
 	for i := 0; i < goCnt; i++ {
 		base := (i % 8) << 60
 		go func(b int, eCh chan error) {
-			tk1 := testkit.NewTestKit(c, s.store)
+			tk1 := testkit.NewTestKit(c, store)
 			tk1.MustExec("use test_db")
 			eCh <- batchInsertRows(tk1, !hasAutoRadomField, "test_add_index", base+start, base+num)
 		}(base, errCh)
@@ -1514,9 +1520,9 @@ func (s *testDBSuite1) testAddIndexWithSplitTable(c *C, createSQL, splitTableSQL
 	rows := re.Rows()
 	c.Assert(len(rows), Equals, 16)
 	addIdxSQL := "alter table test_add_index add index idx(a)"
-	testddlutil.SessionExecInGoroutine(c, s.store, addIdxSQL, done)
+	testddlutil.SessionExecInGoroutine(c, store, addIdxSQL, done)
 
-	ticker := time.NewTicker(s.lease / 20)
+	ticker := time.NewTicker(lease / 5)
 	defer ticker.Stop()
 	num = 0
 LOOP:
@@ -1534,7 +1540,7 @@ LOOP:
 			if num >= 1000 {
 				break
 			}
-			step := 30
+			step := 50
 			// delete, insert and update some data
 			for i := num; i < num+step; i++ {
 				sql := fmt.Sprintf("delete from test_add_index where a = %d", i+1)
