@@ -1191,6 +1191,11 @@ error = '''
 Table '%s' from one of the %ss cannot be used in %s
 '''
 
+["planner:1287"]
+error = '''
+'%s' is deprecated and will be removed in a future release. Please use %s instead
+'''
+
 ["planner:1288"]
 error = '''
 The target table %-.100s of the %s is not updatable
@@ -1459,6 +1464,11 @@ Feature '%s' is not supported when security enhanced mode is enabled
 ["planner:8135"]
 error = '''
 invalid as of timestamp: %s
+'''
+
+["planner:8136"]
+error = '''
+function %s has only limited support. SET tidb_enable_noop_functions=1 to allow unsupported cases
 '''
 
 ["privilege:1141"]
