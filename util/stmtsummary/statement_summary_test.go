@@ -46,11 +46,11 @@ func TestSetUp(t *testing.T) {
 	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	err := ssMap.SetEnabled("1", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = ssMap.SetRefreshInterval("1800", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = ssMap.SetHistorySize("24", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 }
 
 const (
@@ -801,10 +801,10 @@ func TestToDatum(t *testing.T) {
 	defer func() {
 		// clean up
 		err = ssMap.SetMaxStmtCount("", false)
-		require.Nil(t, err)
+		require.NoError(t, err)
 	}()
 
-	require.Nil(t, err)
+	require.NoError(t, err)
 	stmtExecInfo2 := stmtExecInfo1
 	stmtExecInfo2.Digest = "bandit sei"
 	ssMap.AddStatement(stmtExecInfo2)
@@ -869,7 +869,7 @@ func TestAddStatementParallel(t *testing.T) {
 
 		// There would be 32 summaries.
 		datums := reader.GetStmtSummaryCurrentRows()
-		require.Equal(t, loops, len(datums))
+		require.Len(t, datums, loops)
 	}
 
 	for i := 0; i < threads; i++ {
@@ -878,7 +878,7 @@ func TestAddStatementParallel(t *testing.T) {
 	wg.Wait()
 
 	datums := reader.GetStmtSummaryCurrentRows()
-	require.Equal(t, loops, len(datums))
+	require.Len(t, datums, loops)
 }
 
 // Test max number of statement count.
@@ -1038,18 +1038,18 @@ func TestDisableStmtSummary(t *testing.T) {
 
 	// Set false in global scope, it should work.
 	err := ssMap.SetEnabled("0", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	ssMap.beginTimeForCurInterval = now + 60
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	ssMap.AddStatement(stmtExecInfo1)
 	reader := newStmtSummaryReaderForTest(ssMap)
 	datums := reader.GetStmtSummaryCurrentRows()
-	require.Equal(t, 0, len(datums))
+	require.Len(t, datums, 0)
 
 	// Set true in session scope, it will overwrite global scope.
 	err = ssMap.SetEnabled("1", true)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	ssMap.AddStatement(stmtExecInfo1)
 	datums = reader.GetStmtSummaryCurrentRows()
@@ -1057,7 +1057,7 @@ func TestDisableStmtSummary(t *testing.T) {
 
 	// Set false in global scope, it shouldn't work.
 	err = ssMap.SetEnabled("0", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	ssMap.beginTimeForCurInterval = now + 60
 
 	stmtExecInfo2 := stmtExecInfo1
@@ -1070,15 +1070,15 @@ func TestDisableStmtSummary(t *testing.T) {
 
 	// Unset in session scope.
 	err = ssMap.SetEnabled("", true)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	ssMap.beginTimeForCurInterval = now + 60
 	ssMap.AddStatement(stmtExecInfo2)
 	datums = reader.GetStmtSummaryCurrentRows()
-	require.Equal(t, 0, len(datums))
+	require.Len(t, datums, 0)
 
 	// Unset in global scope.
 	err = ssMap.SetEnabled("", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	ssMap.beginTimeForCurInterval = now + 60
 	ssMap.AddStatement(stmtExecInfo1)
 	datums = reader.GetStmtSummaryCurrentRows()
@@ -1086,7 +1086,7 @@ func TestDisableStmtSummary(t *testing.T) {
 
 	// Set back.
 	err = ssMap.SetEnabled("1", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 }
 
 // Test disable and enable statement summary concurrently with adding statements.
@@ -1108,13 +1108,13 @@ func TestEnableSummaryParallel(t *testing.T) {
 		for i := 0; i < loops; i++ {
 			// Sometimes enable it and sometimes disable it.
 			err := ssMap.SetEnabled(fmt.Sprintf("%d", i%2), false)
-			require.Nil(t, err)
+			require.NoError(t, err)
 			ssMap.AddStatement(stmtExecInfo1)
 			// Try to read it.
 			reader.GetStmtSummaryHistoryRows()
 		}
 		err := ssMap.SetEnabled("1", false)
-		require.Nil(t, err)
+		require.NoError(t, err)
 	}
 
 	for i := 0; i < threads; i++ {
@@ -1199,7 +1199,7 @@ func TestRefreshCurrentSummary(t *testing.T) {
 	require.Equal(t, int64(1), ssElement.execCount)
 
 	err := ssMap.SetRefreshInterval("10", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	ssMap.beginTimeForCurInterval = now - 20
 	ssElement.beginTime = now - 20
 	ssMap.AddStatement(stmtExecInfo1)
@@ -1212,16 +1212,16 @@ func TestSummaryHistory(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()
 	now := time.Now().Unix()
 	err := ssMap.SetRefreshInterval("10", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	err = ssMap.SetHistorySize("10", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	defer func() {
 		err := ssMap.SetRefreshInterval("1800", false)
-		require.Nil(t, err)
+		require.NoError(t, err)
 	}()
 	defer func() {
 		err := ssMap.SetHistorySize("24", false)
-		require.Nil(t, err)
+		require.NoError(t, err)
 	}()
 
 	stmtExecInfo1 := generateAnyExecInfo()
@@ -1255,17 +1255,17 @@ func TestSummaryHistory(t *testing.T) {
 	require.Equal(t, 10, len(datum))
 
 	err = ssMap.SetHistorySize("5", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	datum = reader.GetStmtSummaryHistoryRows()
 	require.Equal(t, 5, len(datum))
 
 	// test eviction
 	ssMap.Clear()
 	err = ssMap.SetMaxStmtCount("1", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	defer func() {
 		err := ssMap.SetMaxStmtCount("", false)
-		require.Nil(t, err)
+		require.NoError(t, err)
 	}()
 	// insert first digest
 	for i := 0; i < 6; i++ {
@@ -1345,10 +1345,10 @@ func TestEndTime(t *testing.T) {
 	require.Equal(t, now+1700, ssElement.endTime)
 
 	err := ssMap.SetRefreshInterval("3600", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	defer func() {
 		err := ssMap.SetRefreshInterval("1800", false)
-		require.Nil(t, err)
+		require.NoError(t, err)
 	}()
 	ssMap.AddStatement(stmtExecInfo1)
 	require.Equal(t, 1, ssbd.history.Len())
@@ -1357,7 +1357,7 @@ func TestEndTime(t *testing.T) {
 	require.Equal(t, now+3500, ssElement.endTime)
 
 	err = ssMap.SetRefreshInterval("60", false)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	ssMap.AddStatement(stmtExecInfo1)
 	require.Equal(t, 2, ssbd.history.Len())
 	now2 := time.Now().Unix()
@@ -1416,24 +1416,24 @@ func TestAccessPrivilege(t *testing.T) {
 	reader.user = user
 	reader.isSuper = false
 	datums := reader.GetStmtSummaryCurrentRows()
-	require.Equal(t, loops, len(datums))
+	require.Len(t, datums, loops)
 	reader.user = badUser
 	reader.isSuper = false
 	datums = reader.GetStmtSummaryCurrentRows()
-	require.Equal(t, 0, len(datums))
+	require.Len(t, datums, 0)
 	reader.isSuper = true
 	datums = reader.GetStmtSummaryCurrentRows()
-	require.Equal(t, loops, len(datums))
+	require.Len(t, datums, loops)
 
 	reader.user = user
 	reader.isSuper = false
 	datums = reader.GetStmtSummaryHistoryRows()
-	require.Equal(t, loops, len(datums))
+	require.Len(t, datums, loops)
 	reader.user = badUser
 	reader.isSuper = false
 	datums = reader.GetStmtSummaryHistoryRows()
-	require.Equal(t, 0, len(datums))
+	require.Len(t, datums, 0)
 	reader.isSuper = true
 	datums = reader.GetStmtSummaryHistoryRows()
-	require.Equal(t, loops, len(datums))
+	require.Len(t, datums, loops)
 }
