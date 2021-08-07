@@ -1291,6 +1291,10 @@ func testAddIndex(c *C, store kv.Storage, lease time.Duration, tp testAddIndexTy
 	if isTestShardRowID {
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 		tk.MustExec("set global tidb_scatter_region = 1")
+		defer func() {
+			atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+			tk.MustExec("set global tidb_scatter_region = 0")
+		}()
 	}
 	if isTestPartition {
 		tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
@@ -1472,8 +1476,12 @@ func testAddIndexWithSplitTable(c *C, store kv.Storage, lease time.Duration, cre
 	tk.MustExec("drop table if exists test_add_index")
 	hasAutoRadomField := len(splitTableSQL) > 0
 	if !hasAutoRadomField {
-		tk.MustExec("set global tidb_scatter_region = 1")
 		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+		tk.MustExec("set global tidb_scatter_region = 1")
+		defer func() {
+			atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+			tk.MustExec("set global tidb_scatter_region = 0")
+		}()
 	}
 	tk.MustExec(createSQL)
 
