@@ -1378,9 +1378,6 @@ func upgradeToVer67(s Session, ver int64) {
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
 	}
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
 	req := rs.NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	p := parser.New()
@@ -1395,6 +1392,7 @@ func upgradeToVer67(s Session, ver int64) {
 		}
 		updateBindInfo(iter, p, bindMap)
 	}
+	terror.Call(rs.Close)
 
 	mustExecute(s, "DELETE FROM mysql.bind_info where source != 'builtin'")
 	for original, bind := range bindMap {
