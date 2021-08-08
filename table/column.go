@@ -224,11 +224,13 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 
 	ignoreErr := sc.DupKeyAsWarning
 
+	// Timestamp in MySQL is since EPOCH 1970-01-01 00:00:00 UTC and can by definition not have invalid dates!
+	// Zero date is special for MySQL timestamp and *NOT* 1970-01-01 00:00:00, but 0000-00-00 00:00:00!
 	// in MySQL 8.0, the Timestamp's case is different to Datetime/Date, as shown below:
 	//
 	// |              | NZD               | NZD|ST  | ELSE              | ELSE|ST  |
 	// | ------------ | ----------------- | ------- | ----------------- | -------- |
-	// | `0000-00-01` | Success + Warning | Error   | Success + Warning | Error    |
+	// | `0000-00-01` | Truncate + Warning| Error   | Truncate + Warning| Error    |
 	// | `0000-00-00` | Success + Warning | Error   | Success           | Success  |
 	//
 	// * **NZD**: NO_ZERO_DATE_MODE
@@ -246,7 +248,8 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 		return types.NewDatum(zeroV), true, nil
 	} else if tm.IsZero() || tm.InvalidZero() {
 		if tm.IsZero() {
-			if !mode.HasNoZeroDateMode() {
+			// Don't care NoZeroDate mode if time val is invalid.
+			if !tmIsInvalid && !mode.HasNoZeroDateMode() {
 				return types.NewDatum(zeroV), true, nil
 			}
 		} else if tm.InvalidZero() {
@@ -272,21 +275,13 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 
 // CastValue casts a value based on column type.
 // If forceIgnoreTruncate is true, truncated errors will be ignored.
-// If returnOverflow is true, don't handle overflow errors in this function.
+// If returnErr is true, directly return any conversion errors.
 // It's safe now and it's the same as the behavior of select statement.
 // Set it to true only in FillVirtualColumnValue and UnionScanExec.Next()
 // If the handle of err is changed latter, the behavior of forceIgnoreTruncate also need to change.
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
 func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
-	// Set the reorg attribute for cast value functionality.
-	if col.ChangeStateInfo != nil {
-		origin := ctx.GetSessionVars().StmtCtx.InReorgAttribute
-		ctx.GetSessionVars().StmtCtx.InReorgAttribute = true
-		defer func() {
-			ctx.GetSessionVars().StmtCtx.InReorgAttribute = origin
-		}()
-	}
 	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {
@@ -301,7 +296,12 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	} else if (sc.InInsertStmt || sc.InUpdateStmt) && !casted.IsNull() &&
 		(val.Kind() != types.KindMysqlTime || !val.GetMysqlTime().IsZero()) &&
 		(col.Tp == mysql.TypeDate || col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeTimestamp) {
-		if innCasted, exit, innErr := handleZeroDatetime(ctx, col, casted, val.GetString(), types.ErrWrongValue.Equal(err)); exit {
+		str, err1 := val.ToString()
+		if err1 != nil {
+			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
+			str = val.GetString()
+		}
+		if innCasted, exit, innErr := handleZeroDatetime(ctx, col, casted, str, types.ErrWrongValue.Equal(err)); exit {
 			return innCasted, innErr
 		}
 	}
@@ -346,21 +346,25 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	str := casted.GetString()
 	utf8Charset := col.Charset == mysql.UTF8Charset
 	doMB4CharCheck := utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUTF8
-	for i, w := 0, 0; i < len(str); i += w {
-		runeValue, width := utf8.DecodeRuneInString(str[i:])
-		if runeValue == utf8.RuneError {
-			if strings.HasPrefix(str[i:], string(utf8.RuneError)) {
-				w = width
-				continue
+	fastCheck := (col.Charset == mysql.UTF8MB4Charset) && utf8.ValidString(str)
+	if !fastCheck {
+		// The following check is slow, if we fast check success, we can avoid this.
+		for i, w := 0, 0; i < len(str); i += w {
+			runeValue, width := utf8.DecodeRuneInString(str[i:])
+			if runeValue == utf8.RuneError {
+				if strings.HasPrefix(str[i:], string(utf8.RuneError)) {
+					w = width
+					continue
+				}
+				casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
+				break
+			} else if width > 3 && doMB4CharCheck {
+				// Handle non-BMP characters.
+				casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
+				break
 			}
-			casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
-			break
-		} else if width > 3 && doMB4CharCheck {
-			// Handle non-BMP characters.
-			casted, err = handleWrongCharsetValue(ctx, col, &casted, str, i)
-			break
+			w = width
 		}
-		w = width
 	}
 
 	if forceIgnoreTruncate {
