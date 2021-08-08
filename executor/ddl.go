@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/tikv/client-go/v2/tikv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -136,6 +137,10 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	// Following cases are exceptions
 	var localTempTablesToDrop []*ast.TableName
 	switch s := e.stmt.(type) {
+	case *ast.CreateTableStmt:
+		if s.TemporaryKeyword == ast.TemporaryLocal {
+			return e.createSessionTemporaryTable(s)
+		}
 	case *ast.DropTableStmt:
 		if s.IsView {
 			break
@@ -325,6 +330,50 @@ func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
+	return err
+}
+
+func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
+	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	dbInfo, ok := is.SchemaByName(s.Table.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema.O)
+	}
+	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.ctx, is, s, dbInfo.Charset, dbInfo.Collate)
+	if err != nil {
+		return err
+	}
+
+	tbl, err := e.newTemporaryTableFromTableInfo(tbInfo)
+	if err != nil {
+		return err
+	}
+
+	// Store this temporary table to the session.
+	sessVars := e.ctx.GetSessionVars()
+	if sessVars.LocalTemporaryTables == nil {
+		sessVars.LocalTemporaryTables = infoschema.NewLocalTemporaryTables()
+	}
+	localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+
+	// Init MemBuffer in session
+	if sessVars.TemporaryTableData == nil {
+		// Create this txn just for getting a MemBuffer. It's a little tricky
+		bufferTxn, err := e.ctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
+		if err != nil {
+			return err
+		}
+
+		sessVars.TemporaryTableData = bufferTxn.GetMemBuffer()
+	}
+
+	err = localTempTables.AddTable(dbInfo.Name, tbl)
+
+	if err != nil && s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
+		e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+
 	return err
 }
 

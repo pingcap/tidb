@@ -57,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -1690,7 +1689,7 @@ func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
 	return buildTableInfoWithCheck(mock.NewContext(), s, mysql.DefaultCharset, "")
 }
 
-// BuildTableInfoWithCheck builds model.TableInfo from a SQL statement.
+// buildTableInfoWithCheck builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionIDs are left as uninitialized value.
 func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
 	tbInfo, err := buildTableInfoWithStmt(ctx, s, dbCharset, dbCollate)
@@ -1928,82 +1927,41 @@ func (d *ddl) CreateTableWithInfo(
 		actionType = model.ActionCreateTable
 	}
 
-	if tbInfo.TempTableType == model.TempTableLocal {
-		if tbInfo.ID != 0 {
-			tbInfo.State = model.StatePublic
-		}
-		// Store this temporary table to the session.
-		sessVars := ctx.GetSessionVars()
-		if sessVars.LocalTemporaryTables == nil {
-			sessVars.LocalTemporaryTables = infoschema.NewLocalTemporaryTables()
-		}
-		// AutoID is allocated in mocked..
-		alloc := autoid.NewAllocatorFromTempTblInfo(tbInfo)
-		allocs := make([]autoid.Allocator, 0, 1)
-		if alloc != nil {
-			allocs = append(allocs, alloc)
-		}
-		var tbl table.Table
-		tbl, err = tables.TableFromMeta(allocs, tbInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// Init MemBuffer in session
-		if sessVars.TemporaryTableData == nil {
-			// Create this txn just for getting a MemBuffer. It's a little tricky
-			bufferTxn, err := ctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
-			if err != nil {
-				return err
-			}
-
-			sessVars.TemporaryTableData = bufferTxn.GetMemBuffer()
-		}
-		localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
-		err = localTempTables.AddTable(dbName, tbl)
-		if err != nil {
-			// table exists, but if_not_exists flags is true, so we ignore this error.
-			if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
-				ctx.GetSessionVars().StmtCtx.AppendNote(err)
-				err = nil
-			}
-		}
-	} else {
-		job := &model.Job{
-			SchemaID:   schema.ID,
-			TableID:    tbInfo.ID,
-			SchemaName: schema.Name.L,
-			Type:       actionType,
-			BinlogInfo: &model.HistoryInfo{},
-			Args:       args,
-		}
-		err = d.doDDLJob(ctx, job)
-
-		if err != nil {
-			// table exists, but if_not_exists flags is true, so we ignore this error.
-			if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
-				ctx.GetSessionVars().StmtCtx.AppendNote(err)
-				err = nil
-			}
-		} else if actionType == model.ActionCreateTable {
-			d.preSplitAndScatter(ctx, tbInfo, tbInfo.GetPartitionInfo())
-			if tbInfo.AutoIncID > 1 {
-				// Default tableAutoIncID base is 0.
-				// If the first ID is expected to greater than 1, we need to do rebase.
-				newEnd := tbInfo.AutoIncID - 1
-				if err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.RowIDAllocType); err != nil {
-					return errors.Trace(err)
-				}
-			}
-			if tbInfo.AutoRandID > 1 {
-				// Default tableAutoRandID base is 0.
-				// If the first ID is expected to greater than 1, we need to do rebase.
-				newEnd := tbInfo.AutoRandID - 1
-				err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.AutoRandomType)
-			}
-		}
-
-		err = d.callHookOnChanged(err)
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbInfo.ID,
+		SchemaName: schema.Name.L,
+		Type:       actionType,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       args,
 	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		// table exists, but if_not_exists flags is true, so we ignore this error.
+		if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			err = nil
+		}
+	} else if actionType == model.ActionCreateTable {
+		d.preSplitAndScatter(ctx, tbInfo, tbInfo.GetPartitionInfo())
+		if tbInfo.AutoIncID > 1 {
+			// Default tableAutoIncID base is 0.
+			// If the first ID is expected to greater than 1, we need to do rebase.
+			newEnd := tbInfo.AutoIncID - 1
+			if err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.RowIDAllocType); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		if tbInfo.AutoRandID > 1 {
+			// Default tableAutoRandID base is 0.
+			// If the first ID is expected to greater than 1, we need to do rebase.
+			newEnd := tbInfo.AutoRandID - 1
+			err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.AutoRandomType)
+		}
+	}
+
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 
