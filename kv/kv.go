@@ -19,6 +19,7 @@ import (
 	"time"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
@@ -91,6 +92,8 @@ var (
 type RetrieverMutator interface {
 	Retriever
 	Mutator
+	// set allowed options of current operation in each TiKV disk usage level.
+	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 }
 
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
@@ -131,6 +134,9 @@ type MemBuffer interface {
 
 	// Len returns the number of entries in the DB.
 	Len() int
+
+	// set allowed options of current operation in each TiKV disk usage level.
+	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 }
 
 // LockCtx contains information for LockKeys method.
@@ -186,6 +192,11 @@ type Transaction interface {
 	// GetIndexName returns the cached index name.
 	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
 	GetTableInfo(id int64) *model.TableInfo
+
+	// set allowed options of current operation in each TiKV disk usage level.
+	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
+	// clear allowed flag
+	ClearDiskFullOpt()
 }
 
 // Client is used to send request to KV layer.

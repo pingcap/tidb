@@ -98,6 +98,8 @@ func init() {
 		"testFastAnalyze.TestAnalyzeFastSample",
 		"testBypassSuite.TestLatch",
 		"testIntegrationSuite2.TestPartitionCancelAddPrimaryKey",
+		"testDBSuite1.TestAddIndexWithSplitTable",
+		"testSerialDBSuite.TestAddIndexWithShardRowID",
 	}
 	for _, v := range tmp {
 		allowList[v] = struct{}{}

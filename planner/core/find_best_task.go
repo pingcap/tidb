@@ -14,7 +14,9 @@
 package core
 
 import (
+	"fmt"
 	"math"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -546,19 +548,6 @@ func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.Ph
 
 func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
-	all, _ := prop.AllSameOrder()
-	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
-	// it needs not to keep order for index scan.
-	if !prop.IsEmpty() && all {
-		for i, col := range path.IdxCols {
-			if col.EqualByExprAndID(nil, prop.SortItems[0].Col) {
-				candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.SortItems)
-				break
-			} else if i >= path.EqCondCount {
-				break
-			}
-		}
-	}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
 	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
 	candidate.indexFiltersColSet = expression.ExtractColumnSet(path.IndexFilters)
@@ -649,6 +638,49 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 	return candidates
 }
 
+func (ds *DataSource) getPruningInfo(candidates []*candidatePath, prop *property.PhysicalProperty) string {
+	if !ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain || len(candidates) == len(ds.possibleAccessPaths) {
+		return ""
+	}
+	if len(candidates) == 1 && len(candidates[0].path.Ranges) == 0 {
+		// For TableDual, we don't need to output pruning info.
+		return ""
+	}
+	names := make([]string, 0, len(candidates))
+	var tableName string
+	if ds.TableAsName.O == "" {
+		tableName = ds.tableInfo.Name.O
+	} else {
+		tableName = ds.TableAsName.O
+	}
+	getSimplePathName := func(path *util.AccessPath) string {
+		if path.IsTablePath() {
+			if path.StoreType == kv.TiFlash {
+				return tableName + "(tiflash)"
+			}
+			return tableName
+		}
+		return path.Index.Name.O
+	}
+	for _, cand := range candidates {
+		if cand.path.PartialIndexPaths != nil {
+			partialNames := make([]string, 0, len(cand.path.PartialIndexPaths))
+			for _, partialPath := range cand.path.PartialIndexPaths {
+				partialNames = append(partialNames, getSimplePathName(partialPath))
+			}
+			names = append(names, fmt.Sprintf("IndexMerge{%s}", strings.Join(partialNames, ",")))
+		} else {
+			names = append(names, getSimplePathName(cand.path))
+		}
+	}
+	items := make([]string, 0, len(prop.SortItems))
+	for _, item := range prop.SortItems {
+		items = append(items, item.String())
+	}
+	return fmt.Sprintf("[%s] remain after pruning paths for %s given Prop{SortItems: [%s], TaskTp: %s}",
+		strings.Join(names, ","), tableName, strings.Join(items, " "), prop.TaskTp)
+}
+
 func (ds *DataSource) isPointGetConvertableSchema() bool {
 	for _, col := range ds.Columns {
 		// Only handle tables that all columns are public.
@@ -724,6 +756,15 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 
 	t = invalidTask
 	candidates := ds.skylinePruning(prop)
+	pruningInfo := ds.getPruningInfo(candidates, prop)
+	defer func() {
+		if err == nil && t != nil && !t.invalid() && pruningInfo != "" {
+			if ds.ctx.GetSessionVars().StmtCtx.OptimInfo == nil {
+				ds.ctx.GetSessionVars().StmtCtx.OptimInfo = make(map[int]string)
+			}
+			ds.ctx.GetSessionVars().StmtCtx.OptimInfo[t.plan().ID()] = pruningInfo
+		}
+	}()
 
 	cntPlan = 0
 	for _, candidate := range candidates {
