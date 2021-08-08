@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
 )
@@ -2833,8 +2834,8 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	c.Assert(failpoint.Enable("tikvclient/probeSetVars", `return(true)`), IsNil)
 	tk.MustExec("select * from kvvars where a = 1")
 	c.Assert(failpoint.Disable("tikvclient/probeSetVars"), IsNil)
-	c.Assert(tikv.SetSuccess, IsTrue)
-	tikv.SetSuccess = false
+	c.Assert(transaction.SetSuccess, IsTrue)
+	transaction.SetSuccess = false
 }
 
 func (s *testSessionSuite2) TestCommitRetryCount(c *C) {
