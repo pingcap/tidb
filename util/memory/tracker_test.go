@@ -15,61 +15,40 @@ package memory
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/cznic/mathutil"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	logLevel := os.Getenv("log_level")
-	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
-	if err != nil {
-		t.Errorf(err.Error())
-	}
-	TestingT(t)
-}
-
-var _ = Suite(&testSuite{})
-
-type testSuite struct{}
-
-func (s *testSuite) SetUpSuite(c *C)    {}
-func (s *testSuite) TearDownSuite(c *C) {}
-func (s *testSuite) SetUpTest(c *C)     { testleak.BeforeTest() }
-func (s *testSuite) TearDownTest(c *C)  { testleak.AfterTest(c)() }
-
-func (s *testSuite) TestSetLabel(c *C) {
+func TestSetLabel(t *testing.T) {
 	tracker := NewTracker(1, -1)
-	c.Assert(tracker.label, Equals, 1)
-	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
-	c.Assert(tracker.bytesHardLimit, Equals, int64(-1))
-	c.Assert(tracker.getParent(), IsNil)
-	c.Assert(len(tracker.mu.children), Equals, 0)
+	require.Equal(t, 1, tracker.label)
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.Equal(t, int64(-1), tracker.bytesHardLimit)
+	require.Nil(t, tracker.getParent())
+	require.Equal(t, 0, len(tracker.mu.children))
 	tracker.SetLabel(2)
-	c.Assert(tracker.label, Equals, 2)
-	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
-	c.Assert(tracker.bytesHardLimit, Equals, int64(-1))
-	c.Assert(tracker.getParent(), IsNil)
-	c.Assert(len(tracker.mu.children), Equals, 0)
+	require.Equal(t, 2, tracker.label)
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.Equal(t, int64(-1), tracker.bytesHardLimit)
+	require.Nil(t, tracker.getParent())
+	require.Equal(t, 0, len(tracker.mu.children))
 }
 
-func (s *testSuite) TestConsume(c *C) {
+func TestConsume(t *testing.T) {
 	tracker := NewTracker(1, -1)
-	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
+	require.Equal(t, int64(0), tracker.BytesConsumed())
 
 	tracker.Consume(100)
-	c.Assert(tracker.BytesConsumed(), Equals, int64(100))
+	require.Equal(t, int64(100), tracker.BytesConsumed())
 
 	waitGroup := sync.WaitGroup{}
 	waitGroup.Add(10)
@@ -88,10 +67,10 @@ func (s *testSuite) TestConsume(c *C) {
 	}
 
 	waitGroup.Wait()
-	c.Assert(tracker.BytesConsumed(), Equals, int64(100))
+	require.Equal(t, int64(100), tracker.BytesConsumed())
 }
 
-func (s *testSuite) TestOOMAction(c *C) {
+func TestOOMAction(t *testing.T) {
 	tracker := NewTracker(1, 100)
 	// make sure no panic here.
 	tracker.Consume(10000)
@@ -100,23 +79,23 @@ func (s *testSuite) TestOOMAction(c *C) {
 	action := &mockAction{}
 	tracker.SetActionOnExceed(action)
 
-	c.Assert(action.called, IsFalse)
+	require.False(t, action.called)
 	tracker.Consume(10000)
-	c.Assert(action.called, IsTrue)
+	require.True(t, action.called)
 
 	// test fallback
 	action1 := &mockAction{}
 	action2 := &mockAction{}
 	tracker.SetActionOnExceed(action1)
 	tracker.FallbackOldAndSetNewAction(action2)
-	c.Assert(action1.called, IsFalse)
-	c.Assert(action2.called, IsFalse)
+	require.False(t, action1.called)
+	require.False(t, action2.called)
 	tracker.Consume(10000)
-	c.Assert(action1.called, IsTrue)
-	c.Assert(action2.called, IsFalse)
+	require.True(t, action1.called)
+	require.False(t, action2.called)
 	tracker.Consume(10000)
-	c.Assert(action1.called, IsTrue)
-	c.Assert(action2.called, IsTrue)
+	require.True(t, action1.called)
+	require.True(t, action2.called)
 
 	// test softLimit
 	tracker = NewTracker(1, 100)
@@ -126,17 +105,17 @@ func (s *testSuite) TestOOMAction(c *C) {
 	tracker.FallbackOldAndSetNewActionForSoftLimit(action1)
 	tracker.FallbackOldAndSetNewActionForSoftLimit(action2)
 	tracker.SetActionOnExceed(action3)
-	c.Assert(action1.called, IsFalse)
-	c.Assert(action2.called, IsFalse)
-	c.Assert(action3.called, IsFalse)
+	require.False(t, action1.called)
+	require.False(t, action2.called)
+	require.False(t, action3.called)
 	tracker.Consume(80)
-	c.Assert(action1.called, IsTrue)
-	c.Assert(action2.called, IsFalse)
-	c.Assert(action3.called, IsFalse)
+	require.True(t, action1.called)
+	require.False(t, action2.called)
+	require.False(t, action3.called)
 	tracker.Consume(20)
-	c.Assert(action1.called, IsTrue)
-	c.Assert(action2.called, IsTrue) // SoftLimit fallback
-	c.Assert(action3.called, IsTrue) // HardLimit
+	require.True(t, action1.called)
+	require.True(t, action2.called) // SoftLimit fallback
+	require.True(t, action3.called) // HardLimit
 }
 
 type mockAction struct {
@@ -160,46 +139,46 @@ func (a *mockAction) GetPriority() int64 {
 	return a.priority
 }
 
-func (s *testSuite) TestAttachTo(c *C) {
+func TestAttachTo(t *testing.T) {
 	oldParent := NewTracker(1, -1)
 	newParent := NewTracker(2, -1)
 	child := NewTracker(3, -1)
 	child.Consume(100)
 	child.AttachTo(oldParent)
-	c.Assert(child.BytesConsumed(), Equals, int64(100))
-	c.Assert(oldParent.BytesConsumed(), Equals, int64(100))
-	c.Assert(child.getParent(), DeepEquals, oldParent)
-	c.Assert(len(oldParent.mu.children), Equals, 1)
-	c.Assert(oldParent.mu.children[child.label][0], DeepEquals, child)
+	require.Equal(t, int64(100), child.BytesConsumed())
+	require.Equal(t, int64(100), oldParent.BytesConsumed())
+	require.Equal(t, oldParent, child.getParent())
+	require.Equal(t, 1, len(oldParent.mu.children))
+	require.Equal(t, child, oldParent.mu.children[child.label][0])
 
 	child.AttachTo(newParent)
-	c.Assert(child.BytesConsumed(), Equals, int64(100))
-	c.Assert(oldParent.BytesConsumed(), Equals, int64(0))
-	c.Assert(newParent.BytesConsumed(), Equals, int64(100))
-	c.Assert(child.getParent(), DeepEquals, newParent)
-	c.Assert(len(newParent.mu.children), Equals, 1)
-	c.Assert(newParent.mu.children[child.label][0], DeepEquals, child)
-	c.Assert(len(oldParent.mu.children), Equals, 0)
+	require.Equal(t, int64(100), child.BytesConsumed())
+	require.Equal(t, int64(0), oldParent.BytesConsumed())
+	require.Equal(t, int64(100), newParent.BytesConsumed())
+	require.Equal(t, newParent, child.getParent())
+	require.Equal(t, 1, len(newParent.mu.children))
+	require.Equal(t, child, newParent.mu.children[child.label][0])
+	require.Equal(t, 0, len(oldParent.mu.children))
 }
 
-func (s *testSuite) TestDetach(c *C) {
+func TestDetach(t *testing.T) {
 	parent := NewTracker(1, -1)
 	child := NewTracker(2, -1)
 	child.Consume(100)
 	child.AttachTo(parent)
-	c.Assert(child.BytesConsumed(), Equals, int64(100))
-	c.Assert(parent.BytesConsumed(), Equals, int64(100))
-	c.Assert(len(parent.mu.children), Equals, 1)
-	c.Assert(parent.mu.children[child.label][0], DeepEquals, child)
+	require.Equal(t, int64(100), child.BytesConsumed())
+	require.Equal(t, int64(100), parent.BytesConsumed())
+	require.Equal(t, 1, len(parent.mu.children))
+	require.Equal(t, child, parent.mu.children[child.label][0])
 
 	child.Detach()
-	c.Assert(child.BytesConsumed(), Equals, int64(100))
-	c.Assert(parent.BytesConsumed(), Equals, int64(0))
-	c.Assert(len(parent.mu.children), Equals, 0)
-	c.Assert(child.getParent(), IsNil)
+	require.Equal(t, int64(100), child.BytesConsumed())
+	require.Equal(t, int64(0), parent.BytesConsumed())
+	require.Equal(t, 0, len(parent.mu.children))
+	require.Nil(t, child.getParent())
 }
 
-func (s *testSuite) TestReplaceChild(c *C) {
+func TestReplaceChild(t *testing.T) {
 	oldChild := NewTracker(1, -1)
 	oldChild.Consume(100)
 	newChild := NewTracker(2, -1)
@@ -207,27 +186,27 @@ func (s *testSuite) TestReplaceChild(c *C) {
 	parent := NewTracker(3, -1)
 
 	oldChild.AttachTo(parent)
-	c.Assert(parent.BytesConsumed(), Equals, int64(100))
+	require.Equal(t, int64(100), parent.BytesConsumed())
 
 	parent.ReplaceChild(oldChild, newChild)
-	c.Assert(parent.BytesConsumed(), Equals, int64(500))
-	c.Assert(len(parent.mu.children), Equals, 1)
-	c.Assert(parent.mu.children[newChild.label][0], DeepEquals, newChild)
-	c.Assert(newChild.getParent(), DeepEquals, parent)
-	c.Assert(oldChild.getParent(), IsNil)
+	require.Equal(t, int64(500), parent.BytesConsumed())
+	require.Equal(t, 1, len(parent.mu.children))
+	require.Equal(t, newChild, parent.mu.children[newChild.label][0])
+	require.Equal(t, parent, newChild.getParent())
+	require.Nil(t, oldChild.getParent())
 
 	parent.ReplaceChild(oldChild, nil)
-	c.Assert(parent.BytesConsumed(), Equals, int64(500))
-	c.Assert(len(parent.mu.children), Equals, 1)
-	c.Assert(parent.mu.children[newChild.label][0], DeepEquals, newChild)
-	c.Assert(newChild.getParent(), DeepEquals, parent)
-	c.Assert(oldChild.getParent(), IsNil)
+	require.Equal(t, int64(500), parent.BytesConsumed())
+	require.Equal(t, 1, len(parent.mu.children))
+	require.Equal(t, newChild, parent.mu.children[newChild.label][0])
+	require.Equal(t, parent, newChild.getParent())
+	require.Nil(t, oldChild.getParent())
 
 	parent.ReplaceChild(newChild, nil)
-	c.Assert(parent.BytesConsumed(), Equals, int64(0))
-	c.Assert(len(parent.mu.children), Equals, 0)
-	c.Assert(newChild.getParent(), IsNil)
-	c.Assert(oldChild.getParent(), IsNil)
+	require.Equal(t, int64(0), parent.BytesConsumed())
+	require.Equal(t, 0, len(parent.mu.children))
+	require.Nil(t, newChild.getParent())
+	require.Nil(t, oldChild.getParent())
 
 	node1 := NewTracker(1, -1)
 	node2 := NewTracker(2, -1)
@@ -235,10 +214,10 @@ func (s *testSuite) TestReplaceChild(c *C) {
 	node2.AttachTo(node1)
 	node3.AttachTo(node2)
 	node3.Consume(100)
-	c.Assert(node1.BytesConsumed(), Equals, int64(100))
+	require.Equal(t, int64(100), node1.BytesConsumed())
 	node2.ReplaceChild(node3, nil)
-	c.Assert(node2.BytesConsumed(), Equals, int64(0))
-	c.Assert(node1.BytesConsumed(), Equals, int64(0))
+	require.Equal(t, int64(0), node2.BytesConsumed())
+	require.Equal(t, int64(0), node1.BytesConsumed())
 }
 
 func (s *testSuite) TestToString(c *C) {
