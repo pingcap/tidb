@@ -63,6 +63,13 @@ func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 	}
 }
 
+// WithExecuteInfoSchemaUpdate return a PreprocessOpt to update the `Execute` infoSchema under some conditions.
+func WithExecuteInfoSchemaUpdate(pe *PreprocessExecuteISUpdate) PreprocessOpt {
+	return func(p *preprocessor) {
+		p.PreprocessExecuteISUpdate = pe
+	}
+}
+
 // TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
 func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
@@ -143,6 +150,12 @@ type PreprocessorReturn struct {
 	TxnScope       string
 }
 
+// PreprocessExecuteISUpdate is used to update information schema for special Execute statement in the preprocessor.
+type PreprocessExecuteISUpdate struct {
+	ExecuteInfoSchemaUpdate func(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema
+	Node                    ast.Node
+}
+
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
@@ -157,6 +170,7 @@ type preprocessor struct {
 
 	// values that may be returned
 	*PreprocessorReturn
+	*PreprocessExecuteISUpdate
 	err error
 }
 
@@ -680,11 +694,13 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 			return
 		}
 		tempTableType := tableInfo.Meta().TempTableType
-		if (stmt.Tp == ast.AdminCheckTable || stmt.Tp == ast.AdminChecksumTable) && tempTableType != model.TempTableNone {
+		if (stmt.Tp == ast.AdminCheckTable || stmt.Tp == ast.AdminChecksumTable || stmt.Tp == ast.AdminCheckIndex) && tempTableType != model.TempTableNone {
 			if stmt.Tp == ast.AdminChecksumTable {
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table")
-			} else {
+			} else if stmt.Tp == ast.AdminCheckTable {
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table")
+			} else {
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin check index")
 			}
 			return
 		}
@@ -1588,15 +1604,23 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	p.initedLastSnapshotTS = true
 }
 
-// ensureInfoSchema get the infoschema from the preprecessor.
+// ensureInfoSchema get the infoschema from the preprocessor.
 // there some situations:
 //    - the stmt specifies the schema version.
 //    - session variable
-//    - transcation context
+//    - transaction context
 func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
-	if p.InfoSchema == nil {
-		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	if p.InfoSchema != nil {
+		return p.InfoSchema
 	}
+	// `Execute` under some conditions need to see the latest information schema.
+	if p.PreprocessExecuteISUpdate != nil {
+		if newInfoSchema := p.ExecuteInfoSchemaUpdate(p.Node, p.ctx); newInfoSchema != nil {
+			p.InfoSchema = newInfoSchema
+			return p.InfoSchema
+		}
+	}
+	p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	return p.InfoSchema
 }
 

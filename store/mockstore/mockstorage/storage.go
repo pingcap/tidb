@@ -35,21 +35,15 @@ type mockStorage struct {
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
 func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
-	return NewMockStorageWithLockWaits(tikvStore, nil)
-}
-
-// NewMockStorageWithLockWaits wraps tikv.KVStore as kv.Storage, with mock LockWaits.
-func NewMockStorageWithLockWaits(tikvStore *tikv.KVStore, lockWaits []*deadlockpb.WaitForEntry) (kv.Storage, error) {
 	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
 	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
 	if err != nil {
 		return nil, err
 	}
 	return &mockStorage{
-		KVStore:   tikvStore,
-		Store:     coprStore,
-		memCache:  kv.NewCacheDB(),
-		LockWaits: lockWaits,
+		KVStore:  tikvStore,
+		Store:    coprStore,
+		memCache: kv.NewCacheDB(),
 	}, nil
 }
 
@@ -125,4 +119,14 @@ func (s *mockStorage) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 func (s *mockStorage) Close() error {
 	s.Store.Close()
 	return s.KVStore.Close()
+}
+
+// MockLockWaitSetter is used to set the mocked lock wait information, which helps implementing tests that uses the
+// GetLockWaits function.
+type MockLockWaitSetter interface {
+	SetMockLockWaits(lockWaits []*deadlockpb.WaitForEntry)
+}
+
+func (s *mockStorage) SetMockLockWaits(lockWaits []*deadlockpb.WaitForEntry) {
+	s.LockWaits = lockWaits
 }
