@@ -30,17 +30,14 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -270,74 +267,6 @@ func (e *DDLExec) executeAlterDatabase(s *ast.AlterDatabaseStmt) error {
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
-	return err
-}
-
-func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
-	is := e.ctx.GetInfoSchema().(infoschema.InfoSchema)
-	dbInfo, ok := is.SchemaByName(s.Table.Schema)
-	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema.O)
-	}
-	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.ctx, is, s, dbInfo.Charset, dbInfo.Collate)
-	if err != nil {
-		return err
-	}
-
-	dom := domain.GetDomain(e.ctx)
-	// Local temporary table uses a real table ID.
-	// We could mock a table ID, but the mocked ID might be identical to an existing
-	// real table, and then we'll get into trouble.
-	err = kv.RunInNewTxn(context.Background(), dom.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		tblID, err := m.GenGlobalID()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		tbInfo.ID = tblID
-		tbInfo.State = model.StatePublic
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	// AutoID is allocated in mocked..
-	alloc := autoid.NewAllocatorFromTempTblInfo(tbInfo)
-	allocs := make([]autoid.Allocator, 0, 1)
-	if alloc != nil {
-		allocs = append(allocs, alloc)
-	}
-	tbl, err := tables.TableFromMeta(allocs, tbInfo)
-	if err != nil {
-		return err
-	}
-
-	// Store this temporary table to the session.
-	sessVars := e.ctx.GetSessionVars()
-	if sessVars.LocalTemporaryTables == nil {
-		sessVars.LocalTemporaryTables = infoschema.NewLocalTemporaryTables()
-	}
-	localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
-
-	// Init MemBuffer in session
-	if sessVars.TemporaryTableData == nil {
-		// Create this txn just for getting a MemBuffer. It's a little tricky
-		bufferTxn, err := e.ctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
-		if err != nil {
-			return err
-		}
-
-		sessVars.TemporaryTableData = bufferTxn.GetMemBuffer()
-	}
-
-	err = localTempTables.AddTable(dbInfo, tbl)
-
-	if err != nil && s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
-		e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
-
 	return err
 }
 
