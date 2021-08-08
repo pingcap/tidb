@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/tikv/client-go/v2/tikv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
