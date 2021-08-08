@@ -15,8 +15,10 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -30,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
+	"golang.org/x/tools/container/intsets"
 )
 
 func (p *basePhysicalPlan) StatsCount() float64 {
@@ -255,6 +258,125 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths
 	return stats
 }
 
+// We bind logic of derivePathStats and tryHeuristics together. When some path matches the heuristic rule, we don't need
+// to derive stats of subsequent paths. In this way we can save unnecessary computation of derivePathStats.
+func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
+	uniqueIdxsWithDoubleScan := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
+	singleScanIdxs := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
+	var (
+		selected, uniqueBest, refinedBest *util.AccessPath
+		isRefinedPath                     bool
+	)
+	for _, path := range ds.possibleAccessPaths {
+		if path.IsTablePath() {
+			err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
+			if err != nil {
+				return err
+			}
+			path.IsSingleScan = true
+		} else {
+			ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
+			path.IsSingleScan = ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+		}
+		// Try some heuristic rules to select access path.
+		if len(path.Ranges) == 0 {
+			selected = path
+			break
+		}
+		if path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) {
+			if path.IsTablePath() || path.Index.Unique {
+				if path.IsSingleScan {
+					selected = path
+					break
+				}
+				uniqueIdxsWithDoubleScan = append(uniqueIdxsWithDoubleScan, path)
+			}
+		} else if path.IsSingleScan {
+			singleScanIdxs = append(singleScanIdxs, path)
+		}
+	}
+	if selected == nil && len(uniqueIdxsWithDoubleScan) > 0 {
+		uniqueIdxColumnSets := make([]*intsets.Sparse, 0, len(uniqueIdxsWithDoubleScan))
+		for _, uniqueIdx := range uniqueIdxsWithDoubleScan {
+			uniqueIdxColumnSets = append(uniqueIdxColumnSets, expression.ExtractColumnSet(uniqueIdx.AccessConds))
+			// Find the unique index with the minimal number of ranges as `uniqueBest`.
+			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) {
+				uniqueBest = uniqueIdx
+			}
+		}
+		// `uniqueBest` may not always be the best.
+		// ```
+		// create table t(a int, b int, c int, unique index idx_b(b), index idx_b_c(b, c));
+		// select b, c from t where b = 5 and c > 10;
+		// ```
+		// In the case, `uniqueBest` is `idx_b`. However, `idx_b_c` is better than `idx_b`.
+		// Hence, for each index in `singleScanIdxs`, we check whether it is better than some index in `uniqueIdxsWithDoubleScan`.
+		// If yes, the index is a refined one. We find the refined index with the minimal number of ranges as `refineBest`.
+		for _, singleScanIdx := range singleScanIdxs {
+			columnSet := expression.ExtractColumnSet(singleScanIdx.AccessConds)
+			for _, uniqueIdxColumnSet := range uniqueIdxColumnSets {
+				setsResult, comparable := compareColumnSet(columnSet, uniqueIdxColumnSet)
+				if comparable && setsResult == 1 {
+					if refinedBest == nil || len(singleScanIdx.Ranges) < len(refinedBest.Ranges) {
+						refinedBest = singleScanIdx
+					}
+				}
+			}
+		}
+		// `refineBest` may not always be better than `uniqueBest`.
+		// ```
+		// create table t(a int, b int, c int, d int, unique index idx_a(a), unique index idx_b_c(b, c), unique index idx_b_c_a_d(b, c, a, d));
+		// select a, b, c from t where a = 1 and b = 2 and c in (1, 2, 3, 4, 5);
+		// ```
+		// In the case, `refinedBest` is `idx_b_c_a_d` and `uniqueBest` is `a`. `idx_b_c_a_d` needs to access five points while `idx_a`
+		// only needs one point access and one table access.
+		// Hence we should compare `len(refinedBest.Ranges)` and `2*len(uniqueBest.Ranges)` to select the better one.
+		if refinedBest != nil && (uniqueBest == nil || len(refinedBest.Ranges) < 2*len(uniqueBest.Ranges)) {
+			selected = refinedBest
+			isRefinedPath = true
+		} else {
+			selected = uniqueBest
+		}
+	}
+	// If some path matches a heuristic rule, just remove other possible paths
+	if selected != nil {
+		ds.possibleAccessPaths[0] = selected
+		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
+		// TODO: Can we make a more careful check on whether the optimization depends on mutable constants?
+		ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
+		if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain {
+			var tableName string
+			if ds.TableAsName.O == "" {
+				tableName = ds.tableInfo.Name.O
+			} else {
+				tableName = ds.TableAsName.O
+			}
+			if selected.IsTablePath() {
+				// TODO: primary key / handle / real name?
+				ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(fmt.Sprintf("handle of %s is selected since the path only has point ranges", tableName)))
+			} else {
+				var sb strings.Builder
+				if selected.Index.Unique {
+					sb.WriteString("unique ")
+				}
+				sb.WriteString(fmt.Sprintf("index %s of %s is selected since the path", selected.Index.Name.O, tableName))
+				if isRefinedPath {
+					sb.WriteString(" only fetches limited number of rows")
+				} else {
+					sb.WriteString(" only has point ranges")
+				}
+				if selected.IsSingleScan {
+					sb.WriteString(" with single scan")
+				} else {
+					sb.WriteString(" with double scan")
+				}
+				ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(sb.String()))
+			}
+		}
+	}
+	return nil
+}
+
 // DeriveStats implement LogicalPlan DeriveStats interface.
 func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
 	if ds.stats != nil && len(colGroups) == 0 {
@@ -280,30 +402,12 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			return nil, err
 		}
 	}
+	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
+	// when ds.possibleAccessPaths are pruned.
 	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds, ds.possibleAccessPaths)
-	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath() {
-			noIntervalRanges, err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
-			if err != nil {
-				return nil, err
-			}
-			// If we have point or empty range, just remove other possible paths.
-			if noIntervalRanges || len(path.Ranges) == 0 {
-				ds.possibleAccessPaths[0] = path
-				ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
-				ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
-				break
-			}
-			continue
-		}
-		noIntervalRanges := ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
-		// If we have empty range, or point range on unique index, just remove other possible paths.
-		if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
-			ds.possibleAccessPaths[0] = path
-			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
-			ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
-			break
-		}
+	err := ds.derivePathStatsAndTryHeuristics()
+	if err != nil {
+		return nil, err
 	}
 
 	// TODO: implement UnionScan + IndexMerge
@@ -513,7 +617,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			} else {
 				path.IsIntHandlePath = true
 			}
-			noIntervalRanges, err := ds.deriveTablePathStats(path, conditions, true)
+			err := ds.deriveTablePathStats(path, conditions, true)
 			if err != nil {
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
@@ -523,7 +627,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				continue
 			}
 			// If we have point or empty range, just remove other possible paths.
-			if noIntervalRanges || len(path.Ranges) == 0 {
+			if len(path.Ranges) == 0 || path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) {
 				if len(results) == 0 {
 					results = append(results, path)
 				} else {
@@ -543,13 +647,13 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
-			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
+			ds.deriveIndexPathStats(path, conditions, true)
 			// If the path contains a full range, ignore it.
 			if ranger.HasFullRange(path.Ranges) {
 				continue
 			}
 			// If we have empty range, or point range on unique index, just remove other possible paths.
-			if (noIntervalRanges && path.Index.Unique) || len(path.Ranges) == 0 {
+			if len(path.Ranges) == 0 || (path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) && path.Index.Unique) {
 				if len(results) == 0 {
 					results = append(results, path)
 				} else {
@@ -1106,9 +1210,11 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 	}
 
 	var err error
-	p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
-	if err != nil {
-		return nil, err
+	if p.cte.seedPartPhysicalPlan == nil {
+		p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
+		if err != nil {
+			return nil, err
+		}
 	}
 	resStat := p.cte.seedPartPhysicalPlan.Stats()
 	// Changing the pointer so that seedStat in LogicalCTETable can get the new stat.
@@ -1121,9 +1227,11 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 		p.stats.ColNDVs[col.UniqueID] += resStat.ColNDVs[p.cte.seedPartLogicalPlan.Schema().Columns[i].UniqueID]
 	}
 	if p.cte.recursivePartLogicalPlan != nil {
-		p.cte.recursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
-		if err != nil {
-			return nil, err
+		if p.cte.recursivePartPhysicalPlan == nil {
+			p.cte.recursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
+			if err != nil {
+				return nil, err
+			}
 		}
 		recurStat := p.cte.recursivePartPhysicalPlan.Stats()
 		for i, col := range selfSchema.Columns {

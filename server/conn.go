@@ -1618,6 +1618,15 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 	return nil
 }
 
+// handlePlanRecreator dose the export/import work for reproducing sql queries.
+func (cc *clientConn) handlePlanRecreator(ctx context.Context, info executor.PlanRecreatorInfo) (string, error) {
+	switch info.(type) {
+	case *executor.PlanRecreatorSingleInfo:
+		return info.Process()
+	}
+	return "", errors.New("plan recreator: not supporting info type")
+}
+
 // handleQuery executes the sql query string and writes result set or result ok to the client.
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
@@ -1650,7 +1659,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		capabilities := cc.ctx.GetSessionVars().ClientCapability
 		if capabilities&mysql.ClientMultiStatements < 1 {
 			// The client does not have multi-statement enabled. We now need to determine
-			// how to handle an unsafe sitution based on the multiStmt sysvar.
+			// how to handle an unsafe situation based on the multiStmt sysvar.
 			switch cc.ctx.GetSessionVars().MultiStatementMode {
 			case variable.OffInt:
 				err = errMultiStatementDisabled
@@ -1880,6 +1889,20 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 			return handled, err
 		}
 	}
+
+	planRecreator := cc.ctx.Value(executor.PlanRecreatorVarKey)
+	if planRecreator != nil {
+		handled = true
+		defer cc.ctx.SetValue(executor.PlanRecreatorVarKey, nil)
+		token, err := cc.handlePlanRecreator(ctx, planRecreator.(executor.PlanRecreatorInfo))
+		if err != nil {
+			return handled, err
+		}
+		if token != "" {
+			return handled, cc.writeOkWith(ctx, token, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
+		}
+	}
+
 	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
 }
 

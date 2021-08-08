@@ -19,6 +19,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
@@ -29,6 +30,7 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 type tikvTxn struct {
@@ -49,6 +51,10 @@ func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 
 func (txn *tikvTxn) GetTableInfo(id int64) *model.TableInfo {
 	return txn.idxNameCache[id]
+}
+
+func (txn *tikvTxn) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	txn.KVTxn.SetDiskFullOpt(level)
 }
 
 func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
@@ -153,7 +159,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		if val == nil {
 			txn.KVTxn.GetSnapshot().SetRuntimeStats(nil)
 		} else {
-			txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*tikv.SnapshotRuntimeStats))
+			txn.KVTxn.GetSnapshot().SetRuntimeStats(val.(*txnsnapshot.SnapshotRuntimeStats))
 		}
 	case kv.SchemaAmender:
 		txn.SetSchemaAmender(val.(tikv.SchemaAmender))

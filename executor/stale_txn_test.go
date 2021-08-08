@@ -211,12 +211,15 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		} else if testcase.preSec > 0 {
 			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance", fmt.Sprintf(`return(%d)`, time.Now().Unix()-testcase.preSec)), IsNil)
 		}
-		_, err := tk.Exec(testcase.sql)
+		rs, err := tk.Exec(testcase.sql)
 		if len(testcase.errorStr) != 0 {
 			c.Assert(err, ErrorMatches, testcase.errorStr)
 			continue
 		}
 		c.Assert(err, IsNil, Commentf("sql:%s, error stack %v", testcase.sql, errors.ErrorStack(err)))
+		if rs != nil {
+			rs.Close()
+		}
 		if testcase.expectPhysicalTS > 0 {
 			c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
 		} else if testcase.preSec > 0 {
@@ -696,8 +699,7 @@ func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *
 		c.Log(testcase.name)
 		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
 		if testcase.isValidate {
-			_, err := tk.Exec(testcase.sql)
-			c.Assert(err, IsNil)
+			tk.MustExec(testcase.sql)
 		} else {
 			err := tk.ExecToErr(testcase.sql)
 			c.Assert(err, NotNil)
@@ -706,8 +708,7 @@ func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *
 		tk.MustExec("commit")
 		tk.MustExec("set transaction read only as of timestamp NOW(3);")
 		if testcase.isValidate {
-			_, err := tk.Exec(testcase.sql)
-			c.Assert(err, IsNil)
+			tk.MustExec(testcase.sql)
 		} else {
 			err := tk.ExecToErr(testcase.sql)
 			c.Assert(err, NotNil)
@@ -865,8 +866,7 @@ func (s *testStaleTxnSuite) TestSetTransactionInfoSchema(c *C) {
 	c.Assert(tk.Se.GetInfoSchema().SchemaMetaVersion(), Equals, schemaVer3)
 }
 
-func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210702")
+func (s *testStaleTxnSerialSuite) TestStaleSelect(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -916,20 +916,9 @@ func (s *testStaleTxnSuite) TestStaleSelect(c *C) {
 	tk.MustExec("insert into t values (4, 5)")
 	time.Sleep(10 * time.Millisecond)
 	tk.MustQuery("execute s").Check(staleRows)
-
-	// test dynamic timestamp stale select
-	time3 := time.Now()
 	tk.MustExec("alter table t add column d int")
 	tk.MustExec("insert into t values (4, 4, 4)")
 	time.Sleep(tolerance)
-	time4 := time.Now()
-	staleRows = testkit.Rows("1 <nil>", "2 <nil>", "3 <nil>", "4 5")
-	tk.MustQuery(fmt.Sprintf("select * from t as of timestamp CURRENT_TIMESTAMP(3) - INTERVAL %d MICROSECOND", time4.Sub(time3).Microseconds())).Check(staleRows)
-
-	// test prepared dynamic timestamp stale select
-	time5 := time.Now()
-	tk.MustExec(fmt.Sprintf(`prepare v from "select * from t as of timestamp CURRENT_TIMESTAMP(3) - INTERVAL %d MICROSECOND"`, time5.Sub(time3).Microseconds()))
-	tk.MustQuery("execute v").Check(staleRows)
 
 	// test point get
 	time6 := time.Now()
