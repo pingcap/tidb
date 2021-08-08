@@ -20,7 +20,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"github.com/tikv/client-go/v2/tikv"
 	"math"
 	"strconv"
 	"strings"
@@ -58,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
