@@ -657,8 +657,8 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 		"  `i` int(11) NOT NULL,\n  `j` int(11) DEFAULT NULL,\n  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("create temporary table if not exists tb12 like tb11;")
-	c.Assert(tk.Se.(sessionctx.Context).GetSessionVars().StmtCtx.GetWarnings(), Equals,
-		[]stmtctx.SQLWarn{stmtctx.SQLWarn{Level: stmtctx.WarnLevelNote, Err: infoschema.ErrTableExists.GenWithStackByArgs("tb12")}})
+	c.Assert(tk.Se.(sessionctx.Context).GetSessionVars().StmtCtx.GetWarnings()[0], Equals,
+		stmtctx.SQLWarn{Level: stmtctx.WarnLevelNote, Err: infoschema.ErrTableExists.GenWithStackByArgs("tb12")})
 	defer tk.MustExec("drop table if exists tb11, tb12")
 	// Test from->local temporary, to->local temporary
 	tk.MustExec("drop table if exists tb13, tb14")
