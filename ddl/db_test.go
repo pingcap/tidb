@@ -1548,7 +1548,7 @@ LOOP:
 			if num >= 1000 {
 				break
 			}
-			step := 50
+			step := 20
 			// delete, insert and update some data
 			for i := num; i < num+step; i++ {
 				sql := fmt.Sprintf("delete from test_add_index where a = %d", i+1)
