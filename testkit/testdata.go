@@ -187,3 +187,9 @@ func (td *TestData) GenerateOutputIfNeeded() error {
 	_, err = file.Write(buf.Bytes())
 	return err
 }
+
+// Record is a temporary method for testutil to avoid "flag redefined: record" error,
+// After we migrate all tests based on former testdata, we should remove testutil and this method.
+func Record() bool {
+	return record
+}
