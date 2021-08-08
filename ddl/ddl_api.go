@@ -1959,7 +1959,7 @@ func (d *ddl) CreateTableWithInfo(
 			sessVars.TemporaryTableData = bufferTxn.GetMemBuffer()
 		}
 		localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
-		err = localTempTables.AddTable(schema, tbl)
+		err = localTempTables.AddTable(dbName, tbl)
 		if err != nil {
 			// table exists, but if_not_exists flags is true, so we ignore this error.
 			if onExist == OnExistIgnore && infoschema.ErrTableExists.Equal(err) {
