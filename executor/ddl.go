@@ -115,10 +115,6 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	// Following cases are exceptions
 	var localTempTablesToDrop []*model.TableInfo
 	switch s := e.stmt.(type) {
-	case *ast.CreateTableStmt:
-		if s.TemporaryKeyword == ast.TemporaryLocal {
-			return e.createSessionTemporaryTable(s)
-		}
 	case *ast.DropTableStmt:
 		if s.IsView {
 			break
