@@ -444,6 +444,7 @@ func (parser *CSVParser) replaceEOF(err error, replaced error) error {
 // ReadRow reads a row from the datafile.
 func (parser *CSVParser) ReadRow() error {
 	row := &parser.lastRow
+	row.Length = 0
 	row.RowID++
 
 	// skip the header first
@@ -475,6 +476,7 @@ func (parser *CSVParser) ReadRow() error {
 		row.Row = make([]types.Datum, len(records))
 	}
 	for i, record := range records {
+		row.Length += len(record)
 		unescaped, isNull := parser.unescapeString(record)
 		if isNull {
 			row.Row[i].SetNull()
