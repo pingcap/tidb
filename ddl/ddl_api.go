@@ -1942,7 +1942,8 @@ func (d *ddl) CreateTableWithInfo(
 		if alloc != nil {
 			allocs = append(allocs, alloc)
 		}
-		tbl, err := tables.TableFromMeta(allocs, tbInfo)
+		var tbl table.Table
+		tbl, err = tables.TableFromMeta(allocs, tbInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1955,7 +1956,6 @@ func (d *ddl) CreateTableWithInfo(
 				err = nil
 			}
 		}
-		return errors.Trace(err)
 	} else {
 		job := &model.Job{
 			SchemaID:   schema.ID,
@@ -1992,8 +1992,8 @@ func (d *ddl) CreateTableWithInfo(
 		}
 
 		err = d.callHookOnChanged(err)
-		return errors.Trace(err)
 	}
+	return errors.Trace(err)
 }
 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
