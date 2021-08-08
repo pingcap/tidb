@@ -460,11 +460,37 @@ func (*testSysVarSuite) TestTiDBMultiStatementMode(c *C) {
 
 func (*testSysVarSuite) TestReadOnlyNoop(c *C) {
 	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	noopFuncs := GetSysVar(TiDBEnableNoopFuncs)
+
+	// For session scope
 	for _, name := range []string{TxReadOnly, TransactionReadOnly} {
 		sv := GetSysVar(name)
 		val, err := sv.Validate(vars, "on", ScopeSession)
-		c.Assert(err.Error(), Equals, "[variable:1235]function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
+		c.Assert(err.Error(), Matches, ".* has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
 		c.Assert(val, Equals, "OFF")
+
+		c.Assert(noopFuncs.SetSessionFromHook(vars, "ON"), IsNil)
+		_, err = sv.Validate(vars, "on", ScopeSession)
+		c.Assert(err, IsNil)
+
+		c.Assert(noopFuncs.SetSessionFromHook(vars, "OFF"), IsNil) // restore default.
+	}
+
+	// For global scope
+	for _, name := range []string{TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, ReadOnly} {
+		sv := GetSysVar(name)
+		val, err := sv.Validate(vars, "on", ScopeGlobal)
+		c.Assert(err.Error(), Matches, ".* has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
+		c.Assert(val, Equals, "OFF")
+
+		c.Assert(vars.GlobalVarsAccessor.SetGlobalSysVar(TiDBEnableNoopFuncs, "ON"), IsNil)
+		_, err = sv.Validate(vars, "on", ScopeGlobal)
+		c.Assert(err, IsNil)
+
+		c.Assert(vars.GlobalVarsAccessor.SetGlobalSysVar(TiDBEnableNoopFuncs, "OFF"), IsNil)
 	}
 }
 
@@ -600,6 +626,7 @@ func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
 // The default values should also be normalized for consistency.
 func (*testSysVarSuite) TestDefaultValuesAreSettable(c *C) {
 	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor()
 	for _, sv := range GetSysVars() {
 		if sv.HasSessionScope() && !sv.ReadOnly {
 			val, err := sv.Validate(vars, sv.Value, ScopeSession)
@@ -608,11 +635,6 @@ func (*testSysVarSuite) TestDefaultValuesAreSettable(c *C) {
 		}
 
 		if sv.HasGlobalScope() && !sv.ReadOnly {
-			if sv.Name == TiDBEnableNoopFuncs {
-				// TODO: this requires access to the global var accessor,
-				// which is not available in this test.
-				continue
-			}
 			val, err := sv.Validate(vars, sv.Value, ScopeGlobal)
 			c.Assert(sv.Value, Equals, val)
 			c.Assert(err, IsNil)
