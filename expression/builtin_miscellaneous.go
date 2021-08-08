@@ -399,6 +399,7 @@ func (c *inetAtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	bf.tp.Flen = 21
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinInetAtonSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_InetAton)
 	return sig, nil
 }
 
@@ -476,6 +477,7 @@ func (c *inetNtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	bf.tp.Flen = 93
 	bf.tp.Decimal = 0
 	sig := &builtinInetNtoaSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_InetNtoa)
 	return sig, nil
 }
 
@@ -528,6 +530,7 @@ func (c *inet6AtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	types.SetBinChsClnFlag(bf.tp)
 	bf.tp.Decimal = 0
 	sig := &builtinInet6AtonSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Inet6Aton)
 	return sig, nil
 }
 
@@ -600,6 +603,7 @@ func (c *inet6NtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	bf.tp.Flen = 117
 	bf.tp.Decimal = 0
 	sig := &builtinInet6NtoaSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Inet6Ntoa)
 	return sig, nil
 }
 
@@ -654,6 +658,7 @@ func (c *isIPv4FunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	}
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv4Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4)
 	return sig, nil
 }
 
@@ -721,6 +726,7 @@ func (c *isIPv4CompatFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv4CompatSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4Compat)
 	return sig, nil
 }
 
@@ -769,6 +775,7 @@ func (c *isIPv4MappedFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv4MappedSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4Mapped)
 	return sig, nil
 }
 
@@ -817,6 +824,7 @@ func (c *isIPv6FunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	}
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv6Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_IsIPv6)
 	return sig, nil
 }
 

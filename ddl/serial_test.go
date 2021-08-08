@@ -1745,3 +1745,86 @@ func (s *testSerialSuite) TestCheckEnumLength(c *C) {
 	tk.MustGetErrCode("create table t5 (a set('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))", errno.ErrTooLongValueForType)
 	tk.MustExec("drop table if exists t1,t2,t3,t4,t5")
 }
+
+func (s *testSerialSuite) TestGetReverseKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database db_get")
+	tk.MustExec("use db_get")
+	tk.MustExec("drop table if exists test_get")
+	tk.MustExec("create table test_get(a bigint not null primary key, b bigint);")
+
+	insertVal := func(val int) {
+		sql := fmt.Sprintf("insert into test_get value(%d, %d)", val, val)
+		tk.MustExec(sql)
+	}
+	insertVal(math.MinInt64)
+	insertVal(math.MinInt64 + 1)
+	insertVal(1 << 61)
+	insertVal(3 << 61)
+	insertVal(math.MaxInt64)
+	insertVal(math.MaxInt64 - 1)
+
+	// Get table ID for split.
+	is := s.dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("db_get"), model.NewCIStr("test_get"))
+	c.Assert(err, IsNil)
+	// Split the table.
+	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 4)
+
+	tk.MustQuery("select * from test_get order by a").Check(testkit.Rows("-9223372036854775808 -9223372036854775808",
+		"-9223372036854775807 -9223372036854775807",
+		"2305843009213693952 2305843009213693952",
+		"6917529027641081856 6917529027641081856",
+		"9223372036854775806 9223372036854775806",
+		"9223372036854775807 9223372036854775807",
+	))
+
+	minKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(math.MinInt64))
+	maxKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(math.MaxInt64))
+	checkRet := func(startKey, endKey, retKey kv.Key) {
+		h, err := ddl.GetMaxRowID(s.store, 0, tbl, startKey, endKey)
+		c.Assert(err, IsNil)
+		c.Assert(h.Cmp(retKey), Equals, 0)
+	}
+	// [minInt64, minInt64]
+	checkRet(minKey, minKey, minKey)
+	// [minInt64, 1<<64-1]
+	endKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(1<<61-1))
+	retKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(math.MinInt64+1))
+	checkRet(minKey, endKey, retKey)
+	// [1<<64, 2<<64]
+	startKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(1<<61))
+	endKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(2<<61))
+	checkRet(startKey, endKey, startKey)
+	// [3<<64, maxInt64]
+	startKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), kv.IntHandle(3<<61))
+	endKey = maxKey
+	checkRet(startKey, endKey, endKey)
+}
+
+func (s *testSerialDBSuite) TestLocalTemporaryTableBlockedDDL(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_enable_noop_functions = 1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create temporary table tmp1 (id int primary key, a int unique, b int)")
+	err := tk.ExecToErr("rename table tmp1 to tmp2")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("alter table tmp1 add column c int")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("alter table tmp1 add index b(b)")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("create index a on tmp1(b)")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("drop index a on tmp1")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("lock tables tmp1 read")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("lock tables tmp1 write")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("lock tables t1 read, tmp1 read")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+	err = tk.ExecToErr("admin cleanup table lock tmp1")
+	c.Assert(ddl.ErrUnsupportedLocalTempTableDDL.Equal(err), IsTrue)
+}
