@@ -39,7 +39,7 @@ type SessionTemporaryTableManager struct {
 	cache struct {
 		schemaMetaVersion    int64
 		sortedGlobalTables   []table.Table
-		sortedTableKeyRanges []*tikvkey.KeyRange
+		sortedTableKeyRanges []*tikv.RangeRetriever
 	}
 }
 
@@ -63,8 +63,7 @@ func (m *SessionTemporaryTableManager) UpdateSnapshotOptions(snap kv.Snapshot, i
 		m.cache.schemaMetaVersion = is.SchemaMetaVersion()
 	}
 
-	snap.SetOption(kv.MemSnapshotSortedRanges, m.cache.sortedTableKeyRanges)
-	snap.SetOption(kv.MemSnapshotDB, m.memData)
+	snap.SetOption(kv.CustomKeyRetrievers, m.cache.sortedTableKeyRanges)
 }
 
 // AddLocalTemporaryTable add a local temporary table
@@ -73,12 +72,11 @@ func (m *SessionTemporaryTableManager) AddLocalTemporaryTable(schema model.CIStr
 	if err := m.localTables.AddTable(schema, tb); err != nil {
 		return err
 	}
-
-	m.rebuildKeyRanges()
 	if m.memData == nil {
 		m.memData = tikv.NewMemDB()
 	}
 
+	m.rebuildKeyRanges()
 	return nil
 }
 
@@ -263,31 +261,42 @@ func (m *SessionTemporaryTableManager) rebuildKeyRanges() {
 	}
 	globalTbls := m.cache.sortedGlobalTables
 
-	ranges := make([]*tikvkey.KeyRange, 0, len(localTbls)+len(globalTbls))
+	ranges := make([]*tikv.RangeRetriever, 0, len(localTbls)+len(globalTbls))
 	for localCur < len(localTbls) && globalCur < len(globalTbls) {
-		tblID := localTbls[localCur].Meta().ID
-		globalTblID := globalTbls[globalCur].Meta().ID
-		if globalTblID < tblID {
-			tblID = globalTblID
+		tbl := localTbls[localCur].Meta()
+		globalTbl := globalTbls[globalCur].Meta()
+		if globalTbl.ID < tbl.ID {
+			tbl = globalTbl
 			globalCur++
 		} else {
 			localCur++
 		}
 
-		ranges = append(ranges, getTableKeyRange(tblID))
+		ranges = append(ranges, m.getTableRetriever(tbl))
 	}
 
 	for localCur < len(localTbls) {
-		ranges = append(ranges, getTableKeyRange(localTbls[localCur].Meta().ID))
+		ranges = append(ranges, m.getTableRetriever(localTbls[localCur].Meta()))
 		localCur++
 	}
 
 	for globalCur < len(globalTbls) {
-		ranges = append(ranges, getTableKeyRange(globalTbls[globalCur].Meta().ID))
+		ranges = append(ranges, m.getTableRetriever(globalTbls[globalCur].Meta()))
 		globalCur++
 	}
 
 	m.cache.sortedTableKeyRanges = ranges
+}
+
+func (m *SessionTemporaryTableManager) getTableRetriever(tblInfo *model.TableInfo) *tikv.RangeRetriever {
+	startKey := tablecodec.EncodeTablePrefix(tblInfo.ID)
+	endKey := tablecodec.EncodeTablePrefix(tblInfo.ID + 1)
+
+	if tblInfo.TempTableType == model.TempTableGlobal {
+		return tikv.NewRangeRetriever(startKey, endKey, &tikv.EmptyRetriever{})
+	}
+
+	return tikv.NewRangeRetriever(startKey, endKey, &tikv.MemDBRetriever{MemDB: m.memData})
 }
 
 type temporaryTableKVFilter map[int64]tableutil.TempTable
@@ -300,11 +309,4 @@ func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, _ tikvk
 
 	// This is the default filter for all tables.
 	return tablecodec.IsUntouchedIndexKValue(key, value)
-}
-
-func getTableKeyRange(tblID int64) *tikvkey.KeyRange {
-	return &tikvkey.KeyRange{
-		StartKey: tablecodec.EncodeTablePrefix(tblID),
-		EndKey:   tablecodec.EncodeTablePrefix(tblID + 1),
-	}
 }

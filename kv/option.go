@@ -63,10 +63,8 @@ const (
 	ResourceGroupTag
 	// KVFilter indicates the filter to ignore key-values in the transaction's memory buffer.
 	KVFilter
-	// MemSnapshotSortedRanges is the ranges for mem scan
-	MemSnapshotSortedRanges
-	// MemSnapshotDB is the MemDB to store MemSnapshot
-	MemSnapshotDB
+	// CustomKeyRetrievers is the custom retrievers
+	CustomKeyRetrievers
 )
 
 // ReplicaReadType is the type of replica to read data from
