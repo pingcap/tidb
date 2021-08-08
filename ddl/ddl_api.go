@@ -1942,7 +1942,10 @@ func (d *ddl) CreateTableWithInfo(
 		if alloc != nil {
 			allocs = append(allocs, alloc)
 		}
-		tbl, _ := tables.TableFromMeta(allocs, tbInfo)
+		tbl, err := tables.TableFromMeta(allocs, tbInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
 		err = localTempTables.AddTable(schema, tbl)
 		if err != nil {
