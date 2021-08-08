@@ -120,17 +120,17 @@ func autoRandomIncrementBits(col *table.Column, randomBits int) int {
 }
 
 // collectGeneratedColumns collects all expressions required to evaluate the
-// results of all stored generated columns. The returning slice is in evaluation
-// order.
+// results of all generated columns. The returning slice is in evaluation order.
 func collectGeneratedColumns(se *session, meta *model.TableInfo, cols []*table.Column) ([]genCol, error) {
-	maxGenColOffset := -1
+	hasGenCol := false
 	for _, col := range cols {
-		if col.GeneratedStored && col.Offset > maxGenColOffset {
-			maxGenColOffset = col.Offset
+		if col.GeneratedExpr != nil {
+			hasGenCol = true
+			break
 		}
 	}
 
-	if maxGenColOffset < 0 {
+	if !hasGenCol {
 		return nil, nil
 	}
 
@@ -165,7 +165,7 @@ func collectGeneratedColumns(se *session, meta *model.TableInfo, cols []*table.C
 	// for simplicity we just evaluate all generated columns (virtual or not) before the last stored one.
 	var genCols []genCol
 	for i, col := range cols {
-		if col.GeneratedExpr != nil && col.Offset <= maxGenColOffset {
+		if col.GeneratedExpr != nil {
 			expr, err := expression.RewriteAstExpr(se, col.GeneratedExpr, schema, names)
 			if err != nil {
 				return nil, err
