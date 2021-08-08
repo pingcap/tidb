@@ -220,7 +220,7 @@ func TestReplaceChild(t *testing.T) {
 	require.Equal(t, int64(0), node1.BytesConsumed())
 }
 
-func (s *testSuite) TestToString(c *C) {
+func TestToString(t *testing.T) {
 	parent := NewTracker(1, -1)
 	child1 := NewTracker(2, 1000)
 	child2 := NewTracker(3, -1)
@@ -237,7 +237,7 @@ func (s *testSuite) TestToString(c *C) {
 	child3.Consume(3 * 1024 * 1024)
 	child4.Consume(4 * 1024 * 1024 * 1024)
 
-	c.Assert(parent.String(), Equals, `
+	require.Equal(t, parent.String(), `
 "1"{
   "consumed": 4.00 GB
   "2"{
@@ -257,7 +257,7 @@ func (s *testSuite) TestToString(c *C) {
 `)
 }
 
-func (s *testSuite) TestMaxConsumed(c *C) {
+func TestMaxConsumed(t *testing.T) {
 	r := NewTracker(1, -1)
 	c1 := NewTracker(2, -1)
 	c2 := NewTracker(3, -1)
@@ -270,21 +270,21 @@ func (s *testSuite) TestMaxConsumed(c *C) {
 	ts := []*Tracker{r, c1, c2, cc1}
 	var consumed, maxConsumed int64
 	for i := 0; i < 10; i++ {
-		t := ts[rand.Intn(len(ts))]
+		tracker := ts[rand.Intn(len(ts))]
 		b := rand.Int63n(1000) - 500
 		if consumed+b < 0 {
 			b = -consumed
 		}
 		consumed += b
-		t.Consume(b)
+		tracker.Consume(b)
 		maxConsumed = mathutil.MaxInt64(maxConsumed, consumed)
 
-		c.Assert(r.BytesConsumed(), Equals, consumed)
-		c.Assert(r.MaxConsumed(), Equals, maxConsumed)
+		require.Equal(t, consumed, r.BytesConsumed())
+		require.Equal(t, maxConsumed, r.MaxConsumed())
 	}
 }
 
-func (s *testSuite) TestGlobalTracker(c *C) {
+func TestGlobalTracker(t *testing.T) {
 	r := NewGlobalTracker(1, -1)
 	c1 := NewTracker(2, -1)
 	c2 := NewTracker(3, -1)
@@ -293,47 +293,47 @@ func (s *testSuite) TestGlobalTracker(c *C) {
 
 	c1.AttachToGlobalTracker(r)
 	c2.AttachToGlobalTracker(r)
-	c.Assert(r.BytesConsumed(), Equals, int64(300))
-	c.Assert(c1.getParent(), DeepEquals, r)
-	c.Assert(c2.getParent(), DeepEquals, r)
-	c.Assert(len(r.mu.children), Equals, 0)
+	require.Equal(t, int64(300), r.BytesConsumed())
+	require.Equal(t, r, c1.getParent())
+	require.Equal(t, r, c2.getParent())
+	require.Equal(t, 0, len(r.mu.children))
 
 	c1.DetachFromGlobalTracker()
 	c2.DetachFromGlobalTracker()
-	c.Assert(r.BytesConsumed(), Equals, int64(0))
-	c.Assert(c1.getParent(), IsNil)
-	c.Assert(c2.getParent(), IsNil)
-	c.Assert(len(r.mu.children), Equals, 0)
+	require.Equal(t, int64(0), r.BytesConsumed())
+	require.Nil(t, c1.getParent())
+	require.Nil(t, c2.getParent())
+	require.Equal(t, 0, len(r.mu.children))
 
 	defer func() {
 		v := recover()
-		c.Assert(v, Equals, "Attach to a non-GlobalTracker")
+		require.Equal(t, "Attach to a non-GlobalTracker", v)
 	}()
 	commonTracker := NewTracker(4, -1)
 	c1.AttachToGlobalTracker(commonTracker)
 
 	c1.AttachTo(commonTracker)
-	c.Assert(commonTracker.BytesConsumed(), Equals, int64(100))
-	c.Assert(len(commonTracker.mu.children), Equals, 1)
-	c.Assert(c1.getParent(), DeepEquals, commonTracker)
+	require.Equal(t, int64(100), commonTracker.BytesConsumed())
+	require.Equal(t, 1, len(commonTracker.mu.children))
+	require.Equal(t, commonTracker, c1.getParent())
 
 	c1.AttachToGlobalTracker(r)
-	c.Assert(commonTracker.BytesConsumed(), Equals, int64(0))
-	c.Assert(len(commonTracker.mu.children), Equals, 0)
-	c.Assert(r.BytesConsumed(), Equals, int64(100))
-	c.Assert(c1.getParent(), DeepEquals, r)
-	c.Assert(len(r.mu.children), Equals, 0)
+	require.Equal(t, int64(0), commonTracker.BytesConsumed())
+	require.Equal(t, 0, len(commonTracker.mu.children))
+	require.Equal(t, int64(100), r.BytesConsumed())
+	require.Equal(t, r, c1.getParent())
+	require.Equal(t, 0, len(r.mu.children))
 
 	defer func() {
 		v := recover()
-		c.Assert(v, Equals, "Detach from a non-GlobalTracker")
+		require.Equal(t, "Detach from a non-GlobalTracker", v)
 	}()
 	c2.AttachTo(commonTracker)
 	c2.DetachFromGlobalTracker()
 
 }
 
-func (s *testSuite) parseByteUnit(str string) (int64, error) {
+func parseByteUnit(str string) (int64, error) {
 	u := strings.TrimSpace(str)
 	switch u {
 	case "GB":
@@ -348,7 +348,7 @@ func (s *testSuite) parseByteUnit(str string) (int64, error) {
 	return 0, errors.New("invalid byte unit: " + str)
 }
 
-func (s *testSuite) parseByte(str string) (int64, error) {
+func parseByte(str string) (int64, error) {
 	vBuf := make([]byte, 0, len(str))
 	uBuf := make([]byte, 0, 2)
 	b := int64(0)
@@ -359,7 +359,7 @@ func (s *testSuite) parseByte(str string) (int64, error) {
 			uBuf = append(uBuf, byte(v))
 		}
 	}
-	unit, err := s.parseByteUnit(string(uBuf))
+	unit, err := parseByteUnit(string(uBuf))
 	if err != nil {
 		return 0, err
 	}
@@ -371,7 +371,7 @@ func (s *testSuite) parseByte(str string) (int64, error) {
 	return b, nil
 }
 
-func (s *testSuite) TestFormatBytesWithPrune(c *C) {
+func TestFormatBytesWithPrune(t *testing.T) {
 	cases := []struct {
 		b string
 		s string
@@ -409,29 +409,19 @@ func (s *testSuite) TestFormatBytesWithPrune(c *C) {
 		{"9.15999984741211 MB", "9.16 MB"},
 	}
 	for _, ca := range cases {
-		b, err := s.parseByte(ca.b)
-		c.Assert(err, IsNil)
+		b, err := parseByte(ca.b)
+		require.NoError(t, err)
 		result := FormatBytes(b)
-		c.Assert(result, Equals, ca.s, Commentf("input: %v", ca.b))
+		require.Equal(t, ca.s, result)
+		fmt.Printf("input: %v\n", ca.b)
 	}
 }
 
-func BenchmarkConsume(b *testing.B) {
-	tracker := NewTracker(1, -1)
-	b.RunParallel(func(pb *testing.PB) {
-		childTracker := NewTracker(2, -1)
-		childTracker.AttachTo(tracker)
-		for pb.Next() {
-			childTracker.Consume(256 << 20)
-		}
-	})
+func TestErrorCode(t *testing.T) {
+	require.Equal(t, errno.ErrMemExceedThreshold, int(terror.ToSQLError(errMemExceedThreshold).Code))
 }
 
-func (s *testSuite) TestErrorCode(c *C) {
-	c.Assert(int(terror.ToSQLError(errMemExceedThreshold).Code), Equals, errno.ErrMemExceedThreshold)
-}
-
-func (s *testSuite) TestOOMActionPriority(c *C) {
+func TestOOMActionPriority(t *testing.T) {
 	tracker := NewTracker(1, 100)
 	// make sure no panic here.
 	tracker.Consume(10000)
@@ -444,23 +434,23 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 		actions[i] = &mockAction{priority: int64(i)}
 	}
 
-	randomSuffle := make([]int, n)
+	randomShuffle := make([]int, n)
 	for i := 0; i < n; i++ {
-		randomSuffle[i] = i
+		randomShuffle[i] = i
 		pos := rand.Int() % (i + 1)
-		randomSuffle[i], randomSuffle[pos] = randomSuffle[pos], randomSuffle[i]
+		randomShuffle[i], randomShuffle[pos] = randomShuffle[pos], randomShuffle[i]
 	}
 
 	for i := 0; i < n; i++ {
-		tracker.FallbackOldAndSetNewAction(actions[randomSuffle[i]])
+		tracker.FallbackOldAndSetNewAction(actions[randomShuffle[i]])
 	}
 	for i := n - 1; i >= 0; i-- {
 		tracker.Consume(100)
 		for j := n - 1; j >= 0; j-- {
 			if j >= i {
-				c.Assert(actions[j].called, IsTrue)
+				require.True(t, actions[j].called)
 			} else {
-				c.Assert(actions[j].called, IsFalse)
+				require.False(t, actions[j].called)
 			}
 		}
 	}
