@@ -16,6 +16,7 @@ package ranger_test
 import (
 	"context"
 	"fmt"
+
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
@@ -40,7 +42,7 @@ func TestSetUpTearDown(t *testing.T) {
 	t.Parallel()
 	p := parser.New()
 	require.NotNil(t, *p)
-	testData, err := testkit.LoadTestSuiteData("testdata", "ranger_suite")
+	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
 	require.NoError(t, err)
 	require.Nil(t, testData.GenerateOutputIfNeeded())
 }
@@ -1266,7 +1268,7 @@ func TestCompIndexInExprCorrCol(t *testing.T) {
 		Result []string
 	}
 
-	testData, err := testkit.LoadTestSuiteData("testdata", "ranger_suite")
+	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
 	require.NoError(t, err)
 	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
@@ -1299,7 +1301,7 @@ func TestIndexStringIsTrueRange(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	testData, _ := testkit.LoadTestSuiteData("testdata", "ranger_suite")
+	testData, _ := testdata.LoadTestSuiteData("testdata", "ranger_suite")
 	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
 		testData.OnRecord(func() {
@@ -1330,7 +1332,7 @@ func TestCompIndexDNFMatch(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testkit.LoadTestSuiteData("testdata", "ranger_suite")
+	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
 	require.NoError(t, err)
 	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
@@ -1366,7 +1368,7 @@ func TestCompIndexMultiColDNF1(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testkit.LoadTestSuiteData("testdata", "ranger_suite")
+	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
 	require.NoError(t, err)
 	for i, tt := range input {
 		testData.OnRecord(func() {
@@ -1401,7 +1403,7 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testkit.LoadTestSuiteData("testdata", "ranger_suite")
+	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
 	require.NoError(t, err)
 	for i, tt := range input {
 		testData.OnRecord(func() {
@@ -1434,7 +1436,7 @@ func TestPrefixIndexMultiColDNF(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testkit.LoadTestSuiteData("testdata", "ranger_suite")
+	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
 	require.NoError(t, err)
 	inputLen := len(input)
 	for i, tt := range input {
@@ -1478,7 +1480,7 @@ func TestIndexRangeForBit(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testkit.LoadTestSuiteData("testdata", "ranger_suite")
+	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
 	require.NoError(t, err)
 	for i, tt := range input {
 		testData.OnRecord(func() {
@@ -1748,7 +1750,7 @@ func TestIndexRangeForDecimal(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testkit.LoadTestSuiteData("testdata", "ranger_suite")
+	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
 	require.NoError(t, err)
 	for i, tt := range input {
 		testData.OnRecord(func() {
@@ -1787,7 +1789,7 @@ func TestPrefixIndexAppendPointRanges(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testkit.LoadTestSuiteData("testdata", "ranger_suite")
+	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
 	require.NoError(t, err)
 	for i, tt := range input {
 		testData.OnRecord(func() {

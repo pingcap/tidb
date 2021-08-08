@@ -13,7 +13,7 @@
 
 // +build !codes
 
-package testkit
+package testdata
 
 import (
 	"bytes"
