@@ -20,6 +20,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"github.com/tikv/client-go/v2/tikv"
 	"math"
 	"strconv"
 	"strings"
@@ -1946,6 +1947,16 @@ func (d *ddl) CreateTableWithInfo(
 		tbl, err = tables.TableFromMeta(allocs, tbInfo)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		// Init MemBuffer in session
+		if sessVars.TemporaryTableData == nil {
+			// Create this txn just for getting a MemBuffer. It's a little tricky
+			bufferTxn, err := ctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
+			if err != nil {
+				return err
+			}
+
+			sessVars.TemporaryTableData = bufferTxn.GetMemBuffer()
 		}
 		localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
 		err = localTempTables.AddTable(schema, tbl)
