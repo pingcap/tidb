@@ -1011,8 +1011,17 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Concat, ast.ConcatWS,
 		ast.Year, ast.Month, ast.Day,
 		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
+<<<<<<< HEAD
 		ast.Sqrt,
 		ast.JSONLength:
+=======
+
+		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
+		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
+		ast.JSONLength,
+		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
+		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position:
+>>>>>>> 30cf15a59... expression/expression: add pushdown functions (#26786)
 		return true
 	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength:
 		switch function.Function.PbCode() {
