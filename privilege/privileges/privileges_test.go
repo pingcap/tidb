@@ -1983,15 +1983,19 @@ func TestInfoSchemaUserPrivileges(t *testing.T) {
 }
 
 // Issues https://github.com/pingcap/tidb/issues/25972 and https://github.com/pingcap/tidb/issues/26451
-func (s *testPrivilegeSuite) TestGrantOptionAndRevoke(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestGrantOptionAndRevoke(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP USER IF EXISTS u1, u2, u3, ruser")
 	tk.MustExec("CREATE USER u1, u2, u3, ruser")
 	tk.MustExec("GRANT ALL ON *.* TO ruser WITH GRANT OPTION")
 	tk.MustExec("GRANT SELECT ON *.* TO u1 WITH GRANT OPTION")
 	tk.MustExec("GRANT UPDATE, DELETE on db.* TO u1")
 
-	tk.Se.Auth(&auth.UserIdentity{
+	tk.Session().Auth(&auth.UserIdentity{
 		Username: "ruser",
 		Hostname: "localhost",
 	}, nil, nil)
