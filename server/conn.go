@@ -1509,7 +1509,117 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	return err
 }
 
+<<<<<<< HEAD
 func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, lastStmt bool, appendMultiStmtWarning bool) error {
+=======
+// prefetchPointPlanKeys extracts the point keys in multi-statement query,
+// use BatchGet to get the keys, so the values will be cached in the snapshot cache, save RPC call cost.
+// For pessimistic transaction, the keys will be batch locked.
+func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode) ([]plannercore.Plan, error) {
+	txn, err := cc.ctx.Txn(false)
+	if err != nil {
+		return nil, err
+	}
+	if !txn.Valid() {
+		// Only prefetch in-transaction query for simplicity.
+		// Later we can support out-transaction multi-statement query.
+		return nil, nil
+	}
+	vars := cc.ctx.GetSessionVars()
+	if vars.TxnCtx.IsPessimistic {
+		if vars.IsIsolation(ast.ReadCommitted) {
+			// TODO: to support READ-COMMITTED, we need to avoid getting new TS for each statement in the query.
+			return nil, nil
+		}
+		if vars.TxnCtx.GetForUpdateTS() != vars.TxnCtx.StartTS {
+			// Do not handle the case that ForUpdateTS is changed for simplicity.
+			return nil, nil
+		}
+	}
+	pointPlans := make([]plannercore.Plan, len(stmts))
+	var idxKeys []kv.Key
+	var rowKeys []kv.Key
+	sc := vars.StmtCtx
+	for i, stmt := range stmts {
+		switch stmt.(type) {
+		case *ast.UseStmt:
+			// If there is a "use db" statement, we shouldn't cache even if it's possible.
+			// Consider the scenario where there are statements that could execute on multiple
+			// schemas, but the schema is actually different.
+			return nil, nil
+		}
+		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
+		// TODO: handle the PreprocessorReturn.
+		if err = plannercore.Preprocess(cc.ctx, stmt); err != nil {
+			return nil, err
+		}
+		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
+		pointPlans[i] = p
+		if p == nil {
+			continue
+		}
+		// Only support Update for now.
+		// TODO: support other point plans.
+		switch x := p.(type) {
+		case *plannercore.Update:
+			updateStmt := stmt.(*ast.UpdateStmt)
+			if pp, ok := x.SelectPlan.(*plannercore.PointGetPlan); ok {
+				if pp.PartitionInfo != nil {
+					continue
+				}
+				if pp.IndexInfo != nil {
+					executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
+					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.ctx, pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
+					if err1 != nil {
+						return nil, err1
+					}
+					idxKeys = append(idxKeys, idxKey)
+				} else {
+					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(pp.TblInfo.ID, pp.Handle))
+				}
+			}
+		}
+	}
+	if len(idxKeys) == 0 && len(rowKeys) == 0 {
+		return pointPlans, nil
+	}
+	snapshot := txn.GetSnapshot()
+	idxVals, err1 := snapshot.BatchGet(ctx, idxKeys)
+	if err1 != nil {
+		return nil, err1
+	}
+	for idxKey, idxVal := range idxVals {
+		h, err2 := tablecodec.DecodeHandleInUniqueIndexValue(idxVal, false)
+		if err2 != nil {
+			return nil, err2
+		}
+		tblID := tablecodec.DecodeTableID(hack.Slice(idxKey))
+		rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tblID, h))
+	}
+	if vars.TxnCtx.IsPessimistic {
+		allKeys := append(rowKeys, idxKeys...)
+		err = executor.LockKeys(ctx, cc.ctx, vars.LockWaitTimeout, allKeys...)
+		if err != nil {
+			// suppress the lock error, we are not going to handle it here for simplicity.
+			err = nil
+			logutil.BgLogger().Warn("lock keys error on prefetch", zap.Error(err))
+		}
+	} else {
+		_, err = snapshot.BatchGet(ctx, rowKeys)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return pointPlans, nil
+}
+
+// The first return value indicates whether the call of handleStmt has no side effect and can be retried.
+// Currently the first return value is used to fallback to TiKV when TiFlash is down.
+func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) (bool, error) {
+	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
+	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
+	reg := trace.StartRegion(ctx, "ExecuteStmt")
+>>>>>>> 207970032... server: use stmt should apply to subsequent stmts in multi-stmt mode (#26905)
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	if rs != nil {
 		defer terror.Call(rs.Close)
