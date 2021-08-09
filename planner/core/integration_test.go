@@ -3962,7 +3962,6 @@ func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
 	}
 }
 
-<<<<<<< HEAD
 func (s *testIntegrationSerialSuite) TestSelectIgnoreTemporaryTableInView(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
