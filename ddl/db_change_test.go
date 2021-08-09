@@ -1830,6 +1830,18 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 			if checkErr != nil {
 				return
 			}
+			_, checkErr = tk1.Exec("begin;")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t select * from t")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("rollback")
+			if checkErr != nil {
+				return
+			}
 			_, checkErr = tk1.Exec("insert into t set b = 6")
 			if checkErr != nil {
 				return
@@ -1845,6 +1857,18 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 			// (1, 7), (2, 2), (3, 3), (5, 5), (0, 6)
 		case model.StateWriteOnly:
 			_, checkErr = tk1.Exec("insert into t values (8, 8)")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("begin;")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t select * from t")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("rollback")
 			if checkErr != nil {
 				return
 			}
@@ -1866,6 +1890,18 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 			if checkErr != nil {
 				return
 			}
+			_, checkErr = tk1.Exec("begin;")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t select * from t")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("rollback")
+			if checkErr != nil {
+				return
+			}
 			_, checkErr = tk1.Exec("insert into t set b = 11")
 			if checkErr != nil {
 				return
@@ -1884,8 +1920,257 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 
 	d.(ddl.DDLForTest).SetHook(callback)
 	tk.MustExec("alter table t add index idx((b+1))")
+	c.Assert(checkErr, IsNil)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10", "10 10"))
+}
+
+func (s *serialTestStateChangeSuite) TestCreateUniqueExpressionIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int default 0, b int default 0)")
+	defer func() {
+		tk.MustExec("drop table t")
+	}()
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test_db_state")
+
+	var checkErr error
+	d := s.dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &ddl.TestDDLCallback{}
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		err := originalCallback.OnChanged(nil)
+		c.Assert(err, IsNil)
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, checkErr = tk1.Exec("insert into t values (5, 5)")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("begin;")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t select * from t")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("rollback")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t set b = 6")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("update t set b = 7 where a = 1")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t where b = 4")
+			if checkErr != nil {
+				return
+			}
+			// (1, 7), (2, 2), (3, 3), (5, 5), (0, 6)
+		case model.StateWriteOnly:
+			_, checkErr = tk1.Exec("insert into t values (8, 8)")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("begin;")
+			if checkErr != nil {
+				return
+			}
+			_, tmpErr := tk1.Exec("insert into t select * from t")
+			if tmpErr == nil {
+				checkErr = errors.New("should not be nil")
+			}
+			_, checkErr = tk1.Exec("rollback")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t set b = 9")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("update t set b = 7 where a = 2")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t where b = 3")
+			if checkErr != nil {
+				return
+			}
+			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
+		case model.StateWriteReorganization:
+			_, checkErr = tk1.Exec("insert into t values (10, 10) on duplicate key update a = 11")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("begin;")
+			if checkErr != nil {
+				return
+			}
+			_, tmpErr := tk1.Exec("insert into t select * from t")
+			if tmpErr == nil {
+				checkErr = errors.New("should not be nil")
+			}
+			_, checkErr = tk1.Exec("rollback")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t set b = 11 on duplicate key update a = 13")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("update t set b = 7 where a = 5")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t where b = 6")
+			if checkErr != nil {
+				return
+			}
+			// (1, 7), (2, 7), (5, 7), (8, 8), (13, 9), (11, 10), (0, 11)
+		}
+	}
+
+	d.(ddl.DDLForTest).SetHook(callback)
+	tk.MustExec("alter table t add unique index idx((a*b+1))")
+	c.Assert(checkErr, IsNil)
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 11", "1 7", "2 7", "5 7", "8 8", "11 10", "13 9"))
+}
+
+func (s *serialTestStateChangeSuite) TestDropExpressionIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int default 0, b int default 0, key idx((b+1)))")
+	defer func() {
+		tk.MustExec("drop table t")
+	}()
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test_db_state")
+
+	var checkErr error
+	d := s.dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &ddl.TestDDLCallback{}
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		err := originalCallback.OnChanged(nil)
+		c.Assert(err, IsNil)
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, checkErr = tk1.Exec("insert into t values (5, 5)")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("begin;")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t select * from t")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("rollback")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t set b = 6")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("update t set b = 7 where a = 1")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t where b = 4")
+			if checkErr != nil {
+				return
+			}
+			// (1, 7), (2, 7), (5, 5), (8, 8), (0, 9), (0, 6)
+		case model.StateWriteOnly:
+			_, checkErr = tk1.Exec("insert into t values (8, 8)")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("begin;")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t select * from t")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("rollback")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t set b = 9")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("update t set b = 7 where a = 2")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t where b = 3")
+			if checkErr != nil {
+				return
+			}
+			// (1, 1), (2, 7), (4, 4), (8, 8), (0, 9)
+		case model.StateDeleteReorganization:
+			_, checkErr = tk1.Exec("insert into t values (10, 10)")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("begin;")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t select * from t")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("rollback")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t set b = 11")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("update t set b = 7 where a = 5")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("delete from t where b = 6")
+			if checkErr != nil {
+				return
+			}
+			// (1, 7), (2, 7), (5, 7), (8, 8), (0, 9), (10, 10), (0, 11)
+		}
+	}
+
+	d.(ddl.DDLForTest).SetHook(callback)
+	tk.MustExec("alter table t drop index idx")
+	c.Assert(checkErr, IsNil)
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10"))
 }
 
 func (s *testStateChangeSuite) TestExpressionIndexDDLError(c *C) {
