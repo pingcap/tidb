@@ -3407,15 +3407,6 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 	return &(b.tableHintInfo[len(b.tableHintInfo)-1])
 }
 
-func (b *PlanBuilder) setOrderByPKLimitNForDataSource(p LogicalPlan, sel *ast.SelectStmt) {
-	ds, ok := p.(*DataSource)
-	if !ok || sel.OrderBy == nil || sel.Limit == nil {
-		return
-	}
-
-	ds.orderByPKLimitN = true
-}
-
 func checkOrderByPK(ds *DataSource, byItems []*util.ByItems) bool {
 	if ds.tableInfo.PKIsHandle && len(byItems) == 1 {
 		if col, isCol := byItems[0].Expr.(*expression.Column); isCol && col.Equal(nil, ds.getPKIsHandleCol()) {
