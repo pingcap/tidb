@@ -2880,7 +2880,6 @@ func (s *testSerialStatsSuite) TestLoadHistogramWithCollate(c *C) {
 	do := s.do
 	h := do.StatsHandle()
 	is := do.InfoSchema()
-	h = do.StatsHandle()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
