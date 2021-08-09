@@ -991,7 +991,7 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 
 	// test rename table failed caused by canceled.
 	test = &tests[21]
-	renameTableArgs := []interface{}{dbInfo.ID, model.NewCIStr("t2")}
+	renameTableArgs := []interface{}{dbInfo.ID, dbInfo.Name.L, model.NewCIStr("t2")}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, renameTableArgs, &test.cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)

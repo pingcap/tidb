@@ -1000,11 +1000,11 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		}
 		diff.TableID = job.TableID
 	case model.ActionRenameTables:
-		oldSchemaIDs := []int64{}
+		oldSchemas := []*model.DBInfo{}
 		newSchemaIDs := []int64{}
 		tableNames := []*model.CIStr{}
 		tableIDs := []int64{}
-		err = job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs)
+		err = job.DecodeArgs(&oldSchemas, &newSchemaIDs, &tableNames, &tableIDs)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -1014,12 +1014,12 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 				SchemaID:    newSchemaID,
 				TableID:     tableIDs[i],
 				OldTableID:  tableIDs[i],
-				OldSchemaID: oldSchemaIDs[i],
+				OldSchemaID: oldSchemas[i].ID,
 			}
 		}
 		diff.TableID = tableIDs[0]
 		diff.SchemaID = newSchemaIDs[0]
-		diff.OldSchemaID = oldSchemaIDs[0]
+		diff.OldSchemaID = oldSchemas[0].ID
 		diff.AffectedOpts = affects
 	case model.ActionExchangeTablePartition:
 		var (

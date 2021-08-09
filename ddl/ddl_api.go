@@ -4832,7 +4832,7 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 		SchemaName: schemas[1].Name.L,
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{schemas[0].ID, newIdent.Name},
+		Args:       []interface{}{schemas[0].ID, schemas[0].Name.L, newIdent.Name},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -4843,7 +4843,7 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Ident, isAlterTable bool) error {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	tableNames := make([]*model.CIStr, 0, len(oldIdents))
-	oldSchemaIDs := make([]int64, 0, len(oldIdents))
+	oldSchemas := make([]*model.DBInfo, 0, len(oldIdents))
 	newSchemaIDs := make([]int64, 0, len(oldIdents))
 	tableIDs := make([]int64, 0, len(oldIdents))
 
@@ -4859,7 +4859,7 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 		}
 		tableIDs = append(tableIDs, tableID)
 		tableNames = append(tableNames, &newIdents[i].Name)
-		oldSchemaIDs = append(oldSchemaIDs, schemas[0].ID)
+		oldSchemas = append(oldSchemas, schemas[0])
 		newSchemaIDs = append(newSchemaIDs, schemas[1].ID)
 	}
 
@@ -4869,7 +4869,7 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 		SchemaName: schemas[1].Name.L,
 		Type:       model.ActionRenameTables,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs},
+		Args:       []interface{}{oldSchemas, newSchemaIDs, tableNames, tableIDs},
 	}
 
 	err = d.doDDLJob(ctx, job)

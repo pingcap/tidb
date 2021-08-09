@@ -204,13 +204,13 @@ func testCreateView(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 	return job
 }
 
-func testRenameTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID, oldSchemaID int64, tblInfo *model.TableInfo) *model.Job {
+func testRenameTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID, oldSchemaID int64, oldSchemaName string, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   newSchemaID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{oldSchemaID, tblInfo.Name},
+		Args:       []interface{}{oldSchemaID, oldSchemaName, tblInfo.Name},
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
@@ -404,7 +404,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	// for rename table
 	dbInfo1 := testSchemaInfo(c, s.d, "test_rename_table")
 	testCreateSchema(c, testNewContext(s.d), s.d, dbInfo1)
-	job = testRenameTable(c, ctx, d, dbInfo1.ID, s.dbInfo.ID, tblInfo)
+	job = testRenameTable(c, ctx, d, dbInfo1.ID, s.dbInfo.ID, s.dbInfo.Name.L, tblInfo)
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 

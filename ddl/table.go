@@ -722,8 +722,9 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 
 func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var oldSchemaID int64
+	var oldSchemaName string
 	var tableName model.CIStr
-	if err := job.DecodeArgs(&oldSchemaID, &tableName); err != nil {
+	if err := job.DecodeArgs(&oldSchemaID, &oldSchemaName, &tableName); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -738,7 +739,7 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	ver, tblInfo, err := checkAndRenameTables(t, job, oldSchemaID, job.SchemaID, &tableName)
+	ver, tblInfo, err := checkAndRenameTables(t, job, oldSchemaName, oldSchemaID, job.SchemaID, &tableName)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -752,20 +753,20 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 }
 
 func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	oldSchemaIDs := []int64{}
+	oldSchemas := []*model.DBInfo{}
 	newSchemaIDs := []int64{}
 	tableNames := []*model.CIStr{}
 	tableIDs := []int64{}
-	if err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs); err != nil {
+	if err := job.DecodeArgs(&oldSchemas, &newSchemaIDs, &tableNames, &tableIDs); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	tblInfo := &model.TableInfo{}
 	var err error
-	for i, oldSchemaID := range oldSchemaIDs {
+	for i, oldSchema := range oldSchemas {
 		job.TableID = tableIDs[i]
-		ver, tblInfo, err = checkAndRenameTables(t, job, oldSchemaID, newSchemaIDs[i], tableNames[i])
+		ver, tblInfo, err = checkAndRenameTables(t, job, oldSchema.Name.L, oldSchema.ID, newSchemaIDs[i], tableNames[i])
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -779,7 +780,7 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	return ver, nil
 }
 
-func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID int64, newSchemaID int64, tableName *model.CIStr) (ver int64, tblInfo *model.TableInfo, _ error) {
+func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaName string, oldSchemaID int64, newSchemaID int64, tableName *model.CIStr) (ver int64, tblInfo *model.TableInfo, _ error) {
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, oldSchemaID)
 	if err != nil {
 		return ver, tblInfo, errors.Trace(err)
@@ -820,6 +821,22 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID int64, newSc
 		}
 	})
 
+	oldTableName := tblInfo.Name
+	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, oldSchemaName, oldTableName.L)
+	oldRuleIDs := []string{tableRuleID}
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		if len(pi.Definitions) != 0 {
+			for _, def := range pi.Definitions {
+				oldRuleIDs = append(oldRuleIDs, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName, oldTableName.L, def.Name.L))
+			}
+		}
+	}
+	oldRules, err := infosync.GetLabelRules(context.TODO(), oldRuleIDs)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, tblInfo, errors.Trace(err)
+	}
+
 	tblInfo.Name = *tableName
 	err = t.CreateTableOrView(newSchemaID, tblInfo)
 	if err != nil {
@@ -838,6 +855,30 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID int64, newSc
 			job.State = model.JobStateCancelled
 			return ver, tblInfo, errors.Trace(err)
 		}
+	}
+
+	var newRules []*label.Rule
+	for _, r := range oldRules {
+		if r.ID == tableRuleID {
+			newRules = append(newRules, r.Clone().Reset(tblInfo.ID, job.SchemaName, tblInfo.Name.L))
+		}
+	}
+
+	if tblInfo.GetPartitionInfo() != nil {
+		for _, r := range oldRules {
+			for _, def := range tblInfo.GetPartitionInfo().Definitions {
+				if r.ID == fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName, oldTableName.L, def.Name.L) {
+					newRules = append(newRules, r.Clone().Reset(def.ID, job.SchemaName, tblInfo.Name.L, def.Name.L))
+				}
+			}
+		}
+	}
+
+	patch := label.NewRulePatch(newRules, oldRuleIDs)
+	err = infosync.UpdateLabelRules(context.TODO(), patch)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, tblInfo, errors.Trace(err)
 	}
 
 	return ver, tblInfo, nil
