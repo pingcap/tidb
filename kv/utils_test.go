@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -78,6 +79,10 @@ func newMockMap() *mockMap {
 		index: make([]Key, 0),
 		value: make([][]byte, 0),
 	}
+}
+
+func (s *mockMap) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	//TODO nothing.
 }
 
 func (s *mockMap) Iter(Key, Key) (Iterator, error) {

@@ -33,6 +33,13 @@ type SortItem struct {
 	Desc bool
 }
 
+func (s *SortItem) String() string {
+	if s.Desc {
+		return fmt.Sprintf("{%s desc}", s.Col)
+	}
+	return fmt.Sprintf("{%s asc}", s.Col)
+}
+
 // MPPPartitionType is the way to partition during mpp data exchanging.
 type MPPPartitionType int
 

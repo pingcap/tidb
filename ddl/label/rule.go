@@ -35,6 +35,9 @@ var (
 	// TableIDFormat is the format of the label rule ID for a table.
 	// The format follows "schema/database_name/table_name".
 	TableIDFormat = "%s/%s/%s"
+	// PartitionIDFormat is the format of the label rule ID for a partition.
+	// The format follows "schema/database_name/table_name/partition_name".
+	PartitionIDFormat = "%s/%s/%s/%s"
 )
 
 // Rule is used to establish the relationship between labels and a key range.
@@ -93,4 +96,18 @@ func (r *Rule) ResetTable(id int64, dbName, tableName string) *Rule {
 		"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id+1))),
 	}
 	return r
+}
+
+// RulePatch is the patch to update the label rules.
+type RulePatch struct {
+	SetRules    []*Rule  `json:"sets"`
+	DeleteRules []string `json:"deletes"`
+}
+
+// NewRulePatch returns a patch of rules which need to be set or deleted.
+func NewRulePatch(setRules []*Rule, deleteRules []string) *RulePatch {
+	return &RulePatch{
+		SetRules:    setRules,
+		DeleteRules: deleteRules,
+	}
 }
