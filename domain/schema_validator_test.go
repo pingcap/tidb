@@ -22,17 +22,18 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
 
 func TestSchemaValidator(t *testing.T) {
 	t.Parallel()
-	t.Run("general", testSchemaValidatorGeneral)
-	t.Run("enqueue", testEnqueue)
-	t.Run("enqueueActionType", testEnqueueActionType)
+	t.Run("general", subTestSchemaValidatorGeneral)
+	t.Run("enqueue", subTestEnqueue)
+	t.Run("enqueueActionType", subTestEnqueueActionType)
 }
 
-func testSchemaValidatorGeneral(t *testing.T) {
+// subTestSchemaValidatorGeneral is batched in TestSchemaValidator
+func subTestSchemaValidatorGeneral(t *testing.T) {
 	lease := 10 * time.Millisecond
 	leaseGrantCh := make(chan leaseGrantItem)
 	oracleCh := make(chan uint64)
@@ -58,7 +59,7 @@ func testSchemaValidatorGeneral(t *testing.T) {
 		item.leaseGrantTS,
 		item.oldVer,
 		item.schemaVer,
-		&tikv.RelatedSchemaChange{PhyTblIDS: []int64{10}, ActionTypes: []uint64{10}})
+		&transaction.RelatedSchemaChange{PhyTblIDS: []int64{10}, ActionTypes: []uint64{10}})
 	_, valid := validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
 	require.Equal(t, ResultSucc, valid)
 
@@ -91,7 +92,7 @@ func testSchemaValidatorGeneral(t *testing.T) {
 	// Make sure newItem's version is greater than currVer.
 	newItem = getGreaterVersionItem(t, lease, leaseGrantCh, currVer)
 	// Update current schema version to newItem's version and the delta table IDs is 1, 2, 3.
-	validator.Update(ts, currVer, newItem.schemaVer, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{1, 2, 3}, ActionTypes: []uint64{1, 2, 3}})
+	validator.Update(ts, currVer, newItem.schemaVer, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{1, 2, 3}, ActionTypes: []uint64{1, 2, 3}})
 	// Make sure the updated table IDs don't be covered with the same schema version.
 	validator.Update(ts, newItem.schemaVer, newItem.schemaVer, nil)
 	_, isTablesChanged = validator.isRelatedTablesChanged(currVer, nil)
@@ -111,7 +112,8 @@ func testSchemaValidatorGeneral(t *testing.T) {
 	wg.Wait()
 }
 
-func testEnqueue(t *testing.T) {
+// subTestEnqueue is batched in TestSchemaValidator
+func subTestEnqueue(t *testing.T) {
 	lease := 10 * time.Millisecond
 	originalCnt := variable.GetMaxDeltaSchemaCount()
 	defer variable.SetMaxDeltaSchemaCount(originalCnt)
@@ -121,7 +123,7 @@ func testEnqueue(t *testing.T) {
 
 	// maxCnt is 0.
 	variable.SetMaxDeltaSchemaCount(0)
-	validator.enqueue(1, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{11}, ActionTypes: []uint64{11}})
+	validator.enqueue(1, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{11}, ActionTypes: []uint64{11}})
 	require.Len(t, validator.deltaSchemaInfos, 0)
 
 	// maxCnt is 10.
@@ -139,9 +141,9 @@ func testEnqueue(t *testing.T) {
 		{9, []int64{1, 2, 3}, []uint64{1, 2, 3}},
 	}
 	for _, d := range ds {
-		validator.enqueue(d.schemaVersion, &tikv.RelatedSchemaChange{PhyTblIDS: d.relatedIDs, ActionTypes: d.relatedActions})
+		validator.enqueue(d.schemaVersion, &transaction.RelatedSchemaChange{PhyTblIDS: d.relatedIDs, ActionTypes: d.relatedActions})
 	}
-	validator.enqueue(10, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{1}})
+	validator.enqueue(10, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{1}})
 	ret := []deltaSchemaInfo{
 		{0, []int64{1}, []uint64{1}},
 		{2, []int64{1}, []uint64{1}},
@@ -153,16 +155,16 @@ func testEnqueue(t *testing.T) {
 	}
 	require.Equal(t, ret, validator.deltaSchemaInfos)
 	// The Items' relatedTableIDs have different order.
-	validator.enqueue(11, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{1, 2, 3, 4}, ActionTypes: []uint64{1, 2, 3, 4}})
-	validator.enqueue(12, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{4, 1, 2, 3, 1}, ActionTypes: []uint64{4, 1, 2, 3, 1}})
-	validator.enqueue(13, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{4, 1, 3, 2, 5}, ActionTypes: []uint64{4, 1, 3, 2, 5}})
+	validator.enqueue(11, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{1, 2, 3, 4}, ActionTypes: []uint64{1, 2, 3, 4}})
+	validator.enqueue(12, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{4, 1, 2, 3, 1}, ActionTypes: []uint64{4, 1, 2, 3, 1}})
+	validator.enqueue(13, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{4, 1, 3, 2, 5}, ActionTypes: []uint64{4, 1, 3, 2, 5}})
 	ret[len(ret)-1] = deltaSchemaInfo{13, []int64{4, 1, 3, 2, 5}, []uint64{4, 1, 3, 2, 5}}
 	require.Equal(t, ret, validator.deltaSchemaInfos)
 	// The length of deltaSchemaInfos is greater then maxCnt.
-	validator.enqueue(14, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{1}})
-	validator.enqueue(15, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{2}, ActionTypes: []uint64{2}})
-	validator.enqueue(16, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{3}, ActionTypes: []uint64{3}})
-	validator.enqueue(17, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{4}, ActionTypes: []uint64{4}})
+	validator.enqueue(14, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{1}})
+	validator.enqueue(15, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{2}, ActionTypes: []uint64{2}})
+	validator.enqueue(16, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{3}, ActionTypes: []uint64{3}})
+	validator.enqueue(17, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{4}, ActionTypes: []uint64{4}})
 	ret = append(ret, deltaSchemaInfo{14, []int64{1}, []uint64{1}})
 	ret = append(ret, deltaSchemaInfo{15, []int64{2}, []uint64{2}})
 	ret = append(ret, deltaSchemaInfo{16, []int64{3}, []uint64{3}})
@@ -170,7 +172,8 @@ func testEnqueue(t *testing.T) {
 	require.Equal(t, ret[1:], validator.deltaSchemaInfos)
 }
 
-func testEnqueueActionType(t *testing.T) {
+// subTestEnqueueActionType is batched in TestSchemaValidator
+func subTestEnqueueActionType(t *testing.T) {
 	lease := 10 * time.Millisecond
 	originalCnt := variable.GetMaxDeltaSchemaCount()
 	defer variable.SetMaxDeltaSchemaCount(originalCnt)
@@ -180,7 +183,7 @@ func testEnqueueActionType(t *testing.T) {
 
 	// maxCnt is 0.
 	variable.SetMaxDeltaSchemaCount(0)
-	validator.enqueue(1, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{11}, ActionTypes: []uint64{11}})
+	validator.enqueue(1, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{11}, ActionTypes: []uint64{11}})
 	require.Len(t, validator.deltaSchemaInfos, 0)
 
 	// maxCnt is 10.
@@ -198,9 +201,9 @@ func testEnqueueActionType(t *testing.T) {
 		{9, []int64{1, 2, 3}, []uint64{1, 2, 4}},
 	}
 	for _, d := range ds {
-		validator.enqueue(d.schemaVersion, &tikv.RelatedSchemaChange{PhyTblIDS: d.relatedIDs, ActionTypes: d.relatedActions})
+		validator.enqueue(d.schemaVersion, &transaction.RelatedSchemaChange{PhyTblIDS: d.relatedIDs, ActionTypes: d.relatedActions})
 	}
-	validator.enqueue(10, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{15}})
+	validator.enqueue(10, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{15}})
 	ret := []deltaSchemaInfo{
 		{0, []int64{1}, []uint64{1}},
 		{2, []int64{1}, []uint64{1}},
