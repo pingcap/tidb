@@ -14,9 +14,8 @@
 package printer
 
 import (
+	"github.com/stretchr/testify/require"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestPrintResult(t *testing.T) {
@@ -24,8 +23,8 @@ func TestPrintResult(t *testing.T) {
 	cols := []string{"col1", "col2", "col3"}
 	datas := [][]string{{"11"}, {"21", "22", "23"}}
 	result, ok := GetPrintResult(cols, datas)
-	assert.False(t, ok)
-	assert.Equal(t, "", result)
+	require.False(t, ok)
+	require.Equal(t, "", result)
 
 	datas = [][]string{{"11", "12", "13"}, {"21", "22", "23"}}
 	expect := `
@@ -37,16 +36,16 @@ func TestPrintResult(t *testing.T) {
 +------+------+------+
 `
 	result, ok = GetPrintResult(cols, datas)
-	assert.True(t, ok)
-	assert.Equal(t, expect[1:], result)
+	require.True(t, ok)
+	require.Equal(t, expect[1:], result)
 
 	datas = nil
 	result, ok = GetPrintResult(cols, datas)
-	assert.False(t, ok)
-	assert.Equal(t, "", result)
+	require.False(t, ok)
+	require.Equal(t, "", result)
 
 	cols = nil
 	result, ok = GetPrintResult(cols, datas)
-	assert.False(t, ok)
-	assert.Equal(t, "", result)
+	require.False(t, ok)
+	require.Equal(t, "", result)
 }
