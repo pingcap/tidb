@@ -1819,6 +1819,25 @@ func (cli *testServerClient) runTestMultiStatements(c *C) {
 		} else {
 			dbt.Error("no data")
 		}
+
+		// Test issue #26688
+		// First we "reset" the CurrentDB by using a database and then dropping it.
+		dbt.mustExec("CREATE DATABASE dropme")
+		dbt.mustExec("USE dropme")
+		dbt.mustExec("DROP DATABASE dropme")
+		var usedb string
+		rows = dbt.mustQuery("SELECT IFNULL(DATABASE(),'success')")
+		if rows.Next() {
+			err = rows.Scan(&usedb)
+			c.Assert(err, IsNil)
+			c.Assert(usedb, Equals, "success")
+		} else {
+			dbt.Error("no database() result")
+		}
+		// Because no DB is selected, if the use multistmtuse is not successful, then
+		// the create table + drop table statements will return errors.
+		dbt.mustExec("CREATE DATABASE multistmtuse")
+		dbt.mustExec("use multistmtuse; create table if not exists t1 (id int); drop table t1;")
 	})
 }
 
