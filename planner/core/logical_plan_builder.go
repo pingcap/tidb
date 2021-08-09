@@ -3180,15 +3180,28 @@ func (b *PlanBuilder) addAliasName(ctx context.Context, selectFields []*ast.Sele
 	projOutNames := make([]*types.FieldName, 0, len(selectFields))
 	for _, field := range selectFields {
 		var expr expression.Expression
-		switch field.Expr.(type) {
-		case *ast.ColumnNameExpr:
-			expr = &expression.Column{}
+		colNameField, isColumnNameExpr := field.Expr.(*ast.ColumnNameExpr)
+		if isColumnNameExpr {
+			colName := colNameField.Name.Name
+			if field.AsName.L != "" {
+				colName = field.AsName
+			}
+			projOutNames = append(projOutNames, &types.FieldName{
+				TblName:     colNameField.Name.Table,
+				OrigTblName: colNameField.Name.Table,
+				ColName:     colName,
+				OrigColName: colNameField.Name.Name,
+				DBName:      colNameField.Name.Schema,
+			})
+		} else {
+			// create view v as select name_const('col', 100);
+			// The column in v should be 'col', so we call `buildProjectionField` to handle this.
+			_, name, err := b.buildProjectionField(ctx, p, field, expr)
+			if err != nil {
+				return nil, err
+			}
+			projOutNames = append(projOutNames, name)
 		}
-		_, name, err := b.buildProjectionField(ctx, p, field, expr)
-		if err != nil {
-			return nil, err
-		}
-		projOutNames = append(projOutNames, name)
 	}
 
 	for i, field := range selectFields {
