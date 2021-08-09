@@ -2533,6 +2533,7 @@ const (
 	ShowPlacementForDatabase
 	ShowPlacementForTable
 	ShowPlacementForPartition
+	ShowPlacementLabels
 )
 
 const (
@@ -2868,6 +2869,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("IMPORTS")
 		case ShowPlacement:
 			ctx.WriteKeyWord("PLACEMENT")
+		case ShowPlacementLabels:
+			ctx.WriteKeyWord("PLACEMENT LABELS")
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}

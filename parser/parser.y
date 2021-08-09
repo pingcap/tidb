@@ -10420,6 +10420,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlacement}
 	}
+|	"PLACEMENT" "LABELS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowPlacementLabels}
+	}
 
 ShowLikeOrWhereOpt:
 	{
