@@ -16,14 +16,14 @@ package core_test
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/tidb/session"
 	"math/rand"
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
