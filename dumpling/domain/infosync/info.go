@@ -836,6 +836,36 @@ func PutLabelRule(ctx context.Context, rule *label.Rule) error {
 	return err
 }
 
+// UpdateLabelRules synchronizes the label rule to PD.
+func UpdateLabelRules(ctx context.Context, patch *label.RulePatch) error {
+	if patch == nil || (len(patch.DeleteRules) == 0 && len(patch.SetRules) == 0) {
+		return nil
+	}
+
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+
+	if is.etcdCli == nil {
+		return nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return errors.Errorf("pd unavailable")
+	}
+
+	r, err := json.Marshal(patch)
+	if err != nil {
+		return err
+	}
+
+	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "region-label", "rules"), "PATCH", bytes.NewReader(r))
+	return err
+}
+
 // GetAllLabelRules gets all label rules from PD.
 func GetAllLabelRules(ctx context.Context) ([]*label.Rule, error) {
 	is, err := getGlobalInfoSyncer()
