@@ -386,8 +386,8 @@ func (s *mysqlSuite) TestFetchRemoteTableModels_4_x_auto_random(c *C) {
 }
 
 func (s *mysqlSuite) TestWriteRowsErrorDowngrading(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/br/pkg/lightning/backend/tidb/mockNonRetryableError", "return"), IsNil)
-	defer failpoint.Disable("github.com/pingcap/br/pkg/lightning/backend/tidb/mockNonRetryableError")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/tidb/mockNonRetryableError", "return"), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/tidb/mockNonRetryableError")
 
 	// First, batch insert, fail and rollback.
 	s.mockDB.
@@ -396,7 +396,7 @@ func (s *mysqlSuite) TestWriteRowsErrorDowngrading(c *C) {
 	// Then, insert row-by-row due to the non-retryable error.
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
-		WillReturnResult(sqlmock.NewResult(1, 1))
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	// TODO: skip the previous error and continue writing the rest.
 	// s.mockDB.
 	// 	ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
