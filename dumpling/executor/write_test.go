@@ -2169,7 +2169,6 @@ func (s *testSuite4) TestLoadData(c *C) {
 		{[]byte("\t2\t3"), []byte("\t4\t5"), nil, []byte("\t2\t3\t4\t5"), "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
-	c.Assert(sc.WarningCount(), Equals, uint16(1))
 
 	// lines starting symbol is "" and terminated symbol length is 2, InsertData returns data is nil
 	ld.LinesInfo.Terminated = "||"
