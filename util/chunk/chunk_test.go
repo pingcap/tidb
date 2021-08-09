@@ -262,6 +262,7 @@ func TestTruncateTo(t *testing.T) {
 	require.Equal(t, 6, col.nullCount())
 	require.Equal(t, string([]byte{0b1010101, 0b0000101}), string(col.nullBitmap))
 	require.Equal(t, 13, len(col.offsets))
+	require.Equal(t, 150, len(col.data))
 	require.Equal(t, (len(jsonObj.Value)+int(unsafe.Sizeof(jsonObj.TypeCode)))*6, len(col.data))
 	require.Equal(t, 0, len(col.elemBuf))
 	for i := 0; i < 12; i += 2 {
