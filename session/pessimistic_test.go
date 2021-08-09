@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -67,15 +67,15 @@ type testPessimisticSuite struct {
 func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	s.testSessionSuiteBase.SetUpSuite(c)
 	// Set it to 300ms for testing lock resolve.
-	atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
-	tikv.PrewriteMaxBackoff = 500
-	tikv.VeryLongMaxBackoff = 500
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
+	transaction.PrewriteMaxBackoff = 500
+	transaction.VeryLongMaxBackoff = 500
 }
 
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
 	s.testSessionSuiteBase.TearDownSuite(c)
-	tikv.PrewriteMaxBackoff = 20000
-	tikv.VeryLongMaxBackoff = 600000
+	transaction.PrewriteMaxBackoff = 20000
+	transaction.VeryLongMaxBackoff = 600000
 }
 
 func (s *testPessimisticSuite) TestPessimisticTxn(c *C) {
@@ -437,9 +437,9 @@ func (s *testPessimisticSuite) TestLockUnchangedRowKey(c *C) {
 
 func (s *testPessimisticSuite) TestOptimisticConflicts(c *C) {
 	// To avoid the resolve lock request arrives earlier before heartbeat request while lock expires.
-	atomic.StoreUint64(&tikv.ManagedLockTTL, 1000)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 1000)
 	defer func() {
-		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+		atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
 	}()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
@@ -708,9 +708,9 @@ func (s *testPessimisticSuite) TestConcurrentInsert(c *C) {
 
 func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	// Increasing the ManagedLockTTL so that the lock may not be resolved testing with TiKV.
-	atomic.StoreUint64(&tikv.ManagedLockTTL, 5000)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	defer func() {
-		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+		atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
 	}()
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists tk")
@@ -837,9 +837,9 @@ func (s *testPessimisticSuite) TestPushConditionCheckForPessimisticTxn(c *C) {
 
 func (s *testPessimisticSuite) TestInnodbLockWaitTimeoutWaitStart(c *C) {
 	// Increasing the ManagedLockTTL so that the lock may not be resolved testing with TiKV.
-	atomic.StoreUint64(&tikv.ManagedLockTTL, 5000)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	defer func() {
-		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+		atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
 	}()
 	// prepare work
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -1190,8 +1190,8 @@ func (s *testPessimisticSuite) TestPessimisticLockNonExistsKey(c *C) {
 
 func (s *testPessimisticSuite) TestPessimisticCommitReadLock(c *C) {
 	// set lock ttl to 3s, tk1 lock wait timeout is 2s
-	atomic.StoreUint64(&tikv.ManagedLockTTL, 3000)
-	defer atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 3000)
+	defer atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
@@ -1295,8 +1295,8 @@ func (s *testPessimisticSuite) TestNonAutoCommitWithPessimisticMode(c *C) {
 }
 
 func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
-	atomic.StoreUint64(&tikv.ManagedLockTTL, 3000)
-	defer atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 3000)
+	defer atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustExec("use test")
@@ -1443,8 +1443,8 @@ func (s *testPessimisticSuite) TestRCIndexMerge(c *C) {
 }
 
 func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
-	atomic.StoreUint64(&tikv.ManagedLockTTL, 3000)
-	defer atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 3000)
+	defer atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_row_format_version = %d", variable.DefTiDBRowFormatV2))
@@ -2572,9 +2572,9 @@ func (s *testPessimisticSuite) TestPlanCacheSchemaChange(c *C) {
 }
 
 func (s *testPessimisticSuite) TestAsyncCommitCalTSFail(c *C) {
-	atomic.StoreUint64(&tikv.ManagedLockTTL, 5000)
+	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	defer func() {
-		atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
+		atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
 	}()
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
