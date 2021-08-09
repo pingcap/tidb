@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/util/codec"
 	pd "github.com/tikv/pd/client"
+	pdapi "github.com/tikv/pd/server/api"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -33,6 +34,7 @@ import (
 const (
 	clusterVersionPrefix = "pd/api/v1/config/cluster-version"
 	regionCountPrefix    = "pd/api/v1/stats/region"
+	storePrefix          = "pd/api/v1/store"
 	schedulerPrefix      = "pd/api/v1/schedulers"
 	maxMsgSize           = int(128 * units.MiB) // pd.ScanRegion may return a large response
 	scheduleConfigPrefix = "pd/api/v1/config/schedule"
@@ -333,6 +335,33 @@ func (p *PdController) getRegionCountWith(
 		return int(regionsMap["count"].(float64)), nil
 	}
 	return 0, errors.Trace(err)
+}
+
+// GetStoreInfo returns the info of store with the specified id.
+func (p *PdController) GetStoreInfo(ctx context.Context, storeID uint64) (*pdapi.StoreInfo, error) {
+	return p.getStoreInfoWith(ctx, pdRequest, storeID)
+}
+
+func (p *PdController) getStoreInfoWith(
+	ctx context.Context, get pdHTTPRequest, storeID uint64) (*pdapi.StoreInfo, error) {
+	var err error
+	for _, addr := range p.addrs {
+		query := fmt.Sprintf(
+			"%s/%d",
+			storePrefix, storeID)
+		v, e := get(ctx, addr, query, p.cli, http.MethodGet, nil)
+		if e != nil {
+			err = e
+			continue
+		}
+		store := pdapi.StoreInfo{}
+		err = json.Unmarshal(v, &store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &store, nil
+	}
+	return nil, errors.Trace(err)
 }
 
 func (p *PdController) doPauseSchedulers(ctx context.Context, schedulers []string, post pdHTTPRequest) ([]string, error) {

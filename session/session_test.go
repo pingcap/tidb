@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
 )
@@ -1328,8 +1329,9 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	c.Assert(id, Equals, uint32(1))
 	c.Assert(ps, Equals, 1)
 	tk.MustExec(`set @a=1`)
-	_, err = tk.Se.ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum("1")})
+	rs, err := tk.Se.ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum("1")})
 	c.Assert(err, IsNil)
+	rs.Close()
 	err = tk.Se.DropPreparedStmt(id)
 	c.Assert(err, IsNil)
 
@@ -1349,7 +1351,7 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	tk.MustExec("insert multiexec values (1, 1), (2, 2)")
 	id, _, _, err = tk.Se.PrepareStmt("select a from multiexec where b = ? order by b")
 	c.Assert(err, IsNil)
-	rs, err := tk.Se.ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum(1)})
 	c.Assert(err, IsNil)
 	rs.Close()
 	rs, err = tk.Se.ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum(2)})
@@ -1963,17 +1965,26 @@ func (s *testSessionSuite3) TestCaseInsensitive(c *C) {
 
 	tk.MustExec("create table T (a text, B int)")
 	tk.MustExec("insert t (A, b) values ('aaa', 1)")
-	rs, _ := tk.Exec("select * from t")
+	rs, err := tk.Exec("select * from t")
+	c.Assert(err, IsNil)
 	fields := rs.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "a")
 	c.Assert(fields[1].ColumnAsName.O, Equals, "B")
-	rs, _ = tk.Exec("select A, b from t")
+	rs.Close()
+
+	rs, err = tk.Exec("select A, b from t")
+	c.Assert(err, IsNil)
 	fields = rs.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
 	c.Assert(fields[1].ColumnAsName.O, Equals, "b")
-	rs, _ = tk.Exec("select a as A from t where A > 0")
+	rs.Close()
+
+	rs, err = tk.Exec("select a as A from t where A > 0")
+	c.Assert(err, IsNil)
 	fields = rs.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
+	rs.Close()
+
 	tk.MustExec("update T set b = B + 1")
 	tk.MustExec("update T set B = b + 1")
 	tk.MustQuery("select b from T").Check(testkit.Rows("3"))
@@ -2823,8 +2834,8 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	c.Assert(failpoint.Enable("tikvclient/probeSetVars", `return(true)`), IsNil)
 	tk.MustExec("select * from kvvars where a = 1")
 	c.Assert(failpoint.Disable("tikvclient/probeSetVars"), IsNil)
-	c.Assert(tikv.SetSuccess, IsTrue)
-	tikv.SetSuccess = false
+	c.Assert(transaction.SetSuccess, IsTrue)
+	transaction.SetSuccess = false
 }
 
 func (s *testSessionSuite2) TestCommitRetryCount(c *C) {

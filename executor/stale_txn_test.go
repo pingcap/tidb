@@ -211,12 +211,15 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		} else if testcase.preSec > 0 {
 			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance", fmt.Sprintf(`return(%d)`, time.Now().Unix()-testcase.preSec)), IsNil)
 		}
-		_, err := tk.Exec(testcase.sql)
+		rs, err := tk.Exec(testcase.sql)
 		if len(testcase.errorStr) != 0 {
 			c.Assert(err, ErrorMatches, testcase.errorStr)
 			continue
 		}
 		c.Assert(err, IsNil, Commentf("sql:%s, error stack %v", testcase.sql, errors.ErrorStack(err)))
+		if rs != nil {
+			rs.Close()
+		}
 		if testcase.expectPhysicalTS > 0 {
 			c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
 		} else if testcase.preSec > 0 {
@@ -696,8 +699,7 @@ func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *
 		c.Log(testcase.name)
 		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
 		if testcase.isValidate {
-			_, err := tk.Exec(testcase.sql)
-			c.Assert(err, IsNil)
+			tk.MustExec(testcase.sql)
 		} else {
 			err := tk.ExecToErr(testcase.sql)
 			c.Assert(err, NotNil)
@@ -706,8 +708,7 @@ func (s *testStaleTxnSerialSuite) TestValidateReadOnlyInStalenessTransaction(c *
 		tk.MustExec("commit")
 		tk.MustExec("set transaction read only as of timestamp NOW(3);")
 		if testcase.isValidate {
-			_, err := tk.Exec(testcase.sql)
-			c.Assert(err, IsNil)
+			tk.MustExec(testcase.sql)
 		} else {
 			err := tk.ExecToErr(testcase.sql)
 			c.Assert(err, NotNil)
