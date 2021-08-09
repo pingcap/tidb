@@ -16,6 +16,8 @@ package core_test
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/session"
 	"math/rand"
 	"strings"
 
@@ -263,10 +265,10 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionDML(c *C) {
 	tk.MustQuery("select a from tlist order by a").Check(testkit.Rows())
 }
 
-func (s *testIntegrationPartitionSerialSuite) TestListPartitionDDL(c *C) {
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionCreation(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("create database list_partition_dml")
-	tk.MustExec("use list_partition_dml")
+	tk.MustExec("create database list_partition_cre")
+	tk.MustExec("use list_partition_cre")
 	tk.MustExec("drop table if exists tlist")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
 
@@ -290,6 +292,256 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionDDL(c *C) {
 	c.Assert(tk.ExecToErr("create table texp4 (a int, b int) partition by list(a|b) (partition p0 values in (0))"), ErrorMatches, ".*This partition function is not allowed.*")
 	c.Assert(tk.ExecToErr("create table texp4 (a int, b int) partition by list(a^b) (partition p0 values in (0))"), ErrorMatches, ".*This partition function is not allowed.*")
 	c.Assert(tk.ExecToErr("create table texp4 (a int, b int) partition by list(a&b) (partition p0 values in (0))"), ErrorMatches, ".*This partition function is not allowed.*")
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionDDL(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_ddl")
+	tk.MustExec("use list_partition_ddl")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+
+	// index
+	tk.MustExec(`create table tlist (a int, b int) partition by list (a) (partition p0 values in (0))`)
+	c.Assert(tk.ExecToErr(`alter table tlist add primary key (b)`), ErrorMatches, ".*must include all.*") // add pk
+	tk.MustExec(`alter table tlist add primary key (a)`)
+	c.Assert(tk.ExecToErr(`alter table tlist add unique key (b)`), ErrorMatches, ".*must include all.*") // add uk
+	tk.MustExec(`alter table tlist add key (b)`)                                                         // add index
+	tk.MustExec(`alter table tlist rename index b to bb`)
+	tk.MustExec(`alter table tlist drop index bb`)
+
+	// column
+	tk.MustExec(`alter table tlist add column c varchar(8)`)
+	tk.MustExec(`alter table tlist rename column c to cc`)
+	tk.MustExec(`alter table tlist drop column cc`)
+
+	// table
+	tk.MustExec(`alter table tlist rename to tlistxx`)
+	tk.MustExec(`truncate tlistxx`)
+	tk.MustExec(`drop table tlistxx`)
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionOperations(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_op")
+	tk.MustExec("use list_partition_op")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+
+	tk.MustExec(`create table tlist (a int) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14),
+    partition p3 values in (15, 16, 17, 18, 19))`)
+
+	// truncate
+	tk.MustExec("insert into tlist values (0), (5), (10), (15)")
+	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("0", "10", "15", "5"))
+	tk.MustExec("alter table tlist truncate partition p0")
+	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("10", "15", "5"))
+	tk.MustExec("alter table tlist truncate partition p1, p2")
+	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("15"))
+
+	// drop partition
+	tk.MustExec("insert into tlist values (0), (5), (10)")
+	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("0", "10", "15", "5"))
+	tk.MustExec("alter table tlist drop partition p0")
+	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("10", "15", "5"))
+	c.Assert(tk.ExecToErr("select * from tlist partition (p0)"), ErrorMatches, ".*Unknown partition.*")
+	tk.MustExec("alter table tlist drop partition p1, p2")
+	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("15"))
+	c.Assert(tk.ExecToErr("select * from tlist partition (p1)"), ErrorMatches, ".*Unknown partition.*")
+	c.Assert(tk.ExecToErr("alter table tlist drop partition p3"), ErrorMatches, ".*Cannot remove all partitions.*")
+
+	// add partition
+	tk.MustExec("alter table tlist add partition (partition p0 values in (0, 1, 2, 3, 4))")
+	tk.MustExec("alter table tlist add partition (partition p1 values in (5, 6, 7, 8, 9), partition p2 values in (10, 11, 12, 13, 14))")
+	tk.MustExec("insert into tlist values (0), (5), (10)")
+	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("0", "10", "15", "5"))
+	c.Assert(tk.ExecToErr("alter table tlist add partition (partition pxxx values in (4))"), ErrorMatches, ".*Multiple definition.*")
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionPrivilege(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se = se
+	tk.MustExec("create database list_partition_pri")
+	tk.MustExec("use list_partition_pri")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`create table tlist (a int) partition by list (a) (partition p0 values in (0), partition p1 values in (1))`)
+
+	tk.MustExec(`create user 'priv_test'@'%'`)
+	tk.MustExec(`grant select on list_partition_pri.tlist to 'priv_test'`)
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "priv_test", Hostname: "%"}, nil, nil), IsTrue)
+	tk1.Se = se
+	tk1.MustExec(`use list_partition_pri`)
+	c.Assert(tk1.ExecToErr(`alter table tlist truncate partition p0`), ErrorMatches, ".*denied.*")
+	c.Assert(tk1.ExecToErr(`alter table tlist drop partition p0`), ErrorMatches, ".*denied.*")
+	c.Assert(tk1.ExecToErr(`alter table tlist add partition (partition p2 values in (2))`), ErrorMatches, ".*denied.*")
+	c.Assert(tk1.ExecToErr(`insert into tlist values (1)`), ErrorMatches, ".*denied.*")
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionShardBits(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_shard_bits")
+	tk.MustExec("use list_partition_shard_bits")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+
+	tk.MustExec(`create table tlist (a int) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
+	tk.MustExec("insert into tlist values (0), (1), (5), (6), (10), (12)")
+
+	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("0", "1", "10", "12", "5", "6"))
+	tk.MustQuery("select * from tlist partition (p0)").Sort().Check(testkit.Rows("0", "1"))
+	tk.MustQuery("select * from tlist partition (p1, p2)").Sort().Check(testkit.Rows("10", "12", "5", "6"))
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionSplitRegion(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_split_region")
+	tk.MustExec("use list_partition_split_region")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+
+	tk.MustExec(`create table tlist (a int, key(a)) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
+	tk.MustExec("insert into tlist values (0), (1), (5), (6), (10), (12)")
+
+	tk.MustExec(`split table tlist index a between (2) and (15) regions 10`)
+	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("0", "1", "10", "12", "5", "6"))
+	tk.MustQuery("select * from tlist partition (p0)").Sort().Check(testkit.Rows("0", "1"))
+	tk.MustQuery("select * from tlist partition (p1, p2)").Sort().Check(testkit.Rows("10", "12", "5", "6"))
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionView(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_view")
+	tk.MustExec("use list_partition_view")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+
+	tk.MustExec(`create table tlist (a int, b int) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
+	tk.MustExec(`create definer='root'@'localhost' view vlist as select a*2 as a2, a+b as ab from tlist`)
+	tk.MustExec(`create table tnormal (a int, b int)`)
+	tk.MustExec(`create definer='root'@'localhost' view vnormal as select a*2 as a2, a+b as ab from tnormal`)
+	for i := 0; i < 10; i++ {
+		a, b := rand.Intn(15), rand.Intn(100)
+		tk.MustExec(fmt.Sprintf(`insert into tlist values (%v, %v)`, a, b))
+		tk.MustExec(fmt.Sprintf(`insert into tnormal values (%v, %v)`, a, b))
+	}
+
+	r1 := tk.MustQuery(`select * from vlist`).Sort()
+	r2 := tk.MustQuery(`select * from vnormal`).Sort()
+	r1.Check(r2.Rows())
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionAutoIncre(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_auto_incre")
+	tk.MustExec("use list_partition_auto_incre")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+
+	c.Assert(tk.ExecToErr(`create table tlist (a int, b int AUTO_INCREMENT) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`), ErrorMatches, ".*it must be defined as a key.*")
+
+	tk.MustExec(`create table tlist (a int, b int AUTO_INCREMENT, key(b)) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
+
+	tk.MustExec(`insert into tlist (a) values (0)`)
+	tk.MustExec(`insert into tlist (a) values (5)`)
+	tk.MustExec(`insert into tlist (a) values (10)`)
+	tk.MustExec(`insert into tlist (a) values (1)`)
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionAutoRandom(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_auto_rand")
+	tk.MustExec("use list_partition_auto_rand")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+
+	c.Assert(tk.ExecToErr(`create table tlist (a int, b bigint AUTO_RANDOM) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`), ErrorMatches, ".*Invalid auto random.*")
+
+	tk.MustExec(`create table tlist (a bigint auto_random, primary key(a)) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionInvisibleIdx(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_invisible_idx")
+	tk.MustExec("use list_partition_invisible_idx")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+
+	tk.MustExec(`create table tlist (a int, b int, key(a)) partition by list (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5))`)
+	tk.MustExec(`alter table tlist alter index a invisible`)
+	tk.HasPlan(`select a from tlist where a>=0 and a<=5`, "TableFullScan")
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionCTE(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_cte")
+	tk.MustExec("use list_partition_cte")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+
+	tk.MustExec(`create table tlist (a int) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
+
+	tk.MustExec(`insert into tlist values (0), (1), (5), (6), (10)`)
+	tk.MustQuery(`with tmp as (select a+1 as a from tlist) select * from tmp`).Sort().Check(testkit.Rows("1", "11", "2", "6", "7"))
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionTempTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_temp_table")
+	tk.MustExec("use list_partition_temp_table")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec("set tidb_enable_global_temporary_table = true")
+	c.Assert(tk.ExecToErr("create global temporary table t(a int, b int) partition by list(a) (partition p0 values in (0)) on commit delete rows"), ErrorMatches, ".*Cannot create temporary table with partitions.*")
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionAlterPK(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_alter_pk")
+	tk.MustExec("use list_partition_alter_pk")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`create table tlist (a int, b int) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
+	tk.MustExec(`alter table tlist add primary key(a)`)
+	tk.MustExec(`alter table tlist drop primary key`)
+	c.Assert(tk.ExecToErr(`alter table tlist add primary key(b)`), ErrorMatches, ".*must include all columns.*")
 }
 
 func genListPartition(begin, end int) string {
