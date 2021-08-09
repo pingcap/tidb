@@ -20,13 +20,13 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testChunkSuite) TestList(c *check.C) {
+func TestList(t *testing.T) {
 	fields := []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 	}
@@ -39,18 +39,18 @@ func (s *testChunkSuite) TestList(c *check.C) {
 	for i := 0; i < 5; i++ {
 		l.AppendRow(srcRow)
 	}
-	c.Assert(l.NumChunks(), check.Equals, 3)
-	c.Assert(l.Len(), check.Equals, 5)
-	c.Assert(len(l.freelist), check.Equals, 0)
+	require.Equal(t, 3, l.NumChunks())
+	require.Equal(t, 5, l.Len())
+	require.Empty(t, l.freelist)
 
 	// Test chunk reuse.
 	l.Reset()
-	c.Assert(len(l.freelist), check.Equals, 3)
+	require.Len(t, l.freelist, 3)
 
 	for i := 0; i < 5; i++ {
 		l.AppendRow(srcRow)
 	}
-	c.Assert(len(l.freelist), check.Equals, 0)
+	require.Empty(t, l.freelist)
 
 	// Test add chunk then append row.
 	l.Reset()
@@ -58,11 +58,11 @@ func (s *testChunkSuite) TestList(c *check.C) {
 	nChunk.AppendNull(0)
 	l.Add(nChunk)
 	ptr := l.AppendRow(srcRow)
-	c.Assert(l.NumChunks(), check.Equals, 2)
-	c.Assert(ptr.ChkIdx, check.Equals, uint32(1))
-	c.Assert(ptr.RowIdx, check.Equals, uint32(0))
+	require.Equal(t, 2, l.NumChunks())
+	require.Equal(t, uint32(1), ptr.ChkIdx)
+	require.Equal(t, uint32(0), ptr.RowIdx)
 	row := l.GetRow(ptr)
-	c.Assert(row.GetInt64(0), check.Equals, int64(1))
+	require.Equal(t, int64(1), row.GetInt64(0))
 
 	// Test iteration.
 	l.Reset()
@@ -77,11 +77,11 @@ func (s *testChunkSuite) TestList(c *check.C) {
 		results = append(results, r.GetInt64(0))
 		return nil
 	})
-	c.Assert(err, check.IsNil)
-	c.Assert(results, check.DeepEquals, expected)
+	require.NoError(t, err)
+	require.Equal(t, expected, results)
 }
 
-func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
+func TestListMemoryUsage(t *testing.T) {
 	fieldTypes := make([]*types.FieldType, 0, 5)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
@@ -90,7 +90,7 @@ func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
 
 	jsonObj, err := json.ParseBinaryFromString("1")
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
@@ -103,17 +103,17 @@ func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
 	srcChk.AppendDuration(4, durationObj)
 
 	list := NewList(fieldTypes, maxChunkSize, maxChunkSize*2)
-	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, int64(0))
+	require.Equal(t, int64(0), list.GetMemTracker().BytesConsumed())
 
 	list.AppendRow(srcChk.GetRow(0))
-	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, int64(0))
+	require.Equal(t, int64(0), list.GetMemTracker().BytesConsumed())
 
 	memUsage := list.chunks[0].MemoryUsage()
 	list.Reset()
-	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, memUsage)
+	require.Equal(t, memUsage, list.GetMemTracker().BytesConsumed())
 
 	list.Add(srcChk)
-	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, memUsage+srcChk.MemoryUsage())
+	require.Equal(t, memUsage+srcChk.MemoryUsage(), list.GetMemTracker().BytesConsumed())
 }
 
 func BenchmarkListMemoryUsage(b *testing.B) {
