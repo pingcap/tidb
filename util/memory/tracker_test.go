@@ -432,7 +432,7 @@ func TestFormatBytesWithPrune(t *testing.T) {
 		b, err := parseByte(ca.b)
 		require.NoError(t, err)
 		result := FormatBytes(b)
-		require.Equal(t, ca.s, result)
+		require.Equalf(t, ca.s, result, "input: %v", ca.b)
 		fmt.Printf("input: %v\n", ca.b)
 	}
 }
