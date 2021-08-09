@@ -14,35 +14,29 @@
 package chunk
 
 import (
-	"errors"
+	"testing"
 	"time"
 
-	"github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = check.Suite(&rowContainerTestSuite{})
-var _ = check.SerialSuites(&rowContainerTestSerialSuite{})
-
-type rowContainerTestSuite struct{}
-type rowContainerTestSerialSuite struct{}
-
-func (r *rowContainerTestSuite) TestNewRowContainer(c *check.C) {
+func TestNewRowContainer(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, 1024)
-	c.Assert(rc, check.NotNil)
-	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
+	require.NotNil(t, rc)
+	require.False(t, rc.AlreadySpilledSafeForTest())
 }
 
-func (r *rowContainerTestSuite) TestSel(c *check.C) {
+func TestSel(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	sz := 4
 	rc := NewRowContainer(fields, sz)
-	c.Assert(rc, check.NotNil)
-	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
+	require.NotNil(t, rc)
+	require.False(t, rc.AlreadySpilledSafeForTest())
 	n := 64
 	chk := NewChunkWithCapacity(fields, sz)
 	numRows := 0
@@ -52,12 +46,12 @@ func (r *rowContainerTestSuite) TestSel(c *check.C) {
 			chk.SetSel([]int{0, 2})
 			numRows += 2
 			err := rc.Add(chk)
-			c.Assert(err, check.IsNil)
+			require.NoError(t, err)
 			chk = NewChunkWithCapacity(fields, sz)
 		}
 	}
-	c.Assert(rc.NumChunks(), check.Equals, numRows/2)
-	c.Assert(rc.NumRow(), check.Equals, numRows)
+	require.Equal(t, numRows/2, rc.NumChunks())
+	require.Equal(t, numRows, rc.NumRow())
 	for i := n - sz; i < n; i++ {
 		chk.AppendInt64(0, int64(i))
 	}
@@ -66,28 +60,28 @@ func (r *rowContainerTestSuite) TestSel(c *check.C) {
 	checkByIter := func(it Iterator) {
 		i := 0
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			c.Assert(row.GetInt64(0), check.Equals, int64(i))
+			require.Equal(t, int64(i), row.GetInt64(0))
 			if i < n-sz {
 				i += 2
 			} else {
 				i++
 			}
 		}
-		c.Assert(i, check.Equals, n-1)
+		require.Equal(t, n-1, i)
 	}
 	checkByIter(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4Chunk(chk)))
 	rc.SpillToDisk()
 	err := rc.m.spillError
-	c.Assert(err, check.IsNil)
-	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, true)
+	require.NoError(t, err)
+	require.True(t, rc.AlreadySpilledSafeForTest())
 	checkByIter(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4Chunk(chk)))
 	err = rc.Close()
-	c.Assert(err, check.IsNil)
-	c.Assert(rc.memTracker.BytesConsumed(), check.Equals, int64(0))
-	c.Assert(rc.memTracker.MaxConsumed(), check.Greater, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), rc.memTracker.BytesConsumed())
+	require.Greater(t, rc.memTracker.MaxConsumed(), int64(0))
 }
 
-func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
+func TestSpillAction(t *testing.T) {
 	sz := 4
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, sz)
@@ -101,54 +95,54 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 	tracker = rc.GetMemTracker()
 	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
 	tracker.FallbackOldAndSetNewAction(rc.ActionSpillForTest())
-	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
+	require.False(t, rc.AlreadySpilledSafeForTest())
 	err = rc.Add(chk)
 	rc.actionSpill.WaitForTest()
-	c.Assert(err, check.IsNil)
-	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
-	c.Assert(rc.GetMemTracker().BytesConsumed(), check.Equals, chk.MemoryUsage())
+	require.NoError(t, err)
+	require.False(t, rc.AlreadySpilledSafeForTest())
+	require.Equal(t, chk.MemoryUsage(), rc.GetMemTracker().BytesConsumed())
 	// The following line is erroneous, since chk is already handled by rc, Add it again causes duplicated memory usage account.
 	// It is only for test of spill, do not double-add a chunk elsewhere.
 	err = rc.Add(chk)
 	rc.actionSpill.WaitForTest()
-	c.Assert(err, check.IsNil)
-	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, true)
+	require.NoError(t, err)
+	require.True(t, rc.AlreadySpilledSafeForTest())
 
 	// Read
 	resChk, err := rc.GetChunk(0)
-	c.Assert(err, check.IsNil)
-	c.Assert(resChk.NumRows(), check.Equals, chk.NumRows())
+	require.NoError(t, err)
+	require.Equal(t, chk.NumRows(), resChk.NumRows())
 	for rowIdx := 0; rowIdx < resChk.NumRows(); rowIdx++ {
-		c.Assert(resChk.GetRow(rowIdx).GetDatumRow(fields), check.DeepEquals, chk.GetRow(rowIdx).GetDatumRow(fields))
+		require.Equal(t, chk.GetRow(rowIdx).GetDatumRow(fields), resChk.GetRow(rowIdx).GetDatumRow(fields))
 	}
 	// Write again
 	err = rc.Add(chk)
 	rc.actionSpill.WaitForTest()
-	c.Assert(err, check.IsNil)
-	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, true)
+	require.NoError(t, err)
+	require.True(t, rc.AlreadySpilledSafeForTest())
 
 	// Read
 	resChk, err = rc.GetChunk(2)
-	c.Assert(err, check.IsNil)
-	c.Assert(resChk.NumRows(), check.Equals, chk.NumRows())
+	require.NoError(t, err)
+	require.Equal(t, chk.NumRows(), resChk.NumRows())
 	for rowIdx := 0; rowIdx < resChk.NumRows(); rowIdx++ {
-		c.Assert(resChk.GetRow(rowIdx).GetDatumRow(fields), check.DeepEquals, chk.GetRow(rowIdx).GetDatumRow(fields))
+		require.Equal(t, chk.GetRow(rowIdx).GetDatumRow(fields), resChk.GetRow(rowIdx).GetDatumRow(fields))
 	}
 
 	err = rc.Reset()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 }
 
-func (r *rowContainerTestSerialSuite) TestSpillActionDeadLock(c *check.C) {
+func TestSpillActionDeadLock(t *testing.T) {
 	// Maybe get deadlock if we use two RLock in one goroutine, for oom-action call stack.
 	// Now the implement avoids the situation.
 	// Goroutine 1: rc.Add() (RLock) -> list.Add() -> tracker.Consume() -> SpillDiskAction -> rc.AlreadySpilledSafeForTest() (RLock)
 	// Goroutine 2: ------------------> SpillDiskAction -> new Goroutine to spill -> ------------------
 	// new Goroutine created by 2: ---> rc.SpillToDisk (Lock)
 	// In golang, RLock will be blocked after try to get Lock. So it will cause deadlock.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/chunk/testRowContainerDeadLock", "return(true)"), check.IsNil)
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/util/chunk/testRowContainerDeadLock", "return(true)"))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/util/chunk/testRowContainerDeadLock"), check.IsNil)
+		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/util/chunk/testRowContainerDeadLock"))
 	}()
 	sz := 4
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
@@ -164,25 +158,25 @@ func (r *rowContainerTestSerialSuite) TestSpillActionDeadLock(c *check.C) {
 	tracker.SetBytesLimit(1)
 	ac := rc.ActionSpillForTest()
 	tracker.FallbackOldAndSetNewAction(ac)
-	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
+	require.False(t, rc.AlreadySpilledSafeForTest())
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		ac.Action(tracker)
 	}()
 	err = rc.Add(chk)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	rc.actionSpill.WaitForTest()
-	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, true)
+	require.True(t, rc.AlreadySpilledSafeForTest())
 }
 
-func (r *rowContainerTestSuite) TestNewSortedRowContainer(c *check.C) {
+func TestNewSortedRowContainer(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewSortedRowContainer(fields, 1024, nil, nil, nil)
-	c.Assert(rc, check.NotNil)
-	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
+	require.NotNil(t, rc)
+	require.False(t, rc.AlreadySpilledSafeForTest())
 }
 
-func (r *rowContainerTestSuite) TestSortedRowContainerSortSpillAction(c *check.C) {
+func TestSortedRowContainerSortSpillAction(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	byItemsDesc := []bool{false}
 	keyColumns := []int{0}
@@ -199,35 +193,33 @@ func (r *rowContainerTestSuite) TestSortedRowContainerSortSpillAction(c *check.C
 	tracker = rc.GetMemTracker()
 	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
 	tracker.FallbackOldAndSetNewAction(rc.ActionSpillForTest())
-	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
+	require.False(t, rc.AlreadySpilledSafeForTest())
 	err = rc.Add(chk)
 	rc.actionSpill.WaitForTest()
-	c.Assert(err, check.IsNil)
-	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
-	c.Assert(rc.GetMemTracker().BytesConsumed(), check.Equals, chk.MemoryUsage())
+	require.NoError(t, err)
+	require.False(t, rc.AlreadySpilledSafeForTest())
+	require.Equal(t, chk.MemoryUsage(), rc.GetMemTracker().BytesConsumed())
 	// The following line is erroneous, since chk is already handled by rc, Add it again causes duplicated memory usage account.
 	// It is only for test of spill, do not double-add a chunk elsewhere.
 	err = rc.Add(chk)
 	rc.actionSpill.WaitForTest()
-	c.Assert(err, check.IsNil)
-	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, true)
+	require.NoError(t, err)
+	require.True(t, rc.AlreadySpilledSafeForTest())
 	// The result has been sorted.
 	for i := 0; i < sz*2; i++ {
 		row, err := rc.GetSortedRow(i)
-		if err != nil {
-			c.Fatal(err)
-		}
-		c.Assert(row.GetInt64(0), check.Equals, int64(i/2))
+		require.NoError(t, err)
+		require.Equal(t, int64(i/2), row.GetInt64(0))
 	}
 	// Can't insert records again.
 	err = rc.Add(chk)
-	c.Assert(err, check.NotNil)
-	c.Assert(errors.Is(err, ErrCannotAddBecauseSorted), check.IsTrue)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrCannotAddBecauseSorted)
 	err = rc.Reset()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 }
 
-func (r *rowContainerTestSerialSuite) TestActionBlocked(c *check.C) {
+func TestActionBlocked(t *testing.T) {
 	sz := 4
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, sz)
@@ -245,7 +237,7 @@ func (r *rowContainerTestSerialSuite) TestActionBlocked(c *check.C) {
 	tracker.FallbackOldAndSetNewAction(ac)
 	for i := 0; i < 10; i++ {
 		err = rc.Add(chk)
-		c.Assert(err, check.IsNil)
+		require.NoError(t, err)
 	}
 
 	ac.cond.L.Lock()
@@ -255,11 +247,11 @@ func (r *rowContainerTestSerialSuite) TestActionBlocked(c *check.C) {
 	}
 	ac.cond.L.Unlock()
 	ac.cond.L.Lock()
-	c.Assert(ac.cond.status, check.Equals, spilledYet)
+	require.Equal(t, spilledYet, ac.cond.status)
 	ac.cond.L.Unlock()
-	c.Assert(tracker.BytesConsumed(), check.Equals, int64(0))
-	c.Assert(tracker.MaxConsumed(), check.Greater, int64(0))
-	c.Assert(rc.GetDiskTracker().BytesConsumed(), check.Greater, int64(0))
+	require.Equal(t, int64(0), tracker.BytesConsumed())
+	require.Greater(t, tracker.MaxConsumed(), int64(0))
+	require.Greater(t, rc.GetDiskTracker().BytesConsumed(), int64(0))
 
 	// Case 2, test Action will block when spilling.
 	rc = NewRowContainer(fields, sz)
@@ -273,10 +265,10 @@ func (r *rowContainerTestSerialSuite) TestActionBlocked(c *check.C) {
 		ac.cond.Broadcast()
 	}()
 	ac.Action(tracker)
-	c.Assert(time.Since(starttime), check.GreaterEqual, 200*time.Millisecond)
+	require.GreaterOrEqual(t, time.Since(starttime), 200*time.Millisecond)
 }
 
-func (r *rowContainerTestSuite) TestRowContainerResetAndAction(c *check.C) {
+func TestRowContainerResetAndAction(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	sz := 20
 	rc := NewRowContainer(fields, sz)
@@ -290,23 +282,23 @@ func (r *rowContainerTestSuite) TestRowContainerResetAndAction(c *check.C) {
 	tracker = rc.GetMemTracker()
 	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
 	tracker.FallbackOldAndSetNewAction(rc.ActionSpillForTest())
-	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
+	require.False(t, rc.AlreadySpilledSafeForTest())
 	err = rc.Add(chk)
-	c.Assert(err, check.IsNil)
-	c.Assert(rc.GetDiskTracker().BytesConsumed(), check.Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), rc.GetDiskTracker().BytesConsumed())
 	err = rc.Add(chk)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	rc.actionSpill.WaitForTest()
-	c.Assert(rc.GetDiskTracker().BytesConsumed(), check.Greater, int64(0))
+	require.Greater(t, rc.GetDiskTracker().BytesConsumed(), int64(0))
 	// Reset and Spill again.
 	err = rc.Reset()
-	c.Assert(err, check.IsNil)
-	c.Assert(rc.GetDiskTracker().BytesConsumed(), check.Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), rc.GetDiskTracker().BytesConsumed())
 	err = rc.Add(chk)
-	c.Assert(err, check.IsNil)
-	c.Assert(rc.GetDiskTracker().BytesConsumed(), check.Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), rc.GetDiskTracker().BytesConsumed())
 	err = rc.Add(chk)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	rc.actionSpill.WaitForTest()
-	c.Assert(rc.GetDiskTracker().BytesConsumed(), check.Greater, int64(0))
+	require.Greater(t, rc.GetDiskTracker().BytesConsumed(), int64(0))
 }
