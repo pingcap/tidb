@@ -258,34 +258,9 @@ func (ds *DataSource) deriveStatsByFilter(conds expression.CNFExprs, filledPaths
 	return stats
 }
 
-// DeriveStats implement LogicalPlan DeriveStats interface.
-func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-	if ds.stats != nil && len(colGroups) == 0 {
-		return ds.stats, nil
-	}
-	ds.initStats(colGroups)
-	if ds.stats != nil {
-		// Just reload the GroupNDVs.
-		selectivity := ds.stats.RowCount / ds.tableStats.RowCount
-		ds.stats = ds.tableStats.Scale(selectivity)
-		return ds.stats, nil
-	}
-	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
-	for i, expr := range ds.pushedDownConds {
-		ds.pushedDownConds[i] = expression.PushDownNot(ds.ctx, expr)
-	}
-	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath() {
-			continue
-		}
-		err := ds.fillIndexPath(path, ds.pushedDownConds)
-		if err != nil {
-			return nil, err
-		}
-	}
-	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
-	// when ds.possibleAccessPaths are pruned.
-	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds, ds.possibleAccessPaths)
+// We bind logic of derivePathStats and tryHeuristics together. When some path matches the heuristic rule, we don't need
+// to derive stats of subsequent paths. In this way we can save unnecessary computation of derivePathStats.
+func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 	uniqueIdxsWithDoubleScan := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 	singleScanIdxs := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 	var (
@@ -296,7 +271,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		if path.IsTablePath() {
 			err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			path.IsSingleScan = true
 		} else {
@@ -308,7 +283,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			selected = path
 			break
 		}
-		if path.OnlyPointRange(ds.ctx.GetSessionVars().StmtCtx) {
+		if path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) {
 			if path.IsTablePath() || path.Index.Unique {
 				if path.IsSingleScan {
 					selected = path
@@ -331,10 +306,10 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		}
 		// `uniqueBest` may not always be the best.
 		// ```
-		// create table t(a int, b int, c int, unique index idx_b(b), unique index idx_b_c(b, c));
+		// create table t(a int, b int, c int, unique index idx_b(b), index idx_b_c(b, c));
 		// select b, c from t where b = 5 and c > 10;
 		// ```
-		// In the case, `uniqueBest` is `idx_b`. However, `idx_b_c` is better than `idx_b_c`.
+		// In the case, `uniqueBest` is `idx_b`. However, `idx_b_c` is better than `idx_b`.
 		// Hence, for each index in `singleScanIdxs`, we check whether it is better than some index in `uniqueIdxsWithDoubleScan`.
 		// If yes, the index is a refined one. We find the refined index with the minimal number of ranges as `refineBest`.
 		for _, singleScanIdx := range singleScanIdxs {
@@ -369,7 +344,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 		// TODO: Can we make a more careful check on whether the optimization depends on mutable constants?
 		ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
-		if ds.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+		if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain {
 			var tableName string
 			if ds.TableAsName.O == "" {
 				tableName = ds.tableInfo.Name.O
@@ -398,36 +373,41 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 				ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(sb.String()))
 			}
 		}
-	} else if ds.ctx.GetSessionVars().EnableMaybeGoodHeuristics && ds.orderByPKLimitN {
-		// maybe-good heuristics
-		// For query like `where index_col = ... order by pk limit n`, if the count of `index_col = ...` is small enough, we prefer the index.
-		for _, path := range ds.possibleAccessPaths {
-			// TODO: add a variable instead of using 100
-			if path.OnlyPointRange(ds.ctx.GetSessionVars().StmtCtx) && path.CountAfterAccess < 100 {
-				selected = path
-				break
-			}
+	}
+	return nil
+}
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+	if ds.stats != nil && len(colGroups) == 0 {
+		return ds.stats, nil
+	}
+	ds.initStats(colGroups)
+	if ds.stats != nil {
+		// Just reload the GroupNDVs.
+		selectivity := ds.stats.RowCount / ds.tableStats.RowCount
+		ds.stats = ds.tableStats.Scale(selectivity)
+		return ds.stats, nil
+	}
+	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
+	for i, expr := range ds.pushedDownConds {
+		ds.pushedDownConds[i] = expression.PushDownNot(ds.ctx, expr)
+	}
+	for _, path := range ds.possibleAccessPaths {
+		if path.IsTablePath() {
+			continue
 		}
-		if selected != nil {
-			ds.possibleAccessPaths[0] = selected
-			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
-			// TODO: Can we make a more careful check on whether the optimization depends on mutable constants?
-			ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
-			if ds.ctx.GetSessionVars().StmtCtx.InExplainStmt {
-				var tableName, pathName string
-				if ds.TableAsName.O == "" {
-					tableName = ds.tableInfo.Name.O
-				} else {
-					tableName = ds.TableAsName.O
-				}
-				if selected.IsTablePath() {
-					pathName = "handle of " + tableName
-				} else {
-					pathName = "index " + selected.Index.Name.O + " of " + tableName
-				}
-				ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(pathName + " is selected since the path has point ranges and fetches limited number of rows under ORDER BY PK LIMIT N pattern"))
-			}
+		err := ds.fillIndexPath(path, ds.pushedDownConds)
+		if err != nil {
+			return nil, err
 		}
+	}
+	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
+	// when ds.possibleAccessPaths are pruned.
+	ds.stats = ds.deriveStatsByFilter(ds.pushedDownConds, ds.possibleAccessPaths)
+	err := ds.derivePathStatsAndTryHeuristics()
+	if err != nil {
+		return nil, err
 	}
 
 	// TODO: implement UnionScan + IndexMerge

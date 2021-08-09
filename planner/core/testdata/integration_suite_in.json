@@ -337,5 +337,16 @@
       "select * from t where b = 3 order by a limit 10",
       "select * from t where b in (2, 3, 4) order by a limit 10"
     ]
+  },
+  {
+    "name": "TestOutputSkylinePruningInfo",
+    "cases": [
+      "select * from t where a > 1 order by f",
+      "select * from t where f > 1",
+      "select f from t where f > 1",
+      "select * from t where f > 3 and g = 5",
+      "select * from t where g = 5 order by f",
+      "select * from t where d = 3 order by c, e"
+    ]
   }
 ]

@@ -4690,10 +4690,10 @@ type tblUpdateInfo struct {
 }
 
 // CheckUpdateList checks all related columns in updatable state.
-func CheckUpdateList(assignFlags []int, updt *Update) error {
+func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]table.Table) error {
 	updateFromOtherAlias := make(map[int64]tblUpdateInfo)
 	for _, content := range updt.TblColPosInfos {
-		tbl := updt.tblID2Table[content.TblID]
+		tbl := newTblID2Table[content.TblID]
 		flags := assignFlags[content.Start:content.End]
 		var update, updatePK bool
 		for i, col := range tbl.WritableCols() {
