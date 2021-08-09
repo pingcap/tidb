@@ -54,6 +54,9 @@ type Scanner struct {
 	// because some application may already use them as identifiers.
 	supportWindowFunc bool
 
+	// Whether record the original text keyword position to the AST node.
+	skipPositionRecording bool
+
 	// lastScanOffset indicates last offset returned by scan().
 	// It's used to substring sql in syntax error message.
 	lastScanOffset int
