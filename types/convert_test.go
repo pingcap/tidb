@@ -329,7 +329,6 @@ func TestConvertType(t *testing.T) {
 }
 
 func testToString(t *testing.T, val interface{}, expect string) {
-	t.Parallel()
 	b, err := ToString(val)
 	assert.Nil(t, err)
 	assert.Equal(t, expect, b)
@@ -402,7 +401,6 @@ func TestConvertToString(t *testing.T) {
 }
 
 func testStrToInt(t *testing.T, str string, expect int64, truncateAsErr bool, expectErr error) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToInt(sc, str, false)
@@ -415,7 +413,6 @@ func testStrToInt(t *testing.T, str string, expect int64, truncateAsErr bool, ex
 }
 
 func testStrToUint(t *testing.T, str string, expect uint64, truncateAsErr bool, expectErr error) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToUint(sc, str, false)
@@ -428,7 +425,6 @@ func testStrToUint(t *testing.T, str string, expect uint64, truncateAsErr bool, 
 }
 
 func testStrToFloat(t *testing.T, str string, expect float64, truncateAsErr bool, expectErr error) {
-	t.Parallel()
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToFloat(sc, str, false)
@@ -489,7 +485,6 @@ func TestStrToNum(t *testing.T) {
 }
 
 func testSelectUpdateDeleteEmptyStringError(t *testing.T) {
-	t.Parallel()
 	testCases := []struct {
 		inSelect bool
 		inDelete bool
@@ -955,7 +950,6 @@ func TestConvertTime(t *testing.T) {
 }
 
 func testConvertTimeTimeZone(t *testing.T, sc *stmtctx.StatementContext) {
-	t.Parallel()
 	raw := FromDate(2002, 3, 4, 4, 6, 7, 8)
 	tests := []struct {
 		input  Time

@@ -50,7 +50,6 @@ func TestDatum(t *testing.T) {
 }
 
 func testDatumToBool(t *testing.T, in interface{}, res int) {
-	t.Parallel()
 	datum := NewDatum(in)
 	res64 := int64(res)
 	sc := new(stmtctx.StatementContext)
@@ -113,7 +112,6 @@ func TestToBool(t *testing.T) {
 }
 
 func testDatumToInt64(t *testing.T, val interface{}, expect int64) {
-	t.Parallel()
 	d := NewDatum(val)
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
@@ -277,7 +275,6 @@ func TestIsNull(t *testing.T) {
 }
 
 func testIsNull(t *testing.T, data interface{}, isnull bool) {
-	t.Parallel()
 	d := NewDatum(data)
 	assert.Equal(t, isnull, d.IsNull())
 }
