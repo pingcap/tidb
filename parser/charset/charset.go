@@ -208,6 +208,44 @@ const (
 	CharsetLatin1 = "latin1"
 	// CollationLatin1 is the default collation for CharsetLatin1.
 	CollationLatin1 = "latin1_bin"
+
+	CharsetARMSCII8 = "armscii8"
+	CharsetBig5     = "big5"
+	CharsetBinary   = "binary"
+	CharsetCP1250   = "cp1250"
+	CharsetCP1251   = "cp1251"
+	CharsetCP1256   = "cp1256"
+	CharsetCP1257   = "cp1257"
+	CharsetCP850    = "cp850"
+	CharsetCP852    = "cp852"
+	CharsetCP866    = "cp866"
+	CharsetCP932    = "cp932"
+	CharsetDEC8     = "dec8"
+	CharsetEUCJPMS  = "eucjpms"
+	CharsetEUCKR    = "euckr"
+	CharsetGB18030  = "gb18030"
+	CharsetGB2312   = "gb2312"
+	CharsetGBK      = "gbk"
+	CharsetGEOSTD8  = "geostd8"
+	CharsetGreek    = "greek"
+	CharsetHebrew   = "hebrew"
+	CharsetHP8      = "hp8"
+	CharsetKEYBCS2  = "keybcs2"
+	CharsetKOI8R    = "koi8r"
+	CharsetKOI8U    = "koi8u"
+	CharsetLatin2   = "latin2"
+	CharsetLatin5   = "latin5"
+	CharsetLatin7   = "latin7"
+	CharsetMacCE    = "macce"
+	CharsetMacRoman = "macroman"
+	CharsetSJIS     = "sjis"
+	CharsetSWE7     = "swe7"
+	CharsetTIS620   = "tis620"
+	CharsetUCS2     = "ucs2"
+	CharsetUJIS     = "ujis"
+	CharsetUTF16    = "utf16"
+	CharsetUTF16LE  = "utf16le"
+	CharsetUTF32    = "utf32"
 )
 
 var collations = []*Collation{
@@ -434,29 +472,41 @@ var collations = []*Collation{
 	{2048, "utf8mb4", "utf8mb4_zh_pinyin_tidb_as_cs", false},
 }
 
+// AddCharset adds a new charset.
+// Use only when adding a custom charset to the parser.
+func AddCharset(c *Charset) {
+	charsets[c.Name] = c
+	desc := &Desc{
+		Name:             c.Name,
+		DefaultCollation: c.DefaultCollation,
+		Desc:             c.Desc,
+		Maxlen:           c.Maxlen,
+	}
+	descs = append(descs, desc)
+}
+
+// AddCollation adds a new collation.
+// Use only when adding a custom collation to the parser.
+func AddCollation(c *Collation) {
+	collationsIDMap[c.ID] = c
+	collationsNameMap[c.Name] = c
+
+	if _, ok := supportedCollationNames[c.Name]; ok {
+		supportedCollations = append(supportedCollations, c)
+	}
+
+	if charset, ok := charsets[c.CharsetName]; ok {
+		charset.Collations[c.Name] = c
+	}
+}
+
 // init method always puts to the end of file.
 func init() {
 	for _, c := range charsetInfos {
-		charsets[c.Name] = c
-		desc := &Desc{
-			Name:             c.Name,
-			DefaultCollation: c.DefaultCollation,
-			Desc:             c.Desc,
-			Maxlen:           c.Maxlen,
-		}
-		descs = append(descs, desc)
+		AddCharset(c)
 	}
 
 	for _, c := range collations {
-		collationsIDMap[c.ID] = c
-		collationsNameMap[c.Name] = c
-
-		if _, ok := supportedCollationNames[c.Name]; ok {
-			supportedCollations = append(supportedCollations, c)
-		}
-
-		if charset, ok := charsets[c.CharsetName]; ok {
-			charset.Collations[c.Name] = c
-		}
+		AddCollation(c)
 	}
 }
