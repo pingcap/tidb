@@ -1018,6 +1018,11 @@ AAAAAAAAAAAA5gm5Mg==
 		{"SHOW PLACEMENT FOR PARTITION p1", false, ""},
 		{"SHOW PLACEMENT FOR DB LIKE '%'", false, ""},
 		{"SHOW PLACEMENT FOR DB db1 LIKE '%'", false, ""},
+
+		// for show placement labels
+		{"SHOW PLACEMENT LABELS", true, "SHOW PLACEMENT LABELS"},
+		{"SHOW PLACEMENT LABELS LIKE '%zone%'", true, "SHOW PLACEMENT LABELS LIKE _UTF8MB4'%zone%'"},
+		{"SHOW PLACEMENT LABELS WHERE label='l123'", true, "SHOW PLACEMENT LABELS WHERE `label`=_UTF8MB4'l123'"},
 	}
 	s.RunTest(c, table)
 }
