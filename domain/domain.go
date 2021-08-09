@@ -54,7 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
 	"go.uber.org/zap"
@@ -98,7 +98,7 @@ type Domain struct {
 // 3. currentSchemaVersion(before loading)
 // 4. the changed table IDs if it is not full load
 // 5. an error if any
-func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, int64, *tikv.RelatedSchemaChange, error) {
+func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	m := meta.NewSnapshotMeta(snapshot)
 	neededSchemaVersion, err := m.GetSchemaVersion()
@@ -238,7 +238,7 @@ func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, 
 // Return true if the schema is loaded successfully.
 // Return false if the schema can not be loaded by schema diff, then we need to do full load.
 // The second returned value is the delta updated table and partition IDs.
-func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (infoschema.InfoSchema, *tikv.RelatedSchemaChange, error) {
+func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64) (infoschema.InfoSchema, *transaction.RelatedSchemaChange, error) {
 	var diffs []*model.SchemaDiff
 	for usedVersion < newVersion {
 		usedVersion++
@@ -269,7 +269,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 	}
 	is := builder.Build()
-	relatedChange := tikv.RelatedSchemaChange{}
+	relatedChange := transaction.RelatedSchemaChange{}
 	relatedChange.PhyTblIDS = phyTblIDs
 	relatedChange.ActionTypes = actions
 	return is, &relatedChange, nil

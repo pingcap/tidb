@@ -1601,7 +1601,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TablePlacementPolicy),
 			strings.ToLower(infoschema.TableClientErrorsSummaryGlobal),
 			strings.ToLower(infoschema.TableClientErrorsSummaryByUser),
-			strings.ToLower(infoschema.TableClientErrorsSummaryByHost):
+			strings.ToLower(infoschema.TableClientErrorsSummaryByHost),
+			strings.ToLower(infoschema.TableRegionLabel):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -1950,7 +1951,8 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	if b.err != nil {
 		return nil
 	}
-	b.err = plannercore.CheckUpdateList(assignFlag, v)
+	// should use the new tblID2table, since the update's schema may have been changed in Execstmt.
+	b.err = plannercore.CheckUpdateList(assignFlag, v, tblID2table)
 	if b.err != nil {
 		return nil
 	}

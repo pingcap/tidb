@@ -35,10 +35,12 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -158,6 +160,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByUser,
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
+		case infoschema.TableRegionLabel:
+			err = e.setDataForRegionLabel(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -2137,11 +2141,11 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	var res [][]types.Datum
 	err = e.nextBatch(func(start, end int) error {
 		// Before getting rows, collect the SQL digests that needs to be retrieved first.
-		var sqlRetriever *SQLDigestTextRetriever
+		var sqlRetriever *expression.SQLDigestTextRetriever
 		for _, c := range e.columns {
 			if c.Name.O == txninfo.CurrentSQLDigestTextStr {
 				if sqlRetriever == nil {
-					sqlRetriever = NewSQLDigestTextRetriever()
+					sqlRetriever = expression.NewSQLDigestTextRetriever()
 				}
 
 				for i := start; i < end; i++ {
@@ -2250,9 +2254,9 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 		}
 
 		// Fetch the SQL Texts of the digests above if necessary.
-		var sqlRetriever *SQLDigestTextRetriever
+		var sqlRetriever *expression.SQLDigestTextRetriever
 		if needSQLText {
-			sqlRetriever = NewSQLDigestTextRetriever()
+			sqlRetriever = expression.NewSQLDigestTextRetriever()
 			for _, digest := range digests {
 				if len(digest) > 0 {
 					sqlRetriever.SQLDigestsMap[digest] = ""
@@ -2390,11 +2394,11 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 
 	err = r.nextBatch(func(start, end int) error {
 		// Before getting rows, collect the SQL digests that needs to be retrieved first.
-		var sqlRetriever *SQLDigestTextRetriever
+		var sqlRetriever *expression.SQLDigestTextRetriever
 		for _, c := range r.columns {
 			if c.Name.O == deadlockhistory.ColCurrentSQLDigestTextStr {
 				if sqlRetriever == nil {
-					sqlRetriever = NewSQLDigestTextRetriever()
+					sqlRetriever = expression.NewSQLDigestTextRetriever()
 				}
 
 				idx, waitChainIdx := r.currentIdx, r.currentWaitChainIdx
@@ -2715,4 +2719,84 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 		e.rowIdx = 0
 	}
 	return rows, nil
+}
+
+func (e *memtableRetriever) setDataForRegionLabel(ctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	rules, err := infosync.GetAllLabelRules(context.TODO())
+	failpoint.Inject("mockOutputOfRegionLabel", func() {
+		convert := func(i interface{}) interface{} {
+			return i
+		}
+		rules = []*label.Rule{
+			{
+				ID:       "schema/test/test_label",
+				Labels:   []label.Label{{Key: "nomerge", Value: "true"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				RuleType: "key-range",
+				Rule: convert(map[string]interface{}{
+					"start_key": "7480000000000000ff395f720000000000fa",
+					"end_key":   "7480000000000000ff3a5f720000000000fa",
+				}),
+			},
+		}
+		err = nil
+	})
+
+	if err != nil {
+		return errors.Wrap(err, "get region label failed")
+	}
+	for _, rule := range rules {
+		skip := true
+		dbName, tableName, err := checkRule(rule)
+		if err != nil {
+			return err
+		}
+		if tableName != "" && dbName != "" && (checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.SelectPriv)) {
+			skip = false
+		}
+		if skip {
+			continue
+		}
+
+		labels := rule.Labels.Restore()
+		keyRange := make(map[string]string)
+		for k, v := range rule.Rule.(map[string]interface{}) {
+			keyRange[k] = v.(string)
+		}
+
+		row := types.MakeDatums(
+			rule.ID,
+			rule.RuleType,
+			labels,
+			keyRange["start_key"],
+			keyRange["end_key"],
+		)
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
+func checkRule(rule *label.Rule) (dbName, tableName string, err error) {
+	s := strings.Split(rule.ID, "/")
+	if len(s) < 3 {
+		err = errors.Errorf("invalid label rule ID: %v", rule.ID)
+		return
+	}
+	if rule.RuleType == "" {
+		err = errors.New("empty label rule type")
+		return
+	}
+	if rule.Labels == nil || len(rule.Labels) == 0 {
+		err = errors.New("the label rule has no label")
+		return
+	}
+	if rule.Rule == nil {
+		err = errors.New("the label rule has no rule")
+		return
+	}
+	dbName = s[1]
+	tableName = s[2]
+	return
 }
