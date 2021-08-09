@@ -121,7 +121,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	// Check which user is not exist.
 	for _, user := range e.Users {
-		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)
+		exists, err := userExists(ctx, e.ctx, user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -360,7 +360,7 @@ func tlsOption2GlobalPriv(tlsOptions []*ast.TLSOption) (priv []byte, err error) 
 	gp := privileges.GlobalPrivValue{SSLType: privileges.SslTypeNotSpecified}
 	for _, tlsOpt := range tlsOptions {
 		switch tlsOpt.Type {
-		case ast.TslNone:
+		case ast.TlsNone:
 			gp.SSLType = privileges.SslTypeNone
 		case ast.Ssl:
 			gp.SSLType = privileges.SslTypeAny
