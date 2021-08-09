@@ -91,7 +91,7 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 
 		schema, ok := infoschema.SchemaByTable(table.Meta())
 		if !ok {
-			logutil.BgLogger().Warn("no schema associated with table found in infoschema", zap.Int64("tableOrPartitionID", tableOrPartitionID), zap.Error(err))
+			logutil.BgLogger().Warn("no schema associated with table found in infoschema", zap.Int64("tableOrPartitionID", tableOrPartitionID))
 			return result, nil
 		}
 		result.DbID = schema.ID
@@ -115,7 +115,7 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 			result.PartitionName = partition.Name.O
 		}
 		if !tableFound {
-			logutil.BgLogger().Warn("no table found in infoschema", zap.Int64("tableOrPartitionID", tableOrPartitionID), zap.Error(err))
+			logutil.BgLogger().Warn("no table found in infoschema", zap.Int64("tableOrPartitionID", tableOrPartitionID))
 		}
 	}
 	if isRecordKey {
