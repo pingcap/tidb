@@ -1912,7 +1912,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
-	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
+	failpoint.Inject("mockHistoryJob", func(v failpoint.Value) {
 		args, err1 := json.Marshal([]interface{}{kv.Key{}, []int64{}, []string{v.(string)}})
 		if err1 != nil {
 			return

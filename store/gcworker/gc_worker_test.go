@@ -1591,9 +1591,9 @@ func (s *testGCWorkerSuite) TestGCPlacementRules(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestGCLabelRules(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC", "return(\"schema/d1/t1\")"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/mockHistoryJob", "return(\"schema/d1/t1\")"), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJobForGC"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJob"), IsNil)
 	}()
 
 	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
