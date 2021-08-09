@@ -790,8 +790,9 @@ yynewstate:
 	mustFormat(f, `%u
 	}
 
-
-	%[1]sSetOffset(parser.yyVAL, parser.yyVAL.offset)
+	if !parser.lexer.skipPositionRecording {
+		%[1]sSetOffset(parser.yyVAL, parser.yyVAL.offset)
+	}
 
 	if yyEx != nil && yyEx.Reduced(r, exState, parser.yyVAL) {
 		return -1
