@@ -466,6 +466,28 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Con
 	}
 
 	requireTLS := config.GetGlobalConfig().Security.RequireSecureTransport
+	var minTLSVersion uint16 = tls.VersionTLS11
+	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
+	case "TLSv1.0":
+		minTLSVersion = tls.VersionTLS10
+	case "TLSv1.1":
+		minTLSVersion = tls.VersionTLS11
+	case "TLSv1.2":
+		minTLSVersion = tls.VersionTLS12
+	case "TLSv1.3":
+		minTLSVersion = tls.VersionTLS13
+	case "":
+	default:
+		logutil.BgLogger().Warn(
+			"Invalid TLS version, using default instead",
+			zap.String("tls-version", tlsver),
+		)
+	}
+	if minTLSVersion < tls.VersionTLS12 {
+		logutil.BgLogger().Warn(
+			"Minimum TLS version allows pre-TLSv1.2 protocols, this is not recommended",
+		)
+	}
 
 	// Try loading CA cert.
 	clientAuthPolicy := tls.NoClientCert
@@ -495,6 +517,7 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Con
 		Certificates: []tls.Certificate{tlsCert},
 		ClientCAs:    certPool,
 		ClientAuth:   clientAuthPolicy,
+		MinVersion:   minTLSVersion,
 	}
 	return
 }
