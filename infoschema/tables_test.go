@@ -535,7 +535,6 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		Command: byte(1),
 		Digest:  "abc1",
 		State:   1,
-		StmtCtx: tk.Se.GetSessionVars().StmtCtx,
 	}
 	sm.processInfoMap[2] = &util.ProcessInfo{
 		ID:            2,
@@ -545,7 +544,6 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		Digest:        "abc2",
 		State:         2,
 		Info:          strings.Repeat("x", 101),
-		StmtCtx:       tk.Se.GetSessionVars().StmtCtx,
 		CurTxnStartTS: 410090409861578752,
 	}
 	tk.Se.SetSessionManager(sm)
@@ -1820,6 +1818,24 @@ func (s *testTableSuite) TestInfoschemaDeadlockPrivilege(c *C) {
 		Hostname: "localhost",
 	}, nil, nil), IsTrue)
 	_ = tk.MustQuery("select * from information_schema.deadlocks")
+}
+
+func (s *testTableSuite) TestRegionLabel(c *C) {
+	// test the failpoint for testing
+	fpName := "github.com/pingcap/tidb/executor/mockOutputOfRegionLabel"
+	tk := s.newTestKitWithRoot(c)
+	tk.MustQuery("select * from information_schema.region_label").Check(testkit.Rows())
+
+	c.Assert(failpoint.Enable(fpName, "return"), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	tk.MustQuery(`select * from information_schema.region_label`).Check(testkit.Rows(
+		`schema/test/test_label key-range "nomerge" 7480000000000000ff395f720000000000fa 7480000000000000ff3a5f720000000000fa`,
+	))
+
+	tk.MustQuery(`select rule_id, region_label from information_schema.region_label`).Check(testkit.Rows(
+		`schema/test/test_label "nomerge"`,
+	))
 }
 
 func (s *testClusterTableSuite) TestDataLockWaits(c *C) {
