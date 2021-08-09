@@ -12,7 +12,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
