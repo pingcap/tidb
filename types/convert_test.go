@@ -1061,7 +1061,7 @@ func TestConvertJSONToDecimal(t *testing.T) {
 		assert.Nil(t, err)
 		casted, err := ConvertJSONToDecimal(new(stmtctx.StatementContext), j)
 		assert.Nil(t, err)
-		assert.Equal(t, 0, "input: %v, casted: %v, out: %v, json: %#v", tt.In, casted, tt.Out, j, casted.Compare(tt.Out))
+		assert.Equal(t, 0, casted.Compare(tt.Out))
 	}
 }
 

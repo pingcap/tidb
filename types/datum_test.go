@@ -350,7 +350,7 @@ func TestCloneDatum(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, 0, res)
 		if tt.b != nil {
-			assert.NotEqual(t, &tt1.b[0], &tt.b[0])
+			assert.True(t, &tt.b[0] != &tt1.b[0])
 		}
 	}
 }
