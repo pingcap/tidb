@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,22 +11,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package config
+package distsql
 
 import (
-	"github.com/docker/go-units"
+	"testing"
+
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-const (
-	// mydumper
-	ReadBlockSize   ByteSize = 64 * units.KiB
-	MinRegionSize   ByteSize = 256 * units.MiB
-	MaxRegionSize   ByteSize = 256 * units.MiB
-	SplitRegionSize ByteSize = 96 * units.MiB
-
-	BufferSizeScale = 5
-
-	defaultMaxAllowedPacket = 64 * units.MiB
-
-	DefaultBatchSize ByteSize = 100 * units.GiB
-)
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	goleak.VerifyTestMain(m)
+}

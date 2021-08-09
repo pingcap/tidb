@@ -835,6 +835,26 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	// InetAton
+	function, err = NewFunction(mock.NewContext(), ast.InetAton, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// InetNtoa
+	function, err = NewFunction(mock.NewContext(), ast.InetNtoa, types.NewFieldType(mysql.TypeLonglong), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Inet6Aton
+	function, err = NewFunction(mock.NewContext(), ast.Inet6Aton, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Inet6Ntoa
+	function, err = NewFunction(mock.NewContext(), ast.Inet6Ntoa, types.NewFieldType(mysql.TypeLonglong), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	// ScalarFuncSig_RoundReal
 	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeDouble), realColumn)
 	c.Assert(err, IsNil)
@@ -1004,6 +1024,58 @@ func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
 	c.Assert(len(remained), Equals, 0)
 
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
+	c.Assert(len(pushed), Equals, 0)
+	c.Assert(len(remained), Equals, len(exprs))
+}
+
+func (s *testEvaluatorSuite) TestExprPushDownToTiKV(c *C) {
+	sc := new(stmtctx.StatementContext)
+	client := new(mock.Client)
+	dg := new(dataGen4Expr2PbTest)
+	exprs := make([]Expression, 0)
+
+	//jsonColumn := dg.genColumn(mysql.TypeJSON, 1)
+	//intColumn := dg.genColumn(mysql.TypeLonglong, 2)
+	//realColumn := dg.genColumn(mysql.TypeDouble, 3)
+	//decimalColumn := dg.genColumn(mysql.TypeNewDecimal, 4)
+	stringColumn := dg.genColumn(mysql.TypeString, 5)
+	//datetimeColumn := dg.genColumn(mysql.TypeDatetime, 6)
+	binaryStringColumn := dg.genColumn(mysql.TypeString, 7)
+	binaryStringColumn.RetType.Collate = charset.CollationBin
+
+	function, err := NewFunction(mock.NewContext(), ast.InetAton, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.InetNtoa, types.NewFieldType(mysql.TypeLonglong), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Inet6Aton, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Inet6Ntoa, types.NewFieldType(mysql.TypeLonglong), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.IsIPv4, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.IsIPv6, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.IsIPv4Compat, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.IsIPv4Mapped, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	pushed, remained := PushDownExprs(sc, exprs, client, kv.TiKV)
 	c.Assert(len(pushed), Equals, 0)
 	c.Assert(len(remained), Equals, len(exprs))
 }

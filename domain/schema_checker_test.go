@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/parser/terror"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
 
 func TestSchemaCheckerSimple(t *testing.T) {
@@ -31,8 +31,8 @@ func TestSchemaCheckerSimple(t *testing.T) {
 
 	// Add some schema versions and delta table IDs.
 	ts := uint64(time.Now().UnixNano())
-	validator.Update(ts, 0, 2, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{1}})
-	validator.Update(ts, 2, 4, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{2}, ActionTypes: []uint64{2}})
+	validator.Update(ts, 0, 2, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{1}, ActionTypes: []uint64{1}})
+	validator.Update(ts, 2, 4, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{2}, ActionTypes: []uint64{2}})
 
 	// checker's schema version is the same as the current schema version.
 	checker.schemaVer = 4
