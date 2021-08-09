@@ -100,7 +100,10 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 	getFirstNotificationAfterStartDDL(d)
 	// Ensure that the notification is not handled in workers `start` function.
 	d.cancel()
@@ -141,7 +144,10 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d1.Stop()
+	defer func() {
+		err := d1.Stop()
+		c.Assert(err, IsNil)
+	}()
 	getFirstNotificationAfterStartDDL(d1)
 	// Ensure that the notification is not handled by worker's "start".
 	d1.cancel()

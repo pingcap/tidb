@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -105,6 +106,16 @@ func (s *testEnforceMPPSuite) TestEnforceMPP(c *C) {
 		Warn []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
+	filterWarnings := func(originalWarnings []stmtctx.SQLWarn) []stmtctx.SQLWarn {
+		warnings := make([]stmtctx.SQLWarn, 0, 4)
+		for _, warning := range originalWarnings {
+			// filter out warning about skyline pruning
+			if !strings.Contains(warning.Err.Error(), "remain after pruning paths for") {
+				warnings = append(warnings, warning)
+			}
+		}
+		return warnings
+	}
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -116,11 +127,11 @@ func (s *testEnforceMPPSuite) TestEnforceMPP(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			output[i].Warn = s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings())
+			output[i].Warn = s.testData.ConvertSQLWarnToStrings(filterWarnings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()))
 		})
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
-		c.Assert(s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()), DeepEquals, output[i].Warn)
+		c.Assert(s.testData.ConvertSQLWarnToStrings(filterWarnings(tk.Se.GetSessionVars().StmtCtx.GetWarnings())), DeepEquals, output[i].Warn)
 	}
 }
 
@@ -285,6 +296,57 @@ func (s *testEnforceMPPSuite) TestEnforceMPPWarning3(c *C) {
 		}
 		if strings.HasPrefix(tt, "cmd: disable-new-collation") {
 			collate.SetNewCollationEnabledForTest(false)
+			continue
+		}
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		c.Assert(s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()), DeepEquals, output[i].Warn)
+	}
+}
+
+// Test enforce mpp warning for joins
+func (s *testEnforceMPPSuite) TestEnforceMPPWarning4(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// test table
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t(a int primary key)")
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("CREATE TABLE s(a int primary key)")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" || tblInfo.Name.L == "s" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+			tk.MustExec(tt)
 			continue
 		}
 		s.testData.OnRecord(func() {

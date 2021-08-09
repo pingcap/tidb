@@ -50,6 +50,8 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/txnkv/rangetask"
+	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -67,8 +69,8 @@ type GCWorker struct {
 	cancel       context.CancelFunc
 	done         chan error
 	testingKnobs struct {
-		scanLocks    func(key []byte, regionID uint64) []*tikv.Lock
-		resolveLocks func(locks []*tikv.Lock, regionID tikv.RegionVerID) (ok bool, err error)
+		scanLocks    func(key []byte, regionID uint64) []*txnlock.Lock
+		resolveLocks func(locks []*txnlock.Lock, regionID tikv.RegionVerID) (ok bool, err error)
 	}
 }
 
@@ -140,7 +142,7 @@ const (
 	gcMinConcurrency     = 1
 	gcMaxConcurrency     = 128
 	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
-	gcScanLockLimit = tikv.ResolvedCacheSize / 2
+	gcScanLockLimit = txnlock.ResolvedCacheSize / 2
 
 	gcEnableKey          = "tikv_gc_enable"
 	gcDefaultEnableValue = true
@@ -237,6 +239,7 @@ func createSession(store kv.Storage) session.Session {
 		privilege.BindPrivilegeManager(se, nil)
 		se.GetSessionVars().CommonGlobalLoaded = true
 		se.GetSessionVars().InRestrictedSQL = true
+		se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		return se
 	}
 }
@@ -361,6 +364,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
+
 	if !enable {
 		logutil.Logger(ctx).Warn("[gc worker] gc status is disabled.")
 		return false, 0, nil
@@ -803,7 +807,7 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 	req := tikvrpc.NewRequest(tikvrpc.CmdUnsafeDestroyRange, &kvrpcpb.UnsafeDestroyRangeRequest{
 		StartKey: startKey,
 		EndKey:   endKey,
-	})
+	}, kvrpcpb.Context{DiskFullOpt: kvrpcpb.DiskFullOpt_AllowedOnAlmostFull})
 
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(stores))
@@ -846,13 +850,6 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 
 	if len(errs) > 0 {
 		return errors.Errorf("[gc worker] destroy range finished with errors: %v", errs)
-	}
-
-	// Notify all affected regions in the range that UnsafeDestroyRange occurs.
-	notifyTask := tikv.NewNotifyDeleteRangeTask(w.tikvStore, startKey, endKey, concurrency)
-	err = notifyTask.Execute(ctx)
-	if err != nil {
-		return errors.Annotate(err, "[gc worker] failed notifying regions affected by UnsafeDestroyRange")
 	}
 
 	return nil
@@ -1028,11 +1025,11 @@ func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, con
 		zap.Int("concurrency", concurrency))
 	startTime := time.Now()
 
-	handler := func(ctx context.Context, r tikvstore.KeyRange) (tikv.RangeTaskStat, error) {
+	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 		return w.resolveLocksForRange(ctx, safePoint, r.StartKey, r.EndKey)
 	}
 
-	runner := tikv.NewRangeTaskRunner("resolve-locks-runner", w.tikvStore, concurrency, handler)
+	runner := rangetask.NewRangeTaskRunner("resolve-locks-runner", w.tikvStore, concurrency, handler)
 	// Run resolve lock on the whole TiKV cluster. Empty keys means the range is unbounded.
 	err := runner.RunOnRange(ctx, []byte(""), []byte(""))
 	if err != nil {
@@ -1051,7 +1048,7 @@ func (w *GCWorker) legacyResolveLocks(ctx context.Context, safePoint uint64, con
 	return nil
 }
 
-func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, startKey []byte, endKey []byte) (tikv.RangeTaskStat, error) {
+func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, startKey []byte, endKey []byte) (rangetask.TaskStat, error) {
 	// for scan lock request, we must return all locks even if they are generated
 	// by the same transaction. because gc worker need to make sure all locks have been
 	// cleaned.
@@ -1064,7 +1061,7 @@ func (w *GCWorker) resolveLocksForRange(ctx context.Context, safePoint uint64, s
 		req.ScanLock().Limit = 3
 	})
 
-	var stat tikv.RangeTaskStat
+	var stat rangetask.TaskStat
 	key := startKey
 	bo := tikv.NewGcResolveLockMaxBackoffer(ctx)
 	failpoint.Inject("setGcResolveMaxBackoff", func(v failpoint.Value) {
@@ -1110,9 +1107,9 @@ retryScanAndResolve:
 			return stat, errors.Errorf("unexpected scanlock error: %s", locksResp)
 		}
 		locksInfo := locksResp.GetLocks()
-		locks := make([]*tikv.Lock, len(locksInfo))
+		locks := make([]*txnlock.Lock, len(locksInfo))
 		for i := range locksInfo {
-			locks[i] = tikv.NewLock(locksInfo[i])
+			locks[i] = txnlock.NewLock(locksInfo[i])
 		}
 		if w.testingKnobs.scanLocks != nil {
 			locks = append(locks, w.testingKnobs.scanLocks(key, loc.Region.GetID())...)
@@ -1172,7 +1169,7 @@ retryScanAndResolve:
 	return stat, nil
 }
 
-func (w *GCWorker) tryRelocateLocksRegion(bo *tikv.Backoffer, locks []*tikv.Lock) (stillInSameRegion bool, refreshedLoc *tikv.KeyLocation, err error) {
+func (w *GCWorker) tryRelocateLocksRegion(bo *tikv.Backoffer, locks []*txnlock.Lock) (stillInSameRegion bool, refreshedLoc *tikv.KeyLocation, err error) {
 	if len(locks) == 0 {
 		return
 	}
@@ -1345,9 +1342,9 @@ func (w *GCWorker) checkLockObservers(ctx context.Context, safePoint uint64, sto
 
 		if len(respInner.Locks) > 0 {
 			// Resolve the observed locks.
-			locks := make([]*tikv.Lock, len(respInner.Locks))
+			locks := make([]*txnlock.Lock, len(respInner.Locks))
 			for i, lockInfo := range respInner.Locks {
-				locks[i] = tikv.NewLock(lockInfo)
+				locks[i] = txnlock.NewLock(lockInfo)
 			}
 			sort.Slice(locks, func(i, j int) bool {
 				return bytes.Compare(locks[i].Key, locks[j].Key) < 0
@@ -1414,7 +1411,7 @@ func (w *GCWorker) physicalScanAndResolveLocks(ctx context.Context, safePoint ui
 		return nil, errors.Trace(err)
 	}
 
-	taskCh := make(chan []*tikv.Lock, len(stores))
+	taskCh := make(chan []*txnlock.Lock, len(stores))
 	errCh := make(chan error, len(stores))
 
 	wg := &sync.WaitGroup{}
@@ -1469,7 +1466,7 @@ func (w *GCWorker) physicalScanAndResolveLocks(ctx context.Context, safePoint ui
 	return scanner.GetSucceededStores(), nil
 }
 
-func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*tikv.Lock) error {
+func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*txnlock.Lock) error {
 	failpoint.Inject("resolveLocksAcrossRegionsErr", func(v failpoint.Value) {
 		ms := v.(int)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
@@ -1489,7 +1486,7 @@ func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*tikv.
 			return errors.Trace(err)
 		}
 
-		locksInRegion := make([]*tikv.Lock, 0)
+		locksInRegion := make([]*txnlock.Lock, 0)
 
 		for _, lock := range locks {
 			if loc.Contains(lock.Key) {
@@ -1554,8 +1551,8 @@ func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) er
 	return nil
 }
 
-func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []byte, safePoint uint64) (tikv.RangeTaskStat, error) {
-	var stat tikv.RangeTaskStat
+func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []byte, safePoint uint64) (rangetask.TaskStat, error) {
+	var stat rangetask.TaskStat
 	defer func() {
 		metrics.GCActionRegionResultCounter.WithLabelValues("success").Add(float64(stat.CompletedRegions))
 		metrics.GCActionRegionResultCounter.WithLabelValues("fail").Add(float64(stat.FailedRegions))
@@ -1638,11 +1635,11 @@ func (w *GCWorker) doGC(ctx context.Context, safePoint uint64, concurrency int) 
 		zap.Uint64("safePoint", safePoint))
 	startTime := time.Now()
 
-	runner := tikv.NewRangeTaskRunner(
+	runner := rangetask.NewRangeTaskRunner(
 		"gc-runner",
 		w.tikvStore,
 		concurrency,
-		func(ctx context.Context, r tikvstore.KeyRange) (tikv.RangeTaskStat, error) {
+		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			return w.doGCForRange(ctx, r.StartKey, r.EndKey, safePoint)
 		})
 
@@ -2026,18 +2023,18 @@ type mergeLockScanner struct {
 	client        tikv.Client
 	stores        map[uint64]*metapb.Store
 	receivers     mergeReceiver
-	currentLock   *tikv.Lock
+	currentLock   *txnlock.Lock
 	scanLockLimit uint32
 }
 
 type receiver struct {
 	Ch       <-chan scanLockResult
 	StoreID  uint64
-	NextLock *tikv.Lock
+	NextLock *txnlock.Lock
 	Err      error
 }
 
-func (r *receiver) PeekNextLock() *tikv.Lock {
+func (r *receiver) PeekNextLock() *txnlock.Lock {
 	if r.NextLock != nil {
 		return r.NextLock
 	}
@@ -2050,7 +2047,7 @@ func (r *receiver) PeekNextLock() *tikv.Lock {
 	return r.NextLock
 }
 
-func (r *receiver) TakeNextLock() *tikv.Lock {
+func (r *receiver) TakeNextLock() *txnlock.Lock {
 	lock := r.PeekNextLock()
 	r.NextLock = nil
 	return lock
@@ -2095,7 +2092,7 @@ func (r *mergeReceiver) Pop() interface{} {
 }
 
 type scanLockResult struct {
-	Lock *tikv.Lock
+	Lock *txnlock.Lock
 	Err  error
 }
 
@@ -2148,7 +2145,7 @@ func (s *mergeLockScanner) startWithReceivers(receivers []*receiver) {
 	heap.Init(&s.receivers)
 }
 
-func (s *mergeLockScanner) Next() *tikv.Lock {
+func (s *mergeLockScanner) Next() *txnlock.Lock {
 	for {
 		nextReceiver := s.receivers[0]
 		nextLock := nextReceiver.TakeNextLock()
@@ -2164,8 +2161,8 @@ func (s *mergeLockScanner) Next() *tikv.Lock {
 	}
 }
 
-func (s *mergeLockScanner) NextBatch(batchSize int) []*tikv.Lock {
-	result := make([]*tikv.Lock, 0, batchSize)
+func (s *mergeLockScanner) NextBatch(batchSize int) []*txnlock.Lock {
+	result := make([]*txnlock.Lock, 0, batchSize)
 	for len(result) < batchSize {
 		lock := s.Next()
 		if lock == nil {
@@ -2220,7 +2217,7 @@ func (s *mergeLockScanner) physicalScanLocksForStore(ctx context.Context, safePo
 
 		for _, lockInfo := range resp.Locks {
 			select {
-			case lockCh <- scanLockResult{Lock: tikv.NewLock(lockInfo)}:
+			case lockCh <- scanLockResult{Lock: txnlock.NewLock(lockInfo)}:
 			case <-ctx.Done():
 				return ctx.Err()
 			}

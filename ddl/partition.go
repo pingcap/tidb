@@ -967,12 +967,12 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
 		err = dropRuleBundles(d, physicalTableIDs)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
-		updateDroppingPartitionInfo(tblInfo, partNames)
 		job.SchemaState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteOnly:
@@ -1074,7 +1074,8 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 	if len(newPartitions) == 0 {
-		return ver, table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O)
+		job.State = model.JobStateCancelled
+		return ver, table.ErrUnknownPartition.GenWithStackByArgs(fmt.Sprintf("pid:%v", oldIDs), tblInfo.Name.O)
 	}
 
 	// Clear the tiflash replica available status.
@@ -1370,11 +1371,11 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	}
 	defer w.sessPool.put(ctx)
 
-	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), sql, paramList...)
+	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(w.ddlJobCtx, sql, paramList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(w.ddlJobCtx, stmt)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -31,6 +31,7 @@ import (
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -290,6 +291,10 @@ func (s *testSuite6) TestCreateView(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrNoSuchTable), IsTrue)
 	tk.MustExec("drop table test_v_nested")
 	tk.MustExec("drop view v_nested, v_nested2")
+
+	// Refer https://github.com/pingcap/tidb/issues/25876
+	err = tk.ExecToErr("create view v_stale as select * from source_table as of timestamp current_timestamp(3)")
+	c.Assert(terror.ErrorEqual(err, executor.ErrViewInvalid), IsTrue, Commentf("err %s", err))
 }
 
 func (s *testSuite6) TestViewRecursion(c *C) {
@@ -1142,21 +1147,21 @@ func (s *testSuite6) TestMaxHandleAddIndex(c *C) {
 func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	err := ddlutil.LoadDDLReorgVars(tk.Se)
+	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(1))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
 	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = invalid_val")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
 	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = -1")
@@ -1179,24 +1184,24 @@ func (s *testSuite6) TestSetDDLReorgWorkerCnt(c *C) {
 func (s *testSuite6) TestSetDDLReorgBatchSize(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	err := ddlutil.LoadDDLReorgVars(tk.Se)
+	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.DefTiDBDDLReorgBatchSize))
 
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '1'"))
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, variable.MinDDLReorgBatchSize)
 	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", variable.MaxDDLReorgBatchSize+1))
 	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '%d'", variable.MaxDDLReorgBatchSize+1)))
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, variable.MaxDDLReorgBatchSize)
 	_, err = tk.Exec("set @@global.tidb_ddl_reorg_batch_size = invalid_val")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(100))
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = -1")
@@ -1277,6 +1282,10 @@ func (s *testSuite6) TestGeneratedColumnRelatedDDL(c *C) {
 
 	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (a + 1);")
 	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
+
+	// This mysql compatibility check can be disabled using tidb_enable_auto_increment_in_generated
+	tk.MustExec("set session tidb_enable_auto_increment_in_generated = 1;")
+	tk.MustExec("alter table t1 modify column d bigint generated always as (a + 1);")
 
 	_, err = tk.Exec("alter table t1 add column e bigint as (z + 1);")
 	c.Assert(err.Error(), Equals, ddl.ErrBadField.GenWithStackByArgs("z", "generated column function").Error())
@@ -1478,6 +1487,10 @@ func (s *testSuite6) TestAutoIncrementColumnErrorMessage(c *C) {
 
 	_, err = tk.Exec("CREATE INDEX idx1 ON t1 ((t1_id + t1_id));")
 	c.Assert(err.Error(), Equals, ddl.ErrExpressionIndexCanNotRefer.GenWithStackByArgs("idx1").Error())
+
+	// This mysql compatibility check can be disabled using tidb_enable_auto_increment_in_generated
+	tk.MustExec("SET SESSION tidb_enable_auto_increment_in_generated = 1;")
+	tk.MustExec("CREATE INDEX idx1 ON t1 ((t1_id + t1_id));")
 }
 
 func (s *testRecoverTable) TestRenameMultiTables(c *C) {
