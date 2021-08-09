@@ -26,40 +26,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func equalColumn(c1, c2 *Column) bool {
-	if c1.length != c2.length ||
-		c1.nullCount() != c2.nullCount() {
-		return false
-	}
-	if len(c1.nullBitmap) != len(c2.nullBitmap) ||
-		len(c1.offsets) != len(c2.offsets) ||
-		len(c1.data) != len(c2.data) ||
-		len(c1.elemBuf) != len(c2.elemBuf) {
-		return false
-	}
-	for i := range c1.nullBitmap {
-		if c1.nullBitmap[i] != c2.nullBitmap[i] {
-			return false
-		}
-	}
-	for i := range c1.offsets {
-		if c1.offsets[i] != c2.offsets[i] {
-			return false
-		}
-	}
-	for i := range c1.data {
-		if c1.data[i] != c2.data[i] {
-			return false
-		}
-	}
-	for i := range c1.elemBuf {
-		if c1.elemBuf[i] != c2.elemBuf[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func TestColumnCopy(t *testing.T) {
 	t.Parallel()
 
@@ -69,11 +35,11 @@ func TestColumnCopy(t *testing.T) {
 	}
 
 	c1 := col.CopyConstruct(nil)
-	require.True(t, equalColumn(col, c1))
+	require.Equal(t, col, c1)
 
 	c2 := newFixedLenColumn(8, 10)
 	c2 = col.CopyConstruct(c2)
-	require.True(t, equalColumn(col, c2))
+	require.Equal(t, col, c2)
 }
 
 func TestColumnCopyReconstructFixedLen(t *testing.T) {
