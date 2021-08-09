@@ -1367,7 +1367,12 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 	case ast.AdminCaptureBindings:
 		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
 	case ast.AdminEvolveBindings:
-		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, nil
+		var err error
+		// The 'baseline evolution' only work in the test environment before the feature is GA.
+		if !config.CheckTableBeforeDrop {
+			err = errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
+		}
+		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
 	case ast.AdminReloadBindings:
 		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
 	case ast.AdminShowTelemetry:
