@@ -398,6 +398,9 @@ func (la *LogicalAggregation) ExtractCorrelatedCols() []*expression.CorrelatedCo
 		for _, arg := range fun.Args {
 			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
 		}
+		for _, arg := range fun.OrderByItems {
+			corCols = append(corCols, expression.ExtractCorColumns(arg.Expr)...)
+		}
 	}
 	return corCols
 }
@@ -410,6 +413,9 @@ func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
 	for _, aggDesc := range la.AggFuncs {
 		for _, expr := range aggDesc.Args {
 			usedCols = append(usedCols, expression.ExtractColumns(expr)...)
+		}
+		for _, expr := range aggDesc.OrderByItems {
+			usedCols = append(usedCols, expression.ExtractColumns(expr.Expr)...)
 		}
 	}
 	return usedCols

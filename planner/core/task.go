@@ -1513,22 +1513,23 @@ func BuildFinalModeAggregation(
 	// it right away.
 
 	// group_concat is special when pushing down, it cannot take the two phase execution if no distinct but with orderBy, and other cases are also different:
-	// for example: group_concat([distinct] expr0, expr1[, order by expr1] separtar ‘,’)
+	// for example: group_concat([distinct] expr0, expr1[, order by expr2] separator ‘,’)
 	// no distinct, no orderBy: can two phase
 	// 		[final agg] group_concat(col#1,’,’)
 	// 		[part  agg] group_concat(expr0, expr1,’,’) -> col#1
 	// no distinct,  orderBy: only one phase
 	// distinct, no orderBy: can two phase
-	// 		[final agg] group_concat(col#0, col#1,’,’)
+	// 		[final agg] group_concat(distinct col#0, col#1,’,’)
 	// 		[part  agg] group by expr0 ->col#0, expr1 -> col#1
 	// distinct,  orderBy: can two phase
-	// 		[final agg] group_concat(col#0, col#1, order by col#1,’,’)
-	// 		[part  agg] group by expr0 ->col#0, expr1 -> col#1
+	// 		[final agg] group_concat(distinct col#0, col#1, order by col#2,’,’)
+	// 		[part  agg] group by expr0 ->col#0, expr1 -> col#1, expr2-> col#2
 
 	for i, aggFunc := range original.AggFuncs {
 		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
 		finalAggFunc.Name = aggFunc.Name
 		args := make([]expression.Expression, 0, len(aggFunc.Args))
+		byItems := make([]*util.ByItems, len(aggFunc.OrderByItems), len(aggFunc.OrderByItems))
 		if aggFunc.HasDistinct {
 			/*
 				eg: SELECT COUNT(DISTINCT a), SUM(b) FROM t GROUP BY c
@@ -1539,18 +1540,13 @@ func BuildFinalModeAggregation(
 					[root] group by: c, funcs:count(distinct a), funcs:sum(b)
 						[cop]: group by: c, a
 			*/
-			for j, distinctArg := range aggFunc.Args {
-				// the last arg of ast.AggFuncGroupConcat is the separator, so just put it into the final agg
-				if aggFunc.Name == ast.AggFuncGroupConcat && j+1 == len(aggFunc.Args) {
-					args = append(args, distinctArg)
-					continue
-				}
+			getDistinctExpr := func(distinctArg expression.Expression) (ret expression.Expression) {
 				// 1. add all args to partial.GroupByItems
 				foundInGroupBy := false
 				for j, gbyExpr := range partial.GroupByItems {
 					if gbyExpr.Equal(sctx, distinctArg) {
 						foundInGroupBy = true
-						args = append(args, partialGbySchema.Columns[j])
+						ret = partialGbySchema.Columns[j]
 						break
 					}
 				}
@@ -1582,10 +1578,26 @@ func BuildFinalModeAggregation(
 						partial.Schema.Append(newCol)
 						partialCursor++
 					}
-					args = append(args, gbyCol)
+					ret = gbyCol
 				}
+				return ret
 			}
 
+			for j, distinctArg := range aggFunc.Args {
+				// the last arg of ast.AggFuncGroupConcat is the separator, so just put it into the final agg
+				if aggFunc.Name == ast.AggFuncGroupConcat && j+1 == len(aggFunc.Args) {
+					args = append(args, distinctArg)
+					continue
+				}
+				args = append(args, getDistinctExpr(distinctArg))
+			}
+
+			for b, byItem := range aggFunc.OrderByItems {
+				byItems[b] = byItem.Clone()
+				byItems[b].Expr = getDistinctExpr(byItem.Expr)
+			}
+
+			finalAggFunc.OrderByItems = byItems
 			finalAggFunc.HasDistinct = aggFunc.HasDistinct
 			finalAggFunc.Mode = aggregation.CompleteMode
 		} else {
