@@ -1321,7 +1321,9 @@ yynewstate:
 
 	}
 
-	yyhintSetOffset(parser.yyVAL, parser.yyVAL.offset)
+	if !parser.lexer.skipPositionRecording {
+		yyhintSetOffset(parser.yyVAL, parser.yyVAL.offset)
+	}
 
 	if yyEx != nil && yyEx.Reduced(r, exState, parser.yyVAL) {
 		return -1

@@ -71,6 +71,7 @@ func TrimComment(txt string) string {
 type ParserConfig struct {
 	EnableWindowFunction        bool
 	EnableStrictDoubleTypeCheck bool
+	SkipPositionRecording       bool
 }
 
 // Parser represents a parser instance. Some temporary objects are stored in it to reduce object allocation during Parse function.
@@ -130,6 +131,7 @@ func (parser *Parser) SetStrictDoubleTypeCheck(val bool) {
 func (parser *Parser) SetParserConfig(config ParserConfig) {
 	parser.EnableWindowFunc(config.EnableWindowFunction)
 	parser.SetStrictDoubleTypeCheck(config.EnableStrictDoubleTypeCheck)
+	parser.lexer.skipPositionRecording = config.SkipPositionRecording
 }
 
 // Parse parses a query string to raw ast.StmtNode.
