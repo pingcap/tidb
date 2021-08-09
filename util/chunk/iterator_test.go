@@ -42,6 +42,7 @@ func TestIteratorOnSel(t *testing.T) {
 }
 
 func checkEqual(it Iterator, exp []int64, t *testing.T) {
+	require.Equal(t, len(exp), it.Len())
 	for row, i := it.Begin(), 0; row != it.End(); row, i = it.Next(), i+1 {
 		require.Equal(t, exp[i], row.GetInt64(0))
 	}
@@ -113,7 +114,7 @@ func TestIterator(t *testing.T) {
 	}
 
 	it := NewIterator4Slice(rows)
-	checkIterator(t, it, expected)
+	checkEqual(it, expected, t)
 	it.Begin()
 	for i := 0; i < 5; i++ {
 		require.Equal(t, rows[i], it.Current())
@@ -124,7 +125,7 @@ func TestIterator(t *testing.T) {
 	require.Equal(t, rows[0], it.Begin())
 
 	it = NewIterator4Chunk(chk)
-	checkIterator(t, it, expected)
+	checkEqual(it, expected, t)
 	it.Begin()
 	for i := 0; i < 5; i++ {
 		require.Equal(t, chk.GetRow(i), it.Current())
@@ -135,7 +136,7 @@ func TestIterator(t *testing.T) {
 	require.Equal(t, chk.GetRow(0), it.Begin())
 
 	it = NewIterator4List(li)
-	checkIterator(t, it, expected)
+	checkEqual(it, expected, t)
 	it.Begin()
 	for i := 0; i < 5; i++ {
 		require.Equal(t, li.GetRow(ptrs[i]), it.Current())
@@ -146,7 +147,7 @@ func TestIterator(t *testing.T) {
 	require.Equal(t, li.GetRow(ptrs[0]), it.Begin())
 
 	it = NewIterator4RowPtr(li, ptrs)
-	checkIterator(t, it, expected)
+	checkEqual(it, expected, t)
 	it.Begin()
 	for i := 0; i < 5; i++ {
 		require.Equal(t, li.GetRow(ptrs[i]), it.Current())
@@ -157,7 +158,7 @@ func TestIterator(t *testing.T) {
 	require.Equal(t, li.GetRow(ptrs[0]), it.Begin())
 
 	it = NewIterator4RowPtr(li2, ptrs2)
-	checkIterator(t, it, expected)
+	checkEqual(it, expected, t)
 	it.Begin()
 	for i := 0; i < 5; i++ {
 		require.Equal(t, li2.GetRow(ptrs2[i]), it.Current())
@@ -170,7 +171,7 @@ func TestIterator(t *testing.T) {
 	rc := &RowContainer{}
 	rc.m.records = li
 	it = NewIterator4RowContainer(rc)
-	checkIterator(t, it, expected)
+	checkEqual(it, expected, t)
 	it.Begin()
 	for i := 0; i < 5; i++ {
 		require.Equal(t, li.GetRow(ptrs[i]), it.Current())
@@ -192,12 +193,4 @@ func TestIterator(t *testing.T) {
 	rc.m.records = NewList(fields, 1, 1)
 	it = NewIterator4RowContainer(rc)
 	require.Equal(t, it.End(), it.Begin())
-}
-
-func checkIterator(t *testing.T, it Iterator, expected []int64) {
-	var got []int64
-	for row := it.Begin(); row != it.End(); row = it.Next() {
-		got = append(got, row.GetInt64(0))
-	}
-	require.Equal(t, expected, got)
 }
