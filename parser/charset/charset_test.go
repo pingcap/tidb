@@ -60,6 +60,23 @@ func (s *testCharsetSuite) TestValidCharset(c *C) {
 	}
 }
 
+func (s *testCharsetSuite) TestValidCustomCharset(c *C) {
+	AddCharset(&Charset{"custom", "custom_collation", make(map[string]*Collation), "Custom", 4})
+	AddCollation(&Collation{99999, "custom", "custom_collation", true})
+
+	tests := []struct {
+		cs   string
+		co   string
+		succ bool
+	}{
+		{"custom", "custom_collation", true},
+		{"utf8", "utf8_invalid_ci", false},
+	}
+	for _, tt := range tests {
+		testValidCharset(c, tt.cs, tt.co, tt.succ)
+	}
+}
+
 func (s *testCharsetSuite) TestGetSupportedCharsets(c *C) {
 	charset := &Charset{"test", "test_bin", nil, "Test", 5}
 	charsetInfos = append(charsetInfos, charset)
