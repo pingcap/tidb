@@ -16,49 +16,22 @@ package implementation
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
+func TestBaseImplementation(t *testing.T) {
 
-var _ = Suite(&testImplSuite{})
-
-type testImplSuite struct {
-	*parser.Parser
-	is   infoschema.InfoSchema
-	sctx sessionctx.Context
-}
-
-func (s *testImplSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
-	s.sctx = plannercore.MockContext()
-	s.Parser = parser.New()
-}
-
-func (s *testImplSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
-}
-
-func (s *testImplSuite) TestBaseImplementation(c *C) {
-	p := plannercore.PhysicalLimit{}.Init(s.sctx, nil, 0, nil)
+	sctx := plannercore.MockContext()
+	p := plannercore.PhysicalLimit{}.Init(sctx, nil, 0, nil)
 	impl := &baseImpl{plan: p}
-	c.Assert(impl.GetPlan(), Equals, p)
+	require.Equal(t, p, impl.GetPlan())
 
 	cost := impl.CalcCost(10, []memo.Implementation{}...)
-	c.Assert(cost, Equals, 0.0)
-	c.Assert(impl.GetCost(), Equals, 0.0)
+	require.Equal(t, 0.0, cost)
+	require.Equal(t, 0.0, impl.GetCost())
 
 	impl.SetCost(6.0)
-	c.Assert(impl.GetCost(), Equals, 6.0)
+	require.Equal(t, 6.0, impl.GetCost())
 }
