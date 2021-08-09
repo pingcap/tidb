@@ -75,6 +75,11 @@ func (s *tiflashTestSuite) SetUpSuite(c *C) {
 	s.dom.SetStatsUpdating(true)
 }
 
+func (s *tiflashTestSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	c.Assert(s.store.Close(), IsNil)
+}
+
 func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -507,6 +512,25 @@ func (s *tiflashTestSuite) TestMppEnum(c *C) {
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 	tk.MustQuery("select t1.b from t t1 join t t2 on t1.a = t2.a order by t1.b").Check(testkit.Rows("aca", "bca", "zca"))
+}
+
+func (s *tiflashTestSuite) TestDispatchTaskRetry(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("insert into t values(1,0)")
+	tk.MustExec("insert into t values(2,0)")
+	tk.MustExec("insert into t values(3,0)")
+	tk.MustExec("insert into t values(4,0)")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "3*return(true)"), IsNil)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout"), IsNil)
 }
 
 func (s *tiflashTestSuite) TestCancelMppTasks(c *C) {

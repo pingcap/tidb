@@ -14,20 +14,24 @@
 package txninfo
 
 import (
-	"strings"
+	"encoding/json"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 // TxnRunningState is the current state of a transaction
 type TxnRunningState = int32
 
 const (
-	// TxnRunningNormal means the transaction is running normally
-	TxnRunningNormal TxnRunningState = iota
+	// TxnIdle means the transaction is idle, i.e. waiting for the user's next statement
+	TxnIdle TxnRunningState = iota
+	// TxnRunning means the transaction is running, i.e. executing a statement
+	TxnRunning
 	// TxnLockWaiting means the transaction is blocked on a lock
 	TxnLockWaiting
 	// TxnCommitting means the transaction is (at least trying to) committing
@@ -36,9 +40,36 @@ const (
 	TxnRollingBack
 )
 
+const (
+	// IDStr is the column name of the TIDB_TRX table's ID column.
+	IDStr = "ID"
+	// StartTimeStr is the column name of the TIDB_TRX table's StartTime column.
+	StartTimeStr = "START_TIME"
+	// CurrentSQLDigestStr is the column name of the TIDB_TRX table's CurrentSQLDigest column.
+	CurrentSQLDigestStr = "CURRENT_SQL_DIGEST"
+	// CurrentSQLDigestTextStr is the column name of the TIDB_TRX table's CurrentSQLDigestText column.
+	CurrentSQLDigestTextStr = "CURRENT_SQL_DIGEST_TEXT"
+	// StateStr is the column name of the TIDB_TRX table's State column.
+	StateStr = "STATE"
+	// WaitingStartTimeStr is the column name of the TIDB_TRX table's WaitingStartTime column.
+	WaitingStartTimeStr = "WAITING_START_TIME"
+	// MemBufferKeysStr is the column name of the TIDB_TRX table's MemBufferKeys column.
+	MemBufferKeysStr = "MEM_BUFFER_KEYS"
+	// MemBufferBytesStr is the column name of the TIDB_TRX table's MemBufferBytes column.
+	MemBufferBytesStr = "MEM_BUFFER_BYTES"
+	// SessionIDStr is the column name of the TIDB_TRX table's SessionID column.
+	SessionIDStr = "SESSION_ID"
+	// UserStr is the column name of the TIDB_TRX table's User column.
+	UserStr = "USER"
+	// DBStr is the column name of the TIDB_TRX table's DB column.
+	DBStr = "DB"
+	// AllSQLDigestsStr is the column name of the TIDB_TRX table's AllSQLDigests column.
+	AllSQLDigestsStr = "ALL_SQL_DIGESTS"
+)
+
 // TxnRunningStateStrs is the names of the TxnRunningStates
 var TxnRunningStateStrs = []string{
-	"Normal", "LockWaiting", "Committing", "RollingBack",
+	"Idle", "Running", "LockWaiting", "Committing", "RollingBack",
 }
 
 // TxnInfo is information about a running transaction
@@ -78,44 +109,70 @@ type TxnInfo struct {
 	CurrentDB string
 }
 
-// ToDatum Converts the `TxnInfo` to `Datum` to show in the `TIDB_TRX` table.
-func (info *TxnInfo) ToDatum() []types.Datum {
-	humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
+var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
+	IDStr: func(info *TxnInfo) types.Datum {
+		return types.NewDatum(info.StartTS)
+	},
+	StartTimeStr: func(info *TxnInfo) types.Datum {
+		humanReadableStartTime := time.Unix(0, oracle.ExtractPhysical(info.StartTS)*1e6)
+		return types.NewDatum(types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, types.MaxFsp))
+	},
+	CurrentSQLDigestStr: func(info *TxnInfo) types.Datum {
+		if len(info.CurrentSQLDigest) != 0 {
+			return types.NewDatum(info.CurrentSQLDigest)
+		}
+		return types.NewDatum(nil)
+	},
+	StateStr: func(info *TxnInfo) types.Datum {
+		e, err := types.ParseEnumValue(TxnRunningStateStrs, uint64(info.State+1))
+		if err != nil {
+			panic("this should never happen")
+		}
 
-	var currentDigest interface{}
-	if len(info.CurrentSQLDigest) != 0 {
-		currentDigest = info.CurrentSQLDigest
+		state := types.NewMysqlEnumDatum(e)
+		return state
+	},
+	WaitingStartTimeStr: func(info *TxnInfo) types.Datum {
+		if !info.BlockStartTime.Valid {
+			return types.NewDatum(nil)
+		}
+		return types.NewDatum(types.NewTime(types.FromGoTime(info.BlockStartTime.Time), mysql.TypeTimestamp, types.MaxFsp))
+	},
+	MemBufferKeysStr: func(info *TxnInfo) types.Datum {
+		return types.NewDatum(info.EntriesCount)
+	},
+	MemBufferBytesStr: func(info *TxnInfo) types.Datum {
+		return types.NewDatum(info.EntriesSize)
+	},
+	SessionIDStr: func(info *TxnInfo) types.Datum {
+		return types.NewDatum(info.ConnectionID)
+	},
+	UserStr: func(info *TxnInfo) types.Datum {
+		return types.NewDatum(info.Username)
+	},
+	DBStr: func(info *TxnInfo) types.Datum {
+		return types.NewDatum(info.CurrentDB)
+	},
+	AllSQLDigestsStr: func(info *TxnInfo) types.Datum {
+		allSQLDigests := info.AllSQLDigests
+		// Replace nil with empty array
+		if allSQLDigests == nil {
+			allSQLDigests = []string{}
+		}
+		res, err := json.Marshal(allSQLDigests)
+		if err != nil {
+			logutil.BgLogger().Warn("Failed to marshal sql digests list as json", zap.Uint64("txnStartTS", info.StartTS))
+			return types.NewDatum(nil)
+		}
+		return types.NewDatum(string(res))
+	},
+}
+
+// ToDatum Converts the `TxnInfo`'s specified column to `Datum` to show in the `TIDB_TRX` table.
+func (info *TxnInfo) ToDatum(column string) types.Datum {
+	res, ok := columnValueGetterMap[column]
+	if !ok {
+		return types.NewDatum(nil)
 	}
-
-	var blockStartTime interface{}
-	if !info.BlockStartTime.Valid {
-		blockStartTime = nil
-	} else {
-		blockStartTime = types.NewTime(types.FromGoTime(info.BlockStartTime.Time), mysql.TypeTimestamp, types.MaxFsp)
-	}
-
-	e, err := types.ParseEnumValue(TxnRunningStateStrs, uint64(info.State+1))
-	if err != nil {
-		panic("this should never happen")
-	}
-
-	allSQLs := "[" + strings.Join(info.AllSQLDigests, ", ") + "]"
-
-	state := types.NewMysqlEnumDatum(e)
-
-	datums := types.MakeDatums(
-		info.StartTS,
-		types.NewTime(types.FromGoTime(humanReadableStartTime), mysql.TypeTimestamp, types.MaxFsp),
-		currentDigest,
-	)
-	datums = append(datums, state)
-	datums = append(datums, types.MakeDatums(
-		blockStartTime,
-		info.EntriesCount,
-		info.EntriesSize,
-		info.ConnectionID,
-		info.Username,
-		info.CurrentDB,
-		allSQLs)...)
-	return datums
+	return res(info)
 }

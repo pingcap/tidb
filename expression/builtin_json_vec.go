@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
@@ -30,7 +29,7 @@ import (
 
 func vecJSONModify(ctx sessionctx.Context, args []Expression, bufAllocator columnBufferAllocator, input *chunk.Chunk, result *chunk.Column, mt json.ModifyType) error {
 	nr := input.NumRows()
-	jsonBuf, err := bufAllocator.get(types.ETJson, nr)
+	jsonBuf, err := bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -41,7 +40,7 @@ func vecJSONModify(ctx sessionctx.Context, args []Expression, bufAllocator colum
 
 	strBufs := make([]*chunk.Column, (len(args)-1)/2)
 	for i := 1; i < len(args); i += 2 {
-		strBufs[(i-1)/2], err = bufAllocator.get(types.ETString, nr)
+		strBufs[(i-1)/2], err = bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -52,7 +51,7 @@ func vecJSONModify(ctx sessionctx.Context, args []Expression, bufAllocator colum
 	}
 	valueBufs := make([]*chunk.Column, (len(args)-1)/2+1)
 	for i := 2; i < len(args); i += 2 {
-		valueBufs[i/2-1], err = bufAllocator.get(types.ETJson, nr)
+		valueBufs[i/2-1], err = bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -108,7 +107,7 @@ func (b *builtinJSONStorageSizeSig) vectorized() bool {
 
 func (b *builtinJSONStorageSizeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETJson, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -141,7 +140,7 @@ func (b *builtinJSONDepthSig) vectorized() bool {
 
 func (b *builtinJSONDepthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETJson, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -168,7 +167,7 @@ func (b *builtinJSONKeysSig) vectorized() bool {
 
 func (b *builtinJSONKeysSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETJson, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -224,7 +223,7 @@ func (b *builtinJSONArraySig) vecEvalJSON(input *chunk.Chunk, result *chunk.Colu
 		jsons[i] = make([]interface{}, 0, len(b.args))
 	}
 	for _, arg := range b.args {
-		j, err := b.bufAllocator.get(types.ETJson, nr)
+		j, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -254,7 +253,7 @@ func (b *builtinJSONContainsSig) vectorized() bool {
 func (b *builtinJSONContainsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	nr := input.NumRows()
 
-	objCol, err := b.bufAllocator.get(types.ETJson, nr)
+	objCol, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -264,7 +263,7 @@ func (b *builtinJSONContainsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 
-	targetCol, err := b.bufAllocator.get(types.ETJson, nr)
+	targetCol, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -278,7 +277,7 @@ func (b *builtinJSONContainsSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	resI64s := result.Int64s()
 
 	if len(b.args) == 3 {
-		pathCol, err := b.bufAllocator.get(types.ETString, nr)
+		pathCol, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -338,7 +337,7 @@ func (b *builtinJSONQuoteSig) vectorized() bool {
 
 func (b *builtinJSONQuoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -364,7 +363,7 @@ func (b *builtinJSONSearchSig) vectorized() bool {
 
 func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
 	nr := input.NumRows()
-	jsonBuf, err := b.bufAllocator.get(types.ETJson, nr)
+	jsonBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -372,7 +371,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[0].VecEvalJSON(b.ctx, input, jsonBuf); err != nil {
 		return err
 	}
-	typeBuf, err := b.bufAllocator.get(types.ETString, nr)
+	typeBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -380,7 +379,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 	if err := b.args[1].VecEvalString(b.ctx, input, typeBuf); err != nil {
 		return err
 	}
-	searchBuf, err := b.bufAllocator.get(types.ETString, nr)
+	searchBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -391,7 +390,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 
 	var escapeBuf *chunk.Column
 	if len(b.args) >= 4 {
-		escapeBuf, err = b.bufAllocator.get(types.ETString, nr)
+		escapeBuf, err = b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -406,7 +405,7 @@ func (b *builtinJSONSearchSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 		pathBufs = make([]*chunk.Column, (len(b.args) - 4))
 		for i := 4; i < len(b.args); i++ {
 			index := i - 4
-			pathBufs[index], err = b.bufAllocator.get(types.ETString, nr)
+			pathBufs[index], err = b.bufAllocator.get()
 			if err != nil {
 				return err
 			}
@@ -492,7 +491,7 @@ func (b *builtinJSONObjectSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 	var err error
 	for i := 0; i < len(b.args); i++ {
 		if i&1 == 0 {
-			if argBuffers[i], err = b.bufAllocator.get(types.ETString, nr); err != nil {
+			if argBuffers[i], err = b.bufAllocator.get(); err != nil {
 				return err
 			}
 			defer func(buf *chunk.Column) {
@@ -503,7 +502,7 @@ func (b *builtinJSONObjectSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 				return err
 			}
 		} else {
-			if argBuffers[i], err = b.bufAllocator.get(types.ETJson, nr); err != nil {
+			if argBuffers[i], err = b.bufAllocator.get(); err != nil {
 				return err
 			}
 			defer func(buf *chunk.Column) {
@@ -552,7 +551,7 @@ func (b *builtinJSONArrayInsertSig) vectorized() bool {
 
 func (b *builtinJSONArrayInsertSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
 	nr := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETJson, nr)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -564,7 +563,7 @@ func (b *builtinJSONArrayInsertSig) vecEvalJSON(input *chunk.Chunk, result *chun
 	valueBufs := make([]*chunk.Column, (len(b.args)-1)/2)
 	for i := 1; i < len(b.args); i++ {
 		if i&1 == 0 {
-			valueBufs[i/2-1], err = b.bufAllocator.get(types.ETJson, nr)
+			valueBufs[i/2-1], err = b.bufAllocator.get()
 			if err != nil {
 				return err
 			}
@@ -573,7 +572,7 @@ func (b *builtinJSONArrayInsertSig) vecEvalJSON(input *chunk.Chunk, result *chun
 				return err
 			}
 		} else {
-			pathBufs[(i-1)/2], err = b.bufAllocator.get(types.ETString, nr)
+			pathBufs[(i-1)/2], err = b.bufAllocator.get()
 			if err != nil {
 				return err
 			}
@@ -631,7 +630,7 @@ func (b *builtinJSONKeys2ArgsSig) vectorized() bool {
 
 func (b *builtinJSONKeys2ArgsSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
 	nr := input.NumRows()
-	jsonBuf, err := b.bufAllocator.get(types.ETJson, nr)
+	jsonBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -639,7 +638,7 @@ func (b *builtinJSONKeys2ArgsSig) vecEvalJSON(input *chunk.Chunk, result *chunk.
 	if err := b.args[0].VecEvalJSON(b.ctx, input, jsonBuf); err != nil {
 		return err
 	}
-	pathBuf, err := b.bufAllocator.get(types.ETString, nr)
+	pathBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -686,7 +685,7 @@ func (b *builtinJSONLengthSig) vectorized() bool {
 func (b *builtinJSONLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	nr := input.NumRows()
 
-	jsonBuf, err := b.bufAllocator.get(types.ETJson, nr)
+	jsonBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -698,7 +697,7 @@ func (b *builtinJSONLengthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 	resI64s := result.Int64s()
 
 	if len(b.args) == 2 {
-		pathBuf, err := b.bufAllocator.get(types.ETString, nr)
+		pathBuf, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -768,7 +767,7 @@ func (b *builtinJSONTypeSig) vectorized() bool {
 
 func (b *builtinJSONTypeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETJson, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -796,7 +795,7 @@ func (b *builtinJSONExtractSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Co
 	var err error
 
 	nr := input.NumRows()
-	jsonBuf, err := b.bufAllocator.get(types.ETJson, nr)
+	jsonBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -808,7 +807,7 @@ func (b *builtinJSONExtractSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Co
 	pathArgs := b.args[1:]
 	pathBuffers := make([]*chunk.Column, len(pathArgs))
 	for k := 0; k < len(pathArgs); k++ {
-		if pathBuffers[k], err = b.bufAllocator.get(types.ETString, nr); err != nil {
+		if pathBuffers[k], err = b.bufAllocator.get(); err != nil {
 			return err
 		}
 		defer func(buf *chunk.Column) {
@@ -861,7 +860,7 @@ func (b *builtinJSONRemoveSig) vectorized() bool {
 
 func (b *builtinJSONRemoveSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
 	nr := input.NumRows()
-	jsonBuf, err := b.bufAllocator.get(types.ETJson, nr)
+	jsonBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -872,7 +871,7 @@ func (b *builtinJSONRemoveSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Col
 
 	strBufs := make([]*chunk.Column, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		strBufs[i-1], err = b.bufAllocator.get(types.ETString, nr)
+		strBufs[i-1], err = b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -927,7 +926,7 @@ func (b *builtinJSONMergeSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Colu
 	argBuffers := make([]*chunk.Column, len(b.args))
 	var err error
 	for i, arg := range b.args {
-		if argBuffers[i], err = b.bufAllocator.get(types.ETJson, nr); err != nil {
+		if argBuffers[i], err = b.bufAllocator.get(); err != nil {
 			return err
 		}
 		defer func(buf *chunk.Column) {
@@ -988,7 +987,7 @@ func (b *builtinJSONContainsPathSig) vectorized() bool {
 
 func (b *builtinJSONContainsPathSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	jsonBuf, err := b.bufAllocator.get(types.ETJson, n)
+	jsonBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -996,7 +995,7 @@ func (b *builtinJSONContainsPathSig) vecEvalInt(input *chunk.Chunk, result *chun
 	if err := b.args[0].VecEvalJSON(b.ctx, input, jsonBuf); err != nil {
 		return err
 	}
-	typeBuf, err := b.bufAllocator.get(types.ETString, n)
+	typeBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1013,7 +1012,7 @@ func (b *builtinJSONContainsPathSig) vecEvalInt(input *chunk.Chunk, result *chun
 		}
 	}()
 	for i := 0; i < len(pathBufs); i++ {
-		pathBuf, err := b.bufAllocator.get(types.ETString, n)
+		pathBuf, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -1073,7 +1072,7 @@ func (b *builtinJSONArrayAppendSig) vecEvalJSON(input *chunk.Chunk, result *chun
 	n := input.NumRows()
 	m := (len(b.args) - 1) / 2
 
-	jsonBufs, err := b.bufAllocator.get(types.ETJson, n)
+	jsonBufs, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1093,7 +1092,7 @@ func (b *builtinJSONArrayAppendSig) vecEvalJSON(input *chunk.Chunk, result *chun
 		}
 	}()
 	for i := 1; i < len(b.args)-1; i += 2 {
-		pathBuf, err := b.bufAllocator.get(types.ETString, n)
+		pathBuf, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -1101,7 +1100,7 @@ func (b *builtinJSONArrayAppendSig) vecEvalJSON(input *chunk.Chunk, result *chun
 		if err := b.args[i].VecEvalString(b.ctx, input, pathBuf); err != nil {
 			return err
 		}
-		valBuf, err := b.bufAllocator.get(types.ETJson, n)
+		valBuf, err := b.bufAllocator.get()
 		if err != nil {
 			return err
 		}
@@ -1155,7 +1154,7 @@ func (b *builtinJSONUnquoteSig) vectorized() bool {
 
 func (b *builtinJSONUnquoteSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1189,7 +1188,7 @@ func (b *builtinJSONSPrettySig) vectorized() bool {
 
 func (b *builtinJSONSPrettySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETJson, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -1228,7 +1227,7 @@ func (b *builtinJSONMergePatchSig) vecEvalJSON(input *chunk.Chunk, result *chunk
 	argBuffers := make([]*chunk.Column, len(b.args))
 	var err error
 	for i, arg := range b.args {
-		if argBuffers[i], err = b.bufAllocator.get(types.ETJson, nr); err != nil {
+		if argBuffers[i], err = b.bufAllocator.get(); err != nil {
 			return err
 		}
 		defer func(buf *chunk.Column) {
