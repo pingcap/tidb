@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/tikv/client-go/v2/tikv"
@@ -172,6 +173,8 @@ const (
 	TableDeadlocks = "DEADLOCKS"
 	// TableDataLockWaits is current lock waiting status table.
 	TableDataLockWaits = "DATA_LOCK_WAITS"
+	// TableRegionLabel is the string constant of region label table.
+	TableRegionLabel = "REGION_LABEL"
 )
 
 const (
@@ -266,6 +269,7 @@ var tableIDMap = map[string]int64{
 	TableDataLockWaits:                      autoid.InformationSchemaDBID + 74,
 	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 75,
 	ClusterTableStatementsSummaryEvicted:    autoid.InformationSchemaDBID + 76,
+	TableRegionLabel:                        autoid.InformationSchemaDBID + 77,
 }
 
 type columnInfo struct {
@@ -1389,19 +1393,20 @@ var tableTiDBTrxCols = []columnInfo{
 }
 
 var tableDeadlocksCols = []columnInfo{
-	{name: "DEADLOCK_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, comment: "The ID to distinguish different deadlock events"},
-	{name: "OCCUR_TIME", tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "The physical time when the deadlock occurs"},
-	{name: "RETRYABLE", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the deadlock is retryable. Retryable deadlocks are usually not reported to the client"},
-	{name: "TRY_LOCK_TRX_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction ID (start ts) of the transaction that's trying to acquire the lock"},
-	{name: "CURRENT_SQL_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "The digest of the SQL that's being blocked"},
-	{name: "KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The key on which a transaction is waiting for another"},
-	{name: "KEY_INFO", tp: mysql.TypeBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag, comment: "Information of the key"},
-	{name: "TRX_HOLDING_LOCK", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction ID (start ts) of the transaction that's currently holding the lock"},
+	{name: deadlockhistory.ColDeadlockIDStr, tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag, comment: "The ID to distinguish different deadlock events"},
+	{name: deadlockhistory.ColOccurTimeStr, tp: mysql.TypeTimestamp, decimal: 6, size: 26, comment: "The physical time when the deadlock occurs"},
+	{name: deadlockhistory.ColRetryableStr, tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the deadlock is retryable. Retryable deadlocks are usually not reported to the client"},
+	{name: deadlockhistory.ColTryLockTrxIDStr, tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction ID (start ts) of the transaction that's trying to acquire the lock"},
+	{name: deadlockhistory.ColCurrentSQLDigestStr, tp: mysql.TypeVarchar, size: 64, comment: "The digest of the SQL that's being blocked"},
+	{name: deadlockhistory.ColCurrentSQLDigestTextStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The normalized SQL that's being blocked"},
+	{name: deadlockhistory.ColKeyStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The key on which a transaction is waiting for another"},
+	{name: deadlockhistory.ColKeyInfoStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Information of the key"},
+	{name: deadlockhistory.ColTrxHoldingLockStr, tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction ID (start ts) of the transaction that's currently holding the lock"},
 }
 
 var tableDataLockWaitsCols = []columnInfo{
 	{name: DataLockWaitsColumnKey, tp: mysql.TypeBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag, comment: "The key that's being waiting on"},
-	{name: DataLockWaitsColumnKeyInfo, tp: mysql.TypeBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag, comment: "Information of the key"},
+	{name: DataLockWaitsColumnKeyInfo, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Information of the key"},
 	{name: DataLockWaitsColumnTrxID, tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Current transaction that's waiting for the lock"},
 	{name: DataLockWaitsColumnCurrentHoldingTrxID, tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "The transaction that's holding the lock and blocks the current transaction"},
 	{name: DataLockWaitsColumnSQLDigest, tp: mysql.TypeVarchar, size: 64, comment: "Digest of the SQL that's trying to acquire the lock"},
@@ -1412,6 +1417,14 @@ var tableStatementsSummaryEvictedCols = []columnInfo{
 	{name: "BEGIN_TIME", tp: mysql.TypeTimestamp, size: 26},
 	{name: "END_TIME", tp: mysql.TypeTimestamp, size: 26},
 	{name: "EVICTED_COUNT", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+}
+
+var tableRegionLabelCols = []columnInfo{
+	{name: "RULE_ID", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "RULE_TYPE", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag},
+	{name: "REGION_LABEL", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
+	{name: "START_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
+	{name: "END_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
@@ -1796,6 +1809,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBTrx:                            tableTiDBTrxCols,
 	TableDeadlocks:                          tableDeadlocksCols,
 	TableDataLockWaits:                      tableDataLockWaitsCols,
+	TableRegionLabel:                        tableRegionLabelCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
