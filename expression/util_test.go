@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"context"
 	"reflect"
 	"testing"
 	"time"
@@ -411,6 +412,68 @@ func (s *testUtilSuite) TestDisableParseJSONFlag4Expr(c *check.C) {
 	ft.Flag |= mysql.ParseToJSONFlag
 	DisableParseJSONFlag4Expr(expr)
 	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsFalse)
+}
+
+func (s *testUtilSuite) TestSQLDigestTextRetriever(c *check.C) {
+	// Create a fake session as the argument to the retriever, though it's actually not used when mock data is set.
+
+	r := NewSQLDigestTextRetriever()
+	clearResult := func() {
+		r.SQLDigestsMap = map[string]string{
+			"digest1": "",
+			"digest2": "",
+			"digest3": "",
+			"digest4": "",
+			"digest5": "",
+		}
+	}
+	clearResult()
+	r.mockLocalData = map[string]string{
+		"digest1": "text1",
+		"digest2": "text2",
+		"digest6": "text6",
+	}
+	r.mockGlobalData = map[string]string{
+		"digest2": "text2",
+		"digest3": "text3",
+		"digest4": "text4",
+		"digest7": "text7",
+	}
+
+	expectedLocalResult := map[string]string{
+		"digest1": "text1",
+		"digest2": "text2",
+		"digest3": "",
+		"digest4": "",
+		"digest5": "",
+	}
+	expectedGlobalResult := map[string]string{
+		"digest1": "text1",
+		"digest2": "text2",
+		"digest3": "text3",
+		"digest4": "text4",
+		"digest5": "",
+	}
+
+	err := r.RetrieveLocal(context.Background(), nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(r.SQLDigestsMap, check.DeepEquals, expectedLocalResult)
+	clearResult()
+
+	err = r.RetrieveGlobal(context.Background(), nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(r.SQLDigestsMap, check.DeepEquals, expectedGlobalResult)
+	clearResult()
+
+	r.fetchAllLimit = 1
+	err = r.RetrieveLocal(context.Background(), nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(r.SQLDigestsMap, check.DeepEquals, expectedLocalResult)
+	clearResult()
+
+	err = r.RetrieveGlobal(context.Background(), nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(r.SQLDigestsMap, check.DeepEquals, expectedGlobalResult)
 }
 
 func BenchmarkExtractColumns(b *testing.B) {

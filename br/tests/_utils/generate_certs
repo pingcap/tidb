@@ -1,0 +1,31 @@
+#!/bin/sh
+#
+# Copyright 2020 PingCAP, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+set -eu
+
+mkdir -p $TEST_DIR/certs
+openssl ecparam -out "$TEST_DIR/certs/ca.key" -name prime256v1 -genkey
+# CA's Common Name must not be the same as signed certificate.
+openssl req -new -batch -sha256 -subj '/CN=br_tests' -key "$TEST_DIR/certs/ca.key" -out "$TEST_DIR/certs/ca.csr"
+openssl x509 -req -sha256 -days 2 -in "$TEST_DIR/certs/ca.csr" -signkey "$TEST_DIR/certs/ca.key" -out "$TEST_DIR/certs/ca.pem"
+for cluster in tidb pd tikv importer lightning tiflash curl ticdc br; do
+    openssl ecparam -out "$TEST_DIR/certs/$cluster.key" -name prime256v1 -genkey
+    openssl req -new -batch -sha256 -subj '/CN=localhost' -key "$TEST_DIR/certs/$cluster.key" -out "$TEST_DIR/certs/$cluster.csr"
+    openssl x509 -req -sha256 -days 1 -extensions EXT -extfile "tests/config/ipsan.cnf" \
+        -in "$TEST_DIR/certs/$cluster.csr" \
+        -CA "$TEST_DIR/certs/ca.pem" \
+        -CAkey "$TEST_DIR/certs/ca.key" \
+        -CAcreateserial -out "$TEST_DIR/certs/$cluster.pem"
+done

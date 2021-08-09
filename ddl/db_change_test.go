@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -1051,8 +1052,9 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, IsNil)
-		_, err := s.se.Execute(context.Background(), "select * from t")
+		rs, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
+		c.Assert(rs[0].Close(), IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
@@ -1063,8 +1065,9 @@ func (s *testStateChangeSuite) TestParallelAddGeneratedColumnAndAlterModifyColum
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
-		_, err := s.se.Execute(context.Background(), "select * from t")
+		rs, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
+		c.Assert(rs[0].Close(), IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -1075,8 +1078,9 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: this column has primary key flag")
-		_, err := s.se.Execute(context.Background(), "select * from t")
+		rs, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
+		c.Assert(rs[0].Close(), IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -1360,12 +1364,24 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, err1 = se.Execute(context.Background(), sql1)
+		var rss []sqlexec.RecordSet
+		rss, err1 = se.Execute(context.Background(), sql1)
+		if err1 == nil && len(rss) > 0 {
+			for _, rs := range rss {
+				c.Assert(rs.Close(), IsNil)
+			}
+		}
 	}()
 	go func() {
 		defer wg.Done()
 		<-ch
-		_, err2 = se1.Execute(context.Background(), sql2)
+		var rss []sqlexec.RecordSet
+		rss, err2 = se1.Execute(context.Background(), sql2)
+		if err2 == nil && len(rss) > 0 {
+			for _, rs := range rss {
+				c.Assert(rs.Close(), IsNil)
+			}
+		}
 	}()
 
 	wg.Wait()
@@ -1870,4 +1886,14 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 	tk.MustExec("alter table t add index idx((b+1))")
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10", "10 10"))
+}
+
+func (s *testStateChangeSuite) TestExpressionIndexDDLError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx((a+b)))")
+	tk.MustGetErrCode("alter table t rename column b to b2", errno.ErrDependentByFunctionalIndex)
+	tk.MustGetErrCode("alter table t drop column b", errno.ErrDependentByFunctionalIndex)
+	tk.MustExec("drop table t")
 }
