@@ -182,6 +182,8 @@ type tikvSender struct {
 	inCh chan<- DrainResult
 
 	wg *sync.WaitGroup
+
+	tableWaiters *sync.Map
 }
 
 func (b *tikvSender) PutSink(sink TableSink) {
@@ -191,6 +193,7 @@ func (b *tikvSender) PutSink(sink TableSink) {
 }
 
 func (b *tikvSender) RestoreBatch(ranges DrainResult) {
+	log.Info("restore batch: waiting ranges", zap.Int("range", len(b.inCh)))
 	b.inCh <- ranges
 }
 
@@ -199,29 +202,52 @@ func NewTiKVSender(
 	ctx context.Context,
 	cli *Client,
 	updateCh glue.Progress,
+	splitConcurrency uint,
 ) (BatchSender, error) {
 	inCh := make(chan DrainResult, defaultChannelSize)
-	midCh := make(chan DrainResult, defaultChannelSize)
+	midCh := make(chan drainResultAndDone, defaultChannelSize)
 
 	sender := &tikvSender{
-		client:   cli,
-		updateCh: updateCh,
-		inCh:     inCh,
-		wg:       new(sync.WaitGroup),
+		client:       cli,
+		updateCh:     updateCh,
+		inCh:         inCh,
+		wg:           new(sync.WaitGroup),
+		tableWaiters: new(sync.Map),
 	}
 
 	sender.wg.Add(2)
-	go sender.splitWorker(ctx, inCh, midCh)
+	go sender.splitWorker(ctx, inCh, midCh, splitConcurrency)
 	go sender.restoreWorker(ctx, midCh)
 	return sender, nil
 }
 
-func (b *tikvSender) splitWorker(ctx context.Context, ranges <-chan DrainResult, next chan<- DrainResult) {
+func (b *tikvSender) Close() {
+	close(b.inCh)
+	b.wg.Wait()
+	log.Debug("tikv sender closed")
+}
+
+type drainResultAndDone struct {
+	result DrainResult
+	done   func()
+}
+
+func (b *tikvSender) splitWorker(ctx context.Context,
+	ranges <-chan DrainResult,
+	next chan<- drainResultAndDone,
+	concurrency uint,
+) {
 	defer log.Debug("split worker closed")
+	eg, ectx := errgroup.WithContext(ctx)
 	defer func() {
 		b.wg.Done()
+		if err := eg.Wait(); err != nil {
+			b.sink.EmitError(err)
+			return
+		}
 		close(next)
 	}()
+	pool := utils.NewWorkerPool(concurrency, "split")
 	for {
 		select {
 		case <-ctx.Done():
@@ -230,19 +256,77 @@ func (b *tikvSender) splitWorker(ctx context.Context, ranges <-chan DrainResult,
 			if !ok {
 				return
 			}
-			if err := SplitRanges(ctx, b.client, result.Ranges, result.RewriteRules, b.updateCh); err != nil {
-				log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))
-				b.sink.EmitError(err)
-				return
-			}
-			next <- result
+			// When the batcher has sent all ranges from a table, it would
+			// mark this table 'all done'(BlankTablesAfterSend), and then we can send it to checksum.
+			//
+			// When there a sole worker sequentially running those batch tasks, everything is fine, however,
+			// in the context of multi-workers, that become buggy, for example:
+			// |------table 1, ranges 1------|------table 1, ranges 2------|
+			// The batcher send batches: [
+			//		{Ranges: ranges 1},
+			// 		{Ranges: ranges 2, BlankTablesAfterSend: table 1}
+			// ]
+			// And there are two workers runs concurrently:
+			// 		worker 1: {Ranges: ranges 1}
+			//      worker 2: {Ranges: ranges 2, BlankTablesAfterSend: table 1}
+			// And worker 2 finished its job before worker 1 done. Note the table wasn't restored fully,
+			// hence the checksum would fail.
+			done := b.registerTableIsRestoring(result.TablesToSend)
+			pool.ApplyOnErrorGroup(eg, func() error {
+				err := SplitRanges(ectx, b.client, result.Ranges, result.RewriteRules, b.updateCh)
+				if err != nil {
+					log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))
+					return err
+				}
+				next <- drainResultAndDone{
+					result: result,
+					done:   done,
+				}
+				return nil
+			})
 		}
 	}
 }
 
-func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan DrainResult) {
+// registerTableIsRestoring marks some tables as 'current restoring'.
+// Returning a function that mark the restore has been done.
+func (b *tikvSender) registerTableIsRestoring(ts []CreatedTable) func() {
+	wgs := make([]*sync.WaitGroup, 0, len(ts))
+	for _, t := range ts {
+		i, _ := b.tableWaiters.LoadOrStore(t.Table.ID, new(sync.WaitGroup))
+		wg := i.(*sync.WaitGroup)
+		wg.Add(1)
+		wgs = append(wgs, wg)
+	}
+	return func() {
+		for _, wg := range wgs {
+			wg.Done()
+		}
+	}
+}
+
+// waitTablesDone block the current goroutine,
+// till all tables provided are no more ‘current restoring’.
+func (b *tikvSender) waitTablesDone(ts []CreatedTable) {
+	for _, t := range ts {
+		wg, ok := b.tableWaiters.LoadAndDelete(t.Table.ID)
+		if !ok {
+			log.Panic("bug! table done before register!",
+				zap.Any("wait-table-map", b.tableWaiters),
+				zap.Stringer("table", t.Table.Name))
+		}
+		wg.(*sync.WaitGroup).Wait()
+	}
+}
+
+func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResultAndDone) {
+	eg, ectx := errgroup.WithContext(ctx)
 	defer func() {
 		log.Debug("restore worker closed")
+		if err := eg.Wait(); err != nil {
+			b.sink.EmitError(err)
+			return
+		}
 		b.wg.Done()
 		b.sink.Close()
 	}()
@@ -250,24 +334,24 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan DrainResul
 		select {
 		case <-ctx.Done():
 			return
-		case result, ok := <-ranges:
+		case r, ok := <-ranges:
 			if !ok {
 				return
 			}
-			files := result.Files()
-			if err := b.client.RestoreFiles(ctx, files, result.RewriteRules, b.updateCh); err != nil {
-				b.sink.EmitError(err)
-				return
-			}
-
-			log.Info("restore batch done", rtree.ZapRanges(result.Ranges))
-			b.sink.EmitTables(result.BlankTablesAfterSend...)
+			files := r.result.Files()
+			// There has been a worker in the `RestoreFiles` procedure.
+			// Spawning a raw goroutine won't make too many requests to TiKV.
+			eg.Go(func() error {
+				e := b.client.RestoreFiles(ectx, files, r.result.RewriteRules, b.updateCh)
+				if e != nil {
+					return e
+				}
+				log.Info("restore batch done", rtree.ZapRanges(r.result.Ranges))
+				r.done()
+				b.waitTablesDone(r.result.BlankTablesAfterSend)
+				b.sink.EmitTables(r.result.BlankTablesAfterSend...)
+				return nil
+			})
 		}
 	}
-}
-
-func (b *tikvSender) Close() {
-	close(b.inCh)
-	b.wg.Wait()
-	log.Debug("tikv sender closed")
 }

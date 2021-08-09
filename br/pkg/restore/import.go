@@ -259,6 +259,7 @@ func (importer *FileImporter) Import(
 	files []*backuppb.File,
 	rewriteRules *RewriteRules,
 ) error {
+	start := time.Now()
 	log.Debug("import file", logutil.Files(files))
 	// Rewrite the start key and end key of file to scan regions
 	var startKey, endKey []byte
@@ -348,7 +349,7 @@ func (importer *FileImporter) Import(
 					logutil.ShortError(errDownload))
 				return errors.Trace(errDownload)
 			}
-
+			log.Info("download file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)))
 			ingestResp, errIngest := importer.ingestSSTs(ctx, downloadMetas, info)
 		ingestRetry:
 			for errIngest == nil {
@@ -414,6 +415,7 @@ func (importer *FileImporter) Import(
 				return errors.Trace(errIngest)
 			}
 		}
+		log.Info("ingtest file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)))
 		for _, f := range files {
 			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
 			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
