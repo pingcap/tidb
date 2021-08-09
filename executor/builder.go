@@ -913,7 +913,7 @@ func (b *executorBuilder) buildIndexAdvise(v *plannercore.IndexAdvise) Executor 
 
 func (b *executorBuilder) buildPlanRecreatorSingle(v *plannercore.PlanRecreatorSingle) Executor {
 	e := &PlanRecreatorSingleExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ID()),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		info:         &PlanRecreatorSingleInfo{v.ExecStmt, v.Analyze, v.Load, v.File, b.ctx},
 	}
 	return e

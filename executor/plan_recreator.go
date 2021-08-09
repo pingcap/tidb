@@ -44,16 +44,12 @@ const recreatorPath string = "/tmp/recreator"
 // TTL of plan recreator files
 const remainedInterval float64 = 3
 
-// PlanRecreatorInfo saves the information of plan recreator operation.
-type PlanRecreatorInfo interface {
-	// Process dose the export/import work for reproducing sql queries.
-	Process() (string, error)
-}
-
 // PlanRecreatorSingleExec represents a plan recreator executor.
 type PlanRecreatorSingleExec struct {
 	baseExecutor
 	info *PlanRecreatorSingleInfo
+
+	endFlag bool
 }
 
 // PlanRecreatorSingleInfo saves the information of plan recreator operation for single SQL statement.
@@ -130,15 +126,20 @@ const PlanRecreatorFileList planRecreatorFileListType = 0
 // Next implements the Executor Next interface.
 func (e *PlanRecreatorSingleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
+	if e.endFlag {
+		return nil
+	}
 	if e.info.ExecStmt == nil {
 		return errors.New("plan Recreator: sql is empty")
 	}
-	val := e.ctx.Value(PlanRecreatorVarKey)
-	if val != nil {
-		e.ctx.SetValue(PlanRecreatorVarKey, nil)
-		return errors.New("plan Recreator: previous plan recreator option isn't closed normally")
+	res, err := e.info.dumpSingle()
+	if err != nil {
+		return err
 	}
-	e.ctx.SetValue(PlanRecreatorVarKey, e.info)
+	result := newFirstChunk(e)
+	result.AppendString(0, res)
+	req.Append(result, 0, 1)
+	e.endFlag = true
 	return nil
 }
 
@@ -150,15 +151,6 @@ func (e *PlanRecreatorSingleExec) Close() error {
 // Open implements the Executor Open interface.
 func (e *PlanRecreatorSingleExec) Open(ctx context.Context) error {
 	return nil
-}
-
-// Process dose the export/import work for reproducing sql queries.
-func (e *PlanRecreatorSingleInfo) Process() (string, error) {
-	// TODO: plan recreator load will be developed later
-	if e.Load {
-		return "", nil
-	}
-	return e.dumpSingle()
 }
 
 func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
