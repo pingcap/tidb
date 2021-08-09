@@ -45,8 +45,6 @@ func TestSetLabel(t *testing.T) {
 }
 
 func TestConsume(t *testing.T) {
-	t.Parallel()
-
 	tracker := NewTracker(1, -1)
 	require.Equal(t, int64(0), tracker.BytesConsumed())
 
