@@ -760,7 +760,7 @@ func TestToDatum(t *testing.T) {
 	require.Equal(t, 1, len(datums))
 	n := types.NewTime(types.FromGoTime(time.Unix(ssMap.beginTimeForCurInterval, 0)), mysql.TypeTimestamp, types.DefaultFsp)
 	e := types.NewTime(types.FromGoTime(time.Unix(ssMap.beginTimeForCurInterval+1800, 0)), mysql.TypeTimestamp, types.DefaultFsp)
-	time := types.NewTime(types.FromGoTime(stmtExecInfo1.StartTime), mysql.TypeTimestamp, types.DefaultFsp)
+	f := types.NewTime(types.FromGoTime(stmtExecInfo1.StartTime), mysql.TypeTimestamp, types.DefaultFsp)
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
 	expectedDatum := []interface{}{n, e, "Select", stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.NormalizedSQL,
 		"db1.tb1,db2.tb2", "a", stmtExecInfo1.User, 1, 0, 0, int64(stmtExecInfo1.TotalLatency),
@@ -789,7 +789,7 @@ func TestToDatum(t *testing.T) {
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
 		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
 		0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
-		time, time, 0, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", ""}
+		f, f, 0, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", ""}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
 	match(t, datums[0], expectedDatum...)
 	datums = reader.GetStmtSummaryHistoryRows()
@@ -837,7 +837,7 @@ func TestToDatum(t *testing.T) {
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
 		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
 		0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
-		time, time, 0, 0, 0, "", "", "", ""}
+		f, f, 0, 0, 0, "", "", "", ""}
 	expectedDatum[4] = stmtExecInfo2.Digest
 	match(t, datums[0], expectedDatum...)
 	match(t, datums[1], expectedEvictedDatum...)
@@ -1012,7 +1012,10 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 		go addStmtFunc()
 	}
 
-	defer require.Nil(t, ssMap.SetMaxStmtCount("", true))
+	defer func() {
+		require.Nil(t, ssMap.SetMaxStmtCount("", true))
+	}()
+
 	setStmtCountFunc := func() {
 		defer wg.Done()
 		// Turn down MaxStmtCount one by one.
