@@ -544,6 +544,83 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionAlterPK(c *C) {
 	c.Assert(tk.ExecToErr(`alter table tlist add primary key(b)`), ErrorMatches, ".*must include all columns.*")
 }
 
+func (s *testIntegrationPartitionSerialSuite) TestIssue27018(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database issue_27018")
+	tk.MustExec("use issue_27018")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`CREATE TABLE PK_LP9326 (
+  COL1 tinyint(45) NOT NULL DEFAULT '30' COMMENT 'NUMERIC PK',
+  PRIMARY KEY (COL1) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(col1) (
+  PARTITION P0 VALUES IN (56,127,-128,-125,-40,-18,-10,-5,49,51),
+  PARTITION P1 VALUES IN (-107,-97,-57,-37,4,43,99,-9,-6,45),
+  PARTITION P2 VALUES IN (108,114,-85,-72,-38,-11,29,97,40,107),
+  PARTITION P3 VALUES IN (-112,-95,-42,24,28,47,-103,-94,7,64),
+  PARTITION P4 VALUES IN (-115,-101,-76,-47,1,19,-114,-23,-19,11),
+  PARTITION P5 VALUES IN (44,95,-92,-89,-26,-21,25,-117,-116,27),
+  PARTITION P6 VALUES IN (50,61,118,-110,-32,-1,111,125,-90,74),
+  PARTITION P7 VALUES IN (75,121,-96,-87,-14,-13,37,-68,-58,81),
+  PARTITION P8 VALUES IN (126,30,48,68)
+)`)
+	tk.MustExec(`insert into PK_LP9326 values(30),(48),(56)`)
+	tk.MustQuery(`SELECT COL1 FROM PK_LP9326 WHERE COL1 NOT IN (621579514938,-17333745845828,2777039147338)`).Sort().Check(testkit.Rows("30", "48", "56"))
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestIssue27017(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database issue_27017")
+	tk.MustExec("use issue_27017")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`CREATE TABLE PK_LP9465 (
+  COL1 mediumint(45) NOT NULL DEFAULT '77' COMMENT 'NUMERIC PK',
+  PRIMARY KEY (COL1) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(col1) (
+  PARTITION P0 VALUES IN (-5237720,2949267,6047247,-8317208,-6854239,-6612749,-6578207,-5649321,2450483,2953765),
+  PARTITION P1 VALUES IN (5884439,-7816703,-6716210,-6050369,-5691207,6836620,5769359,-8237127,-1294367,-1228621),
+  PARTITION P2 VALUES IN (-976130,-8351227,-8294140,-4800605,1370685,-7351802,-6447779,77,1367409,5965199),
+  PARTITION P3 VALUES IN (7347944,7397124,8013414,-5737292,-3938813,-3687304,1307396,444598,1216072,1603451),
+  PARTITION P4 VALUES IN (2518402,-8388608,-5291256,-3796824,121011,8388607,39191,2323510,3386861,4886727),
+  PARTITION P5 VALUES IN (-6512367,-5922779,-3272589,-1313463,5751641,-3974640,2605656,3336269,4416436,-7975238),
+  PARTITION P6 VALUES IN (-6693544,-6023586,-4201506,6416586,-3254125,-205332,1072201,2679754,1963191,2077718),
+  PARTITION P7 VALUES IN (4205081,5170051,-8087893,-5805143,-1202286,1657202,8330979,5042855,7578575,-5830439),
+  PARTITION P8 VALUES IN (-5244013,3837781,4246485,670906,5644986,5843443,7794811,7831812,-7704740,-2222984),
+  PARTITION P9 VALUES IN (764108,3406142,8263677,248997,6129417,7556305,7939455,3526998,8239485,-5195482),
+  PARTITION P10 VALUES IN (-3625794,69270,377245)
+)`)
+	tk.MustExec(`insert into PK_LP9465 values(8263677)`)
+	tk.MustQuery(`SELECT COL1 FROM PK_LP9465 HAVING COL1>=-12354348921530`).Sort().Check(testkit.Rows("8263677"))
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestIssue27012(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database issue_27012")
+	tk.MustExec("use issue_27012")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`CREATE TABLE IDT_LP24306 (
+  COL1 tinyint(16) DEFAULT '41' COMMENT 'NUMERIC UNIQUE INDEX',
+  KEY UK_COL1 (COL1) /*!80000 INVISIBLE */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(col1) (
+  PARTITION P0 VALUES IN (-126,-36,-96,-6,-83,-123,-5,-52,-98,-124),
+  PARTITION P1 VALUES IN (-2,-22,-88,-100,-60,-39,-69,-38,-11,-30),
+  PARTITION P2 VALUES IN (-119,-13,-67,-91,-65,-16,0,-128,-73,-118),
+  PARTITION P3 VALUES IN (-99,-56,-76,-110,-93,-114,-78,NULL)
+)`)
+	tk.MustExec(`insert into IDT_LP24306 values(-128)`)
+	tk.MustQuery(`select * from IDT_LP24306 where col1 not between 12021 and 99 and col1 <= -128`).Sort().Check(testkit.Rows("-128"))
+
+	tk.MustExec(`drop table if exists IDT_LP24306`)
+	tk.MustExec(`CREATE TABLE IDT_LP24306 (
+  COL1 tinyint(16) DEFAULT '41' COMMENT 'NUMERIC UNIQUE INDEX',
+  KEY UK_COL1 (COL1) /*!80000 INVISIBLE */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+	tk.MustExec(`insert into IDT_LP24306 values(-128)`)
+	tk.MustQuery(`select * from IDT_LP24306 where col1 not between 12021 and 99 and col1 <= -128`).Sort().Check(testkit.Rows("-128"))
+}
+
 func genListPartition(begin, end int) string {
 	buf := &bytes.Buffer{}
 	buf.WriteString("(")
