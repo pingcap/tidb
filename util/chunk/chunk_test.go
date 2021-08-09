@@ -19,8 +19,6 @@ import (
 	"math"
 	"os"
 	"strconv"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 	"unsafe"
@@ -344,7 +342,7 @@ func newChunk(elemLen ...int) *Chunk {
 		if l > 0 {
 			chk.columns = append(chk.columns, newFixedLenColumn(l, 0))
 		} else {
-			chk.columns = append(chk.columns, newVarLenColumn(0, nil))
+			chk.columns = append(chk.columns, newVarLenColumn(0))
 		}
 	}
 	return chk
@@ -356,7 +354,7 @@ func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
 		if l > 0 {
 			chk.columns = append(chk.columns, newFixedLenColumn(l, cap))
 		} else {
-			chk.columns = append(chk.columns, newVarLenColumn(cap, nil))
+			chk.columns = append(chk.columns, newVarLenColumn(cap))
 		}
 	}
 	return chk
@@ -679,107 +677,6 @@ func TestSwapColumn(t *testing.T) {
 
 	require.NoError(t, chk2.SwapColumn(2, chk2, 0))
 	checkRef()
-}
-
-func (s *testChunkSuite) TestPreAlloc4RowAndInsert(c *check.C) {
-	fieldTypes := make([]*types.FieldType, 0, 4)
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeNewDecimal})
-	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-
-	srcChk := NewChunkWithCapacity(fieldTypes, 10)
-	for i := int64(0); i < 10; i++ {
-		srcChk.AppendFloat32(0, float32(i))
-		srcChk.AppendInt64(1, i)
-		srcChk.AppendMyDecimal(2, types.NewDecFromInt(i))
-		srcChk.AppendString(3, strings.Repeat(strconv.FormatInt(i, 10), int(i)))
-	}
-
-	destChk := NewChunkWithCapacity(fieldTypes, 3)
-
-	// Test Chunk.PreAlloc.
-	for i := 0; i < srcChk.NumRows(); i++ {
-		c.Assert(destChk.NumRows(), check.Equals, i)
-		destChk.preAlloc(srcChk.GetRow(i))
-	}
-	for i, srcCol := range srcChk.columns {
-		destCol := destChk.columns[i]
-		c.Assert(len(srcCol.elemBuf), check.Equals, len(destCol.elemBuf))
-		c.Assert(len(srcCol.data), check.Equals, len(destCol.data))
-		c.Assert(len(srcCol.offsets), check.Equals, len(destCol.offsets))
-		c.Assert(len(srcCol.nullBitmap), check.Equals, len(destCol.nullBitmap))
-		c.Assert(srcCol.length, check.Equals, destCol.length)
-		c.Assert(srcCol.nullCount(), check.Equals, destCol.nullCount())
-
-		for _, val := range destCol.data {
-			c.Assert(val == 0, check.IsTrue)
-		}
-		for j, val := range srcCol.offsets {
-			c.Assert(val, check.Equals, destCol.offsets[j])
-		}
-		for j, val := range srcCol.nullBitmap {
-			c.Assert(val, check.Equals, destCol.nullBitmap[j])
-		}
-		for _, val := range destCol.elemBuf {
-			c.Assert(val == 0, check.IsTrue)
-		}
-	}
-
-	// Test Chunk.Insert.
-	for i := srcChk.NumRows() - 1; i >= 0; i-- {
-		destChk.insert(i, srcChk.GetRow(i))
-	}
-	for i, srcCol := range srcChk.columns {
-		destCol := destChk.columns[i]
-
-		for j, val := range srcCol.data {
-			c.Assert(val, check.Equals, destCol.data[j])
-		}
-		for j, val := range srcCol.offsets {
-			c.Assert(val, check.Equals, destCol.offsets[j])
-		}
-		for j, val := range srcCol.nullBitmap {
-			c.Assert(val, check.Equals, destCol.nullBitmap[j])
-		}
-		for _, val := range destCol.elemBuf {
-			c.Assert(val == 0, check.IsTrue)
-		}
-	}
-
-	// Test parallel Chunk.Insert.
-	destChk.Reset()
-	startWg, endWg := &sync.WaitGroup{}, &sync.WaitGroup{}
-	startWg.Add(1)
-	for i := 0; i < srcChk.NumRows(); i++ {
-		destChk.preAlloc(srcChk.GetRow(i))
-		endWg.Add(1)
-		go func(rowIdx int) {
-			defer func() {
-				endWg.Done()
-			}()
-			startWg.Wait()
-			destChk.insert(rowIdx, srcChk.GetRow(rowIdx))
-		}(i)
-	}
-	startWg.Done()
-	endWg.Wait()
-	for i, srcCol := range srcChk.columns {
-		destCol := destChk.columns[i]
-
-		for j, val := range srcCol.data {
-			c.Assert(val, check.Equals, destCol.data[j])
-		}
-		for j, val := range srcCol.offsets {
-			c.Assert(val, check.Equals, destCol.offsets[j])
-		}
-		for j, val := range srcCol.nullBitmap {
-			c.Assert(val, check.Equals, destCol.nullBitmap[j])
-		}
-		for _, val := range destCol.elemBuf {
-			c.Assert(val == 0, check.IsTrue)
-		}
-	}
 }
 
 func TestAppendSel(t *testing.T) {

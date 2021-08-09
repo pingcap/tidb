@@ -19,6 +19,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
@@ -50,6 +51,10 @@ func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 
 func (txn *tikvTxn) GetTableInfo(id int64) *model.TableInfo {
 	return txn.idxNameCache[id]
+}
+
+func (txn *tikvTxn) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	txn.KVTxn.SetDiskFullOpt(level)
 }
 
 func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {
