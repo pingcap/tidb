@@ -15,7 +15,6 @@ package memory
 
 import (
 	"errors"
-	"fmt"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -432,8 +431,7 @@ func TestFormatBytesWithPrune(t *testing.T) {
 		b, err := parseByte(ca.b)
 		require.NoError(t, err)
 		result := FormatBytes(b)
-		require.Equalf(t, ca.s, result, "input: %v", ca.b)
-		fmt.Printf("input: %v\n", ca.b)
+		require.Equalf(t, ca.s, result, "input: %v\n", ca.b)
 	}
 }
 
