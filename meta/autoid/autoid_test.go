@@ -496,7 +496,6 @@ func TestConcurrentAlloc(t *testing.T) {
 // TestRollbackAlloc tests that when the allocation transaction commit failed,
 // the local variable base and end doesn't change.
 func TestRollbackAlloc(t *testing.T) {
-	t.Parallel()
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
