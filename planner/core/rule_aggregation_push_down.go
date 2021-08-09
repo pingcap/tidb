@@ -380,7 +380,7 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 		}
 		newChildren = append(newChildren, newChild)
 	}
-	union.SetSchema(expression.NewSchema(newChildren[0].Schema().Columns...))
+	union.SetSchema(newChildren[0].Schema().Clone())
 	union.SetChildren(newChildren...)
 	return nil
 }

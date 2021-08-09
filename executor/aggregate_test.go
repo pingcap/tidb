@@ -869,6 +869,12 @@ func (s *testSuiteAgg) TestAggPushDownPartitionTable(c *C) {
 		"9 28",
 		"93 93",
 		"99 102"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`CREATE TABLE t (a int,b int) PARTITION BY HASH( a ) PARTITIONS 2;`)
+	tk.MustExec("insert into t values(1,2);")
+	tk.MustQuery("select * from t where b = 2 and b in (select b from t);").Check(
+		testkit.Rows("1 2"))
 }
 
 func (s *testSuiteAgg) TestIssue13652(c *C) {
