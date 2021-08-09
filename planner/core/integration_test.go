@@ -4183,7 +4183,8 @@ func (s *testIntegrationSuite) TestMaybeGoodHeuristics(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b))")
-  
+	tk.MustExec("set tidb_enable_maybe_good_heuristics = 1")
+
 	var input []string
 	var output []struct {
 		SQL      string

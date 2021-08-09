@@ -335,7 +335,8 @@
     "name": "TestMaybeGoodHeuristics",
     "cases": [
       "select * from t where b = 3 order by a limit 10",
-      "select * from t where b in (2, 3, 4) order by a limit 10"
+      "select * from t where b in (2, 3, 4) order by a limit 10",
+      "select * from t as t1 where t1.a > any(select t2.b from t as t2 where t2.b = 2 and t2.c > t1.a order by t2.a limit 10)"
     ]
   },
   {

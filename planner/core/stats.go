@@ -373,6 +373,36 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 				ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(sb.String()))
 			}
 		}
+	} else if ds.ctx.GetSessionVars().EnableMaybeGoodHeuristics && ds.orderByPKLimitN {
+		// maybe-good heuristics
+		// For query like `where index_col = ... order by pk limit n`, if the count of `index_col = ...` is small enough, we prefer the index.
+		for _, path := range ds.possibleAccessPaths {
+			const smallCountAfterAccess = 100
+			if path.OnlyPointRange(ds.ctx.GetSessionVars().StmtCtx) && path.CountAfterAccess < smallCountAfterAccess {
+				selected = path
+				break
+			}
+		}
+		if selected != nil {
+			ds.possibleAccessPaths[0] = selected
+			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
+			// TODO: Can we make a more careful check on whether the optimization depends on mutable constants?
+			ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
+			if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain {
+				var tableName, pathName string
+				if ds.TableAsName.O == "" {
+					tableName = ds.tableInfo.Name.O
+				} else {
+					tableName = ds.TableAsName.O
+				}
+				if selected.IsTablePath() {
+					pathName = "handle of " + tableName
+				} else {
+					pathName = "index " + selected.Index.Name.O + " of " + tableName
+				}
+				ds.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(pathName + " is selected since the path has point ranges and fetches limited number of rows under ORDER BY PK LIMIT N pattern"))
+			}
+		}
 	}
 	return nil
 }

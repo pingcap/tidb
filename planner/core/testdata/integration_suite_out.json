@@ -1738,10 +1738,10 @@
       {
         "SQL": "select * from t where b = 3 order by a limit 10",
         "Plan": [
-          "IndexLookUp 10.00 root  limit embedded(offset:0, count:10)",
-          "├─Limit(Build) 10.00 cop[tikv]  offset:0, count:10",
-          "│ └─IndexRangeScan 10.00 cop[tikv] table:t, index:idx_b(b) range:[3,3], keep order:true, stats:pseudo",
-          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexLookUp_20 10.00 201.28 root  limit embedded(offset:0, count:10)",
+          "├─Limit_19(Build) 10.00 590.00 cop[tikv]  offset:0, count:10",
+          "│ └─IndexRangeScan_17 10.00 590.00 cop[tikv] table:t, index:idx_b(b) range:[3,3], keep order:true, stats:pseudo",
+          "└─TableRowIDScan_18(Probe) 10.00 590.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "Note 1105 index idx_b of t is selected since the path has point ranges and fetches limited number of rows under ORDER BY PK LIMIT N pattern"
@@ -1750,14 +1750,35 @@
       {
         "SQL": "select * from t where b in (2, 3, 4) order by a limit 10",
         "Plan": [
-          "TopN 0.00 root  test.t.a, offset:0, count:10",
-          "└─IndexLookUp 10.00 root  ",
-          "  ├─TopN(Build) 10.00 cop[tikv]  test.t.a, offset:0, count:10",
-          "  │ └─IndexRangeScan 30.00 cop[tikv] table:t, index:idx_b(b) range:[2,2], [3,3], [4,4], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TopN_9 10.00 379.61 root  test.t.a, offset:0, count:10",
+          "└─IndexLookUp_16 10.00 279.95 root  ",
+          "  ├─TopN_15(Build) 10.00 0.00 cop[tikv]  test.t.a, offset:0, count:10",
+          "  │ └─IndexRangeScan_13 30.00 1770.00 cop[tikv] table:t, index:idx_b(b) range:[2,2], [3,3], [4,4], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_14(Probe) 10.00 1770.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "Note 1105 index idx_b of t is selected since the path has point ranges and fetches limited number of rows under ORDER BY PK LIMIT N pattern"
+        ]
+      },
+      {
+        "SQL": "select * from t as t1 where t1.a > any(select t2.b from t as t2 where t2.b = t1.b order by t2.a limit 10)",
+        "Plan": [
+          "Projection_16 10000.00 2533281.69 root  test.t.a, test.t.b, test.t.c",
+          "└─Apply_18 10000.00 2527263.69 root  CARTESIAN inner join, other cond:or(gt(test.t.a, Column#8), if(ne(Column#9, 0), NULL, 0))",
+          "  ├─TableReader_20(Build) 10000.00 54251.33 root  data:TableFullScan_19",
+          "  │ └─TableFullScan_19 10000.00 570020.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─Selection_21(Probe) 0.80 244.90 root  ne(Column#10, 0)",
+          "    └─HashAgg_22 1.00 241.90 root  funcs:min(Column#13)->Column#8, funcs:sum(Column#14)->Column#9, funcs:count(1)->Column#10",
+          "      └─Projection_46 8.00 0.00 root  test.t.b, cast(isnull(test.t.b), decimal(22,0) BINARY)->Column#14",
+          "        └─Limit_28 8.00 194.50 root  offset:0, count:10",
+          "          └─IndexLookUp_37 8.00 194.50 root  ",
+          "            ├─IndexRangeScan_34(Build) 10.00 590.00 cop[tikv] table:t2, index:idx_b(b) range:[2,2], keep order:true, stats:pseudo",
+          "            └─Selection_36(Probe) 8.00 0.00 cop[tikv]  gt(test.t.c, test.t.a)",
+          "              └─TableRowIDScan_35 10.00 590.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Note 1105 index idx_b of t2 is selected since the path has point ranges and fetches limited number of rows under ORDER BY PK LIMIT N pattern",
+          "Note 1105 [t1] remain after pruning paths for t1 given Prop{SortItems: [], TaskTp: rootTask}"
         ]
       }
     ]
