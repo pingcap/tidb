@@ -626,11 +626,11 @@
         ]
       },
       {
-        "SQL": "create table tto_seconds (a date, b datetime) partition by list (TO_SECONDS(a)) (partition p0 values in (0, 1, 2, 3, 63745012800), partition p1 values in (4, 5, 6, 7, 63744969600))",
+        "SQL": "create table tto_seconds (a date, b datetime) partition by list (TO_SECONDS(a)) (partition p0 values in (0, 1, 2, 3, 63740649600), partition p1 values in (4, 5, 6, 7, 63744969600))",
         "Results": null
       },
       {
-        "SQL": "insert into tto_seconds values ('2019-12-31 12:00:00', '2019-12-31 23:59:59'), ('2019-12-31 23:06:59', '2019-12-31 12:00:00')",
+        "SQL": "insert into tto_seconds values ('2019-12-31 12:00:00', '2019-12-31 23:59:59'), ('2019-11-11 23:06:59', '2019-12-31 12:00:00')",
         "Results": null
       },
       {
