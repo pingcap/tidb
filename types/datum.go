@@ -1128,16 +1128,10 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 	}
 	switch d.k {
 	case KindMysqlTime:
-		// `select timestamp(cast("1000-01-02 23:59:59" as date)); ` casts usage will succeed.
-		// Alter datetime("1000-01-02 23:59:59") to timestamp will error.
-		if sc.InReorgAttribute {
-			t, err = d.GetMysqlTime().Convert(sc, target.Tp)
-			if err != nil {
-				ret.SetMysqlTime(t)
-				return ret, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, t.String()))
-			}
-		} else {
-			t = d.GetMysqlTime()
+		t, err = d.GetMysqlTime().Convert(sc, target.Tp)
+		if err != nil {
+			ret.SetMysqlTime(ZeroTimestamp)
+			return ret, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimestampStr, t.String()))
 		}
 		t, err = t.RoundFrac(sc, fsp)
 	case KindMysqlDuration:

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -1493,6 +1494,17 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 		physicalTableIDs = append(physicalTableIDs, def.ID)
 	}
 	return physicalTableIDs
+}
+
+func getPartitionRuleIDs(dbName string, table *model.TableInfo) []string {
+	if table.GetPartitionInfo() == nil {
+		return []string{}
+	}
+	partRuleIDs := make([]string, 0, len(table.Partition.Definitions))
+	for _, def := range table.Partition.Definitions {
+		partRuleIDs = append(partRuleIDs, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, dbName, table.Name.L, def.Name.L))
+	}
+	return partRuleIDs
 }
 
 // checkPartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
