@@ -621,6 +621,21 @@ PARTITION BY LIST COLUMNS(col1) (
 	tk.MustQuery(`select * from IDT_LP24306 where col1 not between 12021 and 99 and col1 <= -128`).Sort().Check(testkit.Rows("-128"))
 }
 
+func (s *testIntegrationPartitionSerialSuite) TestIssue27031(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database issue_27031")
+	tk.MustExec("use issue_27031")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`CREATE TABLE NT_LP27390 (
+  COL1 mediumint(28) DEFAULT '114' COMMENT 'NUMERIC NO INDEX'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(col1) (
+  PARTITION P9 VALUES IN (3376825,-7753310,-4123498,6483048,6953968,-996842,-7542484,320451,-8322717,-2426029)
+)`)
+	tk.MustExec(`insert into NT_LP27390 values(-4123498)`)
+	tk.MustQuery(`SELECT COL1 FROM NT_LP27390 WHERE COL1 IN (46015556,-4123498,54419751)`).Sort().Check(testkit.Rows("-4123498"))
+}
+
 func genListPartition(begin, end int) string {
 	buf := &bytes.Buffer{}
 	buf.WriteString("(")
