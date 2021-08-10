@@ -412,7 +412,7 @@ func (m *HandleMap) Range(fn func(h Handle, val interface{}) bool) {
 	}
 }
 
-// PartitionHandle combines a handle and a PartitionID, used to location a row in partioned table.
+// PartitionHandle combines a handle and a PartitionID, used to location a row in partitioned table.
 // Now only used in global index.
 // TODO: support PartitionHandle in HandleMap.
 type PartitionHandle struct {

@@ -825,7 +825,7 @@ func (s *TestDDLSuite) TestSimpleDelete(c *C) {
 		tblName = "test_delete_common"
 	}
 	workerNum := 10
-	rowCount := 10000
+	rowCount := 1000
 	batch := rowCount / workerNum
 
 	start := time.Now()
@@ -872,7 +872,7 @@ func (s *TestDDLSuite) TestSimpleConflictDelete(c *C) {
 	keysMap := make(map[int64]int64)
 
 	workerNum := 10
-	rowCount := 10000
+	rowCount := 1000
 	batch := rowCount / workerNum
 
 	start := time.Now()

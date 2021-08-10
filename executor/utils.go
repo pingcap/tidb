@@ -53,3 +53,41 @@ func deleteFromSet(set []string, value string) []string {
 	}
 	return set
 }
+
+// batchRetrieverHelper is a helper for batch returning data with known total rows. This helps implementing memtable
+// retrievers of some information_schema tables. Initialize `batchSize` and `totalRows` fields to use it.
+type batchRetrieverHelper struct {
+	// When retrieved is true, it means retrieving is finished.
+	retrieved bool
+	// The index that the retrieving process has been done up to (exclusive).
+	retrievedIdx int
+	batchSize    int
+	totalRows    int
+}
+
+// nextBatch calculates the index range of the next batch. If there is such a non-empty range, the `retrieveRange` func
+// will be invoked and the range [start, end) is passed to it. Returns error if `retrieveRange` returns error.
+func (b *batchRetrieverHelper) nextBatch(retrieveRange func(start, end int) error) error {
+	if b.retrievedIdx >= b.totalRows {
+		b.retrieved = true
+	}
+	if b.retrieved {
+		return nil
+	}
+	start := b.retrievedIdx
+	end := b.retrievedIdx + b.batchSize
+	if end > b.totalRows {
+		end = b.totalRows
+	}
+
+	err := retrieveRange(start, end)
+	if err != nil {
+		b.retrieved = true
+		return err
+	}
+	b.retrievedIdx = end
+	if b.retrievedIdx == b.totalRows {
+		b.retrieved = true
+	}
+	return nil
+}
