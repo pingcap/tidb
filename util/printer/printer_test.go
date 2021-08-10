@@ -14,8 +14,9 @@
 package printer
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestPrintResult(t *testing.T) {
