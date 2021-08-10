@@ -528,22 +528,14 @@ func (writer *MetaWriter) FinishWriteMetas(ctx context.Context, op AppendOp) err
 	var err error
 	// flush the buffered meta
 	if !writer.useV2Meta {
-		// Set schema version
-		writer.backupMeta.Version = MetaV1
-		err = writer.flushMetasV1(ctx, op)
+		writer.flushMetasV1(ctx, op)
 	} else {
 		err = writer.flushMetasV2(ctx, op)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// Set schema version
-		writer.backupMeta.Version = MetaV2
-		// flush the final backupmeta
-		err = writer.flushBackupMeta(ctx)
 	}
-	if err != nil {
-		return errors.Trace(err)
-	}
+
 	costs := time.Since(writer.start)
 	if op == AppendDataFile {
 		summary.CollectSuccessUnit("backup ranges", writer.flushedItemNum, costs)
@@ -553,7 +545,16 @@ func (writer *MetaWriter) FinishWriteMetas(ctx context.Context, op AppendOp) err
 	return nil
 }
 
-func (writer *MetaWriter) flushBackupMeta(ctx context.Context) error {
+//
+func (writer *MetaWriter) FiniallyFlushBackupMeta(ctx context.Context) error {
+	// Set schema version
+	if writer.useV2Meta {
+		writer.backupMeta.Version = MetaV2
+	} else {
+		writer.backupMeta.Version = MetaV1
+	}
+
+	// Flush the writer.backupMeta to storage
 	backupMetaData, err := proto.Marshal(writer.backupMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -564,7 +565,8 @@ func (writer *MetaWriter) flushBackupMeta(ctx context.Context) error {
 }
 
 // flushMetasV1 keep the compatibility for old version.
-func (writer *MetaWriter) flushMetasV1(ctx context.Context, op AppendOp) error {
+// for MetaV1, just to put in backupMeta
+func (writer *MetaWriter) flushMetasV1(ctx context.Context, op AppendOp) {
 	switch op {
 	case AppendDataFile:
 		writer.backupMeta.Files = writer.metafiles.root.DataFiles
@@ -576,7 +578,6 @@ func (writer *MetaWriter) flushMetasV1(ctx context.Context, op AppendOp) error {
 		log.Panic("unsupport op type", zap.Any("op", op))
 	}
 	writer.flushedItemNum += writer.metafiles.itemNum
-	return writer.flushBackupMeta(ctx)
 }
 
 func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
