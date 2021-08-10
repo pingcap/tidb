@@ -42,7 +42,7 @@ func (s *testPartitionSuite) TestShowPlacementLabelsBuilder(c *C) {
 				{{Key: "zone", Value: "z1"}, {Key: "rack", Value: "r2"}, {Key: "host", Value: "h2"}},
 				{{Key: "zone", Value: "z2"}, {Key: "rack", Value: "r1"}, {Key: "host", Value: "h2"}},
 				nil,
-				{{"k1", "v1"}},
+				{{Key: "k1", Value: "v1"}},
 			},
 			expects: [][]interface{}{
 				{"host", []string{"h1", "h2"}},
