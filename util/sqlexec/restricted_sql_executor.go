@@ -16,6 +16,7 @@ package sqlexec
 import (
 	"context"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
@@ -89,6 +90,10 @@ type SQLExecutor interface {
 	// ExecuteInternal means execute sql as the internal sql.
 	ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (RecordSet, error)
 	ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (RecordSet, error)
+	// allowed when tikv disk full happened.
+	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
+	// clear allowed flag
+	ClearDiskFullOpt()
 }
 
 // SQLParser is an interface provides parsing sql statement.
