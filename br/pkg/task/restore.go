@@ -43,8 +43,8 @@ const (
 	defaultRestoreConcurrency = 128
 	maxRestoreBatchSizeLimit  = 10240
 	defaultDDLConcurrency     = 16
-	defaultPDConcurrency      = 16
-	defaultBatchFlushInterval = time.Second
+	defaultPDConcurrency      = 4
+	defaultBatchFlushInterval = 2 * time.Second
 )
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
