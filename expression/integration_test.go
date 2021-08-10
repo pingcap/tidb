@@ -4106,6 +4106,46 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	tk.MustQuery("select * from d").Check(testkit.Rows("hello,h"))
 }
 
+func (s *testIntegrationSuite) TestAggregationBuiltinJSONArrayagg(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`CREATE TABLE t (
+		a int(11),
+		b varchar(100),
+		c decimal(3,2),
+		d json,
+		e date,
+		f time,
+		g datetime DEFAULT '2012-01-01',
+		h timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		i char(36),
+		j text(50));`)
+
+	tk.MustExec(`insert into t values(1, 'ab', 5.5, '{"id": 1}', '2020-01-10', '11:12:13', '2020-01-11', '2020-10-18 00:00:00', 'first', 'json_arrayagg_test');`)
+
+	result := tk.MustQuery("select a, json_arrayagg(b) from t group by a order by a;")
+	result.Check(testkit.Rows(`1 ["ab"]`))
+	result = tk.MustQuery("select b, json_arrayagg(c) from t group by b order by b;")
+	result.Check(testkit.Rows(`ab [5.5]`))
+	result = tk.MustQuery("select e, json_arrayagg(f) from t group by e order by e;")
+	result.Check(testkit.Rows(`2020-01-10 ["11:12:13"]`))
+	result = tk.MustQuery("select f, json_arrayagg(g) from t group by f order by f;")
+	result.Check(testkit.Rows(`11:12:13 ["2020-01-11 00:00:00"]`))
+	result = tk.MustQuery("select g, json_arrayagg(h) from t group by g order by g;")
+	result.Check(testkit.Rows(`2020-01-11 00:00:00 ["2020-10-18 00:00:00"]`))
+	result = tk.MustQuery("select h, json_arrayagg(i) from t group by h order by h;")
+	result.Check(testkit.Rows(`2020-10-18 00:00:00 ["first"]`))
+	result = tk.MustQuery("select i, json_arrayagg(j) from t group by i order by i;")
+	result.Check(testkit.Rows(`first ["json_arrayagg_test"]`))
+	result = tk.MustQuery("select json_arrayagg(23) from t group by a order by a;")
+	result.Check(testkit.Rows(`[23]`))
+	result = tk.MustQuery("select json_arrayagg(null) from t group by a order by a;")
+	result.Check(testkit.Rows(`[null]`))
+}
+
 func (s *testIntegrationSuite) TestAggregationBuiltinJSONObjectAgg(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
@@ -10014,6 +10054,41 @@ func (s *testIntegrationSuite) TestTimestampIssue25093(c *C) {
 	tk.MustQuery("select timestamp(101.234) from t;").Check(testkit.Rows("2000-01-01 00:00:00.000"))
 }
 
+// issue https://github.com/pingcap/tidb/issues/26111
+func (s *testIntegrationSuite) TestRailsFKUsage(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE author_addresses (
+		id bigint(20) NOT NULL AUTO_INCREMENT,
+		PRIMARY KEY (id)
+	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+	tk.MustExec(`CREATE TABLE authors (
+		id bigint(20) NOT NULL AUTO_INCREMENT,
+		name varchar(255) NOT NULL,
+		author_address_id bigint(20) DEFAULT NULL,
+		author_address_extra_id bigint(20) DEFAULT NULL,
+		organization_id varchar(255) DEFAULT NULL,
+		owned_essay_id varchar(255) DEFAULT NULL,
+		PRIMARY KEY (id),
+		KEY index_authors_on_author_address_id (author_address_id),
+		KEY index_authors_on_author_address_extra_id (author_address_extra_id),
+		CONSTRAINT fk_rails_94423a17a3 FOREIGN KEY (author_address_id) REFERENCES author_addresses (id) ON UPDATE CASCADE ON DELETE RESTRICT
+	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+	tk.MustQuery(`SELECT fk.referenced_table_name AS 'to_table',
+		fk.referenced_column_name AS 'primary_key',
+		fk.column_name AS 'column',
+		fk.constraint_name AS 'name',
+		rc.update_rule AS 'on_update',
+		rc.delete_rule AS 'on_delete'
+		FROM information_schema.referential_constraints rc
+		JOIN information_schema.key_column_usage fk
+		USING (constraint_schema, constraint_name)
+		WHERE fk.referenced_column_name IS NOT NULL
+		AND fk.table_schema = database()
+		AND fk.table_name = 'authors';`).Check(testkit.Rows("author_addresses id author_address_id fk_rails_94423a17a3 CASCADE RESTRICT"))
+}
+
 func (s *testIntegrationSuite) TestTranslate(c *C) {
 	cases := []string{"'ABC'", "'AABC'", "'A.B.C'", "'aaaaabbbbb'", "'abc'", "'aaa'", "NULL"}
 	tk := testkit.NewTestKit(c, s.store)
@@ -10058,4 +10133,17 @@ func (s *testIntegrationSerialSuite) TestIssue26662(c *C) {
 	tk.MustExec("set names utf8;")
 	tk.MustQuery("select t2.b from (select t1.a as b from t1 union all select t1.a as b from t1) t2 where case when (t2.b is not null) then t2.b else '' end > '1234567';").
 		Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestIssue26958(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c_int int not null);")
+	tk.MustExec("insert into t1 values (1), (2), (3),(1),(2),(3);")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (c_int int not null);")
+	tk.MustExec("insert into t2 values (1), (2), (3),(1),(2),(3);")
+	tk.MustQuery("select \n(select count(distinct c_int) from t2 where c_int >= t1.c_int) c1, \n(select count(distinct c_int) from t2 where c_int >= t1.c_int) c2\nfrom t1 group by c_int;\n").
+		Check(testkit.Rows("3 3", "2 2", "1 1"))
 }

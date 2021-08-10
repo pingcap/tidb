@@ -843,6 +843,10 @@ var defaultSysVars = []*SysVar{
 		s.allowMPPExecution = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMPPStoreFailTTL, Type: TypeStr, Value: DefTiDBMPPStoreFailTTL, SetSession: func(s *SessionVars, val string) error {
+		s.MPPStoreFailTTL = val
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashExchangeWithNewCollation, Type: TypeBool, Value: BoolToOnOff(DefTiDBHashExchangeWithNewCollation), SetSession: func(s *SessionVars, val string) error {
 		s.HashExchangeWithNewCollation = TiDBOptOn(val)
 		return nil
@@ -1480,7 +1484,12 @@ var defaultSysVars = []*SysVar{
 		s.UsePlanBaselines = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEvolvePlanBaselines, Value: BoolToOnOff(DefTiDBEvolvePlanBaselines), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEvolvePlanBaselines, Value: BoolToOnOff(DefTiDBEvolvePlanBaselines), Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if normalizedValue == "ON" && !config.CheckTableBeforeDrop {
+			return normalizedValue, errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
 		s.EvolvePlanBaselines = TiDBOptOn(val)
 		return nil
 	}},

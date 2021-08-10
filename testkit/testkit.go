@@ -30,7 +30,7 @@ import (
 	"go.uber.org/atomic"
 )
 
-var idGenerator atomic.Uint64
+var testKitIDGenerator atomic.Uint64
 
 // TestKit is a utility to run sql test.
 type TestKit struct {
@@ -74,6 +74,17 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	tk.require.NoError(err, comment)
 	tk.require.NotNil(rs, comment)
 	return tk.ResultSetToResult(rs, comment)
+}
+
+// QueryToErr executes a sql statement and discard results.
+func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
+	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
+	res, err := tk.Exec(sql, args...)
+	tk.require.NoError(err, comment)
+	tk.require.NotNil(res, comment)
+	_, resErr := session.GetRows4Test(context.Background(), tk.session, res)
+	tk.require.Nil(res.Close())
+	return resErr
 }
 
 // ResultSetToResult converts sqlexec.RecordSet to testkit.Result.
@@ -140,6 +151,6 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 func newSession(t *testing.T, store kv.Storage) session.Session {
 	se, err := session.CreateSession4Test(store)
 	require.Nil(t, err)
-	se.SetConnectionID(idGenerator.Inc())
+	se.SetConnectionID(testKitIDGenerator.Inc())
 	return se
 }

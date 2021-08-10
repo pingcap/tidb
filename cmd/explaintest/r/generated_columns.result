@@ -105,14 +105,37 @@ PARTITION p5 VALUES LESS THAN (6),
 PARTITION max VALUES LESS THAN MAXVALUE);
 EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a <= 1;
 id	estRows	task	access object	operator info
-TableReader	3323.33	root	partition:p0,p1	data:Selection
-└─Selection	3323.33	cop[tikv]		le(test.sgc3.a, 1)
-  └─TableFullScan	10000.00	cop[tikv]	table:sgc3	keep order:false, stats:pseudo
+PartitionUnion	6646.67	root		
+├─TableReader	3323.33	root		data:Selection
+│ └─Selection	3323.33	cop[tikv]		le(test.sgc3.a, 1)
+│   └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p0	keep order:false, stats:pseudo
+└─TableReader	3323.33	root		data:Selection
+  └─Selection	3323.33	cop[tikv]		le(test.sgc3.a, 1)
+    └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p1	keep order:false, stats:pseudo
 EXPLAIN format = 'brief' SELECT * FROM sgc3 WHERE a < 7;
 id	estRows	task	access object	operator info
-TableReader	3323.33	root	partition:all	data:Selection
-└─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
-  └─TableFullScan	10000.00	cop[tikv]	table:sgc3	keep order:false, stats:pseudo
+PartitionUnion	23263.33	root		
+├─TableReader	3323.33	root		data:Selection
+│ └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p0	keep order:false, stats:pseudo
+├─TableReader	3323.33	root		data:Selection
+│ └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p1	keep order:false, stats:pseudo
+├─TableReader	3323.33	root		data:Selection
+│ └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p2	keep order:false, stats:pseudo
+├─TableReader	3323.33	root		data:Selection
+│ └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p3	keep order:false, stats:pseudo
+├─TableReader	3323.33	root		data:Selection
+│ └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p4	keep order:false, stats:pseudo
+├─TableReader	3323.33	root		data:Selection
+│ └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+│   └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:p5	keep order:false, stats:pseudo
+└─TableReader	3323.33	root		data:Selection
+  └─Selection	3323.33	cop[tikv]		lt(test.sgc3.a, 7)
+    └─TableFullScan	10000.00	cop[tikv]	table:sgc3, partition:max	keep order:false, stats:pseudo
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1(a INT, b INT AS (a+1) VIRTUAL, c INT AS (b+1) VIRTUAL, d INT AS (c+1) VIRTUAL, KEY(b), INDEX IDX(c, d));
 INSERT INTO t1 (a) VALUES (0);
