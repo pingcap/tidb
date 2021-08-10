@@ -535,7 +535,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	var newRules []*label.Rule
 	for _, r := range oldRules {
 		if r.ID == tableRuleID {
-			newRules = append(newRules, r.Clone().ResetTable(newTableID, job.SchemaName, tblInfo.Name.L))
+			newRules = append(newRules, r.Clone().Reset(newTableID, job.SchemaName, tblInfo.Name.L))
 		}
 	}
 
@@ -543,7 +543,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		for _, r := range oldRules {
 			for _, def := range tblInfo.GetPartitionInfo().Definitions {
 				if r.ID == fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, def.Name.L) {
-					newRules = append(newRules, r.Clone().ResetPartition(def.ID, job.SchemaName, tblInfo.Name.L, def.Name.L))
+					newRules = append(newRules, r.Clone().Reset(def.ID, job.SchemaName, tblInfo.Name.L, def.Name.L))
 				}
 			}
 		}
