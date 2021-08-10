@@ -378,7 +378,7 @@ func locateStringWithCollation(str, substr, coll string) int64 {
 		count += 1
 		index -= len(collator.Key(string(r)))
 		if index == 0 {
-			return count
+			return count + 1
 		}
 		str = str[size:]
 	}
