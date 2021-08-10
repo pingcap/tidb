@@ -29,6 +29,9 @@ const (
 	errorEmptyRegionCntPerStore = 1000
 	warnRegionCntMaxMinRatio    = 1.5
 	errorRegionCntMaxMinRatio   = 2.0
+
+	// We only check RegionCntMaxMinRatio when maxRegionCnt is larger than this threshold.
+	checkRegionCntRatioThreshold = 1000
 )
 
 type metaMgrBuilder interface {
@@ -649,6 +652,9 @@ func (m *dbTaskMetaMgr) checkRegions(ctx context.Context) error {
 				zap.Int("expect-less-than", warnEmptyRegionCntPerStore),
 			)
 		}
+	}
+	if maxRegionCnt <= checkRegionCntRatioThreshold {
+		return nil
 	}
 	if minRegionCnt == 0 {
 		return errors.Errorf("regions distribution is unbalanced, there is no region on store %v", minRegionCntStoreID)
