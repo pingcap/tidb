@@ -1391,22 +1391,22 @@ func (w *updateColumnWorker) reformatErrors(err error) error {
 	}
 	// Since row count is not precious in concurrent reorganization, here we substitute row count with datum value.
 	if types.ErrTruncated.Equal(err) {
-		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
+		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
+		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, dStr)
 	}
 
 	if types.ErrInvalidYear.Equal(err) {
-		err = types.ErrInvalidYear.GenWithStack("Invalid year value for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
-	}
-
-	if types.ErrWarnDataOutOfRange.Equal(err) {
-		d := w.rowMap[w.oldColInfo.ID]
-		if v, err1 := d.ToString(); err1 == nil {
-			err = types.ErrWarnDataOutOfRange.GenWithStack("Out of range value for column '%s' at '%s'", w.oldColInfo.Name, v)
-		} else {
-			err = types.ErrWarnDataOutOfRange.GenWithStack("Out of range value for column '%s'", w.oldColInfo.Name)
-		}
+		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
+		err = types.ErrInvalidYear.GenWithStack("Invalid year value for column '%s', value is '%s'", w.oldColInfo.Name, dStr)
 	}
 	return err
+}
+
+func datumToStringNoErr(d types.Datum) string {
+	if v, err := d.ToString(); err == nil {
+		return v
+	}
+	return ""
 }
 
 func (w *updateColumnWorker) cleanRowMap() {

@@ -1413,21 +1413,10 @@ func (d *Datum) ConvertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		if len(s) != 4 && y == 0 && strings.HasPrefix(trimS, "0") {
 			adjust = true
 		}
-	case KindMysqlTime, KindMysqlDuration:
-		if sc.InCreateOrAlterStmt {
-			if sc.OverflowAsWarning {
-				sc.AppendWarning(ErrWarnDataOutOfRange)
-			} else {
-				ret.SetInt64(y)
-				return ret, ErrWarnDataOutOfRange
-			}
-		} else {
-			if d.k == KindMysqlTime {
-				y = int64(d.GetMysqlTime().Year())
-			} else {
-				y = int64(time.Now().Year())
-			}
-		}
+	case KindMysqlTime:
+		y = int64(d.GetMysqlTime().Year())
+	case KindMysqlDuration:
+		y, err = d.toSignedInteger(sc, mysql.TypeLong)
 	case KindMysqlJSON:
 		y, err = ConvertJSONToInt64(sc, d.GetMysqlJSON(), false)
 		if err != nil {
