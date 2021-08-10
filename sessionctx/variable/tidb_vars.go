@@ -403,6 +403,9 @@ const (
 	// TiDBEnableAlterPlacement is used to control whether to enable alter table partition.
 	TiDBEnableAlterPlacement = "tidb_enable_alter_placement"
 
+	// TiDBEnableAlterAttributes is used to control whether to enable alter attributes.
+	TiDBEnableAlterAttributes = "tidb_enable_alter_attributes"
+
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
@@ -683,6 +686,7 @@ const (
 	DefTiDBChangeMultiSchema              = false
 	DefTiDBPointGetCache                  = false
 	DefTiDBEnableAlterPlacement           = false
+	DefTiDBEnableAlterAttributes          = false
 	DefTiDBEnableAutoIncrementInGenerated = false
 	DefTiDBHashAggPartialConcurrency      = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency        = ConcurrencyUnset

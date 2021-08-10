@@ -649,6 +649,9 @@ type SessionVars struct {
 	// EnableAlterPlacement indicates whether a user can alter table partition placement rules.
 	EnableAlterPlacement bool
 
+	// EnableAlterAttributes indicates whether a user can alter table/partition attributes.
+	EnableAlterAttributes bool
+
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
@@ -1104,6 +1107,7 @@ func NewSessionVars() *SessionVars {
 		EnableChangeMultiSchema:     DefTiDBChangeMultiSchema,
 		EnablePointGetCache:         DefTiDBPointGetCache,
 		EnableAlterPlacement:        DefTiDBEnableAlterPlacement,
+		EnableAlterAttributes:       DefTiDBEnableAlterAttributes,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                    kv.NewDefaultTxnScopeVar(),

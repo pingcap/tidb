@@ -26,8 +26,14 @@ func (s *testDBSuite8) TestAlterTableAttributes(c *C) {
 
 	tk.MustExec(`create table t1 (c int);`)
 
-	// normal cases
+	// test switch
 	_, err := tk.Exec(`alter table t1 attributes="nomerge";`)
+	c.Assert(err, NotNil)
+	tk.MustExec("set global tidb_enable_alter_attributes = true")
+	defer tk.MustExec("set @@global.tidb_enable_alter_attributes = false")
+
+	// normal cases
+	_, err = tk.Exec(`alter table t1 attributes="nomerge";`)
 	c.Assert(err, IsNil)
 	_, err = tk.Exec(`alter table t1 attributes="nomerge,somethingelse";`)
 	c.Assert(err, IsNil)
