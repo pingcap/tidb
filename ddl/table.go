@@ -233,8 +233,9 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	tblInfo := &model.TableInfo{}
 	var autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64
+	var oldTableName, oldSchemaName string
 	const checkFlagIndexInJobArgs = 4 // The index of `recoverTableCheckFlag` in job arg list.
-	if err = job.DecodeArgs(tblInfo, &autoIncID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID); err != nil {
+	if err = job.DecodeArgs(tblInfo, &autoIncID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID, &oldSchemaName, &oldTableName); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -318,6 +319,22 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		} else {
 			tids = []int64{tblInfo.ID}
 		}
+
+		tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, oldSchemaName, oldTableName)
+		oldRuleIDs := []string{tableRuleID}
+		if pi := tblInfo.GetPartitionInfo(); pi != nil {
+			if len(pi.Definitions) != 0 {
+				for _, def := range pi.Definitions {
+					oldRuleIDs = append(oldRuleIDs, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName, oldTableName, def.Name.L))
+				}
+			}
+		}
+		oldRules, err := infosync.GetLabelRules(context.TODO(), oldRuleIDs)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
 		err = w.delRangeManager.removeFromGCDeleteRange(w.ddlJobCtx, dropJobID, tids)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -335,6 +352,30 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 				err = failpoint.Enable(`tikvclient/mockCommitErrorOpt`, "return(true)")
 			}
 		})
+
+		var newRules []*label.Rule
+		for _, r := range oldRules {
+			if r.ID == tableRuleID {
+				newRules = append(newRules, r.Clone().Reset(tblInfo.ID, job.SchemaName, tblInfo.Name.L))
+			}
+		}
+
+		if tblInfo.GetPartitionInfo() != nil {
+			for _, r := range oldRules {
+				for _, def := range tblInfo.GetPartitionInfo().Definitions {
+					if r.ID == fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName, oldTableName, def.Name.L) {
+						newRules = append(newRules, r.Clone().Reset(def.ID, job.SchemaName, tblInfo.Name.L, def.Name.L))
+					}
+				}
+			}
+		}
+
+		patch := label.NewRulePatch(newRules, oldRuleIDs)
+		err = infosync.UpdateLabelRules(context.TODO(), patch)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 
 		job.CtxVars = []interface{}{tids}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)

@@ -2022,7 +2022,8 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 		Type:       model.ActionRecoverTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args: []interface{}{tbInfo, recoverInfo.CurAutoIncID, recoverInfo.DropJobID,
-			recoverInfo.SnapshotTS, recoverTableCheckFlagNone, recoverInfo.CurAutoRandID},
+			recoverInfo.SnapshotTS, recoverTableCheckFlagNone, recoverInfo.CurAutoRandID,
+			recoverInfo.OldSchemaName, recoverInfo.OldTableName},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
