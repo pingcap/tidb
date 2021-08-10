@@ -92,8 +92,6 @@ var (
 type RetrieverMutator interface {
 	Retriever
 	Mutator
-	// set allowed options of current operation in each TiKV disk usage level.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 }
 
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
