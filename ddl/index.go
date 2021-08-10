@@ -163,8 +163,12 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 		}
 	}
 
+	desc, err := charset.GetCharsetDesc(col.Charset)
+	if err != nil {
+		return err
+	}
 	// Specified length must be shorter than the max length for prefix.
-	if indexColumnLen > config.GetGlobalConfig().MaxIndexLength {
+	if indexColumnLen * desc.Maxlen > config.GetGlobalConfig().MaxIndexLength {
 		return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 	}
 	return nil
@@ -182,15 +186,13 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 	switch col.Tp {
 	case mysql.TypeBit:
 		return (length + 7) >> 3, nil
-	case mysql.TypeVarchar, mysql.TypeString:
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
 		// Different charsets occupy different numbers of bytes on each character.
 		desc, err := charset.GetCharsetDesc(col.Charset)
 		if err != nil {
 			return 0, errUnsupportedCharset.GenWithStackByArgs(col.Charset, col.Collate)
 		}
 		return desc.Maxlen * length, nil
-	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
-		return length, nil
 	case mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeShort:
 		return mysql.DefaultLengthOfMysqlTypes[col.Tp], nil
 	case mysql.TypeFloat:
