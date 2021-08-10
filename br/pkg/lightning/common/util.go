@@ -205,7 +205,7 @@ func (t SQLWithRetry) Exec(ctx context.Context, purpose string, query string, ar
 // sqlmock uses fmt.Errorf to produce expectation failures, which will cause
 // unnecessary retry if not specially handled >:(
 var stdFatalErrorsRegexp = regexp.MustCompile(
-	`^call to (?s:.*) was not expected|arguments do not match:|could not match actual sql`,
+	`^call to (?s:.*) was not expected|arguments do not match:|could not match actual sql|mock non-retryable error`,
 )
 var stdErrorType = reflect.TypeOf(stderrors.New(""))
 
