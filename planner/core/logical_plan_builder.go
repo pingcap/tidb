@@ -3500,8 +3500,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 	if b.capFlag&canExpandAST != 0 {
 		// To be compabitle with MySQL, we add alias name for each select field when creating view.
-		// This function assumes one to one mapping between sel.Fields.Fields and p.OutputNames().
-		// So we do this step right after Projection is built.
 		sel.Fields.Fields, err = b.addAliasName(ctx, sel.Fields.Fields, p)
 		if err != nil {
 			return nil, err
