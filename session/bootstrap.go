@@ -342,7 +342,7 @@ const (
 
 	// CreatePlacementPolicyTable store the placement policys.
 	CreatePlacementPolicyTable = `CREATE TABLE IF NOT EXISTS mysql.placement_policy (
-		NAME varchar(255) NOT NULL,
+		NAME varchar(64) NOT NULL,
 		PRIMARY_REGION varchar(255) DEFAULT NULL,
 		REGIONS varchar(255) DEFAULT NULL,
 		LEADERS BIGINT UNSIGNED DEFAULT NULL,
