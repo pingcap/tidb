@@ -1345,8 +1345,8 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	}
 	w.sessCtx.GetSessionVars().StmtCtx.SetWarnings(oldWarn)
 	newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
-	if err := w.reformatErrors(err); err != nil {
-		return err
+	if err != nil {
+		return w.reformatErrors(err)
 	}
 	if w.sessCtx.GetSessionVars().StmtCtx.GetWarnings() != nil && len(w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()) != 0 {
 		warn := w.sessCtx.GetSessionVars().StmtCtx.GetWarnings()
@@ -1386,9 +1386,6 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 
 // reformatErrors casted error because `convertTo` function couldn't package column name and datum value for some errors.
 func (w *updateColumnWorker) reformatErrors(err error) error {
-	if err == nil {
-		return nil
-	}
 	// Since row count is not precious in concurrent reorganization, here we substitute row count with datum value.
 	if types.ErrTruncated.Equal(err) {
 		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
