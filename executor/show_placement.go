@@ -35,6 +35,10 @@ func (b *showPlacementLabelsResultBuilder) AppendStoreLabels(bj json.BinaryJSON)
 	}
 
 	data, err := bj.MarshalJSON()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	if string(data) == "null" {
 		return nil
 	}
