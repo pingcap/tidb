@@ -54,7 +54,7 @@ func (s *testPartitionSuite) TestShowPlacementLabelsBuilder(c *C) {
 	}
 
 	b := &showPlacementLabelsResultBuilder{}
-	toBinaryJson := func(obj interface{}) (bj json.BinaryJSON) {
+	toBinaryJSON := func(obj interface{}) (bj json.BinaryJSON) {
 		d, err := gjson.Marshal(obj)
 		c.Assert(err, IsNil)
 		err = bj.UnmarshalJSON(d)
@@ -64,7 +64,7 @@ func (s *testPartitionSuite) TestShowPlacementLabelsBuilder(c *C) {
 
 	for _, ca := range cases {
 		for _, store := range ca.stores {
-			bj := toBinaryJson(store)
+			bj := toBinaryJSON(store)
 			err := b.AppendStoreLabels(bj)
 			c.Assert(err, IsNil)
 		}
@@ -74,7 +74,7 @@ func (s *testPartitionSuite) TestShowPlacementLabelsBuilder(c *C) {
 		c.Assert(len(rows), Equals, len(ca.expects))
 		for idx, expect := range ca.expects {
 			row := rows[idx]
-			bj := toBinaryJson(expect[1])
+			bj := toBinaryJSON(expect[1])
 
 			c.Assert(row[0].(string), Equals, expect[0].(string))
 			c.Assert(row[1].(json.BinaryJSON).TypeCode, Equals, bj.TypeCode)
