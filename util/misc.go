@@ -580,6 +580,9 @@ func createTLSCertificates(certpath string, keypath string) error {
 	}
 
 	template := x509.Certificate{
+		Subject: pkix.Name{
+			CommonName: "TiDB_Server_Auto_Generated_Server_Certificate",
+		},
 		SerialNumber: big.NewInt(1),
 		NotBefore:    notBefore,
 		NotAfter:     notAfter,
