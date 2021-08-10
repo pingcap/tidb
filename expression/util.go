@@ -371,6 +371,7 @@ func locateStringWithCollation(str, substr, coll string) int64 {
 		return int64(index + 1)
 	}
 
+	// todo: we can use binary search to make it faster.
 	count := int64(0)
 	for {
 		r, size := utf8.DecodeRuneInString(str)
