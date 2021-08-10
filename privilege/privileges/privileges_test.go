@@ -380,7 +380,7 @@ func TestShowColumnGrants(t *testing.T) {
 	pc := privilege.GetPrivilegeManager(se)
 	gs, err := pc.ShowGrants(se, &auth.UserIdentity{Username: "column", Hostname: "%"}, nil)
 	require.NoError(t, err)
-	require.Equal(t, strings.Join(gs, " "), "GRANT USAGE ON *.* TO 'column'@'%' GRANT SELECT(a), INSERT(c), UPDATE(a, b) ON test.column_table TO 'column'@'%'")
+	require.Equal(t, "GRANT USAGE ON *.* TO 'column'@'%' GRANT SELECT(a), INSERT(c), UPDATE(a, b) ON test.column_table TO 'column'@'%'", strings.Join(gs, " "))
 }
 
 func TestDropTablePrivileges(t *testing.T) {
@@ -1133,37 +1133,37 @@ func TestSystemSchema(t *testing.T) {
 	require.True(t, strings.Contains(err.Error(), "denied to user"))
 	_, err = se.ExecuteInternal(context.Background(), "update information_schema.tables set table_name = 'tst' where table_name = 'mysql'")
 	require.Error(t, err)
-	require.True(t, strings.Contains(err.Error(), "privilege check"))
+	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
 
 	// Test performance_schema.
 	mustExec(t, se, `select * from performance_schema.events_statements_summary_by_digest`)
 	_, err = se.ExecuteInternal(context.Background(), "drop table performance_schema.events_statements_summary_by_digest")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "denied to user")
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 	_, err = se.ExecuteInternal(context.Background(), "update performance_schema.events_statements_summary_by_digest set schema_name = 'tst'")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "privilege check")
+	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
 	_, err = se.ExecuteInternal(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "DELETE command denied to user")
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 	_, err = se.ExecuteInternal(context.Background(), "create table performance_schema.t(a int)")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "CREATE command denied")
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 
 	// Test metric_schema.
 	mustExec(t, se, `select * from metrics_schema.tidb_query_duration`)
 	_, err = se.ExecuteInternal(context.Background(), "drop table metrics_schema.tidb_query_duration")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "denied to user")
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 	_, err = se.ExecuteInternal(context.Background(), "update metrics_schema.tidb_query_duration set instance = 'tst'")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "privilege check")
+	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
 	_, err = se.ExecuteInternal(context.Background(), "delete from metrics_schema.tidb_query_duration")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "DELETE command denied to user")
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 	_, err = se.ExecuteInternal(context.Background(), "create table metric_schema.t(a int)")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "CREATE command denied")
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 }
 
 func TestAdminCommand(t *testing.T) {
@@ -1179,10 +1179,10 @@ func TestAdminCommand(t *testing.T) {
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "test_admin", Hostname: "localhost"}, nil, nil))
 	_, err := se.ExecuteInternal(context.Background(), "ADMIN SHOW DDL JOBS")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "privilege check")
+	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
 	_, err = se.ExecuteInternal(context.Background(), "ADMIN CHECK TABLE t")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "privilege check")
+	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
 
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
 	_, err = se.ExecuteInternal(context.Background(), "ADMIN SHOW DDL JOBS")
@@ -1265,7 +1265,7 @@ func TestLoadDataPrivilege(t *testing.T) {
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil))
 	_, err = se.ExecuteInternal(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "INSERT command denied to user 'test_load'@'localhost' for table 't_load'")
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, `GRANT INSERT on *.* to 'test_load'@'localhost'`)
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil))
@@ -1283,8 +1283,7 @@ func TestSelectIntoNoPermissions(t *testing.T) {
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "nofile", Hostname: "localhost"}, nil, nil))
 	_, err := se.ExecuteInternal(context.Background(), `select 1 into outfile '/tmp/doesntmatter-no-permissions'`)
 	require.Error(t, err)
-	message := "Access denied; you need (at least one of) the FILE privilege(s) for this operation"
-	require.Contains(t, err.Error(), message)
+	require.True(t, terror.ErrorEqual(err, core.ErrSpecificAccessDenied))
 }
 
 func TestGetEncodedPassword(t *testing.T) {
@@ -1388,8 +1387,7 @@ func TestFieldList(t *testing.T) { // Issue #14237 List fields RPC
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "tableaccess", Hostname: "localhost"}, nil, nil))
 	_, err := se.FieldList("fieldlistt1")
 	require.Error(t, err)
-	message := "SELECT command denied to user 'tableaccess'@'localhost' for table 'fieldlistt1'"
-	require.Contains(t, err.Error(), message)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 }
 
 func mustExec(t *testing.T, se session.Session, sql string) {
@@ -1901,7 +1899,7 @@ func TestDynamicPrivsRegistration(t *testing.T) {
 	require.True(t, pm.IsDynamicPrivilege("IAMdyNAMIC"))
 	require.Len(t, privileges.GetDynamicPrivileges(), count+2)
 
-	require.Equal(t, privileges.RegisterDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS").Error(), "privilege name is longer than 32 characters")
+	require.Equal(t, "privilege name is longer than 32 characters", privileges.RegisterDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS").Error())
 	require.False(t, pm.IsDynamicPrivilege("THIS_PRIVILEGE_NAME_IS_TOO_LONG_THE_MAX_IS_32_CHARS"))
 
 	tk := testkit.NewTestKit(t, store)

@@ -184,7 +184,7 @@ func TestLoadDefaultRoleTable(t *testing.T) {
 	require.Equal(t, "test_default_roles", p.DefaultRoles[0].User)
 	require.Equal(t, "localhost", p.DefaultRoles[0].DefaultRoleHost)
 	require.Equal(t, "r_1", p.DefaultRoles[0].DefaultRoleUser)
-	require.Equal(t, "localhost", p.DefaultRoles[0].DefaultRoleHost)
+	require.Equal(t, "localhost", p.DefaultRoles[1].DefaultRoleHost)
 }
 
 func TestPatternMatch(t *testing.T) {
@@ -513,7 +513,7 @@ func TestGlobalPrivValueRequireStr(t *testing.T) {
 	)
 	require.Equal(t, "NONE", none.RequireStr())
 	require.Equal(t, "SSL", tls.RequireStr())
-	require.Equal(t, "X509", x509.RequireStr(), "X509")
+	require.Equal(t, "X509", x509.RequireStr())
 	require.Equal(t, "CIPHER 'c1' ISSUER 'i1' SUBJECT 's1'", spec.RequireStr())
 	require.Equal(t, "ISSUER 'i1' SUBJECT 's1'", spec2.RequireStr())
 	require.Equal(t, "ISSUER 'i1'", spec3.RequireStr())
