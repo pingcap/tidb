@@ -1590,6 +1590,17 @@ func (s *testGCWorkerSuite) TestGCPlacementRules(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testGCWorkerSuite) TestGCLabelRules(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/mockHistoryJob", "return(\"schema/d1/t1\")"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJob"), IsNil)
+	}()
+
+	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
+	err := s.gcWorker.doGCLabelRules(dr)
+	c.Assert(err, IsNil)
+}
+
 func (s *testGCWorkerSuite) TestGCWithPendingTxn(c *C) {
 	ctx := context.Background()
 	gcSafePointCacheInterval = 0

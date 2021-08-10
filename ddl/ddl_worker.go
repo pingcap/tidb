@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -285,6 +286,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		for i, task := range tasks {
 			job := task.job
 			job.Version = currentVersion
@@ -533,6 +535,16 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			d.mu.RLock()
 			d.mu.hook.OnJobRunBefore(job)
 			d.mu.RUnlock()
+
+			// Meta releated txn default is DiskFullOpt_AllowedOnAlmostFull to support
+			// all the ddl job queue operations or other meta change. But we only want
+			// to support the Drop Table like ddls to be executed when TiKV is disk full.
+			switch job.Type {
+			case model.ActionDropSchema, model.ActionDropTable, model.ActionDropIndex, model.ActionTruncateTable, model.ActionDropTablePartition, model.ActionDropView, model.ActionDropSequence, model.ActionDropIndexes, model.ActionTruncateTablePartition:
+				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+			default:
+				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
+			}
 
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
