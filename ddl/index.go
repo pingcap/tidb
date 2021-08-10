@@ -163,12 +163,15 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 		}
 	}
 
-	desc, err := charset.GetCharsetDesc(col.Charset)
-	if err != nil {
-		return err
+	if types.IsString(col.FieldType.Tp) {
+		desc, err := charset.GetCharsetDesc(col.Charset)
+		if err != nil {
+			return err
+		}
+		indexColumnLen *= desc.Maxlen
 	}
 	// Specified length must be shorter than the max length for prefix.
-	if indexColumnLen * desc.Maxlen > config.GetGlobalConfig().MaxIndexLength {
+	if indexColumnLen > config.GetGlobalConfig().MaxIndexLength {
 		return errTooLongKey.GenWithStackByArgs(config.GetGlobalConfig().MaxIndexLength)
 	}
 	return nil
