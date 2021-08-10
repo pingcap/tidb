@@ -37,10 +37,10 @@ func (s *testPartitionSuite) TestShowPlacementLabelsBuilder(c *C) {
 		},
 		{
 			stores: [][]*helper.StoreLabel{
-				{{"zone", "z1"}, {"rack", "r3"}, {"host", "h1"}},
-				{{"zone", "z1"}, {"rack", "r1"}, {"host", "h2"}},
-				{{"zone", "z1"}, {"rack", "r2"}, {"host", "h2"}},
-				{{"zone", "z2"}, {"rack", "r1"}, {"host", "h2"}},
+				{{Key: "zone", Value: "z1"}, {Key: "rack", Value: "r3"}, {Key: "host", Value: "h1"}},
+				{{Key: "zone", Value: "z1"}, {Key: "rack", Value: "r1"}, {Key: "host", Value: "h2"}},
+				{{Key: "zone", Value: "z1"}, {Key: "rack", Value: "r2"}, {Key: "host", Value: "h2"}},
+				{{Key: "zone", Value: "z2"}, {Key: "rack", Value: "r1"}, {Key: "host", Value: "h2"}},
 				nil,
 				{{"k1", "v1"}},
 			},
