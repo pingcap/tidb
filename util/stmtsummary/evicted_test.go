@@ -27,11 +27,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testStmtSummarySuite{})
-
-type testStmtSummarySuite struct {
-}
-
 // fake a stmtSummaryByDigest
 func newInduceSsbd(beginTime int64, endTime int64) *stmtSummaryByDigest {
 	newSsbd := &stmtSummaryByDigest{
@@ -644,13 +639,4 @@ func getEvicted(ssbdee *stmtSummaryByDigestEvictedElement) string {
 	buf := bytes.NewBuffer(nil)
 	buf.WriteString(fmt.Sprintf("{begin: %v, end: %v, count: %v}", ssbdee.beginTime, ssbdee.endTime, len(ssbdee.digestKeyMap)))
 	return buf.String()
-}
-
-func matchCheck(c *C, row []types.Datum, expected ...interface{}) {
-	c.Assert(len(row), Equals, len(expected))
-	for i := range row {
-		got := fmt.Sprintf("%v", row[i].GetValue())
-		need := fmt.Sprintf("%v", expected[i])
-		c.Assert(got, Equals, need)
-	}
 }
