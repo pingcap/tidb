@@ -367,7 +367,8 @@ type Security struct {
 	// EnableSEM prevents SUPER users from having full access.
 	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
 	// Allow automatic TLS certificate generation
-	AutoTLS bool `toml:"auto-tls" json:"auto-tls"`
+	AutoTLS       bool   `toml:"auto-tls" json:"auto-tls"`
+	MinTLSVersion string `toml:"tls-version" json:"tls-version"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -723,6 +724,7 @@ var deprecatedConfig = map[string]struct{}{
 	"tikv-client.copr-cache.enable":  {},
 	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
 	"enable-streaming":               {},
+	"allow-expression-index":         {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {

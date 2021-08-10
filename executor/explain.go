@@ -44,6 +44,10 @@ func (e *ExplainExec) Open(ctx context.Context) error {
 // Close implements the Executor Close interface.
 func (e *ExplainExec) Close() error {
 	e.rows = nil
+	if e.analyzeExec != nil && !e.executed {
+		// Open(), but Next() is not called.
+		return e.analyzeExec.Close()
+	}
 	return nil
 }
 

@@ -76,6 +76,17 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	return tk.ResultSetToResult(rs, comment)
 }
 
+// QueryToErr executes a sql statement and discard results.
+func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
+	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
+	res, err := tk.Exec(sql, args...)
+	tk.require.NoError(err, comment)
+	tk.require.NotNil(res, comment)
+	_, resErr := session.GetRows4Test(context.Background(), tk.session, res)
+	tk.require.Nil(res.Close())
+	return resErr
+}
+
 // ResultSetToResult converts sqlexec.RecordSet to testkit.Result.
 // It is used to check results of execute statement in binary mode.
 func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment string) *Result {
