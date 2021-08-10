@@ -15,12 +15,8 @@ package handle_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/metrics"
-	dto "github.com/prometheus/client_model/go"
 	"math"
-	"math/rand"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
