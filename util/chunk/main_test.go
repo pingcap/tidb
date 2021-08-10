@@ -29,8 +29,20 @@ func TestMain(m *testing.M) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = path
 	})
-	_ = os.RemoveAll(path) // clean the uncleared temp file during the last run.
-	_ = os.MkdirAll(path, 0755)
 
-	goleak.VerifyTestMain(m)
+	goleak.VerifyTestMain(wrapper{
+		M:       m,
+		cleanUp: func() { os.RemoveAll(path) },
+	})
+}
+
+// wrap *testing.M to do the clean up after m.Run() and before os.Exit()
+type wrapper struct {
+	*testing.M
+	cleanUp func()
+}
+
+func (m wrapper) Run() int {
+	defer m.cleanUp()
+	return m.M.Run()
 }
