@@ -14,8 +14,8 @@
 package metrics
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
-	tikvmetrics "github.com/tikv/client-go/v2/metrics"
+	"github.com/hnes/client_golang/prometheus"
+	//tikvmetrics "github.com/tikv/client-go/v2/metrics"
 )
 
 var (
@@ -157,7 +157,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TopSQLReportDurationHistogram)
 	prometheus.MustRegister(TopSQLReportDataHistogram)
 
-	tikvmetrics.InitMetrics(TiDB, TiKVClient)
-	tikvmetrics.RegisterMetrics()
-	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
+	//tikvmetrics.InitMetrics(TiDB, TiKVClient)
+	//tikvmetrics.RegisterMetrics()
+	//tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
 }

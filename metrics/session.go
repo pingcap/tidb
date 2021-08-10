@@ -13,7 +13,7 @@
 
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import "github.com/hnes/client_golang/prometheus"
 
 // Session metrics.
 var (

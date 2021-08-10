@@ -32,8 +32,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/prometheus/client_golang/api"
-	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
+	"github.com/hnes/client_golang/api"
+	promv1 "github.com/hnes/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
 )
 

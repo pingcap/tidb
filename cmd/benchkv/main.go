@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/hnes/client_golang/prometheus"
+	"github.com/hnes/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 )
 

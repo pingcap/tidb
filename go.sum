@@ -280,6 +280,12 @@ github.com/hashicorp/go-uuid v0.0.0-20180228145832-27454136f036/go.mod h1:6SBZvO
 github.com/hashicorp/golang-lru v0.5.0/go.mod h1:/m3WP610KZHVQ1SGc6re/UDhFvYD7pJ4Ao+sR/qLZy8=
 github.com/hashicorp/golang-lru v0.5.1/go.mod h1:/m3WP610KZHVQ1SGc6re/UDhFvYD7pJ4Ao+sR/qLZy8=
 github.com/hashicorp/hcl v1.0.0/go.mod h1:E5yfLk+7swimpb2L/Alb/PJmXilQ/rhwaUYs4T20WEQ=
+github.com/hnes/client_golang v1.5.2-0.20210809112731-5b61a41fe5e8 h1:6c9LtSBb8JSlkeFHHMJ5xeSv/i+UKFe6oL656q+bEe4=
+github.com/hnes/client_golang v1.5.2-0.20210809112731-5b61a41fe5e8/go.mod h1:oKKmMdptIaNhTvYKEebcfFRU0RO6PfyWNUKCjGVaUno=
+github.com/hnes/client_golang v1.5.2-0.20210809114805-605e36986283 h1:mzQqKUKGc6dHIOIXbV8jGX94/L598cMiIffivuDR/3s=
+github.com/hnes/client_golang v1.5.2-0.20210809114805-605e36986283/go.mod h1:oKKmMdptIaNhTvYKEebcfFRU0RO6PfyWNUKCjGVaUno=
+github.com/hnes/client_golang v1.5.2-0.20210810075443-8d7a940b05e5 h1:r61eDMS6fvHNG2fMDtHYEhdf26ssYUOwfrTiiHruaAc=
+github.com/hnes/client_golang v1.5.2-0.20210810075443-8d7a940b05e5/go.mod h1:oKKmMdptIaNhTvYKEebcfFRU0RO6PfyWNUKCjGVaUno=
 github.com/hpcloud/tail v1.0.0 h1:nfCOvKYfkgYP8hkirhJocXT2+zOD8yUNjXaWfTlyFKI=
 github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpOxQnU=
 github.com/hypnoglow/gormzap v0.3.0/go.mod h1:5Wom8B7Jl2oK0Im9hs6KQ+Kl92w4Y7gKCrj66rhyvw0=
