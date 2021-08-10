@@ -34,8 +34,8 @@ type Mutation = struct {
 }
 
 type IndexHelperInfo = struct {
-	indexInfo *model.IndexInfo
-	colInfos  []rowcodec.ColInfo
+	indexInfo     *model.IndexInfo
+	rowColInfos   []rowcodec.ColInfo
 }
 
 // CheckIndexConsistency checks whether the given set of mutations corresponding to a single row is consistent.
@@ -96,16 +96,13 @@ func CheckIndexConsistency(sc *stmtctx.StatementContext, sessVars *variable.Sess
 			return errors.New("index not found")
 		}
 
-		colInfos := BuildRowcodecColInfoForIndexColumns(indexHelperInfo.indexInfo, t.Meta())
-
-		if len(m.value) == 0 {
-			// FIXME: for a delete index mutation, we cannot know the value of it.
-			// When new collation is enabled, we cannot decode value from the key.
-			// => ignore it for now
+		if len(m.value) == 0 && NeedRestoredData(indexHelperInfo.indexInfo.Columns, t.Meta().Columns) {
+			// when we cannot decode the key to get the original value
 			continue
 		}
+
 		decodedIndexValues, err := tablecodec.DecodeIndexKV(m.key, m.value, len(indexHelperInfo.indexInfo.Columns),
-			tablecodec.HandleNotNeeded, colInfos)
+			tablecodec.HandleNotNeeded, indexHelperInfo.rowColInfos)
 		if err != nil {
 			return errors.Trace(err)
 		}
