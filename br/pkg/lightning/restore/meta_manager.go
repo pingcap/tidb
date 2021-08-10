@@ -18,12 +18,22 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	pdapi "github.com/tikv/pd/server/api"
 	"go.uber.org/zap"
+)
+
+const (
+	pdRegions = "/pd/api/v1/regions"
+
+	warnEmptyRegionCntPerStore  = 500
+	errorEmptyRegionCntPerStore = 1000
+	warnRegionCntMaxMinRatio    = 1.5
+	errorRegionCntMaxMinRatio   = 2.0
 )
 
 type metaMgrBuilder interface {
 	Init(ctx context.Context) error
-	TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr
+	TaskMetaMgr(pd *pdutil.PdController, pdTLS *common.TLS) taskMetaMgr
 	TableMetaMgr(tr *TableRestore) tableMetaMgr
 }
 
@@ -55,11 +65,12 @@ func (b *dbMetaMgrBuilder) Init(ctx context.Context) error {
 	return nil
 }
 
-func (b *dbMetaMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
+func (b *dbMetaMgrBuilder) TaskMetaMgr(pd *pdutil.PdController, pdTLS *common.TLS) taskMetaMgr {
 	return &dbTaskMetaMgr{
 		session:    b.db,
 		taskID:     b.taskID,
 		pd:         pd,
+		pdTLS:      pdTLS,
 		tableName:  common.UniqueTable(b.schema, taskMetaTableName),
 		schemaName: b.schema,
 	}
@@ -477,6 +488,7 @@ type dbTaskMetaMgr struct {
 	session *sql.DB
 	taskID  int64
 	pd      *pdutil.PdController
+	pdTLS   *common.TLS
 	// unique name of task meta table
 	tableName  string
 	schemaName string
@@ -590,6 +602,71 @@ func (m *dbTaskMetaMgr) CheckClusterSource(ctx context.Context) (int64, error) {
 	return source, nil
 }
 
+// checkRegions checks if there are too empty regions or regions distribution is unbalanced.
+func (m *dbTaskMetaMgr) checkRegions(ctx context.Context) error {
+	var result pdapi.RegionsInfo
+	if err := m.pdTLS.GetJSON(ctx, pdRegions, &result); err != nil {
+		return errors.Trace(err)
+	}
+	stores := make(map[uint64][]pdapi.RegionInfo)
+	for _, regionInfo := range result.Regions {
+		for _, peer := range regionInfo.Peers {
+			stores[peer.StoreId] = append(stores[peer.StoreId], regionInfo)
+		}
+	}
+	if len(stores) == 0 {
+		return nil
+	}
+	var (
+		maxRegionCnt        = 0
+		maxRegionCntStoreID = uint64(0)
+		minRegionCnt        = -1
+		minRegionCntStoreID = uint64(0)
+	)
+	for storeID, regions := range stores {
+		if len(regions) > maxRegionCnt {
+			maxRegionCnt = len(regions)
+			maxRegionCntStoreID = storeID
+		}
+		if minRegionCnt == -1 || len(regions) < minRegionCnt {
+			minRegionCnt = len(regions)
+			minRegionCntStoreID = storeID
+		}
+		emptyRegionCnt := 0
+		for _, region := range regions {
+			if region.ApproximateSize == 0 {
+				emptyRegionCnt++
+			}
+		}
+		if emptyRegionCnt >= errorEmptyRegionCntPerStore {
+			return errors.Errorf("store %v contains too many empty regions, expect it to be less than %v, but actual is %v",
+				storeID, errorEmptyRegionCntPerStore, emptyRegionCnt)
+		} else if emptyRegionCnt >= warnEmptyRegionCntPerStore {
+			log.L().Warn(
+				"there are too many empty regions in store",
+				zap.Uint64("store-id", storeID),
+				zap.Int("empty-region-cnt", emptyRegionCnt),
+				zap.Int("expect-less-than", warnEmptyRegionCntPerStore),
+			)
+		}
+	}
+	ratio := float64(maxRegionCnt) / float64(minRegionCnt)
+	if ratio >= errorRegionCntMaxMinRatio {
+		return errors.Errorf("regions distribution is unbalanced, the ratio of the regions count of the store(%v) "+
+			"with most regions to the store(%v) with least regions is %v, but we expect it to be less than",
+			maxRegionCntStoreID, minRegionCntStoreID, ratio, errorRegionCntMaxMinRatio)
+	} else if ratio >= warnRegionCntMaxMinRatio {
+		log.L().Warn(
+			"regions distribution is unbalanced",
+			zap.Int("max-region-cnt", maxRegionCnt),
+			zap.Int("min-region-cnt", minRegionCnt),
+			zap.Float64("max-min-ratio", ratio),
+			zap.Float64("expect-less-than", warnRegionCntMaxMinRatio),
+		)
+	}
+	return nil
+}
+
 func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error) {
 	pauseCtx, cancel := context.WithCancel(ctx)
 	conn, err := m.session.Conn(ctx)
@@ -665,6 +742,9 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 			return errors.Trace(err)
 		}
 
+		if err = m.checkRegions(ctx); err != nil {
+			return errors.Trace(err)
+		}
 		orig, removed, err := m.pd.RemoveSchedulersWithOrigin(pauseCtx)
 		if err != nil {
 			return errors.Trace(err)
@@ -858,7 +938,7 @@ func (b noopMetaMgrBuilder) Init(ctx context.Context) error {
 	return nil
 }
 
-func (b noopMetaMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
+func (b noopMetaMgrBuilder) TaskMetaMgr(pd *pdutil.PdController, pdTLS *common.TLS) taskMetaMgr {
 	return noopTaskMetaMgr{}
 }
 

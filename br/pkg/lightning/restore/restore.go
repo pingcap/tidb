@@ -1789,7 +1789,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 
-		rc.taskMgr = rc.metaMgrBuilder.TaskMetaMgr(pdController)
+		rc.taskMgr = rc.metaMgrBuilder.TaskMetaMgr(pdController, rc.tls.WithHost(rc.cfg.TiDB.PdAddr))
 		taskExist, err = rc.taskMgr.CheckTaskExist(ctx)
 		if err != nil {
 			return errors.Trace(err)
