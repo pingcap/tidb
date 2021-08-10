@@ -18,6 +18,7 @@ package testkit
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/stretchr/testify/assert"
@@ -50,6 +51,23 @@ func (res *Result) Check(expected [][]interface{}) {
 // Rows is similar to RowsWithSep, use white space as separator string.
 func Rows(args ...string) [][]interface{} {
 	return RowsWithSep(" ", args...)
+}
+
+// Sort sorts and return the result.
+func (res *Result) Sort() *Result {
+	sort.Slice(res.rows, func(i, j int) bool {
+		a := res.rows[i]
+		b := res.rows[j]
+		for i := range a {
+			if a[i] < b[i] {
+				return true
+			} else if a[i] > b[i] {
+				return false
+			}
+		}
+		return false
+	})
+	return res
 }
 
 // RowsWithSep is a convenient function to wrap args to a slice of []interface.
