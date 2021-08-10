@@ -135,7 +135,7 @@ func CheckIllegalMixCollation(funcName string, args []Expression, evalType types
 	// behavior because we tread utf8mb3 same as utf8mb4 except insert, just keep things simple.
 	// Since we only have utf8mb4 and its subset charset for now, so that just check the data's validity is ok, no
 	// need to convert it.
-	// For the future, we may add more charsets support, but it actually still utf8mb4 encoding at runtime, so we
+	// In the future, we may add more charsets support, but it actually still utf8mb4 encoding at runtime, so we
 	// also no need to do the convert.
 	for _, arg := range args {
 		_, ok := arg.(*Constant)
@@ -155,7 +155,7 @@ func CheckIllegalMixCollation(funcName string, args []Expression, evalType types
 }
 
 // isValidString test if the val is valid for charset dstChs.
-// todo: remove this function when full charset is supported, we will have better way to do this job.
+// TODO: Remove this function when the full charset is supported, we will have a better way to do this job.
 func isValidString(val string, srcChs, dstChs string) bool {
 	if srcChs == dstChs {
 		return true
@@ -163,15 +163,15 @@ func isValidString(val string, srcChs, dstChs string) bool {
 	switch dstChs {
 	case charset.CharsetASCII:
 		for _, c := range val {
-			if !(c < 0x80) {
+			if c >= 0x80 {
 				return false
 			}
 		}
 	case charset.CharsetLatin1:
-		// todo: for latin, we now have no convenience way to check it, just let it go.
-		// todo: will fix it after full charset is supported.
+		// TODO: For latin, we now have no convenience way to check it, just let it go.
+		// We will fix it after the full charset is supported.
 	default:
-		// the charset in tidb are all utf8mb4 or its subset except binary, so that we just check binary charset is enough.
+		// The charset in tidb are all utf8mb4 or its subset except binary, so that we just check binary charset is enough.
 		if srcChs == charset.CharsetBin {
 			return utf8.ValidString(val)
 		}

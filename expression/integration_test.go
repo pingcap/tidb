@@ -6002,8 +6002,8 @@ func (s *testIntegrationSerialSuite) TestIssue23506(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	// fixme: MySQL will get error [HY000][3854] Cannot convert string '\x80' from binary to utf8mb4,
-	// fixme: at this moment, we can only get error like this, will try to fix in the future.
+	// FIXME: MySQL will get an error [HY000][3854] Cannot convert string '\x80' from binary to utf8mb4, at this moment,
+	// we can only get an error like this, will try to fix in the future.
 	tk.MustGetErrMsg("select 'a' collate utf8mb4_general_ci = 0x80;", "[expression:1267]Illegal mix of collations (utf8mb4_general_ci,EXPLICIT) and (binary,COERCIBLE) for operation '='")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a char(10), primary key (a)) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;")
