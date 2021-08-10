@@ -650,6 +650,9 @@ func (m *dbTaskMetaMgr) checkRegions(ctx context.Context) error {
 			)
 		}
 	}
+	if minRegionCnt == 0 {
+		return errors.Errorf("regions distribution is unbalanced, there is no region on store %v", minRegionCntStoreID)
+	}
 	ratio := float64(maxRegionCnt) / float64(minRegionCnt)
 	if ratio >= errorRegionCntMaxMinRatio {
 		return errors.Errorf("regions distribution is unbalanced, the ratio of the regions count of the store(%v) "+
