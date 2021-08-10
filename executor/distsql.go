@@ -629,11 +629,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
 			defer trace.StartRegion(ctx1, "IndexLookUpTableWorker").End()
-			startTime := time.Now()
 			worker.pickAndExecTask(ctx1)
-			if e.stats != nil {
-				atomic.AddInt64(&e.stats.TableRowScan, int64(time.Since(startTime)))
-			}
 			cancel()
 			e.tblWorkerWg.Done()
 		}()
@@ -1001,8 +997,10 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 		case <-w.finished:
 			return
 		}
+		startTime := time.Now()
 		err := w.executeTask(ctx, task)
 		if w.idxLookup.stats != nil {
+			atomic.AddInt64(&w.idxLookup.stats.TableRowScan, int64(time.Since(startTime)))
 			atomic.AddInt64(&w.idxLookup.stats.TableTaskNum, 1)
 		}
 		task.doneCh <- err
