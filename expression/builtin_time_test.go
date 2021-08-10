@@ -931,7 +931,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 	}
 
 	// This is a test for issue 7334
-	du := newDateArighmeticalUtil()
+	du := newDateArithmeticalUtil()
 	resetStmtContext(s.ctx)
 	now, _, err := evalNowWithFsp(s.ctx, 0)
 	c.Assert(err, IsNil)
