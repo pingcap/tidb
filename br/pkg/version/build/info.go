@@ -8,16 +8,18 @@ import (
 	"runtime"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/israce"
+	"github.com/pingcap/tidb/util/versioninfo"
 	"go.uber.org/zap"
 )
 
 // Version information.
 var (
-	ReleaseVersion = "v5.0.0-master"
-	BuildTS        = "None"
-	GitHash        = "None"
-	GitBranch      = "None"
+	ReleaseVersion = mysql.TiDBReleaseVersion
+	BuildTS        = versioninfo.TiDBBuildTS
+	GitHash        = versioninfo.TiDBGitHash
+	GitBranch      = versioninfo.TiDBGitBranch
 	goVersion      = runtime.Version()
 )
 
