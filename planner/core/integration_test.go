@@ -304,6 +304,40 @@ func (s *testIntegrationSuite) TestSimplifyOuterJoinWithCast(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestLimitPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustExec(`analyze table t`)
+
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
+	tk.MustQuery(`explain select a from t order by a desc limit 10`).Check(testkit.Rows(
+		`TopN_9 1.00 root  test.t.a:desc, offset:0, count:10`,
+		`└─TableReader_17 1.00 root  data:TableFullScan_16`,
+		`  └─TableFullScan_16 1.00 cop[tikv] table:t keep order:false`))
+
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold=10`)
+	tk.MustQuery(`explain select a from t order by a desc limit 10`).Check(testkit.Rows(
+		`TopN_7 1.00 root  test.t.a:desc, offset:0, count:10`,
+		`└─TableReader_13 1.00 root  data:TopN_12`,
+		`  └─TopN_12 1.00 cop[tikv]  test.t.a:desc, offset:0, count:10`,
+		`    └─TableFullScan_11 1.00 cop[tikv] table:t keep order:false`))
+
+	tk.MustQuery(`explain select a from t order by a desc limit 11`).Check(testkit.Rows(
+		`TopN_9 1.00 root  test.t.a:desc, offset:0, count:11`,
+		`└─TableReader_17 1.00 root  data:TableFullScan_16`,
+		`  └─TableFullScan_16 1.00 cop[tikv] table:t keep order:false`))
+
+	tk.MustQuery(`explain select /*+ limit_to_cop() */ a from t order by a desc limit 11`).Check(testkit.Rows(
+		`TopN_7 1.00 root  test.t.a:desc, offset:0, count:11`,
+		`└─TableReader_13 1.00 root  data:TopN_12`,
+		`  └─TopN_12 1.00 cop[tikv]  test.t.a:desc, offset:0, count:11`,
+		`    └─TableFullScan_11 1.00 cop[tikv] table:t keep order:false`))
+}
+
 func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
