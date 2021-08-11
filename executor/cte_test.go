@@ -18,64 +18,72 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
-
-	"github.com/pingcap/check"
+	"testing"
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
 )
 
-var _ = check.Suite(&CTETestSuite{&baseCTETestSuite{}})
-var _ = check.SerialSuites(&CTESerialTestSuite{&baseCTETestSuite{}})
-
-type baseCTETestSuite struct {
+type CTETestSuite struct {
 	store      kv.Storage
 	dom        *domain.Domain
 	sessionCtx sessionctx.Context
 	session    session.Session
 	ctx        context.Context
+	close      func()
 }
 
-type CTETestSuite struct {
-	*baseCTETestSuite
-}
+var cteTestSuite *CTETestSuite
 
-type CTESerialTestSuite struct {
-	*baseCTETestSuite
-}
-
-func (test *baseCTETestSuite) SetUpSuite(c *check.C) {
+func SetUpSuite(t *testing.T) *CTETestSuite {
 	var err error
+	test := new(CTETestSuite)
+
 	test.store, err = mockstore.NewMockStore()
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
 	test.dom, err = session.BootstrapSession(test.store)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 
 	test.sessionCtx = mock.NewContext()
 
 	test.session, err = session.CreateSession4Test(test.store)
-	c.Assert(err, check.IsNil)
+	require.NoError(t, err)
 	test.session.SetConnectionID(0)
 
 	test.ctx = context.Background()
+
+	test.close = func() {
+		test.dom.Close()
+		test.store.Close()
+	}
+
+	return test
 }
 
-func (test *baseCTETestSuite) TearDownSuite(c *check.C) {
-	test.dom.Close()
-	test.store.Close()
+func TestCTESuite(t *testing.T) {
+	t.Parallel()
+
+	cteTestSuite = SetUpSuite(t)
+	defer cteTestSuite.close()
+
+	t.Run("TestBasicCTE", BasicCTE)
+	t.Run("TestUnionDistinct", UnionDistinct)
+	t.Run("TestCTEMaxRecursionDepth", CTEMaxRecursionDepth)
+	t.Run("TestCTEWithLimit", CTEWithLimit)
 }
 
-func (test *CTETestSuite) TestBasicCTE(c *check.C) {
-	tk := testkit.NewTestKit(c, test.store)
+func BasicCTE(t *testing.T) {
+	tk := testkit.NewTestKit(t, cteTestSuite.store)
 	tk.MustExec("use test")
 
 	rows := tk.MustQuery("with recursive cte1 as (" +
@@ -120,23 +128,24 @@ func (test *CTETestSuite) TestBasicCTE(c *check.C) {
 	rows.Check(testkit.Rows("1 1", "2 1", "3 1", "4 1", "5 1"))
 }
 
-func (test *CTESerialTestSuite) TestSpillToDisk(c *check.C) {
+func TestSpillToDisk(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
 	})
 
-	tk := testkit.NewTestKit(c, test.store)
+	test := SetUpSuite(t)
+	tk := testkit.NewTestKit(t, test.store)
 	tk.MustExec("use test;")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testCTEStorageSpill", "return(true)"), check.IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testCTEStorageSpill", "return(true)"))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testCTEStorageSpill"), check.IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testCTEStorageSpill"))
 		tk.MustExec("set tidb_mem_quota_query = 1073741824;")
 	}()
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), check.IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), check.IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"))
 	}()
 
 	// Use duplicated rows to test UNION DISTINCT.
@@ -162,10 +171,10 @@ func (test *CTESerialTestSuite) TestSpillToDisk(c *check.C) {
 		"select c1 from cte1 order by c1;", rowNum)
 	rows := tk.MustQuery(sql)
 
-	memTracker := tk.Se.GetSessionVars().StmtCtx.MemTracker
-	diskTracker := tk.Se.GetSessionVars().StmtCtx.DiskTracker
-	c.Assert(memTracker.MaxConsumed(), check.Greater, int64(0))
-	c.Assert(diskTracker.MaxConsumed(), check.Greater, int64(0))
+	memTracker := tk.Session().GetSessionVars().StmtCtx.MemTracker
+	diskTracker := tk.Session().GetSessionVars().StmtCtx.DiskTracker
+	require.Greater(t, memTracker.MaxConsumed(), int64(0))
+	require.Greater(t, diskTracker.MaxConsumed(), int64(0))
 
 	sort.Ints(vals)
 	resRows := make([]string, 0, rowNum)
@@ -175,8 +184,8 @@ func (test *CTESerialTestSuite) TestSpillToDisk(c *check.C) {
 	rows.Check(testkit.Rows(resRows...))
 }
 
-func (test *CTETestSuite) TestUnionDistinct(c *check.C) {
-	tk := testkit.NewTestKit(c, test.store)
+func UnionDistinct(t *testing.T) {
+	tk := testkit.NewTestKit(t, cteTestSuite.store)
 	tk.MustExec("use test;")
 
 	// Basic test. UNION/UNION ALL intersects.
@@ -199,14 +208,14 @@ func (test *CTETestSuite) TestUnionDistinct(c *check.C) {
 	rows.Check(testkit.Rows("1", "2", "3", "4"))
 }
 
-func (test *CTETestSuite) TestCTEMaxRecursionDepth(c *check.C) {
-	tk := testkit.NewTestKit(c, test.store)
+func CTEMaxRecursionDepth(t *testing.T) {
+	tk := testkit.NewTestKit(t, cteTestSuite.store)
 	tk.MustExec("use test;")
 
 	tk.MustExec("set @@cte_max_recursion_depth = -1;")
 	err := tk.QueryToErr("with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 100) select * from cte1;")
-	c.Assert(err, check.NotNil)
-	c.Assert(err.Error(), check.Equals, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
+	require.Error(t, err)
+	require.Equal(t, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value", err.Error())
 	// If there is no recursive part, query runs ok.
 	rows := tk.MustQuery("with recursive cte1(c1) as (select 1 union select 2) select * from cte1 order by c1;")
 	rows.Check(testkit.Rows("1", "2"))
@@ -215,11 +224,11 @@ func (test *CTETestSuite) TestCTEMaxRecursionDepth(c *check.C) {
 
 	tk.MustExec("set @@cte_max_recursion_depth = 0;")
 	err = tk.QueryToErr("with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 0) select * from cte1;")
-	c.Assert(err, check.NotNil)
-	c.Assert(err.Error(), check.Equals, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
+	require.Error(t, err)
+	require.Equal(t, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value", err.Error())
 	err = tk.QueryToErr("with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 1) select * from cte1;")
-	c.Assert(err, check.NotNil)
-	c.Assert(err.Error(), check.Equals, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
+	require.Error(t, err)
+	require.Equal(t, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value", err.Error())
 	// If there is no recursive part, query runs ok.
 	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select 2) select * from cte1 order by c1;")
 	rows.Check(testkit.Rows("1", "2"))
@@ -232,8 +241,8 @@ func (test *CTETestSuite) TestCTEMaxRecursionDepth(c *check.C) {
 	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 1) select * from cte1;")
 	rows.Check(testkit.Rows("1"))
 	err = tk.QueryToErr("with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 2) select * from cte1;")
-	c.Assert(err, check.NotNil)
-	c.Assert(err.Error(), check.Equals, "[executor:3636]Recursive query aborted after 2 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
+	require.Error(t, err)
+	require.Equal(t, "[executor:3636]Recursive query aborted after 2 iterations. Try increasing @@cte_max_recursion_depth to a larger value", err.Error())
 	// If there is no recursive part, query runs ok.
 	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select 2) select * from cte1 order by c1;")
 	rows.Check(testkit.Rows("1", "2"))
@@ -241,8 +250,8 @@ func (test *CTETestSuite) TestCTEMaxRecursionDepth(c *check.C) {
 	rows.Check(testkit.Rows("1", "2"))
 }
 
-func (test *CTETestSuite) TestCTEWithLimit(c *check.C) {
-	tk := testkit.NewTestKit(c, test.store)
+func CTEWithLimit(t *testing.T) {
+	tk := testkit.NewTestKit(t, cteTestSuite.store)
 	tk.MustExec("use test;")
 
 	// Basic recursive tests.
@@ -267,16 +276,16 @@ func (test *CTETestSuite) TestCTEWithLimit(c *check.C) {
 	rows.Check(testkit.Rows("2"))
 
 	err := tk.QueryToErr("with recursive cte1(c1) as (select 0 union select c1 + 1 from cte1 limit 1 offset 3) select * from cte1;")
-	c.Assert(err, check.NotNil)
-	c.Assert(err.Error(), check.Equals, "[executor:3636]Recursive query aborted after 3 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
+	require.Error(t, err)
+	require.Equal(t, "[executor:3636]Recursive query aborted after 3 iterations. Try increasing @@cte_max_recursion_depth to a larger value", err.Error())
 
 	tk.MustExec("set cte_max_recursion_depth=1000;")
 	rows = tk.MustQuery("with recursive cte1(c1) as (select 0 union select c1 + 1 from cte1 limit 5 offset 996) select * from cte1;")
 	rows.Check(testkit.Rows("996", "997", "998", "999", "1000"))
 
 	err = tk.QueryToErr("with recursive cte1(c1) as (select 0 union select c1 + 1 from cte1 limit 5 offset 997) select * from cte1;")
-	c.Assert(err, check.NotNil)
-	c.Assert(err.Error(), check.Equals, "[executor:3636]Recursive query aborted after 1001 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
+	require.Error(t, err)
+	require.Equal(t, "[executor:3636]Recursive query aborted after 1001 iterations. Try increasing @@cte_max_recursion_depth to a larger value", err.Error())
 
 	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 0 offset 1) select * from cte1")
 	rows.Check(testkit.Rows())
@@ -311,7 +320,7 @@ func (test *CTETestSuite) TestCTEWithLimit(c *check.C) {
 	// Error: ERROR 1221 (HY000): Incorrect usage of UNION and LIMIT.
 	// Limit can only be at the end of SQL stmt.
 	err = tk.ExecToErr("with recursive cte1(c1) as (select c1 from t1 limit 1 offset 1 union select c1 + 1 from cte1 limit 0 offset 1) select * from cte1")
-	c.Assert(err.Error(), check.Equals, "[planner:1221]Incorrect usage of UNION and LIMIT")
+	require.Equal(t, "[planner:1221]Incorrect usage of UNION and LIMIT", err.Error())
 
 	// Basic non-recusive tests.
 	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select 2 order by 1 limit 1 offset 1) select * from cte1")
@@ -374,8 +383,8 @@ func (test *CTETestSuite) TestCTEWithLimit(c *check.C) {
 	rows.Check(testkit.Rows())
 	// MySQL err: ERROR 1365 (22012): Division by 0. Because it gives error when computing 1/c1.
 	err = tk.QueryToErr("with recursive cte1 as (select 1/c1 c1 from t1 union select c1 + 1 c1 from cte1 where c1 < 2 limit 1) select * from cte1;")
-	c.Assert(err, check.NotNil)
-	c.Assert(err.Error(), check.Equals, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
+	require.Error(t, err)
+	require.Equal(t, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value", err.Error())
 
 	tk.MustExec("set cte_max_recursion_depth = 1000;")
 	tk.MustExec("drop table if exists t1;")
