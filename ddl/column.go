@@ -691,10 +691,10 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		return (newCol.Flen > 0 && newCol.Flen < oldCol.Flen) || (toUnsigned != originUnsigned)
 	}
 	// Ignore the potential max display length represented by integer's flen, use default flen instead.
-	oldColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.Tp)
-	newColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(newCol.Tp)
+	defaultOldColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.Tp)
+	defaultNewColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(newCol.Tp)
 	needTruncationOrToggleSignForInteger := func() bool {
-		return (newColFlen > 0 && newColFlen < oldColFlen) || (toUnsigned != originUnsigned)
+		return (defaultNewColFlen > 0 && defaultNewColFlen < defaultOldColFlen) || (toUnsigned != originUnsigned)
 	}
 
 	// Deal with the same type.
@@ -708,6 +708,11 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 			return isElemsChangedToModifyColumn(oldCol.Elems, newCol.Elems)
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			return toUnsigned != originUnsigned
+		case mysql.TypeString:
+			// Due to the behavior of padding \x00 at binary type, always change column data when binary length changed
+			if types.IsBinaryStr(&oldCol.FieldType) {
+				return newCol.Flen != oldCol.Flen
+			}
 		}
 
 		return needTruncationOrToggleSign()
@@ -1646,7 +1651,7 @@ func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 
 // checkForNullValue ensure there are no null values of the column of this table.
 // `isDataTruncated` indicates whether the new field and the old field type are the same, in order to be compatible with mysql.
-func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, table, newCol model.CIStr, oldCols ...*model.ColumnInfo) error {
+func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTruncated bool, schema, table, newCol model.CIStr, oldCols ...*model.ColumnInfo) error {
 	var buf strings.Builder
 	buf.WriteString("select 1 from %n.%n where ")
 	paramsList := make([]interface{}, 0, 2+len(oldCols))
@@ -1661,11 +1666,11 @@ func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, tab
 		}
 	}
 	buf.WriteString(" limit 1")
-	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), buf.String(), paramsList...)
+	stmt, err := sctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(ctx, buf.String(), paramsList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(ctx, stmt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1785,12 +1790,12 @@ func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.
 func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.TableInfo, cols []*model.ColumnInfo,
 	newColName model.CIStr, isDataTruncated bool) error {
 	// Get sessionctx from context resource pool.
-	var ctx sessionctx.Context
-	ctx, err := w.sessPool.get()
+	var sctx sessionctx.Context
+	sctx, err := w.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer w.sessPool.put(ctx)
+	defer w.sessPool.put(sctx)
 
 	skipCheck := false
 	failpoint.Inject("skipMockContextDoExec", func(val failpoint.Value) {
@@ -1800,7 +1805,7 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 	})
 	if !skipCheck {
 		// If there is a null value inserted, it cannot be modified and needs to be rollback.
-		err = checkForNullValue(ctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newColName, cols...)
+		err = checkForNullValue(w.ddlJobCtx, sctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newColName, cols...)
 		if err != nil {
 			return errors.Trace(err)
 		}

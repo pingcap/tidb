@@ -16,10 +16,8 @@ package session
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -62,10 +60,14 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
-	mustExecSQL(c, se, "SELECT * from mysql.global_priv;")
-	mustExecSQL(c, se, "SELECT * from mysql.db;")
-	mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
-	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
+	rs := mustExecSQL(c, se, "SELECT * from mysql.global_priv;")
+	c.Assert(rs.Close(), IsNil)
+	rs = mustExecSQL(c, se, "SELECT * from mysql.db;")
+	c.Assert(rs.Close(), IsNil)
+	rs = mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
+	c.Assert(rs.Close(), IsNil)
+	rs = mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
+	c.Assert(rs.Close(), IsNil)
 	// Check privilege tables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	c.Assert(r, NotNil)
@@ -119,7 +121,6 @@ func globalVarsCount() int64 {
 func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 	ss := &session{
 		store:       store,
-		parserPool:  &sync.Pool{New: func() interface{} { return parser.New() }},
 		sessionVars: variable.NewSessionVars(),
 	}
 	ss.txn.init()

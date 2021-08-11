@@ -679,7 +679,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL,\n"+
 			"  `b` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin/*!90000 SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=4 PRE_SPLIT_REGIONS=3 */",
 	))
 	tk.MustExec("drop table t")
 
@@ -1130,7 +1130,7 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	const builtinFuncNum = 271
+	const builtinFuncNum = 273
 	c.Assert(builtinFuncNum, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
 	c.Assert("yearweek", Equals, rows[builtinFuncNum-1][0].(string))
@@ -1301,6 +1301,9 @@ func (s *testSuite5) TestShowVar(c *C) {
 	// Test Hidden tx_read_ts
 	res = tk.MustQuery("show variables like '%tx_read_ts'")
 	c.Check(res.Rows(), HasLen, 0)
+	// Test Hidden tidb_enable_streaming
+	res = tk.MustQuery("show variables like '%tidb_enable_streaming%';")
+	c.Check(res.Rows(), HasLen, 0)
 }
 
 func (s *testSuite5) TestIssue19507(c *C) {
@@ -1372,4 +1375,27 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 		"  KEY `b` (`b`)\n" +
 		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ON COMMIT DELETE ROWS"
 	tk.MustQuery("show create table t5").Check(testkit.Rows("t5 " + expect))
+
+	tk.MustExec("set tidb_enable_noop_functions=true")
+	tk.MustExec("create temporary table t6 (i int primary key, j int)")
+	expect = "CREATE TEMPORARY TABLE `t6` (\n" +
+		"  `i` int(11) NOT NULL,\n" +
+		"  `j` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	tk.MustQuery("show create table t6").Check(testkit.Rows("t6 " + expect))
+	tk.MustExec("create temporary table t7 (i int primary key auto_increment, j int)")
+	defer func() {
+		tk.MustExec("commit;")
+	}()
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t7 (j) values (14)")
+	tk.MustExec("insert into t7 (j) values (24)")
+	tk.MustQuery("select * from t7").Check(testkit.Rows("1 14", "2 24"))
+	expect = "CREATE TEMPORARY TABLE `t7` (\n" +
+		"  `i` int(11) NOT NULL AUTO_INCREMENT,\n" +
+		"  `j` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2"
+	tk.MustQuery("show create table t7").Check(testkit.Rows("t7 " + expect))
 }

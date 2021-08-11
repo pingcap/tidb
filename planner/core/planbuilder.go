@@ -433,6 +433,10 @@ type cteInfo struct {
 	enterSubquery bool
 	recursiveRef  bool
 	limitLP       LogicalPlan
+	// seedStat is shared between logicalCTE and logicalCTETable.
+	seedStat *property.StatsInfo
+	// The LogicalCTEs that reference the same table should share the same CteClass.
+	cteClass *CTEClass
 }
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -511,6 +515,12 @@ type PlanBuilder struct {
 type handleColHelper struct {
 	id2HandleMapStack []map[int64][]HandleCols
 	stackTail         int
+}
+
+func (hch *handleColHelper) resetForReuse() {
+	*hch = handleColHelper{
+		id2HandleMapStack: hch.id2HandleMapStack[:0],
+	}
 }
 
 func (hch *handleColHelper) popMap() map[int64][]HandleCols {
@@ -601,25 +611,66 @@ func (b *PlanBuilder) popSelectOffset() {
 	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
 }
 
-// NewPlanBuilder creates a new PlanBuilder. Return the original PlannerSelectBlockAsName as well, callers decide if
+// NewPlanBuilder creates a new PlanBuilder.
+func NewPlanBuilder() *PlanBuilder {
+	return &PlanBuilder{
+		outerCTEs:           make([]*cteInfo, 0),
+		colMapper:           make(map[*ast.ColumnNameExpr]int),
+		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
+		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+	}
+}
+
+// Init initialize a PlanBuilder.
+// Return the original PlannerSelectBlockAsName as well, callers decide if
 // PlannerSelectBlockAsName should be restored after using this builder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
+// This is The comman code pattern to use it:
+// NewPlanBuilder().Init(sctx, is, processor)
+func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
 	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
 	} else {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
-	return &PlanBuilder{
-		ctx:                 sctx,
-		is:                  is,
-		outerCTEs:           make([]*cteInfo, 0),
-		colMapper:           make(map[*ast.ColumnNameExpr]int),
-		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
-		hintProcessor:       processor,
-		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
-		isForUpdateRead:     sctx.GetSessionVars().IsPessimisticReadConsistency(),
-	}, savedBlockNames
+
+	b.ctx = sctx
+	b.is = is
+	b.hintProcessor = processor
+	b.isForUpdateRead = sctx.GetSessionVars().IsPessimisticReadConsistency()
+	return b, savedBlockNames
+}
+
+// ResetForReuse reset the plan builder, put it into pool for reuse.
+// After reset for reuse, the object should be equal to a object returned by NewPlanBuilder().
+func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
+	// Save some fields for reuse.
+	saveOuterCTEs := b.outerCTEs[:0]
+	saveColMapper := b.colMapper
+	for k := range saveColMapper {
+		delete(saveColMapper, k)
+	}
+	saveHandleHelper := b.handleHelper
+	saveHandleHelper.resetForReuse()
+
+	saveCorrelateAggMapper := b.correlatedAggMapper
+	for k := range saveCorrelateAggMapper {
+		delete(saveCorrelateAggMapper, k)
+	}
+
+	// Reset ALL the fields.
+	*b = PlanBuilder{}
+
+	// Reuse part of the fields.
+	// It's a bit conservative but easier to get right.
+	b.outerCTEs = saveOuterCTEs
+	b.colMapper = saveColMapper
+	b.handleHelper = saveHandleHelper
+	b.correlatedAggMapper = saveCorrelateAggMapper
+
+	// Add more fields if they are safe to be reused.
+
+	return b
 }
 
 // Build builds the ast node to a Plan.
@@ -648,6 +699,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildLoadStats(x), nil
 	case *ast.IndexAdviseStmt:
 		return b.buildIndexAdvise(x), nil
+	case *ast.PlanRecreatorStmt:
+		return b.buildPlanRecreator(x), nil
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x), nil
 	case *ast.SelectStmt:
@@ -955,8 +1008,20 @@ func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[i
 		return nil, false, nil
 	}
 	latestIndexes := make(map[int64]*model.IndexInfo)
-	latestTbl, exist := is.TableByID(id)
-	if exist {
+
+	var latestTbl table.Table
+	latestTblExist := false
+
+	localTemporaryTables := ctx.GetSessionVars().LocalTemporaryTables
+	if localTemporaryTables != nil {
+		latestTbl, latestTblExist = localTemporaryTables.(*infoschema.LocalTemporaryTables).TableByID(id)
+	}
+
+	if !latestTblExist {
+		latestTbl, latestTblExist = is.TableByID(id)
+	}
+
+	if latestTblExist {
 		latestTblInfo := latestTbl.Meta()
 		for _, index := range latestTblInfo.Indices {
 			latestIndexes[index.ID] = index
@@ -1187,6 +1252,10 @@ func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo)
 func addExtraPIDColumnToDataSource(p LogicalPlan, info *extraPIDInfo) error {
 	switch raw := p.(type) {
 	case *DataSource:
+		// Fix issue 26250, do not add extra pid column to normal table.
+		if raw.tableInfo.GetPartitionInfo() == nil {
+			return nil
+		}
 		raw.addExtraPIDColumn(info)
 		return nil
 	default:
@@ -1298,7 +1367,12 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 	case ast.AdminCaptureBindings:
 		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
 	case ast.AdminEvolveBindings:
-		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, nil
+		var err error
+		// The 'baseline evolution' only work in the test environment before the feature is GA.
+		if !config.CheckTableBeforeDrop {
+			err = errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
+		}
+		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
 	case ast.AdminReloadBindings:
 		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
 	case ast.AdminShowTelemetry:
@@ -2886,12 +2960,13 @@ func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Inse
 		// 2. `INSERT INTO tbl_name (col_name [, col_name] ...) SELECT ...`.
 		colName := make([]string, 0, len(insertStmt.Columns))
 		for _, col := range insertStmt.Columns {
-			colName = append(colName, col.Name.O)
+			colName = append(colName, col.Name.L)
 		}
-		var missingColName string
-		affectedValuesCols, missingColName = table.FindCols(insertPlan.Table.VisibleCols(), colName, insertPlan.Table.Meta().PKIsHandle)
-		if missingColName != "" {
-			return nil, ErrUnknownColumn.GenWithStackByArgs(missingColName, clauseMsg[fieldList])
+		var missingColIdx int
+		affectedValuesCols, missingColIdx = table.FindColumns(insertPlan.Table.VisibleCols(), colName, insertPlan.Table.Meta().PKIsHandle)
+		if missingColIdx >= 0 {
+			return nil, ErrUnknownColumn.GenWithStackByArgs(
+				insertStmt.Columns[missingColIdx].Name.O, clauseMsg[fieldList])
 		}
 	} else if len(insertStmt.Setlist) == 0 {
 		// This branch is for the following scenarios:
@@ -2919,9 +2994,9 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	}
 
 	// Check whether the column to be updated is the generated column.
-	tCols, missingColName := table.FindCols(insertPlan.Table.VisibleCols(), colNames, tableInfo.PKIsHandle)
-	if missingColName != "" {
-		return ErrUnknownColumn.GenWithStackByArgs(missingColName, clauseMsg[fieldList])
+	tCols, missingColIdx := table.FindColumns(insertPlan.Table.VisibleCols(), colNames, tableInfo.PKIsHandle)
+	if missingColIdx >= 0 {
+		return ErrUnknownColumn.GenWithStackByArgs(insert.Setlist[missingColIdx].Column.Name.O, clauseMsg[fieldList])
 	}
 	generatedColumns := make(map[string]struct{}, len(tCols))
 	for _, tCol := range tCols {
@@ -4046,8 +4121,11 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Supported_builtin_functions"}
 		ftypes = []byte{mysql.TypeVarchar}
 	case ast.ShowBackups, ast.ShowRestores:
-		names = []string{"Destination", "State", "Progress", "Queue_time", "Execution_time", "Finish_time", "Connection"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDouble, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeLonglong}
+		names = []string{"Destination", "State", "Progress", "Queue_time", "Execution_time", "Finish_time", "Connection", "Message"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDouble, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeVarchar}
+	case ast.ShowPlacementLabels:
+		names = []string{"Key", "Values"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeJSON}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
@@ -4067,6 +4145,11 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		schema.Append(col)
 	}
 	return
+}
+
+func (b *PlanBuilder) buildPlanRecreator(pc *ast.PlanRecreatorStmt) Plan {
+	p := &PlanRecreatorSingle{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File}
+	return p
 }
 
 func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {

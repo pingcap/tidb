@@ -100,10 +100,11 @@ type Config struct {
 	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
-	TempStorageQuota int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
-	EnableStreaming  bool                    `toml:"enable-streaming" json:"enable-streaming"`
-	EnableBatchDML   bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
-	TxnLocalLatches  tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
+	TempStorageQuota int64 `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
+	// Deprecated
+	EnableStreaming bool                    `toml:"-" json:"-"`
+	EnableBatchDML  bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
+	TxnLocalLatches tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames        int                `toml:"lower-case-table-names" json:"lower-case-table-names"`
@@ -365,6 +366,9 @@ type Security struct {
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
 	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
+	// Allow automatic TLS certificate generation
+	AutoTLS       bool   `toml:"auto-tls" json:"auto-tls"`
+	MinTLSVersion string `toml:"tls-version" json:"tls-version"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -497,13 +501,16 @@ type PessimisticTxn struct {
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
 	// The max count of deadlock events that will be recorded in the information_schema.deadlocks table.
 	DeadlockHistoryCapacity uint `toml:"deadlock-history-capacity" json:"deadlock-history-capacity"`
+	// Whether retryable deadlocks (in-statement deadlocks) are collected to the information_schema.deadlocks table.
+	DeadlockHistoryCollectRetryable bool `toml:"deadlock-history-collect-retryable" json:"deadlock-history-collect-retryable"`
 }
 
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
 	return PessimisticTxn{
-		MaxRetryCount:           256,
-		DeadlockHistoryCapacity: 10,
+		MaxRetryCount:                   256,
+		DeadlockHistoryCapacity:         10,
+		DeadlockHistoryCollectRetryable: false,
 	}
 }
 
@@ -538,8 +545,6 @@ type IsolationRead struct {
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
-	// Whether enable creating expression index.
-	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable global kill.
 	EnableGlobalKill bool `toml:"enable-global-kill" json:"-"`
 }
@@ -663,8 +668,7 @@ var defaultConf = Config{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
-		AllowsExpressionIndex: false,
-		EnableGlobalKill:      false,
+		EnableGlobalKill: false,
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
@@ -673,6 +677,7 @@ var defaultConf = Config{
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
+		AutoTLS:                     true,
 	},
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,
@@ -705,19 +710,21 @@ func StoreGlobalConfig(config *Config) {
 }
 
 var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl":            {},
-	"pessimistic-txn.enable":         {},
-	"log.file.log-rotate":            {},
-	"log.log-slow-query":             {},
-	"txn-local-latches":              {},
-	"txn-local-latches.enabled":      {},
-	"txn-local-latches.capacity":     {},
-	"performance.max-memory":         {},
-	"max-txn-time-use":               {},
-	"experimental.allow-auto-random": {},
-	"enable-redact-log":              {}, // use variable tidb_redact_log instead
-	"tikv-client.copr-cache.enable":  {},
-	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
+	"pessimistic-txn.ttl":                 {},
+	"pessimistic-txn.enable":              {},
+	"log.file.log-rotate":                 {},
+	"log.log-slow-query":                  {},
+	"txn-local-latches":                   {},
+	"txn-local-latches.enabled":           {},
+	"txn-local-latches.capacity":          {},
+	"performance.max-memory":              {},
+	"max-txn-time-use":                    {},
+	"experimental.allow-auto-random":      {},
+	"enable-redact-log":                   {}, // use variable tidb_redact_log instead
+	"tikv-client.copr-cache.enable":       {},
+	"alter-primary-key":                   {}, // use NONCLUSTERED keyword instead
+	"enable-streaming":                    {},
+	"experimental.allow-expression-index": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {

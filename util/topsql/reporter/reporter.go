@@ -46,7 +46,7 @@ var _ TopSQLReporter = &RemoteTopSQLReporter{}
 // TopSQLReporter collects Top SQL metrics.
 type TopSQLReporter interface {
 	tracecpu.Collector
-	RegisterSQL(sqlDigest []byte, normalizedSQL string)
+	RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool)
 	RegisterPlan(planDigest []byte, normalizedPlan string)
 	Close()
 }
@@ -120,7 +120,7 @@ type RemoteTopSQLReporter struct {
 	cancel context.CancelFunc
 	client ReportClient
 
-	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are normalized SQL strings
+	// normalizedSQLMap is an map, whose keys are SQL digest strings and values are SQLMeta.
 	normalizedSQLMap atomic.Value // sync.Map
 	sqlMapLength     atomic2.Int64
 
@@ -131,6 +131,12 @@ type RemoteTopSQLReporter struct {
 
 	collectCPUDataChan      chan cpuData
 	reportCollectedDataChan chan collectedData
+}
+
+// SQLMeta is the SQL meta which contains the normalized SQL string and a bool field which uses to distinguish internal SQL.
+type SQLMeta struct {
+	normalizedSQL string
+	isInternal    bool
 }
 
 // NewRemoteTopSQLReporter creates a new TopSQL reporter
@@ -179,14 +185,17 @@ var (
 // Note that the normalized SQL string can be of >1M long.
 // This function should be thread-safe, which means parallelly calling it in several goroutines should be fine.
 // It should also return immediately, and do any CPU-intensive job asynchronously.
-func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
+func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool) {
 	if tsr.sqlMapLength.Load() >= variable.TopSQLVariable.MaxCollect.Load() {
 		ignoreExceedSQLCounter.Inc()
 		return
 	}
 	m := tsr.normalizedSQLMap.Load().(*sync.Map)
 	key := string(sqlDigest)
-	_, loaded := m.LoadOrStore(key, normalizedSQL)
+	_, loaded := m.LoadOrStore(key, SQLMeta{
+		normalizedSQL: normalizedSQL,
+		isInternal:    isInternal,
+	})
 	if !loaded {
 		tsr.sqlMapLength.Add(1)
 	}

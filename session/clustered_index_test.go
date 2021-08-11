@@ -517,7 +517,7 @@ func (s *testClusteredSuite) TestClusteredIndexSelectWhereInNull(c *C) {
 	tk.MustQuery("select * from t where a in (null);").Check(testkit.Rows( /* empty result */ ))
 }
 
-func (s *testClusteredSuite) TestClusteredIndexSyntax(c *C) {
+func (s *testClusteredSerialSuite) TestClusteredIndexSyntax(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	const showPKType = `select tidb_pk_type from information_schema.tables where table_schema = 'test' and table_name = 't';`
 	const nonClustered, clustered = `NONCLUSTERED`, `CLUSTERED`
