@@ -58,6 +58,8 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildVarPop(aggFuncDesc, ordinal)
 	case ast.AggFuncStddevPop:
 		return buildStdDevPop(aggFuncDesc, ordinal)
+	case ast.AggFuncJsonArrayagg:
+		return buildJSONArrayagg(aggFuncDesc, ordinal)
 	case ast.AggFuncJsonObjectAgg:
 		return buildJSONObjectAgg(aggFuncDesc, ordinal)
 	case ast.AggFuncApproxCountDistinct:
@@ -612,6 +614,20 @@ func buildStddevSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc 
 			return &stddevSamp4DistinctFloat64{varPop4DistinctFloat64{base}}
 		}
 		return &stddevSamp4Float64{varPop4Float64{base}}
+	}
+}
+
+// buildJSONArrayagg builds the AggFunc implementation for function "json_arrayagg".
+func buildJSONArrayagg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		return &jsonArrayagg{base}
 	}
 }
 

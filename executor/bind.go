@@ -77,6 +77,13 @@ func (e *SQLBindExec) dropSQLBind() error {
 }
 
 func (e *SQLBindExec) createSQLBind() error {
+	// For audit log, SQLBindExec execute "explain" statement internally, save and recover stmtctx
+	// is necessary to avoid 'create binding' been recorded as 'explain'.
+	saveStmtCtx := e.ctx.GetSessionVars().StmtCtx
+	defer func() {
+		e.ctx.GetSessionVars().StmtCtx = saveStmtCtx
+	}()
+
 	bindInfo := bindinfo.Binding{
 		BindSQL:   e.bindSQL,
 		Charset:   e.charset,

@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -121,7 +122,7 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 
 func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	if col.Flen == 0 && (types.IsTypeChar(col.FieldType.Tp) || types.IsTypeVarchar(col.FieldType.Tp)) {
-		if col.GeneratedExprString != "" {
+		if col.Hidden {
 			return errors.Trace(errWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
 		}
 		return errors.Trace(errWrongKeyColumn.GenWithStackByArgs(col.Name))
@@ -129,6 +130,9 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 
 	// JSON column cannot index.
 	if col.FieldType.Tp == mysql.TypeJSON {
+		if col.Hidden {
+			return errFunctionalIndexOnJSONOrGeometryFunction
+		}
 		return errors.Trace(errJSONUsedAsKey.GenWithStackByArgs(col.Name.O))
 	}
 
@@ -1332,6 +1336,8 @@ func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		}
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
+
+		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 
 		n := len(w.indexes)
 		for i, idxRecord := range idxRecords {
