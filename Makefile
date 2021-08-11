@@ -279,7 +279,7 @@ build_for_br_integration_test:
 br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test:
 	@make failpoint-enable
-	$(GOTEST) $(RACE_FLAG) -tags leak $(ARGS) || ( make failpoint-disable && exit 1 )
+	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -tags leak $(ARGS) || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 
 br_integration_test: br_bins build_br build_for_br_integration_test
