@@ -330,6 +330,11 @@ func (s *testIntegrationSuite7) TestIndexLength(c *C) {
 	tk.MustExec("drop table idx_len;")
 	tk.MustExec("create table idx_len(a text, b text charset ascii, c blob, index(a(768)), index (b(3072)), index (c(3072)));")
 	tk.MustExec("drop table idx_len;")
+	tk.MustExec("create table idx_len(a text, b text charset ascii, c blob);")
+	tk.MustExec("alter table idx_len add index (a(768))")
+	tk.MustExec("alter table idx_len add index (b(3072))")
+	tk.MustExec("alter table idx_len add index (c(3072))")
+	tk.MustExec("drop table idx_len;")
 }
 
 func (s *testIntegrationSuite3) TestIssue3833(c *C) {
