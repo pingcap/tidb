@@ -1,5 +1,5 @@
 run:
-  timeout: 6m
+  timeout: 7m
 linters:
   disable-all: true
   enable:
@@ -23,19 +23,7 @@ linters-settings:
     checks: ["-ST1003"]
   gosec:
     excludes:
-      - G107
-      - G108
-      - G110
-      - G306
-      - G401
-      - G402
-      - G403
-      - G404
-      - G501
-      - G502
-      - G505
       - G601
-
 issues:
   exclude-rules:
     - path: _test\.go
