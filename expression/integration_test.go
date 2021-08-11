@@ -699,7 +699,6 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	result = tk.MustQuery("SELECT round(49.99999, -2), round(50, -2), round(50.00001, -2)")
 	result.Check(testkit.Rows("0 100 100"))
 
-
 	// for truncate
 	result = tk.MustQuery("SELECT truncate(123, -2), truncate(123, 2), truncate(123, 1), truncate(123, -1);")
 	result.Check(testkit.Rows("100 123 123 120"))
