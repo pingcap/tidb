@@ -15,6 +15,7 @@ package core
 import (
 	"context"
 	"fmt"
+	gomath "math"
 	"sort"
 	"strings"
 
@@ -200,7 +201,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 				// issue:#22619
 				if col.RetType.Tp == mysql.TypeBit {
 					// maximum number of partitions is 8192
-					if col.RetType.Flen > 0 && col.RetType.Flen < int(math.Log2(ddl.PartitionCountLimit)) {
+					if col.RetType.Flen > 0 && col.RetType.Flen < int(gomath.Log2(ddl.PartitionCountLimit)) {
 						// all possible hash values
 						maxUsedPartitions := 1 << col.RetType.Flen
 						if maxUsedPartitions < numPartitions {
@@ -305,7 +306,6 @@ func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.
 				ColName:     colInfo.Name,
 				OrigTblName: ds.tableInfo.Name,
 				OrigColName: colInfo.Name,
-				Hidden:      colInfo.Hidden,
 			})
 			continue
 		}
@@ -465,14 +465,20 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 		var locations []tables.ListPartitionLocation
 		if r.IsPointNullable(sc) {
 			location, err := colPrune.LocatePartition(sc, r.HighVal[0])
+			if types.ErrOverflow.Equal(err) {
+				return nil, true, nil // return full-scan if over-flow
+			}
 			if err != nil {
 				return nil, false, err
 			}
 			locations = []tables.ListPartitionLocation{location}
 		} else {
 			locations, err = colPrune.LocateRanges(sc, r)
+			if types.ErrOverflow.Equal(err) {
+				return nil, true, nil // return full-scan if over-flow
+			}
 			if err != nil {
-				return nil, false, nil
+				return nil, false, err
 			}
 		}
 		for _, location := range locations {

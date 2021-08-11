@@ -199,7 +199,10 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	}
 
 	var value []byte
-	if sctx.GetSessionVars().LazyCheckKeyNotExists() {
+	if c.tblInfo.TempTableType != model.TempTableNone {
+		// Always check key for temporary table because it does not write to TiKV
+		value, err = sctx.GetSessionVars().TemporaryTableTxnReader(txn, c.tblInfo).Get(ctx, key)
+	} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
 		value, err = txn.GetMemBuffer().Get(ctx, key)
 	} else {
 		value, err = txn.Get(ctx, key)

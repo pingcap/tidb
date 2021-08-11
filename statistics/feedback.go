@@ -175,6 +175,7 @@ func CollectFeedback(sc *stmtctx.StatementContext, q *QueryFeedback, numOfRanges
 	if q.Hist == nil || q.Hist.Len() == 0 {
 		return false
 	}
+	// #nosec G404
 	if numOfRanges > MaxNumberOfRanges || rand.Float64() > FeedbackProbability.Load() {
 		return false
 	}

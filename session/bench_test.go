@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -248,6 +249,84 @@ func BenchmarkExplainStringIndexScan(b *testing.B) {
 			b.Fatal(err)
 		}
 		readResult(ctx, rs[0], 1)
+	}
+	b.StopTimer()
+}
+
+func BenchmarkPointGet(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, "create table t (pk int primary key)")
+	mustExecute(se, "insert t values (61),(62),(63),(64)")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t where pk = 64")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+}
+
+func BenchmarkBatchPointGet(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, "create table t (pk int primary key)")
+	mustExecute(se, "insert t values (61),(62),(63),(64)")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t where pk in (61, 64, 67)")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+}
+
+func BenchmarkPreparedPointGet(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+	mustExecute(se, "create table t (pk int primary key)")
+	mustExecute(se, "insert t values (61),(62),(63),(64)")
+
+	stmtID, _, _, err := se.PrepareStmt("select * from t where pk = ?")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(64)})
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 	b.StopTimer()
 }
@@ -1590,6 +1669,33 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 	b.StopTimer()
 }
 
+func BenchmarkInsertIntoSelect(b *testing.B) {
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+
+	mustExecute(se, `set @@tidb_enable_global_temporary_table = 1`)
+	mustExecute(se, `set @@tmp_table_size = 1000000000`)
+	mustExecute(se, `create global temporary table tmp (id int, dt varchar(512)) on commit delete rows`)
+	mustExecute(se, `create table src (id int, dt varchar(512))`)
+	for i := 0; i < 100; i++ {
+		mustExecute(se, "begin")
+		for lines := 0; lines < 100; lines++ {
+			mustExecute(se, "insert into src values (42, repeat('x', 512)), (66, repeat('x', 512))")
+		}
+		mustExecute(se, "commit")
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mustExecute(se, "insert into tmp select * from src")
+	}
+	b.StopTimer()
+}
+
 type BenchOutput struct {
 	Date   string
 	Commit string
@@ -1643,6 +1749,9 @@ func TestBenchDaily(t *testing.T) {
 	}
 
 	tests := []func(b *testing.B){
+		BenchmarkPreparedPointGet,
+		BenchmarkPointGet,
+		BenchmarkBatchPointGet,
 		BenchmarkBasic,
 		BenchmarkTableScan,
 		BenchmarkTableLookup,
@@ -1663,6 +1772,7 @@ func TestBenchDaily(t *testing.T) {
 		BenchmarkRangeColumnPartitionPruning,
 		BenchmarkHashPartitionPruningPointSelect,
 		BenchmarkHashPartitionPruningMultiSelect,
+		BenchmarkInsertIntoSelect,
 	}
 
 	res := make([]BenchResult, 0, len(tests))

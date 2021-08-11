@@ -14,8 +14,10 @@
 package ddl_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -24,6 +26,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -35,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -48,7 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 var _ = Suite(&testIntegrationSuite1{&testIntegrationSuite{}})
@@ -60,7 +64,7 @@ var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
 
 type testIntegrationSuite struct {
 	lease   time.Duration
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	dom     *domain.Domain
 	ctx     sessionctx.Context
@@ -72,7 +76,7 @@ func setupIntegrationSuite(s *testIntegrationSuite, c *C) {
 	ddl.SetWaitTimeWhenErrorOccurred(0)
 
 	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
@@ -322,6 +326,15 @@ func (s *testIntegrationSuite7) TestIndexLength(c *C) {
 	tk.MustExec("create index idx5 on idx_len(g)")
 	tk.MustExec("alter table idx_len add index idxg(g)")
 	tk.MustExec("create table idx_len1(a int(0), b timestamp(0), c datetime(0), d time(0), f float(0), g decimal(0), index(a), index(b), index(c), index(d), index(f), index(g))")
+
+	tk.MustExec("drop table idx_len;")
+	tk.MustExec("create table idx_len(a text, b text charset ascii, c blob, index(a(768)), index (b(3072)), index (c(3072)));")
+	tk.MustExec("drop table idx_len;")
+	tk.MustExec("create table idx_len(a text, b text charset ascii, c blob);")
+	tk.MustExec("alter table idx_len add index (a(768))")
+	tk.MustExec("alter table idx_len add index (b(3072))")
+	tk.MustExec("alter table idx_len add index (c(3072))")
+	tk.MustExec("drop table idx_len;")
 }
 
 func (s *testIntegrationSuite3) TestIssue3833(c *C) {
@@ -517,7 +530,9 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrMultiplePriKey)
 	sql = "create table test_error_code_3(pt blob ,primary key (pt));"
 	tk.MustGetErrCode(sql, errno.ErrBlobKeyWithoutLength)
-	sql = "create table test_error_code_3(a text, unique (a(3073)));"
+	sql = "create table test_error_code_3(a text, unique (a(769)));"
+	tk.MustGetErrCode(sql, errno.ErrTooLongKey)
+	sql = "create table test_error_code_3(a text charset ascii, unique (a(3073)));"
 	tk.MustGetErrCode(sql, errno.ErrTooLongKey)
 	sql = "create table test_error_code_3(`id` int, key `primary`(`id`));"
 	tk.MustGetErrCode(sql, errno.ErrWrongNameForIndex)
@@ -2240,9 +2255,6 @@ func (s *testIntegrationSuite3) TestParserIssue284(c *C) {
 }
 
 func (s *testSerialDBSuite1) TestAddExpressionIndex(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -2286,6 +2298,11 @@ func (s *testSerialDBSuite1) TestAddExpressionIndex(c *C) {
 
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
+	// Issue #26371
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, primary key(a, b) clustered)")
+	tk.MustExec("alter table t1 add index idx((a+1))")
+
 	// Issue #17111
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a varchar(10), b varchar(10));")
@@ -2296,26 +2313,16 @@ func (s *testSerialDBSuite1) TestAddExpressionIndex(c *C) {
 	tk.MustExec("create table t(a int, key((a+1)), key((a+2)), key idx((a+3)), key((a+4)));")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (A INT, B INT, UNIQUE KEY ((A * 2)));")
-
-	// Test experiment switch.
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = false
-	})
-	tk.MustGetErrMsg("create index d on t((a+1))", "[ddl:8200]Unsupported creating expression index without allow-expression-index in config")
-	tk.MustGetErrMsg("create table t(a int, key ((a+1)));", "[ddl:8200]Unsupported creating expression index without allow-expression-index in config")
 }
 
 func (s *testSerialDBSuite1) TestCreateExpressionIndexError(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b real);")
 	tk.MustGetErrCode("alter table t add primary key ((a+b)) nonclustered;", errno.ErrFunctionalIndexPrimaryKey)
+
+	tk.MustGetErrCode("create table t(a int, index((cast(a as JSON))))", errno.ErrFunctionalIndexOnJSONOrGeometryFunction)
 
 	// Test for error
 	tk.MustExec("drop table if exists t;")
@@ -2346,12 +2353,14 @@ func (s *testSerialDBSuite1) TestCreateExpressionIndexError(c *C) {
 
 	tk.MustGetErrCode("create table t1 (col1 int, index ((concat(''))));", errno.ErrWrongKeyColumnFunctionalIndex)
 	tk.MustGetErrCode("CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))) NONCLUSTERED);", errno.ErrFunctionalIndexPrimaryKey)
+
+	// For issue 26349
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(id char(10) primary key, short_name char(10), name char(10), key n((upper(`name`))));")
+	tk.MustExec("update t t1 set t1.short_name='a' where t1.id='1';")
 }
 
 func (s *testSerialDBSuite1) TestAddExpressionIndexOnPartition(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -2484,9 +2493,6 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 }
 
 func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists alter_index_test")
 	tk.MustExec("USE alter_index_test;")
@@ -2583,10 +2589,6 @@ func (s *testIntegrationSuite5) TestDropColumnsWithMultiIndex(c *C) {
 }
 
 func (s *testSerialDBSuite) TestDropLastVisibleColumnOrColumns(c *C) {
-	defer config.RestoreFunc()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("create table t_drop_last_column(x int, key((1+1)))")
@@ -2619,6 +2621,95 @@ func (s *testSerialDBSuite1) TestAutoIncrementTableOption(c *C) {
 	tk.MustExec("alter table t auto_increment = 12345678901234567890;")
 	tk.MustExec("insert into t values ();")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
+}
+
+func (s *testIntegrationSuite3) TestAutoIncrementForce(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists auto_inc_force;")
+	tk.MustExec("create database auto_inc_force;")
+	tk.MustExec("use auto_inc_force;")
+	getNextGlobalID := func() uint64 {
+		gidStr := tk.MustQuery("show table t next_row_id").Rows()[0][3]
+		gid, err := strconv.ParseUint(gidStr.(string), 10, 64)
+		c.Assert(err, IsNil)
+		return gid
+	}
+	// Rebase _tidb_row_id.
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1),(2);")
+	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 1", "2 2"))
+	// Cannot set next global ID to 0.
+	tk.MustGetErrCode("alter table t force auto_increment = 0;", errno.ErrAutoincReadFailed)
+	tk.MustExec("alter table t force auto_increment = 1;")
+	c.Assert(getNextGlobalID(), Equals, uint64(1))
+	// inserting new rows can overwrite the existing data.
+	tk.MustExec("insert into t values (3);")
+	tk.MustExec("insert into t values (3);")
+	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("3 1", "3 2"))
+
+	// Rebase auto_increment.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int primary key auto_increment, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (100000000, 1);")
+	tk.MustExec("delete from t where a = 100000000;")
+	c.Assert(getNextGlobalID(), Greater, uint64(100000000))
+	// Cannot set next global ID to 0.
+	tk.MustGetErrCode("alter table t /*T![force_inc] force */ auto_increment = 0;", errno.ErrAutoincReadFailed)
+	tk.MustExec("alter table t /*T![force_inc] force */ auto_increment = 2;")
+	c.Assert(getNextGlobalID(), Equals, uint64(2))
+	tk.MustExec("insert into t(b) values (2);")
+	tk.MustQuery("select a, b from t;").Check(testkit.Rows("1 1", "2 2"))
+
+	// Rebase auto_random.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bigint primary key auto_random(5));")
+	tk.MustExec("insert into t values ();")
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+	tk.MustExec("insert into t values (100000000);")
+	tk.MustExec("delete from t where a = 100000000;")
+	c.Assert(getNextGlobalID(), Greater, uint64(100000000))
+	// Cannot set next global ID to 0.
+	tk.MustGetErrCode("alter table t force auto_random_base = 0;", errno.ErrAutoincReadFailed)
+	tk.MustExec("alter table t force auto_random_base = 2;")
+	c.Assert(getNextGlobalID(), Equals, uint64(2))
+	tk.MustExec("insert into t values ();")
+	tk.MustQuery("select (a & 3) from t order by 1;").Check(testkit.Rows("1", "2"))
+
+	// Change next global ID.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bigint primary key auto_increment);")
+	tk.MustExec("insert into t values (1);")
+	bases := []uint64{1, 65535, 10, math.MaxUint64, math.MaxInt64 + 1, 1, math.MaxUint64, math.MaxInt64, 2}
+	lastBase := fmt.Sprintf("%d", bases[len(bases)-1])
+	for _, b := range bases {
+		tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
+		c.Assert(getNextGlobalID(), Equals, b)
+	}
+	tk.MustExec("insert into t values ();")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("1", lastBase))
+	// Force alter unsigned int auto_increment column.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bigint unsigned primary key auto_increment);")
+	for _, b := range bases {
+		tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
+		c.Assert(getNextGlobalID(), Equals, b)
+		tk.MustExec("insert into t values ();")
+		tk.MustQuery("select a from t;").Check(testkit.Rows(fmt.Sprintf("%d", b)))
+		tk.MustExec("delete from t;")
+	}
+
+	// Force alter with @@auto_increment_increment and @@auto_increment_offset.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int key auto_increment);")
+	tk.MustExec("set @@auto_increment_offset=2;")
+	tk.MustExec("set @@auto_increment_increment = 11;")
+	tk.MustExec("insert into t values (500);")
+	tk.MustExec("alter table t force auto_increment=100;")
+	tk.MustExec("insert into t values (), ();")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("101", "112", "500"))
+	tk.MustQuery("select * from t order by a;").Check(testkit.Rows("101", "112", "500"))
+	tk.MustExec("drop table if exists t;")
 }
 
 func (s *testIntegrationSuite3) TestIssue20490(c *C) {
@@ -2820,10 +2911,16 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into check_data values (1)")
 	tk.MustExec("create temporary table a_local_temp_table (id int)")
-	// Although "begin" take a infoschem snapshot, local temporary table inside txn should be always visible.
+	// Although "begin" take a infoschema snapshot, local temporary table inside txn should be always visible.
 	tk.MustExec("show create table tmp_db.a_local_temp_table")
 	tk.MustExec("rollback")
 	tk.MustQuery("select * from check_data").Check(testkit.Rows())
+
+	// Check create temporary table for if not exists
+	tk.MustExec("create temporary table b_local_temp_table (id int)")
+	_, err = tk.Exec("create temporary table b_local_temp_table (id int)")
+	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
+	tk.MustExec("create temporary table if not exists b_local_temp_table (id int)")
 
 	// Stale read see the local temporary table but can't read on it.
 	tk.MustExec("START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3)")
@@ -2842,4 +2939,306 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	// Considering snapshot, local temporary table is always visible.
 	tk.MustExec("set @@tidb_snapshot = '2016-01-01 15:04:05.999999'")
 	tk.MustExec("select * from overlap")
+}
+
+func (s *testIntegrationSuite3) TestAvoidCreateViewOnLocalTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.MustExec("drop table if exists tt0")
+	tk.MustExec("drop table if exists tt1")
+	tk.MustExec("drop table if exists tt2")
+
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("create table tt0 (a int, b int)")
+	tk.MustExec("create view v0 as select * from tt0")
+	tk.MustExec("create temporary table tt1 (a int, b int)")
+	tk.MustExec("create temporary table tt2 (c int, d int)")
+
+	checkCreateView := func() {
+		_, err := tk.Exec("create view v1 as select * from tt1")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v1")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v1' doesn't exist")
+
+		_, err = tk.Exec("create view v1 as select * from (select * from tt1) as tt")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v1")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v1' doesn't exist")
+
+		_, err = tk.Exec("create view v2 as select * from tt0 union select * from tt1")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v2")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v2' doesn't exist")
+
+		_, err = tk.Exec("create view v3 as select * from tt0, tt1 where tt0.a = tt1.a")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v3")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v3' doesn't exist")
+
+		_, err = tk.Exec("create view v4 as select a, (select count(1) from tt1 where tt1.a = tt0.a) as tt1a from tt0")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v4")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v4' doesn't exist")
+
+		_, err = tk.Exec("create view v5 as select a, (select count(1) from tt1 where tt1.a = 1) as tt1a from tt0")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v5")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v5' doesn't exist")
+
+		_, err = tk.Exec("create view v6 as select * from tt0 where tt0.a=(select max(tt1.b) from tt1)")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v6")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v6' doesn't exist")
+
+		_, err = tk.Exec("create view v7 as select * from tt0 where tt0.b=(select max(tt1.b) from tt1 where tt0.a=tt1.a)")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+		_, err = tk.Exec("select * from v7")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.v7' doesn't exist")
+
+		_, err = tk.Exec("create or replace view v0 as select * from tt1")
+		c.Assert(core.ErrViewSelectTemporaryTable.Equal(err), IsTrue)
+	}
+
+	checkCreateView()
+	tk.MustExec("create temporary table tt0 (a int, b int)")
+	tk.MustExec("create table tt1 (a int, b int)")
+	tk.MustExec("create table tt2 (c int, d int)")
+	tk.MustExec("create view vv as select * from v0")
+	checkCreateView()
+}
+
+func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_noop_functions = 1")
+
+	// Check drop temporary table(include meta data and real data.
+	tk.MustExec("create temporary table if not exists b_local_temp_table (id int)")
+	tk.MustQuery("select * from b_local_temp_table").Check(testkit.Rows())
+	tk.MustExec("drop table b_local_temp_table")
+	_, err := tk.Exec("select * from b_local_temp_table")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.b_local_temp_table' doesn't exist")
+	// TODO: test drop real data
+
+	// Check if we have a normal and local temporary table in the same db with the same name,
+	// local temporary table should be dropped instead of the normal table.
+	tk.MustExec("drop table if exists b_table_local_and_normal")
+	tk.MustExec("create table if not exists b_table_local_and_normal (id int)")
+	tk.MustExec("create temporary table if not exists b_table_local_and_normal (id int)")
+	tk.MustQuery("select * from b_table_local_and_normal").Check(testkit.Rows())
+	tk.MustExec("drop table b_table_local_and_normal")
+	sequenceTable := testGetTableByName(c, tk.Se, "test", "b_table_local_and_normal")
+	c.Assert(sequenceTable.Meta().TempTableType, Equals, model.TempTableNone)
+	tk.MustExec("drop table if exists b_table_local_and_normal")
+	_, err = tk.Exec("select * from b_table_local_and_normal")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.b_table_local_and_normal' doesn't exist")
+
+	// Check dropping local temporary tables should not commit current transaction implicitly.
+	tk.MustExec("drop table if exists check_data_normal_table")
+	tk.MustExec("create table check_data_normal_table (id int)")
+	defer tk.MustExec("drop table if exists check_data_normal_table")
+	tk.MustExec("begin")
+	tk.MustExec("insert into check_data_normal_table values (1)")
+	tk.MustExec("create temporary table a_local_temp_table (id int)")
+	tk.MustExec("create temporary table a_local_temp_table_1 (id int)")
+	tk.MustExec("create temporary table a_local_temp_table_2 (id int)")
+	tk.MustExec("show create table a_local_temp_table")
+	tk.MustExec("show create table a_local_temp_table_1")
+	tk.MustExec("show create table a_local_temp_table_2")
+	tk.MustExec("drop table a_local_temp_table, a_local_temp_table_1, a_local_temp_table_2")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from check_data_normal_table").Check(testkit.Rows())
+
+	// Check dropping local temporary and normal tables should commit current transaction implicitly.
+	tk.MustExec("drop table if exists check_data_normal_table_1")
+	tk.MustExec("create table check_data_normal_table_1 (id int)")
+	defer tk.MustExec("drop table if exists check_data_normal_table_1")
+	tk.MustExec("begin")
+	tk.MustExec("insert into check_data_normal_table_1 values (1)")
+	tk.MustExec("create temporary table a_local_temp_table (id int)")
+	tk.MustExec("create temporary table a_local_temp_table_1 (id int)")
+	tk.MustExec("create temporary table a_local_temp_table_2 (id int)")
+	tk.MustExec("drop table if exists a_normal_table")
+	tk.MustExec("create table a_normal_table (id int)")
+	defer tk.MustExec("drop table if exists a_normal_table")
+	tk.MustExec("show create table a_local_temp_table")
+	tk.MustExec("show create table a_local_temp_table_1")
+	tk.MustExec("show create table a_local_temp_table_2")
+	tk.MustExec("show create table a_normal_table")
+	tk.MustExec("drop table a_local_temp_table, a_local_temp_table_1, a_local_temp_table_2, a_normal_table")
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from check_data_normal_table_1").Check(testkit.Rows("1"))
+
+	// Check drop not exists table.
+	tk.MustExec("create temporary table a_local_temp_table_3 (id int)")
+	tk.MustExec("create temporary table a_local_temp_table_4 (id int)")
+	tk.MustExec("create temporary table a_local_temp_table_5 (id int)")
+	tk.MustExec("drop table if exists a_normal_table_2")
+	tk.MustExec("create table a_normal_table_2 (id int)")
+	defer tk.MustExec("drop table if exists a_normal_table_2")
+	_, err = tk.Exec("drop table a_local_temp_table_3, a_local_temp_table_4, a_local_temp_table_5, a_normal_table_2, a_local_temp_table_6")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.a_local_temp_table_6'")
+
+	tk.MustExec("drop table if exists check_data_normal_table_3")
+	tk.MustExec("create table check_data_normal_table_3 (id int)")
+	defer tk.MustExec("drop table if exists check_data_normal_table_3")
+	tk.MustExec("create temporary table a_local_temp_table_6 (id int)")
+	_, err = tk.Exec("drop table check_data_normal_table_3, check_data_normal_table_7, a_local_temp_table_6")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.check_data_normal_table_7'")
+
+	// Check filter out data from removed local temp tables
+	tk.MustExec("create temporary table a_local_temp_table_7 (id int)")
+	ctx := s.ctx
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	defer func() {
+		err := txn.Rollback()
+		c.Assert(err, IsNil)
+	}()
+	sessionVars := tk.Se.GetSessionVars()
+	sessVarsTempTable := sessionVars.LocalTemporaryTables
+	localTemporaryTable := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
+	tbl, exist := localTemporaryTable.TableByName(model.NewCIStr("test"), model.NewCIStr("a_local_temp_table_7"))
+	c.Assert(exist, IsTrue)
+	tblInfo := tbl.Meta()
+	tablePrefix := tablecodec.EncodeTablePrefix(tblInfo.ID)
+	endTablePrefix := tablecodec.EncodeTablePrefix(tblInfo.ID + 1)
+
+	tk.MustExec("insert into a_local_temp_table_7 values (0)")
+	tk.MustExec("insert into a_local_temp_table_7 values (2)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into a_local_temp_table_7 values (1)")
+	tk.MustExec("drop table if exists a_local_temp_table_7")
+	tk.MustExec("commit")
+
+	_, err = tk.Exec("select * from a_local_temp_table_7")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.a_local_temp_table_7' doesn't exist")
+	memData := sessionVars.TemporaryTableData
+	iter, err := memData.Iter(tablePrefix, endTablePrefix)
+	c.Assert(err, IsNil)
+	for iter.Valid() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, tablePrefix) {
+			break
+		}
+		value := iter.Value()
+		c.Assert(len(value), Equals, 0)
+		_ = iter.Next()
+	}
+	c.Assert(iter.Valid(), IsFalse)
+
+	// Check drop not exists table in transaction.
+	tk.MustExec("begin")
+	tk.MustExec("create temporary table a_local_temp_table_8 (id int)")
+	_, err = tk.Exec("drop table a_local_temp_table_8, a_local_temp_table_9_not_exist")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.a_local_temp_table_9_not_exist'")
+	tk.MustQuery("select * from a_local_temp_table_8").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_noop_functions = 1")
+
+	tk.MustExec("drop table if exists t1, tn")
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create table tn (id int)")
+	tk.MustExec("insert into t1 values(10), (11), (12)")
+	tk.MustExec("create temporary table t1 (id int primary key auto_increment)")
+	tk.MustExec("create temporary table t2 (id int primary key)")
+	tk.MustExec("create database test2")
+	tk.MustExec("create temporary table test2.t2 (id int)")
+
+	// truncate table out of txn
+	tk.MustExec("insert into t1 values(1), (2), (3)")
+	tk.MustExec("insert into t2 values(4), (5), (6)")
+	tk.MustExec("insert into test2.t2 values(7), (8), (9)")
+	tk.MustExec("truncate table t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustExec("insert into t1 values()")
+	// auto_increment will be reset for truncate
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("4", "5", "6"))
+	tk.MustExec("truncate table t2")
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+	tk.MustQuery("select * from test2.t2").Check(testkit.Rows("7", "8", "9"))
+	tk.MustExec("drop table t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("10", "11", "12"))
+	tk.MustExec("create temporary table t1 (id int primary key auto_increment)")
+
+	// truncate table with format dbName.tableName
+	tk.MustExec("insert into t2 values(4), (5), (6)")
+	tk.MustExec("insert into test2.t2 values(7), (8), (9)")
+	tk.MustExec("truncate table test2.t2")
+	tk.MustQuery("select * from test2.t2").Check(testkit.Rows())
+	tk.MustQuery("select * from t2").Check(testkit.Rows("4", "5", "6"))
+	tk.MustExec("truncate table test.t2")
+	tk.MustQuery("select * from t2").Check(testkit.Rows())
+
+	// truncate table in txn
+	tk.MustExec("insert into t1 values(1), (2), (3)")
+	tk.MustExec("insert into t2 values(4), (5), (6)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values(11), (12)")
+	tk.MustExec("insert into t2 values(24), (25)")
+	tk.MustExec("delete from t1 where id=2")
+	tk.MustExec("delete from t2 where id=4")
+	tk.MustExec("truncate table t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows())
+	tk.MustExec("insert into t1 values()")
+	// auto_increment will be reset for truncate
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("5", "6", "24", "25"))
+
+	// since transaction already committed by truncate, so query after rollback will get same result
+	tk.MustExec("rollback")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("5", "6", "24", "25"))
+
+	// truncate a temporary table will not effect the normal table with the same name
+	tk.MustExec("drop table t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("10", "11", "12"))
+	tk.MustExec("create temporary table t1 (id int primary key auto_increment)")
+
+	// truncate temporary table will clear session data
+	localTemporaryTables := tk.Se.GetSessionVars().LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
+	tb1, exist := localTemporaryTables.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1Info := tb1.Meta()
+	tablePrefix := tablecodec.EncodeTablePrefix(tbl1Info.ID)
+	endTablePrefix := tablecodec.EncodeTablePrefix(tbl1Info.ID + 1)
+	c.Assert(exist, IsTrue)
+	tk.MustExec("insert into t1 values(1), (2), (3)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values(5), (6), (7)")
+	tk.MustExec("truncate table t1")
+	iter, err := tk.Se.GetSessionVars().TemporaryTableData.Iter(tablePrefix, endTablePrefix)
+	c.Assert(err, IsNil)
+	for iter.Valid() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, tablePrefix) {
+			break
+		}
+		value := iter.Value()
+		c.Assert(len(value), Equals, 0)
+		_ = iter.Next()
+	}
+	c.Assert(iter.Valid(), IsFalse)
+
+	// truncate after drop database should be successful
+	tk.MustExec("create temporary table test2.t3 (id int)")
+	tk.MustExec("insert into test2.t3 values(1)")
+	tk.MustExec("drop database test2")
+	tk.MustExec("truncate table test2.t3")
+	tk.MustQuery("select * from test2.t3").Check(testkit.Rows())
 }

@@ -1128,16 +1128,10 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 	}
 	switch d.k {
 	case KindMysqlTime:
-		// `select timestamp(cast("1000-01-02 23:59:59" as date)); ` casts usage will succeed.
-		// Alter datetime("1000-01-02 23:59:59") to timestamp will error.
-		if sc.IsDDLJobInQueue {
-			t, err = d.GetMysqlTime().Convert(sc, target.Tp)
-			if err != nil {
-				ret.SetMysqlTime(t)
-				return ret, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, t.String()))
-			}
-		} else {
-			t = d.GetMysqlTime()
+		t, err = d.GetMysqlTime().Convert(sc, target.Tp)
+		if err != nil {
+			ret.SetMysqlTime(ZeroTimestamp)
+			return ret, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimestampStr, t.String()))
 		}
 		t, err = t.RoundFrac(sc, fsp)
 	case KindMysqlDuration:
@@ -1250,18 +1244,18 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 			ret.SetMysqlDuration(dur)
 			return ret, errors.Trace(err)
 		}
-		dur, err = dur.RoundFrac(fsp)
+		dur, err = dur.RoundFrac(fsp, sc.TimeZone)
 		ret.SetMysqlDuration(dur)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
 	case KindMysqlDuration:
-		dur, err := d.GetMysqlDuration().RoundFrac(fsp)
+		dur, err := d.GetMysqlDuration().RoundFrac(fsp, sc.TimeZone)
 		ret.SetMysqlDuration(dur)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
-	case KindInt64, KindFloat32, KindFloat64, KindMysqlDecimal:
+	case KindInt64, KindUint64, KindFloat32, KindFloat64, KindMysqlDecimal:
 		// TODO: We need a ParseDurationFromNum to avoid the cost of converting a num to string.
 		timeStr, err := d.ToString()
 		if err != nil {
@@ -1728,7 +1722,7 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 	case KindMysqlDuration:
 		// 11:11:11.999999 -> 111112
 		// 11:59:59.999999 -> 120000
-		dur, err := d.GetMysqlDuration().RoundFrac(DefaultFsp)
+		dur, err := d.GetMysqlDuration().RoundFrac(DefaultFsp, sc.TimeZone)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

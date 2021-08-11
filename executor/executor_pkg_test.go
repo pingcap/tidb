@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/tableutil"
 )
 
-var _ = Suite(&testExecSuite{})
+var _ = SerialSuites(&testExecSuite{})
 var _ = SerialSuites(&testExecSerialSuite{})
 
 // Note: it's a tricky way to export the `inspectionSummaryRules` and `inspectionRules` for unit test but invisible for normal code
@@ -557,7 +557,7 @@ func (s *pkgTestSuite) TestFilterTemporaryTableKeys(c *C) {
 	vars := variable.NewSessionVars()
 	const tableID int64 = 3
 	vars.TxnCtx = &variable.TransactionContext{
-		GlobalTemporaryTables: map[int64]tableutil.TempTable{tableID: nil},
+		TemporaryTables: map[int64]tableutil.TempTable{tableID: nil},
 	}
 
 	res := filterTemporaryTableKeys(vars, []kv.Key{tablecodec.EncodeTablePrefix(tableID), tablecodec.EncodeTablePrefix(42)})

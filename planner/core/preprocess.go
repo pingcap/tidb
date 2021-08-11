@@ -63,6 +63,13 @@ func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 	}
 }
 
+// WithExecuteInfoSchemaUpdate return a PreprocessOpt to update the `Execute` infoSchema under some conditions.
+func WithExecuteInfoSchemaUpdate(pe *PreprocessExecuteISUpdate) PreprocessOpt {
+	return func(p *preprocessor) {
+		p.PreprocessExecuteISUpdate = pe
+	}
+}
+
 // TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
 func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
@@ -143,6 +150,12 @@ type PreprocessorReturn struct {
 	TxnScope       string
 }
 
+// PreprocessExecuteISUpdate is used to update information schema for special Execute statement in the preprocessor.
+type PreprocessExecuteISUpdate struct {
+	ExecuteInfoSchemaUpdate func(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema
+	Node                    ast.Node
+}
+
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
@@ -157,6 +170,7 @@ type preprocessor struct {
 
 	// values that may be returned
 	*PreprocessorReturn
+	*PreprocessExecuteISUpdate
 	err error
 }
 
@@ -454,8 +468,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			break
 		}
 		valid := false
-		for i, length := 0, len(ast.ExplainFormats); i < length; i++ {
-			if strings.ToLower(x.Format) == ast.ExplainFormats[i] {
+		for i, length := 0, len(types.ExplainFormats); i < length; i++ {
+			if strings.ToLower(x.Format) == types.ExplainFormats[i] {
 				valid = true
 				break
 			}
@@ -680,11 +694,13 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 			return
 		}
 		tempTableType := tableInfo.Meta().TempTableType
-		if (stmt.Tp == ast.AdminCheckTable || stmt.Tp == ast.AdminChecksumTable) && tempTableType != model.TempTableNone {
+		if (stmt.Tp == ast.AdminCheckTable || stmt.Tp == ast.AdminChecksumTable || stmt.Tp == ast.AdminCheckIndex) && tempTableType != model.TempTableNone {
 			if stmt.Tp == ast.AdminChecksumTable {
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table")
-			} else {
+			} else if stmt.Tp == ast.AdminCheckTable {
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table")
+			} else {
+				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("admin check index")
 			}
 			return
 		}
@@ -842,34 +858,55 @@ func (p *preprocessor) checkDropSequenceGrammar(stmt *ast.DropSequenceStmt) {
 
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 	p.checkDropTableNames(stmt.Tables)
-	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
-	if stmt.TemporaryKeyword == ast.TemporaryLocal && !enableNoopFuncs {
+	if stmt.TemporaryKeyword != ast.TemporaryNone {
+		p.checkDropTemporaryTableGrammar(stmt)
+	}
+}
+
+func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
+	if stmt.TemporaryKeyword == ast.TemporaryLocal && !p.ctx.GetSessionVars().EnableNoopFuncs {
 		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")
 		return
 	}
-	if stmt.TemporaryKeyword == ast.TemporaryNone {
-		return
-	}
+
 	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
+	nonExistsTables := make([]string, 0)
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
-		if t.Schema.String() != "" {
-			currentDB = t.Schema
+
+		schema := t.Schema
+		if schema.L == "" {
+			schema = currentDB
 		}
-		tableInfo, err := p.ensureInfoSchema().TableByName(currentDB, t.Name)
+
+		tbl, err := p.ensureInfoSchema().TableByName(schema, t.Name)
+		if infoschema.ErrTableNotExists.Equal(err) {
+			nonExistsTables = append(nonExistsTables, ast.Ident{Schema: schema, Name: t.Name}.String())
+			continue
+		}
+
 		if err != nil {
 			p.err = err
 			return
 		}
-		if tableInfo.Meta().TempTableType != model.TempTableGlobal {
+
+		tblInfo := tbl.Meta()
+		if stmt.TemporaryKeyword == ast.TemporaryGlobal && tblInfo.TempTableType != model.TempTableGlobal {
 			p.err = ErrDropTableOnTemporaryTable
 			return
 		}
+
+		if stmt.TemporaryKeyword == ast.TemporaryLocal && tblInfo.TempTableType != model.TempTableLocal {
+			nonExistsTables = append(nonExistsTables, ast.Ident{Schema: schema, Name: t.Name}.String())
+		}
 	}
 
+	if len(nonExistsTables) > 0 {
+		p.err = infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(nonExistsTables, ","))
+	}
 }
 
 func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
@@ -1501,6 +1538,9 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		}
 		txnCtx := p.ctx.GetSessionVars().TxnCtx
 		p.TxnScope = txnCtx.TxnScope
+		// It means we meet following case:
+		// 1. start transaction read only as of timestamp ts
+		// 2. select statement
 		if txnCtx.IsStaleness {
 			p.LastSnapshotTS = txnCtx.StartTS
 			p.IsStaleness = txnCtx.IsStaleness
@@ -1517,6 +1557,9 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
 			return
 		}
+		// it means we meet following case:
+		// 1. set transaction read only as of timestamp ts
+		// 2. select statement
 		if !p.initedLastSnapshotTS {
 			p.SnapshotTSEvaluator = func(sessionctx.Context) (uint64, error) {
 				return ts, nil
@@ -1534,6 +1577,8 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.err = errors.Trace(err)
 			return
 		}
+		// It means we meet following case:
+		// select statement with as of timestamp
 		if !p.initedLastSnapshotTS {
 			p.SnapshotTSEvaluator = func(ctx sessionctx.Context) (uint64, error) {
 				return calculateTsExpr(ctx, node)
@@ -1553,18 +1598,29 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			return
 		}
 	}
+	if p.flag&inPrepare == 0 {
+		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
+	}
 	p.initedLastSnapshotTS = true
 }
 
-// ensureInfoSchema get the infoschema from the preprecessor.
+// ensureInfoSchema get the infoschema from the preprocessor.
 // there some situations:
 //    - the stmt specifies the schema version.
 //    - session variable
-//    - transcation context
+//    - transaction context
 func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
-	if p.InfoSchema == nil {
-		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
+	if p.InfoSchema != nil {
+		return p.InfoSchema
 	}
+	// `Execute` under some conditions need to see the latest information schema.
+	if p.PreprocessExecuteISUpdate != nil {
+		if newInfoSchema := p.ExecuteInfoSchemaUpdate(p.Node, p.ctx); newInfoSchema != nil {
+			p.InfoSchema = newInfoSchema
+			return p.InfoSchema
+		}
+	}
+	p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	return p.InfoSchema
 }
 

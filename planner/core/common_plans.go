@@ -271,6 +271,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		if err != nil {
 			return errors.Trace(err)
 		}
+		sctx.GetSessionVars().StmtCtx.IsStaleness = true
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
@@ -281,6 +282,10 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		preparedObj.Executor = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
+		// Example:
+		// When running update in prepared statement's schema version distinguished from the one of execute statement
+		// We should reset the tableRefs in the prepared update statements, otherwise, the ast nodes still hold the old
+		// tableRefs columnInfo which will cause chaos in logic of trying point get plan. (should ban non-public column)
 		ret := &PreprocessorReturn{InfoSchema: is}
 		err := Preprocess(sctx, prepared.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
@@ -932,6 +937,15 @@ type LoadStats struct {
 	Path string
 }
 
+// PlanRecreatorSingle represents a plan recreator plan.
+type PlanRecreatorSingle struct {
+	baseSchemaProducer
+	ExecStmt ast.StmtNode
+	Analyze  bool
+	Load     bool
+	File     string
+}
+
 // IndexAdvise represents a index advise plan.
 type IndexAdvise struct {
 	baseSchemaProducer
@@ -1000,7 +1014,7 @@ type Explain struct {
 func GetExplainRowsForPlan(plan Plan) (rows [][]string) {
 	explain := &Explain{
 		TargetPlan: plan,
-		Format:     ast.ExplainFormatROW,
+		Format:     types.ExplainFormatROW,
 		Analyze:    false,
 	}
 	if err := explain.RenderResult(); err != nil {
@@ -1013,17 +1027,20 @@ func GetExplainRowsForPlan(plan Plan) (rows [][]string) {
 func (e *Explain) prepareSchema() error {
 	var fieldNames []string
 	format := strings.ToLower(e.Format)
-
+	if format == types.ExplainFormatTraditional {
+		format = types.ExplainFormatROW
+		e.Format = types.ExplainFormatROW
+	}
 	switch {
-	case (format == ast.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == ast.ExplainFormatBrief):
+	case (format == types.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == types.ExplainFormatBrief):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
-	case format == ast.ExplainFormatVerbose:
+	case format == types.ExplainFormatVerbose:
 		fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
-	case format == ast.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
+	case format == types.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
-	case format == ast.ExplainFormatDOT:
+	case format == types.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
-	case format == ast.ExplainFormatHint:
+	case format == types.ExplainFormatHint:
 		fieldNames = []string{"hint"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
@@ -1048,7 +1065,7 @@ func (e *Explain) RenderResult() error {
 		return nil
 	}
 	switch strings.ToLower(e.Format) {
-	case ast.ExplainFormatROW, ast.ExplainFormatBrief, ast.ExplainFormatVerbose:
+	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose:
 		if e.Rows == nil || e.Analyze {
 			e.explainedPlans = map[int]bool{}
 			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
@@ -1060,11 +1077,11 @@ func (e *Explain) RenderResult() error {
 				return err
 			}
 		}
-	case ast.ExplainFormatDOT:
+	case types.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
 			e.prepareDotInfo(physicalPlan)
 		}
-	case ast.ExplainFormatHint:
+	case types.ExplainFormatHint:
 		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
 		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
@@ -1098,6 +1115,11 @@ func (e *Explain) explainPlanInRowFormatCTE() (err error) {
 func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent string, isLastChild bool) (err error) {
 	e.prepareOperatorInfo(p, taskType, driverSide, indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
+	if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
+		if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[p.ID()]; ok {
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
+		}
+	}
 
 	// For every child we create a new sub-tree rooted by it.
 	childIndent := texttree.Indent4Child(indent, isLastChild)
@@ -1217,7 +1239,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 	if runtimeStatsColl.ExistsRootStats(explainID) {
 		rootStats := runtimeStatsColl.GetRootStats(explainID)
 		analyzeInfo = rootStats.String()
-		actRows = fmt.Sprint(rootStats.GetActRows())
+		actRows = strconv.FormatInt(rootStats.GetActRows(), 10)
 	} else {
 		actRows = "0"
 	}
@@ -1262,7 +1284,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
 	} else {
 		row = []string{id, estRows}
-		if e.Format == ast.ExplainFormatVerbose {
+		if e.Format == types.ExplainFormatVerbose {
 			row = append(row, estCost)
 		}
 		row = append(row, taskType, accessObject, operatorInfo)

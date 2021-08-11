@@ -889,26 +889,32 @@ func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-// splitDateTime splits the string literal into 3 parts, date & time, FSP and time zone.
+// splitDateTime splits the string literal into 3 parts, date & time, FSP(Fractional Seconds Precision) and time zone.
 // For FSP, The only delimiter recognized between a date & time part and a fractional seconds part is the decimal point,
 // therefore we could look from backwards at the literal to find the index of the decimal point.
 // For time zone, the possible delimiter could be +/- (w.r.t. MySQL 8.0, see
 // https://dev.mysql.com/doc/refman/8.0/en/datetime.html) and Z/z (w.r.t. ISO 8601, see section Time zone in
 // https://www.cl.cam.ac.uk/~mgk25/iso-time.html). We also look from backwards for the delimiter, see GetTimezone.
-func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tzSign, tzHour, tzSep, tzMinute string) {
+func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tzSign, tzHour, tzSep, tzMinute string, truncated bool) {
 	tzIndex, tzSign, tzHour, tzSep, tzMinute := GetTimezone(format)
 	if tzIndex > 0 {
 		hasTZ = true
 		for ; tzIndex > 0 && isPunctuation(format[tzIndex-1]); tzIndex-- {
-			// in case of multiple separators, e.g. 2020-10--10
+			// In case of multiple separators, e.g. 2020-10--10
 		}
 		format = format[:tzIndex]
 	}
 	fracIndex := GetFracIndex(format)
 	if fracIndex > 0 {
-		fracStr = format[fracIndex+1:]
+		// Only contain digits
+		fracEnd := fracIndex + 1
+		for fracEnd < len(format) && isDigit(format[fracEnd]) {
+			fracEnd++
+		}
+		truncated = (fracEnd != len(format))
+		fracStr = format[fracIndex+1 : fracEnd]
 		for ; fracIndex > 0 && isPunctuation(format[fracIndex-1]); fracIndex-- {
-			// in case of multiple separators, e.g. 2020-10..10
+			// In case of multiple separators, e.g. 2020-10..10
 		}
 		format = format[:fracIndex]
 	}
@@ -926,9 +932,10 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 		err                                                            error
 	)
 
-	seps, fracStr, hasTZ, tzSign, tzHour, tzSep, tzMinute := splitDateTime(str)
-
-	var truncatedOrIncorrect bool
+	seps, fracStr, hasTZ, tzSign, tzHour, tzSep, tzMinute, truncatedOrIncorrect := splitDateTime(str)
+	if truncatedOrIncorrect {
+		sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("datetime", str))
+	}
 	/*
 		if we have timezone parsed, there are the following cases to be considered, however some of them are wrongly parsed, and we should consider absorb them back to seps.
 
@@ -1020,7 +1027,9 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 
 			year, month, day, hour, minute, second =
 				dateTime.Year(), dateTime.Month(), dateTime.Day(), dateTime.Hour(), dateTime.Minute(), dateTime.Second()
-			if l >= 9 && l <= 14 {
+
+			// case: 0.XXX or like "20170118.999"
+			if seps[0] == "0" || (l >= 9 && l <= 14) {
 				hhmmss = true
 			}
 
@@ -1122,10 +1131,10 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 		return ZeroDatetime, errors.Trace(err)
 	}
 
-	// If str is sepereated by delimiters, the first one is year, and if the year is 2 digit,
+	// If str is sepereated by delimiters, the first one is year, and if the year is 1/2 digit,
 	// we should adjust it.
 	// TODO: adjust year is very complex, now we only consider the simplest way.
-	if len(seps[0]) == 2 {
+	if len(seps[0]) <= 2 && !isFloat {
 		if year == 0 && month == 0 && day == 0 && hour == 0 && minute == 0 && second == 0 && fracStr == "" {
 			// Skip a special case "00-00-00".
 		} else {
@@ -1466,7 +1475,13 @@ func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, e
 // We will use the “round half up” rule, e.g, >= 0.5 -> 1, < 0.5 -> 0,
 // so 10:10:10.999999 round 0 -> 10:10:11
 // and 10:10:10.000000 round 0 -> 10:10:10
-func (d Duration) RoundFrac(fsp int8) (Duration, error) {
+func (d Duration) RoundFrac(fsp int8, loc *gotime.Location) (Duration, error) {
+	tz := loc
+	if tz == nil {
+		logutil.BgLogger().Warn("use gotime.local because sc.timezone is nil")
+		tz = gotime.Local
+	}
+
 	fsp, err := CheckFsp(int(fsp))
 	if err != nil {
 		return d, errors.Trace(err)
@@ -1476,7 +1491,7 @@ func (d Duration) RoundFrac(fsp int8) (Duration, error) {
 		return d, nil
 	}
 
-	n := gotime.Date(0, 0, 0, 0, 0, 0, 0, gotime.Local)
+	n := gotime.Date(0, 0, 0, 0, 0, 0, 0, tz)
 	nd := n.Add(d.Duration).Round(gotime.Duration(math.Pow10(9-int(fsp))) * gotime.Nanosecond).Sub(n)
 	return Duration{Duration: nd, Fsp: fsp}, nil
 }
@@ -1765,7 +1780,7 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration
 		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
-	return d.RoundFrac(fsp)
+	return d.RoundFrac(fsp, sc.TimeZone)
 }
 
 // TruncateOverflowMySQLTime truncates d when it overflows, and returns ErrTruncatedWrongVal.
@@ -3310,6 +3325,7 @@ func DateFSP(date string) (fsp int) {
 func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
 	tz := sc.TimeZone
 	if tz == nil {
+		logutil.BgLogger().Warn("use gotime.local because sc.timezone is nil")
 		tz = gotime.Local
 	}
 

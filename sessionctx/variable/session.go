@@ -15,6 +15,7 @@ package variable
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -174,9 +175,9 @@ type TransactionContext struct {
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
 
-	// GlobalTemporaryTables is used to store transaction-specific information for global temporary tables.
+	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
-	GlobalTemporaryTables map[int64]tableutil.TempTable
+	TemporaryTables map[int64]tableutil.TempTable
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -185,7 +186,7 @@ func (tc *TransactionContext) GetShard(shardRowIDBits uint64, typeBitsLength uin
 		return 0
 	}
 	if tc.shardRand == nil {
-		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS)))
+		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
 	}
 	if tc.shardRemain <= 0 {
 		tc.updateShard()
@@ -514,6 +515,11 @@ type SessionVars struct {
 	// Value set to `false` means never use mpp.
 	allowMPPExecution bool
 
+	// HashExchangeWithNewCollation means if we support hash exchange when new collation is enabled.
+	// Default value is `true`, means support hash exchange when new collation is enabled.
+	// Value set to `false` means not use hash exchange when new collation is enabled.
+	HashExchangeWithNewCollation bool
+
 	// enforceMPPExecution means if we should enforce mpp way to execute query.
 	// Default value is `false`, means to be determined by variable `allowMPPExecution`.
 	// Value set to `true` means enforce use mpp.
@@ -531,8 +537,14 @@ type SessionVars struct {
 	// If we can't estimate the size of one side of join child, we will check if its row number exceeds this limitation.
 	BroadcastJoinThresholdCount int64
 
+	// LimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
+	LimitPushDownThreshold int64
+
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
+
+	// EnableCorrelationAdjustment is used to indicate if correlation adjustment is enabled.
+	EnableCorrelationAdjustment bool
 
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
@@ -627,6 +639,9 @@ type SessionVars struct {
 
 	// EnableChangeMultiSchema is used to control whether to enable the multi schema change.
 	EnableChangeMultiSchema bool
+
+	// EnableAutoIncrementInGenerated is used to control whether to allow auto incremented columns in generated columns.
+	EnableAutoIncrementInGenerated bool
 
 	// EnablePointGetCache is used to cache value for point get for read only scenario.
 	EnablePointGetCache bool
@@ -741,7 +756,6 @@ type SessionVars struct {
 	PlannerSelectBlockAsName []ast.HintTable
 
 	// LockWaitTimeout is the duration waiting for pessimistic lock in milliseconds
-	// negative value means nowait, 0 means default behavior, others means actual wait time
 	LockWaitTimeout int64
 
 	// MetricSchemaStep indicates the step when query metric schema.
@@ -853,9 +867,34 @@ type SessionVars struct {
 	// EnableGlobalTemporaryTable indicates whether to enable global temporary table
 	EnableGlobalTemporaryTable bool
 
+	// EnableStableResultMode if stabilize query results.
+	EnableStableResultMode bool
+
 	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
 	// It's nil if there is no local temporary table.
 	LocalTemporaryTables interface{}
+
+	// TemporaryTableData stores committed kv values for temporary table for current session.
+	TemporaryTableData kv.MemBuffer
+
+	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed.
+	MPPStoreLastFailTime map[string]time.Time
+
+	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
+	MPPStoreFailTTL string
+
+	// cached is used to optimze the object allocation.
+	cached struct {
+		curr int8
+		data [2]stmtctx.StatementContext
+	}
+}
+
+// InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
+func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
+	s.cached.curr = (s.cached.curr + 1) % 2
+	s.cached.data[s.cached.curr] = stmtctx.StatementContext{}
+	return &s.cached.data[s.cached.curr]
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -902,6 +941,11 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
+	if s.InTxn() {
+		// UnionScan cannot get partition table IDs in dynamic-mode, this is a quick-fix for issues/26719,
+		// please see it for more details.
+		return false
+	}
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
@@ -910,6 +954,7 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	return parser.ParserConfig{
 		EnableWindowFunction:        s.EnableWindowFunction,
 		EnableStrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
+		SkipPositionRecording:       true,
 	}
 }
 
@@ -1014,6 +1059,8 @@ func NewSessionVars() *SessionVars {
 		DDLReorgPriority:            kv.PriorityLow,
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
 		preferRangeScan:             DefOptPreferRangeScan,
+		EnableCorrelationAdjustment: DefOptEnableCorrelationAdjustment,
+		LimitPushDownThreshold:      DefOptLimitPushDownThreshold,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		CPUFactor:                   DefOptCPUFactor,
@@ -1070,6 +1117,8 @@ func NewSessionVars() *SessionVars {
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
 		TMPTableSize:                DefTMPTableSize,
 		EnableGlobalTemporaryTable:  DefTiDBEnableGlobalTemporaryTable,
+		MPPStoreLastFailTime:        make(map[string]time.Time),
+		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1117,7 +1166,9 @@ func NewSessionVars() *SessionVars {
 
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
+	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
+	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
@@ -1485,19 +1536,19 @@ func (s *SessionVars) LazyCheckKeyNotExists() bool {
 
 // GetTemporaryTable returns a TempTable by tableInfo.
 func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.TempTable {
-	if tblInfo.TempTableType == model.TempTableGlobal {
-		if s.TxnCtx.GlobalTemporaryTables == nil {
-			s.TxnCtx.GlobalTemporaryTables = make(map[int64]tableutil.TempTable)
+	if tblInfo.TempTableType != model.TempTableNone {
+		if s.TxnCtx.TemporaryTables == nil {
+			s.TxnCtx.TemporaryTables = make(map[int64]tableutil.TempTable)
 		}
-		globalTempTables := s.TxnCtx.GlobalTemporaryTables
-		globalTempTable, ok := globalTempTables[tblInfo.ID]
+		tempTables := s.TxnCtx.TemporaryTables
+		tempTable, ok := tempTables[tblInfo.ID]
 		if !ok {
-			globalTempTable = tableutil.TempTableFromMeta(tblInfo)
-			globalTempTables[tblInfo.ID] = globalTempTable
+			tempTable = tableutil.TempTableFromMeta(tblInfo)
+			tempTables[tblInfo.ID] = tempTable
 		}
-		return globalTempTable
+		return tempTable
 	}
-	// TODO: check local temporary tables
+
 	return nil
 }
 
@@ -2182,4 +2233,67 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		}
 	}
 	return s.seekFactor
+}
+
+// TemporaryTableSnapshotReader can read the temporary table snapshot data
+type TemporaryTableSnapshotReader struct {
+	memBuffer kv.MemBuffer
+}
+
+// Get gets the value for key k from snapshot.
+func (s *TemporaryTableSnapshotReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	if s.memBuffer == nil {
+		return nil, kv.ErrNotExist
+	}
+
+	v, err := s.memBuffer.Get(ctx, k)
+	if err != nil {
+		return v, err
+	}
+
+	if len(v) == 0 {
+		return nil, kv.ErrNotExist
+	}
+
+	return v, nil
+}
+
+// TemporaryTableSnapshotReader can read the temporary table snapshot data
+func (s *SessionVars) TemporaryTableSnapshotReader(tblInfo *model.TableInfo) *TemporaryTableSnapshotReader {
+	if tblInfo.TempTableType == model.TempTableGlobal {
+		return &TemporaryTableSnapshotReader{nil}
+	}
+	return &TemporaryTableSnapshotReader{s.TemporaryTableData}
+}
+
+// TemporaryTableTxnReader can read the temporary table txn data
+type TemporaryTableTxnReader struct {
+	memBuffer kv.MemBuffer
+	snapshot  *TemporaryTableSnapshotReader
+}
+
+// Get gets the value for key k from txn.
+func (s *TemporaryTableTxnReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	v, err := s.memBuffer.Get(ctx, k)
+	if err == nil {
+		if len(v) == 0 {
+			return nil, kv.ErrNotExist
+		}
+
+		return v, nil
+	}
+
+	if !kv.IsErrNotFound(err) {
+		return v, err
+	}
+
+	return s.snapshot.Get(ctx, k)
+}
+
+// TemporaryTableTxnReader can read the temporary table txn data
+func (s *SessionVars) TemporaryTableTxnReader(txn kv.Transaction, tblInfo *model.TableInfo) *TemporaryTableTxnReader {
+	return &TemporaryTableTxnReader{
+		memBuffer: txn.GetMemBuffer(),
+		snapshot:  s.TemporaryTableSnapshotReader(tblInfo),
+	}
 }
