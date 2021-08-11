@@ -41,6 +41,11 @@ type testData struct {
 	handle bool
 }
 
+type testDatas struct {
+	name string
+	data []testData
+}
+
 func TestEncodeLargeSmallReuseBug(t *testing.T) {
 	t.Parallel()
 
@@ -86,85 +91,6 @@ func TestDecodeRowWithHandle(t *testing.T) {
 	handleID := int64(-1)
 	handleValue := int64(10000)
 
-	encodeAndDecodeHandle := func(t *testing.T, testData []testData) {
-		// transform test data into input.
-		colIDs := make([]int64, 0, len(testData))
-		dts := make([]types.Datum, 0, len(testData))
-		fts := make([]*types.FieldType, 0, len(testData))
-		cols := make([]rowcodec.ColInfo, 0, len(testData))
-		handleColFtMap := make(map[int64]*types.FieldType)
-		for _, d := range testData {
-			if d.handle {
-				handleColFtMap[handleID] = d.ft
-			} else {
-				colIDs = append(colIDs, d.id)
-				dts = append(dts, d.dt)
-			}
-			fts = append(fts, d.ft)
-			cols = append(cols, rowcodec.ColInfo{
-				ID:         d.id,
-				IsPKHandle: d.handle,
-				Ft:         d.ft,
-			})
-		}
-
-		// test encode input.
-		var encoder rowcodec.Encoder
-		sc := new(stmtctx.StatementContext)
-		sc.TimeZone = time.UTC
-		newRow, err := encoder.Encode(sc, colIDs, dts, nil)
-		require.NoError(t, err)
-
-		// decode to datum map.
-		mDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone)
-		dm, err := mDecoder.DecodeToDatumMap(newRow, nil)
-		require.NoError(t, err)
-		dm, err = tablecodec.DecodeHandleToDatumMap(kv.IntHandle(handleValue),
-			[]int64{handleID}, handleColFtMap, sc.TimeZone, dm)
-		require.NoError(t, err)
-		for _, td := range testData {
-			d, exists := dm[td.id]
-			require.True(t, exists)
-			require.Equal(t, td.dt, d)
-		}
-
-		// decode to chunk.
-		cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, sc.TimeZone)
-		chk := chunk.New(fts, 1, 1)
-		err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(handleValue), chk)
-		require.NoError(t, err)
-		chkRow := chk.GetRow(0)
-		cdt := chkRow.GetDatumRow(fts)
-		for i, td := range testData {
-			d := cdt[i]
-			if d.Kind() == types.KindMysqlDecimal {
-				require.Equal(t, td.bt.GetMysqlDecimal(), d.GetMysqlDecimal())
-			} else {
-				require.Equal(t, td.bt, d)
-			}
-		}
-
-		// decode to old row bytes.
-		colOffset := make(map[int64]int)
-		for i, td := range testData {
-			colOffset[td.id] = i
-		}
-		bDecoder := rowcodec.NewByteDecoder(cols, []int64{-1}, nil, nil)
-		oldRow, err := bDecoder.DecodeToBytes(colOffset, kv.IntHandle(handleValue), newRow, nil)
-		require.NoError(t, err)
-		for i, td := range testData {
-			remain, d, err := codec.DecodeOne(oldRow[i])
-			require.NoError(t, err)
-			require.Equal(t, 0, len(remain))
-			if d.Kind() == types.KindMysqlDecimal {
-				require.Equal(t, td.bt.GetMysqlDecimal(), d.GetMysqlDecimal())
-			} else {
-				require.Equal(t, td.bt, d)
-			}
-		}
-	}
-
-	// encode & decode signed int.
 	testDataSigned := []testData{
 		{
 			handleID,
@@ -183,9 +109,7 @@ func TestDecodeRowWithHandle(t *testing.T) {
 			false,
 		},
 	}
-	encodeAndDecodeHandle(t, testDataSigned)
 
-	// encode & decode unsigned int.
 	testDataUnsigned := []testData{
 		{
 			handleID,
@@ -204,7 +128,95 @@ func TestDecodeRowWithHandle(t *testing.T) {
 			false,
 		},
 	}
-	encodeAndDecodeHandle(t, testDataUnsigned)
+
+	for _, s := range []*testDatas{
+		{
+			name: "signedInt",
+			data: testDataSigned,
+		},
+		{
+			name: "unsignedInt",
+			data: testDataUnsigned,
+		},
+	} {
+		t.Run(s.name, func(t *testing.T) {
+			// transform test data into input.
+			colIDs := make([]int64, 0, len(s.data))
+			dts := make([]types.Datum, 0, len(s.data))
+			fts := make([]*types.FieldType, 0, len(s.data))
+			cols := make([]rowcodec.ColInfo, 0, len(s.data))
+			handleColFtMap := make(map[int64]*types.FieldType)
+			for _, d := range s.data {
+				if d.handle {
+					handleColFtMap[handleID] = d.ft
+				} else {
+					colIDs = append(colIDs, d.id)
+					dts = append(dts, d.dt)
+				}
+				fts = append(fts, d.ft)
+				cols = append(cols, rowcodec.ColInfo{
+					ID:         d.id,
+					IsPKHandle: d.handle,
+					Ft:         d.ft,
+				})
+			}
+
+			// test encode input.
+			var encoder rowcodec.Encoder
+			sc := new(stmtctx.StatementContext)
+			sc.TimeZone = time.UTC
+			newRow, err := encoder.Encode(sc, colIDs, dts, nil)
+			require.NoError(t, err)
+
+			// decode to datum map.
+			mDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone)
+			dm, err := mDecoder.DecodeToDatumMap(newRow, nil)
+			require.NoError(t, err)
+			dm, err = tablecodec.DecodeHandleToDatumMap(kv.IntHandle(handleValue),
+				[]int64{handleID}, handleColFtMap, sc.TimeZone, dm)
+			require.NoError(t, err)
+			for _, td := range s.data {
+				d, exists := dm[td.id]
+				require.True(t, exists)
+				require.Equal(t, td.dt, d)
+			}
+
+			// decode to chunk.
+			cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, sc.TimeZone)
+			chk := chunk.New(fts, 1, 1)
+			err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(handleValue), chk)
+			require.NoError(t, err)
+			chkRow := chk.GetRow(0)
+			cdt := chkRow.GetDatumRow(fts)
+			for i, td := range s.data {
+				d := cdt[i]
+				if d.Kind() == types.KindMysqlDecimal {
+					require.Equal(t, td.bt.GetMysqlDecimal(), d.GetMysqlDecimal())
+				} else {
+					require.Equal(t, td.bt, d)
+				}
+			}
+
+			// decode to old row bytes.
+			colOffset := make(map[int64]int)
+			for i, td := range s.data {
+				colOffset[td.id] = i
+			}
+			bDecoder := rowcodec.NewByteDecoder(cols, []int64{-1}, nil, nil)
+			oldRow, err := bDecoder.DecodeToBytes(colOffset, kv.IntHandle(handleValue), newRow, nil)
+			require.NoError(t, err)
+			for i, td := range s.data {
+				remain, d, err := codec.DecodeOne(oldRow[i])
+				require.NoError(t, err)
+				require.Equal(t, 0, len(remain))
+				if d.Kind() == types.KindMysqlDecimal {
+					require.Equal(t, td.bt.GetMysqlDecimal(), d.GetMysqlDecimal())
+				} else {
+					require.Equal(t, td.bt, d)
+				}
+			}
+		})
+	}
 }
 
 func TestEncodeKindNullDatum(t *testing.T) {
@@ -300,347 +312,260 @@ func TestTypesNewRowCodec(t *testing.T) {
 	}
 
 	var encoder rowcodec.Encoder
-	encodeAndDecode := func(t *testing.T, testData []testData) {
-		// transform test data into input.
-		colIDs := make([]int64, 0, len(testData))
-		dts := make([]types.Datum, 0, len(testData))
-		fts := make([]*types.FieldType, 0, len(testData))
-		cols := make([]rowcodec.ColInfo, 0, len(testData))
-		for i := range testData {
-			t := testData[i]
-			colIDs = append(colIDs, t.id)
-			dts = append(dts, t.dt)
-			fts = append(fts, t.ft)
-			cols = append(cols, rowcodec.ColInfo{
-				ID:         t.id,
-				IsPKHandle: t.handle,
-				Ft:         t.ft,
-			})
+	getTestData := func() []testData {
+		return []testData{
+			{
+				1,
+				types.NewFieldType(mysql.TypeLonglong),
+				types.NewIntDatum(1),
+				types.NewIntDatum(1),
+				nil,
+				false,
+			},
+			{
+				22,
+				withUnsigned(types.NewFieldType(mysql.TypeShort)),
+				types.NewUintDatum(1),
+				types.NewUintDatum(1),
+				nil,
+				false,
+			},
+			{
+				3,
+				types.NewFieldType(mysql.TypeDouble),
+				types.NewFloat64Datum(2),
+				types.NewFloat64Datum(2),
+				nil,
+				false,
+			},
+			{
+				24,
+				types.NewFieldTypeWithCollation(mysql.TypeBlob, mysql.DefaultCollationName, types.UnspecifiedLength),
+				types.NewStringDatum("abc"),
+				types.NewStringDatum("abc"),
+				nil,
+				false,
+			},
+			{
+				25,
+				&types.FieldType{Tp: mysql.TypeString, Collate: mysql.DefaultCollationName},
+				types.NewStringDatum("ab"),
+				types.NewBytesDatum([]byte("ab")),
+				nil,
+				false,
+			},
+			{
+				5,
+				withFsp(6)(types.NewFieldType(mysql.TypeTimestamp)),
+				types.NewTimeDatum(getTime("2011-11-10 11:11:11.999999")),
+				types.NewUintDatum(1840446893366133311),
+				nil,
+				false,
+			},
+			{
+				16,
+				withFsp(0)(types.NewFieldType(mysql.TypeDuration)),
+				types.NewDurationDatum(getDuration("4:00:00")),
+				types.NewIntDatum(14400000000000),
+				nil,
+				false,
+			},
+			{
+				8,
+				types.NewFieldType(mysql.TypeNewDecimal),
+				withFrac(4)(withLen(6)(types.NewDecimalDatum(types.NewDecFromStringForTest("11.9900")))),
+				withFrac(4)(withLen(6)(types.NewDecimalDatum(types.NewDecFromStringForTest("11.9900")))),
+				nil,
+				false,
+			},
+			{
+				12,
+				types.NewFieldType(mysql.TypeYear),
+				types.NewIntDatum(1999),
+				types.NewIntDatum(1999),
+				nil,
+				false,
+			},
+			{
+				9,
+				withEnumElems("y", "n")(types.NewFieldTypeWithCollation(mysql.TypeEnum, mysql.DefaultCollationName, collate.DefaultLen)),
+				types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
+				types.NewUintDatum(2),
+				nil,
+				false,
+			},
+			{
+				14,
+				types.NewFieldType(mysql.TypeJSON),
+				getJSONDatum(`{"a":2}`),
+				getJSONDatum(`{"a":2}`),
+				nil,
+				false,
+			},
+			{
+				11,
+				types.NewFieldType(mysql.TypeNull),
+				types.NewDatum(nil),
+				types.NewDatum(nil),
+				nil,
+				false,
+			},
+			{
+				2,
+				types.NewFieldType(mysql.TypeNull),
+				types.NewDatum(nil),
+				types.NewDatum(nil),
+				nil,
+				false,
+			},
+			{
+				100,
+				types.NewFieldType(mysql.TypeNull),
+				types.NewDatum(nil),
+				types.NewDatum(nil),
+				nil,
+				false,
+			},
+			{
+				116,
+				types.NewFieldType(mysql.TypeFloat),
+				types.NewFloat32Datum(6),
+				types.NewFloat64Datum(6),
+				nil,
+				false,
+			},
+			{
+				117,
+				withEnumElems("n1", "n2")(types.NewFieldTypeWithCollation(mysql.TypeSet, mysql.DefaultCollationName, collate.DefaultLen)),
+				getSetDatum("n1", 1),
+				types.NewUintDatum(1),
+				nil,
+				false,
+			},
+			{
+				118,
+				withFlen(24)(types.NewFieldType(mysql.TypeBit)), // 3 bit
+				types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(3223600, 3)),
+				types.NewUintDatum(3223600),
+				nil,
+				false,
+			},
+			{
+				119,
+				&types.FieldType{Tp: mysql.TypeVarString, Collate: mysql.DefaultCollationName},
+				types.NewStringDatum(""),
+				types.NewBytesDatum([]byte("")),
+				nil,
+				false,
+			},
 		}
+	}
 
-		// test encode input.
-		sc := new(stmtctx.StatementContext)
-		sc.TimeZone = time.UTC
-		newRow, err := encoder.Encode(sc, colIDs, dts, nil)
-		require.NoError(t, err)
+	getLargeColIDTestData := func() []testData {
+		data := getTestData()
+		data[0].id = 300
+		return data
+	}
 
-		// decode to datum map.
-		mDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone)
-		dm, err := mDecoder.DecodeToDatumMap(newRow, nil)
-		require.NoError(t, err)
-		for _, td := range testData {
-			d, exists := dm[td.id]
-			require.True(t, exists)
-			require.Equal(t, td.dt, d)
-		}
+	getLargeTestData := func() []testData {
+		testData := getTestData()
+		testData[3].dt = types.NewStringDatum(strings.Repeat("a", math.MaxUint16+1))
+		testData[3].bt = types.NewStringDatum(strings.Repeat("a", math.MaxUint16+1))
+		return testData
+	}
 
-		// decode to chunk.
-		cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, sc.TimeZone)
-		chk := chunk.New(fts, 1, 1)
-		err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
-		require.NoError(t, err)
-		chkRow := chk.GetRow(0)
-		cdt := chkRow.GetDatumRow(fts)
-		for i, td := range testData {
-			d := cdt[i]
-			if d.Kind() == types.KindMysqlDecimal {
-				require.Equal(t, td.bt.GetMysqlDecimal(), d.GetMysqlDecimal())
-			} else {
+	for _, tds := range []*testDatas{
+		{
+			name: "small",
+			data: getTestData(),
+		},
+		{
+			name: "largeColID",
+			data: getLargeColIDTestData(),
+		},
+		{
+			name: "largeData",
+			data: getLargeTestData(),
+		},
+	} {
+
+		t.Run(tds.name, func(t *testing.T) {
+			// transform test data into input.
+			colIDs := make([]int64, 0, len(tds.data))
+			dts := make([]types.Datum, 0, len(tds.data))
+			fts := make([]*types.FieldType, 0, len(tds.data))
+			cols := make([]rowcodec.ColInfo, 0, len(tds.data))
+			for i := range tds.data {
+				t := tds.data[i]
+				colIDs = append(colIDs, t.id)
+				dts = append(dts, t.dt)
+				fts = append(fts, t.ft)
+				cols = append(cols, rowcodec.ColInfo{
+					ID:         t.id,
+					IsPKHandle: t.handle,
+					Ft:         t.ft,
+				})
+			}
+
+			// test encode input.
+			sc := new(stmtctx.StatementContext)
+			sc.TimeZone = time.UTC
+			newRow, err := encoder.Encode(sc, colIDs, dts, nil)
+			require.NoError(t, err)
+
+			// decode to datum map.
+			mDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone)
+			dm, err := mDecoder.DecodeToDatumMap(newRow, nil)
+			require.NoError(t, err)
+			for _, td := range tds.data {
+				d, exists := dm[td.id]
+				require.True(t, exists)
 				require.Equal(t, td.dt, d)
 			}
-		}
 
-		// decode to old row bytes.
-		colOffset := make(map[int64]int)
-		for i, td := range testData {
-			colOffset[td.id] = i
-		}
-		bDecoder := rowcodec.NewByteDecoder(cols, []int64{-1}, nil, nil)
-		oldRow, err := bDecoder.DecodeToBytes(colOffset, kv.IntHandle(-1), newRow, nil)
-		require.NoError(t, err)
-		for i, td := range testData {
-			remain, d, err := codec.DecodeOne(oldRow[i])
+			// decode to chunk.
+			cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, sc.TimeZone)
+			chk := chunk.New(fts, 1, 1)
+			err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
 			require.NoError(t, err)
-			require.Equal(t, 0, len(remain))
-			if d.Kind() == types.KindMysqlDecimal {
-				require.Equal(t, td.bt.GetMysqlDecimal(), d.GetMysqlDecimal())
-			} else if d.Kind() == types.KindBytes {
-				require.Equal(t, td.bt.GetBytes(), d.GetBytes())
-			} else {
-				require.Equal(t, td.bt, d)
+			chkRow := chk.GetRow(0)
+			cdt := chkRow.GetDatumRow(fts)
+			for i, td := range tds.data {
+				d := cdt[i]
+				if d.Kind() == types.KindMysqlDecimal {
+					require.Equal(t, td.bt.GetMysqlDecimal(), d.GetMysqlDecimal())
+				} else {
+					require.Equal(t, td.dt, d)
+				}
 			}
-		}
+
+			// decode to old row bytes.
+			colOffset := make(map[int64]int)
+			for i, td := range tds.data {
+				colOffset[td.id] = i
+			}
+			bDecoder := rowcodec.NewByteDecoder(cols, []int64{-1}, nil, nil)
+			oldRow, err := bDecoder.DecodeToBytes(colOffset, kv.IntHandle(-1), newRow, nil)
+			require.NoError(t, err)
+			for i, td := range tds.data {
+				remain, d, err := codec.DecodeOne(oldRow[i])
+				require.NoError(t, err)
+				require.Equal(t, 0, len(remain))
+				if d.Kind() == types.KindMysqlDecimal {
+					require.Equal(t, td.bt.GetMysqlDecimal(), d.GetMysqlDecimal())
+				} else if d.Kind() == types.KindBytes {
+					require.Equal(t, td.bt.GetBytes(), d.GetBytes())
+				} else {
+					require.Equal(t, td.bt, d)
+				}
+			}
+		})
 	}
-
-	testData := []testData{
-		{
-			1,
-			types.NewFieldType(mysql.TypeLonglong),
-			types.NewIntDatum(1),
-			types.NewIntDatum(1),
-			nil,
-			false,
-		},
-		{
-			22,
-			withUnsigned(types.NewFieldType(mysql.TypeShort)),
-			types.NewUintDatum(1),
-			types.NewUintDatum(1),
-			nil,
-			false,
-		},
-		{
-			3,
-			types.NewFieldType(mysql.TypeDouble),
-			types.NewFloat64Datum(2),
-			types.NewFloat64Datum(2),
-			nil,
-			false,
-		},
-		{
-			24,
-			types.NewFieldTypeWithCollation(mysql.TypeBlob, mysql.DefaultCollationName, types.UnspecifiedLength),
-			types.NewStringDatum("abc"),
-			types.NewStringDatum("abc"),
-			nil,
-			false,
-		},
-		{
-			25,
-			&types.FieldType{Tp: mysql.TypeString, Collate: mysql.DefaultCollationName},
-			types.NewStringDatum("ab"),
-			types.NewBytesDatum([]byte("ab")),
-			nil,
-			false,
-		},
-		{
-			5,
-			withFsp(6)(types.NewFieldType(mysql.TypeTimestamp)),
-			types.NewTimeDatum(getTime("2011-11-10 11:11:11.999999")),
-			types.NewUintDatum(1840446893366133311),
-			nil,
-			false,
-		},
-		{
-			16,
-			withFsp(0)(types.NewFieldType(mysql.TypeDuration)),
-			types.NewDurationDatum(getDuration("4:00:00")),
-			types.NewIntDatum(14400000000000),
-			nil,
-			false,
-		},
-		{
-			8,
-			types.NewFieldType(mysql.TypeNewDecimal),
-			withFrac(4)(withLen(6)(types.NewDecimalDatum(types.NewDecFromStringForTest("11.9900")))),
-			withFrac(4)(withLen(6)(types.NewDecimalDatum(types.NewDecFromStringForTest("11.9900")))),
-			nil,
-			false,
-		},
-		{
-			12,
-			types.NewFieldType(mysql.TypeYear),
-			types.NewIntDatum(1999),
-			types.NewIntDatum(1999),
-			nil,
-			false,
-		},
-		{
-			9,
-			withEnumElems("y", "n")(types.NewFieldTypeWithCollation(mysql.TypeEnum, mysql.DefaultCollationName, collate.DefaultLen)),
-			types.NewMysqlEnumDatum(types.Enum{Name: "n", Value: 2}),
-			types.NewUintDatum(2),
-			nil,
-			false,
-		},
-		{
-			14,
-			types.NewFieldType(mysql.TypeJSON),
-			getJSONDatum(`{"a":2}`),
-			getJSONDatum(`{"a":2}`),
-			nil,
-			false,
-		},
-		{
-			11,
-			types.NewFieldType(mysql.TypeNull),
-			types.NewDatum(nil),
-			types.NewDatum(nil),
-			nil,
-			false,
-		},
-		{
-			2,
-			types.NewFieldType(mysql.TypeNull),
-			types.NewDatum(nil),
-			types.NewDatum(nil),
-			nil,
-			false,
-		},
-		{
-			100,
-			types.NewFieldType(mysql.TypeNull),
-			types.NewDatum(nil),
-			types.NewDatum(nil),
-			nil,
-			false,
-		},
-		{
-			116,
-			types.NewFieldType(mysql.TypeFloat),
-			types.NewFloat32Datum(6),
-			types.NewFloat64Datum(6),
-			nil,
-			false,
-		},
-		{
-			117,
-			withEnumElems("n1", "n2")(types.NewFieldTypeWithCollation(mysql.TypeSet, mysql.DefaultCollationName, collate.DefaultLen)),
-			getSetDatum("n1", 1),
-			types.NewUintDatum(1),
-			nil,
-			false,
-		},
-		{
-			118,
-			withFlen(24)(types.NewFieldType(mysql.TypeBit)), // 3 bit
-			types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(3223600, 3)),
-			types.NewUintDatum(3223600),
-			nil,
-			false,
-		},
-		{
-			119,
-			&types.FieldType{Tp: mysql.TypeVarString, Collate: mysql.DefaultCollationName},
-			types.NewStringDatum(""),
-			types.NewBytesDatum([]byte("")),
-			nil,
-			false,
-		},
-	}
-
-	// test small
-	encodeAndDecode(t, testData)
-
-	// test large colID
-	testData[0].id = 300
-	encodeAndDecode(t, testData)
-	testData[0].id = 1
-
-	// test large data
-	testData[3].dt = types.NewStringDatum(strings.Repeat("a", math.MaxUint16+1))
-	testData[3].bt = types.NewStringDatum(strings.Repeat("a", math.MaxUint16+1))
-	encodeAndDecode(t, testData)
 }
 
 func TestNilAndDefault(t *testing.T) {
 	t.Parallel()
 
-	encodeAndDecode := func(t *testing.T, testData []testData) {
-		// transform test data into input.
-		colIDs := make([]int64, 0, len(testData))
-		dts := make([]types.Datum, 0, len(testData))
-		cols := make([]rowcodec.ColInfo, 0, len(testData))
-		fts := make([]*types.FieldType, 0, len(testData))
-		for i := range testData {
-			t := testData[i]
-			if t.def == nil {
-				colIDs = append(colIDs, t.id)
-				dts = append(dts, t.dt)
-			}
-			fts = append(fts, t.ft)
-			cols = append(cols, rowcodec.ColInfo{
-				ID:         t.id,
-				IsPKHandle: t.handle,
-				Ft:         t.ft,
-			})
-		}
-		ddf := func(i int, chk *chunk.Chunk) error {
-			t := testData[i]
-			if t.def == nil {
-				chk.AppendNull(i)
-				return nil
-			}
-			chk.AppendDatum(i, t.def)
-			return nil
-		}
-		bdf := func(i int) ([]byte, error) {
-			t := testData[i]
-			if t.def == nil {
-				return nil, nil
-			}
-			return getOldDatumByte(*t.def), nil
-		}
-		// test encode input.
-		var encoder rowcodec.Encoder
-		sc := new(stmtctx.StatementContext)
-		sc.TimeZone = time.UTC
-		newRow, err := encoder.Encode(sc, colIDs, dts, nil)
-		require.NoError(t, err)
-
-		// decode to datum map.
-		mDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone)
-		dm, err := mDecoder.DecodeToDatumMap(newRow, nil)
-		require.NoError(t, err)
-		for _, td := range testData {
-			d, exists := dm[td.id]
-			if td.def != nil {
-				// for datum should not fill default value.
-				require.False(t, exists)
-			} else {
-				require.True(t, exists)
-				require.Equal(t, td.bt, d)
-			}
-		}
-
-		// decode to chunk.
-		chk := chunk.New(fts, 1, 1)
-		cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, ddf, sc.TimeZone)
-		err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
-		require.NoError(t, err)
-		chkRow := chk.GetRow(0)
-		cdt := chkRow.GetDatumRow(fts)
-		for i, td := range testData {
-			d := cdt[i]
-			if d.Kind() == types.KindMysqlDecimal {
-				require.Equal(t, td.bt.GetMysqlDecimal(), d.GetMysqlDecimal())
-			} else {
-				require.Equal(t, td.bt, d)
-			}
-		}
-
-		chk = chunk.New(fts, 1, 1)
-		cDecoder = rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, sc.TimeZone)
-		err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
-		require.NoError(t, err)
-		chkRow = chk.GetRow(0)
-		cdt = chkRow.GetDatumRow(fts)
-		for i := range testData {
-			if i == 0 {
-				continue
-			}
-			require.True(t, cdt[i].IsNull())
-		}
-
-		// decode to old row bytes.
-		colOffset := make(map[int64]int)
-		for i, td := range testData {
-			colOffset[td.id] = i
-		}
-		bDecoder := rowcodec.NewByteDecoder(cols, []int64{-1}, bdf, sc.TimeZone)
-		oldRow, err := bDecoder.DecodeToBytes(colOffset, kv.IntHandle(-1), newRow, nil)
-		require.NoError(t, err)
-		for i, td := range testData {
-			remain, d, err := codec.DecodeOne(oldRow[i])
-			require.NoError(t, err)
-			require.Equal(t, 0, len(remain))
-			if d.Kind() == types.KindMysqlDecimal {
-				require.Equal(t, td.bt.GetMysqlDecimal(), d.GetMysqlDecimal())
-			} else {
-				require.Equal(t, td.bt, d)
-			}
-		}
-	}
 	dtNilData := []testData{
 		{
 			1,
@@ -659,48 +584,114 @@ func TestNilAndDefault(t *testing.T) {
 			false,
 		},
 	}
-	encodeAndDecode(t, dtNilData)
+
+	// transform test data into input.
+	colIDs := make([]int64, 0, len(dtNilData))
+	dts := make([]types.Datum, 0, len(dtNilData))
+	fts := make([]*types.FieldType, 0, len(dtNilData))
+	cols := make([]rowcodec.ColInfo, 0, len(dtNilData))
+	for i := range dtNilData {
+		t := dtNilData[i]
+		if t.def == nil {
+			colIDs = append(colIDs, t.id)
+			dts = append(dts, t.dt)
+		}
+		fts = append(fts, t.ft)
+		cols = append(cols, rowcodec.ColInfo{
+			ID:         t.id,
+			IsPKHandle: t.handle,
+			Ft:         t.ft,
+		})
+	}
+	ddf := func(i int, chk *chunk.Chunk) error {
+		t := dtNilData[i]
+		if t.def == nil {
+			chk.AppendNull(i)
+			return nil
+		}
+		chk.AppendDatum(i, t.def)
+		return nil
+	}
+	bdf := func(i int) ([]byte, error) {
+		t := dtNilData[i]
+		if t.def == nil {
+			return nil, nil
+		}
+		return getOldDatumByte(*t.def), nil
+	}
+	// test encode input.
+	var encoder rowcodec.Encoder
+	sc := new(stmtctx.StatementContext)
+	sc.TimeZone = time.UTC
+	newRow, err := encoder.Encode(sc, colIDs, dts, nil)
+	require.NoError(t, err)
+
+	// decode to datum map.
+	mDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone)
+	dm, err := mDecoder.DecodeToDatumMap(newRow, nil)
+	require.NoError(t, err)
+	for _, td := range dtNilData {
+		d, exists := dm[td.id]
+		if td.def != nil {
+			// for datum should not fill default value.
+			require.False(t, exists)
+		} else {
+			require.True(t, exists)
+			require.Equal(t, td.bt, d)
+		}
+	}
+
+	// decode to chunk.
+	chk := chunk.New(fts, 1, 1)
+	cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, ddf, sc.TimeZone)
+	err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
+	require.NoError(t, err)
+	chkRow := chk.GetRow(0)
+	cdt := chkRow.GetDatumRow(fts)
+	for i, td := range dtNilData {
+		d := cdt[i]
+		if d.Kind() == types.KindMysqlDecimal {
+			require.Equal(t, td.bt.GetMysqlDecimal(), d.GetMysqlDecimal())
+		} else {
+			require.Equal(t, td.bt, d)
+		}
+	}
+
+	chk = chunk.New(fts, 1, 1)
+	cDecoder = rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, sc.TimeZone)
+	err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
+	require.NoError(t, err)
+	chkRow = chk.GetRow(0)
+	cdt = chkRow.GetDatumRow(fts)
+	for i := range dtNilData {
+		if i == 0 {
+			continue
+		}
+		require.True(t, cdt[i].IsNull())
+	}
+
+	// decode to old row bytes.
+	colOffset := make(map[int64]int)
+	for i, td := range dtNilData {
+		colOffset[td.id] = i
+	}
+	bDecoder := rowcodec.NewByteDecoder(cols, []int64{-1}, bdf, sc.TimeZone)
+	oldRow, err := bDecoder.DecodeToBytes(colOffset, kv.IntHandle(-1), newRow, nil)
+	require.NoError(t, err)
+	for i, td := range dtNilData {
+		remain, d, err := codec.DecodeOne(oldRow[i])
+		require.NoError(t, err)
+		require.Equal(t, 0, len(remain))
+		if d.Kind() == types.KindMysqlDecimal {
+			require.Equal(t, td.bt.GetMysqlDecimal(), d.GetMysqlDecimal())
+		} else {
+			require.Equal(t, td.bt, d)
+		}
+	}
 }
 
 func TestVarintCompatibility(t *testing.T) {
 	t.Parallel()
-
-	encodeAndDecodeByte := func(t *testing.T, testData []testData) {
-		// transform test data into input.
-		colIDs := make([]int64, 0, len(testData))
-		dts := make([]types.Datum, 0, len(testData))
-		cols := make([]rowcodec.ColInfo, 0, len(testData))
-		for i := range testData {
-			t := testData[i]
-			colIDs = append(colIDs, t.id)
-			dts = append(dts, t.dt)
-			cols = append(cols, rowcodec.ColInfo{
-				ID:         t.id,
-				IsPKHandle: t.handle,
-				Ft:         t.ft,
-			})
-		}
-
-		// test encode input.
-		var encoder rowcodec.Encoder
-		sc := new(stmtctx.StatementContext)
-		sc.TimeZone = time.UTC
-		newRow, err := encoder.Encode(sc, colIDs, dts, nil)
-		require.NoError(t, err)
-		decoder := rowcodec.NewByteDecoder(cols, []int64{-1}, nil, sc.TimeZone)
-		// decode to old row bytes.
-		colOffset := make(map[int64]int)
-		for i, td := range testData {
-			colOffset[td.id] = i
-		}
-		oldRow, err := decoder.DecodeToBytes(colOffset, kv.IntHandle(1), newRow, nil)
-		require.NoError(t, err)
-		for i, td := range testData {
-			oldVarint, err := tablecodec.EncodeValue(nil, nil, td.bt) // tablecodec will encode as varint/varuint
-			require.NoError(t, err)
-			require.Equal(t, oldRow[i], oldVarint)
-		}
-	}
 
 	testDataValue := []testData{
 		{
@@ -720,7 +711,41 @@ func TestVarintCompatibility(t *testing.T) {
 			false,
 		},
 	}
-	encodeAndDecodeByte(t, testDataValue)
+
+	// transform test data into input.
+	colIDs := make([]int64, 0, len(testDataValue))
+	dts := make([]types.Datum, 0, len(testDataValue))
+	cols := make([]rowcodec.ColInfo, 0, len(testDataValue))
+	for i := range testDataValue {
+		t := testDataValue[i]
+		colIDs = append(colIDs, t.id)
+		dts = append(dts, t.dt)
+		cols = append(cols, rowcodec.ColInfo{
+			ID:         t.id,
+			IsPKHandle: t.handle,
+			Ft:         t.ft,
+		})
+	}
+
+	// test encode input.
+	var encoder rowcodec.Encoder
+	sc := new(stmtctx.StatementContext)
+	sc.TimeZone = time.UTC
+	newRow, err := encoder.Encode(sc, colIDs, dts, nil)
+	require.NoError(t, err)
+	decoder := rowcodec.NewByteDecoder(cols, []int64{-1}, nil, sc.TimeZone)
+	// decode to old row bytes.
+	colOffset := make(map[int64]int)
+	for i, td := range testDataValue {
+		colOffset[td.id] = i
+	}
+	oldRow, err := decoder.DecodeToBytes(colOffset, kv.IntHandle(1), newRow, nil)
+	require.NoError(t, err)
+	for i, td := range testDataValue {
+		oldVarint, err := tablecodec.EncodeValue(nil, nil, td.bt) // tablecodec will encode as varint/varuint
+		require.NoError(t, err)
+		require.Equal(t, oldRow[i], oldVarint)
+	}
 }
 
 func TestCodecUtil(t *testing.T) {
