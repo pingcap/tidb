@@ -926,7 +926,7 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 
-		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain|flagBuildKeyInfo|flagEliminateAgg|flagEliminateProjection, p.(LogicalPlan))
+		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain|flagBuildKeyInfo|flagEliminateAgg|flagEliminateProjection|flagEliminateProjectionAgain, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		planString := ToString(p)
 		s.testData.OnRecord(func() {
