@@ -372,6 +372,9 @@ func NeedSplit(splitKey []byte, regions []*RegionInfo) *RegionInfo {
 		}
 	}
 	log.Warn("skipping split region because split key out of regions, this would probably be a bug", logutil.Key("key", splitKey))
+	for _, r := range regions {
+		log.Debug("on region", logutil.Region(r.Region), logutil.Key("key", splitKey))
+	}
 	return nil
 }
 
