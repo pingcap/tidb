@@ -19,15 +19,10 @@ import (
 	"fmt"
 	"hash/fnv"
 	"testing"
-
-	. "github.com/pingcap/check"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
 func TestMVMap(t *testing.T) {
+	t.Parallel()
 	m := NewMVMap()
 	var vals [][]byte
 	m.Put([]byte("abc"), []byte("abc1"))
