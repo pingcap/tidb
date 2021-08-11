@@ -136,14 +136,16 @@ func (s *testRangeSuite) TestIsFullRange(c *C) {
 	nullDatum := types.MinNotNullDatum()
 	nullDatum.SetNull()
 	isFullRangeTests := []struct {
-		ran         ranger.Range
-		isFullRange bool
+		ran               ranger.Range
+		unsignedIntHandle bool
+		isFullRange       bool
 	}{
 		{
 			ran: ranger.Range{
 				LowVal:  []types.Datum{types.NewIntDatum(math.MinInt64)},
 				HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)},
 			},
+			unsignedIntHandle: false,
 			isFullRange: true,
 		},
 		{
@@ -151,6 +153,7 @@ func (s *testRangeSuite) TestIsFullRange(c *C) {
 				LowVal:  []types.Datum{types.NewIntDatum(math.MaxInt64)},
 				HighVal: []types.Datum{types.NewIntDatum(math.MinInt64)},
 			},
+			unsignedIntHandle: false,
 			isFullRange: false,
 		},
 		{
@@ -158,6 +161,7 @@ func (s *testRangeSuite) TestIsFullRange(c *C) {
 				LowVal:  []types.Datum{types.NewIntDatum(1)},
 				HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
 			},
+			unsignedIntHandle: false,
 			isFullRange: false,
 		},
 		{
@@ -165,6 +169,7 @@ func (s *testRangeSuite) TestIsFullRange(c *C) {
 				LowVal:  []types.Datum{*nullDatum.Clone()},
 				HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
 			},
+			unsignedIntHandle: false,
 			isFullRange: true,
 		},
 		{
@@ -172,6 +177,7 @@ func (s *testRangeSuite) TestIsFullRange(c *C) {
 				LowVal:  []types.Datum{*nullDatum.Clone()},
 				HighVal: []types.Datum{*nullDatum.Clone()},
 			},
+			unsignedIntHandle: false,
 			isFullRange: false,
 		},
 		{
@@ -179,10 +185,19 @@ func (s *testRangeSuite) TestIsFullRange(c *C) {
 				LowVal:  []types.Datum{types.MinNotNullDatum()},
 				HighVal: []types.Datum{types.MaxValueDatum()},
 			},
+			unsignedIntHandle: false,
+			isFullRange: true,
+		},
+		{
+			ran: ranger.Range{
+				LowVal:  []types.Datum{types.NewUintDatum(0)},
+				HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
+			},
+			unsignedIntHandle: true,
 			isFullRange: true,
 		},
 	}
 	for _, t := range isFullRangeTests {
-		c.Assert(t.ran.IsFullRange(), Equals, t.isFullRange)
+		c.Assert(t.ran.IsFullRange(t.unsignedIntHandle), Equals, t.isFullRange)
 	}
 }

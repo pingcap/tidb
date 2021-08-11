@@ -622,8 +622,14 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
+			var unsignedIntHandle bool
+			if path.IsIntHandlePath && ds.tableInfo.PKIsHandle {
+				if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
+					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.Flag)
+				}
+			}
 			// If the path contains a full range, ignore it.
-			if ranger.HasFullRange(path.Ranges) {
+			if ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
 				continue
 			}
 			// If we have point or empty range, just remove other possible paths.
@@ -649,7 +655,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			}
 			ds.deriveIndexPathStats(path, conditions, true)
 			// If the path contains a full range, ignore it.
-			if ranger.HasFullRange(path.Ranges) {
+			if ranger.HasFullRange(path.Ranges, false) {
 				continue
 			}
 			// If we have empty range, or point range on unique index, just remove other possible paths.
