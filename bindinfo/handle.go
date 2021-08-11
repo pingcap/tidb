@@ -114,6 +114,7 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 		// BindSQL has already been validated when coming here, so we use nil sctx parameter.
 		return handle.AddBindRecord(nil, record)
 	}
+	variable.RegisterStatistics(handle)
 	return handle
 }
 
@@ -128,7 +129,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
 	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source
-	FROM mysql.bind_info WHERE update_time > %? ORDER BY update_time`, updateTime)
+	FROM mysql.bind_info WHERE update_time > %? ORDER BY update_time, create_time`, updateTime)
 	if err != nil {
 		return err
 	}
@@ -217,13 +218,15 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 	if err = h.lockBindInfoTable(); err != nil {
 		return err
 	}
-	// Binding recreation should physically delete previous bindings.
-	_, err = exec.ExecuteInternal(context.TODO(), `DELETE FROM mysql.bind_info WHERE original_sql = %?`, record.OriginalSQL)
+
+	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+
+	updateTs := now.String()
+	_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
+		deleted, updateTs, record.OriginalSQL, updateTs)
 	if err != nil {
 		return err
 	}
-
-	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 
 	for i := range record.Bindings {
 		record.Bindings[i].CreateTime = now
@@ -386,6 +389,45 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 	}
 
 	deleteRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())
+	return err
+}
+
+// GCBindRecord physically removes the deleted bind records in mysql.bind_info.
+func (h *BindHandle) GCBindRecord() (err error) {
+	h.bindInfo.Lock()
+	h.sctx.Lock()
+	defer func() {
+		h.sctx.Unlock()
+		h.bindInfo.Unlock()
+	}()
+	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN PESSIMISTIC")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
+			terror.Log(err1)
+			return
+		}
+
+		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
+		if err != nil {
+			return
+		}
+	}()
+
+	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
+	if err = h.lockBindInfoTable(); err != nil {
+		return err
+	}
+
+	// To make sure that all the deleted bind records have been acknowledged to all tidb,
+	// we only garbage collect those records with update_time before 10 leases.
+	updateTime := time.Now().Add(-(10 * Lease))
+	updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
+	_, err = exec.ExecuteInternal(context.TODO(), `DELETE FROM mysql.bind_info WHERE status = 'deleted' and update_time < %?`, updateTimeStr)
 	return err
 }
 
@@ -657,7 +699,13 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("EXPLAIN FORMAT='hint' %s", sql))
 	sctx.GetSessionVars().UsePlanBaselines = origVals
 	if rs != nil {
-		defer terror.Call(rs.Close)
+		defer func() {
+			// Audit log is collected in Close(), set InRestrictedSQL to avoid 'create sql binding' been recorded as 'explain'.
+			origin := sctx.GetSessionVars().InRestrictedSQL
+			sctx.GetSessionVars().InRestrictedSQL = true
+			terror.Call(rs.Close)
+			sctx.GetSessionVars().InRestrictedSQL = origin
+		}()
 	}
 	if err != nil {
 		return "", err

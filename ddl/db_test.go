@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -294,7 +295,6 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 
 // TestAddPrimaryKeyRollback1 is used to test scenarios that will roll back when a duplicate primary key is encountered.
 func (s *testDBSuite8) TestAddPrimaryKeyRollback1(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210705")
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
@@ -312,7 +312,6 @@ func (s *testDBSuite8) TestAddPrimaryKeyRollback2(c *C) {
 }
 
 func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210702")
 	hasNullValsInKey := false
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
@@ -340,6 +339,11 @@ func (s *testSerialDBSuite) TestWriteReorgForColumnTypeChangeOnAmendTxn(c *C) {
 
 		var checkErr error
 		tk1 := testkit.NewTestKit(c, s.store)
+		defer func() {
+			if tk1.Se != nil {
+				tk1.Se.Close()
+			}
+		}()
 		hook := &ddl.TestDDLCallback{Do: s.dom}
 		times := 0
 		hook.OnJobUpdatedExported = func(job *model.Job) {
@@ -459,6 +463,15 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	c.Assert(physicalID, Equals, int64(0))
 }
 
+func (s *testSerialDBSuite) TestDropTableOnTiKVDiskFull(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table test_disk_full_drop_table(a int);")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcTiKVAllowedOnAlmostFull", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcTiKVAllowedOnAlmostFull")
+	tk.MustExec("drop table test_disk_full_drop_table;")
+}
+
 func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 	dml := fmt.Sprintf("insert into %s values", tbl)
 	for i := start; i < end; i++ {
@@ -513,8 +526,9 @@ LOOP:
 			// delete some rows, and add some data
 			for i := count; i < count+step; i++ {
 				n := rand.Intn(count)
-				// Don't delete this row, otherwise error message would change.
-				if n == defaultBatchSize*2-10 {
+				// (2048, 2038, 2038) and (2038, 2038, 2038)
+				// Don't delete rows where c1 is 2048 or 2038, otherwise, the entry value in duplicated error message would change.
+				if n == defaultBatchSize*2-10 || n == defaultBatchSize*2 {
 					continue
 				}
 				tk.MustExec("delete from t1 where c1 = ?", n)
@@ -1205,9 +1219,26 @@ func (s *testDBSuite6) TestAddIndex1(c *C) {
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))", "")
 }
 
+func (s *testSerialDBSuite1) TestAddIndex1WithShardRowID(c *C) {
+	testAddIndex(c, s.store, s.lease, testPartition|testShardRowID,
+		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint) SHARD_ROW_ID_BITS = 4 pre_split_regions = 4;", "")
+}
+
 func (s *testDBSuite2) TestAddIndex2(c *C) {
 	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
+			      partition by range (c1) (
+			      partition p0 values less than (3440),
+			      partition p1 values less than (61440),
+			      partition p2 values less than (122880),
+			      partition p3 values less than (204800),
+			      partition p4 values less than maxvalue)`, "")
+}
+
+func (s *testSerialDBSuite) TestAddIndex2WithShardRowID(c *C) {
+	testAddIndex(c, s.store, s.lease, testPartition|testShardRowID,
+		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint)
+				  SHARD_ROW_ID_BITS = 4 pre_split_regions = 4
 			      partition by range (c1) (
 			      partition p0 values less than (3440),
 			      partition p1 values less than (61440),
@@ -1222,9 +1253,28 @@ func (s *testDBSuite3) TestAddIndex3(c *C) {
 			      partition by hash (c1) partitions 4;`, "")
 }
 
+func (s *testSerialDBSuite1) TestAddIndex3WithShardRowID(c *C) {
+	testAddIndex(c, s.store, s.lease, testPartition|testShardRowID,
+		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint)
+				  SHARD_ROW_ID_BITS = 4 pre_split_regions = 4
+			      partition by hash (c1) partitions 4;`, "")
+}
+
 func (s *testDBSuite8) TestAddIndex4(c *C) {
 	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
+			      partition by range columns (c1) (
+			      partition p0 values less than (3440),
+			      partition p1 values less than (61440),
+			      partition p2 values less than (122880),
+			      partition p3 values less than (204800),
+			      partition p4 values less than maxvalue)`, "")
+}
+
+func (s *testSerialDBSuite) TestAddIndex4WithShardRowID(c *C) {
+	testAddIndex(c, s.store, s.lease, testPartition|testShardRowID,
+		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint)
+				  SHARD_ROW_ID_BITS = 4 pre_split_regions = 4
 			      partition by range columns (c1) (
 			      partition p0 values less than (3440),
 			      partition p1 values less than (61440),
@@ -1238,21 +1288,31 @@ func (s *testDBSuite5) TestAddIndex5(c *C) {
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c2, c3))`, "")
 }
 
-type testAddIndexType int8
+type testAddIndexType uint8
 
 const (
-	testPlain testAddIndexType = iota
-	testPartition
-	testClusteredIndex
+	testPlain          testAddIndexType = 1
+	testPartition      testAddIndexType = 1 << 1
+	testClusteredIndex testAddIndexType = 1 << 2
+	testShardRowID     testAddIndexType = 1 << 3
 )
 
 func testAddIndex(c *C, store kv.Storage, lease time.Duration, tp testAddIndexType, createTableSQL, idxTp string) {
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
-	switch tp {
-	case testPartition:
+	isTestPartition := (testPartition & tp) > 0
+	isTestShardRowID := (testShardRowID & tp) > 0
+	if isTestShardRowID {
+		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+		tk.MustExec("set global tidb_scatter_region = 1")
+		defer func() {
+			atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+			tk.MustExec("set global tidb_scatter_region = 0")
+		}()
+	}
+	if isTestPartition {
 		tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
-	case testClusteredIndex:
+	} else if (testClusteredIndex & tp) > 0 {
 		tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	}
 	tk.MustExec("drop table if exists test_add_index")
@@ -1271,6 +1331,9 @@ func testAddIndex(c *C, store kv.Storage, lease time.Duration, tp testAddIndexTy
 	// Make sure there are no duplicate keys.
 	base := defaultBatchSize * 20
 	for i := 1; i < batchCnt; i++ {
+		if isTestShardRowID {
+			base = i % 4 << 61
+		}
 		n := base + i*defaultBatchSize + i
 		for j := 0; j < rand.Intn(maxBatch); j++ {
 			n += j
@@ -1320,6 +1383,14 @@ LOOP:
 		}
 	}
 
+	if isTestShardRowID {
+		re := tk.MustQuery("show table test_add_index regions;")
+		rows := re.Rows()
+		c.Assert(len(rows), GreaterEqual, 16)
+		tk.MustExec("admin check table test_add_index")
+		return
+	}
+
 	// get exists keys
 	keys := make([]int, 0, num)
 	for i := start; i < num; i++ {
@@ -1339,7 +1410,7 @@ LOOP:
 	matchRows(c, rows, expectedRows)
 
 	tk.MustExec("admin check table test_add_index")
-	if tp == testPartition {
+	if isTestPartition {
 		return
 	}
 
@@ -1400,6 +1471,116 @@ LOOP:
 	}
 	c.Assert(handles.Len(), Equals, 0)
 	tk.MustExec("drop table test_add_index")
+}
+
+func (s *testDBSuite1) TestAddIndexWithSplitTable(c *C) {
+	createSQL := "CREATE TABLE test_add_index(a bigint PRIMARY KEY AUTO_RANDOM(4), b varchar(255), c bigint)"
+	stSQL := fmt.Sprintf("SPLIT TABLE test_add_index BETWEEN (%d) AND (%d) REGIONS 16;", math.MinInt64, math.MaxInt64)
+	testAddIndexWithSplitTable(c, s.store, s.lease, createSQL, stSQL)
+}
+
+func (s *testSerialDBSuite) TestAddIndexWithShardRowID(c *C) {
+	createSQL := "create table test_add_index(a bigint, b bigint, c bigint) SHARD_ROW_ID_BITS = 4 pre_split_regions = 4;"
+	testAddIndexWithSplitTable(c, s.store, s.lease, createSQL, "")
+}
+
+func testAddIndexWithSplitTable(c *C, store kv.Storage, lease time.Duration, createSQL, splitTableSQL string) {
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists test_add_index")
+	hasAutoRadomField := len(splitTableSQL) > 0
+	if !hasAutoRadomField {
+		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+		tk.MustExec("set global tidb_scatter_region = 1")
+		defer func() {
+			atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+			tk.MustExec("set global tidb_scatter_region = 0")
+		}()
+	}
+	tk.MustExec(createSQL)
+
+	batchInsertRows := func(tk *testkit.TestKit, needVal bool, tbl string, start, end int) error {
+		dml := fmt.Sprintf("insert into %s values", tbl)
+		for i := start; i < end; i++ {
+			if needVal {
+				dml += fmt.Sprintf("(%d, %d, %d)", i, i, i)
+			} else {
+				dml += "()"
+			}
+			if i != end-1 {
+				dml += ","
+			}
+		}
+		_, err := tk.Exec(dml)
+		return err
+	}
+
+	done := make(chan error, 1)
+	start := -20
+	num := defaultBatchSize
+	// Add some discrete rows.
+	goCnt := 10
+	errCh := make(chan error, goCnt)
+	for i := 0; i < goCnt; i++ {
+		base := (i % 8) << 60
+		go func(b int, eCh chan error) {
+			tk1 := testkit.NewTestKit(c, store)
+			tk1.MustExec("use test_db")
+			eCh <- batchInsertRows(tk1, !hasAutoRadomField, "test_add_index", base+start, base+num)
+		}(base, errCh)
+	}
+	for i := 0; i < goCnt; i++ {
+		e := <-errCh
+		c.Assert(e, IsNil)
+	}
+
+	if hasAutoRadomField {
+		tk.MustQuery(splitTableSQL).Check(testkit.Rows("15 1"))
+	}
+	tk.MustQuery("select @@session.tidb_wait_split_region_finish;").Check(testkit.Rows("1"))
+	re := tk.MustQuery("show table test_add_index regions;")
+	rows := re.Rows()
+	c.Assert(len(rows), Equals, 16)
+	addIdxSQL := "alter table test_add_index add index idx(a)"
+	testddlutil.SessionExecInGoroutine(c, store, addIdxSQL, done)
+
+	ticker := time.NewTicker(lease / 5)
+	defer ticker.Stop()
+	num = 0
+LOOP:
+	for {
+		select {
+		case err := <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+		case <-ticker.C:
+			// When the server performance is particularly poor,
+			// the adding index operation can not be completed.
+			// So here is a limit to the number of rows inserted.
+			if num >= 1000 {
+				break
+			}
+			step := 20
+			// delete, insert and update some data
+			for i := num; i < num+step; i++ {
+				sql := fmt.Sprintf("delete from test_add_index where a = %d", i+1)
+				tk.MustExec(sql)
+				if hasAutoRadomField {
+					sql = "insert into test_add_index values ()"
+				} else {
+					sql = fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
+				}
+				tk.MustExec(sql)
+				sql = fmt.Sprintf("update test_add_index set b = %d", i*10)
+				tk.MustExec(sql)
+			}
+			num += step
+		}
+	}
+
+	tk.MustExec("admin check table test_add_index")
 }
 
 // TestCancelAddTableAndDropTablePartition tests cancel ddl job which type is add/drop table partition.
@@ -2520,7 +2701,7 @@ func (s *testDBSuite5) TestRenameColumn(c *C) {
 	assertColNames("test_rename_column", "id", "col2")
 	s.mustExec(tk, c, "alter table test_rename_column rename column col2 to col1")
 	assertColNames("test_rename_column", "id", "col1")
-	tk.MustGetErrCode("alter table test_rename_column rename column id to id1", errno.ErrBadField)
+	tk.MustGetErrCode("alter table test_rename_column rename column id to id1", errno.ErrDependentByGeneratedColumn)
 
 	// Test renaming view columns.
 	tk.MustExec("drop table test_rename_column")

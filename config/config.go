@@ -366,6 +366,9 @@ type Security struct {
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
 	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
+	// Allow automatic TLS certificate generation
+	AutoTLS       bool   `toml:"auto-tls" json:"auto-tls"`
+	MinTLSVersion string `toml:"tls-version" json:"tls-version"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -674,6 +677,7 @@ var defaultConf = Config{
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
+		AutoTLS:                     true,
 	},
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,
@@ -706,20 +710,21 @@ func StoreGlobalConfig(config *Config) {
 }
 
 var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl":            {},
-	"pessimistic-txn.enable":         {},
-	"log.file.log-rotate":            {},
-	"log.log-slow-query":             {},
-	"txn-local-latches":              {},
-	"txn-local-latches.enabled":      {},
-	"txn-local-latches.capacity":     {},
-	"performance.max-memory":         {},
-	"max-txn-time-use":               {},
-	"experimental.allow-auto-random": {},
-	"enable-redact-log":              {}, // use variable tidb_redact_log instead
-	"tikv-client.copr-cache.enable":  {},
-	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
-	"enable-streaming":               {},
+	"pessimistic-txn.ttl":                 {},
+	"pessimistic-txn.enable":              {},
+	"log.file.log-rotate":                 {},
+	"log.log-slow-query":                  {},
+	"txn-local-latches":                   {},
+	"txn-local-latches.enabled":           {},
+	"txn-local-latches.capacity":          {},
+	"performance.max-memory":              {},
+	"max-txn-time-use":                    {},
+	"experimental.allow-auto-random":      {},
+	"enable-redact-log":                   {}, // use variable tidb_redact_log instead
+	"tikv-client.copr-cache.enable":       {},
+	"alter-primary-key":                   {}, // use NONCLUSTERED keyword instead
+	"enable-streaming":                    {},
+	"experimental.allow-expression-index": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
