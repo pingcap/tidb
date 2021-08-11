@@ -23,25 +23,47 @@ import (
 	"github.com/pingcap/errors"
 )
 
+type RoundRule int
+
+const (
+	// RoundHalfUp For exact-value numbers, ROUND() uses the “round half up” rule
+	RoundHalfUp RoundRule = iota + 1
+
+	// RoundNearestEven For approximate-value numbers, the result depends on the C library. On many systems,
+	// this means that ROUND() uses the “round to nearest even” rule
+	RoundNearestEven
+)
+
 // RoundFloat rounds float val to the nearest even integer value with float64 format, like MySQL Round function.
-// RoundFloat uses default rounding mode, see https://dev.mysql.com/doc/refman/5.7/en/precision-math-rounding.html
-// so rounding use "round to nearest even".
+// see https://dev.mysql.com/doc/refman/5.7/en/precision-math-rounding.html
 // e.g, 1.5 -> 2, -1.5 -> -2.
 func RoundFloat(f float64) float64 {
 	return math.RoundToEven(f)
 }
 
-// Round rounds the argument f to dec decimal places.
+// Round rounds the argument f to dec decimal places use “round to nearest even” rule as default.
 // dec defaults to 0 if not specified. dec can be negative
 // to cause dec digits left of the decimal point of the
 // value f to become zero.
-func Round(f float64, dec int) float64 {
+func Round(f float64, dec int, r ...RoundRule) float64 {
 	shift := math.Pow10(dec)
 	tmp := f * shift
 	if math.IsInf(tmp, 0) {
 		return f
 	}
-	result := RoundFloat(tmp) / shift
+
+	var rr = RoundNearestEven
+	if len(r) > 0 {
+		rr = r[0]
+	}
+
+	var result float64
+	if rr == RoundNearestEven {
+		result = math.RoundToEven(tmp) / shift
+	} else {
+		result = math.Round(tmp) / shift
+	}
+
 	if math.IsNaN(result) {
 		return 0
 	}

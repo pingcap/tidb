@@ -441,7 +441,7 @@ func (b *builtinRoundWithFracIntSig) evalInt(row chunk.Row) (int64, bool, error)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return int64(types.Round(float64(val), int(frac))), false, nil
+	return int64(types.Round(float64(val), int(frac), types.RoundHalfUp)), false, nil
 }
 
 type builtinRoundWithFracDecSig struct {
