@@ -337,6 +337,8 @@ func (importer *FileImporter) Import(
 							logutil.Region(info.Region),
 							logutil.Key("startKey", startKey),
 							logutil.Key("endKey", endKey),
+							logutil.Key("file-simple-start", files[0].StartKey),
+							logutil.Key("file-simple-end", files[0].EndKey),
 							logutil.ShortError(e))
 						continue regionLoop
 					}
@@ -349,7 +351,10 @@ func (importer *FileImporter) Import(
 					logutil.ShortError(errDownload))
 				return errors.Trace(errDownload)
 			}
-			log.Info("download file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)))
+			log.Info("download file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)),
+				logutil.Key("start", files[0].StartKey),
+				logutil.Key("end", files[0].EndKey),
+			)
 			ingestResp, errIngest := importer.ingestSSTs(ctx, downloadMetas, info)
 		ingestRetry:
 			for errIngest == nil {
@@ -449,7 +454,7 @@ func (importer *FileImporter) downloadSST(
 	}
 	regionRule := matchNewPrefix(key, rewriteRules)
 	if regionRule == nil {
-		return nil, errors.Trace(berrors.ErrKVRewriteRuleNotFound)
+		return nil, errors.Annotatef(berrors.ErrKVRewriteRuleNotFound, "failed to find rewrite rule.")
 	}
 	rule := import_sstpb.RewriteRule{
 		OldKeyPrefix: encodeKeyPrefix(regionRule.GetOldKeyPrefix()),

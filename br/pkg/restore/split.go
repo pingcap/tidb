@@ -363,6 +363,7 @@ func NeedSplit(splitKey []byte, regions []*RegionInfo) *RegionInfo {
 	for _, region := range regions {
 		// If splitKey is the boundary of the region
 		if bytes.Equal(splitKey, region.Region.GetStartKey()) {
+			log.Info("skipping split region because already split", logutil.Key("key", splitKey))
 			return nil
 		}
 		// If splitKey is in a region
@@ -370,6 +371,7 @@ func NeedSplit(splitKey []byte, regions []*RegionInfo) *RegionInfo {
 			return region
 		}
 	}
+	log.Warn("skipping split region because split key out of regions, this would probably be a bug", logutil.Key("key", splitKey))
 	return nil
 }
 

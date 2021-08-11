@@ -61,7 +61,7 @@ const (
 
 	shardRowIDBitsMax = 15
 
-	batchAddingJobs = 10
+	batchAddingJobs = 50
 
 	// PartitionCountLimit is limit of the number of partitions in a table.
 	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
