@@ -1886,3 +1886,15 @@ func (s *testClusterTableSuite) TestDataLockWaitsPrivilege(c *C) {
 	}, nil, nil), IsTrue)
 	_ = tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS")
 }
+
+func (s *testTableSuite) TestReferentialConstraints(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("CREATE DATABASE referconstraints")
+	tk.MustExec("use referconstraints")
+
+	tk.MustExec("CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY)")
+	tk.MustExec("CREATE TABLE t2 (id INT NOT NULL PRIMARY KEY, t1_id INT DEFAULT NULL, INDEX (t1_id), CONSTRAINT `fk_to_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`))")
+
+	tk.MustQuery(`SELECT * FROM information_schema.referential_constraints WHERE table_name='t2'`).Check(testkit.Rows("def referconstraints fk_to_t1 def referconstraints PRIMARY NONE NO ACTION NO ACTION t2 t1"))
+}
