@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
+// RoundRule indicate the 2 round rule for The ROUND() function
 type RoundRule int
 
 const (
