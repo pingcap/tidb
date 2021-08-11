@@ -101,3 +101,6 @@ require (
 
 // FIXME the official repo has some bug makes br_gcs test failed. https://github.com/googleapis/google-cloud-go/pull/3509
 // replace cloud.google.com/go/storage => github.com/3pointer/google-cloud-go/storage v1.6.1-0.20210108125931-b59bfa0720b2
+// FIXME first merge https://github.com/pingcap/parser/pull/1304 then update the real github.com/pingcap/parser version
+
+replace github.com/pingcap/parser => github.com/mjonss/parser v0.0.0-20210811213526-fa902a87ce9d
