@@ -122,6 +122,7 @@ func init() {
 type saveCp struct {
 	tableName string
 	merger    checkpoints.TableCheckpointMerger
+	waitCh    chan error
 }
 
 type errorSummary struct {
@@ -907,11 +908,21 @@ func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 	return nil
 }
 
-func (rc *Controller) saveStatusCheckpoint(tableName string, engineID int32, err error, statusIfSucceed checkpoints.CheckpointStatus) {
+func firstErr(errors ...error) error {
+	for _, err := range errors {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string, engineID int32, err error, statusIfSucceed checkpoints.CheckpointStatus) error {
 	merger := &checkpoints.StatusCheckpointMerger{Status: statusIfSucceed, EngineID: engineID}
 
-	log.L().Debug("update checkpoint", zap.String("table", tableName), zap.Int32("engine_id", engineID),
-		zap.Uint8("new_status", uint8(statusIfSucceed)), zap.Error(err))
+	logger := log.L().With(zap.String("table", tableName), zap.Int32("engine_id", engineID),
+		zap.String("new_status", statusIfSucceed.MetricName()), zap.Error(err))
+	logger.Debug("update checkpoint")
 
 	switch {
 	case err == nil:
@@ -920,7 +931,7 @@ func (rc *Controller) saveStatusCheckpoint(tableName string, engineID int32, err
 		merger.SetInvalid()
 		rc.errorSummaries.record(tableName, err, statusIfSucceed)
 	default:
-		return
+		return nil
 	}
 
 	if engineID == checkpoints.WholeTableEngineID {
@@ -929,7 +940,20 @@ func (rc *Controller) saveStatusCheckpoint(tableName string, engineID int32, err
 		metric.RecordEngineCount(statusIfSucceed.MetricName(), err)
 	}
 
-	rc.saveCpCh <- saveCp{tableName: tableName, merger: merger}
+	waitCh := make(chan error, 1)
+	rc.saveCpCh <- saveCp{tableName: tableName, merger: merger, waitCh: waitCh}
+
+	var saveCpErr error
+	select {
+	case saveCpErr = <-waitCh:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if saveCpErr != nil {
+		logger.Error("failed to save status checkpoint", zap.Error(saveCpErr))
+		return err
+	}
+	return nil
 }
 
 // listenCheckpointUpdates will combine several checkpoints together to reduce database load.
@@ -938,6 +962,7 @@ func (rc *Controller) listenCheckpointUpdates() {
 
 	var lock sync.Mutex
 	coalesed := make(map[string]*checkpoints.TableCheckpointDiff)
+	var waiters []chan error
 
 	hasCheckpoint := make(chan struct{}, 1)
 	defer close(hasCheckpoint)
@@ -947,10 +972,18 @@ func (rc *Controller) listenCheckpointUpdates() {
 			lock.Lock()
 			cpd := coalesed
 			coalesed = make(map[string]*checkpoints.TableCheckpointDiff)
+			ws := waiters
+			waiters = nil
 			lock.Unlock()
 
+			//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
+			failpoint.Inject("SlowDownCheckpointUpdate", func() {})
+
 			if len(cpd) > 0 {
-				rc.checkpointsDB.Update(cpd)
+				err := rc.checkpointsDB.Update(cpd)
+				for _, w := range ws {
+					w <- err
+				}
 				web.BroadcastCheckpointDiff(cpd)
 			}
 			rc.checkpointsWg.Done()
@@ -965,6 +998,9 @@ func (rc *Controller) listenCheckpointUpdates() {
 			coalesed[scp.tableName] = cpd
 		}
 		scp.merger.MergeInto(cpd)
+		if scp.waitCh != nil {
+			waiters = append(waiters, scp.waitCh)
+		}
 
 		if len(hasCheckpoint) == 0 {
 			rc.checkpointsWg.Add(1)

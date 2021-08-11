@@ -489,7 +489,7 @@ type DB interface {
 	// It assumes the entire table has not been imported before and will fill in
 	// default values for the column permutations and checksums.
 	InsertEngineCheckpoints(ctx context.Context, tableName string, checkpoints map[int32]*EngineCheckpoint) error
-	Update(checkpointDiffs map[string]*TableCheckpointDiff)
+	Update(checkpointDiffs map[string]*TableCheckpointDiff) error
 
 	RemoveCheckpoint(ctx context.Context, tableName string) error
 	// MoveCheckpoints renames the checkpoint schema to include a suffix
@@ -598,7 +598,9 @@ func (*NullCheckpointsDB) InsertEngineCheckpoints(_ context.Context, _ string, _
 	return nil
 }
 
-func (*NullCheckpointsDB) Update(map[string]*TableCheckpointDiff) {}
+func (*NullCheckpointsDB) Update(map[string]*TableCheckpointDiff) error {
+	return nil
+}
 
 type MySQLCheckpointsDB struct {
 	db     *sql.DB
@@ -858,7 +860,7 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tab
 	return nil
 }
 
-func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) {
+func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) error {
 	chunkQuery := fmt.Sprintf(UpdateChunkTemplate, cpdb.schema, CheckpointTableNameChunk)
 	rebaseQuery := fmt.Sprintf(UpdateTableRebaseTemplate, cpdb.schema, CheckpointTableNameTable)
 	tableStatusQuery := fmt.Sprintf(UpdateTableStatusTemplate, cpdb.schema, CheckpointTableNameTable)
@@ -866,7 +868,7 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 	engineStatusQuery := fmt.Sprintf(UpdateEngineTemplate, cpdb.schema, CheckpointTableNameEngine)
 
 	s := common.SQLWithRetry{DB: cpdb.db, Logger: log.L()}
-	err := s.Transact(context.Background(), "update checkpoints", func(c context.Context, tx *sql.Tx) error {
+	return s.Transact(context.Background(), "update checkpoints", func(c context.Context, tx *sql.Tx) error {
 		chunkStmt, e := tx.PrepareContext(c, chunkQuery)
 		if e != nil {
 			return errors.Trace(e)
@@ -932,9 +934,6 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 
 		return nil
 	})
-	if err != nil {
-		log.L().Error("save checkpoint failed", zap.Error(err))
-	}
 }
 
 type FileCheckpointsDB struct {
@@ -1164,7 +1163,7 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 	return errors.Trace(cpdb.save())
 }
 
-func (cpdb *FileCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) {
+func (cpdb *FileCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) error {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
@@ -1199,9 +1198,7 @@ func (cpdb *FileCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoin
 		}
 	}
 
-	if err := cpdb.save(); err != nil {
-		log.L().Error("save checkpoint failed", zap.Error(err))
-	}
+	return cpdb.save()
 }
 
 // Management functions ----------------------------------------------------------------------------
