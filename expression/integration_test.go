@@ -2631,6 +2631,8 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("2017-01-01 00:00:00.00"))
 	result = tk.MustQuery(`select cast(20170118.999 as datetime);`)
 	result.Check(testkit.Rows("2017-01-18 00:00:00"))
+	result = tk.MustQuery(`select cast('e' as date);`)
+	result.Check(testkit.Rows("<nil>"))
 	tk.MustQuery(`select convert(a2.a, unsigned int) from (select cast('"9223372036854775808"' as json) as a) as a2;`)
 
 	tk.MustExec(`create table tb5(a bigint(64) unsigned, b double);`)
