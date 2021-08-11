@@ -67,6 +67,9 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionPushDown(c *C) {
 	tk.MustExec(`create table tlist (a int) partition by list (a) (
     partition p0 values in (0, 1, 2),
     partition p1 values in (3, 4, 5))`)
+	tk.MustExec(`create table tcollist (a int) partition by list columns(a) (
+    partition p0 values in (0, 1, 2),
+    partition p1 values in (3, 4, 5))`)
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 
 	var input []string
@@ -84,6 +87,38 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionPushDown(c *C) {
 	}
 }
 
+func (s *testIntegrationPartitionSerialSuite) TestListColVariousTypes(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_col_partition_types")
+	tk.MustExec("use list_col_partition_types")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+
+	tk.MustExec(`create table tint (a int) partition by list columns(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))`)
+	tk.MustExec(`create table tdate (a date) partition by list columns(a) (partition p0 values in ('2000-01-01', '2000-01-02'), partition p1 values in ('2000-01-03', '2000-01-04'))`)
+	tk.MustExec(`create table tstring (a varchar(32)) partition by list columns(a) (partition p0 values in ('a', 'b'), partition p1 values in ('c', 'd'))`)
+	c.Assert(tk.ExecToErr(`create table tdouble (a double) partition by list columns(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))`), ErrorMatches, ".*not allowed.*")
+	c.Assert(tk.ExecToErr(`create table tdecimal (a decimal(30, 10)) partition by list columns(a) (partition p0 values in (0, 1), partition p1 values in (2, 3))`), ErrorMatches, ".*not allowed.*")
+
+	tk.MustExec(`insert into tint values (0), (1), (2), (3)`)
+	tk.MustExec(`insert into tdate values ('2000-01-01'), ('2000-01-02'), ('2000-01-03'), ('2000-01-04')`)
+	tk.MustExec(`insert into tstring values ('a'), ('b'), ('c'), ('d')`)
+
+	var input []string
+	var output []struct {
+		SQL     string
+		Results []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Results = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Results...))
+	}
+}
+
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionPruning(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database list_partition_pruning")
@@ -91,6 +126,11 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionPruning(c *C) {
 	tk.MustExec("drop table if exists tlist")
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec(`create table tlist (a int) partition by list (a) (
+    partition p0 values in (0, 1, 2),
+    partition p1 values in (3, 4, 5),
+    partition p2 values in (6, 7, 8),
+    partition p3 values in (9, 10, 11))`)
+	tk.MustExec(`create table tcollist (a int) partition by list columns(a) (
     partition p0 values in (0, 1, 2),
     partition p1 values in (3, 4, 5),
     partition p2 values in (6, 7, 8),
@@ -164,6 +204,12 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionOrderLimit(c *C) 
 		`, partition p2 values in ` + genListPartition(40, 60) +
 		`, partition p3 values in ` + genListPartition(60, 80) +
 		`, partition p4 values in ` + genListPartition(80, 100) + `)`)
+	tk.MustExec(`create table tcollist (a int, b int) partition by list columns(a) (` +
+		` partition p0 values in ` + genListPartition(0, 20) +
+		`, partition p1 values in ` + genListPartition(20, 40) +
+		`, partition p2 values in ` + genListPartition(40, 60) +
+		`, partition p3 values in ` + genListPartition(60, 80) +
+		`, partition p4 values in ` + genListPartition(80, 100) + `)`)
 	tk.MustExec(`create table tnormal (a int, b int)`)
 
 	vals := ""
@@ -174,6 +220,7 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionOrderLimit(c *C) 
 		vals += fmt.Sprintf("(%v, %v)", i*2+rand.Intn(2), i*2+rand.Intn(2))
 	}
 	tk.MustExec(`insert into tlist values ` + vals)
+	tk.MustExec(`insert into tcollist values ` + vals)
 	tk.MustExec(`insert into tnormal values ` + vals)
 
 	for _, orderCol := range []string{"a", "b"} {
@@ -187,8 +234,16 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionOrderLimit(c *C) 
 			tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 			rsStatic := tk.MustQuery(fmt.Sprintf(`select * from tlist %v order by %v limit %v`, randCond, orderCol, limitNum)).Sort()
 
+			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+			rsColDynamic := tk.MustQuery(fmt.Sprintf(`select * from tcollist %v order by %v limit %v`, randCond, orderCol, limitNum)).Sort()
+
+			tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+			rsColStatic := tk.MustQuery(fmt.Sprintf(`select * from tcollist %v order by %v limit %v`, randCond, orderCol, limitNum)).Sort()
+
 			rs.Check(rsDynamic.Rows())
 			rs.Check(rsStatic.Rows())
+			rs.Check(rsColDynamic.Rows())
+			rs.Check(rsColStatic.Rows())
 		}
 	}
 }
@@ -209,6 +264,12 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionAgg(c *C) {
 		`, partition p2 values in ` + genListPartition(40, 60) +
 		`, partition p3 values in ` + genListPartition(60, 80) +
 		`, partition p4 values in ` + genListPartition(80, 100) + `)`)
+	tk.MustExec(`create table tcollist (a int, b int) partition by list columns(a) (` +
+		` partition p0 values in ` + genListPartition(0, 20) +
+		`, partition p1 values in ` + genListPartition(20, 40) +
+		`, partition p2 values in ` + genListPartition(40, 60) +
+		`, partition p3 values in ` + genListPartition(60, 80) +
+		`, partition p4 values in ` + genListPartition(80, 100) + `)`)
 	tk.MustExec(`create table tnormal (a int, b int)`)
 
 	vals := ""
@@ -219,6 +280,7 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionAgg(c *C) {
 		vals += fmt.Sprintf("(%v, %v)", rand.Intn(100), rand.Intn(100))
 	}
 	tk.MustExec(`insert into tlist values ` + vals)
+	tk.MustExec(`insert into tcollist values ` + vals)
 	tk.MustExec(`insert into tnormal values ` + vals)
 
 	for _, aggFunc := range []string{"min", "max", "sum", "count"} {
@@ -232,8 +294,16 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionAgg(c *C) {
 			tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 			rsStatic := tk.MustQuery(fmt.Sprintf(`select %v, %v(%v) from tlist group by %v`, c1, aggFunc, c2, c1)).Sort()
 
+			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+			rsColDynamic := tk.MustQuery(fmt.Sprintf(`select %v, %v(%v) from tcollist group by %v`, c1, aggFunc, c2, c1)).Sort()
+
+			tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+			rsColStatic := tk.MustQuery(fmt.Sprintf(`select %v, %v(%v) from tcollist group by %v`, c1, aggFunc, c2, c1)).Sort()
+
 			rs.Check(rsDynamic.Rows())
 			rs.Check(rsStatic.Rows())
+			rs.Check(rsColDynamic.Rows())
+			rs.Check(rsColStatic.Rows())
 		}
 	}
 }
@@ -263,6 +333,25 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionDML(c *C) {
 	tk.MustQuery("select a from tlist order by a").Check(testkit.Rows("0", "1", "2", "3"))
 	tk.MustExec("delete from tlist partition(p0, p2)")
 	tk.MustQuery("select a from tlist order by a").Check(testkit.Rows())
+
+	tk.MustExec(`create table tcollist (a int) partition by list columns(a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
+	tk.MustExec("insert into tcollist partition(p0) values (0), (1)")
+	tk.MustExec("insert into tcollist partition(p0, p1) values (2), (3), (8), (9)")
+	c.Assert(tk.ExecToErr("insert into tcollist partition(p0) values (9)"), ErrorMatches, ".*Found a row not matching the given partition set.*")
+	c.Assert(tk.ExecToErr("insert into tcollist partition(p3) values (20)"), ErrorMatches, ".*Unknown partition.*")
+
+	tk.MustExec("update tcollist partition(p0) set a=a+1")
+	tk.MustQuery("select a from tcollist order by a").Check(testkit.Rows("1", "2", "3", "4", "8", "9"))
+	tk.MustExec("update tcollist partition(p0, p1) set a=a-1")
+	tk.MustQuery("select a from tcollist order by a").Check(testkit.Rows("0", "1", "2", "3", "7", "8"))
+
+	tk.MustExec("delete from tcollist partition(p1)")
+	tk.MustQuery("select a from tcollist order by a").Check(testkit.Rows("0", "1", "2", "3"))
+	tk.MustExec("delete from tcollist partition(p0, p2)")
+	tk.MustQuery("select a from tcollist order by a").Check(testkit.Rows())
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionCreation(c *C) {
@@ -277,13 +366,23 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionCreation(c *C) {
 	c.Assert(tk.ExecToErr("create table tuk2 (a int, b int, unique key(a)) partition by list (b) (partition p0 values in (0))"), ErrorMatches, ".*UNIQUE INDEX must include all columns.*")
 	c.Assert(tk.ExecToErr("create table tuk2 (a int, b int, unique key(a), unique key(b)) partition by list (a) (partition p0 values in (0))"), ErrorMatches, ".*UNIQUE INDEX must include all columns.*")
 
+	tk.MustExec("create table tcoluk1 (a int, b int, unique key(a)) partition by list columns(a) (partition p0 values in (0))")
+	c.Assert(tk.ExecToErr("create table tcoluk2 (a int, b int, unique key(a)) partition by list columns(b) (partition p0 values in (0))"), ErrorMatches, ".*UNIQUE INDEX must include all columns.*")
+	c.Assert(tk.ExecToErr("create table tcoluk2 (a int, b int, unique key(a), unique key(b)) partition by list columns(a) (partition p0 values in (0))"), ErrorMatches, ".*UNIQUE INDEX must include all columns.*")
+
 	// with PK
 	tk.MustExec("create table tpk1 (a int, b int, primary key(a)) partition by list (a) (partition p0 values in (0))")
 	tk.MustExec("create table tpk2 (a int, b int, primary key(a, b)) partition by list (a) (partition p0 values in (0))")
 
+	tk.MustExec("create table tcolpk1 (a int, b int, primary key(a)) partition by list columns(a) (partition p0 values in (0))")
+	tk.MustExec("create table tcolpk2 (a int, b int, primary key(a, b)) partition by list columns(a) (partition p0 values in (0))")
+
 	// with IDX
 	tk.MustExec("create table tidx1 (a int, b int, key(a), key(b)) partition by list (a) (partition p0 values in (0))")
 	tk.MustExec("create table tidx2 (a int, b int, key(a, b), key(b)) partition by list (a) (partition p0 values in (0))")
+
+	tk.MustExec("create table tcolidx1 (a int, b int, key(a), key(b)) partition by list columns(a) (partition p0 values in (0))")
+	tk.MustExec("create table tcolidx2 (a int, b int, key(a, b), key(b)) partition by list columns(a) (partition p0 values in (0))")
 
 	// with expression
 	tk.MustExec("create table texp1 (a int, b int) partition by list(a-10000) (partition p0 values in (0))")
@@ -310,15 +409,31 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionDDL(c *C) {
 	tk.MustExec(`alter table tlist rename index b to bb`)
 	tk.MustExec(`alter table tlist drop index bb`)
 
+	tk.MustExec(`create table tcollist (a int, b int) partition by list columns (a) (partition p0 values in (0))`)
+	c.Assert(tk.ExecToErr(`alter table tcollist add primary key (b)`), ErrorMatches, ".*must include all.*") // add pk
+	tk.MustExec(`alter table tcollist add primary key (a)`)
+	c.Assert(tk.ExecToErr(`alter table tcollist add unique key (b)`), ErrorMatches, ".*must include all.*") // add uk
+	tk.MustExec(`alter table tcollist add key (b)`)                                                         // add index
+	tk.MustExec(`alter table tcollist rename index b to bb`)
+	tk.MustExec(`alter table tcollist drop index bb`)
+
 	// column
 	tk.MustExec(`alter table tlist add column c varchar(8)`)
 	tk.MustExec(`alter table tlist rename column c to cc`)
 	tk.MustExec(`alter table tlist drop column cc`)
 
+	tk.MustExec(`alter table tcollist add column c varchar(8)`)
+	tk.MustExec(`alter table tcollist rename column c to cc`)
+	tk.MustExec(`alter table tcollist drop column cc`)
+
 	// table
 	tk.MustExec(`alter table tlist rename to tlistxx`)
 	tk.MustExec(`truncate tlistxx`)
 	tk.MustExec(`drop table tlistxx`)
+
+	tk.MustExec(`alter table tcollist rename to tcollistxx`)
+	tk.MustExec(`truncate tcollistxx`)
+	tk.MustExec(`drop table tcollistxx`)
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionOperations(c *C) {
@@ -333,6 +448,11 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionOperations(c *C) 
     partition p1 values in (5, 6, 7, 8, 9),
     partition p2 values in (10, 11, 12, 13, 14),
     partition p3 values in (15, 16, 17, 18, 19))`)
+	tk.MustExec(`create table tcollist (a int) partition by list columns(a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14),
+    partition p3 values in (15, 16, 17, 18, 19))`)
 
 	// truncate
 	tk.MustExec("insert into tlist values (0), (5), (10), (15)")
@@ -341,6 +461,13 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionOperations(c *C) 
 	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("10", "15", "5"))
 	tk.MustExec("alter table tlist truncate partition p1, p2")
 	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("15"))
+
+	tk.MustExec("insert into tcollist values (0), (5), (10), (15)")
+	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("0", "10", "15", "5"))
+	tk.MustExec("alter table tcollist truncate partition p0")
+	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("10", "15", "5"))
+	tk.MustExec("alter table tcollist truncate partition p1, p2")
+	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("15"))
 
 	// drop partition
 	tk.MustExec("insert into tlist values (0), (5), (10)")
@@ -353,12 +480,28 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionOperations(c *C) 
 	c.Assert(tk.ExecToErr("select * from tlist partition (p1)"), ErrorMatches, ".*Unknown partition.*")
 	c.Assert(tk.ExecToErr("alter table tlist drop partition p3"), ErrorMatches, ".*Cannot remove all partitions.*")
 
+	tk.MustExec("insert into tcollist values (0), (5), (10)")
+	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("0", "10", "15", "5"))
+	tk.MustExec("alter table tcollist drop partition p0")
+	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("10", "15", "5"))
+	c.Assert(tk.ExecToErr("select * from tcollist partition (p0)"), ErrorMatches, ".*Unknown partition.*")
+	tk.MustExec("alter table tcollist drop partition p1, p2")
+	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("15"))
+	c.Assert(tk.ExecToErr("select * from tcollist partition (p1)"), ErrorMatches, ".*Unknown partition.*")
+	c.Assert(tk.ExecToErr("alter table tcollist drop partition p3"), ErrorMatches, ".*Cannot remove all partitions.*")
+
 	// add partition
 	tk.MustExec("alter table tlist add partition (partition p0 values in (0, 1, 2, 3, 4))")
 	tk.MustExec("alter table tlist add partition (partition p1 values in (5, 6, 7, 8, 9), partition p2 values in (10, 11, 12, 13, 14))")
 	tk.MustExec("insert into tlist values (0), (5), (10)")
 	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("0", "10", "15", "5"))
 	c.Assert(tk.ExecToErr("alter table tlist add partition (partition pxxx values in (4))"), ErrorMatches, ".*Multiple definition.*")
+
+	tk.MustExec("alter table tcollist add partition (partition p0 values in (0, 1, 2, 3, 4))")
+	tk.MustExec("alter table tcollist add partition (partition p1 values in (5, 6, 7, 8, 9), partition p2 values in (10, 11, 12, 13, 14))")
+	tk.MustExec("insert into tcollist values (0), (5), (10)")
+	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("0", "10", "15", "5"))
+	c.Assert(tk.ExecToErr("alter table tcollist add partition (partition pxxx values in (4))"), ErrorMatches, ".*Multiple definition.*")
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionPrivilege(c *C) {
@@ -404,6 +547,16 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionShardBits(c *C) {
 	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("0", "1", "10", "12", "5", "6"))
 	tk.MustQuery("select * from tlist partition (p0)").Sort().Check(testkit.Rows("0", "1"))
 	tk.MustQuery("select * from tlist partition (p1, p2)").Sort().Check(testkit.Rows("10", "12", "5", "6"))
+
+	tk.MustExec(`create table tcollist (a int) partition by list columns (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
+	tk.MustExec("insert into tcollist values (0), (1), (5), (6), (10), (12)")
+
+	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("0", "1", "10", "12", "5", "6"))
+	tk.MustQuery("select * from tcollist partition (p0)").Sort().Check(testkit.Rows("0", "1"))
+	tk.MustQuery("select * from tcollist partition (p1, p2)").Sort().Check(testkit.Rows("10", "12", "5", "6"))
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionSplitRegion(c *C) {
@@ -423,6 +576,17 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionSplitRegion(c *C)
 	tk.MustQuery("select * from tlist").Sort().Check(testkit.Rows("0", "1", "10", "12", "5", "6"))
 	tk.MustQuery("select * from tlist partition (p0)").Sort().Check(testkit.Rows("0", "1"))
 	tk.MustQuery("select * from tlist partition (p1, p2)").Sort().Check(testkit.Rows("10", "12", "5", "6"))
+
+	tk.MustExec(`create table tcollist (a int, key(a)) partition by list columns (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
+	tk.MustExec("insert into tcollist values (0), (1), (5), (6), (10), (12)")
+
+	tk.MustExec(`split table tcollist index a between (2) and (15) regions 10`)
+	tk.MustQuery("select * from tcollist").Sort().Check(testkit.Rows("0", "1", "10", "12", "5", "6"))
+	tk.MustQuery("select * from tcollist partition (p0)").Sort().Check(testkit.Rows("0", "1"))
+	tk.MustQuery("select * from tcollist partition (p1, p2)").Sort().Check(testkit.Rows("10", "12", "5", "6"))
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionView(c *C) {
@@ -448,6 +612,22 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionView(c *C) {
 	r1 := tk.MustQuery(`select * from vlist`).Sort()
 	r2 := tk.MustQuery(`select * from vnormal`).Sort()
 	r1.Check(r2.Rows())
+
+	tk.MustExec(`create table tcollist (a int, b int) partition by list columns (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
+	tk.MustExec(`create definer='root'@'localhost' view vcollist as select a*2 as a2, a+b as ab from tcollist`)
+	tk.MustExec(`truncate tnormal`)
+	for i := 0; i < 10; i++ {
+		a, b := rand.Intn(15), rand.Intn(100)
+		tk.MustExec(fmt.Sprintf(`insert into tcollist values (%v, %v)`, a, b))
+		tk.MustExec(fmt.Sprintf(`insert into tnormal values (%v, %v)`, a, b))
+	}
+
+	r1 = tk.MustQuery(`select * from vcollist`).Sort()
+	r2 = tk.MustQuery(`select * from vnormal`).Sort()
+	r1.Check(r2.Rows())
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionAutoIncre(c *C) {
@@ -471,6 +651,21 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionAutoIncre(c *C) {
 	tk.MustExec(`insert into tlist (a) values (5)`)
 	tk.MustExec(`insert into tlist (a) values (10)`)
 	tk.MustExec(`insert into tlist (a) values (1)`)
+
+	c.Assert(tk.ExecToErr(`create table tcollist (a int, b int AUTO_INCREMENT) partition by list columns (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`), ErrorMatches, ".*it must be defined as a key.*")
+
+	tk.MustExec(`create table tcollist (a int, b int AUTO_INCREMENT, key(b)) partition by list (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
+
+	tk.MustExec(`insert into tcollist (a) values (0)`)
+	tk.MustExec(`insert into tcollist (a) values (5)`)
+	tk.MustExec(`insert into tcollist (a) values (10)`)
+	tk.MustExec(`insert into tcollist (a) values (1)`)
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionAutoRandom(c *C) {
@@ -489,6 +684,16 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionAutoRandom(c *C) 
     partition p0 values in (0, 1, 2, 3, 4),
     partition p1 values in (5, 6, 7, 8, 9),
     partition p2 values in (10, 11, 12, 13, 14))`)
+
+	c.Assert(tk.ExecToErr(`create table tcollist (a int, b bigint AUTO_RANDOM) partition by list columns (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`), ErrorMatches, ".*Invalid auto random.*")
+
+	tk.MustExec(`create table tcollist (a bigint auto_random, primary key(a)) partition by list columns (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionInvisibleIdx(c *C) {
@@ -501,6 +706,10 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionInvisibleIdx(c *C
 	tk.MustExec(`create table tlist (a int, b int, key(a)) partition by list (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5))`)
 	tk.MustExec(`alter table tlist alter index a invisible`)
 	tk.HasPlan(`select a from tlist where a>=0 and a<=5`, "TableFullScan")
+
+	tk.MustExec(`create table tcollist (a int, b int, key(a)) partition by list columns (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5))`)
+	tk.MustExec(`alter table tcollist alter index a invisible`)
+	tk.HasPlan(`select a from tcollist where a>=0 and a<=5`, "TableFullScan")
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionCTE(c *C) {
@@ -517,6 +726,14 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionCTE(c *C) {
 
 	tk.MustExec(`insert into tlist values (0), (1), (5), (6), (10)`)
 	tk.MustQuery(`with tmp as (select a+1 as a from tlist) select * from tmp`).Sort().Check(testkit.Rows("1", "11", "2", "6", "7"))
+
+	tk.MustExec(`create table tcollist (a int) partition by list columns (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
+
+	tk.MustExec(`insert into tcollist values (0), (1), (5), (6), (10)`)
+	tk.MustQuery(`with tmp as (select a+1 as a from tcollist) select * from tmp`).Sort().Check(testkit.Rows("1", "11", "2", "6", "7"))
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionTempTable(c *C) {
@@ -527,6 +744,7 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionTempTable(c *C) {
 	tk.MustExec(`set tidb_enable_list_partition = 1`)
 	tk.MustExec("set tidb_enable_global_temporary_table = true")
 	c.Assert(tk.ExecToErr("create global temporary table t(a int, b int) partition by list(a) (partition p0 values in (0)) on commit delete rows"), ErrorMatches, ".*Cannot create temporary table with partitions.*")
+	c.Assert(tk.ExecToErr("create global temporary table t(a int, b int) partition by list columns (a) (partition p0 values in (0)) on commit delete rows"), ErrorMatches, ".*Cannot create temporary table with partitions.*")
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestListPartitionAlterPK(c *C) {
@@ -542,6 +760,14 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionAlterPK(c *C) {
 	tk.MustExec(`alter table tlist add primary key(a)`)
 	tk.MustExec(`alter table tlist drop primary key`)
 	c.Assert(tk.ExecToErr(`alter table tlist add primary key(b)`), ErrorMatches, ".*must include all columns.*")
+
+	tk.MustExec(`create table tcollist (a int, b int) partition by list columns (a) (
+    partition p0 values in (0, 1, 2, 3, 4),
+    partition p1 values in (5, 6, 7, 8, 9),
+    partition p2 values in (10, 11, 12, 13, 14))`)
+	tk.MustExec(`alter table tcollist add primary key(a)`)
+	tk.MustExec(`alter table tcollist drop primary key`)
+	c.Assert(tk.ExecToErr(`alter table tcollist add primary key(b)`), ErrorMatches, ".*must include all columns.*")
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestIssue27018(c *C) {
@@ -619,6 +845,25 @@ PARTITION BY LIST COLUMNS(col1) (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
 	tk.MustExec(`insert into IDT_LP24306 values(-128)`)
 	tk.MustQuery(`select * from IDT_LP24306 where col1 not between 12021 and 99 and col1 <= -128`).Sort().Check(testkit.Rows("-128"))
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestIssue27030(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database issue_27030")
+	tk.MustExec("use issue_27030")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`CREATE TABLE PK_LCP9290 (
+  COL1 varbinary(10) NOT NULL,
+  PRIMARY KEY (COL1) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(col1) (
+  PARTITION P5 VALUES IN (x'32d8fb9da8b63508a6b8'),
+  PARTITION P6 VALUES IN (x'ffacadeb424179bc4b5c'),
+  PARTITION P8 VALUES IN (x'ae9f733168669fa900be')
+)`)
+	tk.MustExec(`insert into PK_LCP9290 values(0xffacadeb424179bc4b5c),(0xae9f733168669fa900be),(0x32d8fb9da8b63508a6b8)`)
+	tk.MustQuery(`SELECT COL1 FROM PK_LCP9290 WHERE COL1!=x'9f7ebdc957a36f2531b5' AND COL1 IN (x'ffacadeb424179bc4b5c',x'ae9f733168669fa900be',x'32d8fb9da8b63508a6b8')`).Sort().Check(testkit.Rows("2\xd8\xfb\x9d\xa8\xb65\b\xa6\xb8", "\xae\x9fs1hf\x9f\xa9\x00\xbe", "\xff\xac\xad\xebBAy\xbcK\\"))
+	tk.MustQuery(`SELECT COL1 FROM PK_LCP9290 WHERE COL1 IN (x'ffacadeb424179bc4b5c',x'ae9f733168669fa900be',x'32d8fb9da8b63508a6b8')`).Sort().Check(testkit.Rows("2\xd8\xfb\x9d\xa8\xb65\b\xa6\xb8", "\xae\x9fs1hf\x9f\xa9\x00\xbe", "\xff\xac\xad\xebBAy\xbcK\\"))
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestIssue27031(c *C) {
