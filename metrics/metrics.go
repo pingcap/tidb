@@ -149,11 +149,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiFlashQueryTotalCounter)
 	prometheus.MustRegister(SmallTxnWriteDuration)
 	prometheus.MustRegister(TxnWriteThroughput)
-<<<<<<< HEAD
-=======
 	prometheus.MustRegister(TiKVSmallReadDuration)
-	prometheus.MustRegister(LoadSysVarCacheCounter)
->>>>>>> 9900f889c... Metric: Collect TiKV Read Duration Metric for SLI/SLO (#23884)
 
 	tikvmetrics.InitMetrics("tidb", "tikvclient")
 	tikvmetrics.RegisterMetrics()

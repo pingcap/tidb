@@ -296,7 +296,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	if r.rootPlanID <= 0 || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
 		return
 	}
-<<<<<<< HEAD
 	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
 		logutil.Logger(ctx).Error("invalid cop task execution summaries length",
 			zap.Int("expected", len(r.copPlanIDs)),
@@ -304,7 +303,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 
 		return
 	}
-=======
 
 	if copStats.ScanDetail != nil {
 		readKeys := copStats.ScanDetail.ProcessedKeys
@@ -312,7 +310,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		sli.ObserveReadSLI(uint64(readKeys), readTime)
 	}
 
->>>>>>> 9900f889c... Metric: Collect TiKV Read Duration Metric for SLI/SLO (#23884)
 	if r.stats == nil {
 		id := r.rootPlanID
 		r.stats = &selectResultRuntimeStats{

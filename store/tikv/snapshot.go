@@ -35,12 +35,9 @@ import (
 	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/store/tikv/util"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
-=======
 	"github.com/pingcap/tidb/util/sli"
->>>>>>> 9900f889c... Metric: Collect TiKV Read Duration Metric for SLI/SLO (#23884)
 	"go.uber.org/zap"
 )
 
