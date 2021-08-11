@@ -46,13 +46,14 @@ var AllowCartesianProduct = atomic.NewBool(true)
 var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
 const (
-	flagGcSubstitute uint64 = 1 << iota
+	flagEliminateProjection uint64 = 1 << iota
+	flagGcSubstitute
 	flagPrunColumns
 	flagStabilizeResults
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagEliminateAgg
-	flagEliminateProjection
+	flagEliminateProjectionAgain
 	flagMaxMinEliminate
 	flagPredicatePushDown
 	flagEliminateOuterJoin
@@ -64,6 +65,7 @@ const (
 )
 
 var optRuleList = []logicalOptRule{
+	&projectionEliminator{},
 	&gcSubstituter{},
 	&columnPruner{},
 	&resultReorder{},
@@ -145,6 +147,9 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
 		flag |= flagPrunColumnsAgain
+	}
+	if flag&flagEliminateProjection > 0 && flag-flagEliminateProjection > flagEliminateProjection {
+		flag |= flagEliminateProjectionAgain
 	}
 	if checkStableResultMode(sctx) {
 		flag |= flagStabilizeResults
