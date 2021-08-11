@@ -344,7 +344,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 		// TODO: Can we make a more careful check on whether the optimization depends on mutable constants?
 		ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
-		if ds.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+		if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain {
 			var tableName string
 			if ds.TableAsName.O == "" {
 				tableName = ds.tableInfo.Name.O

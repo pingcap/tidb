@@ -176,10 +176,6 @@ func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
 			return err
 		}
 	}
-	// The 'baseline evolution' only work in the test environment before the feature is GA.
-	if sv.Name == TiDBEvolvePlanBaselines && val == "ON" && !config.CheckTableBeforeDrop {
-		return errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
-	}
 	s.systems[sv.Name] = val
 
 	// Call the Set function on all the aliases for this sysVar
@@ -1488,7 +1484,12 @@ var defaultSysVars = []*SysVar{
 		s.UsePlanBaselines = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEvolvePlanBaselines, Value: BoolToOnOff(DefTiDBEvolvePlanBaselines), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEvolvePlanBaselines, Value: BoolToOnOff(DefTiDBEvolvePlanBaselines), Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		if normalizedValue == "ON" && !config.CheckTableBeforeDrop {
+			return normalizedValue, errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
 		s.EvolvePlanBaselines = TiDBOptOn(val)
 		return nil
 	}},

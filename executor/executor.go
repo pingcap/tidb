@@ -1653,12 +1653,18 @@ func (e *UnionExec) Close() error {
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
-	sc := &stmtctx.StatementContext{
-		TimeZone:      vars.Location(),
-		TaskID:        stmtctx.AllocateTaskID(),
-		CTEStorageMap: map[int]*CTEStorages{},
-		IsStaleness:   false,
+	var sc *stmtctx.StatementContext
+	if vars.TxnCtx.CouldRetry {
+		// Must construct new statement context object, the retry history need context for every statement.
+		// TODO: Maybe one day we can get rid of transaction retry, then this logic can be deleted.
+		sc = &stmtctx.StatementContext{}
+	} else {
+		sc = vars.InitStatementContext()
 	}
+	sc.TimeZone = vars.Location()
+	sc.TaskID = stmtctx.AllocateTaskID()
+	sc.CTEStorageMap = map[int]*CTEStorages{}
+	sc.IsStaleness = false
 
 	sc.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
@@ -1704,8 +1710,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InVerboseExplain = strings.ToLower(explainStmt.Format) == types.ExplainFormatVerbose
 		s = explainStmt.Stmt
 	}
-	if _, ok := s.(*ast.ExplainForStmt); ok {
+	if explainForStmt, ok := s.(*ast.ExplainForStmt); ok {
 		sc.InExplainStmt = true
+		sc.InVerboseExplain = strings.ToLower(explainForStmt.Format) == types.ExplainFormatVerbose
 	}
 	// TODO: Many same bool variables here.
 	// We should set only two variables (
