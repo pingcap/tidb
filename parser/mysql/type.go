@@ -73,6 +73,7 @@ const (
 	IsBooleanFlag         uint = 1 << 19 /* Internal: Used for telling boolean literal from integer */
 	PreventNullInsertFlag uint = 1 << 20 /* Prevent this Field from inserting NULL values */
 	EnumSetAsIntFlag      uint = 1 << 21 /* Internal: Used for inferring enum eval type. */
+	DropColumnIndexFlag   uint = 1 << 22 /* Internal: Used for indicate the column is being dropped with index */
 )
 
 // TypeInt24 bounds.
@@ -81,6 +82,11 @@ const (
 	MaxInt24  = 1<<23 - 1
 	MinInt24  = -1 << 23
 )
+
+// HasDropColumnWithIndexFlag checks if DropColumnIndexFlag is set.
+func HasDropColumnWithIndexFlag(flag uint) bool {
+	return (flag & DropColumnIndexFlag) > 0
+}
 
 // HasNotNullFlag checks if NotNullFlag is set.
 func HasNotNullFlag(flag uint) bool {
