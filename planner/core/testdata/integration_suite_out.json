@@ -1805,5 +1805,40 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestPreferRangeScanForUnsignedIntHandle",
+    "Cases": [
+      {
+        "SQL": "set tidb_opt_prefer_range_scan = 0",
+        "Plan": null,
+        "Warnings": null
+      },
+      {
+        "SQL": "explain format = 'verbose' select * from t where b > 5",
+        "Plan": [
+          "TableReader_7 3333.33 45418.00 root  data:Selection_6",
+          "└─Selection_6 3333.33 600020.00 cop[tikv]  gt(test.t.b, 5)",
+          "  └─TableFullScan_5 10000.00 570020.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warnings": null
+      },
+      {
+        "SQL": "set tidb_opt_prefer_range_scan = 1",
+        "Plan": null,
+        "Warnings": null
+      },
+      {
+        "SQL": "explain format = 'verbose' select * from t where b > 5",
+        "Plan": [
+          "IndexLookUp_7 3333.33 70785.94 root ",
+          "├─IndexRangeScan_5(Build) 3333.33 190020.00 cop[tikv] table:t, index:idx_b(b) range:(5,+inf], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_6(Probe) 3333.33 190020.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Note 1105 [idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
+        ]
+      }
+    ]
   }
 ]

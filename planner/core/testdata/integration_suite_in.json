@@ -341,5 +341,14 @@
       "select * from t where g = 5 order by f",
       "select * from t where d = 3 order by c, e"
     ]
+  },
+  {
+    "name": "TestPreferRangeScanForUnsignedIntHandle",
+    "cases": [
+      "set tidb_opt_prefer_range_scan = 0",
+      "explain format = 'verbose' select * from t where b > 5",
+      "set tidb_opt_prefer_range_scan = 1",
+      "explain format = 'verbose' select * from t where b > 5"
+    ]
   }
 ]
