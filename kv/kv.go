@@ -132,9 +132,6 @@ type MemBuffer interface {
 
 	// Len returns the number of entries in the DB.
 	Len() int
-
-	// set allowed options of current operation in each TiKV disk usage level.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 }
 
 // LockCtx contains information for LockKeys method.
