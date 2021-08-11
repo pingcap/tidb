@@ -71,7 +71,9 @@ func SetUpSuite(t *testing.T) *CTETestSuite {
 }
 
 func TestCTESuite(t *testing.T) {
-	t.Parallel()
+	// Before migration, this suite can be parallel
+	// with other suite. However, if t.Parallel() is introduced,
+	// tidbTestSerialSuite.TestTLS will run out of time easily.
 
 	cteTestSuite = SetUpSuite(t)
 	defer cteTestSuite.close()
