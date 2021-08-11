@@ -135,6 +135,8 @@ func TestSpillToDisk(t *testing.T) {
 	})
 
 	test := SetUpSuite(t)
+	defer test.close()
+
 	tk := testkit.NewTestKit(t, test.store)
 	tk.MustExec("use test;")
 
