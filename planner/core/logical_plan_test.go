@@ -1410,6 +1410,9 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		}
 		c.Assert(err, IsNil)
 		p := plan.(LogicalPlan)
+		if builder.optFlag&flagEliminateProjection > 0 && builder.optFlag-flagEliminateProjection > flagEliminateProjection {
+			builder.optFlag |= flagEliminateProjectionAgain
+		}
 		p, err = logicalOptimize(ctx, builder.optFlag, p)
 		s.testData.OnRecord(func() {
 			output[i].Best = ToString(p)
@@ -1510,6 +1513,9 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		builder, _ := NewPlanBuilder().Init(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
+		if builder.optFlag&flagEliminateProjection > 0 && builder.optFlag-flagEliminateProjection > flagEliminateProjection {
+			builder.optFlag |= flagEliminateProjectionAgain
+		}
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		planString := ToString(p)
@@ -1629,6 +1635,9 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	p, err := builder.Build(ctx, stmt)
 	if err != nil {
 		return nil, nil, err
+	}
+	if builder.optFlag&flagEliminateProjection > 0 && builder.optFlag-flagEliminateProjection > flagEliminateProjection {
+		builder.optFlag |= flagEliminateProjectionAgain
 	}
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
 	if err != nil {
