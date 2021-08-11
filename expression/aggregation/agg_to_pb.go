@@ -16,6 +16,8 @@ package aggregation
 
 import (
 	"fmt"
+	"strconv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
@@ -25,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	"strconv"
 )
 
 // AggFuncToPBExpr converts aggregate function to pb.
