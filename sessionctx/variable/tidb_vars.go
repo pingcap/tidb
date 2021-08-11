@@ -438,6 +438,9 @@ const (
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
+
+	// tidb_opt_limit_push_down_threshold determines if push Limit or TopN down to TiKV forcibly.
+	TiDBOptLimitPushDownThreshold = "tidb_opt_limit_push_down_threshold"
 )
 
 // Default TiDB system variable values.
@@ -462,6 +465,7 @@ const (
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
+	DefOptLimitPushDownThreshold       = 100
 	DefOptCPUFactor                    = 3.0
 	DefOptCopCPUFactor                 = 3.0
 	DefOptTiFlashConcurrencyFactor     = 24.0

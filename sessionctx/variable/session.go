@@ -680,6 +680,9 @@ type SessionVars struct {
 
 	// EnableStableResultMode if stabilize query results.
 	EnableStableResultMode bool
+
+	// LimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
+	LimitPushDownThreshold int64
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -738,6 +741,7 @@ func NewSessionVars() *SessionVars {
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
+		LimitPushDownThreshold:      DefOptLimitPushDownThreshold,
 		CPUFactor:                   DefOptCPUFactor,
 		CopCPUFactor:                DefOptCopCPUFactor,
 		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
@@ -1417,6 +1421,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MultiStatementMode = TiDBOptMultiStmt(val)
 	case TiDBEnableOrderedResultMode:
 		s.EnableStableResultMode = TiDBOptOn(val)
+	case TiDBOptLimitPushDownThreshold:
+		s.LimitPushDownThreshold = tidbOptInt64(val, DefOptLimitPushDownThreshold)
 	}
 	s.systems[name] = val
 	return nil
