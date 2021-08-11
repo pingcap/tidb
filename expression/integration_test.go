@@ -10147,3 +10147,12 @@ func (s *testIntegrationSuite) TestIssue26958(c *C) {
 	tk.MustQuery("select \n(select count(distinct c_int) from t2 where c_int >= t1.c_int) c1, \n(select count(distinct c_int) from t2 where c_int >= t1.c_int) c2\nfrom t1 group by c_int;\n").
 		Check(testkit.Rows("3 3", "2 2", "1 1"))
 }
+
+func (s *testIntegrationSuite) TestIssue25053(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tbl_0;")
+	tk.MustExec("create table tbl_0 (col_2 int, col_3 varbinary(163));")
+	tk.MustExec("insert into tbl_0 values (1,'o'), (2,'\\x00');")
+	tk.MustQuery("select json_objectagg( col_2, col_3 ) from tbl_0;").Check(testkit.Rows(`{"1": "base64:type15:bw==", "2": "base64:type15:eDAw"}`))
+}

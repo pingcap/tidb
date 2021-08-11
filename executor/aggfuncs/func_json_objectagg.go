@@ -14,9 +14,11 @@
 package aggfuncs
 
 import (
+	"encoding/base64"
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -108,6 +110,21 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		keyString = stringutil.Copy(keyString)
 
 		realVal := value.Clone().GetValue()
+		// Special handling for varbinary
+		if e.args[1].GetType().Tp == mysql.TypeVarchar && mysql.HasBinaryFlag(e.args[1].GetType().Flag) {
+			strVal := realVal.(string)
+			strVal = "base64:type15:" + base64.StdEncoding.EncodeToString([]byte(strVal))
+			if _, ok := p.entries[keyString]; !ok {
+				memDelta += int64(len(keyString) + len(strVal))
+				if len(p.entries)+1 > (1<<p.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+					memDelta += (1 << p.bInMap) * DefMapStringInterfaceBucketSize
+					p.bInMap++
+				}
+			}
+			p.entries[keyString] = strVal
+			continue
+		}
+
 		switch x := realVal.(type) {
 		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
 			if _, ok := p.entries[keyString]; !ok {
