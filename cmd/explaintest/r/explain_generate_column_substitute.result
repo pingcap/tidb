@@ -456,3 +456,36 @@ HashAgg	6.00	root		group by:Column#9, funcs:max(Column#8)->Column#7
 └─Projection	6.00	root		upper(test.t.b)->Column#8, upper(test.t.b)->Column#9
   └─TableReader	6.00	root		data:TableFullScan
     └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+drop table if exists t, t1;
+create table t(a int, b int, key((b+1)), key((b+1), a));
+create table t1(a int, b int, key((b+1)), key((b+1), a));
+insert into t values (1, 2), (3, 4), (0, NULL), (12, 34);
+insert into t1 values (1, 2), (3, 4), (0, NULL);
+analyze table t;
+analyze table t1;
+create view vx as select * from t;
+desc format = 'brief' select * from vx where b+1 = 100;
+id	estRows	task	access object	operator info
+Projection	0.00	root		test.t.a, test.t.b
+└─IndexLookUp	0.00	root		
+  ├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:expression_index(`b` + 1)	range:[100,100], keep order:false
+  └─TableRowIDScan(Probe)	0.00	cop[tikv]	table:t	keep order:false
+select * from vx where b+1 = 3;
+a	b
+1	2
+create view vx2 as select t1.b+1 from t , t1 where t.b+1>=t1.b+1 and t.b+1>=2;
+desc format = 'brief' select * from vx2;
+id	estRows	task	access object	operator info
+Projection	6.00	root		plus(test.t1.b, 1)
+└─HashJoin	6.00	root		CARTESIAN inner join, other cond:ge(plus(test.t.b, 1), plus(test.t1.b, 1))
+  ├─IndexReader(Build)	2.00	root		index:IndexFullScan
+  │ └─IndexFullScan	2.00	cop[tikv]	table:t1, index:expression_index(`b` + 1)	keep order:false
+  └─IndexReader(Probe)	3.00	root		index:IndexRangeScan
+    └─IndexRangeScan	3.00	cop[tikv]	table:t, index:expression_index(`b` + 1)	range:[2,+inf], keep order:false
+select * from vx2;
+t1.b+1
+3
+5
+3
+5
+3

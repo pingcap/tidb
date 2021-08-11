@@ -192,3 +192,17 @@ desc format = 'brief' select count(upper(b)) from t group by upper(b);
 desc format = 'brief' select max(upper(b)) from t group by upper(b);
 desc format = 'brief' select count(upper(b)) from t use index() group by upper(b);
 desc format = 'brief' select max(upper(b)) from t use index() group by upper(b);
+
+drop table if exists t, t1;
+create table t(a int, b int, key((b+1)), key((b+1), a));
+create table t1(a int, b int, key((b+1)), key((b+1), a));
+insert into t values (1, 2), (3, 4), (0, NULL), (12, 34);
+insert into t1 values (1, 2), (3, 4), (0, NULL);
+analyze table t;
+analyze table t1;
+create view vx as select * from t;
+desc format = 'brief' select * from vx where b+1 = 100;
+select * from vx where b+1 = 3;
+create view vx2 as select t1.b+1 from t , t1 where t.b+1>=t1.b+1 and t.b+1>=2;
+desc format = 'brief' select * from vx2;
+select * from vx2;
