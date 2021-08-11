@@ -160,7 +160,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	return errors.Trace(err)
 }
 
-// ParseFromFlags parses the backup-related flags from the flag set.
+// parseCompressionFlags parses the backup-related flags from the flag set.
 func parseCompressionFlags(flags *pflag.FlagSet) (*CompressionConfig, error) {
 	compressionStr, err := flags.GetString(flagCompressionType)
 	if err != nil {
@@ -429,15 +429,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	metawriter.Update(func(m *backuppb.BackupMeta) {
-		m.StartVersion = req.StartVersion
-		m.EndVersion = req.EndVersion
-		m.IsRawKv = req.IsRawKv
-		m.ClusterId = req.ClusterId
-		m.ClusterVersion = clusterVersion
-		m.BrVersion = brVersion
-	})
 
 	skipChecksum := !cfg.Checksum || isIncrementalBackup
 	checksumProgress := int64(schemas.Len())
