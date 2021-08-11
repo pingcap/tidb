@@ -160,7 +160,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	return errors.Trace(err)
 }
 
-// ParseFromFlags parses the backup-related flags from the flag set.
+// parseCompressionFlags parses the backup-related flags from the flag set.
 func parseCompressionFlags(flags *pflag.FlagSet) (*CompressionConfig, error) {
 	compressionStr, err := flags.GetString(flagCompressionType)
 	if err != nil {
