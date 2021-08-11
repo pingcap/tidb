@@ -30,12 +30,9 @@ parser:
 dev: checklist check test
 
 # Install the check tools.
-check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
+check-setup:tools/bin/revive tools/bin/goword
 
-check: fmt errcheck unconvert lint tidy testSuite check-static vet staticcheck errdoc
-
-# These need to be fixed before they can be ran regularly
-check-fail: goword check-slow
+check: fmt unconvert lint tidy testSuite check-static vet errdoc
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -44,34 +41,12 @@ fmt:
 goword:tools/bin/goword
 	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-gosec:tools/bin/gosec
-	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
-
 check-static: tools/bin/golangci-lint
-	tools/bin/golangci-lint run -v --disable-all --deadline=3m \
-	  --enable=misspell \
-	  --enable=ineffassign \
-	  --enable=typecheck \
-	  --enable=varcheck \
-	  --enable=unused \
-	  --enable=structcheck \
-	  --enable=deadcode \
-	  --enable=gosimple \
-	  --enable=goimports \
-	  $$($(PACKAGE_DIRECTORIES))
-
-check-slow:tools/bin/gometalinter tools/bin/gosec
-	tools/bin/gometalinter --disable-all \
-	  --enable errcheck \
-	  $$($(PACKAGE_DIRECTORIES))
-
-errcheck:tools/bin/errcheck
-	@echo "errcheck"
-	@GO111MODULE=on tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -ignoretests -blank $(PACKAGES)
+	tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES))
 
 unconvert:tools/bin/unconvert
-	@echo "unconvert check"
-	@GO111MODULE=on tools/bin/unconvert ./...
+	@echo "unconvert check(skip check the genenrated or copied code in lightning)"
+	@GO111MODULE=on tools/bin/unconvert $(UNCONVERT_PACKAGES)
 
 gogenerate:
 	@echo "go generate ./..."
@@ -88,10 +63,6 @@ lint:tools/bin/revive
 vet:
 	@echo "vet"
 	$(GO) vet -all $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
-
-staticcheck:
-	$(GO) get honnef.co/go/tools/cmd/staticcheck
-	$(STATICCHECK) ./...
 
 tidy:
 	@echo "go mod tidy"
@@ -110,7 +81,9 @@ test: test_part_1 test_part_2
 
 test_part_1: checklist explaintest
 
-test_part_2: gotest gogenerate
+test_part_2: gotest gogenerate br_unit_test
+
+test_part_br: br_unit_test br_integration_test
 
 explaintest: server_check
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
@@ -132,7 +105,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@export log_level=info; \
 	$(OVERALLS) -project=github.com/pingcap/tidb \
 			-covermode=count \
-			-ignore='.git,vendor,cmd,docs,tests,LICENSES' \
+			-ignore='.git,br,vendor,cmd,docs,tests,LICENSES' \
 			-concurrency=4 \
 			-- -coverpkg=./... \
 			|| { $(FAILPOINT_DISABLE); exit 1; }
@@ -141,7 +114,7 @@ else
 	@export log_level=info; export TZ='Asia/Shanghai'; \
 	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -v -cover $(PACKAGES) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); cat 'gotest.log'; exit 1; }
 	@echo "timeout-check"
-	grep '^PASS:' gotest.log | go run tools/check/check-timeout.go || { $(FAILPOINT_DISABLE); exit 1; }
+	grep 'PASS:' gotest.log | go run tools/check/check-timeout.go || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
 
@@ -218,18 +191,6 @@ tools/bin/goword: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/goword github.com/chzchzchz/goword
 
-tools/bin/gometalinter: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/gometalinter gopkg.in/alecthomas/gometalinter.v3
-
-tools/bin/gosec: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/gosec github.com/securego/gosec/cmd/gosec
-
-tools/bin/errcheck: tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/errcheck github.com/kisielk/errcheck
-
 tools/bin/unconvert: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/unconvert github.com/mdempsky/unconvert
@@ -244,6 +205,10 @@ tools/bin/errdoc-gen: tools/check/go.mod
 
 tools/bin/golangci-lint:
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.41.1
+
+tools/bin/vfsgendev: tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/vfsgendev github.com/shurcooL/vfsgen/cmd/vfsgendev
 
 # Usage:
 #
@@ -271,3 +236,97 @@ endif
 bench-daily:
 	cd ./session && \
 	go test -run TestBenchDaily --date `git log -n1 --date=unix --pretty=format:%cd` --commit `git log -n1 --pretty=format:%h` --outfile $(TO)
+
+build_tools: build_br build_lightning build_lightning-ctl
+
+br_web:
+	@cd br/web && npm install && npm run build
+
+build_br:
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) br/cmd/br/*.go
+
+build_lightning_for_web:
+	CGO_ENABLED=1 $(GOBUILD) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) br/cmd/tidb-lightning/main.go
+
+build_lightning:
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) br/cmd/tidb-lightning/main.go
+
+build_lightning-ctl:
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) br/cmd/tidb-lightning-ctl/main.go
+
+build_for_br_integration_test:
+	@make failpoint-enable
+	($(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/br/... \
+		-o $(BR_BIN).test \
+		github.com/pingcap/tidb/br/cmd/br && \
+	$(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/br/... \
+		-o $(LIGHTNING_BIN).test \
+		github.com/pingcap/tidb/br/cmd/tidb-lightning && \
+	$(GOTEST) -c -cover -covermode=count \
+		-coverpkg=github.com/pingcap/tidb/br/... \
+		-o $(LIGHTNING_CTL_BIN).test \
+		github.com/pingcap/tidb/br/cmd/tidb-lightning-ctl && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/locker br/tests/br_key_locked/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/gc br/tests/br_z_gc_safepoint/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/oauth br/tests/br_gcs/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/rawkv br/tests/br_rawkv/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/parquet_gen br/tests/lightning_checkpoint_parquet/*.go \
+	) || (make failpoint-disable && exit 1)
+	@make failpoint-disable
+
+br_unit_test: export ARGS=$$($(BR_PACKAGES))
+br_unit_test:
+	@make failpoint-enable
+	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -tags leak $(ARGS) || ( make failpoint-disable && exit 1 )
+	@make failpoint-disable
+
+br_integration_test: br_bins build_br build_for_br_integration_test
+	@cd br && tests/run.sh
+
+br_compatibility_test_prepare:
+	@cd br && tests/run_compatible.sh prepare
+
+br_compatibility_test:
+	@cd br && tests/run_compatible.sh run
+
+# There is no FreeBSD environment for GitHub actions. So cross-compile on Linux
+# but that doesn't work with CGO_ENABLED=1, so disable cgo. The reason to have
+# cgo enabled on regular builds is performance.
+ifeq ("$(GOOS)", "freebsd")
+        GOBUILD  = CGO_ENABLED=0 GO111MODULE=on go build -trimpath -ldflags '$(LDFLAGS)'
+endif
+
+br_coverage:
+	tools/bin/gocovmerge "$(TEST_DIR)"/cov.* | grep -vE ".*.pb.go|.*__failpoint_binding__.go" > "$(TEST_DIR)/all_cov.out"
+ifeq ("$(JenkinsCI)", "1")
+	tools/bin/goveralls -coverprofile=$(TEST_DIR)/all_cov.out -service=jenkins-ci -repotoken $(COVERALLS_TOKEN)
+else
+	go tool cover -html "$(TEST_DIR)/all_cov.out" -o "$(TEST_DIR)/all_cov.html"
+	grep -F '<option' "$(TEST_DIR)/all_cov.html"
+endif
+
+# TODO: adjust bins when br integraion tests reformat.
+br_bins:
+	@which bin/tidb-server
+	@which bin/tikv-server
+	@which bin/pd-server
+	@which bin/pd-ctl
+	@which bin/go-ycsb
+	@which bin/minio
+	@which bin/tiflash
+	@which bin/libtiflash_proxy.so
+	@which bin/cdc
+	@which bin/fake-gcs-server
+	@which bin/tikv-importer
+	if [ ! -d bin/flash_cluster_manager ]; then echo "flash_cluster_manager not exist"; exit 1; fi
+
+%_generated.go: %.rl
+	ragel -Z -G2 -o tmp_parser.go $<
+	@echo '// Code generated by ragel DO NOT EDIT.' | cat - tmp_parser.go | sed 's|//line |//.... |g' > $@
+	@rm tmp_parser.go
+
+data_parsers: tools/bin/vfsgendev br/pkg/lightning/mydump/parser_generated.go br_web
+	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOPATH)/src" br/pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
+	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/br/pkg/lightning/web".Res' && mv res_vfsdata.go br/pkg/lightning/web/

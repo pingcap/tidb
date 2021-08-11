@@ -43,10 +43,12 @@ endif
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGE_LIST  := go list ./...| grep -vE "cmd|github.com\/pingcap\/tidb\/tests"
+PACKAGE_LIST  := go list ./...| grep -vE "cmd|github.com\/pingcap\/tidb\/tests|github.com\/pingcap\/tidb\/br"
 PACKAGES  ?= $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
+UNCONVERT_PACKAGES_LIST := go list ./...| grep -vE "lightning\/checkpoints|lightning\/manual|lightning\/common"
+UNCONVERT_PACKAGES := $$($(UNCONVERT_PACKAGES_LIST))
 
 FAILPOINT_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl enable)
 FAILPOINT_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl disable)
@@ -78,3 +80,10 @@ CHECK_FLAG =
 ifeq ("$(WITH_CHECK)", "1")
 	CHECK_FLAG = $(TEST_LDFLAGS)
 endif
+
+BR_PKG := github.com/pingcap/tidb/br
+BR_PACKAGES       := go list ./...| grep "github.com\/pingcap\/tidb\/br"
+LIGHTNING_BIN     := bin/tidb-lightning
+LIGHTNING_CTL_BIN := bin/tidb-lightning-ctl
+BR_BIN            := bin/br
+TEST_DIR          := /tmp/backup_restore_test

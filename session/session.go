@@ -36,6 +36,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -160,6 +161,11 @@ type Session interface {
 	// FieldList returns fields list of a table.
 	FieldList(tableName string) (fields []*ast.ResultField, err error)
 	SetPort(port string)
+
+	// set cur session operations allowed when tikv disk full happens.
+	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
+	GetDiskFullOpt() kvrpcpb.DiskFullOpt
+	ClearDiskFullOpt()
 }
 
 var (
@@ -227,6 +233,8 @@ type session struct {
 	cache [1]ast.StmtNode
 
 	builtinFunctionUsage telemetry.BuiltinFunctionsUsage
+	// allowed when tikv disk full happened.
+	diskFullOpt kvrpcpb.DiskFullOpt
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -478,9 +486,16 @@ func (s *session) doCommit(ctx context.Context) error {
 	if !s.txn.Valid() {
 		return nil
 	}
+
+	// to avoid session set overlap the txn set.
+	if s.GetDiskFullOpt() != kvrpcpb.DiskFullOpt_NotAllowedOnFull {
+		s.txn.SetDiskFullOpt(s.GetDiskFullOpt())
+	}
+
 	defer func() {
 		s.txn.changeToInvalid()
 		s.sessionVars.SetInTxn(false)
+		s.ClearDiskFullOpt()
 	}()
 	if s.txn.IsReadOnly() {
 		return nil
@@ -1338,6 +1353,18 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
+func (s *session) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	s.diskFullOpt = level
+}
+
+func (s *session) GetDiskFullOpt() kvrpcpb.DiskFullOpt {
+	return s.diskFullOpt
+}
+
+func (s *session) ClearDiskFullOpt() {
+	s.diskFullOpt = kvrpcpb.DiskFullOpt_NotAllowedOnFull
+}
+
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
@@ -1699,6 +1726,7 @@ var querySpecialKeys = []fmt.Stringer{
 	executor.LoadDataVarKey,
 	executor.LoadStatsVarKey,
 	executor.IndexAdviseVarKey,
+	executor.PlanRecreatorVarKey,
 }
 
 func (s *session) hasQuerySpecial() bool {
@@ -2258,6 +2286,7 @@ func (s *session) Close() {
 	if s.sessionVars != nil {
 		s.sessionVars.WithdrawAllPreparedStmt()
 	}
+	s.ClearDiskFullOpt()
 }
 
 // GetSessionVars implements the context.Context interface.
