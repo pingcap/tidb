@@ -284,17 +284,17 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			str += fmt.Sprintf("Handle(%s.%s)%v)", x.TblInfo.Name.L, x.TblInfo.GetPkName().L, x.Handles)
 		}
 	case *PhysicalExchangeReceiver:
-		str = "Recv("
+		str = "ExchangeReceiver("
 		for _, task := range x.Tasks {
 			str += fmt.Sprintf("%d, ", task.ID)
 		}
-		str += ")"
+		str = strings.TrimSuffix(str, ", ") + ")"
 	case *PhysicalExchangeSender:
-		str = "Send("
+		str = "ExchangeSender("
 		for _, task := range x.TargetTasks {
 			str += fmt.Sprintf("%d, ", task.ID)
 		}
-		str += ")"
+		str = strings.TrimSuffix(str, ", ") + ")"
 	default:
 		str = fmt.Sprintf("%T", in)
 	}
