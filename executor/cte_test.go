@@ -129,13 +129,13 @@ func BasicCTE(t *testing.T) {
 }
 
 func TestSpillToDisk(t *testing.T) {
+	test := SetUpSuite(t)
+	defer test.close()
+
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
 	})
-
-	test := SetUpSuite(t)
-	defer test.close()
 
 	tk := testkit.NewTestKit(t, test.store)
 	tk.MustExec("use test;")
