@@ -1824,6 +1824,27 @@
         "Warnings": null
       },
       {
+        "SQL": "explain format = 'verbose' select * from t where b = 6 order by a limit 1",
+        "Plan": [
+          "TopN_9 1.00 72.74 root  test.t.a, offset:0, count:1",
+          "└─IndexLookUp_20 1.00 69.74 root  ",
+          "  ├─TopN_19(Build) 1.00 0.00 cop[tikv]  test.t.a, offset:0, count:1",
+          "  │ └─IndexRangeScan_17 10.00 590.00 cop[tikv] table:t, index:idx_b(b) range:[6,6], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_18(Probe) 1.00 590.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warnings": null
+      },
+      {
+        "SQL": "explain format = 'verbose' select * from t where b = 6 limit 1",
+        "Plan": [
+          "IndexLookUp_17 1.00 33.54 root  limit embedded(offset:0, count:1)",
+          "├─Limit_16(Build) 1.00 77.00 cop[tikv]  offset:0, count:1",
+          "│ └─IndexRangeScan_14 1.00 77.00 cop[tikv] table:t, index:idx_b(b) range:[6,6], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_15(Probe) 1.00 77.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warnings": null
+      },
+      {
         "SQL": "set tidb_opt_prefer_range_scan = 1",
         "Plan": null,
         "Warnings": null
@@ -1831,12 +1852,37 @@
       {
         "SQL": "explain format = 'verbose' select * from t where b > 5",
         "Plan": [
-          "IndexLookUp_7 3333.33 70785.94 root ",
+          "IndexLookUp_7 3333.33 70785.94 root  ",
           "├─IndexRangeScan_5(Build) 3333.33 190020.00 cop[tikv] table:t, index:idx_b(b) range:(5,+inf], keep order:false, stats:pseudo",
           "└─TableRowIDScan_6(Probe) 3333.33 190020.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "Note 1105 [idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select * from t where b = 6 order by a limit 1",
+        "Plan": [
+          "TopN_9 1.00 72.74 root  test.t.a, offset:0, count:1",
+          "└─IndexLookUp_16 1.00 69.74 root  ",
+          "  ├─TopN_15(Build) 1.00 0.00 cop[tikv]  test.t.a, offset:0, count:1",
+          "  │ └─IndexRangeScan_13 10.00 590.00 cop[tikv] table:t, index:idx_b(b) range:[6,6], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_14(Probe) 1.00 590.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Note 1105 [idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: copDoubleReadTask}"
+        ]
+      },
+      {
+        "SQL": "explain format = 'verbose' select * from t where b = 6 limit 1",
+        "Plan": [
+          "IndexLookUp_13 1.00 33.54 root  limit embedded(offset:0, count:1)",
+          "├─Limit_12(Build) 1.00 77.00 cop[tikv]  offset:0, count:1",
+          "│ └─IndexRangeScan_10 1.00 77.00 cop[tikv] table:t, index:idx_b(b) range:[6,6], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_11(Probe) 1.00 77.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warnings": [
+          "Note 1105 [idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: copDoubleReadTask}"
         ]
       }
     ]
