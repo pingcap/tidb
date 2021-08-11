@@ -370,6 +370,7 @@ type Security struct {
 	// Allow automatic TLS certificate generation
 	AutoTLS       bool   `toml:"auto-tls" json:"auto-tls"`
 	MinTLSVersion string `toml:"tls-version" json:"tls-version"`
+	RSAKeySize    int    `toml:"rsa-key-size" json:"rsa-key-size"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -679,6 +680,7 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
 		AutoTLS:                     true,
+		RSAKeySize:                  4096,
 	},
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,

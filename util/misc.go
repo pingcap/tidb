@@ -440,7 +440,7 @@ type SequenceTable interface {
 }
 
 // LoadTLSCertificates loads CA/KEY/CERT for special paths.
-func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Config, autoReload bool, err error) {
+func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tlsConfig *tls.Config, autoReload bool, err error) {
 	autoReload = false
 	if len(cert) == 0 || len(key) == 0 {
 		if !autoTLS {
@@ -451,7 +451,7 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Con
 		tempStoragePath := config.GetGlobalConfig().TempStoragePath
 		cert = filepath.Join(tempStoragePath, "/cert.pem")
 		key = filepath.Join(tempStoragePath, "/key.pem")
-		err = createTLSCertificates(cert, key)
+		err = createTLSCertificates(cert, key, rsaKeySize)
 		if err != nil {
 			logutil.BgLogger().Warn("TLS Certificate creation failed", zap.Error(err))
 			return
@@ -590,7 +590,7 @@ func QueryStrForLog(query string) string {
 	return query
 }
 
-func createTLSCertificates(certpath string, keypath string) error {
+func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
 	privkey, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
 		return err
@@ -649,6 +649,7 @@ func createTLSCertificates(certpath string, keypath string) error {
 		return err
 	}
 
-	logutil.BgLogger().Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath), zap.Duration("validity", certValidity))
+	logutil.BgLogger().Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath),
+		zap.Duration("validity", certValidity), zap.Int("rsaKeySize", rsaKeySize))
 	return nil
 }
