@@ -8709,6 +8709,8 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tmp2")
 	tk.MustExec("create temporary table tmp2 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+	tk.MustExec("create table tmp3 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+	tk.MustExec("create table tmp4 (id int not null primary key, code int not null, value int default null, unique key code(code));")
 
 	// sleep 1us to make test stale
 	time.Sleep(time.Microsecond)
@@ -8764,6 +8766,10 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 			tk.MustGetErrMsg(sql, "can not stale read temporary table")
 		}
 	}
+
+	// Test normal table when local temporary exits.
+	tk.MustQuery("select * from tmp4 as of timestamp '2021-05-26 16:45:26', tmp3 as of timestamp '2021-05-26 16:45:26' where tmp3.id=1;")
+	tk.MustGetErrMsg("select * from tmp4 as of timestamp '2021-05-26 16:45:26', tmp2 as of timestamp '2021-05-26 16:45:26' where tmp2.id=1;", "can not stale read temporary table")
 
 	tk.MustExec("start transaction read only as of timestamp NOW(6)")
 	for _, query := range queries {

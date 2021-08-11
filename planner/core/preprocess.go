@@ -1579,11 +1579,6 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	if p.LastSnapshotTS != 0 {
 		dom := domain.GetDomain(p.ctx)
 		p.InfoSchema, p.err = dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
-		// If the statement contains local temporary table, we will return error.
-		if p.ctx.GetSessionVars().LocalTemporaryTableExists() {
-			p.err = errors.New("can not stale read temporary table")
-			return
-		}
 		if p.err != nil {
 			return
 		}
@@ -1600,7 +1595,8 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 //    - session variable
 //    - transcation context
 func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
-	if p.InfoSchema == nil {
+	// If the statement contains local temporary table, we may can not get infoschema when we get snapshot infoschema or get schema from cache.
+	if p.InfoSchema == nil || p.ctx.GetSessionVars().LocalTemporaryTableExists() {
 		p.InfoSchema = p.ctx.GetInfoSchema().(infoschema.InfoSchema)
 	}
 	return p.InfoSchema
