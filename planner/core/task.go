@@ -1529,7 +1529,7 @@ func BuildFinalModeAggregation(
 		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
 		finalAggFunc.Name = aggFunc.Name
 		args := make([]expression.Expression, 0, len(aggFunc.Args))
-		byItems := make([]*util.ByItems, len(aggFunc.OrderByItems), len(aggFunc.OrderByItems))
+		byItems := make([]*util.ByItems, 0, len(aggFunc.OrderByItems))
 		if aggFunc.HasDistinct {
 			/*
 				eg: SELECT COUNT(DISTINCT a), SUM(b) FROM t GROUP BY c
@@ -1592,9 +1592,8 @@ func BuildFinalModeAggregation(
 				args = append(args, getDistinctExpr(distinctArg))
 			}
 
-			for b, byItem := range aggFunc.OrderByItems {
-				byItems[b] = byItem.Clone()
-				byItems[b].Expr = getDistinctExpr(byItem.Expr)
+			for _, byItem := range aggFunc.OrderByItems {
+				byItems = append(byItems, &util.ByItems{Expr: getDistinctExpr(byItem.Expr), Desc: byItem.Desc})
 			}
 
 			finalAggFunc.OrderByItems = byItems

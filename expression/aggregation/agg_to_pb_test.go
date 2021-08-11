@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -62,7 +61,6 @@ func (s *testEvaluatorSuite) TearDownSuite(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
-	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 	dg := new(dataGen4Expr2PbTest)
 
