@@ -16,12 +16,19 @@ import (
 
 // Version information.
 var (
-	ReleaseVersion = mysql.TiDBReleaseVersion
+	ReleaseVersion = getReleaseVersion()
 	BuildTS        = versioninfo.TiDBBuildTS
 	GitHash        = versioninfo.TiDBGitHash
 	GitBranch      = versioninfo.TiDBGitBranch
 	goVersion      = runtime.Version()
 )
+
+func getReleaseVersion() string {
+	if mysql.TiDBReleaseVersion != "None" {
+		return mysql.TiDBReleaseVersion
+	}
+	return "v5.0.0-master"
+}
 
 // AppName is a name of a built binary.
 type AppName string
