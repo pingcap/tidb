@@ -10,7 +10,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuiteJoin2) TestIndexLookupMergeJoinHang(c *C) {
+func (s *testSerialSuite) TestIndexLookupMergeJoinHang(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/IndexMergeJoinMockOOM"), IsNil)
@@ -28,7 +28,7 @@ func (s *testSuiteJoin2) TestIndexLookupMergeJoinHang(c *C) {
 	c.Assert(err.Error(), Equals, "OOM test index merge join doesn't hang here.")
 }
 
-func (s *testSuite9) TestIssue18068(c *C) {
+func (s *testSerialSuite) TestIssue18068(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIssue18068", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIssue18068"), IsNil)
@@ -157,4 +157,23 @@ func (s *testSuite9) TestIssue20549(c *C) {
 		testkit.Rows("1"))
 	tk.MustQuery("SELECT /*+ HASH_JOIN(t1,t2)  */ 1 from t1 left outer join t2 on t1.t2id=t2.id;\n").Check(
 		testkit.Rows("1"))
+}
+
+func (s *testSuite9) TestIssue24473AndIssue25669(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists x, t2, t3")
+	tk.MustExec("CREATE TABLE `x` (  `a` enum('y','b','1','x','0','null') DEFAULT NULL,  KEY `a` (`a`));")
+	tk.MustExec("insert into x values(\"x\"),(\"x\"),(\"b\"),(\"y\");")
+	tk.MustQuery("SELECT /*+ merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
+	tk.MustQuery("SELECT /*+ inl_merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
+
+	tk.MustExec("drop table if exists x, t2, t3")
+	tk.MustExec("CREATE TABLE `x` (  `a` set('y','b','1','x','0','null') DEFAULT NULL,  KEY `a` (`a`));")
+	tk.MustExec("insert into x values(\"x\"),(\"x\"),(\"b\"),(\"y\");")
+	tk.MustQuery("SELECT /*+ merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
+	tk.MustQuery("SELECT /*+ inl_merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;").Sort().Check(
+		testkit.Rows("b b", "x x", "x x", "x x", "x x", "y y"))
 }
