@@ -1612,7 +1612,6 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 //    - session variable
 //    - transaction context
 func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
-	// If the statement contains local temporary table, we may not get infoschema when we get snapshot infoschema or get schema from cache.
 	if p.InfoSchema != nil {
 		return p.InfoSchema
 	}
