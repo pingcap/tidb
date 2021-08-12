@@ -6007,9 +6007,11 @@ func (s *testIntegrationSerialSuite) TestIssue23506(c *C) {
 	tk.MustGetErrMsg("select 'a' collate utf8mb4_general_ci = 0x80;", "[expression:1267]Illegal mix of collations (utf8mb4_general_ci,EXPLICIT) and (binary,COERCIBLE) for operation '='")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a char(10), primary key (a)) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;")
-	tk.MustGetErrMsg("select * from t1 where a > 0x80;", "[expression:1267]Illegal mix of collations (utf8mb4_general_ci,IMPLICIT) and (binary,COERCIBLE) for operation '>'")
 	tk.MustExec("insert into t1 values ('a')")
+	tk.MustGetErrMsg("select * from t1 where a > 0x80;", "[expression:1267]Illegal mix of collations (utf8mb4_general_ci,IMPLICIT) and (binary,COERCIBLE) for operation '>'")
 	tk.MustGetErrMsg("select * from t1 where a between 0x808E and 0x80BD;", "[expression:1267]Illegal mix of collations (utf8mb4_general_ci,IMPLICIT) and (binary,COERCIBLE) for operation '>='")
+	tk.MustGetErrMsg("select _ascii 'a' collate ascii_bin = 'ㅂ';", "[expression:1267]Illegal mix of collations (ascii_bin,EXPLICIT) and (utf8mb4_bin,COERCIBLE) for operation '='")
+	tk.MustGetErrMsg("select _ascii 'a' collate ascii_bin = 0x80;", "[expression:1267]Illegal mix of collations (ascii_bin,EXPLICIT) and (binary,COERCIBLE) for operation '='")
 }
 
 func (s *testIntegrationSuite) TestNotExistFunc(c *C) {
