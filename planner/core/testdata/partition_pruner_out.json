@@ -222,6 +222,14 @@
           "TableReader 10000.00 root partition:p0,p1 data:TableFullScan",
           "└─TableFullScan 10000.00 cop[tikv] table:t9 keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t10 where a between 0 AND 15218001646226433652",
+        "Result": [
+          "TableReader 250.00 root partition:all data:Selection",
+          "└─Selection 250.00 cop[tikv]  ge(test_partition.t10.a, 0), le(test_partition.t10.a, 15218001646226433652)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t10 keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
