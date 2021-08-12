@@ -53,6 +53,9 @@ type indexHelperInfo = struct {
 // 		the mutations, thus ignored.
 func CheckIndexConsistency(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, t *TableCommon,
 	dataAdded, dataRemoved []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle) error {
+	if sh == 0 {
+		return nil
+	}
 	mutations := collectTableMutationsFromBufferStage(t, memBuffer, sh)
 	if err := checkRowValues(sc, sessVars, t, dataAdded, dataRemoved, mutations); err != nil {
 		return errors.Trace(err)
