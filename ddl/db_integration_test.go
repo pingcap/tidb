@@ -326,6 +326,15 @@ func (s *testIntegrationSuite7) TestIndexLength(c *C) {
 	tk.MustExec("create index idx5 on idx_len(g)")
 	tk.MustExec("alter table idx_len add index idxg(g)")
 	tk.MustExec("create table idx_len1(a int(0), b timestamp(0), c datetime(0), d time(0), f float(0), g decimal(0), index(a), index(b), index(c), index(d), index(f), index(g))")
+
+	tk.MustExec("drop table idx_len;")
+	tk.MustExec("create table idx_len(a text, b text charset ascii, c blob, index(a(768)), index (b(3072)), index (c(3072)));")
+	tk.MustExec("drop table idx_len;")
+	tk.MustExec("create table idx_len(a text, b text charset ascii, c blob);")
+	tk.MustExec("alter table idx_len add index (a(768))")
+	tk.MustExec("alter table idx_len add index (b(3072))")
+	tk.MustExec("alter table idx_len add index (c(3072))")
+	tk.MustExec("drop table idx_len;")
 }
 
 func (s *testIntegrationSuite3) TestIssue3833(c *C) {
@@ -521,7 +530,9 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrMultiplePriKey)
 	sql = "create table test_error_code_3(pt blob ,primary key (pt));"
 	tk.MustGetErrCode(sql, errno.ErrBlobKeyWithoutLength)
-	sql = "create table test_error_code_3(a text, unique (a(3073)));"
+	sql = "create table test_error_code_3(a text, unique (a(769)));"
+	tk.MustGetErrCode(sql, errno.ErrTooLongKey)
+	sql = "create table test_error_code_3(a text charset ascii, unique (a(3073)));"
 	tk.MustGetErrCode(sql, errno.ErrTooLongKey)
 	sql = "create table test_error_code_3(`id` int, key `primary`(`id`));"
 	tk.MustGetErrCode(sql, errno.ErrWrongNameForIndex)
