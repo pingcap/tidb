@@ -386,7 +386,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
 
 	rangeStream := restore.GoValidateFileRanges(
-		ctx, tableStream, tableFileMap, cfg.MergeSmallRegionKeyCount, cfg.MergeSmallRegionKeyCount, errCh)
+		ctx, tableStream, tableFileMap, cfg.MergeSmallRegionSizeBytes, cfg.MergeSmallRegionKeyCount, errCh)
 
 	rangeSize := restore.EstimateRangeSize(files)
 	summary.CollectInt("restore ranges", rangeSize)
