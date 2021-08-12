@@ -1076,19 +1076,32 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 
 // CheckHandleExists check whether recordID key exists. if not exists, return nil,
 // otherwise return kv.ErrKeyExists error.
+<<<<<<< HEAD
 func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64, data []types.Datum) error {
+=======
+func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, newRow []types.Datum, modified []bool) error {
+	physicalTableID := t.Meta().ID
+	idxs := t.Indices()
+>>>>>>> 702bed1ae... tables: fix the wrong result for "insert ignore duplicate up" on partition table when handle changed (#25859)
 	if pt, ok := t.(*partitionedTable); ok {
 		info := t.Meta().GetPartitionInfo()
 		pid, err := pt.locatePartition(ctx, info, data)
 		if err != nil {
 			return err
 		}
+<<<<<<< HEAD
 		t = pt.GetPartition(pid)
+=======
+		partition := pt.GetPartition(pid)
+		physicalTableID = partition.GetPhysicalID()
+		idxs = partition.Indices()
+>>>>>>> 702bed1ae... tables: fix the wrong result for "insert ignore duplicate up" on partition table when handle changed (#25859)
 	}
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	// Check key exists.
 	recordKey := t.RecordKey(recordID)
 	e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
@@ -1100,6 +1113,61 @@ func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64, da
 		return e
 	} else if !kv.ErrNotExist.Equal(err) {
 		return err
+=======
+
+	// Check primary key exists.
+	{
+		prefix := tablecodec.GenTableRecordPrefix(physicalTableID)
+		recordKey := tablecodec.EncodeRecordKey(prefix, recordID)
+		_, err = txn.Get(ctx, recordKey)
+		if err == nil {
+			handleStr := getDuplicateErrorHandleString(t, recordID, newRow)
+			return kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
+		} else if !kv.ErrNotExist.Equal(err) {
+			return err
+		}
+	}
+
+	// Check unique key exists.
+	{
+		shouldSkipIgnoreCheck := func(idx table.Index) bool {
+			if !IsIndexWritable(idx) || !idx.Meta().Unique || (t.Meta().IsCommonHandle && idx.Meta().Primary) {
+				return true
+			}
+			for _, c := range idx.Meta().Columns {
+				if modified[c.Offset] {
+					return false
+				}
+			}
+			return true
+		}
+
+		for _, idx := range idxs {
+			if shouldSkipIgnoreCheck(idx) {
+				continue
+			}
+			newVals, err := idx.FetchValues(newRow, nil)
+			if err != nil {
+				return err
+			}
+			key, _, err := idx.GenIndexKey(sctx.GetSessionVars().StmtCtx, newVals, recordID, nil)
+			if err != nil {
+				return err
+			}
+			_, err = txn.Get(ctx, key)
+			if kv.IsErrNotFound(err) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			entryKey, err := genIndexKeyStr(newVals)
+			if err != nil {
+				return err
+			}
+			return kv.ErrKeyExists.FastGenByArgs(entryKey, idx.Meta().Name.String())
+		}
+>>>>>>> 702bed1ae... tables: fix the wrong result for "insert ignore duplicate up" on partition table when handle changed (#25859)
 	}
 	return nil
 }

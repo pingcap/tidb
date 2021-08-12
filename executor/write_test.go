@@ -749,6 +749,44 @@ func (s *testSuite4) TestInsertIgnoreOnDup(c *C) {
 	testSQL = `select * from t;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1", "2 2"))
+<<<<<<< HEAD
+=======
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(`col_25` set('Alice','Bob','Charlie','David') NOT NULL,`col_26` date NOT NULL DEFAULT '2016-04-15', PRIMARY KEY (`col_26`) clustered, UNIQUE KEY `idx_9` (`col_25`,`col_26`),UNIQUE KEY `idx_10` (`col_25`))")
+	tk.MustExec("insert into t2(col_25, col_26) values('Bob', '1989-03-23'),('Alice', '2023-11-24'), ('Charlie', '2023-12-05')")
+	tk.MustExec("insert ignore into t2 (col_25,col_26) values ( 'Bob','1977-11-23' ) on duplicate key update col_25 = 'Alice', col_26 = '2036-12-13'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'Alice' for key 'idx_10'"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("Bob 1989-03-23", "Alice 2023-11-24", "Charlie 2023-12-05"))
+
+	tk.MustExec("drop table if exists t4")
+	tk.MustExec("create table t4(id int primary key clustered, k int, v int, unique key uk1(k))")
+	tk.MustExec("insert into t4 values (1, 10, 100), (3, 30, 300)")
+	tk.MustExec("insert ignore into t4 (id, k, v) values(1, 0, 0) on duplicate key update id = 2, k = 30")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '30' for key 'uk1'"))
+	tk.MustQuery("select * from t4").Check(testkit.Rows("1 10 100", "3 30 300"))
+
+	tk.MustExec("drop table if exists t5")
+	tk.MustExec("create table t5(k1 varchar(100), k2 varchar(100), uk1 int, v int, primary key(k1, k2) clustered, unique key ukk1(uk1), unique key ukk2(v))")
+	tk.MustExec("insert into t5(k1, k2, uk1, v) values('1', '1', 1, '100'), ('1', '3', 2, '200')")
+	tk.MustExec("update ignore t5 set k2 = '2', uk1 = 2 where k1 = '1' and k2 = '1'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '2' for key 'ukk1'"))
+	tk.MustQuery("select * from t5").Check(testkit.Rows("1 1 1 100", "1 3 2 200"))
+
+	tk.MustExec("drop table if exists t6")
+	tk.MustExec("create table t6 (a int, b int, c int, primary key(a, b) clustered, unique key idx_14(b), unique key idx_15(b), unique key idx_16(a, b))")
+	tk.MustExec("insert into t6 select 10, 10, 20")
+	tk.MustExec("insert ignore into t6 set a = 20, b = 10 on duplicate key update a = 100")
+	tk.MustQuery("select * from t6").Check(testkit.Rows("100 10 20"))
+	tk.MustExec("insert ignore into t6 set a = 200, b= 10 on duplicate key update c = 1000")
+	tk.MustQuery("select * from t6").Check(testkit.Rows("100 10 1000"))
+
+	tk.MustExec("drop table if exists t7")
+	tk.MustExec("CREATE TABLE t7 (`col_334` mediumint(9) NOT NULL DEFAULT '-3217641',  `col_335` mediumint(8) unsigned NOT NULL DEFAULT '2002468',  `col_336` enum('alice','bob','charlie','david') COLLATE utf8_general_ci NOT NULL DEFAULT 'alice',  PRIMARY KEY (`col_334`,`col_336`,`col_335`) CLUSTERED,  UNIQUE KEY `idx_116` (`col_334`,`col_335`),  UNIQUE KEY `idx_117` (`col_336`,`col_334`),  KEY `idx_118` (`col_336`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci PARTITION BY HASH( `col_334` ) PARTITIONS 6;")
+	tk.MustExec("insert into t7(col_335, col_336) values(7685969, 'alice'),(2002468, 'bob')")
+	tk.MustExec("insert ignore into t7(col_335, col_336) values(2002468, 'david') on duplicate key update col_335 = 7685969")
+	tk.MustQuery("select * from t7").Check(testkit.Rows("-3217641 7685969 alice", "-3217641 2002468 bob"))
+>>>>>>> 702bed1ae... tables: fix the wrong result for "insert ignore duplicate up" on partition table when handle changed (#25859)
 }
 
 func (s *testSuite4) TestInsertSetWithDefault(c *C) {
