@@ -319,6 +319,7 @@ func (kvcodec *tableKVEncoder) Encode(
 	row []types.Datum,
 	rowID int64,
 	columnPermutation []int,
+	_ string,
 	offset int64,
 ) (Row, error) {
 	cols := kvcodec.tbl.Cols()

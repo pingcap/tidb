@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
@@ -249,6 +250,7 @@ type Controller struct {
 	closedEngineLimit *worker.Pool
 	store             storage.ExternalStorage
 	metaMgrBuilder    metaMgrBuilder
+	errorMgr          *errormanager.ErrorManager
 	taskMgr           taskMetaMgr
 
 	diskQuotaLock  *diskQuotaLock
@@ -296,6 +298,13 @@ func NewRestoreControllerWithPauser(
 		cfg.TaskID = taskCp.TaskID
 	}
 
+	// TODO: support Lightning via SQL
+	db, err := g.GetDB()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	errorMgr := errormanager.New(db, cfg)
+
 	var backend backend.Backend
 	switch cfg.TikvImporter.Backend {
 	case config.BackendImporter:
@@ -309,7 +318,7 @@ func NewRestoreControllerWithPauser(
 		if err != nil {
 			return nil, errors.Annotate(err, "open tidb backend failed")
 		}
-		backend = tidb.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate)
+		backend = tidb.NewTiDBBackend(db, cfg.TikvImporter.OnDuplicate, errorMgr)
 	case config.BackendLocal:
 		var rLimit local.Rlim_t
 		rLimit, err = local.GetSystemRLimit()
@@ -338,11 +347,6 @@ func NewRestoreControllerWithPauser(
 	var metaBuilder metaMgrBuilder
 	switch cfg.TikvImporter.Backend {
 	case config.BackendLocal, config.BackendImporter:
-		// TODO: support Lightning via SQL
-		db, err := g.GetDB()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		metaBuilder = &dbMetaMgrBuilder{
 			db:           db,
 			taskID:       cfg.TaskID,
@@ -375,6 +379,7 @@ func NewRestoreControllerWithPauser(
 
 		store:          s,
 		metaMgrBuilder: metaBuilder,
+		errorMgr:       errorMgr,
 		diskQuotaLock:  newDiskQuotaLock(),
 		taskMgr:        nil,
 	}
@@ -2225,13 +2230,26 @@ func (cr *chunkRestore) encodeLoop(
 			encodeDurStart := time.Now()
 			lastRow := cr.parser.LastRow()
 			// sql -> kv
-			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, curOffset)
+			kvs, encodeErr := kvEncoder.Encode(logger, lastRow.Row, lastRow.RowID, cr.chunk.ColumnPermutation, cr.chunk.Key.Path, curOffset)
 			encodeDur += time.Since(encodeDurStart)
-			cr.parser.RecycleRow(lastRow)
+
+			hasIgnoredEncodeErr := false
 			if encodeErr != nil {
+				rowText := tidb.EncodeRowForRecord(t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row)
+				encodeErr = rc.errorMgr.RecordTypeError(ctx, logger, t.tableName, cr.chunk.Key.Path, newOffset, rowText, encodeErr)
 				err = errors.Annotatef(encodeErr, "in file %s at offset %d", &cr.chunk.Key, newOffset)
+				hasIgnoredEncodeErr = true
+			}
+			cr.parser.RecycleRow(lastRow)
+			curOffset = newOffset
+
+			if err != nil {
 				return
 			}
+			if hasIgnoredEncodeErr {
+				continue
+			}
+
 			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: columnNames, offset: newOffset, rowID: rowID})
 			kvSize += kvs.Size()
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
@@ -2244,7 +2262,6 @@ func (cr *chunkRestore) encodeLoop(
 				canDeliver = true
 				kvSize = 0
 			}
-			curOffset = newOffset
 		}
 		encodeTotalDur += encodeDur
 		metric.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())

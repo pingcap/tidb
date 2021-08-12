@@ -578,7 +578,7 @@ outloop:
 		rowCount += 1
 
 		var dataChecksum, indexChecksum verification.KVChecksum
-		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, offset)
+		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
 		parser.RecycleRow(lastRow)
 		if encodeErr != nil {
 			err = errors.Annotatef(encodeErr, "in file at offset %d", offset)

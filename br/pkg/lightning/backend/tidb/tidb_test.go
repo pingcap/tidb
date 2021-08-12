@@ -29,11 +29,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/uber-go/atomic"
 )
 
 func Test(t *testing.T) {
@@ -68,7 +70,7 @@ func (s *mysqlSuite) SetUpTest(c *C) {
 
 	s.dbHandle = db
 	s.mockDB = mock
-	s.backend = tidb.NewTiDBBackend(db, config.ReplaceOnDup)
+	s.backend = tidb.NewTiDBBackend(db, config.ReplaceOnDup, errormanager.New(nil, config.NewConfig()))
 	s.tbl = tbl
 }
 
@@ -117,7 +119,7 @@ func (s *mysqlSuite) TestWriteRowsReplaceOnDup(c *C) {
 		types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(0x98765432, 4)),
 		types.NewDecimalDatum(types.NewDecFromFloatForTest(12.5)),
 		types.NewMysqlEnumDatum(types.Enum{Name: "ENUM_NAME", Value: 51}),
-	}, 1, perms, 0)
+	}, 1, perms, "0.csv", 0)
 	c.Assert(err, IsNil)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
@@ -138,7 +140,7 @@ func (s *mysqlSuite) TestWriteRowsIgnoreOnDup(c *C) {
 	ctx := context.Background()
 	logger := log.L()
 
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.IgnoreOnDup)
+	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.IgnoreOnDup, errormanager.New(nil, config.NewConfig()))
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	c.Assert(err, IsNil)
 
@@ -151,7 +153,7 @@ func (s *mysqlSuite) TestWriteRowsIgnoreOnDup(c *C) {
 	c.Assert(err, IsNil)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, 0)
+	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "1.csv", 0)
 	c.Assert(err, IsNil)
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
@@ -168,9 +170,9 @@ func (s *mysqlSuite) TestWriteRowsIgnoreOnDup(c *C) {
 	rowWithID, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
 		types.NewIntDatum(1), // _tidb_rowid field
-	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1}, 0)
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1}, "2.csv", 0)
 	c.Assert(err, IsNil)
-	// tidbRow is string.
+	// tidbRow is stringer.
 	c.Assert(fmt.Sprint(rowWithID), Equals, "(1,1)")
 }
 
@@ -182,7 +184,7 @@ func (s *mysqlSuite) TestWriteRowsErrorOnDup(c *C) {
 	ctx := context.Background()
 	logger := log.L()
 
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup)
+	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	c.Assert(err, IsNil)
 
@@ -195,7 +197,7 @@ func (s *mysqlSuite) TestWriteRowsErrorOnDup(c *C) {
 	c.Assert(err, IsNil)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, 0)
+	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "3.csv", 0)
 	c.Assert(err, IsNil)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
@@ -222,19 +224,19 @@ func (s *mysqlSuite) testStrictMode(c *C) {
 	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(0), tblInfo)
 	c.Assert(err, IsNil)
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup)
+	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
 	encoder, err := bk.NewEncoder(tbl, &kv.SessionOptions{SQLMode: mysql.ModeStrictAllTables})
 	c.Assert(err, IsNil)
 
 	logger := log.L()
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum("test"),
-	}, 1, []int{0, -1, -1}, 0)
+	}, 1, []int{0, -1, -1}, "4.csv", 0)
 	c.Assert(err, IsNil)
 
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum("\xff\xff\xff\xff"),
-	}, 1, []int{0, -1, -1}, 0)
+	}, 1, []int{0, -1, -1}, "5.csv", 0)
 	c.Assert(err, ErrorMatches, `.*incorrect utf8 value .* for column s0`)
 
 	// oepn a new encode because column count changed.
@@ -243,7 +245,7 @@ func (s *mysqlSuite) testStrictMode(c *C) {
 	_, err = encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum(""),
 		types.NewStringDatum("非 ASCII 字符串"),
-	}, 1, []int{0, 1, -1}, 0)
+	}, 1, []int{0, 1, -1}, "6.csv", 0)
 	c.Assert(err, ErrorMatches, ".*incorrect ascii value .* for column s1")
 }
 
@@ -257,7 +259,7 @@ func (s *mysqlSuite) TestFetchRemoteTableModels_3_x(c *C) {
 			AddRow("t", "id", "int(10)", "auto_increment"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup)
+	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	c.Assert(err, IsNil)
 	c.Assert(tableInfos, DeepEquals, []*model.TableInfo{
@@ -292,7 +294,7 @@ func (s *mysqlSuite) TestFetchRemoteTableModels_4_0(c *C) {
 			AddRow("test", "t", "id", int64(1)))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup)
+	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	c.Assert(err, IsNil)
 	c.Assert(tableInfos, DeepEquals, []*model.TableInfo{
@@ -327,7 +329,7 @@ func (s *mysqlSuite) TestFetchRemoteTableModels_4_x_auto_increment(c *C) {
 			AddRow("test", "t", "id", int64(1), "AUTO_INCREMENT"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup)
+	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	c.Assert(err, IsNil)
 	c.Assert(tableInfos, DeepEquals, []*model.TableInfo{
@@ -362,7 +364,7 @@ func (s *mysqlSuite) TestFetchRemoteTableModels_4_x_auto_random(c *C) {
 			AddRow("test", "t", "id", int64(1), "AUTO_RANDOM"))
 	s.mockDB.ExpectCommit()
 
-	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup)
+	bk := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup, errormanager.New(nil, config.NewConfig()))
 	tableInfos, err := bk.FetchRemoteTableModels(context.Background(), "test")
 	c.Assert(err, IsNil)
 	c.Assert(tableInfos, DeepEquals, []*model.TableInfo{
@@ -397,24 +399,31 @@ func (s *mysqlSuite) TestWriteRowsErrorDowngrading(c *C) {
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	// TODO: skip the previous error and continue writing the rest.
-	// s.mockDB.
-	// 	ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
-	// 	WillReturnResult(sqlmock.NewResult(1, 1))
-	// s.mockDB.
-	// 	ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(3)\\E").
-	// 	WillReturnResult(sqlmock.NewResult(1, 1))
-	// s.mockDB.
-	// 	ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(4)\\E").
-	// 	WillReturnResult(sqlmock.NewResult(1, 1))
-	// s.mockDB.
-	// 	ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(5)\\E").
-	// 	WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(3)\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(4)\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(5)\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	ctx := context.Background()
 	logger := log.L()
 
-	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup)
+	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup,
+		errormanager.New(nil, &config.Config{
+			App: config.Lightning{
+				MaxError: config.MaxError{
+					Type: *atomic.NewInt64(4),
+				},
+			},
+		}),
+	)
 	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	c.Assert(err, IsNil)
 
@@ -427,35 +436,35 @@ func (s *mysqlSuite) TestWriteRowsErrorDowngrading(c *C) {
 	c.Assert(err, IsNil)
 	row, err := encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(1),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, 0)
+	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "7.csv", 0)
 	c.Assert(err, IsNil)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(2),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, 0)
+	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "8.csv", 0)
 	c.Assert(err, IsNil)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(3),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, 0)
+	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "9.csv", 0)
 	c.Assert(err, IsNil)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(4),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, 0)
+	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "10.csv", 0)
 	c.Assert(err, IsNil)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
 	row, err = encoder.Encode(logger, []types.Datum{
 		types.NewIntDatum(5),
-	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, 0)
+	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, "11.csv", 0)
 	c.Assert(err, IsNil)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/redact"
@@ -53,14 +54,24 @@ const (
 	writeRowsMaxRetryTimes = 3
 )
 
-type tidbRow string
+type tidbRow struct {
+	insertStmt string
+	path       string
+	offset     int64
+}
+
+var emptyTiDBRow = tidbRow{
+	insertStmt: "",
+	path:       "",
+	offset:     0,
+}
 
 type tidbRows []tidbRow
 
 // MarshalLogArray implements the zapcore.ArrayMarshaler interface
 func (rows tidbRows) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 	for _, r := range rows {
-		encoder.AppendString(redact.String(string(r)))
+		encoder.AppendString(redact.String(r.insertStmt))
 	}
 	return nil
 }
@@ -78,24 +89,29 @@ type tidbEncoder struct {
 type tidbBackend struct {
 	db          *sql.DB
 	onDuplicate string
+	errorMgr    *errormanager.ErrorManager
 }
 
 // NewTiDBBackend creates a new TiDB backend using the given database.
 //
 // The backend does not take ownership of `db`. Caller should close `db`
 // manually after the backend expired.
-func NewTiDBBackend(db *sql.DB, onDuplicate string) backend.Backend {
+func NewTiDBBackend(db *sql.DB, onDuplicate string, errorMgr *errormanager.ErrorManager) backend.Backend {
 	switch onDuplicate {
 	case config.ReplaceOnDup, config.IgnoreOnDup, config.ErrorOnDup:
 	default:
 		log.L().Warn("unsupported action on duplicate, overwrite with `replace`")
 		onDuplicate = config.ReplaceOnDup
 	}
-	return backend.MakeBackend(&tidbBackend{db: db, onDuplicate: onDuplicate})
+	return backend.MakeBackend(&tidbBackend{db: db, onDuplicate: onDuplicate, errorMgr: errorMgr})
 }
 
 func (row tidbRow) Size() uint64 {
-	return uint64(len(row))
+	return uint64(len(row.insertStmt))
+}
+
+func (row tidbRow) String() string {
+	return row.insertStmt
 }
 
 func (row tidbRow) ClassifyAndAppend(data *kv.Rows, checksum *verification.KVChecksum, _ *kv.Rows, _ *verification.KVChecksum) {
@@ -103,26 +119,27 @@ func (row tidbRow) ClassifyAndAppend(data *kv.Rows, checksum *verification.KVChe
 	// Cannot do `rows := data.(*tidbRows); *rows = append(*rows, row)`.
 	//nolint:gocritic
 	*data = append(rows, row)
-	cs := verification.MakeKVChecksum(uint64(len(row)), 1, 0)
+	cs := verification.MakeKVChecksum(row.Size(), 1, 0)
 	checksum.Add(&cs)
 }
 
-func (rows tidbRows) SplitIntoChunks(splitSize int) []kv.Rows {
+func (rows tidbRows) SplitIntoChunks(splitSizeInt int) []kv.Rows {
 	if len(rows) == 0 {
 		return nil
 	}
 
 	res := make([]kv.Rows, 0, 1)
 	i := 0
-	cumSize := 0
+	cumSize := uint64(0)
+	splitSize := uint64(splitSizeInt)
 
 	for j, row := range rows {
-		if i < j && cumSize+len(row) > splitSize {
+		if i < j && cumSize+row.Size() > splitSize {
 			res = append(res, rows[i:j])
 			i = j
 			cumSize = 0
 		}
-		cumSize += len(row)
+		cumSize += row.Size()
 	}
 
 	return append(res, rows[i:])
@@ -262,7 +279,7 @@ func getColumnByIndex(cols []*table.Column, index int) *table.Column {
 	return cols[index]
 }
 
-func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, columnPermutation []int, _ int64) (kv.Row, error) {
+func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, columnPermutation []int, path string, offset int64) (kv.Row, error) {
 	cols := enc.tbl.Cols()
 
 	if len(enc.columnIdx) == 0 {
@@ -284,7 +301,7 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 	if len(row) > enc.columnCnt {
 		logger.Error("column count mismatch", zap.Ints("column_permutation", columnPermutation),
 			zap.Array("data", kv.RowArrayMarshaler(row)))
-		return nil, errors.Errorf("column count mismatch, expected %d, got %d", enc.columnCnt, len(row))
+		return emptyTiDBRow, errors.Errorf("column count mismatch, expected %d, got %d", enc.columnCnt, len(row))
 	}
 
 	var encoded strings.Builder
@@ -305,7 +322,24 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 		}
 	}
 	encoded.WriteByte(')')
-	return tidbRow(encoded.String()), nil
+	return tidbRow{
+		insertStmt: encoded.String(),
+		path:       path,
+		offset:     offset,
+	}, nil
+}
+
+// EncodeRowForRecord encodes a row to a string compatible with INSERT statements.
+func EncodeRowForRecord(encTable table.Table, sqlMode mysql.SQLMode, row []types.Datum) string {
+	enc := tidbEncoder{
+		tbl:  encTable,
+		mode: sqlMode,
+	}
+	resRow, err := enc.Encode(log.L(), row, 0, nil, "", 0)
+	if err != nil {
+		return fmt.Sprintf("/* ERROR: %s */", err)
+	}
+	return resRow.(tidbRow).insertStmt
 }
 
 func (be *tidbBackend) Close() {
@@ -371,7 +405,7 @@ func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID) error {
 	return nil
 }
 
-func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName string, columnNames []string, rows kv.Rows) error {
+func (be *tidbBackend) WriteRows(ctx context.Context, tableName string, columnNames []string, rows kv.Rows) error {
 	var err error
 rowLoop:
 	for _, r := range rows.SplitIntoChunks(be.MaxChunkSize()) {
@@ -419,10 +453,10 @@ func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string,
 		if i != 0 {
 			insertStmt.WriteByte(',')
 		}
-		insertStmt.WriteString(string(row))
+		insertStmt.WriteString(row.insertStmt)
 	}
 	stmtTasks[0] = stmtTask{rows, insertStmt.String()}
-	return be.execStmts(ctx, stmtTasks, true)
+	return be.execStmts(ctx, stmtTasks, tableName, true)
 }
 
 func (be *tidbBackend) checkAndBuildStmt(rows tidbRows, tableName string, columnNames []string) *strings.Builder {
@@ -449,10 +483,10 @@ func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, colu
 	for _, row := range rows {
 		var finalInsertStmt strings.Builder
 		finalInsertStmt.WriteString(is)
-		finalInsertStmt.WriteString(string(row))
+		finalInsertStmt.WriteString(row.insertStmt)
 		stmtTasks = append(stmtTasks, stmtTask{[]tidbRow{row}, finalInsertStmt.String()})
 	}
-	return be.execStmts(ctx, stmtTasks, false)
+	return be.execStmts(ctx, stmtTasks, tableName, false)
 }
 
 func (be *tidbBackend) buildStmt(tableName string, columnNames []string) *strings.Builder {
@@ -480,7 +514,7 @@ func (be *tidbBackend) buildStmt(tableName string, columnNames []string) *string
 	return &insertStmt
 }
 
-func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, batch bool) error {
+func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tableName string, batch bool) error {
 	for _, stmtTask := range stmtTasks {
 		for i := 0; i < writeRowsMaxRetryTimes; i++ {
 			stmt := stmtTask.stmt
@@ -504,8 +538,11 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, batc
 				if common.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
 					continue
 				}
-				// TODO: count, record and skip the error.
-				// Just return if any error occurs for now.
+				firstRow := stmtTask.rows[0]
+				err = be.errorMgr.RecordTypeError(ctx, log.L(), tableName, firstRow.path, firstRow.offset, firstRow.insertStmt, err)
+				if err == nil {
+					continue
+				}
 				return errors.Trace(err)
 			}
 			// No error, contine the next stmtTask.
@@ -642,14 +679,14 @@ func (be *tidbBackend) ResetEngine(context.Context, uuid.UUID) error {
 func (be *tidbBackend) LocalWriter(
 	ctx context.Context,
 	cfg *backend.LocalWriterConfig,
-	engineUUID uuid.UUID,
+	_ uuid.UUID,
 ) (backend.EngineWriter, error) {
-	return &Writer{be: be, engineUUID: engineUUID}, nil
+	return &Writer{be: be}, nil
 }
 
 type Writer struct {
-	be         *tidbBackend
-	engineUUID uuid.UUID
+	be       *tidbBackend
+	errorMgr *errormanager.ErrorManager
 }
 
 func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
@@ -657,7 +694,7 @@ func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 }
 
 func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames []string, rows kv.Rows) error {
-	return w.be.WriteRows(ctx, w.engineUUID, tableName, columnNames, rows)
+	return w.be.WriteRows(ctx, tableName, columnNames, rows)
 }
 
 func (w *Writer) IsSynced() bool {

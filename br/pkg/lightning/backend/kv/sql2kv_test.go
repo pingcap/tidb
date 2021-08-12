@@ -88,7 +88,7 @@ func (s *kvSuite) TestEncode(c *C) {
 		Timestamp: 1234567890,
 	})
 	c.Assert(err, IsNil)
-	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1}, 1234)
+	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1}, "1.csv", 1234)
 	c.Assert(err, ErrorMatches, "failed to cast value as tinyint\\(4\\) for column `c1` \\(#1\\):.*overflows tinyint")
 	c.Assert(pairs, IsNil)
 
@@ -96,14 +96,14 @@ func (s *kvSuite) TestEncode(c *C) {
 		types.NewIntDatum(1),
 		types.NewStringDatum("invalid-pk"),
 	}
-	_, err = strictMode.Encode(logger, rowsWithPk, 2, []int{0, 1}, 1234)
+	_, err = strictMode.Encode(logger, rowsWithPk, 2, []int{0, 1}, "1.csv", 1234)
 	c.Assert(err, ErrorMatches, "failed to cast value as bigint\\(20\\) for column `_tidb_rowid`.*Truncated.*")
 
 	rowsWithPk2 := []types.Datum{
 		types.NewIntDatum(1),
 		types.NewStringDatum("1"),
 	}
-	pairs, err = strictMode.Encode(logger, rowsWithPk2, 2, []int{0, 1}, 1234)
+	pairs, err = strictMode.Encode(logger, rowsWithPk2, 2, []int{0, 1}, "1.csv", 1234)
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, &KvPairs{pairs: []common.KvPair{
 		{
@@ -121,7 +121,7 @@ func (s *kvSuite) TestEncode(c *C) {
 		Timestamp: 1234567891,
 	})
 	c.Assert(err, IsNil)
-	_, err = mockMode.Encode(logger, rowsWithPk2, 2, []int{0, 1}, 1234)
+	_, err = mockMode.Encode(logger, rowsWithPk2, 2, []int{0, 1}, "1.csv", 1234)
 	c.Assert(err, ErrorMatches, "mock error")
 
 	// Non-strict mode
@@ -131,7 +131,7 @@ func (s *kvSuite) TestEncode(c *C) {
 		SysVars:   map[string]string{"tidb_row_format_version": "1"},
 	})
 	c.Assert(err, IsNil)
-	pairs, err = noneMode.Encode(logger, rows, 1, []int{0, 1}, 1234)
+	pairs, err = noneMode.Encode(logger, rows, 1, []int{0, 1}, "1.csv", 1234)
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, &KvPairs{pairs: []common.KvPair{
 		{
@@ -206,7 +206,7 @@ func (s *kvSuite) TestDecodeIndex(c *C) {
 		Timestamp: 1234567890,
 	})
 	c.Assert(err, IsNil)
-	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1, -1}, 123)
+	pairs, err := strictMode.Encode(logger, rows, 1, []int{0, 1, -1}, "1.csv", 123)
 	data := pairs.(*KvPairs)
 	c.Assert(len(data.pairs), DeepEquals, 2)
 
@@ -245,7 +245,7 @@ func (s *kvSuite) TestEncodeRowFormatV2(c *C) {
 		SysVars:   map[string]string{"tidb_row_format_version": "2"},
 	})
 	c.Assert(err, IsNil)
-	pairs, err := noneMode.Encode(logger, rows, 1, []int{0, 1}, 1234)
+	pairs, err := noneMode.Encode(logger, rows, 1, []int{0, 1}, "1.csv", 1234)
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, &KvPairs{pairs: []common.KvPair{
 		{
@@ -294,7 +294,7 @@ func (s *kvSuite) TestEncodeTimestamp(c *C) {
 		},
 	})
 	c.Assert(err, IsNil)
-	pairs, err := encoder.Encode(logger, nil, 70, []int{-1, 1}, 1234)
+	pairs, err := encoder.Encode(logger, nil, 70, []int{-1, 1}, "1.csv", 1234)
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, &KvPairs{pairs: []common.KvPair{
 		{
@@ -322,7 +322,7 @@ func (s *kvSuite) TestEncodeDoubleAutoIncrement(c *C) {
 	c.Assert(err, IsNil)
 	pairs, err := encoder.Encode(logger, []types.Datum{
 		types.NewStringDatum("1"),
-	}, 70, []int{0, -1}, 1234)
+	}, 70, []int{0, -1}, "1.csv", 1234)
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, &KvPairs{pairs: []common.KvPair{
 		{
@@ -366,7 +366,7 @@ func (s *kvSuite) TestDefaultAutoRandoms(c *C) {
 	})
 	c.Assert(err, IsNil)
 	logger := log.Logger{Logger: zap.NewNop()}
-	pairs, err := encoder.Encode(logger, []types.Datum{types.NewStringDatum("")}, 70, []int{-1, 0}, 1234)
+	pairs, err := encoder.Encode(logger, []types.Datum{types.NewStringDatum("")}, 70, []int{-1, 0}, "1.csv", 1234)
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, &KvPairs{pairs: []common.KvPair{
 		{
@@ -378,7 +378,7 @@ func (s *kvSuite) TestDefaultAutoRandoms(c *C) {
 	}})
 	c.Assert(tbl.Allocators(encoder.(*tableKVEncoder).se).Get(autoid.AutoRandomType).Base(), Equals, int64(70))
 
-	pairs, err = encoder.Encode(logger, []types.Datum{types.NewStringDatum("")}, 71, []int{-1, 0}, 1234)
+	pairs, err = encoder.Encode(logger, []types.Datum{types.NewStringDatum("")}, 71, []int{-1, 0}, "1.csv", 1234)
 	c.Assert(err, IsNil)
 	c.Assert(pairs, DeepEquals, &KvPairs{pairs: []common.KvPair{
 		{
@@ -405,7 +405,7 @@ func (s *kvSuite) TestShardRowId(c *C) {
 	logger := log.Logger{Logger: zap.NewNop()}
 	keyMap := make(map[int64]struct{}, 16)
 	for i := int64(1); i <= 32; i++ {
-		pairs, err := encoder.Encode(logger, []types.Datum{types.NewStringDatum(fmt.Sprintf("%d", i))}, i, []int{0, -1}, i*32)
+		pairs, err := encoder.Encode(logger, []types.Datum{types.NewStringDatum(fmt.Sprintf("%d", i))}, i, []int{0, -1}, "1.csv", i*32)
 		c.Assert(err, IsNil)
 		kvs := pairs.(*KvPairs)
 		c.Assert(len(kvs.pairs), Equals, 1)
@@ -594,7 +594,7 @@ func (s *benchSQL2KVSuite) SetUpTest(c *C) {
 // Run `go test github.com/pingcap/tidb/br/pkg/lightning/backend -check.b -test.v` to get benchmark result.
 func (s *benchSQL2KVSuite) BenchmarkSQL2KV(c *C) {
 	for i := 0; i < c.N; i++ {
-		rows, err := s.encoder.Encode(s.logger, s.row, 1, s.colPerm, 0)
+		rows, err := s.encoder.Encode(s.logger, s.row, 1, s.colPerm, "", 0)
 		c.Assert(err, IsNil)
 		c.Assert(rows, HasLen, 2)
 	}
