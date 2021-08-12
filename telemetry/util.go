@@ -14,7 +14,7 @@
 package telemetry
 
 import (
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505
 	"fmt"
 	"sort"
 	"strconv"
@@ -23,7 +23,7 @@ import (
 
 // hashString returns the SHA1 checksum in hex of the string.
 func hashString(text string) (string, error) {
-	hash := sha1.New()
+	hash := sha1.New() // #nosec G401
 	_, err := hash.Write([]byte(text))
 	if err != nil {
 		return "", err
