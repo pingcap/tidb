@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -23,14 +24,14 @@ import (
 )
 
 const (
-	pdRegions = "/pd/api/v1/regions"
+	pdEmptyRegions = "/pd/api/v1/regions/check/empty-region"
 
 	warnEmptyRegionCntPerStore  = 500
 	errorEmptyRegionCntPerStore = 1000
 	warnRegionCntMaxMinRatio    = 1.5
 	errorRegionCntMaxMinRatio   = 2.0
 
-	// We only check RegionCntMaxMinRatio when maxRegionCnt is larger than this threshold.
+	// We only check RegionCntMaxMinRatio when the maximum region count of all stores is larger than this threshold.
 	checkRegionCntRatioThreshold = 1000
 )
 
@@ -605,70 +606,67 @@ func (m *dbTaskMetaMgr) CheckClusterSource(ctx context.Context) (int64, error) {
 	return source, nil
 }
 
-// checkRegions checks if there are too empty regions or regions distribution is unbalanced.
-func (m *dbTaskMetaMgr) checkRegions(ctx context.Context) error {
+// checkEmptyRegion checks if there are too many empty regions on each store.
+func (m *dbTaskMetaMgr) checkEmptyRegion(ctx context.Context) error {
 	var result pdapi.RegionsInfo
-	if err := m.pdTLS.GetJSON(ctx, pdRegions, &result); err != nil {
+	if err := m.pdTLS.GetJSON(ctx, pdEmptyRegions, &result); err != nil {
 		return errors.Trace(err)
 	}
-	stores := make(map[uint64][]pdapi.RegionInfo)
-	for _, regionInfo := range result.Regions {
-		for _, peer := range regionInfo.Peers {
-			stores[peer.StoreId] = append(stores[peer.StoreId], regionInfo)
+	regions := make(map[uint64]int)
+	for _, region := range result.Regions {
+		for _, peer := range region.Peers {
+			regions[peer.StoreId]++
 		}
 	}
-	if len(stores) == 0 {
-		return nil
-	}
-	var (
-		maxRegionCnt        = 0
-		maxRegionCntStoreID = uint64(0)
-		minRegionCnt        = -1
-		minRegionCntStoreID = uint64(0)
-	)
-	for storeID, regions := range stores {
-		if len(regions) > maxRegionCnt {
-			maxRegionCnt = len(regions)
-			maxRegionCntStoreID = storeID
-		}
-		if minRegionCnt == -1 || len(regions) < minRegionCnt {
-			minRegionCnt = len(regions)
-			minRegionCntStoreID = storeID
-		}
-		emptyRegionCnt := 0
-		for _, region := range regions {
-			if region.ApproximateSize == 0 {
-				emptyRegionCnt++
-			}
-		}
-		if emptyRegionCnt >= errorEmptyRegionCntPerStore {
+	for storeID, regionCnt := range regions {
+		if regionCnt >= errorEmptyRegionCntPerStore {
 			return errors.Errorf("store %v contains too many empty regions, expect it to be less than %v, but actual is %v",
-				storeID, errorEmptyRegionCntPerStore, emptyRegionCnt)
-		} else if emptyRegionCnt >= warnEmptyRegionCntPerStore {
+				storeID, errorEmptyRegionCntPerStore, regionCnt)
+		} else if regionCnt >= warnEmptyRegionCntPerStore {
 			log.L().Warn(
 				"there are too many empty regions in store",
 				zap.Uint64("store-id", storeID),
-				zap.Int("empty-region-cnt", emptyRegionCnt),
+				zap.Int("empty-region-cnt", regionCnt),
 				zap.Int("expect-less-than", warnEmptyRegionCntPerStore),
 			)
 		}
 	}
-	if maxRegionCnt <= checkRegionCntRatioThreshold {
+	return nil
+}
+
+// checkRegionDistribution checks if regions distribution is unbalanced.
+func (m *dbTaskMetaMgr) checkRegionDistribution(ctx context.Context) error {
+	result := &pdapi.StoresInfo{}
+	err := m.pdTLS.GetJSON(ctx, pdStores, result)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(result.Stores) <= 1 {
 		return nil
 	}
-	if minRegionCnt == 0 {
-		return errors.Errorf("regions distribution is unbalanced, there is no region on store %v", minRegionCntStoreID)
+	sort.Slice(result.Stores, func(i, j int) bool {
+		return result.Stores[i].Status.RegionCount < result.Stores[j].Status.RegionCount
+	})
+	minStore := result.Stores[0]
+	maxStore := result.Stores[len(result.Stores)-1]
+	if maxStore.Status.RegionCount <= checkRegionCntRatioThreshold {
+		return nil
 	}
-	ratio := float64(maxRegionCnt) / float64(minRegionCnt)
+	if minStore.Status.RegionCount == 0 {
+		return errors.Errorf("regions distribution is unbalanced, there is no region on store %v", minStore.Store.Id)
+	}
+	ratio := float64(maxStore.Status.RegionCount) / float64(minStore.Status.RegionCount)
 	if ratio >= errorRegionCntMaxMinRatio {
 		return errors.Errorf("regions distribution is unbalanced, the ratio of the regions count of the store(%v) "+
-			"with most regions to the store(%v) with least regions is %v, but we expect it to be less than",
-			maxRegionCntStoreID, minRegionCntStoreID, ratio, errorRegionCntMaxMinRatio)
+			"with most regions(%v) to the store(%v) with least regions(%v) is %v, but we expect it to be less than",
+			maxStore.Store.Id, maxStore.Status.RegionCount, minStore.Store.Id, minStore.Status.RegionCount, ratio, errorRegionCntMaxMinRatio)
 	} else if ratio >= warnRegionCntMaxMinRatio {
 		log.L().Warn(
 			"regions distribution is unbalanced",
-			zap.Int("max-region-cnt", maxRegionCnt),
-			zap.Int("min-region-cnt", minRegionCnt),
+			zap.Uint64("max-store-id", maxStore.Store.Id),
+			zap.Int("max-region-cnt", maxStore.Status.RegionCount),
+			zap.Uint64("min-store-id", minStore.Store.Id),
+			zap.Int("min-region-cnt", minStore.Status.RegionCount),
 			zap.Float64("max-min-ratio", ratio),
 			zap.Float64("expect-less-than", warnRegionCntMaxMinRatio),
 		)
@@ -751,9 +749,13 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 			return errors.Trace(err)
 		}
 
-		if err = m.checkRegions(ctx); err != nil {
+		if err = m.checkEmptyRegion(ctx); err != nil {
 			return errors.Trace(err)
 		}
+		if err = m.checkRegionDistribution(ctx); err != nil {
+			return errors.Trace(err)
+		}
+
 		orig, removed, err := m.pd.RemoveSchedulersWithOrigin(pauseCtx)
 		if err != nil {
 			return errors.Trace(err)
