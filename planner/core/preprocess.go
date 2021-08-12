@@ -1593,11 +1593,8 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		return
 	}
 	if p.LastSnapshotTS != 0 {
-		dom := domain.GetDomain(p.ctx)
-		p.InfoSchema, p.err = dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
-		if p.err != nil {
-			return
-		}
+		p.InfoSchema, p.err = p.getSnapshotInfoSchema()
+
 	}
 	if p.flag&inPrepare == 0 {
 		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
@@ -1612,7 +1609,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 //    - transaction context
 func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 	// If the statement contains local temporary table, we may not get infoschema when we get snapshot infoschema or get schema from cache.
-	if p.InfoSchema != nil && !p.ctx.GetSessionVars().LocalTemporaryTableExists() {
+	if p.InfoSchema != nil {
 		return p.InfoSchema
 	}
 	// `Execute` under some conditions need to see the latest information schema.
@@ -1630,4 +1627,31 @@ func (p *preprocessor) setStalenessReturn() {
 	txnScope := config.GetTxnScopeFromConfig()
 	p.IsStaleness = true
 	p.TxnScope = txnScope
+}
+
+func (p *preprocessor) getSnapshotInfoSchema() (infoschema.InfoSchema, error) {
+	is, err := domain.GetDomain(p.ctx).GetSnapshotInfoSchema(p.LastSnapshotTS)
+	if err != nil {
+		return nil, err
+	}
+	// Set snapshot does not affect the witness of the local temporary table.
+	// The session always see the latest temporary tables.
+	return wrapWithTemporaryTable(p.ctx, is), nil
+}
+
+func wrapWithTemporaryTable(s sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+	// Already a wrapped one.
+	if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
+		return is
+	}
+	// No temporary table.
+	local := s.GetSessionVars().LocalTemporaryTables
+	if local == nil {
+		return is
+	}
+
+	return &infoschema.TemporaryTableAttachedInfoSchema{
+		InfoSchema:           is,
+		LocalTemporaryTables: local.(*infoschema.LocalTemporaryTables),
+	}
 }
