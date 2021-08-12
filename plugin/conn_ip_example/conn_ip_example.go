@@ -76,12 +76,6 @@ func OnInit(ctx context.Context, manifest *plugin.Manifest) error {
 	return nil
 }
 
-// OnFlush implements TiDB plugin's OnFlush SPI.
-func OnFlush(ctx context.Context, manifest *plugin.Manifest) error {
-	fmt.Println("## conn_ip_example OnFlush called ##")
-	return nil
-}
-
 // OnShutdown implements TiDB plugin's OnShutdown SPI.
 func OnShutdown(ctx context.Context, manifest *plugin.Manifest) error {
 	fmt.Println("## conn_ip_example OnShutdown called ##")

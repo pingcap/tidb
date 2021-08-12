@@ -6,7 +6,6 @@ license = ""
 validate = "Validate"
 onInit = "OnInit"
 onShutdown = "OnShutdown"
-onFlush = "OnFlush"
 export = [
     {extPoint="OnGeneralEvent", impl="OnGeneralEvent"},
     {extPoint="OnConnectionEvent", impl="OnConnectionEvent"}
