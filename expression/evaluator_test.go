@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var _ = SerialSuites(&testEvaluatorSerialSuites{})
@@ -44,6 +45,7 @@ func TestT(t *testing.T) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
+	tikv.EnableFailpoints()
 
 	testleak.BeforeTest()
 	defer testleak.AfterTestT(t)()

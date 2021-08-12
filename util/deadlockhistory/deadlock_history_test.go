@@ -17,53 +17,67 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
-	tikverr "github.com/pingcap/tidb/store/tikv/error"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/stretchr/testify/assert"
+	tikverr "github.com/tikv/client-go/v2/error"
 )
 
-type testDeadlockHistorySuite struct{}
+func getAllDatum(d *DeadlockHistory, columns []*model.ColumnInfo) [][]types.Datum {
+	records := d.GetAll()
+	rowsCount := 0
+	for _, rec := range records {
+		rowsCount += len(rec.WaitChain)
+	}
+	rows := make([][]types.Datum, 0, rowsCount)
+	for _, rec := range records {
+		for waitChainIdx := range rec.WaitChain {
+			row := make([]types.Datum, len(columns))
+			for colIdx, column := range columns {
+				row[colIdx] = rec.ToDatum(waitChainIdx, column.Name.O)
+			}
+			rows = append(rows, row)
+		}
+	}
 
-var _ = Suite(&testDeadlockHistorySuite{})
+	return rows
 
-func TestT(t *testing.T) {
-	TestingT(t)
 }
 
-func (s *testDeadlockHistorySuite) TestDeadlockHistoryCollection(c *C) {
+func TestDeadlockHistoryCollection(t *testing.T) {
 	h := NewDeadlockHistory(1)
-	c.Assert(len(h.GetAll()), Equals, 0)
-	c.Assert(h.head, Equals, 0)
-	c.Assert(h.size, Equals, 0)
+	assert.Equal(t, len(h.GetAll()), 0)
+	assert.Equal(t, h.head, 0)
+	assert.Equal(t, h.size, 0)
 
 	rec1 := &DeadlockRecord{
 		OccurTime: time.Now(),
 	}
 	h.Push(rec1)
 	res := h.GetAll()
-	c.Assert(len(res), Equals, 1)
-	c.Assert(res[0], Equals, rec1) // Checking pointer equals is ok.
-	c.Assert(res[0].ID, Equals, uint64(1))
-	c.Assert(h.head, Equals, 0)
-	c.Assert(h.size, Equals, 1)
+	assert.Equal(t, len(res), 1)
+	assert.Equal(t, res[0], rec1) // Checking pointer equals is ok.
+	assert.Equal(t, res[0].ID, uint64(1))
+	assert.Equal(t, h.head, 0)
+	assert.Equal(t, h.size, 1)
 
 	rec2 := &DeadlockRecord{
 		OccurTime: time.Now(),
 	}
 	h.Push(rec2)
 	res = h.GetAll()
-	c.Assert(len(res), Equals, 1)
-	c.Assert(res[0], Equals, rec2)
-	c.Assert(res[0].ID, Equals, uint64(2))
-	c.Assert(h.head, Equals, 0)
-	c.Assert(h.size, Equals, 1)
+	assert.Equal(t, len(res), 1)
+	assert.Equal(t, res[0], rec2)
+	assert.Equal(t, res[0].ID, uint64(2))
+	assert.Equal(t, h.head, 0)
+	assert.Equal(t, h.size, 1)
 
 	h.Clear()
-	c.Assert(len(h.GetAll()), Equals, 0)
+	assert.Equal(t, len(h.GetAll()), 0)
 
 	h = NewDeadlockHistory(3)
 	rec1 = &DeadlockRecord{
@@ -71,39 +85,39 @@ func (s *testDeadlockHistorySuite) TestDeadlockHistoryCollection(c *C) {
 	}
 	h.Push(rec1)
 	res = h.GetAll()
-	c.Assert(len(res), Equals, 1)
-	c.Assert(res[0], Equals, rec1) // Checking pointer equals is ok.
-	c.Assert(res[0].ID, Equals, uint64(1))
-	c.Assert(h.head, Equals, 0)
-	c.Assert(h.size, Equals, 1)
+	assert.Equal(t, len(res), 1)
+	assert.Equal(t, res[0], rec1) // Checking pointer equals is ok.
+	assert.Equal(t, res[0].ID, uint64(1))
+	assert.Equal(t, h.head, 0)
+	assert.Equal(t, h.size, 1)
 
 	rec2 = &DeadlockRecord{
 		OccurTime: time.Now(),
 	}
 	h.Push(rec2)
 	res = h.GetAll()
-	c.Assert(len(res), Equals, 2)
-	c.Assert(res[0], Equals, rec1)
-	c.Assert(res[0].ID, Equals, uint64(1))
-	c.Assert(res[1], Equals, rec2)
-	c.Assert(res[1].ID, Equals, uint64(2))
-	c.Assert(h.head, Equals, 0)
-	c.Assert(h.size, Equals, 2)
+	assert.Equal(t, len(res), 2)
+	assert.Equal(t, res[0], rec1)
+	assert.Equal(t, res[0].ID, uint64(1))
+	assert.Equal(t, res[1], rec2)
+	assert.Equal(t, res[1].ID, uint64(2))
+	assert.Equal(t, h.head, 0)
+	assert.Equal(t, h.size, 2)
 
 	rec3 := &DeadlockRecord{
 		OccurTime: time.Now(),
 	}
 	h.Push(rec3)
 	res = h.GetAll()
-	c.Assert(len(res), Equals, 3)
-	c.Assert(res[0], Equals, rec1)
-	c.Assert(res[0].ID, Equals, uint64(1))
-	c.Assert(res[1], Equals, rec2)
-	c.Assert(res[1].ID, Equals, uint64(2))
-	c.Assert(res[2], Equals, rec3)
-	c.Assert(res[2].ID, Equals, uint64(3))
-	c.Assert(h.head, Equals, 0)
-	c.Assert(h.size, Equals, 3)
+	assert.Equal(t, len(res), 3)
+	assert.Equal(t, res[0], rec1)
+	assert.Equal(t, res[0].ID, uint64(1))
+	assert.Equal(t, res[1], rec2)
+	assert.Equal(t, res[1].ID, uint64(2))
+	assert.Equal(t, res[2], rec3)
+	assert.Equal(t, res[2].ID, uint64(3))
+	assert.Equal(t, h.head, 0)
+	assert.Equal(t, h.size, 3)
 
 	// Continuously pushing items to check the correctness of the deque
 	expectedItems := []*DeadlockRecord{rec1, rec2, rec3}
@@ -122,20 +136,20 @@ func (s *testDeadlockHistorySuite) TestDeadlockHistoryCollection(c *C) {
 		expectedDequeHead = (expectedDequeHead + 1) % 3
 
 		res = h.GetAll()
-		c.Assert(len(res), Equals, 3)
+		assert.Equal(t, len(res), 3)
 		for idx, item := range res {
-			c.Assert(item, Equals, expectedItems[idx])
-			c.Assert(item.ID, Equals, expectedIDs[idx])
+			assert.Equal(t, item, expectedItems[idx])
+			assert.Equal(t, item.ID, expectedIDs[idx])
 		}
-		c.Assert(h.head, Equals, expectedDequeHead)
-		c.Assert(h.size, Equals, 3)
+		assert.Equal(t, h.head, expectedDequeHead)
+		assert.Equal(t, h.size, 3)
 	}
 
 	h.Clear()
-	c.Assert(len(h.GetAll()), Equals, 0)
+	assert.Equal(t, len(h.GetAll()), 0)
 }
 
-func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
+func TestGetDatum(t *testing.T) {
 	time1 := time.Date(2021, 05, 14, 15, 28, 30, 123456000, time.UTC)
 	time2 := time.Date(2022, 06, 15, 16, 29, 31, 123457000, time.UTC)
 
@@ -181,50 +195,64 @@ func (s *testDeadlockHistorySuite) TestGetDatum(c *C) {
 		WaitChain:   nil,
 	})
 
-	res := h.GetAllDatum()
-	c.Assert(len(res), Equals, 4)
+	dummyColumnInfo := []*model.ColumnInfo{
+		{Name: model.NewCIStr(ColDeadlockIDStr)},
+		{Name: model.NewCIStr(ColOccurTimeStr)},
+		{Name: model.NewCIStr(ColRetryableStr)},
+		{Name: model.NewCIStr(ColTryLockTrxIDStr)},
+		{Name: model.NewCIStr(ColCurrentSQLDigestStr)},
+		{Name: model.NewCIStr(ColCurrentSQLDigestTextStr)},
+		{Name: model.NewCIStr(ColKeyStr)},
+		{Name: model.NewCIStr(ColKeyInfoStr)},
+		{Name: model.NewCIStr(ColTrxHoldingLockStr)},
+	}
+	res := getAllDatum(h, dummyColumnInfo)
+
+	assert.Equal(t, len(res), 4)
 	for _, row := range res {
-		c.Assert(len(row), Equals, 7)
+		assert.Equal(t, len(row), 9)
 	}
 
 	toGoTime := func(d types.Datum) time.Time {
 		v, ok := d.GetValue().(types.Time)
-		c.Assert(ok, IsTrue)
-		t, err := v.GoTime(time.UTC)
-		c.Assert(err, IsNil)
-		return t
+		assert.True(t, ok)
+		tm, err := v.GoTime(time.UTC)
+		assert.Nil(t, err)
+		return tm
 	}
 
-	c.Assert(res[0][0].GetValue(), Equals, uint64(1))   // ID
-	c.Assert(toGoTime(res[0][1]), Equals, time1)        // OCCUR_TIME
-	c.Assert(res[0][2].GetValue(), Equals, int64(0))    // RETRYABLE
-	c.Assert(res[0][3].GetValue(), Equals, uint64(101)) // TRY_LOCK_TRX_ID
-	c.Assert(res[0][4].GetValue(), Equals, "sql1")      // SQL_DIGEST
-	c.Assert(res[0][5].GetValue(), Equals, "6B31")      // KEY
-	c.Assert(res[0][6].GetValue(), Equals, uint64(102)) // TRX_HOLDING_LOCK
+	assert.Equal(t, res[0][0].GetValue(), uint64(1))   // ID
+	assert.Equal(t, toGoTime(res[0][1]), time1)        // OCCUR_TIME
+	assert.Equal(t, res[0][2].GetValue(), int64(0))    // RETRYABLE
+	assert.Equal(t, res[0][3].GetValue(), uint64(101)) // TRY_LOCK_TRX_ID
+	assert.Equal(t, res[0][4].GetValue(), "sql1")      // SQL_DIGEST
+	assert.Equal(t, res[0][5].GetValue(), nil)         // SQL_DIGEST_TEXT
+	assert.Equal(t, res[0][6].GetValue(), "6B31")      // KEY
+	assert.Equal(t, res[0][8].GetValue(), uint64(102)) // TRX_HOLDING_LOCK
 
-	c.Assert(res[1][0].GetValue(), Equals, uint64(1))   // ID
-	c.Assert(toGoTime(res[1][1]), Equals, time1)        // OCCUR_TIME
-	c.Assert(res[1][2].GetValue(), Equals, int64(0))    // RETRYABLE
-	c.Assert(res[1][3].GetValue(), Equals, uint64(102)) // TRY_LOCK_TRX_ID
-	c.Assert(res[1][4].GetValue(), Equals, nil)         // SQL_DIGEST
-	c.Assert(res[1][5].GetValue(), Equals, nil)         // KEY
-	c.Assert(res[1][6].GetValue(), Equals, uint64(101)) // TRX_HOLDING_LOCK
+	assert.Equal(t, res[1][0].GetValue(), uint64(1))   // ID
+	assert.Equal(t, toGoTime(res[1][1]), time1)        // OCCUR_TIME
+	assert.Equal(t, res[1][2].GetValue(), int64(0))    // RETRYABLE
+	assert.Equal(t, res[1][3].GetValue(), uint64(102)) // TRY_LOCK_TRX_ID
+	assert.Equal(t, res[1][4].GetValue(), nil)         // SQL_DIGEST
+	assert.Equal(t, res[1][5].GetValue(), nil)         // SQL_DIGEST_TEXT
+	assert.Equal(t, res[1][6].GetValue(), nil)         // KEY
+	assert.Equal(t, res[1][8].GetValue(), uint64(101)) // TRX_HOLDING_LOCK
 
-	c.Assert(res[2][0].GetValue(), Equals, uint64(2))   // ID
-	c.Assert(toGoTime(res[2][1]), Equals, time2)        // OCCUR_TIME
-	c.Assert(res[2][2].GetValue(), Equals, int64(1))    // RETRYABLE
-	c.Assert(res[2][3].GetValue(), Equals, uint64(201)) // TRY_LOCK_TRX_ID
-	c.Assert(res[2][6].GetValue(), Equals, uint64(202)) // TRX_HOLDING_LOCK
+	assert.Equal(t, res[2][0].GetValue(), uint64(2))   // ID
+	assert.Equal(t, toGoTime(res[2][1]), time2)        // OCCUR_TIME
+	assert.Equal(t, res[2][2].GetValue(), int64(1))    // RETRYABLE
+	assert.Equal(t, res[2][3].GetValue(), uint64(201)) // TRY_LOCK_TRX_ID
+	assert.Equal(t, res[2][8].GetValue(), uint64(202)) // TRX_HOLDING_LOCK
 
-	c.Assert(res[3][0].GetValue(), Equals, uint64(2))   // ID
-	c.Assert(toGoTime(res[3][1]), Equals, time2)        // OCCUR_TIME
-	c.Assert(res[3][2].GetValue(), Equals, int64(1))    // RETRYABLE
-	c.Assert(res[3][3].GetValue(), Equals, uint64(202)) // TRY_LOCK_TRX_ID
-	c.Assert(res[3][6].GetValue(), Equals, uint64(201)) // TRX_HOLDING_LOCK
+	assert.Equal(t, res[3][0].GetValue(), uint64(2))   // ID
+	assert.Equal(t, toGoTime(res[3][1]), time2)        // OCCUR_TIME
+	assert.Equal(t, res[3][2].GetValue(), int64(1))    // RETRYABLE
+	assert.Equal(t, res[3][3].GetValue(), uint64(202)) // TRY_LOCK_TRX_ID
+	assert.Equal(t, res[3][8].GetValue(), uint64(201)) // TRX_HOLDING_LOCK
 }
 
-func (s *testDeadlockHistorySuite) TestErrDeadlockToDeadlockRecord(c *C) {
+func TestErrDeadlockToDeadlockRecord(t *testing.T) {
 	digest1, digest2 := parser.NewDigest([]byte("aabbccdd")), parser.NewDigest([]byte("ddccbbaa"))
 	tag1 := tipb.ResourceGroupTag{SqlDigest: digest1.Bytes()}
 	tag2 := tipb.ResourceGroupTag{SqlDigest: digest2.Bytes()}
@@ -273,7 +301,53 @@ func (s *testDeadlockHistorySuite) TestErrDeadlockToDeadlockRecord(c *C) {
 
 	record := ErrDeadlockToDeadlockRecord(err)
 	// The OccurTime is set to time.Now
-	c.Assert(time.Since(record.OccurTime), Less, time.Millisecond*5)
+	assert.Less(t, time.Since(record.OccurTime), time.Millisecond*5)
 	expectedRecord.OccurTime = record.OccurTime
-	c.Assert(record, DeepEquals, expectedRecord)
+	assert.Equal(t, record, expectedRecord)
+}
+
+func dummyRecord() *DeadlockRecord {
+	return &DeadlockRecord{}
+}
+
+func TestResize(t *testing.T) {
+	h := NewDeadlockHistory(2)
+	h.Push(dummyRecord()) // id=1 inserted
+	h.Push(dummyRecord()) // id=2 inserted,
+	h.Push(dummyRecord()) // id=3 inserted, id=1 is removed
+	assert.Equal(t, h.head, 1)
+	assert.Equal(t, h.size, 2)
+	assert.Equal(t, len(h.GetAll()), 2)
+	assert.Equal(t, h.GetAll()[0].ID, uint64(2))
+	assert.Equal(t, h.GetAll()[1].ID, uint64(3))
+
+	h.Resize(3)
+	assert.Equal(t, h.head, 0)
+	assert.Equal(t, h.size, 2)
+	h.Push(dummyRecord()) // id=4 inserted
+	assert.Equal(t, h.head, 0)
+	assert.Equal(t, h.size, 3)
+	assert.Equal(t, len(h.GetAll()), 3)
+	assert.Equal(t, h.GetAll()[0].ID, uint64(2))
+	assert.Equal(t, h.GetAll()[1].ID, uint64(3))
+	assert.Equal(t, h.GetAll()[2].ID, uint64(4))
+
+	h.Resize(2) // id=2 removed
+	assert.Equal(t, h.head, 0)
+	assert.Equal(t, h.size, 2)
+	assert.Equal(t, len(h.GetAll()), 2)
+	assert.Equal(t, h.GetAll()[0].ID, uint64(3))
+	assert.Equal(t, h.GetAll()[1].ID, uint64(4))
+
+	h.Resize(0) // all removed
+	assert.Equal(t, h.head, 0)
+	assert.Equal(t, h.size, 0)
+	assert.Equal(t, len(h.GetAll()), 0)
+
+	h.Resize(2)
+	assert.Equal(t, h.head, 0)
+	assert.Equal(t, h.size, 0)
+	h.Push(dummyRecord()) // id=5 inserted
+	assert.Equal(t, h.head, 0)
+	assert.Equal(t, h.size, 1)
 }

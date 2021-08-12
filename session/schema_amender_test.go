@@ -18,22 +18,20 @@ import (
 	"context"
 	"sort"
 	"strconv"
-	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
 )
 
@@ -64,7 +62,7 @@ func initTblColIdxID(metaInfo *model.TableInfo) {
 	metaInfo.State = model.StatePublic
 }
 
-func mutationsEqual(res *tikv.PlainMutations, expected *tikv.PlainMutations, c *C) {
+func mutationsEqual(res *transaction.PlainMutations, expected *transaction.PlainMutations, c *C) {
 	c.Assert(len(res.GetKeys()), Equals, len(expected.GetKeys()))
 	for i := 0; i < len(res.GetKeys()); i++ {
 		foundIdx := -1
@@ -91,8 +89,8 @@ type data struct {
 
 // Generate exist old data and new data in transaction to be amended. Also generate the expected amend mutations
 // according to the old and new data and the full generated expected mutations.
-func prepareTestData(se *session, mutations *tikv.PlainMutations, oldTblInfo table.Table, newTblInfo table.Table,
-	expectedAmendOps []amendOp, c *C) (*data, tikv.PlainMutations) {
+func prepareTestData(se *session, mutations *transaction.PlainMutations, oldTblInfo table.Table, newTblInfo table.Table,
+	expectedAmendOps []amendOp, c *C) (*data, transaction.PlainMutations) {
 	var err error
 	// Generated test data.
 	colIds := make([]int64, len(oldTblInfo.Meta().Columns))
@@ -112,7 +110,7 @@ func prepareTestData(se *session, mutations *tikv.PlainMutations, oldTblInfo tab
 	newRowValues := make([][]types.Datum, numberOfRows)
 	rd := rowcodec.Encoder{Enable: true}
 	oldData := &data{}
-	expecteMutations := tikv.NewPlainMutations(8)
+	expecteMutations := transaction.NewPlainMutations(8)
 	oldRowKvMap := make(map[string][]types.Datum)
 	newRowKvMap := make(map[string][]types.Datum)
 
@@ -201,8 +199,8 @@ func prepareTestData(se *session, mutations *tikv.PlainMutations, oldTblInfo tab
 			return idxKey, idxVal
 		}
 		for i := 0; i < len(mutations.GetKeys()); i++ {
-			oldIdxKeyMutation := tikv.PlainMutations{}
-			newIdxKeyMutation := tikv.PlainMutations{}
+			oldIdxKeyMutation := transaction.PlainMutations{}
+			newIdxKeyMutation := transaction.PlainMutations{}
 			key := mutations.GetKeys()[i]
 			keyOp := mutations.GetOps()[i]
 			if addIndexNeedRemoveOp(info.AmendOpType) && mayGenDelIndexRowKeyOp(keyOp) {
@@ -255,7 +253,6 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 	defer store.Close()
 	se := &session{
 		store:       store,
-		parserPool:  &sync.Pool{New: func() interface{} { return parser.New() }},
 		sessionVars: variable.NewSessionVars(),
 	}
 	startStates := []model.SchemaState{model.StateNone, model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization}
@@ -382,7 +379,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 				}
 			}
 			// Generated test data.
-			mutations := tikv.NewPlainMutations(8)
+			mutations := transaction.NewPlainMutations(8)
 			oldData, expectedMutations := prepareTestData(se, &mutations, oldTbInfo, newTblInfo, expectedAmendOps, c)
 			// Prepare old data in table.
 			txnPrepare, err := se.store.Begin()

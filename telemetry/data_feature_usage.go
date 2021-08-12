@@ -19,11 +19,12 @@ import (
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
+	m "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/metrics"
 )
 
 type featureUsage struct {
@@ -33,23 +34,25 @@ type featureUsage struct {
 	// key is the first 6 characters of sha2(TABLE_NAME, 256)
 	ClusterIndex   *ClusterIndexUsage `json:"clusterIndex"`
 	TemporaryTable bool               `json:"temporaryTable"`
+	CTE            *m.CTEUsageCounter `json:"cte"`
 }
 
 func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
-
-	clusterIdxUsage, err := GetClusterIndexUsageInfo(ctx)
+	clusterIdxUsage, err := getClusterIndexUsageInfo(ctx)
 	if err != nil {
 		logutil.BgLogger().Info(err.Error())
 		return nil, err
 	}
 
 	// transaction related feature
-	txnUsage := GetTxnUsageInfo(ctx)
+	txnUsage := getTxnUsageInfo(ctx)
 
 	// Avoid the circle dependency.
 	temporaryTable := ctx.(TemporaryTableFeatureChecker).TemporaryTableExists()
 
-	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable}, nil
+	cteUsage := getCTEUsageInfo()
+
+	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage}, nil
 }
 
 // ClusterIndexUsage records the usage info of all the tables, no more than 10k tables
@@ -64,8 +67,8 @@ type TableClusteredInfo struct {
 	// NA means this field is no meaningful information
 }
 
-// GetClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
-func GetClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, err error) {
+// getClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
+func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, err error) {
 	usage := make(ClusterIndexUsage)
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 
@@ -96,6 +99,7 @@ func GetClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 			}
 		}
 	}()
+
 	err = ctx.RefreshTxnCtx(context.TODO())
 	if err != nil {
 		return nil, err
@@ -148,9 +152,10 @@ type TxnUsage struct {
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
+var initialCTECounter m.CTEUsageCounter
 
-// GetTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
-func GetTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
+// getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
+func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	asyncCommitUsed := false
 	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableAsyncCommit); err == nil {
 		asyncCommitUsed = val == variable.On
@@ -166,4 +171,16 @@ func GetTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 
 func postReportTxnUsage() {
 	initialTxnCommitCounter = metrics.GetTxnCommitCounter()
+}
+
+// ResetCTEUsage resets CTE usages.
+func postReportCTEUsage() {
+	initialCTECounter = m.GetCTECounter()
+}
+
+// getCTEUsageInfo gets the CTE usages.
+func getCTEUsageInfo() *m.CTEUsageCounter {
+	curr := m.GetCTECounter()
+	diff := curr.Sub(initialCTECounter)
+	return &diff
 }

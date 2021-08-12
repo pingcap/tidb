@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	driver "github.com/pingcap/tidb/store/driver/txn"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.
@@ -55,6 +55,8 @@ type BatchPointGetExec struct {
 	partTblID   int64
 	idxVals     [][]types.Datum
 	startTS     uint64
+	txnScope    string
+	isStaleness bool
 	snapshotTS  uint64
 	txn         kv.Transaction
 	lock        bool
@@ -105,7 +107,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	}
 	e.txn = txn
 	var snapshot kv.Snapshot
-	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
+	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == e.snapshotTS {
 		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
 		// The snapshot may contains cache that can reduce RPC call.
 		snapshot = txn.GetSnapshot()
@@ -113,7 +115,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
 	}
 	if e.runtimeStats != nil {
-		snapshotStats := &tikv.SnapshotRuntimeStats{}
+		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
 			SnapshotRuntimeStats: snapshotStats,
 		}
@@ -124,20 +126,31 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
-	isStaleness := e.ctx.GetSessionVars().TxnCtx.IsStaleness
-	snapshot.SetOption(kv.IsStalenessReadOnly, isStaleness)
-	if isStaleness && e.ctx.GetSessionVars().TxnCtx.TxnScope != kv.GlobalTxnScope {
+	snapshot.SetOption(kv.TxnScope, e.txnScope)
+	snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
+	failpoint.Inject("assertBatchPointStalenessOption", func(val failpoint.Value) {
+		assertScope := val.(string)
+		if len(assertScope) > 0 {
+			if e.isStaleness && assertScope != e.txnScope {
+				panic("batch point get staleness option fail")
+			}
+		}
+	})
+
+	if e.isStaleness && e.txnScope != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
-				Value: e.ctx.GetSessionVars().TxnCtx.TxnScope,
+				Value: e.txnScope,
 			},
 		})
 	}
 	setResourceGroupTagForTxn(stmtCtx, snapshot)
 	// Avoid network requests for the temporary table.
 	if e.tblInfo.TempTableType == model.TempTableGlobal {
-		snapshot = globalTemporaryTableSnapshot{snapshot}
+		snapshot = temporaryTableSnapshot{snapshot, nil}
+	} else if e.tblInfo.TempTableType == model.TempTableLocal {
+		snapshot = temporaryTableSnapshot{snapshot, e.ctx.GetSessionVars().TemporaryTableData}
 	}
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
@@ -155,14 +168,37 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	return nil
 }
 
-// Global temporary table would always be empty, so get the snapshot data of it is meanless.
-// globalTemporaryTableSnapshot inherits kv.Snapshot and override the BatchGet methods to return empty.
-type globalTemporaryTableSnapshot struct {
+// Temporary table would always use memBuffer in session as snapshot.
+// temporaryTableSnapshot inherits kv.Snapshot and override the BatchGet methods to return empty.
+type temporaryTableSnapshot struct {
 	kv.Snapshot
+	memBuffer kv.MemBuffer
 }
 
-func (s globalTemporaryTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
-	return make(map[string][]byte), nil
+func (s temporaryTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	values := make(map[string][]byte)
+	if s.memBuffer == nil {
+		return values, nil
+	}
+
+	for _, key := range keys {
+		val, err := s.memBuffer.Get(ctx, key)
+		if err == kv.ErrNotExist {
+			continue
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		if len(val) == 0 {
+			continue
+		}
+
+		values[string(key)] = val
+	}
+
+	return values, nil
 }
 
 // Close implements the Executor interface.
@@ -398,6 +434,23 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		// Change the unique index LOCK into PUT record.
+		if len(indexKeys) > 0 {
+			if !e.txn.Valid() {
+				return kv.ErrInvalidTxn
+			}
+			membuf := e.txn.GetMemBuffer()
+			for _, idxKey := range indexKeys {
+				handleVal := handleVals[string(idxKey)]
+				if len(handleVal) == 0 {
+					continue
+				}
+				err = membuf.Set(idxKey, handleVal)
+				if err != nil {
+					return err
+				}
+			}
+		}
 	}
 	// Fetch all values.
 	values, err = batchGetter.BatchGet(ctx, keys)
@@ -409,6 +462,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	if e.lock && rc {
 		existKeys = make([]kv.Key, 0, 2*len(values))
 	}
+	changeLockToPutIdxKeys := make([]kv.Key, 0, len(indexKeys))
 	e.values = make([][]byte, 0, len(values))
 	for i, key := range keys {
 		val := values[string(key)]
@@ -428,6 +482,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			// lock primary key for clustered index table is redundant
 			if len(indexKeys) != 0 {
 				existKeys = append(existKeys, indexKeys[i])
+				changeLockToPutIdxKeys = append(changeLockToPutIdxKeys, indexKeys[i])
 			}
 		}
 	}
@@ -436,6 +491,22 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		err = LockKeys(ctx, e.ctx, e.waitTime, existKeys...)
 		if err != nil {
 			return err
+		}
+		if len(changeLockToPutIdxKeys) > 0 {
+			if !e.txn.Valid() {
+				return kv.ErrInvalidTxn
+			}
+			for _, idxKey := range changeLockToPutIdxKeys {
+				membuf := e.txn.GetMemBuffer()
+				handleVal := handleVals[string(idxKey)]
+				if len(handleVal) == 0 {
+					return kv.ErrNotExist
+				}
+				err = membuf.Set(idxKey, handleVal)
+				if err != nil {
+					return err
+				}
+			}
 		}
 	}
 	e.handles = handles

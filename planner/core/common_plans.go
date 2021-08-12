@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -31,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -42,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
@@ -182,6 +186,9 @@ type Execute struct {
 	UsingVars     []expression.Expression
 	PrepareParams []types.Datum
 	ExecID        uint32
+	SnapshotTS    uint64
+	IsStaleness   bool
+	TxnScope      string
 	Stmt          ast.StmtNode
 	StmtType      string
 	Plan          Plan
@@ -255,7 +262,17 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			vars.PreparedParams = append(vars.PreparedParams, val)
 		}
 	}
-
+	snapshotTS, txnScope, isStaleness, err := e.handleExecuteBuilderOption(sctx, preparedObj)
+	if err != nil {
+		return err
+	}
+	if isStaleness {
+		is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		sctx.GetSessionVars().StmtCtx.IsStaleness = true
+	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// In order to avoid some correctness issues, we have to clear the
 		// cached plan once the schema version is changed.
@@ -265,7 +282,10 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		preparedObj.Executor = nil
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
-		// FIXME: compatible with prepare https://github.com/pingcap/tidb/issues/24932
+		// Example:
+		// When running update in prepared statement's schema version distinguished from the one of execute statement
+		// We should reset the tableRefs in the prepared update statements, otherwise, the ast nodes still hold the old
+		// tableRefs columnInfo which will cause chaos in logic of trying point get plan. (should ban non-public column)
 		ret := &PreprocessorReturn{InfoSchema: is}
 		err := Preprocess(sctx, prepared.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
@@ -273,12 +293,72 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
-	err := e.getPhysicalPlan(ctx, sctx, is, preparedObj)
+	err = e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
 		return err
 	}
+	e.SnapshotTS = snapshotTS
+	e.TxnScope = txnScope
+	e.IsStaleness = isStaleness
 	e.Stmt = prepared.Stmt
 	return nil
+}
+
+func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
+	preparedObj *CachedPrepareStmt) (snapshotTS uint64, txnScope string, isStaleness bool, err error) {
+	snapshotTS = 0
+	txnScope = oracle.GlobalTxnScope
+	isStaleness = false
+	err = nil
+	vars := sctx.GetSessionVars()
+	readTS := vars.TxnReadTS.PeakTxnReadTS()
+	if readTS > 0 {
+		// It means we meet following case:
+		// 1. prepare p from 'select * from t as of timestamp now() - x seconds'
+		// 1. set transaction read only as of timestamp ts2
+		// 2. execute prepare p
+		// The execute statement would be refused due to timestamp conflict
+		if preparedObj.SnapshotTSEvaluator != nil {
+			err = ErrAsOf.FastGenWithCause("as of timestamp can't be set after set transaction read only as of.")
+			return
+		}
+		snapshotTS = vars.TxnReadTS.UseTxnReadTS()
+		isStaleness = true
+		txnScope = config.GetTxnScopeFromConfig()
+		return
+	}
+	// It means we meet following case:
+	// 1. prepare p from 'select * from t as of timestamp ts1'
+	// 1. begin
+	// 2. execute prepare p
+	// The execute statement would be refused due to timestamp conflict
+	if preparedObj.SnapshotTSEvaluator != nil {
+		if vars.InTxn() {
+			err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+			return
+		}
+		// if preparedObj.SnapshotTSEvaluator != nil, it is a stale read SQL:
+		// which means its infoschema is specified by the SQL, not the current/latest infoschema
+		snapshotTS, err = preparedObj.SnapshotTSEvaluator(sctx)
+		if err != nil {
+			err = errors.Trace(err)
+			return
+		}
+		isStaleness = true
+		txnScope = config.GetTxnScopeFromConfig()
+		return
+	}
+	// It means we meet following case:
+	// 1. prepare p from 'select * from t'
+	// 1. start transaction read only as of timestamp ts1
+	// 2. execute prepare p
+	if vars.InTxn() && vars.TxnCtx.IsStaleness {
+		isStaleness = true
+		snapshotTS = vars.TxnCtx.StartTS
+		txnScope = vars.TxnCtx.TxnScope
+		return
+	}
+	return
 }
 
 func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context,
@@ -795,51 +875,12 @@ type Delete struct {
 	TblColPosInfos TblColPosInfoSlice
 }
 
-// AnalyzeTableID is hybrid table id used to analyze table.
-type AnalyzeTableID struct {
-	TableID int64
-	// PartitionID is used for the construction of partition table statistics. It indicate the ID of the partition.
-	// If the table is not the partition table, the PartitionID will be equal to -1.
-	PartitionID int64
-}
-
-// GetStatisticsID is used to obtain the table ID to build statistics.
-// If the 'PartitionID == -1', we use the TableID to build the statistics for non-partition tables.
-// Otherwise, we use the PartitionID to build the statistics of the partitions in the partition tables.
-func (h *AnalyzeTableID) GetStatisticsID() int64 {
-	statisticsID := h.TableID
-	if h.PartitionID != -1 {
-		statisticsID = h.PartitionID
-	}
-	return statisticsID
-}
-
-// IsPartitionTable indicates whether the table is partition table.
-func (h *AnalyzeTableID) IsPartitionTable() bool {
-	return h.PartitionID != -1
-}
-
-func (h *AnalyzeTableID) String() string {
-	return fmt.Sprintf("%d => %v", h.PartitionID, h.TableID)
-}
-
-// Equals indicates whether two table id is equal.
-func (h *AnalyzeTableID) Equals(t *AnalyzeTableID) bool {
-	if h == t {
-		return true
-	}
-	if h == nil || t == nil {
-		return false
-	}
-	return h.TableID == t.TableID && h.PartitionID == t.PartitionID
-}
-
-// analyzeInfo is used to store the database name, table name and partition name of analyze task.
-type analyzeInfo struct {
+// AnalyzeInfo is used to store the database name, table name and partition name of analyze task.
+type AnalyzeInfo struct {
 	DBName        string
 	TableName     string
 	PartitionName string
-	TableID       AnalyzeTableID
+	TableID       statistics.AnalyzeTableID
 	Incremental   bool
 	StatsVersion  int
 }
@@ -851,14 +892,14 @@ type AnalyzeColumnsTask struct {
 	ColsInfo         []*model.ColumnInfo
 	TblInfo          *model.TableInfo
 	Indexes          []*model.IndexInfo
-	analyzeInfo
+	AnalyzeInfo
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
 	IndexInfo *model.IndexInfo
 	TblInfo   *model.TableInfo
-	analyzeInfo
+	AnalyzeInfo
 }
 
 // Analyze represents an analyze plan
@@ -894,6 +935,15 @@ type LoadStats struct {
 	baseSchemaProducer
 
 	Path string
+}
+
+// PlanRecreatorSingle represents a plan recreator plan.
+type PlanRecreatorSingle struct {
+	baseSchemaProducer
+	ExecStmt ast.StmtNode
+	Analyze  bool
+	Load     bool
+	File     string
 }
 
 // IndexAdvise represents a index advise plan.
@@ -964,7 +1014,7 @@ type Explain struct {
 func GetExplainRowsForPlan(plan Plan) (rows [][]string) {
 	explain := &Explain{
 		TargetPlan: plan,
-		Format:     ast.ExplainFormatROW,
+		Format:     types.ExplainFormatROW,
 		Analyze:    false,
 	}
 	if err := explain.RenderResult(); err != nil {
@@ -977,17 +1027,20 @@ func GetExplainRowsForPlan(plan Plan) (rows [][]string) {
 func (e *Explain) prepareSchema() error {
 	var fieldNames []string
 	format := strings.ToLower(e.Format)
-
+	if format == types.ExplainFormatTraditional {
+		format = types.ExplainFormatROW
+		e.Format = types.ExplainFormatROW
+	}
 	switch {
-	case (format == ast.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == ast.ExplainFormatBrief):
+	case (format == types.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == types.ExplainFormatBrief):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
-	case format == ast.ExplainFormatVerbose:
+	case format == types.ExplainFormatVerbose:
 		fieldNames = []string{"id", "estRows", "estCost", "task", "access object", "operator info"}
-	case format == ast.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
+	case format == types.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
-	case format == ast.ExplainFormatDOT:
+	case format == types.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
-	case format == ast.ExplainFormatHint:
+	case format == types.ExplainFormatHint:
 		fieldNames = []string{"hint"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
@@ -1012,7 +1065,7 @@ func (e *Explain) RenderResult() error {
 		return nil
 	}
 	switch strings.ToLower(e.Format) {
-	case ast.ExplainFormatROW, ast.ExplainFormatBrief, ast.ExplainFormatVerbose:
+	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose:
 		if e.Rows == nil || e.Analyze {
 			e.explainedPlans = map[int]bool{}
 			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
@@ -1024,11 +1077,11 @@ func (e *Explain) RenderResult() error {
 				return err
 			}
 		}
-	case ast.ExplainFormatDOT:
+	case types.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
 			e.prepareDotInfo(physicalPlan)
 		}
-	case ast.ExplainFormatHint:
+	case types.ExplainFormatHint:
 		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
 		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
@@ -1062,6 +1115,11 @@ func (e *Explain) explainPlanInRowFormatCTE() (err error) {
 func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent string, isLastChild bool) (err error) {
 	e.prepareOperatorInfo(p, taskType, driverSide, indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
+	if e.ctx != nil && e.ctx.GetSessionVars() != nil && e.ctx.GetSessionVars().StmtCtx != nil {
+		if optimInfo, ok := e.ctx.GetSessionVars().StmtCtx.OptimInfo[p.ID()]; ok {
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(errors.New(optimInfo))
+		}
+	}
 
 	// For every child we create a new sub-tree rooted by it.
 	childIndent := texttree.Indent4Child(indent, isLastChild)
@@ -1181,7 +1239,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 	if runtimeStatsColl.ExistsRootStats(explainID) {
 		rootStats := runtimeStatsColl.GetRootStats(explainID)
 		analyzeInfo = rootStats.String()
-		actRows = fmt.Sprint(rootStats.GetActRows())
+		actRows = strconv.FormatInt(rootStats.GetActRows(), 10)
 	} else {
 		actRows = "0"
 	}
@@ -1226,7 +1284,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
 	} else {
 		row = []string{id, estRows}
-		if e.Format == ast.ExplainFormatVerbose {
+		if e.Format == types.ExplainFormatVerbose {
 			row = append(row, estCost)
 		}
 		row = append(row, taskType, accessObject, operatorInfo)
@@ -1323,7 +1381,7 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 	buffer.WriteString("}\n")
 
 	for _, cop := range copTasks {
-		e.prepareTaskDot(cop.(PhysicalPlan), "cop", buffer)
+		e.prepareTaskDot(cop, "cop", buffer)
 	}
 
 	for i := range pipelines {

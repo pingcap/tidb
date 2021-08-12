@@ -85,6 +85,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set tidb_opt_limit_push_down_threshold=0")
+	c.Assert(err, IsNil)
 	var input []string
 	var output []struct {
 		SQL  string
@@ -426,6 +428,8 @@ func (s *testPlanSuite) TestAggEliminator(c *C) {
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "set tidb_opt_limit_push_down_threshold=0")
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'")
 	c.Assert(err, IsNil) // disable only full group by
@@ -974,6 +978,7 @@ func (s *testPlanSuite) TestLimitToCopHint(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tn")
 	tk.MustExec("create table tn(a int, b int, c int, d int, key (a, b, c, d))")
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 
 	var (
 		input  []string
@@ -1720,8 +1725,8 @@ func (s *testPlanSuite) TestEnumIndex(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(e enum('c','b','a'), index idx(e))")
-	tk.MustExec("insert into t values(1),(2),(3);")
+	tk.MustExec("create table t(e enum('c','b','a',''), index idx(e))")
+	tk.MustExec("insert ignore into t values(0),(1),(2),(3),(4);")
 
 	for i, ts := range input {
 		s.testData.OnRecord(func() {

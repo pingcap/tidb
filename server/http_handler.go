@@ -46,12 +46,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -59,9 +60,12 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -150,7 +154,7 @@ type mvccKV struct {
 func (t *tikvHandlerTool) getRegionIDByKey(encodedKey []byte) (uint64, error) {
 	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 500, nil), encodedKey)
 	if err != nil {
-		return 0, err
+		return 0, derr.ToTiDBErr(err)
 	}
 	return keyLocation.Region.GetID(), nil
 }
@@ -324,6 +328,11 @@ type binlogRecover struct{}
 
 // schemaHandler is the handler for list database or table schemas.
 type schemaHandler struct {
+	*tikvHandlerTool
+}
+
+// schemaStorageHandler is the handler for list database or table schemas.
+type schemaStorageHandler struct {
 	*tikvHandlerTool
 }
 
@@ -703,6 +712,30 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 		}
+		if deadlockHistoryCapacity := req.Form.Get("deadlock_history_capacity"); deadlockHistoryCapacity != "" {
+			capacity, err := strconv.Atoi(deadlockHistoryCapacity)
+			if err != nil {
+				writeError(w, errors.New("illegal argument"))
+				return
+			} else if capacity < 0 || capacity > 10000 {
+				writeError(w, errors.New("deadlock_history_capacity out of range, should be in 0 to 10000"))
+				return
+			}
+			cfg := config.GetGlobalConfig()
+			cfg.PessimisticTxn.DeadlockHistoryCapacity = uint(capacity)
+			config.StoreGlobalConfig(cfg)
+			deadlockhistory.GlobalDeadlockHistory.Resize(uint(capacity))
+		}
+		if deadlockCollectRetryable := req.Form.Get("deadlock_history_collect_retryable"); deadlockCollectRetryable != "" {
+			collectRetryable, err := strconv.ParseBool(deadlockCollectRetryable)
+			if err != nil {
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+			cfg := config.GetGlobalConfig()
+			cfg.PessimisticTxn.DeadlockHistoryCollectRetryable = collectRetryable
+			config.StoreGlobalConfig(cfg)
+		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}
@@ -900,6 +933,125 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		status.RegionCount),
 		zap.Uint64("flash region count", status.FlashRegionCount),
 		zap.Error(err))
+}
+
+type schemaTableStorage struct {
+	TableSchema   string `json:"table_schema"`
+	TableName     string `json:"table_name"`
+	TableRows     int64  `json:"table_rows"`
+	AvgRowLength  int64  `json:"avg_row_length"`
+	DataLength    int64  `json:"data_length"`
+	MaxDataLength int64  `json:"max_data_length"`
+	IndexLength   int64  `json:"index_length"`
+	DataFree      int64  `json:"data_free"`
+}
+
+func getSchemaTablesStorageInfo(h *schemaStorageHandler, schema *model.CIStr, table *model.CIStr) (messages []*schemaTableStorage, err error) {
+	var s session.Session
+	if s, err = session.CreateSession(h.Store); err != nil {
+		return
+	}
+	defer s.Close()
+
+	ctx := s.(sessionctx.Context)
+	condition := make([]string, 0)
+	params := make([]interface{}, 0)
+
+	if schema != nil {
+		condition = append(condition, `TABLE_SCHEMA = %?`)
+		params = append(params, schema.O)
+	}
+	if table != nil {
+		condition = append(condition, `TABLE_NAME = %?`)
+		params = append(params, table.O)
+	}
+
+	sql := `select TABLE_SCHEMA,TABLE_NAME,TABLE_ROWS,AVG_ROW_LENGTH,DATA_LENGTH,MAX_DATA_LENGTH,INDEX_LENGTH,DATA_FREE from INFORMATION_SCHEMA.TABLES`
+	if len(condition) > 0 {
+		sql += ` WHERE ` + strings.Join(condition, ` AND `)
+	}
+	var results sqlexec.RecordSet
+	if results, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, params...); err != nil {
+		logutil.BgLogger().Error(`ExecuteInternal`, zap.Error(err))
+	} else if results != nil {
+		messages = make([]*schemaTableStorage, 0)
+		defer terror.Call(results.Close)
+		for {
+			req := results.NewChunk()
+			if err = results.Next(context.TODO(), req); err != nil {
+				break
+			}
+
+			if req.NumRows() == 0 {
+				break
+			}
+
+			for i := 0; i < req.NumRows(); i++ {
+				messages = append(messages, &schemaTableStorage{
+					TableSchema:   req.GetRow(i).GetString(0),
+					TableName:     req.GetRow(i).GetString(1),
+					TableRows:     req.GetRow(i).GetInt64(2),
+					AvgRowLength:  req.GetRow(i).GetInt64(3),
+					DataLength:    req.GetRow(i).GetInt64(4),
+					MaxDataLength: req.GetRow(i).GetInt64(5),
+					IndexLength:   req.GetRow(i).GetInt64(6),
+					DataFree:      req.GetRow(i).GetInt64(7),
+				})
+			}
+		}
+	}
+	return
+}
+
+// ServeHTTP handles request of list a database or table's schemas.
+func (h schemaStorageHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	schema, err := h.schema()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	// parse params
+	params := mux.Vars(req)
+
+	var (
+		dbName    *model.CIStr
+		tableName *model.CIStr
+		isSingle  bool
+	)
+
+	if reqDbName, ok := params[pDBName]; ok {
+		cDBName := model.NewCIStr(reqDbName)
+		// all table schemas in a specified database
+		schemaInfo, exists := schema.SchemaByName(cDBName)
+		if !exists {
+			writeError(w, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(reqDbName))
+			return
+		}
+		dbName = &schemaInfo.Name
+
+		if reqTableName, ok := params[pTableName]; ok {
+			// table schema of a specified table name
+			cTableName := model.NewCIStr(reqTableName)
+			data, e := schema.TableByName(cDBName, cTableName)
+			if e != nil {
+				writeError(w, e)
+				return
+			}
+			tableName = &data.Meta().Name
+			isSingle = true
+		}
+	}
+
+	if results, e := getSchemaTablesStorageInfo(&h, dbName, tableName); e != nil {
+		writeError(w, e)
+	} else {
+		if isSingle {
+			writeData(w, results[0])
+		} else {
+			writeData(w, results)
+		}
+	}
 }
 
 // ServeHTTP handles request of list a database or table's schemas.

@@ -1268,9 +1268,13 @@ func convertEnum(val []byte, tp *tipb.FieldType) (*Constant, error) {
 	if err != nil {
 		return nil, errors.Errorf("invalid enum % x", val)
 	}
-	e, err := types.ParseEnumValue(tp.Elems, uVal)
-	if err != nil {
-		return nil, err
+	// If uVal is 0, it should return Enum{}
+	var e = types.Enum{}
+	if uVal != 0 {
+		e, err = types.ParseEnumValue(tp.Elems, uVal)
+		if err != nil {
+			return nil, err
+		}
 	}
 	d := types.NewMysqlEnumDatum(e)
 	return &Constant{Value: d, RetType: FieldTypeFromPB(tp)}, nil

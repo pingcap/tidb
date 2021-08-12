@@ -102,9 +102,9 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.FoundInBinding, Equals, DefTiDBFoundInBinding)
 	c.Assert(vars.AllowAutoRandExplicitInsert, Equals, DefTiDBAllowAutoRandExplicitInsert)
 	c.Assert(vars.ShardAllocateStep, Equals, int64(DefTiDBShardAllocateStep))
-	c.Assert(vars.EnableChangeColumnType, Equals, DefTiDBChangeColumnType)
 	c.Assert(vars.AnalyzeVersion, Equals, DefTiDBAnalyzeVersion)
 	c.Assert(vars.CTEMaxRecursionDepth, Equals, DefCTEMaxRecursionDepth)
+	c.Assert(vars.TMPTableSize, Equals, int64(DefTMPTableSize))
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
@@ -369,37 +369,37 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "5.0")
 	c.Assert(v.CopCPUFactor, Equals, 5.0)
 
-	c.Assert(v.NetworkFactor, Equals, 1.0)
+	c.Assert(v.GetNetworkFactor(nil), Equals, 1.0)
 	err = SetSessionSystemVar(v, TiDBOptNetworkFactor, "3.0")
 	c.Assert(err, IsNil)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptNetworkFactor)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "3.0")
-	c.Assert(v.NetworkFactor, Equals, 3.0)
+	c.Assert(v.GetNetworkFactor(nil), Equals, 3.0)
 
-	c.Assert(v.ScanFactor, Equals, 1.5)
+	c.Assert(v.GetScanFactor(nil), Equals, 1.5)
 	err = SetSessionSystemVar(v, TiDBOptScanFactor, "3.0")
 	c.Assert(err, IsNil)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptScanFactor)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "3.0")
-	c.Assert(v.ScanFactor, Equals, 3.0)
+	c.Assert(v.GetScanFactor(nil), Equals, 3.0)
 
-	c.Assert(v.DescScanFactor, Equals, 3.0)
+	c.Assert(v.GetDescScanFactor(nil), Equals, 3.0)
 	err = SetSessionSystemVar(v, TiDBOptDescScanFactor, "5.0")
 	c.Assert(err, IsNil)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptDescScanFactor)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "5.0")
-	c.Assert(v.DescScanFactor, Equals, 5.0)
+	c.Assert(v.GetDescScanFactor(nil), Equals, 5.0)
 
-	c.Assert(v.SeekFactor, Equals, 20.0)
+	c.Assert(v.GetSeekFactor(nil), Equals, 20.0)
 	err = SetSessionSystemVar(v, TiDBOptSeekFactor, "50.0")
 	c.Assert(err, IsNil)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBOptSeekFactor)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "50.0")
-	c.Assert(v.SeekFactor, Equals, 50.0)
+	c.Assert(v.GetSeekFactor(nil), Equals, 50.0)
 
 	c.Assert(v.MemoryFactor, Equals, 0.001)
 	err = SetSessionSystemVar(v, TiDBOptMemoryFactor, "1.0")
@@ -490,13 +490,6 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	err = SetSessionSystemVar(v, TiDBFoundInBinding, "1")
 	c.Assert(err, ErrorMatches, ".*]Variable 'last_plan_from_binding' is a read only variable")
 
-	err = SetSessionSystemVar(v, TiDBEnableChangeColumnType, "ON")
-	c.Assert(err, IsNil)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBEnableChangeColumnType)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "ON")
-	c.Assert(v.systems[TiDBEnableChangeColumnType], Equals, "ON")
-
 	err = SetSessionSystemVar(v, "UnknownVariable", "on")
 	c.Assert(err, ErrorMatches, ".*]Unknown system variable 'UnknownVariable'")
 
@@ -559,6 +552,9 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBEnableTablePartition, "OFF", false},
 		{TiDBEnableTablePartition, "AUTO", false},
 		{TiDBEnableTablePartition, "UN", true},
+		{TiDBEnableListTablePartition, "ON", false},
+		{TiDBEnableListTablePartition, "OFF", false},
+		{TiDBEnableListTablePartition, "list", true},
 		{TiDBOptCorrelationExpFactor, "a", true},
 		{TiDBOptCorrelationExpFactor, "-10", true},
 		{TiDBOptCorrelationThreshold, "a", true},
@@ -736,4 +732,31 @@ func (s *testVarsutilSuite) TestConcurrencyVariables(c *C) {
 	c.Assert(vars.MergeJoinConcurrency(), Equals, mjConcurrency)
 	c.Assert(vars.StreamAggConcurrency(), Equals, saConcurrency)
 
+}
+
+func (s *testVarsutilSuite) TestHelperFuncs(c *C) {
+	c.Assert(int32ToBoolStr(1), Equals, "ON")
+	c.Assert(int32ToBoolStr(0), Equals, "OFF")
+
+	c.Assert(TiDBOptEnableClustered("ON"), Equals, ClusteredIndexDefModeOn)
+	c.Assert(TiDBOptEnableClustered("OFF"), Equals, ClusteredIndexDefModeOff)
+	c.Assert(TiDBOptEnableClustered("bogus"), Equals, ClusteredIndexDefModeIntOnly) // default
+
+	c.Assert(tidbOptPositiveInt32("1234", 5), Equals, 1234)
+	c.Assert(tidbOptPositiveInt32("-1234", 5), Equals, 5)
+	c.Assert(tidbOptPositiveInt32("bogus", 5), Equals, 5)
+
+	c.Assert(tidbOptInt("1234", 5), Equals, 1234)
+	c.Assert(tidbOptInt("-1234", 5), Equals, -1234)
+	c.Assert(tidbOptInt("bogus", 5), Equals, 5)
+}
+
+func (s *testVarsutilSuite) TestStmtVars(c *C) {
+	vars := NewSessionVars()
+	err := SetStmtVar(vars, "bogussysvar", "1")
+	c.Assert(err.Error(), Equals, "[variable:1193]Unknown system variable 'bogussysvar'")
+	err = SetStmtVar(vars, MaxExecutionTime, "ACDC")
+	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'max_execution_time'")
+	err = SetStmtVar(vars, MaxExecutionTime, "100")
+	c.Assert(err, IsNil)
 }

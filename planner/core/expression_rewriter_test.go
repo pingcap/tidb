@@ -43,6 +43,17 @@ func (s *testExpressionRewriterSuite) TestIfNullEliminateColName(c *C) {
 	c.Assert(err, IsNil)
 	fields := rs.Fields()
 	c.Assert(fields[0].Column.Name.L, Equals, "ifnull(a,b)")
+	c.Assert(rs.Close(), IsNil)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(e int not null, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("create table t1(e int not null, b int)")
+	tk.MustExec("insert into t1 values(1, 1)")
+	rows := tk.MustQuery("select b from t where ifnull(e, b)")
+	rows.Check(testkit.Rows("1"))
+	rows = tk.MustQuery("select b from t1 where ifnull(e, b)")
+	rows.Check(testkit.Rows("1"))
 }
 
 func (s *testExpressionRewriterSuite) TestBinaryOpFunction(c *C) {

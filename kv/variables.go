@@ -14,7 +14,7 @@
 package kv
 
 import (
-	tikv "github.com/pingcap/tidb/store/tikv/kv"
+	tikv "github.com/tikv/client-go/v2/kv"
 )
 
 // Variables defines the variables used by KV storage. TODO:remove it when br is ready.

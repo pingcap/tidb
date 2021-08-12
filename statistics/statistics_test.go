@@ -259,7 +259,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
 	c.Check(col.Len(), Equals, 226)
-	count := col.equalRowCount(types.NewIntDatum(1000), false)
+	count, _ := col.equalRowCount(types.NewIntDatum(1000), false)
 	c.Check(int(count), Equals, 0)
 	count = col.lessRowCount(types.NewIntDatum(1000))
 	c.Check(int(count), Equals, 10000)
@@ -271,7 +271,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 100000)
 	count = col.greaterRowCount(types.NewIntDatum(200000000))
 	c.Check(count, Equals, 0.0)
-	count = col.equalRowCount(types.NewIntDatum(200000000), false)
+	count, _ = col.equalRowCount(types.NewIntDatum(200000000), false)
 	c.Check(count, Equals, 0.0)
 	count = col.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
 	c.Check(int(count), Equals, 4994)
@@ -281,23 +281,26 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true)
 	c.Check(err, IsNil)
 	c.Check(topnv2.TopN, NotNil)
-	expectedTopNCount := []uint64{9990, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30}
+	// The most common one's occurrence is 9990, the second most common one's occurrence is 30.
+	// The ndv of the histogram is 73344, the total count of it is 90010. 90010/73344 vs 30, it's not a bad estimate.
+	expectedTopNCount := []uint64{9990}
+	c.Assert(len(topnv2.TopN), Equals, len(expectedTopNCount))
 	for i, meta := range topnv2.TopN {
 		c.Check(meta.Count, Equals, expectedTopNCount[i])
 	}
-	c.Check(colv2.Len(), Equals, 256)
+	c.Check(colv2.Len(), Equals, 251)
 	count = colv2.lessRowCount(types.NewIntDatum(1000))
-	c.Check(int(count), Equals, 325)
+	c.Check(int(count), Equals, 328)
 	count = colv2.lessRowCount(types.NewIntDatum(2000))
-	c.Check(int(count), Equals, 9430)
+	c.Check(int(count), Equals, 10007)
 	count = colv2.greaterRowCount(types.NewIntDatum(2000))
-	c.Check(int(count), Equals, 80008)
+	c.Check(int(count), Equals, 80001)
 	count = colv2.lessRowCount(types.NewIntDatum(200000000))
-	c.Check(int(count), Equals, 89440)
+	c.Check(int(count), Equals, 90010)
 	count = colv2.greaterRowCount(types.NewIntDatum(200000000))
 	c.Check(count, Equals, 0.0)
 	count = colv2.BetweenRowCount(types.NewIntDatum(3000), types.NewIntDatum(3500))
-	c.Check(int(count), Equals, 4995)
+	c.Check(int(count), Equals, 5001)
 	count = colv2.lessRowCount(types.NewIntDatum(1))
 	c.Check(int(count), Equals, 0)
 
@@ -324,7 +327,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
 	c.Check(int(tblCount), Equals, 100000)
-	count = col.equalRowCount(encodeKey(types.NewIntDatum(10000)), false)
+	count, _ = col.equalRowCount(encodeKey(types.NewIntDatum(10000)), false)
 	c.Check(int(count), Equals, 1)
 	count = col.lessRowCount(encodeKey(types.NewIntDatum(20000)))
 	c.Check(int(count), Equals, 19999)
@@ -341,7 +344,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
 	c.Check(int(tblCount), Equals, 100000)
-	count = col.equalRowCount(types.NewIntDatum(10000), false)
+	count, _ = col.equalRowCount(types.NewIntDatum(10000), false)
 	c.Check(int(count), Equals, 1)
 	count = col.lessRowCount(types.NewIntDatum(20000))
 	c.Check(int(count), Equals, 20000)
@@ -458,7 +461,7 @@ func (s *testStatisticsSuite) TestPseudoTable(c *C) {
 	count, err := tbl.ColumnEqualRowCount(sc, types.NewIntDatum(1000), colInfo.ID)
 	c.Assert(err, IsNil)
 	c.Assert(int(count), Equals, 10)
-	count = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo.ID)
+	count, _ = tbl.ColumnBetweenRowCount(sc, types.NewIntDatum(1000), types.NewIntDatum(5000), colInfo.ID)
 	c.Assert(int(count), Equals, 250)
 }
 
@@ -636,7 +639,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	tbl.Count *= 10
 	count, err = tbl.GetRowCountByIntColumnRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 10)
+	c.Assert(int(count), Equals, 1)
 }
 
 func (s *testStatisticsSuite) TestIndexRanges(c *C) {

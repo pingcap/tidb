@@ -63,6 +63,9 @@ type Storage interface {
 	// NumChunks return chunk number of the underlying storage.
 	NumChunks() int
 
+	// NumRows return row number of the underlying storage.
+	NumRows() int
+
 	// Storage is not thread-safe.
 	// By using Lock(), users can achieve the purpose of ensuring thread safety.
 	Lock()
@@ -198,6 +201,11 @@ func (s *StorageRC) GetRow(ptr chunk.RowPtr) (chunk.Row, error) {
 // NumChunks impls Storage NumChunks interface.
 func (s *StorageRC) NumChunks() int {
 	return s.rc.NumChunks()
+}
+
+// NumRows impls Storage NumRows interface.
+func (s *StorageRC) NumRows() int {
+	return s.rc.NumRow()
 }
 
 // Lock impls Storage Lock interface.

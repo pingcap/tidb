@@ -60,8 +60,8 @@
         "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
         "RatioOfPseudoEstimate": 10,
         "Plan": [
-          "TableReader 29.77 root  data:Selection",
-          "└─Selection 29.77 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+          "TableReader 28.80 root  data:Selection",
+          "└─Selection 28.80 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
           "  └─TableFullScan 80.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -435,14 +435,14 @@
   {
     "Name": "TestAnalyze",
     "Cases": [
-      "Analyze{Index(a),Table(a, b)}",
+      "Analyze{Table(_tidb_rowid, a, b, _tidb_rowid)}",
       "TableReader(Table(t)->Sel([le(test.t.a, 2)]))",
       "IndexReader(Index(t.b)[[-inf,2)])",
       "TableReader(Table(t)->Sel([eq(test.t.a, 1) le(test.t.b, 2)]))",
       "TableReader(Table(t1)->Sel([le(test.t1.a, 2)]))",
       "IndexLookUp(Index(t1.a)[[1,1]], Table(t1)->Sel([le(test.t1.b, 2)]))",
       "TableReader(Table(t2)->Sel([le(test.t2.a, 2)]))",
-      "Analyze{Index(a),Index(b)}",
+      "Analyze{Table(_tidb_rowid, a, b, _tidb_rowid)}",
       "PartitionUnionAll{TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))->TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))}",
       "PartitionUnionAll{IndexReader(Index(t4.b)[[-inf,2)])->IndexReader(Index(t4.b)[[-inf,2)])}",
       "TableReader(Table(t4)->Sel([eq(test.t4.a, 1) le(test.t4.b, 2)]))"
@@ -454,18 +454,18 @@
       {
         "SQL": "explain format = 'brief' select * from t where a = 7639902",
         "Plan": [
-          "IndexReader 6.68 root  index:IndexRangeScan",
-          "└─IndexRangeScan 6.68 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+          "IndexReader 5.95 root  index:IndexRangeScan",
+          "└─IndexRangeScan 5.95 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select c, b from t where a = 7639902 order by b asc limit 6",
         "Plan": [
-          "Projection 6.00 root  test.t.c, test.t.b",
-          "└─TopN 6.00 root  test.t.b, offset:0, count:6",
-          "  └─IndexReader 6.00 root  index:TopN",
-          "    └─TopN 6.00 cop[tikv]  test.t.b, offset:0, count:6",
-          "      └─IndexRangeScan 6.68 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+          "Projection 5.95 root  test.t.c, test.t.b",
+          "└─TopN 5.95 root  test.t.b, offset:0, count:6",
+          "  └─IndexReader 5.95 root  index:TopN",
+          "    └─TopN 5.95 cop[tikv]  test.t.b, offset:0, count:6",
+          "      └─IndexRangeScan 5.95 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
         ]
       }
     ]
