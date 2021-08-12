@@ -62,6 +62,22 @@ func (s *testSuite1) TestIndexMergeReaderAndGeneratedColumn(c *C) {
 	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE t0.c1 OR t0.c0").Check(testkit.Rows("1"))
 }
 
+// issue 25045
+func (s *testSuite1) TestIndexMergeReaderIssue25045(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int primary key, b int, c int, key(b), key(c));")
+	tk.MustExec("INSERT INTO t1 VALUES (10, 10, 10), (11, 11, 11)")
+	tk.MustQuery("explain format='brief' select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);").Check(testkit.Rows(
+		"IndexMerge 0.01 root  ",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c(c) range:[10,10], keep order:false, stats:pseudo",
+		"├─TableRangeScan(Build) 1.00 cop[tikv] table:t1 range:[10,10], keep order:false, stats:pseudo",
+		"└─Selection(Probe) 0.01 cop[tikv]  or(eq(test.t1.c, 10), and(eq(test.t1.b, 10), eq(test.t1.a, 10)))",
+		"  └─TableRowIDScan 11.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);").Check(testkit.Rows("10 10 10"))
+}
+
 func (s *testSuite1) TestIssue16910(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
