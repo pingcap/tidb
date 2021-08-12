@@ -754,7 +754,7 @@ func (s *testStateChangeSuite) TestDeleteOnlyForDropColumnWithIndexes(c *C) {
 
 // Solve issue#25462
 // TestUpdateForDropColumnWithIndexes test for updating data in the middle state of dropping column with indexes in it.
-func (s *testStateChangeSuite) TestUpdateForDropColumnWithIndexes(c *C) {
+func (s *testStateChangeSuite) TestUpdateForDropColumnOrColumnsWithIndexes(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db_state")
 	sqls := make([]sqlWithErr, 2)
@@ -777,6 +777,10 @@ func (s *testStateChangeSuite) TestUpdateForDropColumnWithIndexes(c *C) {
 		if !mysql.HasDropColumnWithIndexFlag(m.Columns[len(m.Columns)-1].Flag) {
 			return errors.New("drop column with indexes assert flag fail")
 		}
+		// Admin check table here to check all the public indexes here.
+		if _, err := tkOpt.Se.Execute(context.Background(), "admin check table t1"); err != nil {
+			return errors.Errorf("admin check table error in checkOpt: %v", err)
+		}
 		return nil
 	}
 	prepare()
@@ -790,10 +794,30 @@ func (s *testStateChangeSuite) TestUpdateForDropColumnWithIndexes(c *C) {
 	// Drop column with multi-index.
 	prepare = func() {
 		tk.MustExec("drop table if exists t1")
-		tk.MustExec("CREATE TABLE t1 (x int, a int, b int, index idx0(a), index idx1(a), index idx2(b))")
+		tk.MustExec("CREATE TABLE t1 (x int, a int, b int, c int, index idx0(a), index idx1(a), index idx2(b))")
 		tk.MustExec("insert into t1 set a = 123")
 	}
+	// MultiSchema change.
+	dropColumnSQL = "alter table t1 drop column a, drop column b"
 	query = &expectQuery{sql: "select * from t1;", rows: []string{"<nil> 18"}}
+
+	sqls[0] = sqlWithErr{"update t1 set c='18'", nil}
+	sqls[1] = sqlWithErr{"update t1 set c='18' where b=123", errors.Errorf("[planner:1054]Unknown column 'b' in 'where clause'")}
+	checkOpt = func() error {
+		tbl := testGetTableByName(c, tkOpt.Se, "test_db_state", "t1")
+		m := tbl.Meta()
+		if m.Columns[len(m.Columns)-2].Name.L != "a" || m.Columns[len(m.Columns)-1].Name.L != "b" {
+			return errors.New("drop column with indexes assert offset fail")
+		}
+		if !mysql.HasDropColumnWithIndexFlag(m.Columns[len(m.Columns)-2].Flag) || !mysql.HasDropColumnWithIndexFlag(m.Columns[len(m.Columns)-1].Flag) {
+			return errors.New("drop column with indexes assert flag fail")
+		}
+		// Admin check table here to check all the public indexes here.
+		if _, err := tkOpt.Se.Execute(context.Background(), "admin check table t1"); err != nil {
+			return errors.Errorf("admin check table error in checkOpt: %v", err)
+		}
+		return nil
+	}
 	prepare()
 	s.runTestInSchemaState(c, model.StateWriteOnly, true, dropColumnSQL, sqls, query, checkOpt)
 	prepare()
