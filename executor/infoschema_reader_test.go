@@ -559,7 +559,6 @@ func (s *testInfoschemaTableSuite) TestTableSessionVar(c *C) {
 }
 
 func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
-	c.Skip("Skip this unstable test(#25896) and bring it back before 2021-07-29.")
 	tk := testkit.NewTestKit(c, s.store)
 	statistics.ClearHistoryJobs()
 	tk.MustExec("use test")
@@ -586,6 +585,8 @@ func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 	tk.MustExec("create table t1 (a int, b int, index idx(a))")
 	tk.MustExec("insert into t1 values (1,2),(3,4)")
 	tk.MustExec("analyze table t1")
+	tk.MustQuery("show warnings").Check(testkit.Rows()) // no warning
+	c.Assert(s.dom.StatsHandle().LoadNeededHistograms(), IsNil)
 	tk.MustExec("CREATE ROLE r_t1 ;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")
 	tk.MustExec("GRANT r_t1 TO analyze_tester;")
