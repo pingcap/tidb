@@ -65,7 +65,7 @@ func (s *metaMgrSuite) SetUpTest(c *C) {
 		session:      db,
 		taskID:       1,
 		tr:           s.tr,
-		tableName:    common.UniqueTable("test", tableMetaTableName),
+		tableName:    common.UniqueTable("test", TableMetaTableName),
 		needChecksum: true,
 	}
 	s.mockDB = m
