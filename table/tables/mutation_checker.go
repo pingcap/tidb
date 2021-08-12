@@ -15,6 +15,7 @@ package tables
 
 import (
 	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
@@ -27,13 +28,13 @@ import (
 	"go.uber.org/zap"
 )
 
-type Mutation = struct {
+type mutation = struct {
 	key   kv.Key
 	flags kv.KeyFlags
 	value []byte
 }
 
-type IndexHelperInfo = struct {
+type indexHelperInfo = struct {
 	indexInfo   *model.IndexInfo
 	rowColInfos []rowcodec.ColInfo
 }
@@ -65,10 +66,10 @@ func CheckIndexConsistency(sc *stmtctx.StatementContext, sessVars *variable.Sess
 
 // checkIndexKeys checks whether the decoded data from keys of index mutations are consistent with the expected ones.
 func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, t *TableCommon,
-	dataAdded []types.Datum, dataRemoved []types.Datum, mutations []Mutation) error {
-	indexIdMap := make(map[int64]IndexHelperInfo)
+	dataAdded []types.Datum, dataRemoved []types.Datum, mutations []mutation) error {
+	indexIDMap := make(map[int64]indexHelperInfo)
 	for _, index := range t.indices {
-		indexIdMap[index.Meta().ID] = IndexHelperInfo{
+		indexIDMap[index.Meta().ID] = indexHelperInfo{
 			index.Meta(),
 			BuildRowcodecColInfoForIndexColumns(index.Meta(), t.Meta()),
 		}
@@ -79,12 +80,12 @@ func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 			continue
 		}
 
-		_, indexId, _, err := tablecodec.DecodeIndexKey(m.key)
+		_, indexID, _, err := tablecodec.DecodeIndexKey(m.key)
 		if err != nil {
 			continue
 		}
 
-		indexHelperInfo, ok := indexIdMap[indexId]
+		indexHelperInfo, ok := indexIDMap[indexID]
 		if !ok {
 			return errors.New("index not found")
 		}
@@ -123,7 +124,7 @@ func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 
 // checkRowValues checks whether  the values of row mutations are consistent with the expected ones
 func checkRowValues(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, t *TableCommon,
-	dataAdded, dataRemoved []types.Datum, mutations []Mutation) error {
+	dataAdded, dataRemoved []types.Datum, mutations []mutation) error {
 	rowsAdded, rowsRemoved := ExtractRowMutations(mutations)
 	if len(rowsAdded) > 1 || len(rowsRemoved) > 1 {
 		// TODO: is it possible?
@@ -148,7 +149,7 @@ func checkRowValues(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 	return nil
 }
 
-func checkRowMutationsWithData(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, rowMutations []Mutation,
+func checkRowMutationsWithData(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, rowMutations []mutation,
 	columnFieldMap map[int64]*types.FieldType, expectedData []types.Datum, columnMap map[int64]*model.ColumnInfo) error {
 	if len(rowMutations) > 0 {
 		decodedData, err := tablecodec.DecodeRowToDatumMap(rowMutations[0].value, columnFieldMap, sessVars.Location())
@@ -159,8 +160,8 @@ func checkRowMutationsWithData(sc *stmtctx.StatementContext, sessVars *variable.
 		// TODO: we cannot check if the decoded values contain all columns since some columns may be skipped.
 		// Instead we check data in the value are consistent with input.
 
-		for columnId, decodedDatum := range decodedData {
-			inputDatum := expectedData[columnMap[columnId].Offset]
+		for columnID, decodedDatum := range decodedData {
+			inputDatum := expectedData[columnMap[columnID].Offset]
 			cmp, err := decodedDatum.CompareDatum(sc, &inputDatum)
 			if err != nil {
 				return errors.Trace(err)
@@ -176,19 +177,19 @@ func checkRowMutationsWithData(sc *stmtctx.StatementContext, sessVars *variable.
 	return nil
 }
 
-func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer, sh kv.StagingHandle) []Mutation {
-	mutations := make([]Mutation, 0)
+func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer, sh kv.StagingHandle) []mutation {
+	mutations := make([]mutation, 0)
 	inspector := func(key kv.Key, flags kv.KeyFlags, data []byte) {
 		// TODO: shall we check only the current table, or all tables involved?
 		if tablecodec.DecodeTableID(key) == t.physicalTableID {
-			mutations = append(mutations, Mutation{key, flags, data})
+			mutations = append(mutations, mutation{key, flags, data})
 		}
 	}
 	memBuffer.InspectStage(sh, inspector)
 	return mutations
 }
 
-func compareIndexData(sc *stmtctx.StatementContext, t *TableCommon, indexData, input []types.Datum, indexHelperInfo IndexHelperInfo) error {
+func compareIndexData(sc *stmtctx.StatementContext, t *TableCommon, indexData, input []types.Datum, indexHelperInfo indexHelperInfo) error {
 	for i, decodedMutationDatum := range indexData {
 		expectedDatum := input[indexHelperInfo.indexInfo.Columns[i].Offset]
 
@@ -214,9 +215,9 @@ func compareIndexData(sc *stmtctx.StatementContext, t *TableCommon, indexData, i
 }
 
 // ExtractRowMutations extracts row mutations and classify them into 2 categories: put and delete
-func ExtractRowMutations(mutations []Mutation) ([]Mutation, []Mutation) {
-	handlesAdded := make([]Mutation, 0)
-	handlesRemoved := make([]Mutation, 0)
+func ExtractRowMutations(mutations []mutation) ([]mutation, []mutation) {
+	handlesAdded := make([]mutation, 0)
+	handlesRemoved := make([]mutation, 0)
 	// TODO: assumption: value in mem buffer
 	for _, m := range mutations {
 		if rowcodec.IsRowKey(m.key) {
