@@ -51,7 +51,7 @@ require (
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20210806074406-317f69fb54b4
 	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
-	github.com/pingcap/parser v0.0.0-20210809155315-ccfccf24e995
+	github.com/pingcap/parser v0.0.0-20210812031716-f8bd71b2c3d9
 	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
 	github.com/pingcap/tipb v0.0.0-20210708040514-0f154bb0dc0f
@@ -101,6 +101,3 @@ require (
 
 // FIXME the official repo has some bug makes br_gcs test failed. https://github.com/googleapis/google-cloud-go/pull/3509
 // replace cloud.google.com/go/storage => github.com/3pointer/google-cloud-go/storage v1.6.1-0.20210108125931-b59bfa0720b2
-// FIXME first merge https://github.com/pingcap/parser/pull/1304 then update the real github.com/pingcap/parser version
-
-replace github.com/pingcap/parser => github.com/mjonss/parser v0.0.0-20210811213526-fa902a87ce9d
