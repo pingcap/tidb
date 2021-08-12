@@ -266,6 +266,9 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			continue
 		}
 		tableInfo := table.Meta()
+		if oldTbl, ok := oldCache.tables[physicalID]; ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+			continue
+		}
 		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
@@ -280,6 +283,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl.Count = count
 		tbl.ModifyCount = modifyCount
 		tbl.Name = getFullTableName(is, tableInfo)
+		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
 	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion))

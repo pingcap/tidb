@@ -609,3 +609,18 @@ func (s *testClusteredSerialSuite) TestPrefixedClusteredIndexUniqueKeyWithNewCol
 	tk.MustExec("admin check table t;")
 	tk.MustExec("drop table t;")
 }
+
+func (s *testClusteredSerialSuite) TestClusteredIndexNewCollationWithOldRowFormat(c *C) {
+	// This case maybe not useful, because newCollation isn't convenience to run on TiKV(it's required serialSuit)
+	// but unistore doesn't support old row format.
+	defer collate.SetNewCollationEnabledForTest(false)
+	collate.SetNewCollationEnabledForTest(true)
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Se.GetSessionVars().RowEncoder.Enable = false
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(col_1 varchar(132) CHARACTER SET utf8 COLLATE utf8_unicode_ci, primary key(col_1) clustered)")
+	tk.MustExec("insert into t2 select 'aBc'")
+	tk.MustQuery("select col_1 from t2 where col_1 = 'aBc'").Check(testkit.Rows("aBc"))
+}
