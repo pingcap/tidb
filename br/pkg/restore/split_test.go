@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/util/codec"
@@ -357,16 +358,42 @@ func (s *testRangeSuite) TestNeedSplit(c *C) {
 			},
 		},
 	}
+	assertNoSplitKey := func(key string) {
+		r, err := restore.NeedSplit([]byte(key), regions)
+		c.Assert(r, IsNil)
+		c.Assert(err, IsNil)
+	}
 	// Out of region
-	c.Assert(restore.NeedSplit([]byte("a"), regions), IsNil)
+	assertNoSplitKey("a")
 	// Region start key
-	c.Assert(restore.NeedSplit([]byte("b"), regions), IsNil)
+	assertNoSplitKey("b")
 	// In region
-	region := restore.NeedSplit([]byte("c"), regions)
+	region, err := restore.NeedSplit([]byte("c"), regions)
+	c.Assert(err, IsNil)
 	c.Assert(bytes.Compare(region.Region.GetStartKey(), codec.EncodeBytes([]byte{}, []byte("b"))), Equals, 0)
 	c.Assert(bytes.Compare(region.Region.GetEndKey(), codec.EncodeBytes([]byte{}, []byte("d"))), Equals, 0)
 	// Region end key
-	c.Assert(restore.NeedSplit([]byte("d"), regions), IsNil)
+	assertNoSplitKey("d")
 	// Out of region
-	c.Assert(restore.NeedSplit([]byte("e"), regions), IsNil)
+	assertNoSplitKey("e")
+}
+
+func (s *testRangeSuite) TestNeedSplitAbnormal(c *C) {
+	regions := []*restore.RegionInfo{
+		{
+			Region: &metapb.Region{
+				StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
+				EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+			},
+		},
+		// a hole in the key space: [d, e)!
+		{
+			Region: &metapb.Region{
+				StartKey: codec.EncodeBytes([]byte{}, []byte("e")),
+			},
+		},
+	}
+	region, err := restore.NeedSplit([]byte("dd"), regions)
+	c.Assert(errors.ErrorEqual(err, berrors.ErrHoleInKeySpace), IsTrue, Commentf("need split hasn't detect the hole in key space!"))
+	c.Assert(region, IsNil)
 }

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"time"
 
@@ -118,7 +119,12 @@ SplitRegions:
 			log.Warn("split regions cannot scan any region")
 			return nil
 		}
-		splitKeyMap := getSplitKeys(rewriteRules, sortedRanges, regions)
+		splitKeyMap, err := getSplitKeys(rewriteRules, sortedRanges, regions)
+		if err != nil {
+			log.Warn("get split key meet error", logutil.ShortError(err))
+			time.Sleep(time.Second)
+			continue SplitRegions
+		}
 		regionMap := make(map[uint64]*RegionInfo)
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region
@@ -328,7 +334,7 @@ func PaginateScanRegion(
 
 // getSplitKeys checks if the regions should be split by the new prefix of the rewrites rule and the end key of
 // the ranges, groups the split keys by region id.
-func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*RegionInfo) map[uint64][][]byte {
+func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*RegionInfo) (map[uint64][][]byte, error) {
 	splitKeyMap := make(map[uint64][][]byte)
 	checkKeys := make([][]byte, 0)
 	for _, rule := range rewriteRules.Data {
@@ -338,7 +344,11 @@ func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*R
 		checkKeys = append(checkKeys, rg.EndKey)
 	}
 	for _, key := range checkKeys {
-		if region := NeedSplit(key, regions); region != nil {
+		region, err := NeedSplit(key, regions)
+		if err != nil {
+			return nil, err
+		}
+		if region != nil {
 			splitKeys, ok := splitKeyMap[region.Region.GetId()]
 			if !ok {
 				splitKeys = make([][]byte, 0, 1)
@@ -350,32 +360,77 @@ func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*R
 				logutil.Key("endKey", region.Region.EndKey))
 		}
 	}
-	return splitKeyMap
+	return splitKeyMap, nil
+}
+
+// tryFindHole tries find a hole via a key given in this hole.
+// prerequest:
+//   regions is sorted.
+// e.g. give it regions = {[0,1),[1,2),[4,5)} and key = 3, it returns {[1,2) and [4,5)} via bisection searching.
+func tryFindHole(regions []*RegionInfo, key []byte) (left, right *RegionInfo) {
+	if len(regions) == 0 {
+		return
+	}
+	ptr := len(regions) / 2
+	// at left of the current region.
+	if bytes.Compare(regions[ptr].Region.StartKey, key) < 0 {
+		// if current is the leftmost region.
+		if ptr == 0 {
+			right = regions[ptr]
+			return
+		}
+		return tryFindHole(regions[:ptr], key)
+	}
+	// already the last one, and the hole should at pass the end.
+	if ptr == len(regions)-1 {
+		left = regions[ptr]
+		return
+	}
+	// the current key is the hole!
+	if !bytes.Equal(regions[ptr].Region.EndKey, regions[ptr].Region.StartKey) {
+		left = regions[ptr]
+		right = regions[ptr+1]
+		return
+	}
+	// find hole at the remaining regions.
+	return tryFindHole(regions[ptr+1:], key)
 }
 
 // NeedSplit checks whether a key is necessary to split, if true returns the split region.
-func NeedSplit(splitKey []byte, regions []*RegionInfo) *RegionInfo {
+func NeedSplit(splitKey []byte, regions []*RegionInfo) (*RegionInfo, error) {
 	// If splitKey is the max key.
 	if len(splitKey) == 0 {
-		return nil
+		return nil, nil
 	}
 	splitKey = codec.EncodeBytes(splitKey)
 	for _, region := range regions {
 		// If splitKey is the boundary of the region
 		if bytes.Equal(splitKey, region.Region.GetStartKey()) {
 			log.Info("skipping split region because already split", logutil.Key("key", splitKey))
-			return nil
+			return nil, nil
 		}
 		// If splitKey is in a region
 		if region.ContainsInterior(splitKey) {
-			return region
+			return region, nil
 		}
 	}
-	log.Warn("skipping split region because split key out of regions, this would probably be a bug", logutil.Key("key", splitKey))
-	for _, r := range regions {
-		log.Debug("on region", logutil.Region(r.Region), logutil.Key("key", splitKey))
+	left, right := tryFindHole(regions, splitKey)
+	log.Warn("skipping split region because split key out of regions, this would probably be a bug",
+		logutil.Key("key", splitKey),
+	)
+	if log.GetLevel() <= zap.DebugLevel {
+		for _, region := range regions {
+			log.Debug("on region", logutil.Key("key", splitKey), logutil.Region(region.Region))
+		}
 	}
-	return nil
+	leftKey, rightKey := "0", "+inf"
+	if left != nil {
+		leftKey = fmt.Sprintf("%X", left.Region.GetEndKey())
+	}
+	if right != nil {
+		rightKey = fmt.Sprintf("%X", right.Region.GetEndKey())
+	}
+	return nil, errors.Annotatef(berrors.ErrHoleInKeySpace, "hole: [%s, %s)", leftKey, rightKey)
 }
 
 func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *sst.RewriteRule) {

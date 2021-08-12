@@ -75,6 +75,7 @@ type brContextManager struct {
 
 	// This 'set' of table ID allow us to handle each table just once.
 	hasTable map[int64]CreatedTable
+	mu       sync.Mutex
 }
 
 func (manager *brContextManager) Close(ctx context.Context) {
@@ -87,6 +88,8 @@ func (manager *brContextManager) Close(ctx context.Context) {
 
 func (manager *brContextManager) Enter(ctx context.Context, tables []CreatedTable) error {
 	placementRuleTables := make([]*model.TableInfo, 0, len(tables))
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
 
 	for _, tbl := range tables {
 		if _, ok := manager.hasTable[tbl.Table.ID]; !ok {
@@ -99,6 +102,8 @@ func (manager *brContextManager) Enter(ctx context.Context, tables []CreatedTabl
 }
 
 func (manager *brContextManager) Leave(ctx context.Context, tables []CreatedTable) error {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
 	placementRuleTables := make([]*model.TableInfo, 0, len(tables))
 
 	for _, table := range tables {
