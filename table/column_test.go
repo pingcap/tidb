@@ -250,7 +250,7 @@ func TestGetZeroValue(t *testing.T) {
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
-		t.Run(fmt.Sprintf("%+v \n", tt.ft), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%+v", tt.ft), func(t *testing.T) {
 			t.Parallel()
 			colInfo := &model.ColumnInfo{FieldType: *tt.ft}
 			zv := GetZeroValue(colInfo)
@@ -284,7 +284,6 @@ func TestCastValue(t *testing.T) {
 	}
 	val, err = CastValue(ctx, types.NewDatum("test"), &colInfoS, false, false)
 	require.NoError(t, err)
-
 	require.NotNil(t, val)
 
 	colInfoS.Charset = mysql.UTF8Charset
