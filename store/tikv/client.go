@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/connectivity"
@@ -350,6 +351,11 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	defer c.recycleMu.RUnlock()
 	connArray, err := c.getConnArray(addr, enableBatch)
 	if err != nil {
+		logutil.BgLogger().Warn(
+			"SendRequest-RPC getConnArray fail",
+			zap.String("target", addr),
+			zap.Error(err),
+		)
 		return nil, errors.Trace(err)
 	}
 
@@ -386,7 +392,15 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}
 	ctx1, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return tikvrpc.CallRPC(ctx1, client, req)
+	resp, err := tikvrpc.CallRPC(ctx1, client, req)
+	if err != nil {
+		logutil.BgLogger().Warn(
+			"SendRequest-RPC CallRPC fail",
+			zap.String("target", addr),
+			zap.Error(err),
+		)
+	}
+	return resp, err
 }
 
 func (c *rpcClient) getCopStreamResponse(ctx context.Context, client tikvpb.TikvClient, req *tikvrpc.Request, timeout time.Duration, connArray *connArray) (*tikvrpc.Response, error) {
