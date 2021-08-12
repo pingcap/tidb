@@ -871,7 +871,7 @@ var addDateSigsTmpl = []sig{
 	{SigName: "builtinAddDateDurationDecimalSig", TypeA: TypeDuration, TypeB: TypeDecimal, Output: TypeDuration},
 }
 
-var subDataSigsTmpl = []sig{
+var subDateSigsTmpl = []sig{
 	{SigName: "builtinSubDateStringStringSig", TypeA: TypeString, TypeB: TypeString, Output: TypeDatetime},
 	{SigName: "builtinSubDateStringIntSig", TypeA: TypeString, TypeB: TypeInt, Output: TypeDatetime},
 	{SigName: "builtinSubDateStringRealSig", TypeA: TypeString, TypeB: TypeReal, Output: TypeDatetime},
@@ -913,7 +913,7 @@ var tmplVal = struct {
 		{FuncName: "SubTime", Sigs: subTimeSigsTmpl},
 		{FuncName: "TimeDiff", Sigs: timeDiffSigsTmpl},
 		{FuncName: "AddDate", Sigs: addDateSigsTmpl},
-		{FuncName: "SubDate", Sigs: subDataSigsTmpl},
+		{FuncName: "SubDate", Sigs: subDateSigsTmpl},
 	},
 }
 
@@ -935,7 +935,7 @@ func generateDotGo(fileName string) error {
 	if err != nil {
 		return err
 	}
-	err = addOrSubDate.Execute(w, function{FuncName: "SubDate", Sigs: subDataSigsTmpl})
+	err = addOrSubDate.Execute(w, function{FuncName: "SubDate", Sigs: subDateSigsTmpl})
 	if err != nil {
 		return err
 	}
