@@ -780,8 +780,9 @@ var (
 		MaxCollect:            atomic.NewInt64(DefTiDBTopSQLMaxCollect),
 		ReportIntervalSeconds: atomic.NewInt64(DefTiDBTopSQLReportIntervalSeconds),
 	}
-	EnableLocalTxn     = atomic.NewBool(DefTiDBEnableLocalTxn)
-	RestrictedReadOnly = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	EnableLocalTxn        = atomic.NewBool(DefTiDBEnableLocalTxn)
+	RestrictedReadOnly    = atomic.NewBool(DefTiDBRestrictedReadOnly)
+	EnableAlterAttributes = atomic.NewBool(DefTiDBEnableAlterPlacement)
 )
 
 // TopSQL is the variable for control top sql feature.

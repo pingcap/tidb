@@ -1362,7 +1362,12 @@ var defaultSysVars = []*SysVar{
 		s.EnableAlterPlacement = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBEnableAlterAttributes, Value: BoolToOnOff(DefTiDBEnableAlterAttributes), Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TiDBEnableAlterAttributes, Value: BoolToOnOff(DefTiDBEnableAlterAttributes), Type: TypeBool, Hidden: true, GetGlobal: func(s *SessionVars) (string, error) {
+		return BoolToOnOff(EnableAlterAttributes.Load()), nil
+	}, SetGlobal: func(vars *SessionVars, s string) error {
+		EnableAlterAttributes.Store(TiDBOptOn(s))
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBForcePriority, skipInit: true, Value: mysql.Priority2Str[DefTiDBForcePriority], SetSession: func(s *SessionVars, val string) error {
 		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
 		return nil
