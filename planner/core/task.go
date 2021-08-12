@@ -711,9 +711,9 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 		nlTask := lTask.copy().(*mppTask)
 		nlTask.p = lProj
 		nlTask = nlTask.enforceExchangerImpl(&property.PhysicalProperty{
-			TaskTp:        property.MppTaskType,
-			PartitionTp:   property.HashType,
-			PartitionCols: lPartKeys,
+			TaskTp:           property.MppTaskType,
+			MPPPartitionTp:   property.HashType,
+			MPPPartitionCols: lPartKeys,
 		})
 		nlTask.cst = lTask.cst
 		lTask = nlTask
@@ -722,9 +722,9 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 		nrTask := rTask.copy().(*mppTask)
 		nrTask.p = rProj
 		nrTask = nrTask.enforceExchangerImpl(&property.PhysicalProperty{
-			TaskTp:        property.MppTaskType,
-			PartitionTp:   property.HashType,
-			PartitionCols: rPartKeys,
+			TaskTp:           property.MppTaskType,
+			MPPPartitionTp:   property.HashType,
+			MPPPartitionCols: rPartKeys,
 		})
 		nrTask.cst = rTask.cst
 		rTask = nrTask
@@ -1358,33 +1358,50 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, storeType kv.StoreType) bool {
 	sc := sctx.GetSessionVars().StmtCtx
 	client := sctx.GetClient()
+	ret := true
+	reason := ""
 	for _, aggFunc := range aggFuncs {
 		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
 		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
-			return false
+			reason = "expressions of AggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now"
+			ret = false
+			break
+		}
+		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
+			reason = "AggFunc `" + aggFunc.Name + "` is not supported now"
+			ret = false
+			break
+		}
+		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
+			reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs"
+			ret = false
+			break
 		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
-			return false
-		}
-		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
-			if sc.InExplainStmt {
-				storageName := storeType.Name()
-				if storeType == kv.UnSpecified {
-					storageName = "storage layer"
-				}
-				sc.AppendWarning(errors.New("Agg function '" + aggFunc.Name + "' can not be pushed to " + storageName))
-			}
-			return false
-		}
-		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
-			return false
+			reason = "AggFunc `" + aggFunc.Name + "` can not be converted to pb expr"
+			ret = false
+			break
 		}
 	}
-	if expression.ContainVirtualColumn(groupByItems) {
-		return false
+	if ret && expression.ContainVirtualColumn(groupByItems) {
+		reason = "groupByItems contain virtual columns, which is not supported now"
+		ret = false
 	}
-	return expression.CanExprsPushDown(sc, groupByItems, client, storeType)
+	if ret && !expression.CanExprsPushDown(sc, groupByItems, client, storeType) {
+		reason = "groupByItems contain unsupported exprs"
+		ret = false
+	}
+
+	if !ret && sc.InExplainStmt {
+		sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because " + reason)
+		storageName := storeType.Name()
+		if storeType == kv.UnSpecified {
+			storageName = "storage layer"
+		}
+		sc.AppendWarning(errors.New("Aggregation can not be pushed to " + storageName + " because " + reason))
+	}
+	return ret
 }
 
 // AggInfo stores the information of an Aggregation.
@@ -1863,7 +1880,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 				partitionCols = append(partitionCols, col)
 			}
 		}
-		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: partitionCols}
+		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
 		newMpp := mpp.enforceExchangerImpl(prop)
 		if newMpp.invalid() {
 			return newMpp
@@ -1886,6 +1903,28 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		attachPlan2Task(finalAgg, t)
 		t.addCost(p.GetCost(inputRows, true, false))
 		return t
+	case MppScalar:
+		proj := p.convertAvgForMPP()
+		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
+		if partialAgg == nil || finalAgg == nil {
+			return invalidTask
+		}
+		attachPlan2Task(partialAgg, mpp)
+		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType}
+		newMpp := mpp.enforceExchangerImpl(prop)
+		attachPlan2Task(finalAgg, newMpp)
+		if proj == nil {
+			proj = PhysicalProjection{
+				Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)),
+			}.Init(p.ctx, p.statsInfo(), p.SelectBlockOffset())
+			for _, col := range p.Schema().Columns {
+				proj.Exprs = append(proj.Exprs, col)
+			}
+			proj.SetSchema(p.schema)
+		}
+		attachPlan2Task(proj, newMpp)
+		newMpp.addCost(p.GetCost(inputRows, false, true))
+		return newMpp
 	default:
 		return invalidTask
 	}
@@ -1985,7 +2024,7 @@ type mppTask struct {
 	p   PhysicalPlan
 	cst float64
 
-	partTp   property.PartitionType
+	partTp   property.MPPPartitionType
 	hashCols []*expression.Column
 }
 
@@ -2030,8 +2069,10 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
 
-	cst := t.cst + t.count()*ctx.GetSessionVars().NetworkFactor
-	cst = cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+	cst := t.cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+	if p.ctx.GetSessionVars().IsMPPEnforced() {
+		cst = t.cst / 1000000000
+	}
 	rt := &rootTask{
 		p:   p,
 		cst: cst,
@@ -2040,7 +2081,7 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 }
 
 func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
-	switch prop.PartitionTp {
+	switch prop.MPPPartitionTp {
 	case property.AnyType:
 		return false
 	case property.BroadcastType:
@@ -2050,10 +2091,10 @@ func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
 			return true
 		}
 		// TODO: consider equalivant class
-		if len(prop.PartitionCols) != len(t.hashCols) {
+		if len(prop.MPPPartitionCols) != len(t.hashCols) {
 			return true
 		}
-		for i, col := range prop.PartitionCols {
+		for i, col := range prop.MPPPartitionCols {
 			if !col.Equal(nil, t.hashCols[i]) {
 				return true
 			}
@@ -2064,6 +2105,7 @@ func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
 
 func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 	if len(prop.SortItems) != 0 {
+		t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
 		return &mppTask{}
 	}
 	if !t.needEnforce(prop) {
@@ -2073,17 +2115,18 @@ func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 }
 
 func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask {
-	if collate.NewCollationEnabled() && prop.PartitionTp == property.HashType {
-		for _, col := range prop.PartitionCols {
+	if collate.NewCollationEnabled() && prop.MPPPartitionTp == property.HashType {
+		for _, col := range prop.MPPPartitionCols {
 			if types.IsString(col.RetType.Tp) {
+				t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.")
 				return &mppTask{cst: math.MaxFloat64}
 			}
 		}
 	}
 	ctx := t.p.SCtx()
 	sender := PhysicalExchangeSender{
-		ExchangeType: tipb.ExchangeType(prop.PartitionTp),
-		HashCols:     prop.PartitionCols,
+		ExchangeType: tipb.ExchangeType(prop.MPPPartitionTp),
+		HashCols:     prop.MPPPartitionCols,
 	}.Init(ctx, t.p.statsInfo())
 	sender.SetChildren(t.p)
 	receiver := PhysicalExchangeReceiver{}.Init(ctx, t.p.statsInfo())
@@ -2092,7 +2135,7 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	return &mppTask{
 		p:        receiver,
 		cst:      cst,
-		partTp:   prop.PartitionTp,
-		hashCols: prop.PartitionCols,
+		partTp:   prop.MPPPartitionTp,
+		hashCols: prop.MPPPartitionCols,
 	}
 }
