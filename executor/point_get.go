@@ -530,6 +530,9 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
+	if types.NeedRestoredData(col.RetType) {
+		return false, nil
+	}
 	// Try to decode common handle.
 	if mysql.HasPriKeyFlag(col.RetType.Flag) {
 		for i, hid := range pkCols {
