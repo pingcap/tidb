@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/connectivity"
@@ -352,13 +351,6 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	connArray, err := c.getConnArray(addr, enableBatch)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	metrics.TiKVRecycleConnDuration.Observe(float64(time.Since(start)))
-	if ctx.Value("isMeta") == true {
-		duration := time.Since(start)
-		startTs := ctx.Value(txnStartKey)
-		logutil.Logger(ctx).Info("load meta SendRequest", zap.Reflect("startTs", startTs), zap.Duration("recycle conn", duration))
 	}
 
 	// TiDB RPC server supports batch RPC, but batch connection will send heart beat, It's not necessary since
