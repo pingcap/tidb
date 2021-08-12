@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/plancodec"
 )
 
 var _ = Suite(&testStmtSummarySuite{})
@@ -423,6 +424,31 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	c.Assert(s.ssMap.summaryMap.Size(), Equals, 4)
 	_, ok = s.ssMap.summaryMap.Get(key)
 	c.Assert(ok, IsTrue)
+
+	// Test for plan too large
+	stmtExecInfo7 := stmtExecInfo1
+	stmtExecInfo7.PlanDigest = "plan_digest7"
+	stmtExecInfo7.PlanGenerator = func() (string, string) {
+		buf := make([]byte, maxEncodedPlanSizeInBytes+1)
+		for i := range buf {
+			buf[i] = 'a'
+		}
+		return string(buf), ""
+	}
+	key = &stmtSummaryByDigestKey{
+		schemaName: stmtExecInfo7.SchemaName,
+		digest:     stmtExecInfo7.Digest,
+		planDigest: stmtExecInfo7.PlanDigest,
+	}
+	s.ssMap.AddStatement(stmtExecInfo7)
+	c.Assert(s.ssMap.summaryMap.Size(), Equals, 5)
+	v, ok := s.ssMap.summaryMap.Get(key)
+	c.Assert(ok, IsTrue)
+	stmt := v.(*stmtSummaryByDigest)
+	c.Assert(stmt.digest, DeepEquals, key.digest)
+	e := stmt.history.Back()
+	ssElement := e.Value.(*stmtSummaryByDigestElement)
+	c.Assert(ssElement.samplePlan, Equals, plancodec.PlanDiscardedEncoded)
 }
 
 func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
