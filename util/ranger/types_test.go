@@ -144,7 +144,7 @@ func TestIsFullRange(t *testing.T) {
 				HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)},
 			},
 			unsignedIntHandle: false,
-			isFullRange: true,
+			isFullRange:       true,
 		},
 		{
 			ran: ranger.Range{
@@ -152,7 +152,7 @@ func TestIsFullRange(t *testing.T) {
 				HighVal: []types.Datum{types.NewIntDatum(math.MinInt64)},
 			},
 			unsignedIntHandle: false,
-			isFullRange: false,
+			isFullRange:       false,
 		},
 		{
 			ran: ranger.Range{
@@ -160,7 +160,7 @@ func TestIsFullRange(t *testing.T) {
 				HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
 			},
 			unsignedIntHandle: false,
-			isFullRange: false,
+			isFullRange:       false,
 		},
 		{
 			ran: ranger.Range{
@@ -168,7 +168,7 @@ func TestIsFullRange(t *testing.T) {
 				HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
 			},
 			unsignedIntHandle: false,
-			isFullRange: true,
+			isFullRange:       true,
 		},
 		{
 			ran: ranger.Range{
@@ -176,7 +176,7 @@ func TestIsFullRange(t *testing.T) {
 				HighVal: []types.Datum{*nullDatum.Clone()},
 			},
 			unsignedIntHandle: false,
-			isFullRange: false,
+			isFullRange:       false,
 		},
 		{
 			ran: ranger.Range{
@@ -184,7 +184,7 @@ func TestIsFullRange(t *testing.T) {
 				HighVal: []types.Datum{types.MaxValueDatum()},
 			},
 			unsignedIntHandle: false,
-			isFullRange: true,
+			isFullRange:       true,
 		},
 		{
 			ran: ranger.Range{
@@ -192,7 +192,7 @@ func TestIsFullRange(t *testing.T) {
 				HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
 			},
 			unsignedIntHandle: true,
-			isFullRange: true,
+			isFullRange:       true,
 		},
 	}
 	for _, v := range isFullRangeTests {

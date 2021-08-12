@@ -624,7 +624,9 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 	}
 
 	if ds.ctx.GetSessionVars().GetAllowPreferRangeScan() && len(candidates) > 1 {
-		// remove table/index full scan paths if there exists some range scan path
+		// For those paths which are neither TiFlash-path nor forced-path, we remove table/index full scan paths if there
+		// exists some range scan path.
+		// For TiFlash-path or forced-path, we just keep them.
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
 		var hasRangeScanPath bool
 		for _, c := range candidates {
