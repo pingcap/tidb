@@ -2060,6 +2060,7 @@ func tearDownTest(t *testing.T, store kv.Storage, dbName string) {
 }
 
 func TestGrantReferences(t *testing.T) {
+	t.Parallel()
 	store, clean := newStore(t)
 	defer clean()
 
