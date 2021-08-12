@@ -70,6 +70,7 @@ type Context interface {
 	ClearValue(key fmt.Stringer)
 
 	GetInfoSchema() InfoschemaMetaVersion
+	GetSnapshotInfoSchema(snapshotTS uint64) (InfoschemaMetaVersion, error)
 
 	GetSessionVars() *variable.SessionVars
 

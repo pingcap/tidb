@@ -169,6 +169,11 @@ func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	return nil
 }
 
+// GetSnapshotInfoSchema implements sessionctx.Context GetSnapshotInfoSchema interface.
+func (c *Context) GetSnapshotInfoSchema(snapshotTS uint64) (sessionctx.InfoschemaMetaVersion, error) {
+	return nil, nil
+}
+
 // GetBuiltinFunctionUsage implements sessionctx.Context GetBuiltinFunctionUsage interface.
 func (c *Context) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)

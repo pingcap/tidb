@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -1593,7 +1592,12 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		return
 	}
 	if p.LastSnapshotTS != 0 {
-		p.InfoSchema, p.err = p.getSnapshotInfoSchema()
+		is, err := p.ctx.GetSnapshotInfoSchema(p.LastSnapshotTS)
+		p.InfoSchema = is.(infoschema.InfoSchema)
+		p.err = err
+		if p.err != nil {
+			return
+		}
 
 	}
 	if p.flag&inPrepare == 0 {
@@ -1627,31 +1631,4 @@ func (p *preprocessor) setStalenessReturn() {
 	txnScope := config.GetTxnScopeFromConfig()
 	p.IsStaleness = true
 	p.TxnScope = txnScope
-}
-
-func (p *preprocessor) getSnapshotInfoSchema() (infoschema.InfoSchema, error) {
-	is, err := domain.GetDomain(p.ctx).GetSnapshotInfoSchema(p.LastSnapshotTS)
-	if err != nil {
-		return nil, err
-	}
-	// Set snapshot does not affect the witness of the local temporary table.
-	// The session always see the latest temporary tables.
-	return wrapWithTemporaryTable(p.ctx, is), nil
-}
-
-func wrapWithTemporaryTable(s sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
-	// Already a wrapped one.
-	if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
-		return is
-	}
-	// No temporary table.
-	local := s.GetSessionVars().LocalTemporaryTables
-	if local == nil {
-		return is
-	}
-
-	return &infoschema.TemporaryTableAttachedInfoSchema{
-		InfoSchema:           is,
-		LocalTemporaryTables: local.(*infoschema.LocalTemporaryTables),
-	}
 }

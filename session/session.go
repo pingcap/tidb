@@ -1564,7 +1564,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	}()
 
 	if execOption.SnapshotTS != 0 {
-		se.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
+		se.sessionVars.SnapshotInfoschema, err = s.GetSnapshotInfoSchema(execOption.SnapshotTS)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -2068,7 +2068,8 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		is, err = getSnapshotInfoSchema(s, snapshotTS)
+		isv, err := s.GetSnapshotInfoSchema(snapshotTS)
+		is = isv.(infoschema.InfoSchema)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -2219,7 +2220,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 	txn.SetOption(kv.IsStalenessReadOnly, true)
 	txn.SetOption(kv.TxnScope, txnScope)
 	s.txn.changeInvalidToValid(txn)
-	is, err := getSnapshotInfoSchema(s, txn.StartTS())
+	is, err := s.GetSnapshotInfoSchema(txn.StartTS())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3117,7 +3118,8 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	return wrapWithTemporaryTable(s, is)
 }
 
-func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
+// GetSnapshotInfoSchema returns snapshotInfoSchema if snapshotTS gived
+func (s *session) GetSnapshotInfoSchema(snapshotTS uint64) (sessionctx.InfoschemaMetaVersion, error) {
 	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {
 		return nil, err
