@@ -232,7 +232,6 @@ type session struct {
 
 	cache [1]ast.StmtNode
 
-	builtinFunctionUsage telemetry.BuiltinFunctionsUsage
 	// allowed when tikv disk full happened.
 	diskFullOpt kvrpcpb.DiskFullOpt
 }
@@ -2276,7 +2275,6 @@ func (s *session) Close() {
 	if s.idxUsageCollector != nil {
 		s.idxUsageCollector.Delete()
 	}
-	telemetry.GlobalBuiltinFunctionsUsage.Collect(s.GetBuiltinFunctionUsage())
 	bindValue := s.Value(bindinfo.SessionBindInfoKeyType)
 	if bindValue != nil {
 		bindValue.(*bindinfo.SessionHandle).Close()
@@ -2692,12 +2690,11 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		return nil, err
 	}
 	s := &session{
-		store:                store,
-		sessionVars:          variable.NewSessionVars(),
-		ddlOwnerChecker:      dom.DDL().OwnerManager(),
-		client:               store.GetClient(),
-		mppClient:            store.GetMPPClient(),
-		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
+		store:           store,
+		sessionVars:     variable.NewSessionVars(),
+		ddlOwnerChecker: dom.DDL().OwnerManager(),
+		client:          store.GetClient(),
+		mppClient:       store.GetMPPClient(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		if opt != nil && opt.PreparedPlanCache != nil {
@@ -2726,11 +2723,10 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 // a lock context, which cause we can't call createSession directly.
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
-		store:                store,
-		sessionVars:          variable.NewSessionVars(),
-		client:               store.GetClient(),
-		mppClient:            store.GetMPPClient(),
-		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
+		store:       store,
+		sessionVars: variable.NewSessionVars(),
+		client:      store.GetClient(),
+		mppClient:   store.GetMPPClient(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
@@ -3160,8 +3156,4 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 	} else {
 		telemetryCTEUsage.WithLabelValues("notCTE").Inc()
 	}
-}
-
-func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
-	return s.builtinFunctionUsage
 }
