@@ -101,3 +101,7 @@ require (
 
 // FIXME the official repo has some bug makes br_gcs test failed. https://github.com/googleapis/google-cloud-go/pull/3509
 // replace cloud.google.com/go/storage => github.com/3pointer/google-cloud-go/storage v1.6.1-0.20210108125931-b59bfa0720b2
+
+replace github.com/pingcap/tipb => github.com/crazycs520/tipb v0.0.0-20210806124853-308070a785ed
+
+replace github.com/pingcap/kvproto => github.com/crazycs520/kvproto v0.0.0-20210811090023-8bfd9794848e
