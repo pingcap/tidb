@@ -3905,6 +3905,37 @@ func (s *testIntegrationSerialSuite) TestIssue25300(c *C) {
 	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a' except select 'd';`, mysql.ErrCantAggregate3collations)
 }
 
+func (s *testIntegrationSerialSuite) TestIssue27167(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ts")
+
+	tk.MustExec(`CREATE TABLE all_types (
+  		id int(11) NOT NULL,
+  		d_tinyint tinyint(4) DEFAULT NULL,
+  		d_smallint smallint(6) DEFAULT NULL,
+  		d_int int(11) DEFAULT NULL,
+  		d_bigint bigint(20) DEFAULT NULL,
+  		d_float float DEFAULT NULL,
+  		d_double double DEFAULT NULL,
+  		d_decimal decimal(10,2) DEFAULT NULL,
+  		d_bit bit(10) DEFAULT NULL,
+  		d_binary binary(10) DEFAULT NULL,
+  		d_date date DEFAULT NULL,
+  		d_datetime datetime DEFAULT NULL,
+  		d_timestamp timestamp NULL DEFAULT NULL,
+  		d_varchar varchar(20) NULL default NULL,
+  		PRIMARY KEY (id)
+		);`)
+
+	tk.MustExec(`insert into all_types values(0, 0, 1, 2, 3, 1.5, 2.2, 10.23, 12, 'xy', '2021-12-12', '2021-12-12 12:00:00', '2021-12-12 12:00:00', '123');`)
+
+	tk.MustQuery("select * from (select d_date c from all_types union select d_int c from all_types) t order by c;").Check(testkit.Rows("2 2021-12-12"))
+	tk.MustQuery("select * from (select d_date c from all_types union select d_float c from all_types) t order by c;").Check(testkit.Rows("1.5 2021-12-12"))
+	// timestamp also OK
+	tk.MustQuery("select * from (select d_timestamp c from all_types union select d_float c from all_types) t order by c;").Check(testkit.Rows("1.5 '2021-12-12 12:00:00'"))
+}
+
 func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
