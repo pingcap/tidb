@@ -108,16 +108,15 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		tk.MustExec(`drop table if exists b`)
 		tk.MustExec(`drop table if exists t`)
 	}()
-	time.Sleep(2 * time.Second)
+	time.Sleep(3 * time.Second)
 	now := time.Now()
-	time.Sleep(2 * time.Second)
 
-	testcases := []struct {
+	// test setSQL with extract timestamp
+	testcases1 := []struct {
 		setTxnSQL        string
 		name             string
 		sql              string
 		expectPhysicalTS int64
-		preSec           int64
 		// IsStaleness is auto cleanup in select stmt.
 		errorStr string
 	}{
@@ -139,15 +138,40 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 			expectPhysicalTS: now.Unix(),
 		},
 		{
-			name:   "NormalRead",
-			sql:    `select * from b;`,
-			preSec: 0,
-		},
-		{
 			name:             "TimestampExactRead2",
 			sql:              fmt.Sprintf("select * from t as of timestamp TIMESTAMP('%s');", now.Format("2006-1-2 15:04:05")),
 			expectPhysicalTS: now.Unix(),
 		},
+	}
+
+	for _, testcase := range testcases1 {
+		c.Log(testcase.name)
+		if len(testcase.setTxnSQL) > 0 {
+			tk.MustExec(testcase.setTxnSQL)
+		}
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, testcase.expectPhysicalTS)), IsNil)
+		rs, err := tk.Exec(testcase.sql)
+		if len(testcase.errorStr) != 0 {
+			c.Assert(err, ErrorMatches, testcase.errorStr)
+			continue
+		}
+		c.Assert(err, IsNil, Commentf("sql:%s, error stack %v", testcase.sql, errors.ErrorStack(err)))
+		if rs != nil {
+			rs.Close()
+		}
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
+		if len(testcase.setTxnSQL) > 0 {
+			c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
+		}
+	}
+
+	// test stale sql by calculating with NOW() function
+	testcases2 := []struct {
+		name   string
+		sql    string
+		preSec int64
+		errorStr string
+	}{
 		{
 			name:   "TimestampExactRead3",
 			sql:    `select * from t as of timestamp NOW() - INTERVAL 2 SECOND;`,
@@ -179,11 +203,6 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 			errorStr: ".*can not set different time in the as of.*",
 		},
 		{
-			name:   "NomalRead",
-			sql:    `select * from t, b;`,
-			preSec: 0,
-		},
-		{
 			name:     "TimestampExactRead9",
 			sql:      `select * from (select * from t as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND), b as of timestamp TIMESTAMP(NOW() - INTERVAL 1 SECOND)) as c, b;`,
 			errorStr: ".*can not set different time in the as of.*",
@@ -201,15 +220,11 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		},
 	}
 
-	for _, testcase := range testcases {
+	for _, testcase := range testcases2 {
 		c.Log(testcase.name)
-		if len(testcase.setTxnSQL) > 0 {
-			tk.MustExec(testcase.setTxnSQL)
-		}
-		if testcase.expectPhysicalTS > 0 {
-			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, testcase.expectPhysicalTS)), IsNil)
-		} else if testcase.preSec > 0 {
-			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance", fmt.Sprintf(`return(%d)`, time.Now().Unix()-testcase.preSec)), IsNil)
+		if testcase.preSec > 0 {
+			failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix()))
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, now.Unix()-testcase.preSec)), IsNil)
 		}
 		rs, err := tk.Exec(testcase.sql)
 		if len(testcase.errorStr) != 0 {
@@ -220,17 +235,11 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 		if rs != nil {
 			rs.Close()
 		}
-		if testcase.expectPhysicalTS > 0 {
-			c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
-		} else if testcase.preSec > 0 {
-			c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance"), IsNil)
-		}
-		if len(testcase.setTxnSQL) > 0 {
-			c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
+		if testcase.preSec > 0 {
+			failpoint.Disable("github.com/pingcap/tidb/expression/injectNow")
+			failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO")
 		}
 	}
-	failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO")
-	failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSOWithTolerance")
 }
 
 func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
