@@ -8862,8 +8862,6 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	// sleep 1us to make test stale
 	time.Sleep(time.Microsecond)
 
-	tk.MustGetErrMsg("select * from tmp2 as of timestamp now(6) where id=1;", "can not stale read temporary table")
-
 	queries := []struct {
 		sql string
 	}{
