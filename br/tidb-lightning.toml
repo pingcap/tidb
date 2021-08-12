@@ -37,6 +37,15 @@ table-concurrency = 6
 # this config is only used in "local" and "importer" backend.
 # meta-schema-name = "lightning_metadata"
 
+# maximum number of non-fatal errors to tolerate before stopping Lightning.
+# Non-fatal errors are those that are localized to a few rows, and ignoring those rows allow the import process to continue.
+# Setting this to N means Lightning will stop as soon as possible when the (N+1)-th error is encountered.
+# The skipped rows will be inserted to tables inside the "task info" schema on the target TiDB, which can be configured below.
+max-error = 0
+# task-info-schema-name is the name of the schema/database storing human-readable Lightning execution result.
+# set this to empty string to disable error recording.
+#task-info-schema-name = 'lightning_task_info'
+
 # logging
 level = "info"
 # file path for log. If set to empty, log will be written to /tmp/lightning.log.{timestamp}
@@ -85,7 +94,7 @@ addr = "127.0.0.1:8287"
 # What to do on duplicated record (unique key conflict) when the backend is 'tidb'. Possible values are:
 #  - replace: replace the old record by the new record (i.e. insert rows using "REPLACE INTO")
 #  - ignore: keep the old record and ignore the new record (i.e. insert rows using "INSERT IGNORE INTO")
-#  - error: stop Lightning and report an error (i.e. insert rows using "INSERT INTO")
+#  - error: produce an error (i.e. insert rows using "INSERT INTO"), which will count towards the max-error limit.
 #on-duplicate = "replace"
 # Maximum KV size of SST files produced in the 'local' backend. This should be the same as
 # the TiKV region size to avoid further region splitting. The default value is 96 MiB.
