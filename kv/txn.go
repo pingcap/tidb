@@ -88,7 +88,7 @@ var (
 // See http://www.awsarchitectureblog.com/2015/03/backoff.html.
 func BackOff(attempts uint) int {
 	upper := int(math.Min(float64(retryBackOffCap), float64(retryBackOffBase)*math.Pow(2.0, float64(attempts))))
-	sleep := time.Duration(rand.Intn(upper)) * time.Millisecond
+	sleep := time.Duration(rand.Intn(upper)) * time.Millisecond // #nosec G404
 	time.Sleep(sleep)
 	return int(sleep)
 }

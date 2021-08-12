@@ -71,8 +71,7 @@ func init() {
 		"testSerialSuite.TestAggInDisk",
 		"testStaleTxnSerialSuite.TestSelectAsOf",
 		"testEvaluatorSuite.TestSleepVectorized",
-		"testSuite.TestFailNewSession",
-		"testSuite.TestFailNewSession",
+		"TestFailNewSession",
 		"testPlanSerialSuite.TestPartitionTable",
 		"testPlanSerialSuite.TestPartitionWithVariedDatasources",
 		"HTTPHandlerTestSuite.TestZipInfoForSQL",
@@ -98,6 +97,8 @@ func init() {
 		"testFastAnalyze.TestAnalyzeFastSample",
 		"testBypassSuite.TestLatch",
 		"testIntegrationSuite2.TestPartitionCancelAddPrimaryKey",
+		"testDBSuite1.TestAddIndexWithSplitTable",
+		"testSerialDBSuite.TestAddIndexWithShardRowID",
 	}
 	for _, v := range tmp {
 		allowList[v] = struct{}{}

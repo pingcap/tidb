@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/errno"
@@ -95,6 +96,7 @@ type Meta struct {
 func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	txn.SetOption(kv.SyncLog, struct{}{})
+	txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
 	listKey := DefaultJobListKey
 	if len(jobListKeys) != 0 {

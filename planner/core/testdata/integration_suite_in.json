@@ -320,5 +320,34 @@
       "select a, b, c from t1 where (a = 1 and b = 1 and c < 3) or (a = 1 and b = 1 and c > 6) order by c",
       "select * from t2 where ((a = 1 and b = 1 and d < 3) or (a = 1 and b = 1 and d > 6)) and c = 3 order by d"
     ]
+  },
+  {
+    "name": "TestHeuristicIndexSelection",
+    "cases": [
+      "select * from t1 where a = 3 or a = 5",
+      "select f, g from t1 where f = 2 and g in (3, 4, 5)",
+      "select * from t1 where c = 1 and (d = 2 or d = 3) and e in (4, 5)",
+      "select f, g from t1 where f = 2 and g > 3",
+      "select a, b, c from t2 where a = 1 and b = 2 and c in (1, 2, 3, 4, 5)",
+      "select * from t3 where (a = 1 or a = 3) and b = 'xx'",
+      "select * from t4 where (a = 1 or a = 3) and b = 'xx'",
+      "select a, b from t3 where (a = 1 or a = 3) and b = 'xx'",
+      "select a, b from t4 where (a = 1 or a = 3) and b = 'xx'",
+      "update t1 set b = 2 where a = 4 or a = 6",
+      "delete from t1 where f = 2 and g in (3, 4)",
+      "insert into t3 select a, b, c from t1 where f = 2",
+      "replace into t3 select a, b, c from t1 where a = 3"
+    ]
+  },
+  {
+    "name": "TestOutputSkylinePruningInfo",
+    "cases": [
+      "select * from t where a > 1 order by f",
+      "select * from t where f > 1",
+      "select f from t where f > 1",
+      "select * from t where f > 3 and g = 5",
+      "select * from t where g = 5 order by f",
+      "select * from t where d = 3 order by c, e"
+    ]
   }
 ]
