@@ -465,6 +465,9 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 		var locations []tables.ListPartitionLocation
 		if r.IsPointNullable(sc) {
 			location, err := colPrune.LocatePartition(sc, r.HighVal[0])
+			if types.ErrOverflow.Equal(err) {
+				return nil, true, nil // return full-scan if over-flow
+			}
 			if err != nil {
 				return nil, false, err
 			}
