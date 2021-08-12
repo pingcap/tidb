@@ -666,7 +666,7 @@ func TestSwapColumn(t *testing.T) {
 	require.NoError(t, chk2.SwapColumn(1, chk2, 0))
 	checkRef()
 
-	// swap src = dst
+	// swap the same column in the same chunk
 	require.NoError(t, chk2.SwapColumn(1, chk2, 1))
 	checkRef()
 
