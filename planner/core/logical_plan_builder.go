@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -1349,6 +1350,24 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	return resultTp
 }
 
+// shouldUseDefautCharsetAndCollationInUnion return true if type of any column is time and any type is
+// not (varchar & time)
+func shouldUseDefautCharsetAndCollationInUnion(fieldTypes []*types.FieldType) bool {
+	var hasDate = false
+	var allDateOrVarchar = true
+	for _, e := range fieldTypes {
+		if !hasDate {
+			hasDate = types.IsTypeTime(e.Tp)
+		}
+
+		if !(types.IsTypeVarchar(e.Tp) || types.IsTypeTime(e.Tp)) {
+			allDateOrVarchar = false
+		}
+	}
+
+	return hasDate && !allDateOrVarchar
+}
+
 func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnionAll) error {
 	unionCols := make([]*expression.Column, 0, u.children[0].Schema().Len())
 	names := make([]*types.FieldName, 0, u.children[0].Schema().Len())
@@ -1356,17 +1375,27 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 	// Infer union result types by its children's schema.
 	for i, col := range u.children[0].Schema().Columns {
 		tmpExprs := make([]expression.Expression, 0, len(u.Children()))
+		temTypes := make([]*types.FieldType, 0, len(u.Children()))
 		tmpExprs = append(tmpExprs, col)
+		temTypes = append(temTypes, col.RetType)
 		resultTp := col.RetType
 		for j := 1; j < len(u.children); j++ {
 			tmpExprs = append(tmpExprs, u.children[j].Schema().Columns[i])
 			childTp := u.children[j].Schema().Columns[i].RetType
+			temTypes = append(temTypes, childTp)
 			resultTp = unionJoinFieldType(resultTp, childTp)
 		}
 		if err := expression.CheckIllegalMixCollation("UNION", tmpExprs, types.ETInt); err != nil {
 			return err
 		}
-		resultTp.Charset, resultTp.Collate = expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
+
+		if shouldUseDefautCharsetAndCollationInUnion(temTypes) {
+			resultTp.Charset, resultTp.Collate = charset.GetDefaultCharsetAndCollate()
+		} else {
+			resultTp.Charset, resultTp.Collate = expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
+		}
+
+		//resultTp.Charset, resultTp.Collate = charset.GetDefaultCharsetAndCollate()
 		names = append(names, &types.FieldName{ColName: u.children[0].OutputNames()[i].ColName})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
