@@ -270,7 +270,6 @@ func TestBuildKeyInfo(t *testing.T) {
 	require.False(t, group2.Prop.MaxOneRow)
 	require.Len(t, group2.Prop.Schema.Keys, 1)
 
-
 	// case 3: build key info for new Group
 	newSel := plannercore.LogicalSelection{}.Init(ctx, 0)
 	newExpr1 := NewGroupExpr(newSel)
