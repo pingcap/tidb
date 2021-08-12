@@ -1,3 +1,12 @@
+What's Up?
+suさん、こんにちは！
+TiDB Community へサインインしようとされたようですが、そのワークスペースでのあなたのアカウントは解除されたようです。
+
+誤って解除されたと思われる場合には、ワークスペースの管理者に連絡してアカウントを再び有効にしてもらいましょう。
+
+今後とも Slack をどうぞよろしくおねがいします！
+Slack チーム一同
+
 ![](docs/logo_with_text.png)
 
 [![LICENSE](https://img.shields.io/github/license/pingcap/tidb.svg)](https://github.com/pingcap/tidb/blob/master/LICENSE)
