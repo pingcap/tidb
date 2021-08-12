@@ -5787,6 +5787,7 @@ func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 func (s *testSerialDBSuite) TestShardRowIDBitsOnTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	// for global temporary table
 	tk.MustExec("drop table if exists shard_row_id_temporary")
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	_, err := tk.Exec("create global temporary table shard_row_id_temporary (a int) shard_row_id_bits = 5 on commit delete rows;")
@@ -5795,6 +5796,15 @@ func (s *testSerialDBSuite) TestShardRowIDBitsOnTemporaryTable(c *C) {
 	defer tk.MustExec("drop table if exists shard_row_id_temporary")
 	_, err = tk.Exec("alter table shard_row_id_temporary shard_row_id_bits = 4;")
 	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
+	// for local temporary table
+	tk.MustExec("set tidb_enable_noop_functions=true")
+	tk.MustExec("drop table if exists local_shard_row_id_temporary")
+	_, err = tk.Exec("create temporary table local_shard_row_id_temporary (a int) shard_row_id_bits = 5;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
+	tk.MustExec("create temporary table local_shard_row_id_temporary (a int);")
+	defer tk.MustExec("drop table if exists local_shard_row_id_temporary")
+	_, err = tk.Exec("alter table local_shard_row_id_temporary shard_row_id_bits = 4;")
+	c.Assert(err.Error(), Equals, ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE").Error())
 }
 
 // port from mysql
