@@ -3841,26 +3841,26 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		p, err := b.tryBuildCTE(ctx, tn, asName)
 		if err != nil || p != nil {
 			if len(b.cteNameProcessingStack) > 0 {
-				if tblIds, ok := b.cteToTblIdMapper[tn.Name.L]; ok {
+				if tblIds, ok := b.cteToTblIDMapper[tn.Name.L]; ok {
 					cteName := b.cteNameProcessingStack[len(b.cteNameProcessingStack)-1]
-					tblIds1 := b.cteToTblIdMapper[cteName]
+					tblIds1 := b.cteToTblIDMapper[cteName]
 					if tblIds1 == nil {
 						tblIds1 = make([]int64, 0, 1)
 					}
-					b.cteToTblIdMapper[cteName] = append(b.cteToTblIdMapper[cteName], tblIds...)
+					b.cteToTblIDMapper[cteName] = append(b.cteToTblIDMapper[cteName], tblIds...)
 				}
 			} else {
-				if tblIds, ok := b.cteToTblIdMapper[tn.Name.L]; ok {
-					for _, tblId := range tblIds {
-						if _, ok := b.selTmpTblIds[tblId]; ok {
-							tb, ok1 := b.is.TableByID(tblId)
+				if tblIds, ok := b.cteToTblIDMapper[tn.Name.L]; ok {
+					for _, tblID := range tblIds {
+						if _, ok := b.selTmpTblIds[tblID]; ok {
+							tb, ok1 := b.is.TableByID(tblID)
 							if !ok1 {
-								return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tblId)
+								return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tblID)
 							}
 							errMsg := fmt.Sprintf(errno.MySQLErrName[errno.ErrCantReopenTable].Raw, tb.Meta().Name.L)
 							return nil, ErrInternal.GenWithStack(errMsg)
 						}
-						b.selTmpTblIds[tblId] = struct{}{}
+						b.selTmpTblIds[tblID] = struct{}{}
 					}
 				}
 			}
@@ -4107,13 +4107,13 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tableInfo.TempTableType == model.TempTableLocal {
 		if len(b.cteNameProcessingStack) > 0 {
 			cteName := b.cteNameProcessingStack[len(b.cteNameProcessingStack)-1]
-			tblIds := b.cteToTblIdMapper[cteName]
+			tblIds := b.cteToTblIDMapper[cteName]
 			if tblIds == nil {
 				tblIds = make([]int64, 0, 1)
-				b.cteToTblIdMapper[cteName] = tblIds
+				b.cteToTblIDMapper[cteName] = tblIds
 			}
 			tblIds = append(tblIds, tableInfo.ID)
-			b.cteToTblIdMapper[cteName] = tblIds
+			b.cteToTblIDMapper[cteName] = tblIds
 		} else {
 			if _, ok := b.selTmpTblIds[tableInfo.ID]; ok {
 				errMsg := fmt.Sprintf(errno.MySQLErrName[errno.ErrCantReopenTable].Raw, tbl.Meta().Name)
