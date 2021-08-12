@@ -44,11 +44,11 @@ func (b *dbMetaMgrBuilder) Init(ctx context.Context) error {
 	if err := exec.Exec(ctx, "create meta schema", metaDBSQL); err != nil {
 		return errors.Annotate(err, "create meta schema failed")
 	}
-	taskMetaSQL := fmt.Sprintf(CreateTaskMetaTable, common.UniqueTable(b.schema, taskMetaTableName))
+	taskMetaSQL := fmt.Sprintf(CreateTaskMetaTable, common.UniqueTable(b.schema, TaskMetaTableName))
 	if err := exec.Exec(ctx, "create meta table", taskMetaSQL); err != nil {
 		return errors.Annotate(err, "create task meta table failed")
 	}
-	tableMetaSQL := fmt.Sprintf(CreateTableMetadataTable, common.UniqueTable(b.schema, tableMetaTableName))
+	tableMetaSQL := fmt.Sprintf(CreateTableMetadataTable, common.UniqueTable(b.schema, TableMetaTableName))
 	if err := exec.Exec(ctx, "create meta table", tableMetaSQL); err != nil {
 		return errors.Annotate(err, "create table meta table failed")
 	}
@@ -60,7 +60,7 @@ func (b *dbMetaMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
 		session:    b.db,
 		taskID:     b.taskID,
 		pd:         pd,
-		tableName:  common.UniqueTable(b.schema, taskMetaTableName),
+		tableName:  common.UniqueTable(b.schema, TaskMetaTableName),
 		schemaName: b.schema,
 	}
 }
@@ -70,7 +70,7 @@ func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
 		session:      b.db,
 		taskID:       b.taskID,
 		tr:           tr,
-		tableName:    common.UniqueTable(b.schema, tableMetaTableName),
+		tableName:    common.UniqueTable(b.schema, TableMetaTableName),
 		needChecksum: b.needChecksum,
 	}
 }
@@ -458,6 +458,21 @@ func (m *dbTableMetaMgr) FinishTable(ctx context.Context) error {
 	return exec.Exec(ctx, "clean up metas", query, m.tr.tableInfo.ID)
 }
 
+func RemoveTableMetaByTableName(ctx context.Context, db *sql.DB, metaTable, tableName string) error {
+	exec := &common.SQLWithRetry{
+		DB:     db,
+		Logger: log.L(),
+	}
+	query := fmt.Sprintf("DELETE FROM %s", metaTable)
+	var args []interface{}
+	if tableName != "" {
+		query += " where table_name = ?"
+		args = []interface{}{tableName}
+	}
+
+	return exec.Exec(ctx, "clean up metas", query, args...)
+}
+
 type taskMetaMgr interface {
 	InitTask(ctx context.Context, source int64) error
 	CheckClusterSource(ctx context.Context) (int64, error)
@@ -674,6 +689,11 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 		pausedCfg = storedCfgs{PauseCfg: removed, RestoreCfg: orig}
 		jsonByts, err := json.Marshal(&pausedCfg)
 		if err != nil {
+			// try to rollback the stopped schedulers
+			cancelFunc := m.pd.MakeUndoFunctionByConfig(pausedCfg.RestoreCfg)
+			if err1 := cancelFunc(ctx); err1 != nil {
+				log.L().Warn("undo remove schedulers failed", zap.Error(err1))
+			}
 			return errors.Trace(err)
 		}
 
@@ -828,24 +848,31 @@ func (m *dbTaskMetaMgr) Close() {
 }
 
 func (m *dbTaskMetaMgr) CleanupAllMetas(ctx context.Context) error {
+	return MaybeCleanupAllMetas(ctx, m.session, m.schemaName, true)
+}
+
+// MaybeCleanupAllMetas remove the meta schema if there is no unfinished tables
+func MaybeCleanupAllMetas(ctx context.Context, db *sql.DB, schemaName string, tableMetaExist bool) error {
 	exec := &common.SQLWithRetry{
-		DB:     m.session,
+		DB:     db,
 		Logger: log.L(),
 	}
 
 	// check if all tables are finished
-	query := fmt.Sprintf("SELECT COUNT(*) from %s", common.UniqueTable(m.schemaName, tableMetaTableName))
-	var cnt int
-	if err := exec.QueryRow(ctx, "fetch table meta row count", query, &cnt); err != nil {
-		return errors.Trace(err)
-	}
-	if cnt > 0 {
-		log.L().Warn("there are unfinished table in table meta table, cleanup skipped.")
-		return nil
+	if tableMetaExist {
+		query := fmt.Sprintf("SELECT COUNT(*) from %s", common.UniqueTable(schemaName, TableMetaTableName))
+		var cnt int
+		if err := exec.QueryRow(ctx, "fetch table meta row count", query, &cnt); err != nil {
+			return errors.Trace(err)
+		}
+		if cnt > 0 {
+			log.L().Warn("there are unfinished table in table meta table, cleanup skipped.")
+			return nil
+		}
 	}
 
 	// avoid override existing metadata if the meta is already inserted.
-	stmt := fmt.Sprintf("DROP DATABASE %s;", common.EscapeIdentifier(m.schemaName))
+	stmt := fmt.Sprintf("DROP DATABASE %s;", common.EscapeIdentifier(schemaName))
 	if err := exec.Exec(ctx, "cleanup task meta tables", stmt); err != nil {
 		return errors.Trace(err)
 	}
