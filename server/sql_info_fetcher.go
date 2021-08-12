@@ -81,6 +81,7 @@ func (sh *sqlInfoFetcher) zipInfoForSQL(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer sh.s.Close()
+
 	sh.do = domain.GetDomain(sh.s)
 	reqCtx := r.Context()
 	sql := r.FormValue("sql")
