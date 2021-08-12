@@ -787,7 +787,7 @@ func (s *testStateChangeSuite) TestUpdateForDropColumnWithIndexes(c *C) {
 	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnSQL, sqls, query, checkOpt)
 	prepare()
 	s.runTestInSchemaState(c, model.StateDeleteReorganization, true, dropColumnSQL, sqls, query, checkOpt)
-	// drop column with multi indexes.
+	// Drop column with multi-index.
 	prepare = func() {
 		tk.MustExec("drop table if exists t1")
 		tk.MustExec("CREATE TABLE t1 (x int, a int, b int, index idx0(a), index idx1(a), index idx2(b))")
