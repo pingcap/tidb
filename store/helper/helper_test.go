@@ -79,7 +79,7 @@ func (s *HelperTestSuite) SetUpSuite(c *C) {
 
 	s.store = &mockStore{
 		mockTikvStore.(helper.Storage),
-		[]string{url[len("http://"):]},
+		[]string{"invalid_pd_address", url[len("http://"):]},
 	}
 	c.Assert(err, IsNil)
 }

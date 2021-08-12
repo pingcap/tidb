@@ -371,8 +371,8 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec("set @@tidb_store_limit = 0")
 
 	tk.MustExec("set global tidb_store_limit = 100")
-	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("100"))
+	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("100"))
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
 
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
@@ -519,6 +519,26 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec(`set tidb_enable_ordered_result_mode=1`)
 	tk.MustQuery(`select @@global.tidb_enable_ordered_result_mode`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select @@tidb_enable_ordered_result_mode`).Check(testkit.Rows("1"))
+
+	// test for tidb_opt_enable_correlation_adjustment
+	tk.MustQuery(`select @@tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_opt_enable_correlation_adjustment = 0`)
+	tk.MustQuery(`select @@global.tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("0"))
+	tk.MustExec(`set global tidb_opt_enable_correlation_adjustment = 1`)
+	tk.MustQuery(`select @@global.tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("1"))
+	tk.MustExec(`set tidb_opt_enable_correlation_adjustment=0`)
+	tk.MustQuery(`select @@global.tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("0"))
+
+	// test for tidb_opt_limit_push_down_threshold
+	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
+	tk.MustExec(`set global tidb_opt_limit_push_down_threshold = 20`)
+	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
+	tk.MustExec(`set global tidb_opt_limit_push_down_threshold = 100`)
+	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold = 20`)
+	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
+	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
@@ -695,7 +715,6 @@ func (s *testSuite5) TestSetCollationAndCharset(c *C) {
 }
 
 func (s *testSuite5) TestValidateSetVar(c *C) {
-	c.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
 	tk := testkit.NewTestKit(c, s.store)
 
 	_, err := tk.Exec("set global tidb_distsql_scan_concurrency='fff';")
@@ -1054,7 +1073,6 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 }
 
 func (s *testSuite5) TestSelectGlobalVar(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210624")
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("151"))
@@ -1314,7 +1332,8 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 	c.Assert(tk.ExecToErr("set config xxx log.level='info'"), ErrorMatches, "unknown type xxx")
 	c.Assert(tk.ExecToErr("set config tidb log.level='info'"), ErrorMatches, "TiDB doesn't support to change configs online, please use SQL variables")
 	c.Assert(tk.ExecToErr("set config '127.0.0.1:1111' log.level='info'"), ErrorMatches, "TiDB doesn't support to change configs online, please use SQL variables")
-	c.Assert(tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), ErrorMatches, "invalid instance 127.a.b.c:1234")
+	c.Assert(tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), ErrorMatches, "invalid instance 127.a.b.c:1234")                          // name doesn't resolve.
+	c.Assert(tk.ExecToErr("set config 'example.com:1111' log.level='info'"), ErrorMatches, "instance example.com:1111 is not found in this cluster") // name resolves.
 	c.Assert(tk.ExecToErr("set config tikv log.level=null"), ErrorMatches, "can't set config to null")
 	c.Assert(tk.ExecToErr("set config '1.1.1.1:1111' log.level='info'"), ErrorMatches, "instance 1.1.1.1:1111 is not found in this cluster")
 

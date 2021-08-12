@@ -87,6 +87,11 @@ type PrepareExec struct {
 	ID         uint32
 	ParamCount int
 	Fields     []*ast.ResultField
+
+	// If it's generated from executing "prepare stmt from '...'", the process is parse -> plan -> executor
+	// If it's generated from the prepare protocol, the process is session.PrepareStmt -> NewPrepareExec
+	// They both generate a PrepareExec struct, but the second case needs to reset the statement context while the first already do that.
+	needReset bool
 }
 
 // NewPrepareExec creates a new PrepareExec.
@@ -96,6 +101,7 @@ func NewPrepareExec(ctx sessionctx.Context, sqlTxt string) *PrepareExec {
 	return &PrepareExec{
 		baseExecutor: base,
 		sqlText:      sqlTxt,
+		needReset:    true,
 	}
 }
 
@@ -135,9 +141,11 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	stmt := stmts[0]
 
-	err = ResetContextOfStmt(e.ctx, stmt)
-	if err != nil {
-		return err
+	if e.needReset {
+		err = ResetContextOfStmt(e.ctx, stmt)
+		if err != nil {
+			return err
+		}
 	}
 
 	var extractor paramMarkerExtractor
@@ -315,7 +323,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, args []types.Datum) (sqlexec.Statement, bool, bool, error) {
+	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, args []types.Datum) (*ExecStmt, bool, bool, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)

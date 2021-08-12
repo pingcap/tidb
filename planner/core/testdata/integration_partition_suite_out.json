@@ -1,0 +1,327 @@
+[
+  {
+    "Name": "TestListPartitionPruning",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a in (2)",
+        "DynamicPlan": [
+          "TableReader 10.00 root partition:p0 data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a in (7)",
+        "DynamicPlan": [
+          "TableReader 10.00 root partition:p2 data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 7)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "TableReader 10.00 root  data:Selection",
+          "└─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 7)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a in (0,5)",
+        "DynamicPlan": [
+          "TableReader 20.00 root partition:p0,p1 data:Selection",
+          "└─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 40.00 root  ",
+          "├─TableReader 20.00 root  data:Selection",
+          "│ └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "└─TableReader 20.00 root  data:Selection",
+          "  └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a not in (0, 1, 2, 3, 4, 5, 6, 7, 8)",
+        "DynamicPlan": [
+          "TableReader 3583.33 root partition:all data:Selection",
+          "└─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 14333.33 root  ",
+          "├─TableReader 3583.33 root  data:Selection",
+          "│ └─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader 3583.33 root  data:Selection",
+          "│ └─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo",
+          "├─TableReader 3583.33 root  data:Selection",
+          "│ └─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo",
+          "└─TableReader 3583.33 root  data:Selection",
+          "  └─Selection 3583.33 cop[tikv]  not(in(list_partition_pruning.tlist.a, 0, 1, 2, 3, 4, 5, 6, 7, 8))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a >= 7",
+        "DynamicPlan": [
+          "TableReader 3333.33 root partition:all data:Selection",
+          "└─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 7)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 13333.33 root  ",
+          "├─TableReader 3333.33 root  data:Selection",
+          "│ └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 7)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader 3333.33 root  data:Selection",
+          "│ └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 7)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo",
+          "├─TableReader 3333.33 root  data:Selection",
+          "│ └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 7)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo",
+          "└─TableReader 3333.33 root  data:Selection",
+          "  └─Selection 3333.33 cop[tikv]  ge(list_partition_pruning.tlist.a, 7)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a <= 7",
+        "DynamicPlan": [
+          "TableReader 3323.33 root partition:all data:Selection",
+          "└─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 7)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 13293.33 root  ",
+          "├─TableReader 3323.33 root  data:Selection",
+          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 7)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader 3323.33 root  data:Selection",
+          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 7)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo",
+          "├─TableReader 3323.33 root  data:Selection",
+          "│ └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 7)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo",
+          "└─TableReader 3323.33 root  data:Selection",
+          "  └─Selection 3323.33 cop[tikv]  le(list_partition_pruning.tlist.a, 7)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a=0 or a=7",
+        "DynamicPlan": [
+          "TableReader 20.00 root partition:p0,p2 data:Selection",
+          "└─Selection 20.00 cop[tikv]  or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 7))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 40.00 root  ",
+          "├─TableReader 20.00 root  data:Selection",
+          "│ └─Selection 20.00 cop[tikv]  or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 7))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "└─TableReader 20.00 root  data:Selection",
+          "  └─Selection 20.00 cop[tikv]  or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 7))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a=0 or a=1 or a=6 or a=11",
+        "DynamicPlan": [
+          "TableReader 40.00 root partition:p0,p2,p3 data:Selection",
+          "└─Selection 40.00 cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 120.00 root  ",
+          "├─TableReader 40.00 root  data:Selection",
+          "│ └─Selection 40.00 cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader 40.00 root  data:Selection",
+          "│ └─Selection 40.00 cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo",
+          "└─TableReader 40.00 root  data:Selection",
+          "  └─Selection 40.00 cop[tikv]  or(or(eq(list_partition_pruning.tlist.a, 0), eq(list_partition_pruning.tlist.a, 1)), or(eq(list_partition_pruning.tlist.a, 6), eq(list_partition_pruning.tlist.a, 11)))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a in (0, 1, 2) and mod(a, 2)=0",
+        "DynamicPlan": [
+          "Selection 24.00 root  eq(mod(list_partition_pruning.tlist.a, 2), 0)",
+          "└─TableReader 24.00 root partition:p0 data:Selection",
+          "  └─Selection 24.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Selection 24.00 root  eq(mod(list_partition_pruning.tlist.a, 2), 0)",
+          "└─TableReader 24.00 root  data:Selection",
+          "  └─Selection 24.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from tlist where a in (0, 3, 6) and a+1>3",
+        "DynamicPlan": [
+          "TableReader 24.00 root partition:p0,p1,p2 data:Selection",
+          "└─Selection 24.00 cop[tikv]  gt(plus(list_partition_pruning.tlist.a, 1), 3), in(list_partition_pruning.tlist.a, 0, 3, 6)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "PartitionUnion 72.00 root  ",
+          "├─TableReader 24.00 root  data:Selection",
+          "│ └─Selection 24.00 cop[tikv]  gt(plus(list_partition_pruning.tlist.a, 1), 3), in(list_partition_pruning.tlist.a, 0, 3, 6)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "├─TableReader 24.00 root  data:Selection",
+          "│ └─Selection 24.00 cop[tikv]  gt(plus(list_partition_pruning.tlist.a, 1), 3), in(list_partition_pruning.tlist.a, 0, 3, 6)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo",
+          "└─TableReader 24.00 root  data:Selection",
+          "  └─Selection 24.00 cop[tikv]  gt(plus(list_partition_pruning.tlist.a, 1), 3), in(list_partition_pruning.tlist.a, 0, 3, 6)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' delete from tlist where a in (2)",
+        "DynamicPlan": [
+          "Delete N/A root  N/A",
+          "└─TableReader 10.00 root partition:p0 data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Delete N/A root  N/A",
+          "└─TableReader 10.00 root  data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' delete from tlist where a in (0, 5)",
+        "DynamicPlan": [
+          "Delete N/A root  N/A",
+          "└─TableReader 20.00 root partition:p0,p1 data:Selection",
+          "  └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Delete N/A root  N/A",
+          "└─PartitionUnion 40.00 root  ",
+          "  ├─TableReader 20.00 root  data:Selection",
+          "  │ └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "  └─TableReader 20.00 root  data:Selection",
+          "    └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' update tlist set a=3 where a in (2)",
+        "DynamicPlan": [
+          "Update N/A root  N/A",
+          "└─TableReader 10.00 root partition:p0 data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Update N/A root  N/A",
+          "└─TableReader 10.00 root  data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' update tlist set a=3 where a in (0, 5)",
+        "DynamicPlan": [
+          "Update N/A root  N/A",
+          "└─TableReader 20.00 root partition:p0,p1 data:Selection",
+          "  └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Update N/A root  N/A",
+          "└─PartitionUnion 40.00 root  ",
+          "  ├─TableReader 20.00 root  data:Selection",
+          "  │ └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "  └─TableReader 20.00 root  data:Selection",
+          "    └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' insert into tlist select * from tlist where a in (2)",
+        "DynamicPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 10.00 root partition:p0 data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 10.00 root  data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' insert into tlist select * from tlist where a in (0, 5)",
+        "DynamicPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 20.00 root partition:p0,p1 data:Selection",
+          "  └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Insert N/A root  N/A",
+          "└─PartitionUnion 40.00 root  ",
+          "  ├─TableReader 20.00 root  data:Selection",
+          "  │ └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "  └─TableReader 20.00 root  data:Selection",
+          "    └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' replace tlist select * from tlist where a in (2)",
+        "DynamicPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 10.00 root partition:p0 data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 10.00 root  data:Selection",
+          "  └─Selection 10.00 cop[tikv]  eq(list_partition_pruning.tlist.a, 2)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' replace tlist select * from tlist where a in (0, 5)",
+        "DynamicPlan": [
+          "Insert N/A root  N/A",
+          "└─TableReader 20.00 root partition:p0,p1 data:Selection",
+          "  └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
+        ],
+        "StaticPlan": [
+          "Insert N/A root  N/A",
+          "└─PartitionUnion 40.00 root  ",
+          "  ├─TableReader 20.00 root  data:Selection",
+          "  │ └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
+          "  └─TableReader 20.00 root  data:Selection",
+          "    └─Selection 20.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 5)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  }
+]

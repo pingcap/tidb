@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -1035,7 +1036,7 @@ func IsAutoRandomColumnID(tblInfo *model.TableInfo, colID int64) bool {
 	return tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() && tblInfo.GetPkColInfo().ID == colID
 }
 
-func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
+func checkGeneratedColumn(ctx sessionctx.Context, colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
 	var exists bool
 	var autoIncrementColumn string
@@ -1067,9 +1068,11 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 
 	// Check whether the generated column refers to any auto-increment columns
 	if exists {
-		for colName, generated := range colName2Generation {
-			if _, found := generated.dependences[autoIncrementColumn]; found {
-				return ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(colName)
+		if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
+			for colName, generated := range colName2Generation {
+				if _, found := generated.dependences[autoIncrementColumn]; found {
+					return ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(colName)
+				}
 			}
 		}
 	}
@@ -1163,7 +1166,7 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	nameLower := strings.ToLower(name)
 	if namesMap[nameLower] {
 		if foreign {
-			return infoschema.ErrCannotAddForeign
+			return ErrFkDupName.GenWithStackByArgs(name)
 		}
 		return ErrDupKeyName.GenWithStack("duplicate key name %s", name)
 	}
@@ -1588,7 +1591,7 @@ func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
 	// All of these rely on the AST structure of expressions, which were
 	// lost in the model (got serialized into strings).
-	if err := checkGeneratedColumn(s.Cols); err != nil {
+	if err := checkGeneratedColumn(ctx, s.Cols); err != nil {
 		return errors.Trace(err)
 	}
 	if tbInfo.Partition != nil {
@@ -2585,6 +2588,8 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			err = d.AlterTableAddStatistics(sctx, ident, spec.Statistics, spec.IfNotExists)
 		case ast.AlterTableDropStatistics:
 			err = d.AlterTableDropStatistics(sctx, ident, spec.Statistics, spec.IfExists)
+		case ast.AlterTableAttributes:
+			err = d.AlterTableAttributes(sctx, ident, spec)
 		default:
 			// Nothing to do now.
 		}
@@ -2764,8 +2769,10 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 			}
 
 			_, dependColNames := findDependedColumnNames(specNewColumn)
-			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
-				return nil, errors.Trace(err)
+			if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
+				if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 			duplicateColNames := make(map[string]struct{}, len(dependColNames))
 			for k := range dependColNames {
@@ -3575,8 +3582,16 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg 
 		return true, "conversion between char and varchar string needs reorganization"
 	}
 
-	if toFlen > 0 && toFlen < originFlen {
-		return true, fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
+	if toFlen > 0 && toFlen != originFlen {
+		if toFlen < originFlen {
+			return true, fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
+		}
+
+		// Due to the behavior of padding \x00 at binary type, we need to reorg when binary length changed
+		isBinaryType := func(tp *types.FieldType) bool { return tp.Tp == mysql.TypeString && types.IsBinaryStr(tp) }
+		if isBinaryType(origin) && isBinaryType(to) {
+			return true, "can't change binary types of different length"
+		}
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
 		return true, fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
@@ -3939,7 +3954,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 	}
 
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
-	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn, spec.Position); err != nil {
+	if err = checkModifyGeneratedColumn(sctx, t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -4192,7 +4207,10 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		dependedColNames := findColumnNamesInExpr(col.GeneratedExpr)
 		for _, name := range dependedColNames {
 			if name.Name.L == oldColName.L {
-				return ErrBadField.GenWithStackByArgs(oldColName.O, "generated column function")
+				if col.Hidden {
+					return errDependentByFunctionalIndex.GenWithStackByArgs(oldColName.O)
+				}
+				return errDependentByGeneratedColumn.GenWithStackByArgs(oldColName.O)
 			}
 		}
 	}
@@ -5076,14 +5094,13 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		if err = checkDependedColExist(checkDependencies, existCols); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if err = checkExpressionIndexAutoIncrement(indexName.O, colInfo.Dependences, tblInfo); err != nil {
-			return nil, errors.Trace(err)
+		if !ctx.GetSessionVars().EnableAutoIncrementInGenerated {
+			if err = checkExpressionIndexAutoIncrement(indexName.O, colInfo.Dependences, tblInfo); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		idxPart.Expr = nil
 		hiddenCols = append(hiddenCols, colInfo)
-	}
-	if len(hiddenCols) > 0 && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
-		return nil, ErrUnsupportedExpressionIndex
 	}
 	return hiddenCols, nil
 }
@@ -5140,13 +5157,16 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return errors.Trace(err)
 	}
 
+	finalColumns := make([]*model.ColumnInfo, len(tblInfo.Columns), len(tblInfo.Columns)+len(hiddenCols))
+	copy(finalColumns, tblInfo.Columns)
+	finalColumns = append(finalColumns, hiddenCols...)
 	// Check before the job is put to the queue.
 	// This check is redundant, but useful. If DDL check fail before the job is put
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, err := buildIndexColumns(append(tblInfo.Columns, hiddenCols...), indexPartSpecifications)
+	indexColumns, err := buildIndexColumns(finalColumns, indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5158,7 +5178,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		if err != nil {
 			return err
 		}
-		idxLen, err = indexColumnsLen(tblInfo.Columns, indexColumns)
+		idxLen, err = indexColumnsLen(finalColumns, indexColumns)
 		if err != nil {
 			return err
 		}
@@ -5299,6 +5319,13 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		return infoschema.ErrCannotAddForeign
 	}
 
+	// Check the uniqueness of the FK.
+	for _, fk := range t.Meta().ForeignKeys {
+		if fk.Name.L == fkName.L {
+			return ErrFkDupName.GenWithStackByArgs(fkName.O)
+		}
+	}
+
 	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols(), t.Meta())
 	if err != nil {
 		return errors.Trace(err)
@@ -5415,7 +5442,10 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 }
 
 func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
-	if ok, dep := hasDependentByGeneratedColumn(tblInfo, colName); ok {
+	if ok, dep, isHidden := hasDependentByGeneratedColumn(tblInfo, colName); ok {
+		if isHidden {
+			return errDependentByFunctionalIndex.GenWithStackByArgs(dep)
+		}
 		return errDependentByGeneratedColumn.GenWithStackByArgs(dep)
 	}
 
@@ -5986,6 +6016,45 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		Type:       model.ActionAlterTableAlterPartition,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partitionID, bundle},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	meta := tb.Meta()
+
+	rule := label.NewRule()
+	err = rule.ApplyAttributesSpec(spec.AttributesSpec)
+	if err != nil {
+		var sb strings.Builder
+		restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreKeyWordLowercase|format.RestoreNameBackQuotes, &sb)
+
+		if e := spec.Restore(restoreCtx); e != nil {
+			return ErrInvalidAttributesSpec.GenWithStackByArgs(sb.String(), err)
+		}
+		return ErrInvalidAttributesSpec.GenWithStackByArgs(err)
+	}
+
+	rule.ResetTable(meta.ID, schema.Name.L, meta.Name.L)
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAlterTableAttributes,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{rule},
 	}
 
 	err = d.doDDLJob(ctx, job)

@@ -1114,7 +1114,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	allRoles := p.FindAllRole(roles)
 	// Show global grants.
 	var currentPriv mysql.PrivilegeType
-	var hasGrantOptionPriv, userExists = false, false
+	var userExists = false
 	// Check whether user exists.
 	if userList, ok := p.UserMap[user]; ok {
 		for _, record := range userList {
@@ -1131,21 +1131,11 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	for _, record := range p.User {
 		if record.fullyMatch(user, host) {
 			hasGlobalGrant = true
-			if (record.Privileges & mysql.GrantPriv) > 0 {
-				hasGrantOptionPriv = true
-				currentPriv |= (record.Privileges & ^mysql.GrantPriv)
-				continue
-			}
 			currentPriv |= record.Privileges
 		} else {
 			for _, r := range allRoles {
 				if record.baseRecord.match(r.Username, r.Hostname) {
 					hasGlobalGrant = true
-					if (record.Privileges & mysql.GrantPriv) > 0 {
-						hasGrantOptionPriv = true
-						currentPriv |= (record.Privileges & ^mysql.GrantPriv)
-						continue
-					}
 					currentPriv |= record.Privileges
 				}
 			}
@@ -1154,9 +1144,8 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	g = userPrivToString(currentPriv)
 	if len(g) > 0 {
 		var s string
-		if hasGrantOptionPriv {
+		if (currentPriv & mysql.GrantPriv) > 0 {
 			s = fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION`, g, user, host)
-
 		} else {
 			s = fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s'`, g, user, host)
 
@@ -1167,7 +1156,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	// This is a mysql convention.
 	if len(gs) == 0 && hasGlobalGrant {
 		var s string
-		if hasGrantOptionPriv {
+		if (currentPriv & mysql.GrantPriv) > 0 {
 			s = fmt.Sprintf("GRANT USAGE ON *.* TO '%s'@'%s' WITH GRANT OPTION", user, host)
 		} else {
 			s = fmt.Sprintf("GRANT USAGE ON *.* TO '%s'@'%s'", user, host)
@@ -1180,36 +1169,16 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	for _, record := range p.DB {
 		if record.fullyMatch(user, host) {
 			if _, ok := dbPrivTable[record.DB]; ok {
-				if (record.Privileges & mysql.GrantPriv) > 0 {
-					hasGrantOptionPriv = true
-					dbPrivTable[record.DB] |= (record.Privileges & ^mysql.GrantPriv)
-					continue
-				}
 				dbPrivTable[record.DB] |= record.Privileges
 			} else {
-				if (record.Privileges & mysql.GrantPriv) > 0 {
-					hasGrantOptionPriv = true
-					dbPrivTable[record.DB] = (record.Privileges & ^mysql.GrantPriv)
-					continue
-				}
 				dbPrivTable[record.DB] = record.Privileges
 			}
 		} else {
 			for _, r := range allRoles {
 				if record.baseRecord.match(r.Username, r.Hostname) {
 					if _, ok := dbPrivTable[record.DB]; ok {
-						if (record.Privileges & mysql.GrantPriv) > 0 {
-							hasGrantOptionPriv = true
-							dbPrivTable[record.DB] |= (record.Privileges & ^mysql.GrantPriv)
-							continue
-						}
 						dbPrivTable[record.DB] |= record.Privileges
 					} else {
-						if (record.Privileges & mysql.GrantPriv) > 0 {
-							hasGrantOptionPriv = true
-							dbPrivTable[record.DB] = (record.Privileges & ^mysql.GrantPriv)
-							continue
-						}
 						dbPrivTable[record.DB] = record.Privileges
 					}
 				}
@@ -1220,13 +1189,16 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		g := dbPrivToString(priv)
 		if len(g) > 0 {
 			var s string
-			if hasGrantOptionPriv {
+			if (priv & mysql.GrantPriv) > 0 {
 				s = fmt.Sprintf(`GRANT %s ON %s.* TO '%s'@'%s' WITH GRANT OPTION`, g, dbName, user, host)
-
 			} else {
 				s = fmt.Sprintf(`GRANT %s ON %s.* TO '%s'@'%s'`, g, dbName, user, host)
-
 			}
+			gs = append(gs, s)
+		} else if len(g) == 0 && (priv&mysql.GrantPriv) > 0 {
+			// We have GRANT OPTION on the db, but no privilege granted.
+			// Wo we need to print a special USAGE line.
+			s := fmt.Sprintf(`GRANT USAGE ON %s.* TO '%s'@'%s' WITH GRANT OPTION`, dbName, user, host)
 			gs = append(gs, s)
 		}
 	}
@@ -1237,36 +1209,16 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		recordKey := record.DB + "." + record.TableName
 		if user == record.User && host == record.Host {
 			if _, ok := dbPrivTable[record.DB]; ok {
-				if (record.TablePriv & mysql.GrantPriv) > 0 {
-					hasGrantOptionPriv = true
-					tablePrivTable[recordKey] |= (record.TablePriv & ^mysql.GrantPriv)
-					continue
-				}
 				tablePrivTable[recordKey] |= record.TablePriv
 			} else {
-				if (record.TablePriv & mysql.GrantPriv) > 0 {
-					hasGrantOptionPriv = true
-					tablePrivTable[recordKey] = (record.TablePriv & ^mysql.GrantPriv)
-					continue
-				}
 				tablePrivTable[recordKey] = record.TablePriv
 			}
 		} else {
 			for _, r := range allRoles {
 				if record.baseRecord.match(r.Username, r.Hostname) {
 					if _, ok := dbPrivTable[record.DB]; ok {
-						if (record.TablePriv & mysql.GrantPriv) > 0 {
-							hasGrantOptionPriv = true
-							tablePrivTable[recordKey] |= (record.TablePriv & ^mysql.GrantPriv)
-							continue
-						}
 						tablePrivTable[recordKey] |= record.TablePriv
 					} else {
-						if (record.TablePriv & mysql.GrantPriv) > 0 {
-							hasGrantOptionPriv = true
-							tablePrivTable[recordKey] = (record.TablePriv & ^mysql.GrantPriv)
-							continue
-						}
 						tablePrivTable[recordKey] = record.TablePriv
 					}
 				}
@@ -1277,11 +1229,16 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		g := tablePrivToString(priv)
 		if len(g) > 0 {
 			var s string
-			if hasGrantOptionPriv {
+			if (priv & mysql.GrantPriv) > 0 {
 				s = fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s' WITH GRANT OPTION`, g, k, user, host)
 			} else {
 				s = fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, g, k, user, host)
 			}
+			gs = append(gs, s)
+		} else if len(g) == 0 && (priv&mysql.GrantPriv) > 0 {
+			// We have GRANT OPTION on the table, but no privilege granted.
+			// Wo we need to print a special USAGE line.
+			s := fmt.Sprintf(`GRANT USAGE ON %s TO '%s'@'%s' WITH GRANT OPTION`, k, user, host)
 			gs = append(gs, s)
 		}
 	}
@@ -1364,7 +1321,8 @@ func privOnColumnsToString(p privOnColumns) string {
 		if idx > 0 {
 			buf.WriteString(", ")
 		}
-		fmt.Fprintf(&buf, "%s(", mysql.Priv2Str[priv])
+		privStr := privToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)
+		fmt.Fprintf(&buf, "%s(", privStr)
 		for i, col := range v {
 			if i > 0 {
 				fmt.Fprintf(&buf, ", ")
@@ -1398,21 +1356,21 @@ func collectColumnGrant(record *columnsPrivRecord, user, host string, columnPriv
 }
 
 func userPrivToString(privs mysql.PrivilegeType) string {
-	if privs == userTablePrivilegeMask {
+	if (privs & ^mysql.GrantPriv) == userTablePrivilegeMask {
 		return mysql.AllPrivilegeLiteral
 	}
 	return privToString(privs, mysql.AllGlobalPrivs, mysql.Priv2Str)
 }
 
 func dbPrivToString(privs mysql.PrivilegeType) string {
-	if privs == dbTablePrivilegeMask {
+	if (privs & ^mysql.GrantPriv) == dbTablePrivilegeMask {
 		return mysql.AllPrivilegeLiteral
 	}
 	return privToString(privs, mysql.AllDBPrivs, mysql.Priv2SetStr)
 }
 
 func tablePrivToString(privs mysql.PrivilegeType) string {
-	if privs == tablePrivMask {
+	if (privs & ^mysql.GrantPriv) == tablePrivMask {
 		return mysql.AllPrivilegeLiteral
 	}
 	return privToString(privs, mysql.AllTablePrivs, mysql.Priv2Str)
@@ -1424,7 +1382,7 @@ func privToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allP
 		if priv&p == 0 {
 			continue
 		}
-		s := allPrivNames[p]
+		s := strings.ToUpper(allPrivNames[p])
 		pstrs = append(pstrs, s)
 	}
 	return strings.Join(pstrs, ",")
@@ -1478,7 +1436,7 @@ func appendUserPrivilegesTableRow(rows [][]types.Datum, user UserRecord) [][]typ
 	}
 	for _, priv := range mysql.AllGlobalPrivs {
 		if user.Privileges&priv > 0 {
-			privilegeType := mysql.Priv2Str[priv]
+			privilegeType := strings.ToUpper(mysql.Priv2Str[priv])
 			// +---------------------------+---------------+-------------------------+--------------+
 			// | GRANTEE                   | TABLE_CATALOG | PRIVILEGE_TYPE          | IS_GRANTABLE |
 			// +---------------------------+---------------+-------------------------+--------------+

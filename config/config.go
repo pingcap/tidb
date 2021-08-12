@@ -366,6 +366,8 @@ type Security struct {
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
 	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
+	// Allow automatic TLS certificate generation
+	AutoTLS bool `toml:"auto-tls" json:"auto-tls"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -498,13 +500,16 @@ type PessimisticTxn struct {
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
 	// The max count of deadlock events that will be recorded in the information_schema.deadlocks table.
 	DeadlockHistoryCapacity uint `toml:"deadlock-history-capacity" json:"deadlock-history-capacity"`
+	// Whether retryable deadlocks (in-statement deadlocks) are collected to the information_schema.deadlocks table.
+	DeadlockHistoryCollectRetryable bool `toml:"deadlock-history-collect-retryable" json:"deadlock-history-collect-retryable"`
 }
 
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
 	return PessimisticTxn{
-		MaxRetryCount:           256,
-		DeadlockHistoryCapacity: 10,
+		MaxRetryCount:                   256,
+		DeadlockHistoryCapacity:         10,
+		DeadlockHistoryCollectRetryable: false,
 	}
 }
 
@@ -539,8 +544,6 @@ type IsolationRead struct {
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
-	// Whether enable creating expression index.
-	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 	// Whether enable global kill.
 	EnableGlobalKill bool `toml:"enable-global-kill" json:"-"`
 }
@@ -664,8 +667,7 @@ var defaultConf = Config{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
-		AllowsExpressionIndex: false,
-		EnableGlobalKill:      false,
+		EnableGlobalKill: false,
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
@@ -674,6 +676,7 @@ var defaultConf = Config{
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
+		AutoTLS:                     true,
 	},
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,
@@ -720,6 +723,7 @@ var deprecatedConfig = map[string]struct{}{
 	"tikv-client.copr-cache.enable":  {},
 	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
 	"enable-streaming":               {},
+	"allow-expression-index":         {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {

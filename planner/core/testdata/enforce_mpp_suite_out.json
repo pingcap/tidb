@@ -295,15 +295,10 @@
           "  └─TableRowIDScan_41(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
           "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
-          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
           "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
-          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
           "Aggregation can not be pushed to tikv because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
-          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
           "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
-          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
           "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now"
         ]
       },
@@ -316,11 +311,8 @@
           "    └─TableFullScan_10 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because groupByItems contain virtual columns, which is not supported now",
           "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now",
-          "MPP mode may be blocked because groupByItems contain virtual columns, which is not supported now",
           "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now",
-          "MPP mode may be blocked because groupByItems contain virtual columns, which is not supported now",
           "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now"
         ]
       },
@@ -333,13 +325,9 @@
           "    └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because AggFunc `group_concat` is not supported now",
           "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now",
-          "MPP mode may be blocked because AggFunc `group_concat` is not supported now",
           "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now",
-          "MPP mode may be blocked because AggFunc `group_concat` is not supported now",
           "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now",
-          "MPP mode may be blocked because AggFunc `group_concat` is not supported now",
           "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now"
         ]
       },
@@ -353,13 +341,10 @@
         ],
         "Warn": [
           "Scalar function 'md5'(signature: MD5) can not be pushed to tiflash",
-          "MPP mode may be blocked because groupByItems contain unsupported exprs",
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
           "Scalar function 'md5'(signature: MD5) can not be pushed to tiflash",
-          "MPP mode may be blocked because groupByItems contain unsupported exprs",
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
           "Scalar function 'md5'(signature: MD5) can not be pushed to tiflash",
-          "MPP mode may be blocked because groupByItems contain unsupported exprs",
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"
         ]
       },
@@ -418,7 +403,7 @@
     "Name": "TestEnforceMPPWarning3",
     "Cases": [
       {
-        "SQL": "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;",
+        "SQL": "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;set @@tidb_hash_exchange_with_new_collation=0;",
         "Plan": null,
         "Warn": null
       },
@@ -477,6 +462,7 @@
           "  └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:true, stats:pseudo"
         ],
         "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
         ]
       },
@@ -490,6 +476,7 @@
           "  └─TableRangeScan_12 1.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
         ],
         "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
         ]
       },
@@ -503,6 +490,7 @@
           "  └─TableRangeScan_11 1.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false, stats:pseudo"
         ],
         "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
         ]
       },
@@ -516,6 +504,7 @@
           "  └─TableFullScan_33 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
+          "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.",
           "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now."
         ]
       },
@@ -525,7 +514,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN SELECT * from t join s; -- 5. cartesian without broadcast join",
+        "SQL": "EXPLAIN SELECT * from t join s; -- 5. cartesian join, cartesian banned.",
         "Plan": [
           "HashJoin_8 100000000.00 root  CARTESIAN inner join",
           "├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
@@ -534,8 +523,8 @@
           "  └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.",
-          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`."
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variable `tidb_opt_broadcast_cartesian_join`.",
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variable `tidb_opt_broadcast_cartesian_join`."
         ]
       },
       {
@@ -544,7 +533,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN SELECT * from t join s; -- 6. cartesian without broadcast join",
+        "SQL": "EXPLAIN SELECT * from t join s; -- 6. cartesian join, broadcast banned.",
         "Plan": [
           "HashJoin_8 100000000.00 root  CARTESIAN inner join",
           "├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
@@ -553,8 +542,8 @@
           "  └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.",
-          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`."
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.",
+          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`."
         ]
       },
       {
@@ -581,18 +570,17 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN SELECT * from t join s; -- can use mpp FIXME: maybe not, see github.com/pingcap/tidb/issues/26243",
+        "SQL": "EXPLAIN SELECT * from t join s; -- can use mpp",
         "Plan": [
-          "HashJoin_8 100000000.00 root  CARTESIAN inner join",
-          "├─TableReader_17(Build) 10000.00 root  data:TableFullScan_16",
-          "│ └─TableFullScan_16 10000.00 cop[tiflash] table:s keep order:false, stats:pseudo",
-          "└─TableReader_13(Probe) 10000.00 root  data:TableFullScan_12",
-          "  └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "TableReader_27 100000000.00 root  data:ExchangeSender_26",
+          "└─ExchangeSender_26 100000000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_25 100000000.00 cop[tiflash]  CARTESIAN inner join",
+          "    ├─ExchangeReceiver_13(Build) 10000.00 cop[tiflash]  ",
+          "    │ └─ExchangeSender_12 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─TableFullScan_14(Probe) 10000.00 cop[tiflash] table:s keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.",
-          "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_opt_broadcast_cartesian_join`, `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`."
-        ]
+        "Warn": null
       },
       {
         "SQL": "set @@tidb_broadcast_join_threshold_size = 104857600; set @@tidb_opt_broadcast_cartesian_join = 1;",
