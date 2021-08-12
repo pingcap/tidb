@@ -34,44 +34,38 @@ type Mutation = struct {
 }
 
 type IndexHelperInfo = struct {
-	indexInfo     *model.IndexInfo
-	rowColInfos   []rowcodec.ColInfo
+	indexInfo   *model.IndexInfo
+	rowColInfos []rowcodec.ColInfo
 }
 
 // CheckIndexConsistency checks whether the given set of mutations corresponding to a single row is consistent.
 // Namely, assume the database is consistent before, applying the mutations shouldn't break the consistency.
-// It aims at reducing bugs that will corrupt data, and prevent mistakes from spreading if possible.
+// It aims at reducing bugs that will corrupt data, and preventing mistakes from spreading if possible.
 //
 // Assume the set of row values changes from V1 to V2. We check
 // (1) V2 - V1 = {added indices}
 // (2) V1 - V2 = {deleted indices}
 //
 // To check (1), we need
-// (a) {added indices} is a subset of {needed indices} <=> each index mutation is consistent with the input/row key/value
-// (b) {needed indices} is a subset of {added indices}. The check process would be exactly the same with how we calculate
+// (a) {added indices} is a subset of {needed indices} => each index mutation is consistent with the input/row key/value
+// (b) {needed indices} is a subset of {added indices}. The check process would be exactly the same with how we generate
 // 		the mutations, thus ignored.
 func CheckIndexConsistency(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, t *TableCommon,
 	dataAdded, dataRemoved []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle) error {
-	// collect mutations
-	mutations := make([]Mutation, 0)
-	inspector := func(key kv.Key, flags kv.KeyFlags, data []byte) {
-		// TODO: shall we check only the current table, or all tables involved?
-		if tablecodec.DecodeTableID(key) == t.physicalTableID {
-			mutations = append(mutations, Mutation{key, flags, data})
-		}
+	mutations := collectTableMutationsFromBufferStage(t, memBuffer, sh)
+	if err := checkRowValues(sc, sessVars, t, dataAdded, dataRemoved, mutations); err != nil {
+		return errors.Trace(err)
 	}
-	memBuffer.InspectStage(sh, inspector)
-
-	// get the handle
-	handlesAdded, handlesRemoved := ExtractHandles(mutations, t)
-	if len(handlesAdded) > 1 || len(handlesRemoved) > 1 {
-		// TODO: is it possible?
-		logutil.BgLogger().Error("multiple handles added/mutated", zap.Any("handlesAdded", handlesAdded),
-			zap.Any("handlesRemoved", handlesRemoved))
-		return errors.New("multiple handles added/mutated")
+	if err := checkIndexKeys(sc, sessVars, t, dataAdded, dataRemoved, mutations); err != nil {
+		return errors.Trace(err)
 	}
+	// TODO: check whether handles match in index and row mutations
+	return nil
+}
 
-	// 1. TODO: compare handlesAdded vs. dataAdded, handlesRemoved vs. dataRemoved
+// checkIndexKeys checks whether the decoded data from keys of index mutations are consistent with the expected ones.
+func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, t *TableCommon,
+	dataAdded []types.Datum, dataRemoved []types.Datum, mutations []Mutation) error {
 	indexIdMap := make(map[int64]IndexHelperInfo)
 	for _, index := range t.indices {
 		indexIdMap[index.Meta().ID] = IndexHelperInfo{
@@ -80,7 +74,6 @@ func CheckIndexConsistency(sc *stmtctx.StatementContext, sessVars *variable.Sess
 		}
 	}
 
-	// 2. check index keys: consistent with input data
 	for _, m := range mutations {
 		if !tablecodec.IsIndexKey(m.key) {
 			continue
@@ -96,8 +89,8 @@ func CheckIndexConsistency(sc *stmtctx.StatementContext, sessVars *variable.Sess
 			return errors.New("index not found")
 		}
 
+		// when we cannot decode the key to get the original value
 		if len(m.value) == 0 && NeedRestoredData(indexHelperInfo.indexInfo.Columns, t.Meta().Columns) {
-			// when we cannot decode the key to get the original value
 			continue
 		}
 
@@ -108,17 +101,12 @@ func CheckIndexConsistency(sc *stmtctx.StatementContext, sessVars *variable.Sess
 		}
 		indexData := make([]types.Datum, 0)
 		for i, v := range decodedIndexValues {
-			d, err := tablecodec.DecodeColumnValue(v, &t.Columns[indexHelperInfo.indexInfo.Columns[i].Offset].FieldType, sessVars.TimeZone)
+			fieldType := &t.Columns[indexHelperInfo.indexInfo.Columns[i].Offset].FieldType
+			datum, err := tablecodec.DecodeColumnValue(v, fieldType, sessVars.Location())
 			if err != nil {
 				return errors.Trace(err)
 			}
-			indexData = append(indexData, d)
-			logutil.BgLogger().Warn("decoded index value", zap.String("datum", d.String()))
-		}
-
-		// TODO: when is it nil?
-		if m.value == nil {
-			continue
+			indexData = append(indexData, datum)
 		}
 
 		if len(m.value) == 0 {
@@ -131,6 +119,73 @@ func CheckIndexConsistency(sc *stmtctx.StatementContext, sessVars *variable.Sess
 		}
 	}
 	return nil
+}
+
+// checkRowValues checks whether  the values of row mutations are consistent with the expected ones
+func checkRowValues(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, t *TableCommon,
+	dataAdded, dataRemoved []types.Datum, mutations []Mutation) error {
+	rowsAdded, rowsRemoved := ExtractRowMutations(mutations)
+	if len(rowsAdded) > 1 || len(rowsRemoved) > 1 {
+		// TODO: is it possible?
+		logutil.BgLogger().Error("multiple row mutations added/mutated", zap.Any("rowsAdded", rowsAdded),
+			zap.Any("rowsRemoved", rowsRemoved))
+		return errors.New("multiple row mutations added/mutated")
+	}
+
+	columnMap := make(map[int64]*model.ColumnInfo)
+	columnFieldMap := make(map[int64]*types.FieldType)
+	for _, col := range t.Meta().Columns {
+		columnMap[col.ID] = col
+		columnFieldMap[col.ID] = &col.FieldType
+	}
+
+	if err := checkRowMutationsWithData(sc, sessVars, rowsAdded, columnFieldMap, dataAdded, columnMap); err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkRowMutationsWithData(sc, sessVars, rowsRemoved, columnFieldMap, dataRemoved, columnMap); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func checkRowMutationsWithData(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, rowMutations []Mutation,
+	columnFieldMap map[int64]*types.FieldType, expectedData []types.Datum, columnMap map[int64]*model.ColumnInfo) error {
+	if len(rowMutations) > 0 {
+		decodedData, err := tablecodec.DecodeRowToDatumMap(rowMutations[0].value, columnFieldMap, sessVars.Location())
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// TODO: we cannot check if the decoded values contain all columns since some columns may be skipped.
+		// Instead we check data in the value are consistent with input.
+
+		for columnId, decodedDatum := range decodedData {
+			inputDatum := expectedData[columnMap[columnId].Offset]
+			cmp, err := decodedDatum.CompareDatum(sc, &inputDatum)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if cmp != 0 {
+				logutil.BgLogger().Error("inconsistent row mutation", zap.String("decoded datum", decodedDatum.String()),
+					zap.String("input datum", inputDatum.String()))
+				return errors.New(fmt.Sprintf("inconsistent row mutation, row datum = {%v}, input datum = {%v}",
+					decodedDatum.String(), inputDatum.String()))
+			}
+		}
+	}
+	return nil
+}
+
+func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer, sh kv.StagingHandle) []Mutation {
+	mutations := make([]Mutation, 0)
+	inspector := func(key kv.Key, flags kv.KeyFlags, data []byte) {
+		// TODO: shall we check only the current table, or all tables involved?
+		if tablecodec.DecodeTableID(key) == t.physicalTableID {
+			mutations = append(mutations, Mutation{key, flags, data})
+		}
+	}
+	memBuffer.InspectStage(sh, inspector)
+	return mutations
 }
 
 func compareIndexData(sc *stmtctx.StatementContext, t *TableCommon, indexData, input []types.Datum, indexHelperInfo IndexHelperInfo) error {
@@ -158,27 +213,18 @@ func compareIndexData(sc *stmtctx.StatementContext, t *TableCommon, indexData, i
 	return nil
 }
 
-// ExtractHandles extract handles of row mutations and classify them into 2 categories: put and delete
-func ExtractHandles(mutations []Mutation, t *TableCommon) ([]kv.Handle, []kv.Handle) {
-	handlesAdded := make([]kv.Handle, 0)
-	handlesRemoved := make([]kv.Handle, 0)
+// ExtractRowMutations extracts row mutations and classify them into 2 categories: put and delete
+func ExtractRowMutations(mutations []Mutation) ([]Mutation, []Mutation) {
+	handlesAdded := make([]Mutation, 0)
+	handlesRemoved := make([]Mutation, 0)
+	// TODO: assumption: value in mem buffer
 	for _, m := range mutations {
-		handle, err := tablecodec.DecodeRowKey(m.key)
-		if err != nil {
-			// TODO: remove it later
-			logutil.BgLogger().Warn("decode row key failed", zap.Error(err))
-			continue
-		}
-
-		// TODO: distinguish between nil and empty value
-		if m.value == nil {
-			logutil.BgLogger().Warn("row.value = nil", zap.String("handle", handle.String()))
-			continue
-		}
-		if len(m.value) > 0 {
-			handlesAdded = append(handlesAdded, handle)
-		} else {
-			handlesRemoved = append(handlesRemoved, handle)
+		if rowcodec.IsRowKey(m.key) {
+			if len(m.value) > 0 {
+				handlesAdded = append(handlesAdded, m)
+			} else {
+				handlesRemoved = append(handlesRemoved, m)
+			}
 		}
 	}
 	return handlesAdded, handlesRemoved
