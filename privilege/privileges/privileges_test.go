@@ -466,6 +466,28 @@ func (s *testPrivilegeSuite) TestSetPasswdStmt(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testPrivilegeSuite) TestAlterUserStmt(c *C) {
+	se := newSession(c, s.store, s.dbName)
+
+	// high privileged user setting password for other user (passes)
+	mustExec(c, se, "CREATE USER 'superuser2'")
+	mustExec(c, se, "CREATE USER 'nobodyuser2'")
+	mustExec(c, se, "CREATE USER 'nobodyuser3'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'superuser2'")
+	mustExec(c, se, "GRANT CREATE USER ON *.* TO 'nobodyuser2'")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost", AuthUsername: "superuser2", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+
+	// low privileged user trying to set password for other user (fails)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser2", Hostname: "localhost", AuthUsername: "nobodyuser2", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	_, err := se.ExecuteInternal(context.Background(), "ALTER USER 'superuser2' IDENTIFIED BY 'newpassword'")
+	c.Assert(err, NotNil)
+}
+
 func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(sessionctx.Context)
