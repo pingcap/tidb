@@ -186,7 +186,7 @@ func (tc *TransactionContext) GetShard(shardRowIDBits uint64, typeBitsLength uin
 		return 0
 	}
 	if tc.shardRand == nil {
-		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS)))
+		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
 	}
 	if tc.shardRemain <= 0 {
 		tc.updateShard()
@@ -876,6 +876,25 @@ type SessionVars struct {
 
 	// TemporaryTableData stores committed kv values for temporary table for current session.
 	TemporaryTableData kv.MemBuffer
+
+	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed.
+	MPPStoreLastFailTime map[string]time.Time
+
+	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
+	MPPStoreFailTTL string
+
+	// cached is used to optimze the object allocation.
+	cached struct {
+		curr int8
+		data [2]stmtctx.StatementContext
+	}
+}
+
+// InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
+func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
+	s.cached.curr = (s.cached.curr + 1) % 2
+	s.cached.data[s.cached.curr] = stmtctx.StatementContext{}
+	return &s.cached.data[s.cached.curr]
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -935,6 +954,7 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	return parser.ParserConfig{
 		EnableWindowFunction:        s.EnableWindowFunction,
 		EnableStrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
+		SkipPositionRecording:       true,
 	}
 }
 
@@ -1097,6 +1117,8 @@ func NewSessionVars() *SessionVars {
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
 		TMPTableSize:                DefTMPTableSize,
 		EnableGlobalTemporaryTable:  DefTiDBEnableGlobalTemporaryTable,
+		MPPStoreLastFailTime:        make(map[string]time.Time),
+		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1146,6 +1168,7 @@ func NewSessionVars() *SessionVars {
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
+	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {

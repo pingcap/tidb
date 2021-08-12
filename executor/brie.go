@@ -21,9 +21,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/br/pkg/glue"
-	"github.com/pingcap/br/pkg/storage"
-	"github.com/pingcap/br/pkg/task"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -32,6 +29,9 @@ import (
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	pd "github.com/tikv/pd/client"
 
+	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
