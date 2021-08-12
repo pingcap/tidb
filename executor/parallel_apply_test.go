@@ -597,3 +597,14 @@ func (s *testSuite) TestApplyGoroutinePanic(c *C) {
 		c.Assert(failpoint.Disable(panicPath), IsNil)
 	}
 }
+
+func (s *testSuite) TestIssue24930(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustQuery(`select case when t1.a is null
+    then (select t2.a from t2 where t2.a = t1.a limit 1) else t1.a end a
+	from t1 where t1.a=1 order by a limit 1`).Check(testkit.Rows()) // can return an empty result instead of hanging forever
+}
