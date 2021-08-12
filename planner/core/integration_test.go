@@ -3970,3 +3970,24 @@ func (s *testIntegrationSerialSuite) TestSelectIgnoreTemporaryTableInView(c *C) 
 	tk.MustQuery("select * from v5").Check(testkit.Rows("1 2", "3 4"))
 
 }
+
+func (s *testIntegrationSerialSuite) TestSelectTemporaryTableReopen(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("create temporary table tmp1(a int, b int, c int);")
+	err := tk.QueryToErr("with cte1 as (with cte2 as (select * from tmp1) select * from cte2) select * from cte1 left join tmp1 on cte1.c=tmp1.c;")
+	c.Assert(err.Error(), Equals, "ERROR 1815 (HY000): Can't reopen table: 'tmp1'")
+	err = tk.QueryToErr("with cte1 as (with cte2 as (select * from tmp1) select * from cte2) select * from cte1 t1 left join cte1 t2 on t1.c=t2.c;")
+	c.Assert(err.Error(), Equals, "ERROR 1815 (HY000): Can't reopen table: 'tmp1'")
+	err = tk.QueryToErr("WITH RECURSIVE cte(a) AS (SELECT 1 UNION SELECT a+1 FROM tmp1 WHERE a < 5) SELECT * FROM cte;")
+	c.Assert(err.Error(), Equals, "ERROR 1815 (HY000): Can't reopen table: 'tmp1'")
+	err = tk.QueryToErr("select * from tmp1 union select * from tmp1;")
+	c.Assert(err.Error(), Equals, "ERROR 1815 (HY000): Can't reopen table: 'tmp1'")
+	err = tk.QueryToErr("select * from tmp1 union select * from tmp1;")
+	c.Assert(err.Error(), Equals, "select * from tmp1 t1 left join tmp1 t2 on t1.c=t2.c;")
+	err = tk.QueryToErr("select * from tmp1 t1 left join (select * from tmp1) t2 on t1.c=t2.c;")
+	c.Assert(err.Error(), Equals, "select * from tmp1 t1 left join tmp1 t2 on t1.c=t2.c;")
+}

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -3830,6 +3831,30 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		// Try CTE.
 		p, err := b.tryBuildCTE(ctx, tn, asName)
 		if err != nil || p != nil {
+			if len(b.cteNameProcessingStack) > 0 {
+				if tblIds, ok := b.cteToTblIdMapper[tn.Name.L]; ok {
+					cteName := b.cteNameProcessingStack[len(b.cteNameProcessingStack)-1]
+					tblIds1 := b.cteToTblIdMapper[cteName]
+					if tblIds1 == nil {
+						tblIds1 = make([]int64, 0, 1)
+					}
+					b.cteToTblIdMapper[cteName] = append(b.cteToTblIdMapper[cteName], tblIds...)
+				}
+			} else {
+				if tblIds, ok := b.cteToTblIdMapper[tn.Name.L]; ok {
+					for _, tblId := range tblIds {
+						if _, ok := b.selTmpTblIds[tblId]; ok {
+							tb, ok1 := b.is.TableByID(tblId)
+							if !ok1 {
+								return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tblId)
+							}
+							errMsg := fmt.Sprintf(errno.MySQLErrName[errno.ErrCantReopenTable].Raw, tb.Meta().Name.L)
+							return nil, ErrInternal.GenWithStack(errMsg)
+						}
+						b.selTmpTblIds[tblId] = struct{}{}
+					}
+				}
+			}
 			return p, err
 		}
 		dbName = model.NewCIStr(sessionVars.CurrentDB)
@@ -4071,6 +4096,24 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.setPreferredStoreType(b.TableHints())
 	ds.SampleInfo = NewTableSampleInfo(tn.TableSample, schema.Clone(), b.partitionedTable)
 	b.isSampling = ds.SampleInfo != nil
+	if tableInfo.TempTableType == model.TempTableLocal {
+		if len(b.cteNameProcessingStack) > 0 {
+			cteName := b.cteNameProcessingStack[len(b.cteNameProcessingStack)-1]
+			tblIds := b.cteToTblIdMapper[cteName]
+			if tblIds == nil {
+				tblIds = make([]int64, 0, 1)
+				b.cteToTblIdMapper[cteName] = tblIds
+			}
+			tblIds = append(tblIds, tableInfo.ID)
+			b.cteToTblIdMapper[cteName] = tblIds
+		} else {
+			if _, ok := b.selTmpTblIds[tableInfo.ID]; ok {
+				errMsg := fmt.Sprintf(errno.MySQLErrName[errno.ErrCantReopenTable].Raw, tbl.Meta().Name)
+				return nil, ErrInternal.GenWithStack(errMsg)
+			}
+			b.selTmpTblIds[tableInfo.ID] = struct{}{}
+		}
+	}
 
 	// Init commonHandleCols and commonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
@@ -6233,7 +6276,9 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) error {
 		saveFlag := b.optFlag
 		// Init the flag to flagPrunColumns, otherwise it's missing.
 		b.optFlag = flagPrunColumns
+		b.cteNameProcessingStack = append(b.cteNameProcessingStack, cte.Name.L)
 		_, err := b.buildCte(ctx, cte, w.IsRecursive)
+		b.cteNameProcessingStack = b.cteNameProcessingStack[0 : len(b.cteNameProcessingStack)-1]
 		if err != nil {
 			return err
 		}

@@ -506,6 +506,14 @@ type PlanBuilder struct {
 	isForUpdateRead             bool
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
+
+	// The stack of the cteName,
+	cteNameProcessingStack []string
+	// The map holds relationship that CteName to temporary table id
+	// collection that main query of cte related
+	cteToTblIdMapper map[string][]int64
+	// Temporary table id collection that main query related
+	selTmpTblIds map[int64]struct{}
 }
 
 type handleColHelper struct {
@@ -614,6 +622,8 @@ func NewPlanBuilder() *PlanBuilder {
 		colMapper:           make(map[*ast.ColumnNameExpr]int),
 		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		cteToTblIdMapper:    make(map[string][]int64),
+		selTmpTblIds:        make(map[int64]struct{}),
 	}
 }
 
@@ -663,6 +673,8 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	b.colMapper = saveColMapper
 	b.handleHelper = saveHandleHelper
 	b.correlatedAggMapper = saveCorrelateAggMapper
+	b.cteToTblIdMapper = make(map[string][]int64)
+	b.selTmpTblIds = make(map[int64]struct{})
 
 	// Add more fields if they are safe to be reused.
 
