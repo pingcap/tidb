@@ -14,7 +14,6 @@ import (
 var _pool = buffer.NewPool()
 
 func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, error) {
-
 	// reuse global config and override slow query log file
 	// if slow query log filename is empty, slow query log will behave the same as global log
 	sqConfig := &cfg.Config

@@ -2968,16 +2968,112 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		if !vars.EnableRedactLog {
 			query += vars.PreparedParams.String()
 		}
-		logutil.BgLogger().Info("GENERAL_LOG",
-			zap.Uint64("conn", vars.ConnectionID),
-			zap.Stringer("user", vars.User),
-			zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
-			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
-			zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
-			zap.Bool("isReadConsistency", vars.IsIsolation(ast.ReadCommitted)),
-			zap.String("current_db", vars.CurrentDB),
-			zap.String("txn_mode", vars.GetReadableTxnMode()),
-			zap.String("sql", query))
+
+		// generalLogText := fmt.Sprintf("[GENERAL_LOG] [conn=%d] [user=%s] [schemaVersion=%d] [txnStartTS=%d] [forUpdateTS=%d] [isReadConsistency=%t] [current_db=%s] [txn_mode=%s] [sql=\"%s\"]",
+		// 	vars.ConnectionID,
+		// 	vars.User.String(),
+		// 	s.GetInfoSchema().SchemaMetaVersion(),
+		// 	vars.TxnCtx.StartTS,
+		// 	vars.TxnCtx.GetForUpdateTS(),
+		// 	vars.IsIsolation(ast.ReadCommitted),
+		// 	vars.CurrentDB,
+		// 	vars.GetReadableTxnMode(),
+		// 	query)
+
+		var generalLogBuf bytes.Buffer
+
+		t := time.Now()
+		generalLogBuf.WriteByte('[')
+		generalLogBuf.WriteString(strconv.FormatInt(int64(t.Year()), 10))
+		generalLogBuf.WriteByte('/')
+		if t.Month() < 10 {
+			generalLogBuf.WriteByte('0')
+		}
+		generalLogBuf.WriteString(strconv.FormatInt(int64(t.Month()), 10))
+		generalLogBuf.WriteByte('/')
+		if t.Day() < 10 {
+			generalLogBuf.WriteByte('0')
+		}
+		generalLogBuf.WriteString(strconv.FormatInt(int64(t.Day()), 10))
+		generalLogBuf.WriteByte(' ')
+		if t.Hour() < 10 {
+			generalLogBuf.WriteByte('0')
+		}
+		generalLogBuf.WriteString(strconv.FormatInt(int64(t.Hour()), 10))
+		generalLogBuf.WriteByte(':')
+		if t.Minute() < 10 {
+			generalLogBuf.WriteByte('0')
+		}
+		generalLogBuf.WriteString(strconv.FormatInt(int64(t.Minute()), 10))
+		generalLogBuf.WriteByte(':')
+		if t.Second() < 10 {
+			generalLogBuf.WriteByte('0')
+		}
+		generalLogBuf.WriteString(strconv.FormatInt(int64(t.Second()), 10))
+		generalLogBuf.WriteByte('.')
+		generalLogBuf.WriteString(strconv.FormatInt(int64(t.Nanosecond()/1000000), 10))
+		generalLogBuf.WriteByte(' ')
+		_, offset := t.Zone()
+		offsetAbs := offset
+		if offsetAbs < 0 {
+			offsetAbs = -offsetAbs
+		}
+		offsetHour := offset / 3600
+		offsetHourAbs := offsetHour
+		if offsetHourAbs < 0 {
+			offsetHourAbs = -offsetHourAbs
+		}
+		offsetMinuteAbs := offsetAbs/60 - offsetHourAbs*60
+		if offsetMinuteAbs < 0 {
+			offsetMinuteAbs = -offsetMinuteAbs
+		}
+		if offsetHour > 0 {
+			generalLogBuf.WriteByte('+')
+		}
+		if offsetHourAbs < 10 {
+			generalLogBuf.WriteByte('0')
+		}
+		generalLogBuf.WriteString(strconv.FormatInt(int64(offsetHour), 10))
+		generalLogBuf.WriteByte(':')
+		if offsetMinuteAbs < 10 {
+			generalLogBuf.WriteByte('0')
+		}
+		generalLogBuf.WriteString(strconv.FormatInt(int64(offsetMinuteAbs), 10))
+		generalLogBuf.WriteString("] ")
+
+		generalLogBuf.WriteString("[GENERAL_LOG] [conn=")
+		generalLogBuf.WriteString(strconv.FormatUint(vars.ConnectionID, 10))
+		generalLogBuf.WriteString("] [user=")
+		generalLogBuf.WriteString(vars.User.String())
+		generalLogBuf.WriteString("] [schemaVersion=")
+		generalLogBuf.WriteString(strconv.FormatInt(s.GetInfoSchema().SchemaMetaVersion(), 10))
+		generalLogBuf.WriteString("] [txnStartTS=")
+		generalLogBuf.WriteString(strconv.FormatUint(vars.TxnCtx.StartTS, 10))
+		generalLogBuf.WriteString("] [forUpdateTS=")
+		generalLogBuf.WriteString(strconv.FormatUint(vars.TxnCtx.GetForUpdateTS(), 10))
+		generalLogBuf.WriteString("] [isReadConsistency=")
+		generalLogBuf.WriteString(strconv.FormatBool(vars.IsIsolation(ast.ReadCommitted)))
+		generalLogBuf.WriteString("] [current_db=")
+		generalLogBuf.WriteString(vars.CurrentDB)
+		generalLogBuf.WriteString("] [txn_mode=")
+		generalLogBuf.WriteString(vars.GetReadableTxnMode())
+		generalLogBuf.WriteString("] [sql=\"")
+		generalLogBuf.WriteString(query)
+		generalLogBuf.WriteString("\"]")
+
+		generalLogText := generalLogBuf.String()
+		logutil.PutGeneralLogBlocking(generalLogText)
+		// logutil.GeneralLogLogger.Info(generalLogText)
+		// logutil.BgLogger().Info("GENERAL_LOG",
+		// 	zap.Uint64("conn", vars.ConnectionID),
+		// 	zap.Stringer("user", vars.User),
+		// 	zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
+		// 	zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
+		// 	zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
+		// 	zap.Bool("isReadConsistency", vars.IsIsolation(ast.ReadCommitted)),
+		// 	zap.String("current_db", vars.CurrentDB),
+		// 	zap.String("txn_mode", vars.GetReadableTxnMode()),
+		// 	zap.String("sql", query))
 	}
 }
 

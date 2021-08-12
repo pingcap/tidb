@@ -97,6 +97,15 @@ const (
 // SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
 var SlowQueryLogger = log.L()
 
+// GeneralLogLogger is used to log general log
+var GeneralLogLogger = log.L()
+
+var generalLog *GeneralLog
+
+func PutGeneralLogBlocking(log string) {
+	generalLog.logChan <- log
+}
+
 // InitLogger initializes a logger with cfg.
 func InitLogger(cfg *LogConfig) error {
 	gl, props, err := log.InitLogger(&cfg.Config, zap.AddStacktrace(zapcore.FatalLevel))
@@ -110,6 +119,16 @@ func InitLogger(cfg *LogConfig) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// initialize general log logger
+	GeneralLogLogger, err = newGeneralLogLogger(cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	fmt.Println("newGeneralLogLogger")
+	generalLog = newGeneralLog(GeneralLogLogger)
+	fmt.Println("newGeneralLog")
 
 	// init logger for grpc debugging
 	if len(os.Getenv("GRPC_DEBUG")) > 0 {
