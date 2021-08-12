@@ -16,24 +16,21 @@ package memo
 import (
 	"encoding/binary"
 	"reflect"
-	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/stretchr/testify/require"
 )
 
-func TestNewGroupExpr(t *testing.T) {
-	t.Parallel()
+func (s *testMemoSuite) TestNewGroupExpr(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	require.Equal(t, p, expr.ExprNode)
-	require.Nil(t, expr.Children)
-	require.False(t, expr.Explored(0))
+	c.Assert(expr.ExprNode, Equals, p)
+	c.Assert(expr.Children, IsNil)
+	c.Assert(expr.Explored(0), IsFalse)
 }
 
-func TestGroupExprFingerprint(t *testing.T) {
-	t.Parallel()
+func (s *testMemoSuite) TestGroupExprFingerprint(c *C) {
 	p := &plannercore.LogicalLimit{Count: 3}
 	expr := NewGroupExpr(p)
 	childGroup := NewGroupWithSchema(nil, expression.NewSchema())
@@ -44,5 +41,5 @@ func TestGroupExprFingerprint(t *testing.T) {
 	binary.BigEndian.PutUint16(buffer, 1)
 	binary.BigEndian.PutUint64(buffer[2:], uint64(reflect.ValueOf(childGroup).Pointer()))
 	copy(buffer[10:], planHash)
-	require.Equal(t, string(buffer), expr.FingerPrint())
+	c.Assert(expr.FingerPrint(), Equals, string(buffer))
 }
