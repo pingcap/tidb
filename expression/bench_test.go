@@ -1804,7 +1804,7 @@ func (s *testVectorizeSuite2) TestVecEvalBool(c *C) {
 			it := chunk.NewIterator4Chunk(input)
 			i := 0
 			for row := it.Begin(); row != it.End(); row = it.Next() {
-				ok, null, err := EvalBool(mock.NewContext(), exprs, row)
+				ok, null, err := EvalBool(ctx, exprs, row)
 				c.Assert(err, IsNil)
 				c.Assert(null, Equals, nulls[i])
 				c.Assert(ok, Equals, selected[i])
