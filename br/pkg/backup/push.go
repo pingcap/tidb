@@ -12,7 +12,6 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
@@ -66,7 +65,7 @@ func (push *pushDown) pushBackup(
 	// Push down backup tasks to all tikv instances.
 	res := rtree.NewRangeTree()
 	failpoint.Inject("noop-backup", func(_ failpoint.Value) {
-		log.Warn("skipping normal backup, jump to fine-grained backup, meow :3", logutil.Key("start-key", req.StartKey), logutil.Key("end-key", req.EndKey))
+		logutil.CL(ctx).Warn("skipping normal backup, jump to fine-grained backup, meow :3", logutil.Key("start-key", req.StartKey), logutil.Key("end-key", req.EndKey))
 		failpoint.Return(res, nil)
 	})
 
@@ -74,22 +73,23 @@ func (push *pushDown) pushBackup(
 	for _, s := range stores {
 		store := s
 		storeID := s.GetId()
+		lctx := logutil.ContextWithField(ctx, zap.Uint64("store-id", storeID))
 		if s.GetState() != metapb.StoreState_Up {
-			log.Warn("skip store", zap.Uint64("StoreID", storeID), zap.Stringer("State", s.GetState()))
+			logutil.CL(lctx).Warn("skip store", zap.Stringer("State", s.GetState()))
 			continue
 		}
-		client, err := push.mgr.GetBackupClient(ctx, storeID)
+		client, err := push.mgr.GetBackupClient(lctx, storeID)
 		if err != nil {
 			// BR should be able to backup even some of stores disconnected.
 			// The regions managed by this store can be retried at fine-grained backup then.
-			log.Warn("fail to connect store, skipping", zap.Uint64("StoreID", storeID), zap.Error(err))
+			logutil.CL(lctx).Warn("fail to connect store, skipping", zap.Error(err))
 			return res, nil
 		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			err := SendBackup(
-				ctx, storeID, client, req,
+				lctx, storeID, client, req,
 				func(resp *backuppb.BackupResponse) error {
 					// Forward all responses (including error).
 					push.respCh <- responseAndStore{
@@ -99,8 +99,8 @@ func (push *pushDown) pushBackup(
 					return nil
 				},
 				func() (backuppb.BackupClient, error) {
-					log.Warn("reset the connection in push", zap.Uint64("storeID", storeID))
-					return push.mgr.ResetBackupClient(ctx, storeID)
+					logutil.CL(lctx).Warn("reset the connection in push")
+					return push.mgr.ResetBackupClient(lctx, storeID)
 				})
 			// Disconnected stores can be ignored.
 			if err != nil {
@@ -127,14 +127,14 @@ func (push *pushDown) pushBackup(
 			}
 			failpoint.Inject("backup-storage-error", func(val failpoint.Value) {
 				msg := val.(string)
-				log.Debug("failpoint backup-storage-error injected.", zap.String("msg", msg))
+				logutil.CL(ctx).Debug("failpoint backup-storage-error injected.", zap.String("msg", msg))
 				resp.Error = &backuppb.Error{
 					Msg: msg,
 				}
 			})
 			failpoint.Inject("tikv-rw-error", func(val failpoint.Value) {
 				msg := val.(string)
-				log.Debug("failpoint tikv-rw-error injected.", zap.String("msg", msg))
+				logutil.CL(ctx).Debug("failpoint tikv-rw-error injected.", zap.String("msg", msg))
 				resp.Error = &backuppb.Error{
 					Msg: msg,
 				}
@@ -150,28 +150,28 @@ func (push *pushDown) pushBackup(
 				errPb := resp.GetError()
 				switch v := errPb.Detail.(type) {
 				case *backuppb.Error_KvError:
-					log.Warn("backup occur kv error", zap.Reflect("error", v))
+					logutil.CL(ctx).Warn("backup occur kv error", zap.Reflect("error", v))
 
 				case *backuppb.Error_RegionError:
-					log.Warn("backup occur region error", zap.Reflect("error", v))
+					logutil.CL(ctx).Warn("backup occur region error", zap.Reflect("error", v))
 
 				case *backuppb.Error_ClusterIdError:
-					log.Error("backup occur cluster ID error", zap.Reflect("error", v))
+					logutil.CL(ctx).Error("backup occur cluster ID error", zap.Reflect("error", v))
 					return res, errors.Annotatef(berrors.ErrKVClusterIDMismatch, "%v", errPb)
 				default:
 					if utils.MessageIsRetryableStorageError(errPb.GetMsg()) {
-						log.Warn("backup occur storage error", zap.String("error", errPb.GetMsg()))
+						logutil.CL(ctx).Warn("backup occur storage error", zap.String("error", errPb.GetMsg()))
 						continue
 					}
 					if utils.MessageIsNotFoundStorageError(errPb.GetMsg()) {
 						errMsg := fmt.Sprintf("File or directory not found error occurs on TiKV Node(store id: %v; Address: %s)", store.GetId(), redact.String(store.GetAddress()))
-						log.Error("", zap.String("error", berrors.ErrKVStorage.Error()+": "+errMsg),
+						logutil.CL(ctx).Error("", zap.String("error", berrors.ErrKVStorage.Error()+": "+errMsg),
 							zap.String("work around", "please ensure br and tikv node share a same disk and the user of br and tikv has same uid."))
 					}
 
 					if utils.MessageIsPermissionDeniedStorageError(errPb.GetMsg()) {
 						errMsg := fmt.Sprintf("I/O permission denied error occurs on TiKV Node(store id: %v; Address: %s)", store.GetId(), redact.String(store.GetAddress()))
-						log.Error("", zap.String("error", berrors.ErrKVStorage.Error()+": "+errMsg),
+						logutil.CL(ctx).Error("", zap.String("error", berrors.ErrKVStorage.Error()+": "+errMsg),
 							zap.String("work around", "please ensure tikv has permission to read from & write to the storage."))
 					}
 					return res, berrors.ErrKVStorage
@@ -181,7 +181,7 @@ func (push *pushDown) pushBackup(
 			if !berrors.Is(err, berrors.ErrFailedToConnect) {
 				return res, errors.Annotatef(err, "failed to backup range [%s, %s)", redact.Key(req.StartKey), redact.Key(req.EndKey))
 			}
-			log.Warn("skipping disconnected stores", logutil.ShortError(err))
+			logutil.CL(ctx).Warn("skipping disconnected stores", logutil.ShortError(err))
 			return res, nil
 		}
 	}

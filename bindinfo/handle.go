@@ -130,7 +130,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
 	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source
-	FROM mysql.bind_info WHERE update_time > %? ORDER BY update_time`, updateTime)
+	FROM mysql.bind_info WHERE update_time > %? ORDER BY update_time, create_time`, updateTime)
 	if err != nil {
 		return err
 	}
@@ -219,13 +219,15 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 	if err = h.lockBindInfoTable(); err != nil {
 		return err
 	}
-	// Binding recreation should physically delete previous bindings.
-	_, err = exec.ExecuteInternal(context.TODO(), `DELETE FROM mysql.bind_info WHERE original_sql = %?`, record.OriginalSQL)
+
+	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+
+	updateTs := now.String()
+	_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
+		deleted, updateTs, record.OriginalSQL, updateTs)
 	if err != nil {
 		return err
 	}
-
-	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 
 	for i := range record.Bindings {
 		record.Bindings[i].CreateTime = now
