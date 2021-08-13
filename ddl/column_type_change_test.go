@@ -2193,7 +2193,7 @@ func (s *testColumnTypeChangeSuite) TestChangeFromUnsignedIntToTime(c *C) {
 	tk.MustExec("drop table if exists t;")
 }
 
-// https://github.com/pingcap/tidb/issues/25287.
+// See https://github.com/pingcap/tidb/issues/25287.
 func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
