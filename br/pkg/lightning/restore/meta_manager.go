@@ -673,7 +673,7 @@ func (m *dbTaskMetaMgr) checkRegionDistribution(ctx context.Context) error {
 	ratio := float64(maxStore.Status.RegionCount) / float64(minStore.Status.RegionCount)
 	if ratio >= errorRegionCntMaxMinRatio {
 		return errors.Errorf("regions distribution is unbalanced, the ratio of the regions count of the store(%v) "+
-			"with most regions(%v) to the store(%v) with least regions(%v) is %v, but we expect it to be less than",
+			"with most regions(%v) to the store(%v) with least regions(%v) is %v, but we expect it to be less than %v",
 			maxStore.Store.Id, maxStore.Status.RegionCount, minStore.Store.Id, minStore.Status.RegionCount, ratio, errorRegionCntMaxMinRatio)
 	} else if ratio >= warnRegionCntMaxMinRatio {
 		log.L().Warn(
