@@ -19,6 +19,7 @@ import (
 	"time"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
@@ -186,6 +187,11 @@ type Transaction interface {
 	// GetIndexName returns the cached index name.
 	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
 	GetTableInfo(id int64) *model.TableInfo
+
+	// set allowed options of current operation in each TiKV disk usage level.
+	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
+	// clear allowed flag
+	ClearDiskFullOpt()
 }
 
 // Client is used to send request to KV layer.

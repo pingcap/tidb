@@ -48,6 +48,8 @@ var (
 	errUnknownLocale                 = dbterror.ClassExpression.NewStd(mysql.ErrUnknownLocale)
 	errNonUniq                       = dbterror.ClassExpression.NewStd(mysql.ErrNonUniq)
 	errWrongValueForType             = dbterror.ClassExpression.NewStd(mysql.ErrWrongValueForType)
+	errUnknown                       = dbterror.ClassExpression.NewStd(mysql.ErrUnknown)
+	errSpecificAccessDenied          = dbterror.ClassExpression.NewStd(mysql.ErrSpecificAccessDenied)
 
 	// Sequence usage privilege check.
 	errSequenceAccessDenied      = dbterror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)

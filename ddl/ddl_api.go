@@ -1686,12 +1686,12 @@ func buildTableInfoWithLike(ctx sessionctx.Context, ident ast.Ident, referTblInf
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionID are left as uninitialized value.
 func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
-	return BuildTableInfoWithCheck(mock.NewContext(), s, mysql.DefaultCharset, "")
+	return buildTableInfoWithCheck(mock.NewContext(), s, mysql.DefaultCharset, "")
 }
 
-// BuildTableInfoWithCheck builds model.TableInfo from a SQL statement.
+// buildTableInfoWithCheck builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionIDs are left as uninitialized value.
-func BuildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
+func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
 	tbInfo, err := buildTableInfoWithStmt(ctx, s, dbCharset, dbCollate)
 	if err != nil {
 		return nil, err
@@ -1706,6 +1706,30 @@ func BuildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 		return nil, err
 	}
 	return tbInfo, nil
+}
+
+// BuildSessionTemporaryTableInfo builds model.TableInfo from a SQL statement.
+func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSchema, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
+	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	//build tableInfo
+	var tbInfo *model.TableInfo
+	var referTbl table.Table
+	var err error
+	if s.ReferTable != nil {
+		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
+		_, ok := is.SchemaByName(referIdent.Schema)
+		if !ok {
+			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
+		}
+		referTbl, err = is.TableByName(referIdent.Schema, referIdent.Name)
+		if err != nil {
+			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
+		}
+		tbInfo, err = buildTableInfoWithLike(ctx, ident, referTbl.Meta(), s)
+	} else {
+		tbInfo, err = buildTableInfoWithCheck(ctx, s, dbCharset, dbCollate)
+	}
+	return tbInfo, err
 }
 
 // buildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
@@ -4207,7 +4231,10 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		dependedColNames := findColumnNamesInExpr(col.GeneratedExpr)
 		for _, name := range dependedColNames {
 			if name.Name.L == oldColName.L {
-				return ErrBadField.GenWithStackByArgs(oldColName.O, "generated column function")
+				if col.Hidden {
+					return errDependentByFunctionalIndex.GenWithStackByArgs(oldColName.O)
+				}
+				return errDependentByGeneratedColumn.GenWithStackByArgs(oldColName.O)
 			}
 		}
 	}
@@ -5439,7 +5466,10 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 }
 
 func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
-	if ok, dep := hasDependentByGeneratedColumn(tblInfo, colName); ok {
+	if ok, dep, isHidden := hasDependentByGeneratedColumn(tblInfo, colName); ok {
+		if isHidden {
+			return errDependentByFunctionalIndex.GenWithStackByArgs(dep)
+		}
 		return errDependentByGeneratedColumn.GenWithStackByArgs(dep)
 	}
 
@@ -5759,7 +5789,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	}
 
 	// It is necessary to specify the table.ID and partition.ID manually.
-	newTableInfo, err := BuildTableInfoWithCheck(ctx, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
+	newTableInfo, err := buildTableInfoWithCheck(ctx, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
 	if err != nil {
 		return errors.Trace(err)
 	}

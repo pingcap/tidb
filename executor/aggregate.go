@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
@@ -298,14 +299,17 @@ func (e *HashAggExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *HashAggExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
 	failpoint.Inject("mockHashAggExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.New("mock HashAggExec.baseExecutor.Open returned error"))
 		}
 	})
+
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+	// If panic here, the children executor should be closed because they are open.
+	defer closeBaseExecutor(&e.baseExecutor)
 	e.prepared = false
 
 	e.memTracker = memory.NewTracker(e.id, -1)
@@ -341,6 +345,15 @@ func (e *HashAggExec) initForUnparallelExec() {
 		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
+	}
+}
+
+func closeBaseExecutor(b *baseExecutor) {
+	if r := recover(); r != nil {
+		// Release the resource, but throw the panic again and let the top level handle it.
+		terror.Log(b.Close())
+		logutil.BgLogger().Warn("panic in Open(), close base executor and throw exception again")
+		panic(r)
 	}
 }
 
@@ -1218,14 +1231,18 @@ type StreamAggExec struct {
 
 // Open implements the Executor Open interface.
 func (e *StreamAggExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
 	failpoint.Inject("mockStreamAggExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.New("mock StreamAggExec.baseExecutor.Open returned error"))
 		}
 	})
+
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+	// If panic in Open, the children executor should be closed because they are open.
+	defer closeBaseExecutor(&e.baseExecutor)
+
 	e.childResult = newFirstChunk(e.children[0])
 	e.executed = false
 	e.isChildReturnEmpty = true
@@ -1886,10 +1903,13 @@ type AggSpillDiskAction struct {
 
 // Action set HashAggExec spill mode.
 func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
-	if atomic.LoadUint32(&a.e.inSpillMode) == 0 && a.spillTimes < maxSpillTimes {
+	// Guarantee that processed data is at least 20% of the threshold, to avoid spilling too frequently.
+	if atomic.LoadUint32(&a.e.inSpillMode) == 0 && a.spillTimes < maxSpillTimes && a.e.memTracker.BytesConsumed() >= t.GetBytesLimit()/5 {
 		a.spillTimes++
 		logutil.BgLogger().Info("memory exceeds quota, set aggregate mode to spill-mode",
-			zap.Uint32("spillTimes", a.spillTimes))
+			zap.Uint32("spillTimes", a.spillTimes),
+			zap.Int64("consumed", t.BytesConsumed()),
+			zap.Int64("quota", t.GetBytesLimit()))
 		atomic.StoreUint32(&a.e.inSpillMode, 1)
 		return
 	}
