@@ -167,9 +167,9 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 
 	// test stale sql by calculating with NOW() function
 	testcases2 := []struct {
-		name   string
-		sql    string
-		preSec int64
+		name     string
+		sql      string
+		preSec   int64
 		errorStr string
 	}{
 		{
