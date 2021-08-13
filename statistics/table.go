@@ -214,8 +214,6 @@ func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSket
 	return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy()
 }
 
-<<<<<<< HEAD
-=======
 // GetColRowCount tries to get the row count of the a column if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (t *Table) GetColRowCount() float64 {
@@ -228,7 +226,6 @@ func (t *Table) GetColRowCount() float64 {
 	return -1
 }
 
->>>>>>> 4eeff54d8... statistics: fix the fomula for checking outdated stats (#26728)
 type tableColumnID struct {
 	TableID  int64
 	ColumnID int64
