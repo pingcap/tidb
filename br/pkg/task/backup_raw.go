@@ -234,7 +234,7 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 		return errors.Trace(err)
 	}
 
-	err = metaWriter.FiniallyFlushBackupMeta(ctx)
+	err = metaWriter.FlushBackupMeta(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

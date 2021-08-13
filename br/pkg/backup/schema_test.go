@@ -132,7 +132,7 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchema(c *C) {
 		ctx, metaWriter, s.mock.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	c.Assert(updateCh.get(), Equals, int64(1))
 	c.Assert(err, IsNil)
-	err = metaWriter.FiniallyFlushBackupMeta(ctx)
+	err = metaWriter.FlushBackupMeta(ctx)
 	c.Assert(err, IsNil)
 
 	schemas := s.GetSchemasFromMeta(c, es)
@@ -159,7 +159,7 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchema(c *C) {
 		ctx, metaWriter2, s.mock.Storage, nil, math.MaxUint64, 2, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	c.Assert(updateCh.get(), Equals, int64(2))
 	c.Assert(err, IsNil)
-	err = metaWriter2.FiniallyFlushBackupMeta(ctx)
+	err = metaWriter2.FlushBackupMeta(ctx)
 	c.Assert(err, IsNil)
 
 	schemas = s.GetSchemasFromMeta(c, es2)
@@ -206,7 +206,7 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchemaWithBrokenStats(c *
 	err = backupSchemas.BackupSchemas(
 		ctx, metaWriter, s.mock.Storage, nil, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	c.Assert(err, IsNil)
-	err = metaWriter.FiniallyFlushBackupMeta(ctx)
+	err = metaWriter.FlushBackupMeta(ctx)
 	c.Assert(err, IsNil)
 
 	schemas := s.GetSchemasFromMeta(c, es)
@@ -234,7 +234,7 @@ func (s *testBackupSchemaSuite) TestBuildBackupRangeAndSchemaWithBrokenStats(c *
 	err = backupSchemas.BackupSchemas(
 		ctx, metaWriter2, s.mock.Storage, statsHandle, math.MaxUint64, 1, variable.DefChecksumTableConcurrency, skipChecksum, updateCh)
 	c.Assert(err, IsNil)
-	err = metaWriter2.FiniallyFlushBackupMeta(ctx)
+	err = metaWriter2.FlushBackupMeta(ctx)
 	c.Assert(err, IsNil)
 
 	schemas2 := s.GetSchemasFromMeta(c, es2)

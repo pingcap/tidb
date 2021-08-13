@@ -545,8 +545,8 @@ func (writer *MetaWriter) FinishWriteMetas(ctx context.Context, op AppendOp) err
 	return nil
 }
 
-//
-func (writer *MetaWriter) FiniallyFlushBackupMeta(ctx context.Context) error {
+// FlushBackupMeta flush the `backupMeta` to `ExternalStorage`
+func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
 	// Set schema version
 	if writer.useV2Meta {
 		writer.backupMeta.Version = MetaV2
