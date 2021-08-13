@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	split "github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"

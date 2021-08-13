@@ -29,7 +29,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+<<<<<<< HEAD
 	md "github.com/pingcap/tidb/br/pkg/lightning/mydump"
+=======
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+>>>>>>> d4a98d5a7... br: enable some checks for br (#27120)
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/tikv/pd/pkg/typeutil"
 	"github.com/tikv/pd/server/api"
