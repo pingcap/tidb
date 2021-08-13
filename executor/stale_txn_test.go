@@ -223,7 +223,7 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 	for _, testcase := range testcases2 {
 		c.Log(testcase.name)
 		if testcase.preSec > 0 {
-			failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix()))
+			c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix())), IsNil)
 			c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, now.Unix()-testcase.preSec)), IsNil)
 		}
 		rs, err := tk.Exec(testcase.sql)
@@ -236,8 +236,8 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 			rs.Close()
 		}
 		if testcase.preSec > 0 {
-			failpoint.Disable("github.com/pingcap/tidb/expression/injectNow")
-			failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO")
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/injectNow"), IsNil)
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
 		}
 	}
 }
