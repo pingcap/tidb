@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 const (
@@ -61,7 +61,7 @@ func TestT(t *testing.T) {
 type testSuite struct {
 	*parser.Parser
 	ctx     sessionctx.Context
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	store   kv.Storage
 	domain  *domain.Domain
 }
@@ -71,7 +71,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
@@ -389,6 +389,9 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	if p.funcName == ast.AggFuncApproxCountDistinct {
 		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 1)
 	}
+	if p.funcName == ast.AggFuncJsonArrayagg {
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeJSON)}, 1)
+	}
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -401,6 +404,9 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	dt := resultChk.GetRow(0).GetDatum(0, p.dataType)
 	if p.funcName == ast.AggFuncApproxCountDistinct {
 		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeString))
+	}
+	if p.funcName == ast.AggFuncJsonArrayagg {
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeJSON))
 	}
 	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
@@ -426,6 +432,9 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	if p.funcName == ast.AggFuncApproxCountDistinct {
 		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeString))
 	}
+	if p.funcName == ast.AggFuncJsonArrayagg {
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeJSON))
+	}
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[1]))
@@ -435,6 +444,9 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	if p.funcName == ast.AggFuncApproxCountDistinct {
 		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
 	}
+	if p.funcName == ast.AggFuncJsonArrayagg {
+		resultChk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeJSON)}, 1)
+	}
 	resultChk.Reset()
 	err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
 	c.Assert(err, IsNil)
@@ -442,6 +454,9 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	dt = resultChk.GetRow(0).GetDatum(0, p.dataType)
 	if p.funcName == ast.AggFuncApproxCountDistinct {
 		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeLonglong))
+	}
+	if p.funcName == ast.AggFuncJsonArrayagg {
+		dt = resultChk.GetRow(0).GetDatum(0, types.NewFieldType(mysql.TypeJSON))
 	}
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[2])
 	c.Assert(err, IsNil)
@@ -673,6 +688,51 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	c.Assert(err, IsNil)
 	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
+	c.Assert(err, IsNil)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[1]))
+
+	// test the empty input
+	resultChk.Reset()
+	finalFunc.ResetPartialResult(finalPr)
+	err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	c.Assert(err, IsNil)
+	dt = resultChk.GetRow(0).GetDatum(0, desc.RetTp)
+	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
+	c.Assert(err, IsNil)
+	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[0]))
+}
+
+func (s *testSuite) testAggFuncWithoutDistinct(c *C, p aggTest) {
+	srcChk := p.genSrcChk()
+
+	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
+	if p.funcName == ast.AggFuncGroupConcat {
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
+	}
+	if p.funcName == ast.AggFuncApproxPercentile {
+		args = append(args, &expression.Constant{Value: types.NewIntDatum(50), RetType: types.NewFieldType(mysql.TypeLong)})
+	}
+	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
+	c.Assert(err, IsNil)
+	if p.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
+	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
+	finalPr, _ := finalFunc.AllocPartialResult()
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+
+	iter := chunk.NewIterator4Chunk(srcChk)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		_, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(err, IsNil)
+	}
+	p.messUpChunk(srcChk)
+	err = finalFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
+	c.Assert(err, IsNil)
+	dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
+	result, err := dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[1])
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[1]))
 

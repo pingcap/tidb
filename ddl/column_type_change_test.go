@@ -1764,7 +1764,7 @@ func (s *testColumnTypeChangeSuite) TestChangingColOriginDefaultValueAfterAddCol
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
 
-	tk.MustExec(fmt.Sprintf("set time_zone = 'UTC'"))
+	tk.MustExec("set time_zone = 'UTC'")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a VARCHAR(31) NULL DEFAULT 'wwrzfwzb01j6ddj', b DECIMAL(12,0) NULL DEFAULT '-729850476163')")
 	tk.MustExec("ALTER TABLE t ADD COLUMN x CHAR(218) NULL DEFAULT 'lkittuae'")
@@ -2105,4 +2105,90 @@ func (s *testColumnTypeChangeSuite) TestChangePrefixedIndexColumnToNonPrefixOne(
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a varchar(700), key(a(700)));")
 	tk.MustGetErrCode("alter table t change column a a tinytext;", mysql.ErrBlobKeyWithoutLength)
+}
+
+// Fix issue https://github.com/pingcap/tidb/issues/25469
+func (s *testColumnTypeChangeSuite) TestCastToTimeStampDecodeError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"  `a` datetime DEFAULT '1764-06-11 02:46:14'" +
+		") ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3'")
+	tk.MustExec("insert into `t` values();")
+	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24';", mysql.ErrTruncatedWrongValue)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"  `a` date DEFAULT '1764-06-11 02:46:14'" +
+		") ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3'")
+	tk.MustExec("insert into `t` values();")
+	tk.MustGetErrCode("alter table `t` change column `a` `b` TIMESTAMP NULL DEFAULT '2015-11-14 07:12:24';", mysql.ErrTruncatedWrongValue)
+	tk.MustExec("drop table if exists t")
+
+	// Normal cast datetime to timestamp can succeed.
+	tk.MustQuery("select timestamp(cast('1000-11-11 12-3-1' as date));").Check(testkit.Rows("1000-11-11 00:00:00"))
+}
+
+// Fix issue: https://github.com/pingcap/tidb/issues/26292
+// Cast date to timestamp has two kind behavior: cast("3977-02-22" as date)
+// For select statement, it truncate the string and return no errors. (which is 3977-02-22 00:00:00 here)
+// For ddl reorging or changing column in ctc, it need report some errors.
+func (s *testColumnTypeChangeSuite) TestCastDateToTimestampInReorgAttribute(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`a` DATE NULL DEFAULT '8497-01-06')")
+	tk.MustExec("insert into t values(now())")
+
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+
+	// use new session to check meta in callback function.
+	internalTK := testkit.NewTestKit(c, s.store)
+	internalTK.MustExec("use test")
+
+	tbl := testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(tbl, NotNil)
+	c.Assert(len(tbl.Cols()), Equals, 1)
+
+	hook := &ddl.TestDDLCallback{}
+	var (
+		checkErr1 error
+		checkErr2 error
+	)
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr1 != nil || checkErr2 != nil {
+			return
+		}
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteOnly:
+			_, checkErr1 = internalTK.Exec("insert into `t` set  `a` = '3977-02-22'") // this(string) will be cast to a as date, then cast a(date) as timestamp to changing column.
+			_, checkErr2 = internalTK.Exec("update t set `a` = '3977-02-22'")
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	tk.MustExec("alter table t modify column a  TIMESTAMP NULL DEFAULT '2021-04-28 03:35:11' FIRST")
+	c.Assert(checkErr1.Error(), Equals, "[types:1292]Incorrect timestamp value: '3977-02-22'")
+	c.Assert(checkErr2.Error(), Equals, "[types:1292]Incorrect timestamp value: '3977-02-22'")
+	tk.MustExec("drop table if exists t")
+}
+
+// https://github.com/pingcap/tidb/issues/25282.
+func (s *testColumnTypeChangeSuite) TestChangeFromUnsignedIntToTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a mediumint unsigned);")
+	tk.MustExec("insert into t values (180857);")
+	tk.MustExec("alter table t modify column a time;")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("18:08:57"))
+	tk.MustExec("drop table if exists t;")
 }

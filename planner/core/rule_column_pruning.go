@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/util"
 )
 
@@ -282,6 +283,33 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 }
 
 // PruneColumns implements LogicalPlan interface.
+func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) error {
+	switch p.TableInfo.Name.O {
+	case infoschema.TableStatementsSummary,
+		infoschema.TableStatementsSummaryHistory,
+		infoschema.TableSlowQuery,
+		infoschema.ClusterTableStatementsSummary,
+		infoschema.ClusterTableStatementsSummaryHistory,
+		infoschema.ClusterTableSlowLog,
+		infoschema.TableTiDBTrx,
+		infoschema.ClusterTableTiDBTrx,
+		infoschema.TableDataLockWaits,
+		infoschema.TableDeadlocks,
+		infoschema.ClusterTableDeadlocks:
+	default:
+		return nil
+	}
+	used := expression.GetUsedList(parentUsedCols, p.schema)
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] && p.schema.Len() > 1 {
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
+		}
+	}
+	return nil
+}
+
+// PruneColumns implements LogicalPlan interface.
 func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) error {
 	used := expression.GetUsedList(parentUsedCols, p.Schema())
 
@@ -379,9 +407,8 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 
 	if len(p.partitionedTable) > 0 {
-		// If the children include partitioned tables, do not prune columns.
-		// Because the executor needs the partitioned columns to calculate the lock key.
-		return p.children[0].PruneColumns(p.Schema().Columns)
+		// If the children include partitioned tables, there is an extra partition ID column.
+		parentUsedCols = append(parentUsedCols, p.extraPIDInfo.Columns...)
 	}
 
 	for _, cols := range p.tblID2Handle {
@@ -444,8 +471,14 @@ func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) error {
 		return nil
 	}
 
-	p.inlineProjection(parentUsedCols)
-	return p.children[0].PruneColumns(parentUsedCols)
+	savedUsedCols := make([]*expression.Column, len(parentUsedCols))
+	copy(savedUsedCols, parentUsedCols)
+	if err := p.children[0].PruneColumns(parentUsedCols); err != nil {
+		return err
+	}
+	p.schema = nil
+	p.inlineProjection(savedUsedCols)
+	return nil
 }
 
 func (*columnPruner) name() string {

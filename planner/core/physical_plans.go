@@ -472,6 +472,8 @@ type PhysicalTableScan struct {
 	IsGlobalRead bool
 
 	// The table scan may be a partition, rather than a real table.
+	// TODO: clean up this field. After we support dynamic partitioning, table scan
+	// works on the whole partition table, and `isPartition` is not used.
 	isPartition bool
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
@@ -914,7 +916,7 @@ type PhysicalExchangeSender struct {
 
 	TargetTasks  []*kv.MPPTask
 	ExchangeType tipb.ExchangeType
-	HashCols     []*expression.Column
+	HashCols     []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks []*kv.MPPTask
 }
@@ -953,6 +955,7 @@ type PhysicalLock struct {
 
 	TblID2Handle     map[int64][]HandleCols
 	PartitionedTable []table.PartitionedTable
+	ExtraPIDInfo     extraPIDInfo
 }
 
 // PhysicalLimit is the physical operator of Limit.
@@ -1005,6 +1008,8 @@ const (
 	Mpp2Phase
 	// MppTiDB runs agg on TiDB (and a partial agg on TiFlash if in 2 phase agg)
 	MppTiDB
+	// MppScalar also has 2 phases. The second phase runs in a single task.
+	MppScalar
 )
 
 type basePhysicalAgg struct {
@@ -1013,7 +1018,7 @@ type basePhysicalAgg struct {
 	AggFuncs         []*aggregation.AggFuncDesc
 	GroupByItems     []expression.Expression
 	MppRunMode       AggMppRunMode
-	MppPartitionCols []*expression.Column
+	MppPartitionCols []*property.MPPPartitionColumn
 }
 
 func (p *basePhysicalAgg) isFinalAgg() bool {

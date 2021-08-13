@@ -142,12 +142,6 @@ func initGRPCLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
 	return l, prop, nil
 }
 
-// InitZapLogger is delegated to InitLogger.
-// Deprecated: prefer InitLogger
-func InitZapLogger(cfg *LogConfig) error {
-	return InitLogger(cfg)
-}
-
 // SetLevel sets the zap logger's level.
 func SetLevel(level string) error {
 	l := zap.NewAtomicLevel()

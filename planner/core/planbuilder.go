@@ -433,6 +433,10 @@ type cteInfo struct {
 	enterSubquery bool
 	recursiveRef  bool
 	limitLP       LogicalPlan
+	// seedStat is shared between logicalCTE and logicalCTETable.
+	seedStat *property.StatsInfo
+	// The LogicalCTEs that reference the same table should share the same CteClass.
+	cteClass *CTEClass
 }
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -487,6 +491,8 @@ type PlanBuilder struct {
 	buildingViewStack set.StringSet
 	// renamingViewName is the name of the view which is being renamed.
 	renamingViewName string
+	// isCreateView indicates whether the query is create view.
+	isCreateView bool
 
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
@@ -509,6 +515,12 @@ type PlanBuilder struct {
 type handleColHelper struct {
 	id2HandleMapStack []map[int64][]HandleCols
 	stackTail         int
+}
+
+func (hch *handleColHelper) resetForReuse() {
+	*hch = handleColHelper{
+		id2HandleMapStack: hch.id2HandleMapStack[:0],
+	}
 }
 
 func (hch *handleColHelper) popMap() map[int64][]HandleCols {
@@ -599,25 +611,66 @@ func (b *PlanBuilder) popSelectOffset() {
 	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
 }
 
-// NewPlanBuilder creates a new PlanBuilder. Return the original PlannerSelectBlockAsName as well, callers decide if
+// NewPlanBuilder creates a new PlanBuilder.
+func NewPlanBuilder() *PlanBuilder {
+	return &PlanBuilder{
+		outerCTEs:           make([]*cteInfo, 0),
+		colMapper:           make(map[*ast.ColumnNameExpr]int),
+		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
+		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+	}
+}
+
+// Init initialize a PlanBuilder.
+// Return the original PlannerSelectBlockAsName as well, callers decide if
 // PlannerSelectBlockAsName should be restored after using this builder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
+// This is The comman code pattern to use it:
+// NewPlanBuilder().Init(sctx, is, processor)
+func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
 	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
 	} else {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
-	return &PlanBuilder{
-		ctx:                 sctx,
-		is:                  is,
-		outerCTEs:           make([]*cteInfo, 0),
-		colMapper:           make(map[*ast.ColumnNameExpr]int),
-		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
-		hintProcessor:       processor,
-		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
-		isForUpdateRead:     sctx.GetSessionVars().IsPessimisticReadConsistency(),
-	}, savedBlockNames
+
+	b.ctx = sctx
+	b.is = is
+	b.hintProcessor = processor
+	b.isForUpdateRead = sctx.GetSessionVars().IsPessimisticReadConsistency()
+	return b, savedBlockNames
+}
+
+// ResetForReuse reset the plan builder, put it into pool for reuse.
+// After reset for reuse, the object should be equal to a object returned by NewPlanBuilder().
+func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
+	// Save some fields for reuse.
+	saveOuterCTEs := b.outerCTEs[:0]
+	saveColMapper := b.colMapper
+	for k := range saveColMapper {
+		delete(saveColMapper, k)
+	}
+	saveHandleHelper := b.handleHelper
+	saveHandleHelper.resetForReuse()
+
+	saveCorrelateAggMapper := b.correlatedAggMapper
+	for k := range saveCorrelateAggMapper {
+		delete(saveCorrelateAggMapper, k)
+	}
+
+	// Reset ALL the fields.
+	*b = PlanBuilder{}
+
+	// Reuse part of the fields.
+	// It's a bit conservative but easier to get right.
+	b.outerCTEs = saveOuterCTEs
+	b.colMapper = saveColMapper
+	b.handleHelper = saveHandleHelper
+	b.correlatedAggMapper = saveCorrelateAggMapper
+
+	// Add more fields if they are safe to be reused.
+
+	return b
 }
 
 // Build builds the ast node to a Plan.
@@ -646,6 +699,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildLoadStats(x), nil
 	case *ast.IndexAdviseStmt:
 		return b.buildIndexAdvise(x), nil
+	case *ast.PlanRecreatorStmt:
+		return b.buildPlanRecreator(x), nil
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x), nil
 	case *ast.SelectStmt:
@@ -953,8 +1008,20 @@ func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[i
 		return nil, false, nil
 	}
 	latestIndexes := make(map[int64]*model.IndexInfo)
-	latestTbl, exist := is.TableByID(id)
-	if exist {
+
+	var latestTbl table.Table
+	latestTblExist := false
+
+	localTemporaryTables := ctx.GetSessionVars().LocalTemporaryTables
+	if localTemporaryTables != nil {
+		latestTbl, latestTblExist = localTemporaryTables.(*infoschema.LocalTemporaryTables).TableByID(id)
+	}
+
+	if !latestTblExist {
+		latestTbl, latestTblExist = is.TableByID(id)
+	}
+
+	if latestTblExist {
 		latestTblInfo := latestTbl.Meta()
 		for _, index := range latestTblInfo.Indices {
 			latestIndexes[index.ID] = index
@@ -1086,6 +1153,10 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	}
 
 	available = removeIgnoredPaths(available, ignored, tblInfo)
+	if ctx.GetSessionVars().StmtCtx.IsStaleness {
+		// skip tiflash if the statement is for stale read until tiflash support stale read
+		available = removeTiflashDuringStaleRead(available)
+	}
 
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
@@ -1141,14 +1212,62 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 	return remainedPaths
 }
 
-func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) *LogicalLock {
+func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
+	n := 0
+	for _, path := range paths {
+		if path.StoreType != kv.TiFlash {
+			paths[n] = path
+			n++
+		}
+	}
+	return paths[:n]
+}
+
+func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
 	selectLock := LogicalLock{
 		Lock:             lock,
 		tblID2Handle:     b.handleHelper.tailMap(),
 		partitionedTable: b.partitionedTable,
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)
-	return selectLock
+
+	if len(b.partitionedTable) > 0 {
+		// If a chunk row is read from a partitioned table, which partition the row
+		// comes from is unknown. With the existence of Join, the situation could be
+		// even worse: SelectLock have to know the `pid` to construct the lock key.
+		// To solve the problem, an extra `pid` column is add to the schema, and the
+		// DataSource need to return the `pid` information in the chunk row.
+		err := addExtraPIDColumnToDataSource(src, &selectLock.extraPIDInfo)
+		if err != nil {
+			return nil, err
+		}
+		// TODO: Dynamic partition mode does not support adding extra pid column to the data source.
+		// (Because one table reader can read from multiple partitions, which partition a chunk row comes from is unknown)
+		// So we have to use the old "rewrite to union" way here, set `flagPartitionProcessor` flag for that.
+		b.optFlag = b.optFlag | flagPartitionProcessor
+	}
+	return selectLock, nil
+}
+
+func addExtraPIDColumnToDataSource(p LogicalPlan, info *extraPIDInfo) error {
+	switch raw := p.(type) {
+	case *DataSource:
+		// Fix issue 26250, do not add extra pid column to normal table.
+		if raw.tableInfo.GetPartitionInfo() == nil {
+			return nil
+		}
+		raw.addExtraPIDColumn(info)
+		return nil
+	default:
+		var err error
+		for _, child := range p.Children() {
+			err = addExtraPIDColumnToDataSource(child, info)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
@@ -1248,7 +1367,12 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 	case ast.AdminCaptureBindings:
 		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
 	case ast.AdminEvolveBindings:
-		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, nil
+		var err error
+		// The 'baseline evolution' only work in the test environment before the feature is GA.
+		if !config.CheckTableBeforeDrop {
+			err = errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
+		}
+		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
 	case ast.AdminReloadBindings:
 		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
 	case ast.AdminShowTelemetry:
@@ -1705,7 +1829,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			DBName:        tbl.Schema.O,
 			TableName:     tbl.Name.O,
 			PartitionName: names[i],
-			TableID:       AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
+			TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
 			Incremental:   false,
 			StatsVersion:  version,
 		}
@@ -1772,7 +1896,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					DBName:        tbl.Schema.O,
 					TableName:     tbl.Name.O,
 					PartitionName: names[i],
-					TableID:       AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
+					TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
 					Incremental:   as.Incremental,
 					StatsVersion:  version,
 				}
@@ -1793,7 +1917,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					DBName:        tbl.Schema.O,
 					TableName:     tbl.Name.O,
 					PartitionName: names[i],
-					TableID:       AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
+					TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
 					Incremental:   as.Incremental,
 					StatsVersion:  version,
 				}
@@ -1844,7 +1968,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 					info := AnalyzeInfo{
 						DBName:        as.TableNames[0].Schema.O,
 						TableName:     as.TableNames[0].Name.O,
-						PartitionName: names[i], TableID: AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
+						PartitionName: names[i], TableID: statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
 						Incremental:  as.Incremental,
 						StatsVersion: version,
 					}
@@ -1865,7 +1989,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 				DBName:        as.TableNames[0].Schema.O,
 				TableName:     as.TableNames[0].Name.O,
 				PartitionName: names[i],
-				TableID:       AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
+				TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
 				Incremental:   as.Incremental,
 				StatsVersion:  version,
 			}
@@ -1907,7 +2031,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 					DBName:        as.TableNames[0].Schema.O,
 					TableName:     as.TableNames[0].Name.O,
 					PartitionName: names[i],
-					TableID:       AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
+					TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
 					Incremental:   as.Incremental,
 					StatsVersion:  version,
 				}
@@ -1925,7 +2049,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				DBName:        as.TableNames[0].Schema.O,
 				TableName:     as.TableNames[0].Name.O,
 				PartitionName: names[i],
-				TableID:       AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
+				TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
 				Incremental:   as.Incremental,
 				StatsVersion:  version,
 			}
@@ -2347,16 +2471,15 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.AlterInstanceStmt:
 		err := ErrSpecificAccessDenied.GenWithStack("SUPER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
-	case *ast.AlterUserStmt, *ast.RenameUserStmt:
+	case *ast.RenameUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
-		if b.ctx.GetSessionVars().CurrentDB == "" && raw.Level.DBName == "" {
-			if raw.Level.Level == ast.GrantLevelTable {
-				return nil, ErrNoDB
-			}
+		var err error
+		b.visitInfo, err = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
+		if err != nil {
+			return nil, err
 		}
-		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
 	case *ast.BRIEStmt:
 		p.setSchemaAndNames(buildBRIESchema())
 		if sem.IsEnabled() && strings.EqualFold(raw.Storage[:8], "local://") {
@@ -2381,7 +2504,11 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
 		}
 	case *ast.RevokeStmt:
-		b.visitInfo = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
+		var err error
+		b.visitInfo, err = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
+		if err != nil {
+			return nil, err
+		}
 	case *ast.KillStmt:
 		// All users can kill their own connections regardless.
 		// If you have the SUPER privilege, you can kill all threads and statements unless SEM is enabled.
@@ -2414,15 +2541,20 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.ShutdownStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
 	case *ast.BeginStmt:
-		readTS := b.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+		readTS := b.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
 		if raw.AsOf != nil {
 			startTS, err := calculateTsExpr(b.ctx, raw.AsOf)
 			if err != nil {
 				return nil, err
 			}
+			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
+				return nil, err
+			}
 			p.StaleTxnStartTS = startTS
 		} else if readTS > 0 {
 			p.StaleTxnStartTS = readTS
+			// consume read ts here
+			b.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
 		}
 	}
 	return p, nil
@@ -2441,14 +2573,14 @@ func calculateTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (uint6
 	if err != nil {
 		return 0, err
 	}
-	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().TimeZone)
+	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().Location())
 	if err != nil {
 		return 0, err
 	}
 	return oracle.GoTimeToTS(tsTime), nil
 }
 
-func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.RevokeStmt) []visitInfo {
+func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
 	// To use REVOKE, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
@@ -2456,6 +2588,9 @@ func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stm
 	// This supports a local revoke SELECT on tablename, but does
 	// not add dbName to the visitInfo of a *.* grant.
 	if dbName == "" && stmt.Level.Level != ast.GrantLevelGlobal {
+		if sctx.GetSessionVars().CurrentDB == "" {
+			return nil, ErrNoDB
+		}
 		dbName = sctx.GetSessionVars().CurrentDB
 	}
 	var nonDynamicPrivilege bool
@@ -2492,7 +2627,7 @@ func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stm
 		// we need to attach the "GLOBAL" version of the GRANT OPTION.
 		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
 	}
-	return vi
+	return vi, nil
 }
 
 // appendVisitInfoIsRestrictedUser appends additional visitInfo if the user has a
@@ -2509,7 +2644,7 @@ func appendVisitInfoIsRestrictedUser(visitInfo []visitInfo, sctx sessionctx.Cont
 	return visitInfo
 }
 
-func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
+func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.GrantStmt) ([]visitInfo, error) {
 	// To use GRANT, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
@@ -2517,6 +2652,9 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 	// This supports a local revoke SELECT on tablename, but does
 	// not add dbName to the visitInfo of a *.* grant.
 	if dbName == "" && stmt.Level.Level != ast.GrantLevelGlobal {
+		if sctx.GetSessionVars().CurrentDB == "" {
+			return nil, ErrNoDB
+		}
 		dbName = sctx.GetSessionVars().CurrentDB
 	}
 	var nonDynamicPrivilege bool
@@ -2561,7 +2699,7 @@ func collectVisitInfoFromGrantStmt(sctx sessionctx.Context, vi []visitInfo, stmt
 		// we need to attach the "GLOBAL" version of the GRANT OPTION.
 		vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
 	}
-	return vi
+	return vi, nil
 }
 
 func (b *PlanBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
@@ -2822,12 +2960,13 @@ func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Inse
 		// 2. `INSERT INTO tbl_name (col_name [, col_name] ...) SELECT ...`.
 		colName := make([]string, 0, len(insertStmt.Columns))
 		for _, col := range insertStmt.Columns {
-			colName = append(colName, col.Name.O)
+			colName = append(colName, col.Name.L)
 		}
-		var missingColName string
-		affectedValuesCols, missingColName = table.FindCols(insertPlan.Table.VisibleCols(), colName, insertPlan.Table.Meta().PKIsHandle)
-		if missingColName != "" {
-			return nil, ErrUnknownColumn.GenWithStackByArgs(missingColName, clauseMsg[fieldList])
+		var missingColIdx int
+		affectedValuesCols, missingColIdx = table.FindColumns(insertPlan.Table.VisibleCols(), colName, insertPlan.Table.Meta().PKIsHandle)
+		if missingColIdx >= 0 {
+			return nil, ErrUnknownColumn.GenWithStackByArgs(
+				insertStmt.Columns[missingColIdx].Name.O, clauseMsg[fieldList])
 		}
 	} else if len(insertStmt.Setlist) == 0 {
 		// This branch is for the following scenarios:
@@ -2855,9 +2994,9 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	}
 
 	// Check whether the column to be updated is the generated column.
-	tCols, missingColName := table.FindCols(insertPlan.Table.VisibleCols(), colNames, tableInfo.PKIsHandle)
-	if missingColName != "" {
-		return ErrUnknownColumn.GenWithStackByArgs(missingColName, clauseMsg[fieldList])
+	tCols, missingColIdx := table.FindColumns(insertPlan.Table.VisibleCols(), colNames, tableInfo.PKIsHandle)
+	if missingColIdx >= 0 {
+		return ErrUnknownColumn.GenWithStackByArgs(insert.Setlist[missingColIdx].Column.Name.O, clauseMsg[fieldList])
 	}
 	generatedColumns := make(map[string]struct{}, len(tCols))
 	for _, tCol := range tCols {
@@ -2957,6 +3096,8 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 					Value:   x.Datum,
 					RetType: &x.Type,
 				}
+			case *driver.ParamMarkerExpr:
+				expr, err = expression.ParamMarkerExpression(b.ctx, x)
 			default:
 				b.curClause = fieldList
 				// subquery in insert values should not reference upper scope
@@ -3544,11 +3685,13 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
+		b.isCreateView = true
 		b.capFlag |= canExpandAST | renameView
 		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L
 		defer func() {
 			b.capFlag &= ^canExpandAST
 			b.capFlag &= ^renameView
+			b.isCreateView = false
 		}()
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
@@ -3744,7 +3887,7 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 		return &Explain{Format: explainFor.Format}, nil
 	}
 	var explainRows [][]string
-	if explainFor.Format == ast.ExplainFormatROW {
+	if explainFor.Format == types.ExplainFormatROW {
 		explainRows = processInfo.PlanExplainRows
 	}
 	return b.buildExplainPlan(targetPlan, explainFor.Format, explainRows, false, nil, processInfo.RuntimeStatsColl)
@@ -3978,8 +4121,11 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Supported_builtin_functions"}
 		ftypes = []byte{mysql.TypeVarchar}
 	case ast.ShowBackups, ast.ShowRestores:
-		names = []string{"Destination", "State", "Progress", "Queue_time", "Execution_time", "Finish_time", "Connection"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDouble, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeLonglong}
+		names = []string{"Destination", "State", "Progress", "Queue_time", "Execution_time", "Finish_time", "Connection", "Message"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDouble, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeVarchar}
+	case ast.ShowPlacementLabels:
+		names = []string{"Key", "Values"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeJSON}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
@@ -3999,6 +4145,11 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		schema.Append(col)
 	}
 	return
+}
+
+func (b *PlanBuilder) buildPlanRecreator(pc *ast.PlanRecreatorStmt) Plan {
+	p := &PlanRecreatorSingle{ExecStmt: pc.Stmt, Analyze: pc.Analyze, Load: pc.Load, File: pc.File}
+	return p
 }
 
 func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {

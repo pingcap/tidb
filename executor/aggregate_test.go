@@ -1461,3 +1461,42 @@ func (s *testSuiteAgg) TestIssue23314(c *C) {
 	res := tk.MustQuery("select col1 from t1 group by col1")
 	res.Check(testkit.Rows("16:40:20.01"))
 }
+
+func (s *testSerialSuite) TestAggInDisk(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_hashagg_final_concurrency = 1;")
+	tk.MustExec("set tidb_hashagg_partial_concurrency = 1;")
+	tk.MustExec("set tidb_mem_quota_query = 4194304")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(a int)")
+	sql := "insert into t values (0)"
+	for i := 1; i <= 200; i++ {
+		sql += fmt.Sprintf(",(%v)", i)
+	}
+	sql += ";"
+	tk.MustExec(sql)
+	rows := tk.MustQuery("desc analyze select /*+ HASH_AGG() */ avg(t1.a) from t t1 join t t2 group by t1.a, t2.a;").Rows()
+	for _, row := range rows {
+		length := len(row)
+		line := fmt.Sprintf("%v", row)
+		disk := fmt.Sprintf("%v", row[length-1])
+		if strings.Contains(line, "HashAgg") {
+			c.Assert(strings.Contains(disk, "0 Bytes"), IsFalse)
+			c.Assert(strings.Contains(disk, "MB") ||
+				strings.Contains(disk, "KB") ||
+				strings.Contains(disk, "Bytes"), IsTrue)
+		}
+	}
+
+	// Add code cover
+	// Test spill chunk. Add a line to avoid tmp spill chunk is always full.
+	tk.MustExec("insert into t values(0)")
+	tk.MustQuery("select sum(tt.b) from ( select /*+ HASH_AGG() */ avg(t1.a) as b from t t1 join t t2 group by t1.a, t2.a) as tt").Check(
+		testkit.Rows("4040100.0000"))
+	// Test no groupby and no data.
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(c int, c1 int);")
+	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t;").Check(testkit.Rows("0"))
+	tk.MustQuery("select /*+ HASH_AGG() */ count(c) from t group by c1;").Check(testkit.Rows())
+}

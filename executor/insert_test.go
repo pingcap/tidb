@@ -336,6 +336,18 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`create table t (a year);`)
 	_, err = tk.Exec(`insert into t values(2156);`)
 	c.Assert(err.Error(), Equals, `[types:8033]invalid year`)
+
+	tk.MustExec(`DROP TABLE IF EXISTS ts`)
+	tk.MustExec(`CREATE TABLE ts (id int DEFAULT NULL, time1 TIMESTAMP NULL DEFAULT NULL)`)
+	tk.MustExec(`SET @@sql_mode=''`)
+	tk.MustExec(`INSERT INTO ts (id, time1) VALUES (1, TIMESTAMP '1018-12-23 00:00:00')`)
+	tk.MustQuery(`SHOW WARNINGS`).Check(testkit.Rows(`Warning 1292 Incorrect timestamp value: '1018-12-23 00:00:00'`))
+	tk.MustQuery(`SELECT * FROM ts ORDER BY id`).Check(testkit.Rows(`1 0000-00-00 00:00:00`))
+
+	tk.MustExec(`SET @@sql_mode='STRICT_TRANS_TABLES'`)
+	_, err = tk.Exec(`INSERT INTO ts (id, time1) VALUES (2, TIMESTAMP '1018-12-24 00:00:00')`)
+	c.Assert(err.Error(), Equals, `[table:1292]Incorrect timestamp value: '1018-12-24 00:00:00' for column 'time1' at row 1`)
+	tk.MustExec(`DROP TABLE ts`)
 }
 
 func (s *testSuite3) TestInsertValueForCastDecimalField(c *C) {
@@ -1071,7 +1083,7 @@ func (s *testSuite3) TestInsertFloatOverflow(c *C) {
 	tk.MustExec("drop table if exists t,t1")
 }
 
-// There is a potential issue in MySQL: when the value of auto_increment_offset is greater
+// TestAutoIDIncrementAndOffset There is a potential issue in MySQL: when the value of auto_increment_offset is greater
 // than that of auto_increment_increment, the value of auto_increment_offset is ignored
 // (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
 // This issue is a flaw of the implementation of MySQL and it doesn't exist in TiDB.
@@ -1571,7 +1583,7 @@ func combination(items []string) func() []string {
 	}
 }
 
-// See https://github.com/pingcap/tidb/issues/24582
+// TestDuplicatedEntryErr See https://github.com/pingcap/tidb/issues/24582
 func (s *testSuite10) TestDuplicatedEntryErr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1725,4 +1737,21 @@ func (s *testSuite13) TestGlobalTempTableParallel(c *C) {
 		go insertFunc()
 	}
 	wg.Wait()
+}
+
+func (s *testSuite13) TestIssue26762(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 date);")
+	_, err := tk.Exec("insert into t1 values('2020-02-31');")
+	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
+
+	tk.MustExec("set @@sql_mode='ALLOW_INVALID_DATES';")
+	tk.MustExec("insert into t1 values('2020-02-31');")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2020-02-31"))
+
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES';")
+	_, err = tk.Exec("insert into t1 values('2020-02-31');")
+	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
 }

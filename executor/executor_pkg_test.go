@@ -29,18 +29,21 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	plannerutil "github.com/pingcap/tidb/planner/util"
 	txninfo "github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/tableutil"
 )
 
-var _ = Suite(&testExecSuite{})
+var _ = SerialSuites(&testExecSuite{})
 var _ = SerialSuites(&testExecSerialSuite{})
 
 // Note: it's a tricky way to export the `inspectionSummaryRules` and `inspectionRules` for unit test but invisible for normal code
@@ -548,4 +551,15 @@ func getGrowing(m aggPartialResultMapper) bool {
 	point := (**hmap)(unsafe.Pointer(&m))
 	value := *point
 	return value.oldbuckets != nil
+}
+
+func (s *pkgTestSuite) TestFilterTemporaryTableKeys(c *C) {
+	vars := variable.NewSessionVars()
+	const tableID int64 = 3
+	vars.TxnCtx = &variable.TransactionContext{
+		TemporaryTables: map[int64]tableutil.TempTable{tableID: nil},
+	}
+
+	res := filterTemporaryTableKeys(vars, []kv.Key{tablecodec.EncodeTablePrefix(tableID), tablecodec.EncodeTablePrefix(42)})
+	c.Assert(res, HasLen, 1)
 }

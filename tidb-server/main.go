@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"runtime"
 	"strconv"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -67,6 +69,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
@@ -170,6 +173,11 @@ func main() {
 		terror.MustNil(err)
 		checkTempStorageQuota()
 	}
+	// Enable failpoints in tikv/client-go if the test API is enabled.
+	// It appears in the main function to be set before any use of client-go to prevent data race.
+	if _, err := failpoint.Status("github.com/pingcap/tidb/server/enableTestAPI"); err == nil {
+		tikv.EnableFailpoints()
+	}
 	setGlobalVars()
 	setCPUAffinity()
 	setupLog()
@@ -201,6 +209,12 @@ func exit() {
 
 func syncLog() {
 	if err := log.Sync(); err != nil {
+		// Don't complain about /dev/stdout as Fsync will return EINVAL.
+		if pathErr, ok := err.(*fs.PathError); ok {
+			if pathErr.Path == "/dev/stdout" {
+				os.Exit(0)
+			}
+		}
 		fmt.Fprintln(os.Stderr, "sync log err:", err)
 		os.Exit(1)
 	}
@@ -563,7 +577,7 @@ func setGlobalVars() {
 		}
 	}
 
-	atomic.StoreUint64(&tikv.CommitMaxBackoff, uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds()*1000))
+	atomic.StoreUint64(&transaction.CommitMaxBackoff, uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds()*1000))
 	tikv.SetRegionCacheTTLSec(int64(cfg.TiKVClient.RegionCacheTTL))
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)

@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
 )
 
@@ -75,7 +75,7 @@ type InsertValues struct {
 	hasRefCols     bool
 	hasExtraHandle bool
 
-	// Fill the autoID lazily to datum. This is used for being compatible with JDBC using getGeneratedKeys().
+	// lazyFillAutoID indicates whatever had been filled the autoID lazily to datum. This is used for being compatible with JDBC using getGeneratedKeys().
 	// `insert|replace values` can guarantee consecutive autoID in a batch.
 	// Other statements like `insert select from` don't guarantee consecutive autoID.
 	// https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
@@ -86,7 +86,7 @@ type InsertValues struct {
 
 	stats *InsertRuntimeStat
 
-	// LoadData use two goroutines. One for generate batch data,
+	// isLoadData indicates whatever current goroutine is use for generating batch data. LoadData use two goroutines. One for generate batch data,
 	// The other one for commit task, which will invalid txn.
 	// We use mutex to protect routine from using invalid txn.
 	isLoadData bool
@@ -120,7 +120,7 @@ func (e *InsertValues) exec(_ context.Context, _ [][]types.Datum) error {
 // See https://dev.mysql.com/doc/refman/5.7/en/insert.html
 func (e *InsertValues) initInsertColumns() error {
 	var cols []*table.Column
-	var missingColName string
+	var missingColIdx int
 	var err error
 
 	tableCols := e.Table.Cols()
@@ -129,11 +129,12 @@ func (e *InsertValues) initInsertColumns() error {
 		// Process `set` type column.
 		columns := make([]string, 0, len(e.SetList))
 		for _, v := range e.SetList {
-			columns = append(columns, v.ColName.O)
+			columns = append(columns, v.ColName.L)
 		}
-		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if missingColName != "" {
-			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
+		cols, missingColIdx = table.FindColumns(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if missingColIdx >= 0 {
+			return errors.Errorf("INSERT INTO %s: unknown column %s",
+				e.Table.Meta().Name.O, e.SetList[missingColIdx].ColName.O)
 		}
 		if len(cols) == 0 {
 			return errors.Errorf("INSERT INTO %s: empty column", e.Table.Meta().Name.O)
@@ -142,11 +143,12 @@ func (e *InsertValues) initInsertColumns() error {
 		// Process `name` type column.
 		columns := make([]string, 0, len(e.Columns))
 		for _, v := range e.Columns {
-			columns = append(columns, v.Name.O)
+			columns = append(columns, v.Name.L)
 		}
-		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if missingColName != "" {
-			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
+		cols, missingColIdx = table.FindColumns(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if missingColIdx >= 0 {
+			return errors.Errorf("INSERT INTO %s: unknown column %s",
+				e.Table.Meta().Name.O, e.Columns[missingColIdx].Name.O)
 		}
 	} else {
 		// If e.Columns are empty, use all columns instead.
@@ -343,7 +345,7 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 	e.evalBuffer.SetDatums(row...)
 	for i, expr := range list {
 		val, err := expr.Eval(e.evalBuffer.ToRow())
-		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
+		if err != nil {
 			return nil, err
 		}
 		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false, false)
@@ -1006,7 +1008,7 @@ func (e *InsertValues) handleWarning(err error) {
 func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
-			snapshotStats := &tikv.SnapshotRuntimeStats{}
+			snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 			e.stats = &InsertRuntimeStat{
 				BasicRuntimeStats:    e.runtimeStats,
 				SnapshotRuntimeStats: snapshotStats,
@@ -1049,13 +1051,18 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	}
 	prefetchStart := time.Now()
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
-	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
-		return err
+	// Temporary table need not to do prefetch because its all data are stored in the memory.
+	if e.Table.Meta().TempTableType == model.TempTableNone {
+		if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
+			return err
+		}
 	}
+
 	if e.stats != nil {
 		e.stats.Prefetch += time.Since(prefetchStart)
 	}
 
+	txnValueGetter := e.txnValueGetter(txn)
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
 		if r.ignored {
@@ -1063,7 +1070,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		}
 		skip := false
 		if r.handleKey != nil {
-			_, err := txn.Get(ctx, r.handleKey.newKey)
+			_, err := txnValueGetter.Get(ctx, r.handleKey.newKey)
 			if err == nil {
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 				continue
@@ -1073,7 +1080,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 		for _, uk := range r.uniqueKeys {
-			_, err := txn.Get(ctx, uk.newKey)
+			_, err := txnValueGetter.Get(ctx, uk.newKey)
 			if err == nil {
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
@@ -1100,6 +1107,15 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		e.stats.CheckInsertTime += time.Since(start)
 	}
 	return nil
+}
+
+func (e *InsertValues) txnValueGetter(txn kv.Transaction) kv.Getter {
+	tblInfo := e.Table.Meta()
+	if tblInfo.TempTableType == model.TempTableNone {
+		return txn
+	}
+
+	return e.ctx.GetSessionVars().TemporaryTableTxnReader(txn, tblInfo)
 }
 
 func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) error {
@@ -1130,7 +1146,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 // InsertRuntimeStat record the stat about insert and check
 type InsertRuntimeStat struct {
 	*execdetails.BasicRuntimeStats
-	*tikv.SnapshotRuntimeStats
+	*txnsnapshot.SnapshotRuntimeStats
 	CheckInsertTime time.Duration
 	Prefetch        time.Duration
 }

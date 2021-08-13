@@ -64,6 +64,12 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
+	// For audit log plugin to set the correct statement.
+	stmtCtx := e.ctx.GetSessionVars().StmtCtx
+	defer func() {
+		e.ctx.GetSessionVars().StmtCtx = stmtCtx
+	}()
+
 	switch e.format {
 	case core.TraceFormatLog:
 		return e.nextTraceLog(ctx, se, req)
@@ -130,6 +136,14 @@ func (e *TraceExec) nextRowJSON(ctx context.Context, se sqlexec.SQLExecutor, req
 }
 
 func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
+	// For audit log plugin to log the statement correctly.
+	// Should be logged as 'explain ...', instead of the executed SQL.
+	vars := e.ctx.GetSessionVars()
+	origin := vars.InRestrictedSQL
+	vars.InRestrictedSQL = true
+	defer func() {
+		vars.InRestrictedSQL = origin
+	}()
 	rs, err := se.ExecuteStmt(ctx, e.stmtNode)
 	if err != nil {
 		var errCode uint16

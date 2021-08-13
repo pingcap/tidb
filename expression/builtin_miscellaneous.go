@@ -53,6 +53,8 @@ var (
 	_ functionClass = &uuidFunctionClass{}
 	_ functionClass = &uuidShortFunctionClass{}
 	_ functionClass = &vitessHashFunctionClass{}
+	_ functionClass = &uuidToBinFunctionClass{}
+	_ functionClass = &binToUUIDFunctionClass{}
 )
 
 var (
@@ -76,6 +78,8 @@ var (
 	_ builtinFunc = &builtinIsIPv6Sig{}
 	_ builtinFunc = &builtinUUIDSig{}
 	_ builtinFunc = &builtinVitessHashSig{}
+	_ builtinFunc = &builtinUUIDToBinSig{}
+	_ builtinFunc = &builtinBinToUUIDSig{}
 
 	_ builtinFunc = &builtinNameConstIntSig{}
 	_ builtinFunc = &builtinNameConstRealSig{}
@@ -395,6 +399,7 @@ func (c *inetAtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	bf.tp.Flen = 21
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinInetAtonSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_InetAton)
 	return sig, nil
 }
 
@@ -472,6 +477,7 @@ func (c *inetNtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	bf.tp.Flen = 93
 	bf.tp.Decimal = 0
 	sig := &builtinInetNtoaSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_InetNtoa)
 	return sig, nil
 }
 
@@ -524,6 +530,7 @@ func (c *inet6AtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	types.SetBinChsClnFlag(bf.tp)
 	bf.tp.Decimal = 0
 	sig := &builtinInet6AtonSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Inet6Aton)
 	return sig, nil
 }
 
@@ -596,6 +603,7 @@ func (c *inet6NtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	bf.tp.Flen = 117
 	bf.tp.Decimal = 0
 	sig := &builtinInet6NtoaSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Inet6Ntoa)
 	return sig, nil
 }
 
@@ -650,6 +658,7 @@ func (c *isIPv4FunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	}
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv4Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4)
 	return sig, nil
 }
 
@@ -717,6 +726,7 @@ func (c *isIPv4CompatFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv4CompatSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4Compat)
 	return sig, nil
 }
 
@@ -765,6 +775,7 @@ func (c *isIPv4MappedFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv4MappedSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4Mapped)
 	return sig, nil
 }
 
@@ -813,6 +824,7 @@ func (c *isIPv6FunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	}
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv6Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_IsIPv6)
 	return sig, nil
 }
 
@@ -1093,4 +1105,157 @@ func (b *builtinVitessHashSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, err
 	}
 	return int64(hashed), false, nil
+}
+
+type uuidToBinFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *uuidToBinFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTps := []types.EvalType{types.ETString}
+	if len(args) == 2 {
+		argTps = append(argTps, types.ETInt)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.tp.Flen = 16
+	types.SetBinChsClnFlag(bf.tp)
+	bf.tp.Decimal = 0
+	sig := &builtinUUIDToBinSig{bf}
+	return sig, nil
+}
+
+type builtinUUIDToBinSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinUUIDToBinSig) Clone() builtinFunc {
+	newSig := &builtinUUIDToBinSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals UUID_TO_BIN(string_uuid, swap_flag).
+// See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_uuid-to-bin
+func (b *builtinUUIDToBinSig) evalString(row chunk.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+
+	u, err := uuid.Parse(val)
+	if err != nil {
+		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "uuid_to_bin")
+	}
+	bin, err := u.MarshalBinary()
+	if err != nil {
+		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "uuid_to_bin")
+	}
+
+	flag := int64(0)
+	if len(b.args) == 2 {
+		flag, isNull, err = b.args[1].EvalInt(b.ctx, row)
+		if isNull {
+			flag = 0
+		}
+		if err != nil {
+			return "", false, err
+		}
+	}
+	if flag != 0 {
+		return swapBinaryUUID(bin), false, nil
+	}
+	return string(bin), false, nil
+}
+
+type binToUUIDFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *binToUUIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTps := []types.EvalType{types.ETString}
+	if len(args) == 2 {
+		argTps = append(argTps, types.ETInt)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.Flen = 32
+	bf.tp.Decimal = 0
+	sig := &builtinBinToUUIDSig{bf}
+	return sig, nil
+}
+
+type builtinBinToUUIDSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinBinToUUIDSig) Clone() builtinFunc {
+	newSig := &builtinBinToUUIDSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals BIN_TO_UUID(binary_uuid, swap_flag).
+// See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_bin-to-uuid
+func (b *builtinBinToUUIDSig) evalString(row chunk.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+
+	var u uuid.UUID
+	err = u.UnmarshalBinary([]byte(val))
+	if err != nil {
+		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "bin_to_uuid")
+	}
+
+	str := u.String()
+	flag := int64(0)
+	if len(b.args) == 2 {
+		flag, isNull, err = b.args[1].EvalInt(b.ctx, row)
+		if isNull {
+			flag = 0
+		}
+		if err != nil {
+			return "", false, err
+		}
+	}
+	if flag != 0 {
+		return swapStringUUID(str), false, nil
+	}
+	return str, false, nil
+}
+
+func swapBinaryUUID(bin []byte) string {
+	buf := make([]byte, len(bin))
+	copy(buf[0:2], bin[6:8])
+	copy(buf[2:4], bin[4:6])
+	copy(buf[4:8], bin[0:4])
+	copy(buf[8:], bin[8:])
+	return string(buf)
+}
+
+func swapStringUUID(str string) string {
+	buf := make([]byte, len(str))
+	copy(buf[0:4], str[9:13])
+	copy(buf[4:8], str[14:18])
+	copy(buf[8:9], str[8:9])
+	copy(buf[9:13], str[4:8])
+	copy(buf[13:14], str[13:14])
+	copy(buf[14:18], str[0:4])
+	copy(buf[18:], str[18:])
+	return string(buf)
 }

@@ -581,6 +581,11 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 // TiDB only require that the types fall into the same catalog but TiFlash require the type to be exactly the same, so
 // need to check if the conversion is a must
 func needConvert(tp *types.FieldType, rtp *types.FieldType) bool {
+	// all the string type are mapped to the same type in TiFlash, so
+	// do not need convert for string types
+	if types.IsString(tp.Tp) && types.IsString(rtp.Tp) {
+		return false
+	}
 	if tp.Tp != rtp.Tp {
 		return true
 	}
@@ -678,7 +683,7 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 	for i := range lTask.hashCols {
 		lKey := lTask.hashCols[i]
 		rKey := rTask.hashCols[i]
-		cType, lConvert, rConvert := negotiateCommonType(lKey.RetType, rKey.RetType)
+		cType, lConvert, rConvert := negotiateCommonType(lKey.Col.RetType, rKey.Col.RetType)
 		if lConvert {
 			lMask[i] = true
 			cTypes[i] = cType
@@ -703,22 +708,22 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 		rp = rProj
 	}
 
-	lPartKeys := make([]*expression.Column, 0, len(rTask.hashCols))
-	rPartKeys := make([]*expression.Column, 0, len(lTask.hashCols))
+	lPartKeys := make([]*property.MPPPartitionColumn, 0, len(rTask.hashCols))
+	rPartKeys := make([]*property.MPPPartitionColumn, 0, len(lTask.hashCols))
 	for i := range lTask.hashCols {
 		lKey := lTask.hashCols[i]
 		rKey := rTask.hashCols[i]
 		if lMask[i] {
 			cType := cTypes[i].Clone()
-			cType.Flag = lKey.RetType.Flag
-			lCast := expression.BuildCastFunction(p.ctx, lKey, cType)
-			lKey = appendExpr(lProj, lCast)
+			cType.Flag = lKey.Col.RetType.Flag
+			lCast := expression.BuildCastFunction(p.ctx, lKey.Col, cType)
+			lKey = &property.MPPPartitionColumn{Col: appendExpr(lProj, lCast), CollateID: lKey.CollateID}
 		}
 		if rMask[i] {
 			cType := cTypes[i].Clone()
-			cType.Flag = rKey.RetType.Flag
-			rCast := expression.BuildCastFunction(p.ctx, rKey, cType)
-			rKey = appendExpr(rProj, rCast)
+			cType.Flag = rKey.Col.RetType.Flag
+			rCast := expression.BuildCastFunction(p.ctx, rKey.Col, cType)
+			rKey = &property.MPPPartitionColumn{Col: appendExpr(rProj, rCast), CollateID: rKey.CollateID}
 		}
 		lPartKeys = append(lPartKeys, lKey)
 		rPartKeys = append(rPartKeys, rKey)
@@ -849,7 +854,7 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 	cpuCost += probeCost
 	// For merge join, only one group of rows with same join key(not null) are cached,
 	// we compute average memory cost using estimated group size.
-	NDV := getCardinality(innerKeys, innerSchema, innerStats)
+	NDV := getColsNDV(innerKeys, innerSchema, innerStats)
 	memoryCost := (innerStats.RowCount / NDV) * sessVars.MemoryFactor
 	return cpuCost + memoryCost
 }
@@ -1401,37 +1406,49 @@ func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, storeType kv.StoreType) bool {
 	sc := sctx.GetSessionVars().StmtCtx
 	client := sctx.GetClient()
+	ret := true
+	reason := ""
 	for _, aggFunc := range aggFuncs {
 		// if the aggFunc contain VirtualColumn or CorrelatedColumn, it can not be pushed down.
 		if expression.ContainVirtualColumn(aggFunc.Args) || expression.ContainCorrelatedColumn(aggFunc.Args) {
-			sctx.GetSessionVars().RaiseWarningWhenMPPEnforced(
-				"MPP mode may be blocked because expressions of AggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now.")
-			return false
+			reason = "expressions of AggFunc `" + aggFunc.Name + "` contain virtual column or correlated column, which is not supported now"
+			ret = false
+			break
+		}
+		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
+			reason = "AggFunc `" + aggFunc.Name + "` is not supported now"
+			ret = false
+			break
+		}
+		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
+			reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs"
+			ret = false
+			break
 		}
 		pb := aggregation.AggFuncToPBExpr(sc, client, aggFunc)
 		if pb == nil {
-			sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because AggFunc `" + aggFunc.Name + "` is not supported now.")
-			return false
-		}
-		if !aggregation.CheckAggPushDown(aggFunc, storeType) {
-			if sc.InExplainStmt {
-				storageName := storeType.Name()
-				if storeType == kv.UnSpecified {
-					storageName = "storage layer"
-				}
-				sc.AppendWarning(errors.New("Agg function '" + aggFunc.Name + "' can not be pushed to " + storageName))
-			}
-			return false
-		}
-		if !expression.CanExprsPushDown(sc, aggFunc.Args, client, storeType) {
-			return false
+			reason = "AggFunc `" + aggFunc.Name + "` can not be converted to pb expr"
+			ret = false
+			break
 		}
 	}
-	if expression.ContainVirtualColumn(groupByItems) {
-		sctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because groupByItems contain virtual column, which is not supported now.")
-		return false
+	if ret && expression.ContainVirtualColumn(groupByItems) {
+		reason = "groupByItems contain virtual columns, which is not supported now"
+		ret = false
 	}
-	return expression.CanExprsPushDown(sc, groupByItems, client, storeType)
+	if ret && !expression.CanExprsPushDown(sc, groupByItems, client, storeType) {
+		reason = "groupByItems contain unsupported exprs"
+		ret = false
+	}
+
+	if !ret && sc.InExplainStmt {
+		storageName := storeType.Name()
+		if storeType == kv.UnSpecified {
+			storageName = "storage layer"
+		}
+		sc.AppendWarning(errors.New("Aggregation can not be pushed to " + storageName + " because " + reason))
+	}
+	return ret
 }
 
 // AggInfo stores the information of an Aggregation.
@@ -1905,13 +1922,17 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		partitionCols := p.MppPartitionCols
 		if len(partitionCols) == 0 {
 			items := finalAgg.(*PhysicalHashAgg).GroupByItems
-			partitionCols = make([]*expression.Column, 0, len(items))
+			partitionCols = make([]*property.MPPPartitionColumn, 0, len(items))
 			for _, expr := range items {
 				col, ok := expr.(*expression.Column)
 				if !ok {
 					return invalidTask
 				}
-				partitionCols = append(partitionCols, col)
+				_, coll := expression.DeriveCollationFromExprs(p.ctx, col)
+				partitionCols = append(partitionCols, &property.MPPPartitionColumn{
+					Col:       col,
+					CollateID: property.GetCollateIDByNameForPartition(coll),
+				})
 			}
 		}
 		partialAgg.SetCost(mpp.cost())
@@ -1926,9 +1947,9 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		}
 		// TODO: how to set 2-phase cost?
 		newMpp.addCost(p.GetCost(inputRows, false, true))
-		finalAgg.SetCost(mpp.cost())
+		finalAgg.SetCost(newMpp.cost())
 		if proj != nil {
-			proj.SetCost(mpp.cost())
+			proj.SetCost(newMpp.cost())
 		}
 		return newMpp
 	case MppTiDB:
@@ -1946,6 +1967,30 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		t.addCost(p.GetCost(inputRows, true, false))
 		finalAgg.SetCost(t.cost())
 		return t
+	case MppScalar:
+		proj := p.convertAvgForMPP()
+		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
+		if partialAgg == nil || finalAgg == nil {
+			return invalidTask
+		}
+		attachPlan2Task(partialAgg, mpp)
+		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType}
+		newMpp := mpp.enforceExchangerImpl(prop)
+		attachPlan2Task(finalAgg, newMpp)
+		if proj == nil {
+			proj = PhysicalProjection{
+				Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)),
+			}.Init(p.ctx, p.statsInfo(), p.SelectBlockOffset())
+			for _, col := range p.Schema().Columns {
+				proj.Exprs = append(proj.Exprs, col)
+			}
+			proj.SetSchema(p.schema)
+		}
+		attachPlan2Task(proj, newMpp)
+		newMpp.addCost(p.GetCost(inputRows, false, true))
+		finalAgg.SetCost(newMpp.cost())
+		proj.SetCost(newMpp.cost())
+		return newMpp
 	default:
 		return invalidTask
 	}
@@ -2047,7 +2092,7 @@ type mppTask struct {
 	cst float64
 
 	partTp   property.MPPPartitionType
-	hashCols []*expression.Column
+	hashCols []*property.MPPPartitionColumn
 }
 
 func (t *mppTask) count() float64 {
@@ -2119,7 +2164,7 @@ func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
 			return true
 		}
 		for i, col := range prop.MPPPartitionCols {
-			if !col.Equal(nil, t.hashCols[i]) {
+			if !col.Equal(t.hashCols[i]) {
 				return true
 			}
 		}
@@ -2139,9 +2184,9 @@ func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 }
 
 func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask {
-	if collate.NewCollationEnabled() && prop.MPPPartitionTp == property.HashType {
+	if collate.NewCollationEnabled() && !t.p.SCtx().GetSessionVars().HashExchangeWithNewCollation && prop.MPPPartitionTp == property.HashType {
 		for _, col := range prop.MPPPartitionCols {
-			if types.IsString(col.RetType.Tp) {
+			if types.IsString(col.Col.RetType.Tp) {
 				t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because when `new_collation_enabled` is true, HashJoin or HashAgg with string key is not supported now.")
 				return &mppTask{cst: math.MaxFloat64}
 			}
