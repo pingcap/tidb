@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -156,13 +157,22 @@ func (t *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDB
 //
 // The argument `columns` _must_ be in lower case.
 func (tr *TableRestore) initializeColumns(columns []string, ccp *checkpoints.ChunkCheckpoint) error {
+	colPerm, err := createColumnPermutation(columns, tr.ignoreColumns, tr.tableInfo.Core)
+	if err != nil {
+		return err
+	}
+	ccp.ColumnPermutation = colPerm
+	return nil
+}
+
+func createColumnPermutation(columns []string, ignoreColumns []string, tableInfo *model.TableInfo) ([]int, error) {
 	var colPerm []int
 	if len(columns) == 0 {
-		colPerm = make([]int, 0, len(tr.tableInfo.Core.Columns)+1)
-		shouldIncludeRowID := common.TableHasAutoRowID(tr.tableInfo.Core)
+		colPerm = make([]int, 0, len(tableInfo.Columns)+1)
+		shouldIncludeRowID := common.TableHasAutoRowID(tableInfo)
 
 		// no provided columns, so use identity permutation.
-		for i := range tr.tableInfo.Core.Columns {
+		for i := range tableInfo.Columns {
 			colPerm = append(colPerm, i)
 		}
 		if shouldIncludeRowID {
@@ -170,14 +180,12 @@ func (tr *TableRestore) initializeColumns(columns []string, ccp *checkpoints.Chu
 		}
 	} else {
 		var err error
-		colPerm, err = parseColumnPermutations(tr.tableInfo.Core, columns, tr.ignoreColumns)
+		colPerm, err = parseColumnPermutations(tableInfo, columns, ignoreColumns)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 	}
-
-	ccp.ColumnPermutation = colPerm
-	return nil
+	return colPerm, nil
 }
 
 func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
@@ -281,26 +289,21 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 			if engine.Status < checkpoints.CheckpointStatusImported {
 				wg.Add(1)
 
-				// Note: We still need tableWorkers to control the concurrency of tables.
-				// In the future, we will investigate more about
-				// the difference between restoring tables concurrently and restoring tables one by one.
+				// If the number of chunks is small, it means that this engine may be finished in a few times.
+				// We do not limit it in TableConcurrency
 				restoreWorker := rc.tableWorkers.Apply()
-
 				go func(w *worker.Worker, eid int32, ecp *checkpoints.EngineCheckpoint) {
 					defer wg.Done()
-
 					engineLogTask := tr.logger.With(zap.Int32("engineNumber", eid)).Begin(zap.InfoLevel, "restore engine")
 					dataClosedEngine, err := tr.restoreEngine(ctx, rc, indexEngine, eid, ecp)
 					engineLogTask.End(zap.ErrorLevel, err)
 					rc.tableWorkers.Recycle(w)
-					if err != nil {
-						setError(err)
-						return
+					if err == nil {
+						dataWorker := rc.closedEngineLimit.Apply()
+						defer rc.closedEngineLimit.Recycle(dataWorker)
+						err = tr.importEngine(ctx, dataClosedEngine, rc, eid, ecp)
 					}
-
-					dataWorker := rc.closedEngineLimit.Apply()
-					defer rc.closedEngineLimit.Recycle(dataWorker)
-					if err := tr.importEngine(ctx, dataClosedEngine, rc, eid, ecp); err != nil {
+					if err != nil {
 						setError(err)
 					}
 				}(restoreWorker, engineID, engine)
@@ -389,6 +392,11 @@ func (tr *TableRestore) restoreEngine(
 	dataEngineCfg := &backend.EngineConfig{
 		TableInfo: tr.tableInfo,
 		Local:     &backend.LocalEngineConfig{},
+	}
+	if !tr.tableMeta.IsRowOrdered {
+		dataEngineCfg.Local.Compact = true
+		dataEngineCfg.Local.CompactConcurrency = 4
+		dataEngineCfg.Local.CompactThreshold = compactionUpperThreshold
 	}
 	dataEngine, err := rc.backend.OpenEngine(ctx, dataEngineCfg, tr.tableName, engineID)
 	if err != nil {
@@ -883,4 +891,41 @@ func (tr *TableRestore) analyzeTable(ctx context.Context, g glue.SQLExecutor) er
 	err := g.ExecuteWithLog(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table", tr.logger)
 	task.End(zap.ErrorLevel, err)
 	return err
+}
+
+// estimate SST files compression threshold by total row file size
+// with a higher compression threshold, the compression time increases, but the iteration time decreases.
+// Try to limit the total SST files number under 500. But size compress 32GB SST files cost about 20min,
+// we set the upper bound to 32GB to avoid too long compression time.
+// factor is the non-clustered(1 for data engine and number of non-clustered index count for index engine).
+func estimateCompactionThreshold(cp *checkpoints.TableCheckpoint, factor int64) int64 {
+	totalRawFileSize := int64(0)
+	var lastFile string
+	for _, engineCp := range cp.Engines {
+		for _, chunk := range engineCp.Chunks {
+			if chunk.FileMeta.Path == lastFile {
+				continue
+			}
+			size := chunk.FileMeta.FileSize
+			if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+				// parquet file is compressed, thus estimates with a factor of 2
+				size *= 2
+			}
+			totalRawFileSize += size
+			lastFile = chunk.FileMeta.Path
+		}
+	}
+	totalRawFileSize *= factor
+
+	// try restrict the total file number within 512
+	threshold := totalRawFileSize / 512
+	threshold = utils.NextPowerOfTwo(threshold)
+	if threshold < compactionLowerThreshold {
+		// disable compaction if threshold is smaller than lower bound
+		threshold = 0
+	} else if threshold > compactionUpperThreshold {
+		threshold = compactionUpperThreshold
+	}
+
+	return threshold
 }

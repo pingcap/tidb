@@ -1744,6 +1744,13 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	var rowKeys []kv.Key
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
+		switch stmt.(type) {
+		case *ast.UseStmt:
+			// If there is a "use db" statement, we shouldn't cache even if it's possible.
+			// Consider the scenario where there are statements that could execute on multiple
+			// schemas, but the schema is actually different.
+			return nil, nil
+		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
 		// TODO: handle the PreprocessorReturn.
 		if err = plannercore.Preprocess(cc.ctx, stmt); err != nil {

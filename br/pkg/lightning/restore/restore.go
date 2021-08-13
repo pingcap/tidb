@@ -77,8 +77,8 @@ const (
 )
 
 const (
-	taskMetaTableName  = "task_meta"
-	tableMetaTableName = "table_meta"
+	TaskMetaTableName  = "task_meta"
+	TableMetaTableName = "table_meta"
 	// CreateTableMetadataTable stores the per-table sub jobs information used by TiDB Lightning
 	CreateTableMetadataTable = `CREATE TABLE IF NOT EXISTS %s (
 		task_id 			BIGINT(20) UNSIGNED,
@@ -100,6 +100,8 @@ const (
 		task_id BIGINT(20) UNSIGNED NOT NULL,
 		pd_cfgs VARCHAR(2048) NOT NULL DEFAULT '',
 		status  VARCHAR(32) NOT NULL,
+		state   TINYINT(1) NOT NULL DEFAULT 0 COMMENT '0: normal, 1: exited before finish',
+		source_bytes BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (task_id)
 	);`
 
@@ -247,6 +249,7 @@ type Controller struct {
 	closedEngineLimit *worker.Pool
 	store             storage.ExternalStorage
 	metaMgrBuilder    metaMgrBuilder
+	taskMgr           taskMetaMgr
 
 	diskQuotaLock  *diskQuotaLock
 	diskQuotaState atomic.Int32
@@ -353,8 +356,8 @@ func NewRestoreControllerWithPauser(
 	rc := &Controller{
 		cfg:           cfg,
 		dbMetas:       dbMetas,
-		tableWorkers:  worker.NewPool(ctx, cfg.App.TableConcurrency, "table"),
-		indexWorkers:  worker.NewPool(ctx, cfg.App.IndexConcurrency, "index"),
+		tableWorkers:  nil,
+		indexWorkers:  nil,
 		regionWorkers: worker.NewPool(ctx, cfg.App.RegionConcurrency, "region"),
 		ioWorkers:     worker.NewPool(ctx, cfg.App.IOConcurrency, "io"),
 		checksumWorks: worker.NewPool(ctx, cfg.TiDB.ChecksumTableConcurrency, "checksum"),
@@ -373,6 +376,7 @@ func NewRestoreControllerWithPauser(
 		store:          s,
 		metaMgrBuilder: metaBuilder,
 		diskQuotaLock:  newDiskQuotaLock(),
+		taskMgr:        nil,
 	}
 
 	return rc, nil
@@ -385,9 +389,9 @@ func (rc *Controller) Close() {
 
 func (rc *Controller) Run(ctx context.Context) error {
 	opts := []func(context.Context) error{
-		rc.preCheckRequirements,
 		rc.setGlobalVariables,
 		rc.restoreSchema,
+		rc.preCheckRequirements,
 		rc.restoreTables,
 		rc.fullCompact,
 		rc.switchToNormalMode,
@@ -844,7 +848,12 @@ func verifyLocalFile(ctx context.Context, cpdb checkpoints.DB, dir string) error
 func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 	estimatedChunkCount := 0.0
 	estimatedEngineCnt := int64(0)
-	batchSize := int64(rc.cfg.Mydumper.BatchSize)
+	batchSize := rc.cfg.Mydumper.BatchSize
+	if batchSize <= 0 {
+		// if rows in source files are not sorted by primary key(if primary is number or cluster index enabled),
+		// the key range in each data engine may have overlap, thus a bigger engine size can somewhat alleviate it.
+		batchSize = config.DefaultBatchSize
+	}
 	for _, dbMeta := range rc.dbMetas {
 		for _, tableMeta := range dbMeta.Tables {
 			tableName := common.UniqueTable(dbMeta.Name, tableMeta.Name)
@@ -871,7 +880,7 @@ func (rc *Controller) estimateChunkCountIntoMetrics(ctx context.Context) error {
 			}
 			// estimate engines count if engine cp is empty
 			if len(dbCp.Engines) == 0 {
-				estimatedEngineCnt += ((tableMeta.TotalSize + batchSize - 1) / batchSize) + 1
+				estimatedEngineCnt += ((tableMeta.TotalSize + int64(batchSize) - 1) / int64(batchSize)) + 1
 			}
 			for _, fileMeta := range tableMeta.DataFiles {
 				if cnt, ok := fileChunks[fileMeta.FileMeta.Path]; ok {
@@ -1178,9 +1187,11 @@ var checksumManagerKey struct{}
 
 func (rc *Controller) restoreTables(ctx context.Context) error {
 	logTask := log.L().Begin(zap.InfoLevel, "restore all tables data")
-
-	if err := rc.metaMgrBuilder.Init(ctx); err != nil {
-		return err
+	if rc.tableWorkers == nil {
+		rc.tableWorkers = worker.NewPool(ctx, rc.cfg.App.TableConcurrency, "table")
+	}
+	if rc.indexWorkers == nil {
+		rc.indexWorkers = worker.NewPool(ctx, rc.cfg.App.IndexConcurrency, "index")
 	}
 
 	// for local backend, we should disable some pd scheduler and change some settings, to
@@ -1192,27 +1203,17 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 	// we do not do switch back automatically
 	cleanupFunc := func() {}
 	switchBack := false
+	taskFinished := false
 	if rc.cfg.TikvImporter.Backend == config.BackendLocal {
-		// disable some pd schedulers
-		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
-			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		mgr := rc.metaMgrBuilder.TaskMetaMgr(pdController)
-		if err = mgr.InitTask(ctx); err != nil {
-			return err
-		}
 
 		logTask.Info("removing PD leader&region schedulers")
 
-		restoreFn, err := mgr.CheckAndPausePdSchedulers(ctx)
+		restoreFn, err := rc.taskMgr.CheckAndPausePdSchedulers(ctx)
 		finishSchedulers = func() {
 			if restoreFn != nil {
 				// use context.Background to make sure this restore function can still be executed even if ctx is canceled
 				restoreCtx := context.Background()
-				needSwitchBack, err := mgr.CheckAndFinishRestore(restoreCtx)
+				needSwitchBack, needCleanup, err := rc.taskMgr.CheckAndFinishRestore(restoreCtx, taskFinished)
 				if err != nil {
 					logTask.Warn("check restore pd schedulers failed", zap.Error(err))
 					return
@@ -1222,22 +1223,25 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 					if restoreE := restoreFn(restoreCtx); restoreE != nil {
 						logTask.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
 					}
+
+					logTask.Info("add back PD leader&region schedulers")
 					// clean up task metas
-					if cleanupErr := mgr.Cleanup(restoreCtx); cleanupErr != nil {
-						logTask.Warn("failed to clean task metas, you may need to restore them manually", zap.Error(cleanupErr))
-					}
-					// cleanup table meta and schema db if needed.
-					cleanupFunc = func() {
-						if e := mgr.CleanupAllMetas(restoreCtx); err != nil {
-							logTask.Warn("failed to clean table task metas, you may need to restore them manually", zap.Error(e))
+					if needCleanup {
+						logTask.Info("cleanup task metas")
+						if cleanupErr := rc.taskMgr.Cleanup(restoreCtx); cleanupErr != nil {
+							logTask.Warn("failed to clean task metas, you may need to restore them manually", zap.Error(cleanupErr))
+						}
+						// cleanup table meta and schema db if needed.
+						cleanupFunc = func() {
+							if e := rc.taskMgr.CleanupAllMetas(restoreCtx); err != nil {
+								logTask.Warn("failed to clean table task metas, you may need to restore them manually", zap.Error(e))
+							}
 						}
 					}
 				}
-
-				logTask.Info("add back PD leader&region schedulers")
 			}
 
-			pdController.Close()
+			rc.taskMgr.Close()
 		}
 
 		if err != nil {
@@ -1432,6 +1436,7 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 	// finishSchedulers()
 	// cancelFunc(switchBack)
 	// finishFuncCalled = true
+	taskFinished = true
 
 	close(postProcessTaskChan)
 	// otherwise, we should run all tasks in the post-process task chan
@@ -1562,43 +1567,6 @@ func (tr *TableRestore) restoreTable(
 
 	// 3. Post-process. With the last parameter set to false, we can allow delay analyze execute latter
 	return tr.postProcess(ctx, rc, cp, false /* force-analyze */, metaMgr)
-}
-
-// estimate SST files compression threshold by total row file size
-// with a higher compression threshold, the compression time increases, but the iteration time decreases.
-// Try to limit the total SST files number under 500. But size compress 32GB SST files cost about 20min,
-// we set the upper bound to 32GB to avoid too long compression time.
-// factor is the non-clustered(1 for data engine and number of non-clustered index count for index engine).
-func estimateCompactionThreshold(cp *checkpoints.TableCheckpoint, factor int64) int64 {
-	totalRawFileSize := int64(0)
-	var lastFile string
-	for _, engineCp := range cp.Engines {
-		for _, chunk := range engineCp.Chunks {
-			if chunk.FileMeta.Path == lastFile {
-				continue
-			}
-			size := chunk.FileMeta.FileSize
-			if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-				// parquet file is compressed, thus estimates with a factor of 2
-				size *= 2
-			}
-			totalRawFileSize += size
-			lastFile = chunk.FileMeta.Path
-		}
-	}
-	totalRawFileSize *= factor
-
-	// try restrict the total file number within 512
-	threshold := totalRawFileSize / 512
-	threshold = utils.NextPowerOfTwo(threshold)
-	if threshold < compactionLowerThreshold {
-		// disable compaction if threshold is smaller than lower bound
-		threshold = 0
-	} else if threshold > compactionUpperThreshold {
-		threshold = compactionUpperThreshold
-	}
-
-	return threshold
 }
 
 // do full compaction for the whole data.
@@ -1797,10 +1765,6 @@ func (rc *Controller) isLocalBackend() bool {
 // 3. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
-	if !rc.cfg.App.CheckRequirements {
-		log.L().Info("skip pre check due to user requirement")
-		return nil
-	}
 	if err := rc.ClusterIsAvailable(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -1808,14 +1772,49 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	if err := rc.StoragePermission(ctx); err != nil {
 		return errors.Trace(err)
 	}
-
-	if err := rc.ClusterResource(ctx); err != nil {
-		return errors.Trace(err)
+	if err := rc.metaMgrBuilder.Init(ctx); err != nil {
+		return err
 	}
+	taskExist := false
 
 	if rc.isLocalBackend() {
-		if err := rc.LocalResource(ctx); err != nil {
+		source, err := rc.EstimateSourceData(ctx)
+		if err != nil {
 			return errors.Trace(err)
+		}
+
+		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
+			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		rc.taskMgr = rc.metaMgrBuilder.TaskMetaMgr(pdController)
+		taskExist, err = rc.taskMgr.CheckTaskExist(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !taskExist {
+			err = rc.LocalResource(ctx, source)
+			if err != nil {
+				rc.taskMgr.CleanupTask(ctx)
+				return errors.Trace(err)
+			}
+			if err := rc.ClusterResource(ctx, source); err != nil {
+				rc.taskMgr.CleanupTask(ctx)
+				return errors.Trace(err)
+			}
+		}
+	}
+	if rc.cfg.App.CheckRequirements && rc.tidbGlue.OwnsSQLExecutor() {
+		// print check template only if check requirements is true.
+		fmt.Print(rc.checkTemplate.Output())
+		if !rc.checkTemplate.Success() {
+			if !taskExist && rc.taskMgr != nil {
+				rc.taskMgr.CleanupTask(ctx)
+			}
+			return errors.Errorf("tidb-lightning pre-check failed." +
+				" Please fix the failed check(s) or set --check-requirements=false to skip checks")
 		}
 	}
 	return nil
