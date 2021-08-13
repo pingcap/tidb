@@ -1597,9 +1597,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		if p.err != nil {
 			return
 		}
-		if is != nil {
-			p.InfoSchema = is.(infoschema.InfoSchema)
-		}
+		p.InfoSchema = is.(infoschema.InfoSchema)
 	}
 	if p.flag&inPrepare == 0 {
 		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness

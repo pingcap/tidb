@@ -3118,7 +3118,7 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	return wrapWithTemporaryTable(s, is)
 }
 
-// GetSnapshotInfoSchema returns snapshotInfoSchema if snapshotTS gived
+// GetSnapshotInfoSchema returns snapshotInfoSchema if snapshotTS gived or returns err with nil infoschema.
 func (s *session) GetSnapshotInfoSchema(snapshotTS uint64) (sessionctx.InfoschemaMetaVersion, error) {
 	is, err := domain.GetDomain(s).GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {
