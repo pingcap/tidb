@@ -5173,23 +5173,23 @@ func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
 }
 
 func (s *testDBSuite1) TestModifyColumnTime_TimeToYear(c *C) {
-	invalidYearCode := uint16(8033)
+	outOfRangeCode := uint16(1264)
 	tests := []testModifyColumnTimeCase{
 		// time to year, it's reasonable to return current year and discard the time (even if MySQL may get data out of range error).
-		{"time", `"30 20:00:12"`, "year", "", invalidYearCode},
-		{"time", `"30 20:00"`, "year", "", invalidYearCode},
-		{"time", `"30 20"`, "year", "", invalidYearCode},
-		{"time", `"20:00:12"`, "year", "", invalidYearCode},
-		{"time", `"20:00"`, "year", "", invalidYearCode},
+		{"time", `"30 20:00:12"`, "year", "", outOfRangeCode},
+		{"time", `"30 20:00"`, "year", "", outOfRangeCode},
+		{"time", `"30 20"`, "year", "", outOfRangeCode},
+		{"time", `"20:00:12"`, "year", "", outOfRangeCode},
+		{"time", `"20:00"`, "year", "", outOfRangeCode},
 		{"time", `"12"`, "year", "2012", 0},
-		{"time", `"200012"`, "year", "", invalidYearCode},
-		{"time", `200012`, "year", "", invalidYearCode},
+		{"time", `"200012"`, "year", "", outOfRangeCode},
+		{"time", `200012`, "year", "", outOfRangeCode},
 		{"time", `0012`, "year", "2012", 0},
 		{"time", `12`, "year", "2012", 0},
-		{"time", `"30 20:00:12.498"`, "year", "", invalidYearCode},
-		{"time", `"20:00:12.498"`, "year", "", invalidYearCode},
-		{"time", `"200012.498"`, "year", "", invalidYearCode},
-		{"time", `200012.498`, "year", "", invalidYearCode},
+		{"time", `"30 20:00:12.498"`, "year", "", outOfRangeCode},
+		{"time", `"20:00:12.498"`, "year", "", outOfRangeCode},
+		{"time", `"200012.498"`, "year", "", outOfRangeCode},
+		{"time", `200012.498`, "year", "", outOfRangeCode},
 	}
 	testModifyColumnTime(c, s.store, tests)
 }
