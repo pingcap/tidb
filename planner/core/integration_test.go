@@ -4208,7 +4208,6 @@ func (s *testIntegrationSerialSuite) TestSelectTemporaryTableReopen(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("create temporary table tmp1(a int, b int, c int);")
 	err := tk.QueryToErr("with cte1 as (with cte2 as (select * from tmp1) select * from cte2) select * from cte1 left join tmp1 on cte1.c=tmp1.c;")
