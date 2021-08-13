@@ -739,7 +739,7 @@ func (s *configTestSuite) TestDataCharacterSet(c *C) {
 		{
 			input: `
 				[mydumper]
-				data-invalid-char-replace = "\ufffd"
+				data-invalid-char-replace = "\u2323"
 			`,
 			err: "",
 		},
@@ -747,6 +747,27 @@ func (s *configTestSuite) TestDataCharacterSet(c *C) {
 			input: `
 				[mydumper]
 				data-invalid-char-replace = "a"
+			`,
+			err: "",
+		},
+		{
+			input: `
+				[mydumper]
+				data-invalid-char-replace = "INV"
+			`,
+			err: "",
+		},
+		{
+			input: `
+				[mydumper]
+				data-invalid-char-replace = "😊"
+			`,
+			err: "",
+		},
+		{
+			input: `
+				[mydumper]
+				data-invalid-char-replace = "😊😭😅😄"
 			`,
 			err: "",
 		},

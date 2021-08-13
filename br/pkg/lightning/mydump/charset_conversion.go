@@ -55,7 +55,7 @@ type CharsetConvertor struct {
 	// sourceCharacterSet represents the charset that the source file uses.
 	sourceCharacterSet Charset
 	// invalidCharReplacement is the default replacement character for the invalid content, e.g "\ufffd".
-	invalidCharReplacement      rune
+	invalidCharReplacement      string
 	invalidCharReplacementBytes []byte
 
 	originalReader ReadSeekCloser
@@ -87,19 +87,19 @@ func NewCharsetConvertor(cfg *config.MydumperRuntime, reader ReadSeekCloser) (Re
 	}, nil
 }
 
-func loadCharsetFromConfig(cfg *config.MydumperRuntime) (Charset, rune, error) {
-	r, _ := utf8.DecodeRuneInString(cfg.DataInvalidCharReplace)
+func loadCharsetFromConfig(cfg *config.MydumperRuntime) (Charset, string, error) {
+	dataInvalidCharReplace := cfg.DataInvalidCharReplace
 	switch cfg.DataCharacterSet {
 	case "binary":
-		return BINARY, r, nil
+		return BINARY, dataInvalidCharReplace, nil
 	case "utf8mb4":
-		return UTF8MB4, r, nil
+		return UTF8MB4, dataInvalidCharReplace, nil
 	case "gb18030":
-		return GB18030, r, nil
+		return GB18030, dataInvalidCharReplace, nil
 	case "gbk":
-		return GBK, r, nil
+		return GBK, dataInvalidCharReplace, nil
 	default:
-		return BINARY, r, errors.New("found unsupported data-character-set")
+		return BINARY, dataInvalidCharReplace, errors.New("found unsupported data-character-set")
 	}
 }
 

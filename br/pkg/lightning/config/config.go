@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
@@ -94,7 +95,7 @@ const (
 	pdStores                = "/pd/api/v1/stores"
 
 	defaultMydumperDataCharacterSet       = "binary"
-	defaultMydumperDataInvalidCharReplace = '\uFFFD'
+	defaultMydumperDataInvalidCharReplace = utf8.RuneError
 )
 
 var (
@@ -266,13 +267,20 @@ type MydumperRuntime struct {
 	Filter           []string         `toml:"filter" json:"filter"`
 	FileRouters      []*FileRouteRule `toml:"files" json:"files"`
 	// Deprecated: only used to keep the compatibility.
-	NoSchema               bool             `toml:"no-schema" json:"no-schema"`
-	CaseSensitive          bool             `toml:"case-sensitive" json:"case-sensitive"`
-	StrictFormat           bool             `toml:"strict-format" json:"strict-format"`
-	DefaultFileRules       bool             `toml:"default-file-rules" json:"default-file-rules"`
-	IgnoreColumns          AllIgnoreColumns `toml:"ignore-data-columns" json:"ignore-data-columns"`
-	DataCharacterSet       string           `toml:"data-character-set" json:"data-character-set"`
-	DataInvalidCharReplace string           `toml:"data-invalid-char-replace" json:"data-invalid-char-replace"`
+	NoSchema         bool             `toml:"no-schema" json:"no-schema"`
+	CaseSensitive    bool             `toml:"case-sensitive" json:"case-sensitive"`
+	StrictFormat     bool             `toml:"strict-format" json:"strict-format"`
+	DefaultFileRules bool             `toml:"default-file-rules" json:"default-file-rules"`
+	IgnoreColumns    AllIgnoreColumns `toml:"ignore-data-columns" json:"ignore-data-columns"`
+	// DataCharacterSet is the character set of the source file. Only CSV, SQL files are supported. The following options are supported.
+	//   - utf8mb4
+	//   - GB18030
+	//   - GBK: an extension of the GB2312 character set and is also known as Code Page 936.
+	//   - binary: no attempt to convert the encoding.
+	DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
+	// DataInvalidCharReplace is the replacement characters for non-compatible characters, which shouldn't duplicate with the separators or line breaks.
+	// Changing the default value will result in increased parsing time. Non-compatible characters do not cause an increase in error.
+	DataInvalidCharReplace string `toml:"data-invalid-char-replace" json:"data-invalid-char-replace"`
 }
 
 type AllIgnoreColumns []*IgnoreColumns

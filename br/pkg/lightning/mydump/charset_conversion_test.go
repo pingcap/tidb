@@ -41,7 +41,7 @@ func (s testCharsetConvertorSuite) TestCharsetConvertor(c *C) {
 	originalUTF8Data, err := io.ReadAll(utf8Reader)
 	c.Assert(err, IsNil)
 
-	cfg := &config.MydumperRuntime{DataCharacterSet: "gb18030", DataInvalidCharReplace: string('\ufffd')}
+	cfg := &config.MydumperRuntime{DataCharacterSet: "gb18030", DataInvalidCharReplace: "\ufffd"}
 	gbkReader, err := os.Open(testGBKDataFile)
 	c.Assert(err, IsNil)
 	cc, err := mydump.NewCharsetConvertor(cfg, gbkReader)
@@ -53,7 +53,7 @@ func (s testCharsetConvertorSuite) TestCharsetConvertor(c *C) {
 }
 
 func (s testCharsetConvertorSuite) TestInvalidCharReplace(c *C) {
-	dataInvalidCharReplace := string('\uEE00')
+	dataInvalidCharReplace := "😅😅😅"
 	// 你好 in gb18030
 	normalCharGB18030 := []byte{0xC4, 0xE3, 0xBA, 0xC3}
 	// 你好 in utf8mb4
@@ -63,7 +63,7 @@ func (s testCharsetConvertorSuite) TestInvalidCharReplace(c *C) {
 	// Input: 你好invalid char你好
 	inputData := append(normalCharGB18030, invalidChar...)
 	inputData = append(inputData, normalCharGB18030...)
-	// Expect: 你好dataInvalidCharReplace你好
+	// Expect: 你好😅😅😅你好
 	expectedData := append(normalCharUTF8MB4, []byte(dataInvalidCharReplace)...)
 	expectedData = append(expectedData, normalCharUTF8MB4...)
 
