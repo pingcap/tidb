@@ -1731,14 +1731,14 @@ func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("insert into t1(id) values (1);")
-	tk.MustExec("alter table t1 add column update_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP();")
 	tk.MustExec("alter table t1 add column update_time3 datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3);")
 	tk.MustExec("alter table t1 add column update_time6 datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6);")
 	rows := tk.MustQuery("select * from t1").Rows()
 	c.Assert(rows[0][0], Equals, "1")
-	c.Assert(len(rows[0][1].(string)), Equals, 19)
-	c.Assert(len(rows[0][2].(string)), Equals, 23)
-	c.Assert(len(rows[0][3].(string)), Equals, 26)
+	updateTime3 := rows[0][1].(string)
+	c.Assert(updateTime3[len(updateTime3)-3:], Not(Equals), "000")
+	updateTime6 := rows[0][2].(string)
+	c.Assert(updateTime6[len(updateTime6)-6:], Not(Equals), "000000")
 }
 
 func (s *testIntegrationSuite) assertWarningExec(tk *testkit.TestKit, c *C, sql string, expectedWarn *terror.Error) {
