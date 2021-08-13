@@ -77,8 +77,8 @@ const (
 )
 
 const (
-	taskMetaTableName  = "task_meta"
-	tableMetaTableName = "table_meta"
+	TaskMetaTableName  = "task_meta"
+	TableMetaTableName = "table_meta"
 	// CreateTableMetadataTable stores the per-table sub jobs information used by TiDB Lightning
 	CreateTableMetadataTable = `CREATE TABLE IF NOT EXISTS %s (
 		task_id 			BIGINT(20) UNSIGNED,
