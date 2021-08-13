@@ -287,8 +287,8 @@ func ValidateFileRewriteRule(file *backuppb.File, rewriteRules *RewriteRules) er
 		)
 		return errors.Annotate(berrors.ErrRestoreInvalidRewrite, "cannot find rewrite rule")
 	}
-	// the new prefix of the start rule must equal or less than the new prefix of the end rule
-	if bytes.Compare(startRule.GetNewKeyPrefix(), endRule.GetNewKeyPrefix()) > 0 {
+	// the rewrite rule of the start key and the end key should be equaled.
+	if bytes.Compare(startRule.GetNewKeyPrefix(), endRule.GetNewKeyPrefix()) != 0 {
 		startTableID := tablecodec.DecodeTableID(file.GetStartKey())
 		endTableID := tablecodec.DecodeTableID(file.GetEndKey())
 		log.Error(
@@ -336,15 +336,6 @@ func matchOldPrefix(key []byte, rewriteRules *RewriteRules) *import_sstpb.Rewrit
 	return nil
 }
 
-func matchNewPrefix(key []byte, rewriteRules *RewriteRules) *import_sstpb.RewriteRule {
-	for _, rule := range rewriteRules.Data {
-		if bytes.HasPrefix(key, rule.GetNewKeyPrefix()) {
-			return rule
-		}
-	}
-	return nil
-}
-
 func truncateTS(key []byte) []byte {
 	if len(key) == 0 {
 		return nil
@@ -374,6 +365,16 @@ func SplitRanges(
 			updateCh.Inc()
 		}
 	})
+}
+
+func findMatchedRewriteRule(file *backuppb.File, rules *RewriteRules) *import_sstpb.RewriteRule {
+	startID := tablecodec.DecodeTableID(file.GetStartKey())
+	endID := tablecodec.DecodeTableID(file.GetEndKey())
+	if startID != endID {
+		return nil
+	}
+	_, rule := rewriteRawKey(file.StartKey, rules)
+	return rule
 }
 
 func rewriteFileKeys(file *backuppb.File, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {

@@ -326,14 +326,11 @@ func PaginateScanRegion(
 	return regions, nil
 }
 
-// getSplitKeys checks if the regions should be split by the new prefix of the rewrites rule and the end key of
+// getSplitKeys checks if the regions should be split by the end key of
 // the ranges, groups the split keys by region id.
 func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*RegionInfo) map[uint64][][]byte {
 	splitKeyMap := make(map[uint64][][]byte)
 	checkKeys := make([][]byte, 0)
-	for _, rule := range rewriteRules.Data {
-		checkKeys = append(checkKeys, rule.GetNewKeyPrefix())
-	}
 	for _, rg := range ranges {
 		checkKeys = append(checkKeys, rg.EndKey)
 	}
