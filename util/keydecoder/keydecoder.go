@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
@@ -41,6 +42,8 @@ type DecodedKey struct {
 	DbName            string     `json:"db_name,omitempty"`
 	TableID           int64      `json:"table_id"`
 	TableName         string     `json:"table_name,omitempty"`
+	PartitionID       int64      `json:"partition_id,omitempty"`
+	PartitionName     string     `json:"partition_name,omitempty"`
 	HandleType        HandleType `json:"handle_type,omitempty"`
 	IsPartitionHandle bool       `json:"partition_handle,omitempty"`
 	HandleValue       string     `json:"handle_value,omitempty"`
@@ -60,7 +63,6 @@ func handleType(handle kv.Handle) HandleType {
 		return handleType(h.Handle)
 	} else {
 		logutil.BgLogger().Warn("Unexpected kv.Handle type",
-			zap.Any("handle", handle),
 			zap.String("handle Type", fmt.Sprintf("%T", handle)),
 		)
 	}
@@ -73,13 +75,13 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 	if !tablecodec.IsRecordKey(key) && !tablecodec.IsIndexKey(key) {
 		return result, errors.Errorf("Unknown key type for key %v", key)
 	}
-	tableID, indexID, isRecordKey, err := tablecodec.DecodeKeyHead(key)
+	tableOrPartitionID, indexID, isRecordKey, err := tablecodec.DecodeKeyHead(key)
 	if err != nil {
 		return result, err
 	}
-	result.TableID = tableID
+	result.TableID = tableOrPartitionID
 
-	table, tableFound := infoschema.TableByID(tableID)
+	table, tableFound := infoschema.TableByID(tableOrPartitionID)
 
 	// The schema may have changed since when the key is get.
 	// Then we just omit the table name and show the table ID only.
@@ -89,21 +91,42 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 
 		schema, ok := infoschema.SchemaByTable(table.Meta())
 		if !ok {
-			logutil.BgLogger().Warn("no schema associated with table found in infoschema", zap.Int64("tableID", tableID), zap.Error(err))
+			logutil.BgLogger().Warn("no schema associated with table found in infoschema", zap.Int64("tableOrPartitionID", tableOrPartitionID))
 			return result, nil
 		}
 		result.DbID = schema.ID
 		result.DbName = schema.Name.O
 	} else {
-		logutil.BgLogger().Warn("no table found in infoschema", zap.Int64("tableID", tableID), zap.Error(err))
+		// If the table of this ID is not found, try to find it as a partition.
+		var schema *model.DBInfo
+		var partition *model.PartitionDefinition
+		table, schema, partition = infoschema.FindTableByPartitionID(tableOrPartitionID)
+		if table != nil {
+			tableFound = true
+			result.TableID = table.Meta().ID
+			result.TableName = table.Meta().Name.O
+		}
+		if schema != nil {
+			result.DbID = schema.ID
+			result.DbName = schema.Name.O
+		}
+		if partition != nil {
+			result.PartitionID = partition.ID
+			result.PartitionName = partition.Name.O
+		}
+		if !tableFound {
+			logutil.BgLogger().Warn("no table found in infoschema", zap.Int64("tableOrPartitionID", tableOrPartitionID))
+		}
 	}
 	if isRecordKey {
 		_, handle, err := tablecodec.DecodeRecordKey(key)
 		if err != nil {
-			logutil.BgLogger().Warn("decode record key failed", zap.Int64("tableID", tableID), zap.Error(err))
-			return result, errors.Errorf("cannot decode record key of table %d", tableID)
+			logutil.BgLogger().Warn("decode record key failed", zap.Int64("tableOrPartitionID", tableOrPartitionID), zap.Error(err))
+			return result, errors.Errorf("cannot decode record key of table %d", tableOrPartitionID)
 		}
 		result.HandleType = handleType(handle)
+		// The PartitionHandle is used by the Global Index feature for partition tables, which is currently an
+		// unfinished feature. So we don't care about it much for now.
 		_, result.IsPartitionHandle = handle.(kv.PartitionHandle)
 		result.HandleValue = handle.String()
 	} else {
