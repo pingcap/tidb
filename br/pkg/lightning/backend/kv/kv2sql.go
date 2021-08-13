@@ -14,6 +14,8 @@
 package kv
 
 import (
+	"fmt"
+
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/kv"
@@ -26,6 +28,10 @@ import (
 type TableKVDecoder struct {
 	tbl table.Table
 	se  *session
+}
+
+func (t *TableKVDecoder) Name() string {
+	return t.tbl.Meta().Name.O
 }
 
 func (t *TableKVDecoder) DecodeHandleFromTable(key []byte) (kv.Handle, error) {
@@ -44,6 +50,17 @@ func (t *TableKVDecoder) DecodeHandleFromIndex(indexInfo *model.IndexInfo, key [
 // DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
 func (t *TableKVDecoder) DecodeRawRowData(h kv.Handle, value []byte) ([]types.Datum, map[int64]types.Datum, error) {
 	return tables.DecodeRawRowData(t.se, t.tbl.Meta(), h, t.tbl.Cols(), value)
+}
+
+func (t *TableKVDecoder) DecodeRawRowDataAsStr(h kv.Handle, value []byte) (res string) {
+	row, _, err := t.DecodeRawRowData(h, value)
+	if err == nil {
+		res, err = types.DatumsToString(row, true)
+		if err == nil {
+			return
+		}
+	}
+	return fmt.Sprintf("/* ERROR: %s */", err)
 }
 
 func NewTableKVDecoder(tbl table.Table, options *SessionOptions) (*TableKVDecoder, error) {

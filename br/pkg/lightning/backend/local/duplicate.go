@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -59,8 +60,7 @@ type DuplicateRequest struct {
 }
 
 type DuplicateManager struct {
-	// TODO: Remote the member `db` and store the result in another place.
-	db                *pebble.DB
+	errorMgr          *errormanager.ErrorManager
 	splitCli          restore.SplitClient
 	regionConcurrency int
 	connPool          common.GRPCConns
@@ -69,14 +69,84 @@ type DuplicateManager struct {
 	keyAdapter        KeyAdapter
 }
 
+type pendingIndexHandles struct {
+	// all 4 slices should have exactly the same length.
+	dataConflictInfos []errormanager.DataConflictInfo
+	indexNames        []string
+	handles           []tidbkv.Handle
+	rawHandles        [][]byte
+}
+
+func makePendingIndexHandlesWithCapacity(cap int) pendingIndexHandles {
+	return pendingIndexHandles{
+		dataConflictInfos: make([]errormanager.DataConflictInfo, 0, cap),
+		indexNames:        make([]string, 0, cap),
+		handles:           make([]tidbkv.Handle, 0, cap),
+		rawHandles:        make([][]byte, 0, cap),
+	}
+}
+
+func (indexHandles *pendingIndexHandles) append(
+	conflictInfo errormanager.DataConflictInfo,
+	indexName string,
+	handle tidbkv.Handle,
+	rawHandle []byte,
+) {
+	indexHandles.dataConflictInfos = append(indexHandles.dataConflictInfos, conflictInfo)
+	indexHandles.indexNames = append(indexHandles.indexNames, indexName)
+	indexHandles.handles = append(indexHandles.handles, handle)
+	indexHandles.rawHandles = append(indexHandles.rawHandles, rawHandle)
+}
+
+func (indexHandles *pendingIndexHandles) appendAt(
+	other *pendingIndexHandles,
+	i int,
+) {
+	indexHandles.append(
+		other.dataConflictInfos[i],
+		other.indexNames[i],
+		other.handles[i],
+		other.rawHandles[i],
+	)
+}
+
+func (indexHandles *pendingIndexHandles) extend(other *pendingIndexHandles) {
+	indexHandles.dataConflictInfos = append(indexHandles.dataConflictInfos, other.dataConflictInfos...)
+	indexHandles.indexNames = append(indexHandles.indexNames, other.indexNames...)
+	indexHandles.handles = append(indexHandles.handles, other.handles...)
+	indexHandles.rawHandles = append(indexHandles.rawHandles, other.rawHandles...)
+}
+
+func (indexHandles *pendingIndexHandles) truncate() {
+	indexHandles.dataConflictInfos = indexHandles.dataConflictInfos[:0]
+	indexHandles.indexNames = indexHandles.indexNames[:0]
+	indexHandles.handles = indexHandles.handles[:0]
+	indexHandles.rawHandles = indexHandles.rawHandles[:0]
+}
+
+func (indexHandles *pendingIndexHandles) Len() int {
+	return len(indexHandles.rawHandles)
+}
+
+func (indexHandles *pendingIndexHandles) Less(i, j int) bool {
+	return bytes.Compare(indexHandles.rawHandles[i], indexHandles.rawHandles[j]) < 0
+}
+
+func (indexHandles *pendingIndexHandles) Swap(i, j int) {
+	indexHandles.handles[i], indexHandles.handles[j] = indexHandles.handles[j], indexHandles.handles[i]
+	indexHandles.indexNames[i], indexHandles.indexNames[j] = indexHandles.indexNames[j], indexHandles.indexNames[i]
+	indexHandles.dataConflictInfos[i], indexHandles.dataConflictInfos[j] = indexHandles.dataConflictInfos[j], indexHandles.dataConflictInfos[i]
+	indexHandles.rawHandles[i], indexHandles.rawHandles[j] = indexHandles.rawHandles[j], indexHandles.rawHandles[i]
+}
+
 func NewDuplicateManager(
-	db *pebble.DB,
+	errorMgr *errormanager.ErrorManager,
 	splitCli restore.SplitClient,
 	ts uint64,
 	tls *common.TLS,
 	regionConcurrency int) (*DuplicateManager, error) {
 	return &DuplicateManager{
-		db:                db,
+		errorMgr:          errorMgr,
 		tls:               tls,
 		regionConcurrency: regionConcurrency,
 		splitCli:          splitCli,
@@ -126,7 +196,7 @@ func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
 		return err
 	}
 	tryTimes := 0
-	indexHandles := make([][]byte, 0)
+	indexHandles := makePendingIndexHandlesWithCapacity(0)
 	for {
 		if len(regions) == 0 {
 			break
@@ -166,12 +236,12 @@ func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
 			}
 		}
 
-		if len(indexHandles) > 0 {
-			handles := manager.getValues(ctx, indexHandles)
-			if len(handles) > 0 {
+		if indexHandles.Len() > 0 {
+			handles := manager.getValues(ctx, decoder, indexHandles)
+			if handles.Len() > 0 {
 				indexHandles = handles
 			} else {
-				indexHandles = indexHandles[:0]
+				indexHandles.truncate()
 			}
 		}
 
@@ -225,8 +295,8 @@ func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
 				if err != nil {
 					return err
 				}
-				if len(handles) > 0 {
-					indexHandles = append(indexHandles, handles...)
+				if handles.Len() > 0 {
+					indexHandles.extend(&handles)
 				}
 			}
 		}
@@ -246,56 +316,52 @@ func (manager *DuplicateManager) storeDuplicateData(
 	resp *import_sstpb.DuplicateDetectResponse,
 	decoder *kv.TableKVDecoder,
 	req *DuplicateRequest,
-) ([][]byte, error) {
-	opts := &pebble.WriteOptions{Sync: false}
+) (pendingIndexHandles, error) {
 	var err error
-	maxKeyLen := 0
+	var dataConflictInfos []errormanager.DataConflictInfo
+	indexHandles := makePendingIndexHandlesWithCapacity(len(resp.Pairs))
 	for _, kv := range resp.Pairs {
-		l := manager.keyAdapter.EncodedLen(kv.Key)
-		if l > maxKeyLen {
-			maxKeyLen = l
+		logger := log.With(
+			logutil.Key("key", kv.Key), logutil.Key("value", kv.Value),
+			zap.Uint64("commit-ts", kv.CommitTs))
+
+		var h tidbkv.Handle
+		if req.indexInfo != nil {
+			h, err = decoder.DecodeHandleFromIndex(req.indexInfo, kv.Key, kv.Value)
+		} else {
+			h, err = decoder.DecodeHandleFromTable(kv.Key)
 		}
-	}
-	buf := make([]byte, maxKeyLen)
-	for i := 0; i < maxRetryTimes; i++ {
-		b := manager.db.NewBatch()
-		handles := make([][]byte, 0)
-		for _, kv := range resp.Pairs {
-			if req.indexInfo != nil {
-				h, err := decoder.DecodeHandleFromIndex(req.indexInfo, kv.Key, kv.Value)
-				if err != nil {
-					log.L().Error("decode handle error from index",
-						zap.Error(err), logutil.Key("key", kv.Key),
-						logutil.Key("value", kv.Value), zap.Uint64("commit-ts", kv.CommitTs))
-					continue
-				}
-				key := decoder.EncodeHandleKey(h)
-				handles = append(handles, key)
-			} else {
-				encodedKey := manager.keyAdapter.Encode(buf, kv.Key, 0, int64(kv.CommitTs))
-				b.Set(encodedKey, kv.Value, opts)
-			}
-		}
-		err = b.Commit(opts)
 		if err != nil {
+			logger.Error("decode handle error", log.ShortError(err))
 			continue
 		}
-		b.Close()
-		if len(handles) == 0 {
-			return handles, nil
+
+		conflictInfo := errormanager.DataConflictInfo{
+			RawKey:   kv.Key,
+			RawValue: kv.Value,
+			KeyData:  h.String(),
 		}
-		return manager.getValues(ctx, handles), nil
+
+		if req.indexInfo != nil {
+			indexHandles.append(
+				conflictInfo,
+				req.indexInfo.Name.O,
+				h, decoder.EncodeHandleKey(h))
+		} else {
+			conflictInfo.Row = decoder.DecodeRawRowDataAsStr(h, kv.Value)
+			dataConflictInfos = append(dataConflictInfos, conflictInfo)
+		}
 	}
-	return nil, err
-}
 
-func (manager *DuplicateManager) ReportDuplicateData() error {
-	return nil
-}
+	err = manager.errorMgr.RecordDataConflictError(ctx, log.L(), decoder.Name(), dataConflictInfos)
+	if err != nil {
+		return indexHandles, err
+	}
 
-func (manager *DuplicateManager) RepairDuplicateData() error {
-	// TODO
-	return nil
+	if len(indexHandles.dataConflictInfos) == 0 {
+		return indexHandles, nil
+	}
+	return manager.getValues(ctx, decoder, indexHandles), nil
 }
 
 // Collect rows by read the index in db.
@@ -310,7 +376,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 	if err != nil {
 		return err
 	}
-	handles := make([][]byte, 0)
+	handles := makePendingIndexHandlesWithCapacity(0)
 	allRanges := make([]tidbkv.KeyRange, 0)
 	for _, indexInfo := range tbl.Meta().Indices {
 		if indexInfo.State != model.StatePublic {
@@ -352,28 +418,35 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 						logutil.Key("value", value))
 					continue
 				}
-				key := decoder.EncodeHandleKey(h)
-				handles = append(handles, key)
-				if len(handles) > maxGetRequestKeyCount {
-					handles = manager.getValues(ctx, handles)
+				handles.append(
+					errormanager.DataConflictInfo{
+						RawKey:   rawKey,
+						RawValue: value,
+						KeyData:  h.String(),
+					},
+					indexInfo.Name.O,
+					h,
+					decoder.EncodeHandleKey(h))
+				if handles.Len() > maxGetRequestKeyCount {
+					handles = manager.getValues(ctx, decoder, handles)
 				}
 			}
-			if len(handles) > 0 {
-				handles = manager.getValues(ctx, handles)
+			if handles.Len() > 0 {
+				handles = manager.getValues(ctx, decoder, handles)
 			}
-			if len(handles) == 0 {
+			if handles.Len() == 0 {
 				db.DeleteRange(r.StartKey, r.EndKey, &pebble.WriteOptions{Sync: false})
 			}
 			iter.Close()
 		}
 	}
-	if len(handles) == 0 {
+	if handles.Len() == 0 {
 		return nil
 	}
 
 	for i := 0; i < maxRetryTimes; i++ {
-		handles = manager.getValues(ctx, handles)
-		if len(handles) == 0 {
+		handles = manager.getValues(ctx, decoder, handles)
+		if handles.Len() == 0 {
 			for _, r := range allRanges {
 				db.DeleteRange(r.StartKey, r.EndKey, &pebble.WriteOptions{Sync: false})
 			}
@@ -384,15 +457,14 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 
 func (manager *DuplicateManager) getValues(
 	ctx context.Context,
-	handles [][]byte,
-) [][]byte {
-	retryHandles := make([][]byte, 0)
-	sort.Slice(handles, func(i, j int) bool {
-		return bytes.Compare(handles[i], handles[j]) < 0
-	})
-	l := len(handles)
-	startKey := codec.EncodeBytes([]byte{}, handles[0])
-	endKey := codec.EncodeBytes([]byte{}, nextKey(handles[l-1]))
+	decoder *kv.TableKVDecoder,
+	handles pendingIndexHandles,
+) pendingIndexHandles {
+	sort.Sort(&handles)
+
+	l := handles.Len()
+	startKey := codec.EncodeBytes([]byte{}, handles.rawHandles[0])
+	endKey := codec.EncodeBytes([]byte{}, nextKey(handles.rawHandles[l-1]))
 	regions, err := paginateScanRegion(ctx, manager.splitCli, startKey, endKey, scanRegionLimit)
 	if err != nil {
 		log.L().Error("scan regions errors", zap.Error(err))
@@ -400,28 +472,30 @@ func (manager *DuplicateManager) getValues(
 	}
 	startIdx := 0
 	endIdx := 0
-	batch := make([][]byte, 0)
+	retryHandles := makePendingIndexHandlesWithCapacity(0)
+	batch := makePendingIndexHandlesWithCapacity(0)
 	for _, region := range regions {
 		if startIdx >= l {
 			break
 		}
-		handleKey := codec.EncodeBytes([]byte{}, handles[startIdx])
+		handleKey := codec.EncodeBytes([]byte{}, handles.rawHandles[startIdx])
 		if bytes.Compare(handleKey, region.Region.EndKey) >= 0 {
+			// TODO shouldn't we use `sort.Search` for these 🤔
 			continue
 		}
 		endIdx = startIdx
 		for endIdx < l {
-			handleKey := codec.EncodeBytes([]byte{}, handles[endIdx])
+			handleKey := codec.EncodeBytes([]byte{}, handles.rawHandles[endIdx])
 			if bytes.Compare(handleKey, region.Region.EndKey) < 0 {
-				batch = append(batch, handles[endIdx])
+				batch.appendAt(&handles, endIdx)
 				endIdx++
 			} else {
 				break
 			}
 		}
-		if err := manager.getValuesFromRegion(ctx, region, batch); err != nil {
+		if err := manager.getValuesFromRegion(ctx, region, decoder, batch); err != nil {
 			log.L().Error("failed to collect values from TiKV by handle, we will retry it again", zap.Error(err))
-			retryHandles = append(retryHandles, batch...)
+			retryHandles.extend(&batch)
 		}
 		startIdx = endIdx
 	}
@@ -431,7 +505,8 @@ func (manager *DuplicateManager) getValues(
 func (manager *DuplicateManager) getValuesFromRegion(
 	ctx context.Context,
 	region *restore.RegionInfo,
-	handles [][]byte,
+	decoder *kv.TableKVDecoder,
+	handles pendingIndexHandles,
 ) error {
 	kvclient, err := manager.getKvClient(ctx, region.Leader)
 	if err != nil {
@@ -445,7 +520,7 @@ func (manager *DuplicateManager) getValuesFromRegion(
 
 	req := &kvrpcpb.BatchGetRequest{
 		Context: reqCtx,
-		Keys:    handles,
+		Keys:    handles.rawHandles,
 		Version: manager.ts,
 	}
 	resp, err := kvclient.KvBatchGet(ctx, req)
@@ -459,39 +534,22 @@ func (manager *DuplicateManager) getValuesFromRegion(
 		return errors.Errorf("key error")
 	}
 
-	maxKeyLen := 0
-	for _, kv := range resp.Pairs {
-		l := manager.keyAdapter.EncodedLen(kv.Key)
-		if l > maxKeyLen {
-			maxKeyLen = l
-		}
-	}
-	buf := make([]byte, maxKeyLen)
-
 	log.L().Error("get keys", zap.Int("key size", len(resp.Pairs)))
-	for i := 0; i < maxRetryTimes; i++ {
-		b := manager.db.NewBatch()
-		opts := &pebble.WriteOptions{Sync: false}
-		for _, kv := range resp.Pairs {
-			encodedKey := manager.keyAdapter.Encode(buf, kv.Key, 0, 0)
-			b.Set(encodedKey, kv.Value, opts)
-			if b.Count() > maxWriteBatchCount {
-				err = b.Commit(opts)
-				if err != nil {
-					break
-				} else {
-					b.Reset()
-				}
-			}
-		}
-		if err == nil {
-			err = b.Commit(opts)
-		}
-		if err == nil {
-			return nil
-		}
+
+	rawRows := make([][]byte, 0, len(resp.Pairs))
+	for i, kv := range resp.Pairs {
+		rawRows = append(rawRows, kv.Value)
+		handles.dataConflictInfos[i].Row = decoder.DecodeRawRowDataAsStr(handles.handles[i], kv.Value)
 	}
-	return err
+
+	return manager.errorMgr.RecordIndexConflictError(
+		ctx, log.L(),
+		decoder.Name(),
+		handles.indexNames,
+		handles.dataConflictInfos,
+		handles.rawHandles,
+		rawRows,
+	)
 }
 
 func (manager *DuplicateManager) getDuplicateStream(ctx context.Context,

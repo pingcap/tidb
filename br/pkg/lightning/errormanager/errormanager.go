@@ -46,9 +46,38 @@ const (
 		);
 	`
 
+	createConflictErrorTable = `
+		CREATE TABLE IF NOT EXISTS %s.` + conflictErrorTableName + ` (
+			task_id     bigint NOT NULL,
+			create_time datetime(6) NOT NULL DEFAULT now(6),
+			table_name  varchar(261) NOT NULL,
+			index_name  varchar(128) NOT NULL,
+			key_data    text NOT NULL,  -- decoded from raw_key, human readable only, not for machine use
+			row         text NOT NULL,  -- decoded from raw_row, human readable only, not for machine use
+			raw_key     mediumblob NOT NULL,  -- the conflicted key
+			raw_value   mediumblob NOT NULL,  -- the value of the conflicted key
+			raw_handle  mediumblob NOT NULL,  -- the data handle derived from the conflicted key or value
+			raw_row     mediumblob NOT NULL,  -- the data retrieved from the handle
+			KEY (raw_key(64), task_id)
+		);
+	`
+
 	insertIntoTypeError = `
 		INSERT INTO %s.` + typeErrorTableName + `
-		(task_id, table_name, path, offset, error, row) VALUES (?, ?, ?, ?, ?, ?);
+		(task_id, table_name, path, offset, error, row)
+		VALUES (?, ?, ?, ?, ?, ?);
+	`
+
+	insertIntoConflictErrorData = `
+		INSERT INTO %s.` + conflictErrorTableName + `
+		(task_id, table_name, index_name, key_data, row, raw_key, raw_value, raw_handle, raw_row)
+		VALUES (?, ?, 'PRIMARY', ?, ?, ?, ?, raw_key, raw_value);
+	`
+
+	insertIntoConflictErrorIndex = `
+		INSERT INTO %s.` + conflictErrorTableName + `
+		(task_id, table_name, index_name, key_data, row, raw_key, raw_value, raw_handle, raw_row)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 )
 
@@ -87,6 +116,7 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 		{"create task info schema", createSchema},
 		{"create syntax error table", createSyntaxErrorTable},
 		{"create type error table", createTypeErrorTable},
+		{"create conflict error table", createConflictErrorTable},
 	}
 
 	for _, sql := range sqls {
@@ -141,4 +171,92 @@ func (em *ErrorManager) RecordTypeError(
 		return encodeErr
 	}
 	return nil
+}
+
+type DataConflictInfo struct {
+	RawKey   []byte
+	RawValue []byte
+	KeyData  string
+	Row      string
+}
+
+func (em *ErrorManager) RecordDataConflictError(
+	ctx context.Context,
+	logger log.Logger,
+	tableName string,
+	conflictInfos []DataConflictInfo,
+) error {
+	if em.db == nil {
+		return nil
+	}
+
+	exec := common.SQLWithRetry{
+		DB:           em.db,
+		Logger:       logger,
+		HideQueryLog: redact.NeedRedact(),
+	}
+	return exec.Transact(ctx, "insert data conflict error record", func(c context.Context, txn *sql.Tx) error {
+		stmt, err := txn.PrepareContext(c, fmt.Sprintf(insertIntoConflictErrorData, em.schemaEscaped))
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+		for _, conflictInfo := range conflictInfos {
+			_, err = stmt.ExecContext(c,
+				em.taskID,
+				tableName,
+				conflictInfo.KeyData,
+				conflictInfo.Row,
+				conflictInfo.RawKey,
+				conflictInfo.RawValue,
+			)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (em *ErrorManager) RecordIndexConflictError(
+	ctx context.Context,
+	logger log.Logger,
+	tableName string,
+	indexNames []string,
+	conflictInfos []DataConflictInfo,
+	rawHandles, rawRows [][]byte,
+) error {
+	if em.db == nil {
+		return nil
+	}
+
+	exec := common.SQLWithRetry{
+		DB:           em.db,
+		Logger:       logger,
+		HideQueryLog: redact.NeedRedact(),
+	}
+	return exec.Transact(ctx, "insert index conflict error record", func(c context.Context, txn *sql.Tx) error {
+		stmt, err := txn.PrepareContext(c, fmt.Sprintf(insertIntoConflictErrorIndex, em.schemaEscaped))
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+		for i, conflictInfo := range conflictInfos {
+			_, err = stmt.ExecContext(c,
+				em.taskID,
+				tableName,
+				indexNames[i],
+				conflictInfo.KeyData,
+				conflictInfo.Row,
+				conflictInfo.RawKey,
+				conflictInfo.RawValue,
+				rawHandles[i],
+				rawRows[i],
+			)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
