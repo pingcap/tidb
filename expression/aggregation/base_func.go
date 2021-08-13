@@ -411,6 +411,9 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		if i == 1 && (a.Name == ast.WindowFuncLead || a.Name == ast.WindowFuncLag || a.Name == ast.WindowFuncNthValue) {
 			continue
 		}
+		if a.Args[i].GetType().Tp == mysql.TypeNull {
+			continue
+		}
 		a.Args[i] = castFunc(ctx, a.Args[i])
 		if a.Name != ast.AggFuncAvg && a.Name != ast.AggFuncSum {
 			continue
