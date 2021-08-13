@@ -1403,7 +1403,7 @@ func datumToStringNoErr(d types.Datum) string {
 	if v, err := d.ToString(); err == nil {
 		return v
 	}
-	return ""
+	return fmt.Sprintf("%v", d.GetValue())
 }
 
 func (w *updateColumnWorker) cleanRowMap() {
