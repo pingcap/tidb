@@ -1593,10 +1593,12 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	}
 	if p.LastSnapshotTS != 0 {
 		is, err := p.ctx.GetSnapshotInfoSchema(p.LastSnapshotTS)
-		p.InfoSchema = is.(infoschema.InfoSchema)
 		p.err = err
 		if p.err != nil {
 			return
+		}
+		if is != nil {
+			p.InfoSchema = is.(infoschema.InfoSchema)
 		}
 	}
 	if p.flag&inPrepare == 0 {

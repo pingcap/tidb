@@ -1339,11 +1339,6 @@ func (s *SessionVars) InTxn() bool {
 	return s.GetStatusFlag(mysql.ServerStatusInTrans)
 }
 
-// LocalTemporaryTableExists returns if there are local temporary tables in the session.
-func (s *SessionVars) LocalTemporaryTableExists() bool {
-	return s.LocalTemporaryTables != nil
-}
-
 // IsAutocommit returns if the session is set to autocommit.
 func (s *SessionVars) IsAutocommit() bool {
 	return s.GetStatusFlag(mysql.ServerStatusAutocommit)
