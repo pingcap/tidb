@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"fmt"
 	"strings"
 	"time"
 
@@ -92,19 +91,11 @@ func (rs *RegionSplitter) Split(
 	minKey := codec.EncodeBytes(sortedRanges[0].StartKey)
 	maxKey := codec.EncodeBytes(sortedRanges[len(sortedRanges)-1].EndKey)
 	for _, rule := range rewriteRules.Data {
-		if bytes.Compare(minKey, rule.GetNewKeyPrefix()) > 0 {
-			minKey = rule.GetNewKeyPrefix()
+		if bytes.Compare(minKey, codec.EncodeBytes(rule.GetNewKeyPrefix())) > 0 {
+			minKey = codec.EncodeBytes(rule.GetNewKeyPrefix())
 		}
-		if bytes.Compare(maxKey, rule.GetNewKeyPrefix()) < 0 {
-			maxKey = rule.GetNewKeyPrefix()
-		}
-	}
-	for _, rule := range rewriteRules.Data {
-		if bytes.Compare(minKey, rule.GetNewKeyPrefix()) > 0 {
-			minKey = rule.GetNewKeyPrefix()
-		}
-		if bytes.Compare(maxKey, rule.GetNewKeyPrefix()) < 0 {
-			maxKey = rule.GetNewKeyPrefix()
+		if bytes.Compare(maxKey, codec.EncodeBytes(rule.GetNewKeyPrefix())) < 0 {
+			maxKey = codec.EncodeBytes(rule.GetNewKeyPrefix())
 		}
 	}
 	interval := SplitRetryInterval
@@ -119,9 +110,11 @@ SplitRegions:
 			log.Warn("split regions cannot scan any region")
 			return nil
 		}
-		splitKeyMap, err := getSplitKeys(rewriteRules, sortedRanges, regions)
-		if err != nil {
-			log.Warn("get split key meet error", logutil.ShortError(err))
+		var splitKeyMap map[uint64][][]byte
+		splitKeyMap, errSplit = getSplitKeys(rewriteRules, sortedRanges, regions)
+		if errSplit != nil {
+			log.Warn("get split key meet error", logutil.ShortError(errSplit), logutil.Key("start", minKey), logutil.Key("end", maxKey))
+			// sleep a contant duration since the hole won't appear for a too long time.
 			time.Sleep(time.Second)
 			continue SplitRegions
 		}
@@ -363,39 +356,6 @@ func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*R
 	return splitKeyMap, nil
 }
 
-// tryFindHole tries find a hole via a key given in this hole.
-// prerequest:
-//   regions is sorted.
-// e.g. give it regions = {[0,1),[1,2),[4,5)} and key = 3, it returns {[1,2) and [4,5)} via bisection searching.
-func tryFindHole(regions []*RegionInfo, key []byte) (left, right *RegionInfo) {
-	if len(regions) == 0 {
-		return
-	}
-	ptr := len(regions) / 2
-	// at left of the current region.
-	if bytes.Compare(regions[ptr].Region.StartKey, key) < 0 {
-		// if current is the leftmost region.
-		if ptr == 0 {
-			right = regions[ptr]
-			return
-		}
-		return tryFindHole(regions[:ptr], key)
-	}
-	// already the last one, and the hole should at pass the end.
-	if ptr == len(regions)-1 {
-		left = regions[ptr]
-		return
-	}
-	// the current key is the hole!
-	if !bytes.Equal(regions[ptr].Region.EndKey, regions[ptr].Region.StartKey) {
-		left = regions[ptr]
-		right = regions[ptr+1]
-		return
-	}
-	// find hole at the remaining regions.
-	return tryFindHole(regions[ptr+1:], key)
-}
-
 // NeedSplit checks whether a key is necessary to split, if true returns the split region.
 func NeedSplit(splitKey []byte, regions []*RegionInfo) (*RegionInfo, error) {
 	// If splitKey is the max key.
@@ -404,8 +364,9 @@ func NeedSplit(splitKey []byte, regions []*RegionInfo) (*RegionInfo, error) {
 	}
 	splitKey = codec.EncodeBytes(splitKey)
 	for _, region := range regions {
-		// If splitKey is the boundary of the region
-		if bytes.Equal(splitKey, region.Region.GetStartKey()) {
+		// If splitKey is the boundary of the region,
+		// both start key and end key (for being the end key of some region imples being the start key of another region.)
+		if bytes.Equal(splitKey, region.Region.GetStartKey()) || bytes.Equal(splitKey, region.Region.GetEndKey()) {
 			log.Info("skipping split region because already split", logutil.Key("key", splitKey))
 			return nil, nil
 		}
@@ -414,23 +375,16 @@ func NeedSplit(splitKey []byte, regions []*RegionInfo) (*RegionInfo, error) {
 			return region, nil
 		}
 	}
-	left, right := tryFindHole(regions, splitKey)
 	log.Warn("skipping split region because split key out of regions, this would probably be a bug",
 		logutil.Key("key", splitKey),
 	)
+	// zap.DebugLevel == -1, the lower the level being, the verboser the log becoming.
 	if log.GetLevel() <= zap.DebugLevel {
 		for _, region := range regions {
 			log.Debug("on region", logutil.Key("key", splitKey), logutil.Region(region.Region))
 		}
 	}
-	leftKey, rightKey := "0", "+inf"
-	if left != nil {
-		leftKey = fmt.Sprintf("%X", left.Region.GetEndKey())
-	}
-	if right != nil {
-		rightKey = fmt.Sprintf("%X", right.Region.GetEndKey())
-	}
-	return nil, errors.Annotatef(berrors.ErrHoleInKeySpace, "hole: [%s, %s)", leftKey, rightKey)
+	return nil, errors.Annotatef(berrors.ErrHoleInKeySpace, "when seeking key: %X", splitKey)
 }
 
 func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *sst.RewriteRule) {
