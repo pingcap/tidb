@@ -92,6 +92,9 @@ const (
 	maxRetryTimes           = 4
 	defaultRetryBackoffTime = 100 * time.Millisecond
 	pdStores                = "/pd/api/v1/stores"
+
+	defaultMydumperDataCharacterSet       = "binary"
+	defaultMydumperDataInvalidCharReplace = '\uFFFD'
 )
 
 var (
@@ -263,11 +266,13 @@ type MydumperRuntime struct {
 	Filter           []string         `toml:"filter" json:"filter"`
 	FileRouters      []*FileRouteRule `toml:"files" json:"files"`
 	// Deprecated: only used to keep the compatibility.
-	NoSchema         bool             `toml:"no-schema" json:"no-schema"`
-	CaseSensitive    bool             `toml:"case-sensitive" json:"case-sensitive"`
-	StrictFormat     bool             `toml:"strict-format" json:"strict-format"`
-	DefaultFileRules bool             `toml:"default-file-rules" json:"default-file-rules"`
-	IgnoreColumns    AllIgnoreColumns `toml:"ignore-data-columns" json:"ignore-data-columns"`
+	NoSchema               bool             `toml:"no-schema" json:"no-schema"`
+	CaseSensitive          bool             `toml:"case-sensitive" json:"case-sensitive"`
+	StrictFormat           bool             `toml:"strict-format" json:"strict-format"`
+	DefaultFileRules       bool             `toml:"default-file-rules" json:"default-file-rules"`
+	IgnoreColumns          AllIgnoreColumns `toml:"ignore-data-columns" json:"ignore-data-columns"`
+	DataCharacterSet       string           `toml:"data-character-set" json:"data-character-set"`
+	DataInvalidCharReplace string           `toml:"data-invalid-char-replace" json:"data-invalid-char-replace"`
 }
 
 type AllIgnoreColumns []*IgnoreColumns
@@ -308,6 +313,10 @@ type FileRouteRule struct {
 	Type        string `json:"type" toml:"type" yaml:"type"`
 	Key         string `json:"key" toml:"key" yaml:"key"`
 	Compression string `json:"compression" toml:"compression" yaml:"compression"`
+	// TODO: DataCharacterSet here can overide the same field in [mydumper] with a higher level.
+	// This could provide users a more flexable usage to configure different files with
+	// different data charsets.
+	// DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
 }
 
 type TikvImporter struct {
@@ -426,9 +435,11 @@ func NewConfig() *Config {
 				BackslashEscape: true,
 				TrimLastSep:     false,
 			},
-			StrictFormat:  false,
-			MaxRegionSize: MaxRegionSize,
-			Filter:        DefaultFilter,
+			StrictFormat:           false,
+			MaxRegionSize:          MaxRegionSize,
+			Filter:                 DefaultFilter,
+			DataCharacterSet:       defaultMydumperDataCharacterSet,
+			DataInvalidCharReplace: string(defaultMydumperDataInvalidCharReplace),
 		},
 		TikvImporter: TikvImporter{
 			Backend:         "",

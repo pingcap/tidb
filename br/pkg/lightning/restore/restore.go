@@ -23,7 +23,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -1901,7 +1900,10 @@ func newChunkRestore(
 
 	// Don't do the conversion if it's not the type supportted.
 	if chunk.FileMeta.Type == mydump.SourceTypeCSV || chunk.FileMeta.Type == mydump.SourceTypeSQL {
-		reader = mydump.NewCharsetConvertor(mydump.BINARY, utf8.RuneError, reader)
+		reader, err = mydump.NewCharsetConvertor(&cfg.Mydumper, reader)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	var parser mydump.Parser
