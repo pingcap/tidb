@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -247,17 +248,36 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 }
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
-	var charOpt *ast.CharsetOpt
+	var opt *ast.CharsetOpt
 	var directPlacementOpts *model.PlacementSettings
 	var placementPolicyRef *model.PolicyRefInfo
+	var err error
+	sessionVars := e.ctx.GetSessionVars()
+
+	// If no charset and/or collation is specified use collation_server and character_set_server
+	opt = &ast.CharsetOpt{}
+	if sessionVars.GlobalVarsAccessor != nil {
+		opt.Col, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CollationServer)
+		if err != nil {
+			logutil.BgLogger().Warn("Failed to get server collation", zap.Error(err))
+		}
+		opt.Chs, err = variable.GetSessionOrGlobalSystemVar(sessionVars, variable.CharacterSetServer)
+		if err != nil {
+			logutil.BgLogger().Warn("Failed to get server character set", zap.Error(err))
+		}
+	}
+
+	explicitCharset := false
+	explicitCollation := false
 	if len(s.Options) != 0 {
-		charOpt = &ast.CharsetOpt{}
 		for _, val := range s.Options {
 			switch val.Tp {
 			case ast.DatabaseOptionCharset:
-				charOpt.Chs = val.Value
+				opt.Chs = val.Value
+				explicitCharset = true
 			case ast.DatabaseOptionCollate:
-				charOpt.Col = val.Value
+				opt.Col = val.Value
+				explicitCollation = true
 			case ast.DatabaseOptionPlacementPrimaryRegion, ast.DatabaseOptionPlacementRegions,
 				ast.DatabaseOptionPlacementFollowerCount, ast.DatabaseOptionPlacementLeaderConstraints,
 				ast.DatabaseOptionPlacementLearnerCount, ast.DatabaseOptionPlacementVoterCount,
@@ -278,7 +298,27 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 			}
 		}
 	}
-	err := domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), charOpt, directPlacementOpts, placementPolicyRef)
+
+	if opt.Col != "" {
+		if coll, err := collate.GetCollationByName(opt.Col); err == nil {
+			// The collation is not valid for the specified character set.
+			// Try to remove any of them, but not if they are explicitly defined.
+			if coll.CharsetName != opt.Chs {
+				if explicitCollation && !explicitCharset {
+					// Use the explicitly set collation, not the implicit charset.
+					opt.Chs = ""
+				}
+				if !explicitCollation && explicitCharset {
+					// Use the explicitly set charset, not the (session) collation.
+					opt.Col = ""
+				}
+			}
+		} else {
+			logutil.BgLogger().Warn("Failed to get collation details", zap.String("collation", opt.Col), zap.Error(err))
+		}
+	}
+
+	err = domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt, directPlacementOpts, placementPolicyRef)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) && s.IfNotExists {
 			err = nil
