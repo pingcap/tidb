@@ -405,8 +405,7 @@ func evalAndEncode(
 		if err != nil || isNull {
 			break
 		}
-		val = string(collator.Key(val))
-		encodedBytes = codec.EncodeCompactBytes(encodedBytes, hack.Slice(val))
+		encodedBytes = codec.EncodeCompactBytes(encodedBytes, collator.Key(val))
 	default:
 		return nil, false, errors.Errorf("unsupported column type for encode %d", tp)
 	}
