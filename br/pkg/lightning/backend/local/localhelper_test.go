@@ -498,7 +498,7 @@ func (h *scanRegionEmptyHook) AfterScanRegions(res []*restore.RegionInfo, err er
 }
 
 func (s *localSuite) TestBatchSplitRegionByRangesScanFailed(c *C) {
-	s.doTestBatchSplitRegionByRanges(context.Background(), c, &scanRegionEmptyHook{}, "paginate scan region returns empty result", defaultHook{})
+	s.doTestBatchSplitRegionByRanges(context.Background(), c, &scanRegionEmptyHook{}, ".*scan region return empty result.*", defaultHook{})
 }
 
 type splitRegionEpochNotMatchHook struct {

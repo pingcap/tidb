@@ -111,12 +111,6 @@ func (local *local) SplitAndScatterRegionByRanges(
 			continue
 		}
 
-		if len(regions) == 0 {
-			log.L().Warn("paginate scan region returns empty result", logutil.Key("minKey", minKey), logutil.Key("maxKey", maxKey),
-				zap.Int("retry", i))
-			return errors.New("paginate scan region returns empty result")
-		}
-
 		log.L().Info("paginate scan region finished", logutil.Key("minKey", minKey), logutil.Key("maxKey", maxKey),
 			zap.Int("regions", len(regions)))
 
