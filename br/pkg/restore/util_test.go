@@ -265,4 +265,11 @@ func (s *testRestoreUtilSuite) TestPaginateScanRegion(c *C) {
 
 	_, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{2}, []byte{1}, 3)
 	c.Assert(err, ErrorMatches, ".*startKey >= endKey.*")
+
+	// make the regionMap losing some region, this will cause scan region check fails
+	delete(regionMap, uint64(3))
+	_, err = restore.PaginateScanRegion(
+		ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
+	c.Assert(err, ErrorMatches, ".*region endKey not equal to next region startKey.*")
+
 }

@@ -327,21 +327,22 @@ func PaginateScanRegion(
 
 	// current pd can't guarantee the consistency of returned regions
 	if len(regions) == 0 {
-		return nil, errors.New("scan region return empty result")
+		return nil, errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan region return empty result, startKey: %s, endkey: %s",
+			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 	}
 
 	if bytes.Compare(regions[0].Region.StartKey, startKey) > 0 {
-		return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "first region's startKey > startKey, startKey: %s, regionStartKey: %s",
+		return nil, errors.Annotatef(berrors.ErrPDBatchScanRegion, "first region's startKey > startKey, startKey: %s, regionStartKey: %s",
 			hex.EncodeToString(startKey), hex.EncodeToString(regions[0].Region.StartKey))
 	} else if len(regions[len(regions)-1].Region.EndKey) != 0 && bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
-		return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "last region's endKey < startKey, startKey: %s, regionStartKey: %s",
+		return nil, errors.Annotatef(berrors.ErrPDBatchScanRegion, "last region's endKey < startKey, startKey: %s, regionStartKey: %s",
 			hex.EncodeToString(endKey), hex.EncodeToString(regions[len(regions)-1].Region.EndKey))
 	}
 
 	cur := regions[0]
 	for _, r := range regions[1:] {
 		if !bytes.Equal(cur.Region.EndKey, r.Region.StartKey) {
-			return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "region endKey not equal to next region startKey, endKey: %s, startKey: %s",
+			return nil, errors.Annotatef(berrors.ErrPDBatchScanRegion, "region endKey not equal to next region startKey, endKey: %s, startKey: %s",
 				hex.EncodeToString(cur.Region.EndKey), hex.EncodeToString(r.Region.StartKey))
 		}
 		cur = r
