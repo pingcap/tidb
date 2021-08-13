@@ -105,3 +105,5 @@ require (
 replace github.com/pingcap/tipb => github.com/crazycs520/tipb v0.0.0-20210806124853-308070a785ed
 
 replace github.com/pingcap/kvproto => github.com/crazycs520/kvproto v0.0.0-20210811090023-8bfd9794848e
+
+replace github.com/tikv/client-go/v2 => /Users/cs/code/goread/src/github.com/pingcap/client-go

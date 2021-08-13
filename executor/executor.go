@@ -1882,3 +1882,9 @@ func setResourceGroupTagForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapsho
 		snapshot.SetOption(kv.ResourceGroupTag, sc.GetResourceGroupTag())
 	}
 }
+
+func setKeyLabelForSnapshot(snapshot kv.Snapshot, keyLabel int32) {
+	if snapshot != nil && variable.TopSQLEnabled() {
+		snapshot.SetOption(kv.KeyLabel, keyLabel)
+	}
+}

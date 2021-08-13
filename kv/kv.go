@@ -297,6 +297,8 @@ type Request struct {
 	MatchStoreLabels []*metapb.StoreLabel
 	// ResourceGroupTag indicates the kv request task group.
 	ResourceGroupTag []byte
+	// KeyLabel indicates the key label of the kv request.
+	KeyLabel int32
 }
 
 // ResultSubset represents a result subset from a single storage unit.

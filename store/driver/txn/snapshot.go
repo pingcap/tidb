@@ -97,6 +97,8 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		s.KVSnapshot.SetResourceGroupTag(val.([]byte))
 	case kv.TxnScope:
 		s.KVSnapshot.SetTxnScope(val.(string))
+	case kv.KeyLabel:
+		s.KVSnapshot.SetKeyLabel(val.(int32))
 	}
 }
 

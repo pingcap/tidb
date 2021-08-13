@@ -63,6 +63,8 @@ const (
 	ResourceGroupTag
 	// KVFilter indicates the filter to ignore key-values in the transaction's memory buffer.
 	KVFilter
+	// KeyLabel indicates the key label of the kv request.
+	KeyLabel
 )
 
 // ReplicaReadType is the type of replica to read data from

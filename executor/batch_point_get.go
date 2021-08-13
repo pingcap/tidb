@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tipb/go-tipb"
 	"sort"
 	"sync/atomic"
 
@@ -314,6 +315,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 
 		// Fetch all handles.
+		setKeyLabelForSnapshot(e.snapshot, int32(tipb.ResourceGroupKeyLabel_IsIndex))
 		handleVals, err = batchGetter.BatchGet(ctx, toFetchIndexKeys)
 		if err != nil {
 			return err
@@ -453,6 +455,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 	}
 	// Fetch all values.
+	setKeyLabelForSnapshot(e.snapshot, int32(tipb.ResourceGroupKeyLabel_IsRow))
 	values, err = batchGetter.BatchGet(ctx, keys)
 	if err != nil {
 		return err

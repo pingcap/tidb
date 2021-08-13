@@ -153,6 +153,16 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 			builder.Request.Concurrency = 1
 		}
 	}
+	if variable.TopSQLEnabled() && len(dag.Executors) > 0 {
+		switch dag.Executors[0].Tp {
+		case tipb.ExecType_TypeIndexScan:
+			builder.SetKeyLabel(int32(tipb.ResourceGroupKeyLabel_IsIndex))
+		case tipb.ExecType_TypeTableScan:
+			builder.SetKeyLabel(int32(tipb.ResourceGroupKeyLabel_IsRow))
+		default:
+			builder.SetKeyLabel(int32(tipb.ResourceGroupKeyLabel_IsOthers))
+		}
+	}
 	return builder
 }
 
@@ -213,6 +223,12 @@ func (builder *RequestBuilder) SetStoreType(storeType kv.StoreType) *RequestBuil
 // SetAllowBatchCop sets `BatchCop` property.
 func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
 	builder.Request.BatchCop = batchCop
+	return builder
+}
+
+// SetKeyLabel sets `KeyLabel` property.
+func (builder *RequestBuilder) SetKeyLabel(keyLabel int32) *RequestBuilder {
+	builder.Request.KeyLabel = keyLabel
 	return builder
 }
 

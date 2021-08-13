@@ -183,6 +183,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetResourceGroupTag(val.([]byte))
 	case kv.KVFilter:
 		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
+	case kv.KeyLabel:
+		txn.KVTxn.SetKeyLabel(val.(int32))
 	}
 }
 
