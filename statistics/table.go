@@ -156,18 +156,6 @@ func (t *Table) ColumnByName(colName string) *Column {
 	return nil
 }
 
-<<<<<<< HEAD
-=======
-// GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch, TopN and FMSketch.
-func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSketch, *TopN, *FMSketch) {
-	if isIndex {
-		idxStatsInfo := t.Indices[ID]
-		return int64(idxStatsInfo.TotalRowCount()), idxStatsInfo.Histogram.Copy(), idxStatsInfo.CMSketch.Copy(), idxStatsInfo.TopN.Copy(), idxStatsInfo.FMSketch.Copy()
-	}
-	colStatsInfo := t.Columns[ID]
-	return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy()
-}
-
 // GetColRowCount tries to get the row count of the a column if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (t *Table) GetColRowCount() float64 {
@@ -180,7 +168,6 @@ func (t *Table) GetColRowCount() float64 {
 	return -1
 }
 
->>>>>>> 4eeff54d8... statistics: fix the fomula for checking outdated stats (#26728)
 type tableColumnID struct {
 	TableID  int64
 	ColumnID int64
