@@ -1451,6 +1451,7 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 // otherwise return kv.ErrKeyExists error.
 func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, newRow []types.Datum, modified []bool) error {
 	physicalTableID := t.Meta().ID
+	idxs := t.Indices()
 	if pt, ok := t.(*partitionedTable); ok {
 		info := t.Meta().GetPartitionInfo()
 		pid, err := pt.locatePartition(sctx, info, newRow)
@@ -1459,6 +1460,7 @@ func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.C
 		}
 		partition := pt.GetPartition(pid)
 		physicalTableID = partition.GetPhysicalID()
+		idxs = partition.Indices()
 	}
 	txn, err := sctx.Txn(true)
 	if err != nil {
@@ -1492,7 +1494,7 @@ func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.C
 			return true
 		}
 
-		for _, idx := range t.Indices() {
+		for _, idx := range idxs {
 			if shouldSkipIgnoreCheck(idx) {
 				continue
 			}
