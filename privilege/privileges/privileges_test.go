@@ -2058,3 +2058,29 @@ func tearDownTest(t *testing.T, store kv.Storage, dbName string) {
 	dropDBSQL := fmt.Sprintf("drop database if exists %s;", dbName)
 	mustExec(t, se, dropDBSQL)
 }
+
+func TestGrantReferences(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE SCHEMA reftestdb")
+	tk.MustExec("USE reftestdb")
+	tk.MustExec("CREATE TABLE reftest (a int)")
+	tk.MustExec("CREATE USER referencesUser")
+	tk.MustExec("GRANT REFERENCES ON *.* TO referencesUser")
+	tk.MustExec("GRANT REFERENCES ON reftestdb.* TO referencesUser")
+	tk.MustExec("GRANT REFERENCES ON reftestdb.reftest TO referencesUser")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR referencesUser").Check(testkit.Rows(
+		`GRANT REFERENCES ON *.* TO 'referencesUser'@'%'`,
+		`GRANT REFERENCES ON reftestdb.* TO 'referencesUser'@'%'`,
+		`GRANT REFERENCES ON reftestdb.reftest TO 'referencesUser'@'%'`))
+	tk.MustExec("DROP USER referencesUser")
+	tk.MustExec("DROP SCHEMA reftestdb")
+}

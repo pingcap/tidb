@@ -7194,6 +7194,8 @@ func (s *testSerialSuite) TestIssue23872(c *C) {
 	rs, err := tk.Exec("select * from test_create_table;")
 	c.Assert(err, IsNil)
 	cols := rs.Fields()
+	err = rs.Close()
+	c.Assert(err, IsNil)
 	expectFlag := uint16(mysql.NotNullFlag | mysql.PriKeyFlag | mysql.NoDefaultValueFlag)
 	c.Assert(cols[0].Column.Flag, Equals, uint(expectFlag))
 	tk.MustExec("create table t(a int default 1, primary key(a));")
@@ -7201,6 +7203,8 @@ func (s *testSerialSuite) TestIssue23872(c *C) {
 	rs1, err := tk.Exec("select * from t;")
 	c.Assert(err, IsNil)
 	cols1 := rs1.Fields()
+	err = rs1.Close()
+	c.Assert(err, IsNil)
 	expectFlag1 := uint16(mysql.NotNullFlag | mysql.PriKeyFlag)
 	c.Assert(cols1[0].Column.Flag, Equals, uint(expectFlag1))
 }
