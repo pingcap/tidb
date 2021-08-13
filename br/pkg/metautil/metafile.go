@@ -528,7 +528,7 @@ func (writer *MetaWriter) FinishWriteMetas(ctx context.Context, op AppendOp) err
 	var err error
 	// flush the buffered meta
 	if !writer.useV2Meta {
-		writer.flushMetasV1(ctx, op)
+		writer.fillMetasV1(ctx, op)
 	} else {
 		err = writer.flushMetasV2(ctx, op)
 		if err != nil {
@@ -564,9 +564,9 @@ func (writer *MetaWriter) FiniallyFlushBackupMeta(ctx context.Context) error {
 	return writer.storage.WriteFile(ctx, MetaFile, backupMetaData)
 }
 
-// flushMetasV1 keep the compatibility for old version.
-// for MetaV1, just to put in backupMeta
-func (writer *MetaWriter) flushMetasV1(ctx context.Context, op AppendOp) {
+// fillMetasV1 keep the compatibility for old version.
+// for MetaV1, just put in backupMeta
+func (writer *MetaWriter) fillMetasV1(ctx context.Context, op AppendOp) {
 	switch op {
 	case AppendDataFile:
 		writer.backupMeta.Files = writer.metafiles.root.DataFiles
