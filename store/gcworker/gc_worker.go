@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -239,6 +240,7 @@ func createSession(store kv.Storage) session.Session {
 		privilege.BindPrivilegeManager(se, nil)
 		se.GetSessionVars().CommonGlobalLoaded = true
 		se.GetSessionVars().InRestrictedSQL = true
+		se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		return se
 	}
 }
@@ -363,6 +365,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
+
 	if !enable {
 		logutil.Logger(ctx).Warn("[gc worker] gc status is disabled.")
 		return false, 0, nil
@@ -730,6 +733,14 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 				zap.Error(err))
 			continue
 		}
+		if err := w.doGCLabelRules(r); err != nil {
+			logutil.Logger(ctx).Error("[gc worker] gc label rules failed on range",
+				zap.String("uuid", w.uuid),
+				zap.Int64("jobID", r.JobID),
+				zap.Int64("elementID", r.ElementID),
+				zap.Error(err))
+			continue
+		}
 	}
 	logutil.Logger(ctx).Info("[gc worker] finish delete ranges",
 		zap.String("uuid", w.uuid),
@@ -805,7 +816,7 @@ func (w *GCWorker) doUnsafeDestroyRangeRequest(ctx context.Context, startKey []b
 	req := tikvrpc.NewRequest(tikvrpc.CmdUnsafeDestroyRange, &kvrpcpb.UnsafeDestroyRangeRequest{
 		StartKey: startKey,
 		EndKey:   endKey,
-	})
+	}, kvrpcpb.Context{DiskFullOpt: kvrpcpb.DiskFullOpt_AllowedOnAlmostFull})
 
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(stores))
@@ -1895,6 +1906,51 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 	// Notify PD to drop the placement rules, even if there may be no placement rules.
 	bundles := []*placement.Bundle{placement.NewBundle(pid)}
 	err = infosync.PutRuleBundles(context.TODO(), bundles)
+	return
+}
+
+func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
+	// Get the job from the job history
+	var historyJob *model.Job
+	failpoint.Inject("mockHistoryJob", func(v failpoint.Value) {
+		args, err1 := json.Marshal([]interface{}{kv.Key{}, []int64{}, []string{v.(string)}})
+		if err1 != nil {
+			return
+		}
+		historyJob = &model.Job{
+			ID:      dr.JobID,
+			Type:    model.ActionDropTable,
+			RawArgs: args,
+		}
+	})
+	if historyJob == nil {
+		err = kv.RunInNewTxn(context.Background(), w.store, false, func(ctx context.Context, txn kv.Transaction) error {
+			var err1 error
+			t := meta.NewMeta(txn)
+			historyJob, err1 = t.GetHistoryDDLJob(dr.JobID)
+			return err1
+		})
+		if err != nil {
+			return
+		}
+		if historyJob == nil {
+			return admin.ErrDDLJobNotFound.GenWithStackByArgs(dr.JobID)
+		}
+	}
+
+	if historyJob.Type == model.ActionDropTable {
+		var (
+			startKey         kv.Key
+			physicalTableIDs []int64
+			ruleIDs          []string
+		)
+		if err = historyJob.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
+			return
+		}
+
+		patch := label.NewRulePatch(nil, ruleIDs)
+		err = infosync.UpdateLabelRules(context.TODO(), patch)
+	}
 	return
 }
 
