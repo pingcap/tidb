@@ -10148,3 +10148,14 @@ func (s *testIntegrationSuite) TestIssue26958(c *C) {
 	tk.MustQuery("select \n(select count(distinct c_int) from t2 where c_int >= t1.c_int) c1, \n(select count(distinct c_int) from t2 where c_int >= t1.c_int) c2\nfrom t1 group by c_int;\n").
 		Check(testkit.Rows("3 3", "2 2", "1 1"))
 }
+
+func (s *testIntegrationSuite) TestIssue24997(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(c1 varbinary(100));")
+	tk.MustExec("insert into t1 values('e');")
+	tk.MustExec("create table t2(c1 date);")
+	tk.MustExec("insert into t2 values('2019-11-10');")
+	tk.MustQuery("select * from t1 inner join t2 on t1.c1 <= t2.c1;").Check(testkit.Rows("e 2019-11-10"))
+}
