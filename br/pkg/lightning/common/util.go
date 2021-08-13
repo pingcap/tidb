@@ -318,6 +318,21 @@ func InterpolateMySQLString(s string) string {
 	return builder.String()
 }
 
+// TableExists return whether table with specified name exists in target db
+func TableExists(ctx context.Context, db *sql.DB, schema, table string) (bool, error) {
+	query := "SELECT 1 from INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
+	var exist string
+	err := db.QueryRowContext(ctx, query, schema, table).Scan(&exist)
+	switch {
+	case err == nil:
+		return true, nil
+	case err == sql.ErrNoRows:
+		return false, nil
+	default:
+		return false, errors.Annotatef(err, "check table exists failed")
+	}
+}
+
 // GetJSON fetches a page and parses it as JSON. The parsed result will be
 // stored into the `v`. The variable `v` must be a pointer to a type that can be
 // unmarshalled from JSON.

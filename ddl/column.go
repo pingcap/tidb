@@ -1066,7 +1066,10 @@ func (w *worker) doModifyColumnTypeWithData(
 				func() {
 					addIndexErr = errCancelledDDLJob.GenWithStack("modify table `%v` column `%v` panic", tblInfo.Name, oldCol.Name)
 				}, false)
-			return w.updateColumnAndIndexes(tbl, oldCol, changingCol, changingIdxs, reorgInfo)
+			// Use old column name to generate less confusing error messages.
+			changingColCpy := changingCol.Clone()
+			changingColCpy.Name = oldCol.Name
+			return w.updateColumnAndIndexes(tbl, oldCol, changingColCpy, changingIdxs, reorgInfo)
 		})
 		if err != nil {
 			if errWaitReorgTimeout.Equal(err) {

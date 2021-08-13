@@ -85,3 +85,16 @@ func RowsWithSep(sep string, args ...string) [][]interface{} {
 	}
 	return rows
 }
+
+// Rows returns the result data.
+func (res *Result) Rows() [][]interface{} {
+	ifacesSlice := make([][]interface{}, len(res.rows))
+	for i := range res.rows {
+		ifaces := make([]interface{}, len(res.rows[i]))
+		for j := range res.rows[i] {
+			ifaces[j] = res.rows[i][j]
+		}
+		ifacesSlice[i] = ifaces
+	}
+	return ifacesSlice
+}

@@ -400,6 +400,11 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 			}
 		}
 	}
+	if (args[0].GetType().EvalType() == types.ETInt || IsBinaryLiteral(args[0])) &&
+		(args[1].GetType().EvalType() == types.ETInt || IsBinaryLiteral(args[1])) &&
+		(args[2].GetType().EvalType() == types.ETInt || IsBinaryLiteral(args[2])) {
+		return types.ETInt
+	}
 
 	return cmpTp
 }

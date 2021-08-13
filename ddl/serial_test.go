@@ -647,6 +647,59 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 	_, err = tk.Exec("create global temporary table tb8 like tb7 on commit delete rows;")
 	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
 	defer tk.MustExec("drop table if exists tb7, tb8")
+
+	tk.MustExec("set tidb_enable_noop_functions=true")
+	// Test from->normal, to->local temporary
+	tk.MustExec("drop table if exists tb11, tb12")
+	tk.MustExec("create table tb11 (i int primary key, j int)")
+	tk.MustExec("create temporary table tb12 like tb11")
+	tk.MustQuery("show create table tb12;").Check(testkit.Rows("tb12 CREATE TEMPORARY TABLE `tb12` (\n" +
+		"  `i` int(11) NOT NULL,\n  `j` int(11) DEFAULT NULL,\n  PRIMARY KEY (`i`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("create temporary table if not exists tb12 like tb11;")
+	c.Assert(tk.Se.(sessionctx.Context).GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals,
+		infoschema.ErrTableExists.GenWithStackByArgs("tb12").Error())
+	defer tk.MustExec("drop table if exists tb11, tb12")
+	// Test from->local temporary, to->local temporary
+	tk.MustExec("drop table if exists tb13, tb14")
+	tk.MustExec("create temporary table tb13 (i int primary key, j int)")
+	_, err = tk.Exec("create temporary table tb14 like tb13;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
+	defer tk.MustExec("drop table if exists tb13, tb14")
+	// Test from->local temporary, to->normal
+	tk.MustExec("drop table if exists tb15, tb16")
+	tk.MustExec("create temporary table tb15 (i int primary key, j int)")
+	_, err = tk.Exec("create table tb16 like tb15;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
+	defer tk.MustExec("drop table if exists tb15, tb16")
+
+	tk.MustExec("drop table if exists table_pre_split, tmp_pre_split")
+	tk.MustExec("create table table_pre_split(id int) shard_row_id_bits=2 pre_split_regions=2;")
+	_, err = tk.Exec("create temporary table tmp_pre_split like table_pre_split")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error())
+	defer tk.MustExec("drop table if exists table_pre_split, tmp_pre_split")
+
+	tk.MustExec("drop table if exists table_shard_row_id, tmp_shard_row_id")
+	tk.MustExec("create table table_shard_row_id(id int) shard_row_id_bits=2;")
+	_, err = tk.Exec("create temporary table tmp_shard_row_id like table_shard_row_id")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
+	defer tk.MustExec("drop table if exists table_shard_row_id, tmp_shard_row_id")
+
+	tk.MustExec("drop table if exists partition_table, tmp_partition_table")
+	tk.MustExec("create table partition_table (a int, b int) partition by hash(a) partitions 3;")
+	tk.MustGetErrCode("create temporary table tmp_partition_table like partition_table", errno.ErrPartitionNoTemporary)
+	defer tk.MustExec("drop table if exists partition_table, tmp_partition_table")
+
+	tk.MustExec("drop table if exists foreign_key_table1, foreign_key_table2, foreign_key_tmp;")
+	tk.MustExec("create table foreign_key_table1 (a int, b int);")
+	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b));")
+	tk.MustExec("create temporary table foreign_key_tmp like foreign_key_table2")
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("foreign_key_tmp"))
+	c.Assert(err, IsNil)
+	tableInfo = table.Meta()
+	c.Assert(len(tableInfo.ForeignKeys), Equals, 0)
+	defer tk.MustExec("drop table if exists foreign_key_table1, foreign_key_table2, foreign_key_tmp;")
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.

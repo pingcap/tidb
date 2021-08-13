@@ -44,10 +44,14 @@ endif
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGE_LIST  := go list ./...| grep -vE "cmd|github.com\/pingcap\/tidb\/tests|github.com\/pingcap\/tidb\/br"
+PACKAGE_LIST  := go list ./...| grep -vE "cmd|github.com\/pingcap\/tidb\/tests"
+PACKAGE_LIST_WITHOUT_BR  := go list ./...| grep -vE "cmd|github.com\/pingcap\/tidb\/tests|github.com\/pingcap\/tidb\/br"
 PACKAGES  ?= $$($(PACKAGE_LIST))
+PACKAGES_WITHOUT_BR ?= $$($(PACKAGE_LIST_WITHOUT_BR))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
+PACKAGE_DIRECTORIES_WITHOUT_BR := $(PACKAGE_LIST_WITHOUT_BR) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
+FILES_WITHOUT_BR := $$(find $$($(PACKAGE_DIRECTORIES_WITHOUT_BR)) -name "*.go")
 UNCONVERT_PACKAGES_LIST := go list ./...| grep -vE "lightning\/checkpoints|lightning\/manual|lightning\/common"
 UNCONVERT_PACKAGES := $$($(UNCONVERT_PACKAGES_LIST))
 
@@ -88,24 +92,3 @@ LIGHTNING_BIN     := bin/tidb-lightning
 LIGHTNING_CTL_BIN := bin/tidb-lightning-ctl
 BR_BIN            := bin/br
 TEST_DIR          := /tmp/backup_restore_test
-
-TOOL_RELEASE_VERSION =
-ifeq ($(TOOL_RELEASE_VERSION),)
-        TOOL_RELEASE_VERSION := v4.0.0-dev
-        release_version_regex := ^v4\..*$$
-        release_branch_regex := "^release-[0-9]\.[0-9].*$$|^HEAD$$|^.*/*tags/v[0-9]\.[0-9]\..*$$"
-        ifneq ($(shell git rev-parse --abbrev-ref HEAD | egrep $(release_branch_regex)),)
-                # If we are in release branch, try to use tag version.
-                ifneq ($(shell git describe --tags --dirty | egrep $(release_version_regex)),)
-                        TOOL_RELEASE_VERSION := $(shell git describe --tags --dirty)
-                endif
-        else ifneq ($(shell git status --porcelain),)
-                # Add -dirty if the working tree is dirty for non release branch.
-                TOOL_RELEASE_VERSION := $(TOOL_RELEASE_VERSION)-dirty
-        endif
-endif
-
-TOOL_LDFLAGS += -X "$(BR_PKG)/pkg/version/build.ReleaseVersion=$(TOOL_RELEASE_VERSION)"
-TOOL_LDFLAGS += -X "$(BR_PKG)/pkg/version/build.BuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
-TOOL_LDFLAGS += -X "$(BR_PKG)/pkg/version/build.GitHash=$(shell git rev-parse HEAD)"
-TOOL_LDFLAGS += -X "$(BR_PKG)/pkg/version/build.GitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
