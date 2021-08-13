@@ -118,7 +118,7 @@ func InitLogger(cfg *LogConfig) error {
 }
 
 func initGRPCLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
-	// copy Config struct by assignment
+	// Copy Config struct by assignment.
 	config := cfg.Config
 	var l *zap.Logger
 	var err error
