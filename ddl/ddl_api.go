@@ -6079,6 +6079,10 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 		return ErrInvalidAttributesSpec.GenWithStackByArgs(err)
 	}
 
+	var toDelete bool
+	if len(rule.Labels) == 0 || spec.AttributesSpec.Default {
+		toDelete = true
+	}
 	rule.Reset(meta.ID, schema.Name.L, meta.Name.L)
 
 	job := &model.Job{
@@ -6087,7 +6091,7 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAlterTableAttributes,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{rule},
+		Args:       []interface{}{rule, toDelete},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -6127,6 +6131,10 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 		return ErrInvalidAttributesSpec.GenWithStackByArgs(sb.String(), err)
 	}
 
+	var toDelete bool
+	if len(rule.Labels) == 0 || spec.AttributesSpec.Default {
+		toDelete = true
+	}
 	rule.Reset(partitionID, schema.Name.L, meta.Name.L, spec.PartitionNames[0].L)
 
 	job := &model.Job{
@@ -6135,7 +6143,7 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAlterTablePartitionAttributes,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partitionID, rule},
+		Args:       []interface{}{partitionID, rule, toDelete},
 	}
 
 	err = d.doDDLJob(ctx, job)
