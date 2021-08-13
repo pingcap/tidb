@@ -2116,3 +2116,41 @@ func (s *testStatsSuite) TestHideExtendedStatsSwitch(c *C) {
 	}
 	tk.MustQuery("show variables like 'tidb_enable_extended_stats'").Check(testkit.Rows())
 }
+
+func (s *testStatsSuite) TestDuplicateFMSketch(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("insert into t values (1, 1, 1)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
+
+	tk.MustExec("alter table t drop column a")
+	s.do.StatsHandle().SetLastUpdateVersion(s.do.StatsHandle().LastUpdateVersion() + 1)
+	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), time.Duration(0)), IsNil)
+	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+}
+
+func (s *testStatsSuite) TestStatsCacheUpdateSkip(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	do := s.do
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("insert into t values(1, 2)")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	statsTbl1 := h.GetTableStats(tableInfo)
+	c.Assert(statsTbl1.Pseudo, IsFalse)
+	h.Update(is)
+	statsTbl2 := h.GetTableStats(tableInfo)
+	c.Assert(statsTbl1, Equals, statsTbl2)
+}

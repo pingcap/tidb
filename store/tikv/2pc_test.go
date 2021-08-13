@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/config"
@@ -1342,6 +1343,48 @@ func (s *testCommitterSuite) TestAsyncCommitCheck(c *C) {
 		conf.TiKVClient.AsyncCommit.TotalKeySizeLimit = 63
 	})
 	c.Assert(committer.checkAsyncCommit(), IsFalse)
+}
+
+// Test that pessimistic rollback is not sent if LockKeys locks only one key and
+// the error is KeyExists or WriteConflict.
+func (s *testCommitterSuite) TestFailLockKeysNeedNoRollback(c *C) {
+	// Write key k
+	txn := s.begin(c)
+	err := txn.Set(kv.Key("k1"), []byte("v1"))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	// In this test case, no pessimistic rollback should be sent. So we make pessimistic rollback panic.
+	// If a pessimistic rollback is sent, the test should fail because of the panic.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeAsyncPessimisticRollback", "panic"), IsNil)
+	defer func() {
+		// we should delay some time so we disable the failpoint after the background job finishes
+		time.Sleep(time.Second)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeAsyncPessimisticRollback"), IsNil)
+	}()
+
+	txn = s.begin(c)
+	txn.SetOption(kv.Pessimistic, true)
+
+	// test KeyExists error
+	err = txn.GetMemBuffer().SetWithFlags(kv.Key("k1"), []byte{0}, kv.SetPresumeKeyNotExists)
+	c.Assert(err, IsNil)
+	lockCtx := kv.LockCtx{ForUpdateTS: txn.startTS, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
+	err = txn.LockKeys(context.Background(), &lockCtx, kv.Key("k1"))
+	c.Assert(err, NotNil)
+	_, isErrKeyExist := errors.Cause(err).(*ErrKeyExist)
+	c.Assert(isErrKeyExist, IsTrue)
+
+	// test WriteConflict error
+	txn2 := s.begin(c)
+	err = txn2.Set(kv.Key("k2"), []byte("v2"))
+	c.Assert(err, IsNil)
+	err = txn2.Commit(context.Background())
+	c.Assert(err, IsNil)
+	err = txn.LockKeys(context.Background(), &lockCtx, kv.Key("k2"))
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(kv.ErrWriteConflict, err), IsTrue)
 }
 
 type mockClient struct {

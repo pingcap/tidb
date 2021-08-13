@@ -186,7 +186,7 @@
       {
         "SQL": "explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 and t1.a = 1",
         "Result": [
-          "HashJoin 80000.00 root  CARTESIAN left outer join",
+          "HashJoin 100000.00 root  CARTESIAN left outer join",
           "├─TableReader(Build) 10.00 root  data:Selection",
           "│ └─Selection 10.00 cop[tikv]  eq(test.t1.a, 1)",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -253,7 +253,7 @@
       {
         "SQL": "explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 or (t1.a = 2 and t1.a = 3)",
         "Result": [
-          "HashJoin 80000.00 root  CARTESIAN left outer join",
+          "HashJoin 100000.00 root  CARTESIAN left outer join",
           "├─TableReader(Build) 10.00 root  data:Selection",
           "│ └─Selection 10.00 cop[tikv]  or(eq(test.t1.a, 1), 0)",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
