@@ -929,15 +929,15 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	// year
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 2.55555, 98.1111111, 2154.00001, 20200805111307.11111111, b'10101')")
-	tk.MustGetErrMsg("alter table t modify d year", "[types:8033]Invalid year value for column 'd', value is '200805.1100000'")
-	tk.MustGetErrCode("alter table t modify n year", mysql.ErrInvalidYear)
+	tk.MustGetErrMsg("alter table t modify d year", "[types:1264]Out of range value for column 'd', the value is '200805.1100000'")
+	tk.MustGetErrCode("alter table t modify n year", mysql.ErrWarnDataOutOfRange)
 	// MySQL will get "ERROR 1264 (22001) Data truncation: Out of range value for column 'r' at row 1".
 	tk.MustExec("alter table t modify r year")
 	// MySQL will get "ERROR 1264 (22001) Data truncation: Out of range value for column 'db' at row 1".
 	tk.MustExec("alter table t modify db year")
 	// MySQL will get "ERROR 1264 (22001) Data truncation: Out of range value for column 'f32' at row 1".
 	tk.MustExec("alter table t modify f32 year")
-	tk.MustGetErrMsg("alter table t modify f64 year", "[types:8033]Invalid year value for column 'f64', value is '20200805111307.11'")
+	tk.MustGetErrMsg("alter table t modify f64 year", "[types:1264]Out of range value for column 'f64', the value is '20200805111307.11'")
 	tk.MustExec("alter table t modify b year")
 	tk.MustQuery("select * from t").Check(testkit.Rows("200805.1100000 307.33 2003 1998 2154 20200805111307.11 2021"))
 
@@ -2143,9 +2143,9 @@ func (s *testColumnTypeChangeSuite) TestChangeFromTimeToYear(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id bigint primary key, a time);")
 	tk.MustExec("replace into t values (1, '10:10:10');")
-	tk.MustGetErrCode("alter table t modify column a year;", mysql.ErrInvalidYear)
+	tk.MustGetErrCode("alter table t modify column a year;", mysql.ErrWarnDataOutOfRange)
 	tk.MustExec("replace into t values (1, '12:13:14');")
-	tk.MustGetErrCode("alter table t modify column a year;", mysql.ErrInvalidYear)
+	tk.MustGetErrCode("alter table t modify column a year;", mysql.ErrWarnDataOutOfRange)
 	tk.MustExec("set @@sql_mode = '';")
 	tk.MustExec("alter table t modify column a year;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8033 Invalid year value for column 'a', value is '12:13:14'"))

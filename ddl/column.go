@@ -1392,9 +1392,9 @@ func (w *updateColumnWorker) reformatErrors(err error) error {
 		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, dStr)
 	}
 
-	if types.ErrInvalidYear.Equal(err) {
+	if types.ErrWarnDataOutOfRange.Equal(err) {
 		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
-		err = types.ErrInvalidYear.GenWithStack("Invalid year value for column '%s', value is '%s'", w.oldColInfo.Name, dStr)
+		err = types.ErrWarnDataOutOfRange.GenWithStack("Out of range value for column '%s', the value is '%s'", w.oldColInfo.Name, dStr)
 	}
 	return err
 }

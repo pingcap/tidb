@@ -5393,9 +5393,8 @@ func (s *testDBSuite1) TestModifyColumnTime_DatetimeToYear(c *C) {
 		{"datetime", `20060102150405`, "year", "2006", 0},
 		{"datetime", `060102150405`, "year", "2006", 0},
 		{"datetime", `"2006-01-02 23:59:59.506"`, "year", "2006", 0},
-		// MySQL will get "Data truncation: Out of range value for column 'a' at row 1.
-		{"datetime", `"1000-01-02 23:59:59"`, "year", "", errno.ErrInvalidYear},
-		{"datetime", `"9999-01-02 23:59:59"`, "year", "", errno.ErrInvalidYear},
+		{"datetime", `"1000-01-02 23:59:59"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"datetime", `"9999-01-02 23:59:59"`, "year", "", errno.ErrWarnDataOutOfRange},
 	}
 	testModifyColumnTime(c, s.store, tests)
 }
