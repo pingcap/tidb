@@ -999,9 +999,9 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 }
 
 func (s *tableRestoreSuite) TestSaveStatusCheckpoint(c *C) {
-	_ = failpoint.Enable("github.com/pingcap/br/br/pkg/lightning/restore/SlowDownCheckpointUpdate", "sleep(100)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckpointUpdate", "sleep(100)")
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/br/br/pkg/lightning/restore/SlowDownCheckpointUpdate")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckpointUpdate")
 	}()
 
 	web.BroadcastInitProgress([]*mydump.MDDatabaseMeta{{

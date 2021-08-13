@@ -951,7 +951,7 @@ func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string
 	}
 	if saveCpErr != nil {
 		logger.Error("failed to save status checkpoint", zap.Error(saveCpErr))
-		return err
+		return saveCpErr
 	}
 	return nil
 }
