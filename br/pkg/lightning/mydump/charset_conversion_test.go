@@ -32,6 +32,7 @@ func (s *testCharsetConvertorSuite) TearDownSuite(c *C) {}
 const (
 	testUTF8DataFile = "./csv/utf8_test_file.csv"
 	testGBKDataFile  = "./csv/gb18030_test_file.csv"
+	testTempDataFile = "./csv/temp_test_file.csv"
 )
 
 func (s testCharsetConvertorSuite) TestCharsetConvertor(c *C) {
@@ -49,4 +50,34 @@ func (s testCharsetConvertorSuite) TestCharsetConvertor(c *C) {
 	_, err = cc.Read(gbkToUTF8Data)
 	c.Assert(err, IsNil)
 	c.Assert(gbkToUTF8Data, DeepEquals, originalUTF8Data)
+}
+
+func (s testCharsetConvertorSuite) TestInvalidCharReplace(c *C) {
+	dataInvalidCharReplace := string('\uEE00')
+	// 你好 in gb18030
+	normalCharGB18030 := []byte{0xC4, 0xE3, 0xBA, 0xC3}
+	// 你好 in utf8mb4
+	normalCharUTF8MB4 := []byte{0xE4, 0xBD, 0xA0, 0xE5, 0xA5, 0xBD}
+	// invalid char
+	invalidChar := []byte{0xff}
+	// Input: 你好invalid char你好
+	inputData := append(normalCharGB18030, invalidChar...)
+	inputData = append(inputData, normalCharGB18030...)
+	// Expect: 你好dataInvalidCharReplace你好
+	expectedData := append(normalCharUTF8MB4, []byte(dataInvalidCharReplace)...)
+	expectedData = append(expectedData, normalCharUTF8MB4...)
+
+	// Prepare the file data.
+	c.Assert(os.WriteFile(testTempDataFile, inputData, 0666), IsNil)
+	defer func() { c.Assert(os.Remove(testTempDataFile), IsNil) }()
+
+	cfg := &config.MydumperRuntime{DataCharacterSet: "gb18030", DataInvalidCharReplace: dataInvalidCharReplace}
+	gbkReader, err := os.Open(testTempDataFile)
+	c.Assert(err, IsNil)
+	cc, err := mydump.NewCharsetConvertor(cfg, gbkReader)
+	c.Assert(err, IsNil)
+	gbkToUTF8Data := make([]byte, len(expectedData))
+	_, err = cc.Read(gbkToUTF8Data)
+	c.Assert(err, IsNil)
+	c.Assert(gbkToUTF8Data, DeepEquals, expectedData)
 }

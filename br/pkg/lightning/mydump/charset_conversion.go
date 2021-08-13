@@ -15,11 +15,12 @@ package mydump
 
 import (
 	"bytes"
-	"fmt"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"go.uber.org/zap"
 	"golang.org/x/text/encoding/simplifiedchinese"
 	"golang.org/x/text/transform"
 )
@@ -54,7 +55,8 @@ type CharsetConvertor struct {
 	// sourceCharacterSet represents the charset that the source file uses.
 	sourceCharacterSet Charset
 	// invalidCharReplacement is the default replacement character for the invalid content, e.g "\ufffd".
-	invalidCharReplacement rune
+	invalidCharReplacement      rune
+	invalidCharReplacementBytes []byte
 
 	originalReader ReadSeekCloser
 }
@@ -68,14 +70,20 @@ func NewCharsetConvertor(cfg *config.MydumperRuntime, reader ReadSeekCloser) (Re
 	if err != nil {
 		return nil, err
 	}
+	invalidCharReplacementBytes := []byte(string(invalidCharReplacement))
 	// No need to convert the charset encoding, just return the original reader.
 	if sourceCharacterSet == BINARY || sourceCharacterSet == UTF8MB4 {
 		return reader, nil
 	}
+	log.L().Warn(
+		"incompatible strings may be encountered during the transcoding process and will be replaced, please be aware of the risk of not being able to retain the original information",
+		zap.String("source-character-set", sourceCharacterSet.String()),
+		zap.ByteString("invalid-char-replacement", invalidCharReplacementBytes))
 	return &CharsetConvertor{
-		sourceCharacterSet:     sourceCharacterSet,
-		invalidCharReplacement: invalidCharReplacement,
-		originalReader:         reader,
+		sourceCharacterSet:          sourceCharacterSet,
+		invalidCharReplacement:      invalidCharReplacement,
+		invalidCharReplacementBytes: invalidCharReplacementBytes,
+		originalReader:              reader,
 	}, nil
 }
 
@@ -95,12 +103,14 @@ func loadCharsetFromConfig(cfg *config.MydumperRuntime) (Charset, rune, error) {
 	}
 }
 
+var utf8RuneErrorBytes = []byte(string(utf8.RuneError))
+
 func (cc *CharsetConvertor) Read(p []byte) (n int, err error) {
 	// Extend p to make sure it must have a enough room for a UTF8 encoding at last.
 	originalLength := len(p)
 	extendedLength := originalLength
-	if originalLength%4 != 0 {
-		extendedLength = 4 - originalLength%4 + originalLength
+	if originalLength%utf8.UTFMax != 0 {
+		extendedLength = utf8.UTFMax - originalLength%utf8.UTFMax + originalLength
 	}
 	extendedP := make([]byte, extendedLength)
 	// Read from the original reader first.
@@ -120,7 +130,7 @@ func (cc *CharsetConvertor) Read(p []byte) (n int, err error) {
 	if err != nil {
 		return n, err
 	}
-	replacedData := bytes.ReplaceAll(extendedP, []byte(string(utf8.RuneError)), []byte(string(cc.invalidCharReplacement)))
+	replacedData := bytes.ReplaceAll(extendedP, utf8RuneErrorBytes, cc.invalidCharReplacementBytes)
 	// Copy replacedData to original p.
 	copy(p, replacedData)
 	return n, nil
@@ -133,7 +143,7 @@ func (cc *CharsetConvertor) buildTransformer(data []byte) (*transform.Reader, er
 	case GBK:
 		return transform.NewReader(bytes.NewReader(data), simplifiedchinese.GBK.NewDecoder()), nil
 	default:
-		return nil, fmt.Errorf("not support %s as the conversion source yet", cc.sourceCharacterSet)
+		return nil, errors.Errorf("not support %s as the conversion source yet", cc.sourceCharacterSet)
 	}
 }
 
