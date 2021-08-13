@@ -5180,6 +5180,7 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPla
 		return nil, nil, nil, nil, err
 	}
 
+	// ftw
 	newArgList := make([]expression.Expression, 0, len(args))
 	for _, arg := range args {
 		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true)
