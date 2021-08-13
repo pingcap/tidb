@@ -946,7 +946,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	} else {
 		label := strconv.Itoa(int(cmd))
 		if err != nil {
-			metrics.QueryTotalCounter.WithLabelValues(label, "ERROR").Inc()
+			metrics.QueryTotalCounter.WithLabelValues(label, "Error").Inc()
 		} else {
 			metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
 		}
