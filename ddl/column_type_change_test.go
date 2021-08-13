@@ -2148,7 +2148,8 @@ func (s *testColumnTypeChangeSuite) TestChangeFromTimeToYear(c *C) {
 	tk.MustGetErrCode("alter table t modify column a year;", mysql.ErrWarnDataOutOfRange)
 	tk.MustExec("set @@sql_mode = '';")
 	tk.MustExec("alter table t modify column a year;")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8033 Invalid year value for column 'a', value is '12:13:14'"))
+	tk.MustQuery("show warnings").Check(
+		testkit.Rows("Warning 1264 Out of range value for column 'a', the value is '12:13:14'"))
 }
 
 // Fix issue: https://github.com/pingcap/tidb/issues/26292
