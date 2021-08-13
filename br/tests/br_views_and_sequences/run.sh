@@ -16,6 +16,10 @@
 set -eu
 DB="$TEST_NAME"
 
+trim_sql_result() {
+    tail -n1 | sed 's/[^0-9]//g'
+}
+
 run_sql "create schema $DB;"
 run_sql "create view $DB.view_1 as select 331 as m;"
 run_sql "create view $DB.view_2 as select * from $DB.view_1;"
@@ -29,13 +33,12 @@ run_sql "create view $DB.view_3 as select m from $DB.table_1 union select a * b 
 run_sql "drop view $DB.view_1;"
 run_sql "create view $DB.view_1 as select 133 as m;"
 
-run_sql "create table $DB.auto_inc (n int primary key auto_incrment);"
+run_sql "create table $DB.auto_inc (n int primary key AUTO_INCREMENT);"
 run_sql "insert into $DB.auto_inc values (), (), (), (), ();"
-last_id=$(run_sql "select n from $DB.auto_inc order by n desc limit 1" | tail -n1)
+last_id=$(run_sql "select n from $DB.auto_inc order by n desc limit 1" | trim_sql_result)
 
-run_sql "insert into $DB.auto_rnd (n bigint primary key auto_random(8));"
-run_sql "insert into $DB.auto_rnd values (), (), (), (), ();"
-last_rnd_id=$(run_sql "select last_insert_id()" | tail -n1)
+run_sql "create table $DB.auto_rnd (n BIGINT primary key AUTO_RANDOM(8));"
+last_rnd_id=$(run_sql "insert into $DB.auto_rnd values (), (), (), (), ();select last_insert_id();" | trim_sql_result )
 
 echo "backup start..."
 run_br backup db --db "$DB" -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
@@ -47,7 +50,7 @@ run_br restore db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
 set -x
 
-views_count=$(run_sql "select count(*) c, sum(m) s from $DB.view_3;" | tail -2 | paste -sd ';')
+views_count=$(run_sql "select count(*) c, sum(m) s from $DB.view_3;" | tail -2 | paste -sd ';' -)
 [ "$views_count" = 'c: 8;s: 181' ]
 
 run_sql "insert into $DB.table_2 (c) values (33);"
@@ -55,7 +58,12 @@ seq_val=$(run_sql "select a >= 8 and b >= 4 as g from $DB.table_2 where c = 33;"
 [ "$seq_val" = 'g: 1' ]
 
 run_sql "insert into $DB.auto_inc values ();"
-last_id_after_restore=$(run_sql "select n from $DB.auto_inc order by n desc limit 1;" | tail -n1)
+last_id_after_restore=$(run_sql "select n from $DB.auto_inc order by n desc limit 1;" | trim_sql_result)
+[ $last_id_after_restore -gt $last_id ]
+rnd_last_id_after_restore=$(run_sql "insert into $DB.auto_rnd values ();select last_insert_id();" | trim_sql_result )
+[ $(( rnd_last_id_after_restore & 0xff )) -gt $(( last_rnd_id & 0xff )) ]
+rnd_count_after_restore=$(run_sql "select count(*) from $DB.auto_rnd;" | trim_sql_result )
+[ $rnd_count_after_restore -gt 5 ]
 
 
 run_sql "drop schema $DB"
