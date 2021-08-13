@@ -155,9 +155,13 @@ func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.Agg
 
 	base := basePercentile{percent: int(percent), baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
 
+	evalType := aggFuncDesc.Args[0].GetType().EvalType()
+	if aggFuncDesc.Args[0].GetType().Tp == mysql.TypeBit {
+		evalType = types.ETString // same as other aggregate function
+	}
 	switch aggFuncDesc.Mode {
 	case aggregation.CompleteMode, aggregation.Partial1Mode, aggregation.FinalMode:
-		switch aggFuncDesc.Args[0].GetType().EvalType() {
+		switch evalType {
 		case types.ETInt:
 			return &percentileOriginal4Int{base}
 		case types.ETReal:

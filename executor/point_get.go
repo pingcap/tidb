@@ -441,6 +441,18 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 			var str string
 			str, err = idxVals[i].ToString()
 			idxVals[i].SetString(str, colInfo.FieldType.Collate)
+		} else if colInfo.Tp == mysql.TypeEnum && (idxVals[i].Kind() == types.KindString || idxVals[i].Kind() == types.KindBytes || idxVals[i].Kind() == types.KindBinaryLiteral) {
+			var str string
+			var e types.Enum
+			str, err = idxVals[i].ToString()
+			if err != nil {
+				return nil, kv.ErrNotExist
+			}
+			e, err = types.ParseEnumName(colInfo.FieldType.Elems, str, colInfo.FieldType.Collate)
+			if err != nil {
+				return nil, kv.ErrNotExist
+			}
+			idxVals[i].SetMysqlEnum(e, colInfo.FieldType.Collate)
 		} else {
 			// If a truncated error or an overflow error is thrown when converting the type of `idxVal[i]` to
 			// the type of `colInfo`, the `idxVal` does not exist in the `idxInfo` for sure.

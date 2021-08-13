@@ -156,6 +156,16 @@ func (s *testBatchPointGetSuite) TestIssue18843(c *C) {
 	tk.MustQuery("select * from t18843 where f is null").Check(testkit.Rows("2 <nil>"))
 }
 
+func (s *testBatchPointGetSuite) TestIssue24562(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ttt")
+	tk.MustExec("create table ttt(a enum(\"a\",\"b\",\"c\",\"d\"), primary key(a));")
+	tk.MustExec("insert into ttt values(1)")
+	tk.MustQuery("select * from ttt where ttt.a in (\"1\",\"b\")").Check(testkit.Rows())
+	tk.MustQuery("select * from ttt where ttt.a in (1,\"b\")").Check(testkit.Rows("a"))
+}
+
 func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
