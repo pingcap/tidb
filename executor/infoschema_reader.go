@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -103,6 +104,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataForStatistics(sctx, dbs)
 		case infoschema.TableTables:
 			err = e.setDataFromTables(ctx, sctx, dbs)
+		case infoschema.TableReferConst:
+			err = e.setDataFromReferConst(ctx, sctx, dbs)
 		case infoschema.TableSequences:
 			e.setDataFromSequences(sctx, dbs)
 		case infoschema.TablePartitions:
@@ -463,6 +466,46 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 	e.rows = append(e.rows, rows...)
 }
 
+func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
+	checker := privilege.GetPrivilegeManager(sctx)
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if !table.IsBaseTable() {
+				continue
+			}
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+			for _, fk := range table.ForeignKeys {
+				updateRule, deleteRule := "NO ACTION", "NO ACTION"
+				if ast.ReferOptionType(fk.OnUpdate) != 0 {
+					updateRule = ast.ReferOptionType(fk.OnUpdate).String()
+				}
+				if ast.ReferOptionType(fk.OnDelete) != 0 {
+					deleteRule = ast.ReferOptionType(fk.OnDelete).String()
+				}
+				record := types.MakeDatums(
+					infoschema.CatalogVal, // CONSTRAINT_CATALOG
+					schema.Name.O,         // CONSTRAINT_SCHEMA
+					fk.Name.O,             // CONSTRAINT_NAME
+					infoschema.CatalogVal, // UNIQUE_CONSTRAINT_CATALOG
+					schema.Name.O,         // UNIQUE_CONSTRAINT_SCHEMA
+					"PRIMARY",             // UNIQUE_CONSTRAINT_NAME
+					"NONE",                // MATCH_OPTION
+					updateRule,            // UPDATE_RULE
+					deleteRule,            // DELETE_RULE
+					table.Name.O,          // TABLE_NAME
+					fk.RefTable.O,         // REFERENCED_TABLE_NAME
+				)
+				rows = append(rows, record)
+			}
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx, sctx)
 	if err != nil {
@@ -482,10 +525,6 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
 
 			createOptions := ""
-
-			if table.IsSequence() {
-				continue
-			}
 
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
@@ -523,6 +562,12 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				tableType := "BASE TABLE"
 				if util.IsSystemView(schema.Name.L) {
 					tableType = "SYSTEM VIEW"
+				}
+				if table.IsSequence() {
+					tableType = "SEQUENCE"
+					if rowCount == 0 {
+						rowCount = 1
+					}
 				}
 				if table.PKIsHandle || table.IsCommonHandle {
 					pkType = "CLUSTERED"
