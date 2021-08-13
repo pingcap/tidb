@@ -161,6 +161,8 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		if len(s.Tables) == 0 {
 			return e.dropLocalTemporaryTables(localTempTablesToDrop)
 		}
+	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
+		return errUnsupportedFlashbackTmpTable
 	}
 
 	if err = e.ctx.NewTxn(ctx); err != nil {
