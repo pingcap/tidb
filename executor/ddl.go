@@ -162,6 +162,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return e.dropLocalTemporaryTables(localTempTablesToDrop)
 		}
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
+		// local temporary table can not be distinguished from non-existent table after being dropped.
 		return errUnsupportedFlashbackTmpTable
 	}
 
