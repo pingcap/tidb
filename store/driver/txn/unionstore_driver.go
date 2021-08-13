@@ -34,6 +34,10 @@ func newMemBuffer(m *tikv.MemDB) kv.MemBuffer {
 	return &memBuffer{MemDB: m}
 }
 
+func (m *memBuffer) Size() int {
+	return m.MemDB.Size()
+}
+
 func (m *memBuffer) Delete(k kv.Key) error {
 	return m.MemDB.Delete(k)
 }

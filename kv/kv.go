@@ -132,6 +132,9 @@ type MemBuffer interface {
 
 	// Len returns the number of entries in the DB.
 	Len() int
+
+	// Size returns sum of keys and values length.
+	Size() int
 }
 
 // LockCtx contains information for LockKeys method.
