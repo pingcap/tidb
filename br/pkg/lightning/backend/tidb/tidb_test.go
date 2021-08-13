@@ -21,6 +21,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -382,4 +383,88 @@ func (s *mysqlSuite) TestFetchRemoteTableModels_4_x_auto_random(c *C) {
 			},
 		},
 	})
+}
+
+func (s *mysqlSuite) TestWriteRowsErrorDowngrading(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/tidb/mockNonRetryableError", "return"), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/tidb/mockNonRetryableError")
+
+	// First, batch insert, fail and rollback.
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1),(2),(3),(4),(5)\\E").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	// Then, insert row-by-row due to the non-retryable error.
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	// TODO: skip the previous error and continue writing the rest.
+	// s.mockDB.
+	// 	ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
+	// 	WillReturnResult(sqlmock.NewResult(1, 1))
+	// s.mockDB.
+	// 	ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(3)\\E").
+	// 	WillReturnResult(sqlmock.NewResult(1, 1))
+	// s.mockDB.
+	// 	ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(4)\\E").
+	// 	WillReturnResult(sqlmock.NewResult(1, 1))
+	// s.mockDB.
+	// 	ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(5)\\E").
+	// 	WillReturnResult(sqlmock.NewResult(1, 1))
+
+	ctx := context.Background()
+	logger := log.L()
+
+	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup)
+	engine, err := ignoreBackend.OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
+	c.Assert(err, IsNil)
+
+	dataRows := ignoreBackend.MakeEmptyRows()
+	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
+	indexRows := ignoreBackend.MakeEmptyRows()
+	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
+
+	encoder, err := ignoreBackend.NewEncoder(s.tbl, &kv.SessionOptions{})
+	c.Assert(err, IsNil)
+	row, err := encoder.Encode(logger, []types.Datum{
+		types.NewIntDatum(1),
+	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, 0)
+	c.Assert(err, IsNil)
+
+	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	row, err = encoder.Encode(logger, []types.Datum{
+		types.NewIntDatum(2),
+	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, 0)
+	c.Assert(err, IsNil)
+
+	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	row, err = encoder.Encode(logger, []types.Datum{
+		types.NewIntDatum(3),
+	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, 0)
+	c.Assert(err, IsNil)
+
+	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	row, err = encoder.Encode(logger, []types.Datum{
+		types.NewIntDatum(4),
+	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, 0)
+	c.Assert(err, IsNil)
+
+	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	row, err = encoder.Encode(logger, []types.Datum{
+		types.NewIntDatum(5),
+	}, 1, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, -1}, 0)
+	c.Assert(err, IsNil)
+
+	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	writer, err := engine.LocalWriter(ctx, nil)
+	c.Assert(err, IsNil)
+	err = writer.WriteRows(ctx, []string{"a"}, dataRows)
+	c.Assert(err, NotNil)
+	st, err := writer.Close(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(st, IsNil)
 }

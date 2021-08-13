@@ -254,7 +254,7 @@ const (
 		charset TEXT NOT NULL,
 		collation TEXT NOT NULL,
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
-		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
+		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
@@ -339,6 +339,22 @@ const (
 		WITH_GRANT_OPTION enum('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (USER,HOST,PRIV)
 	  );`
+
+	// CreatePlacementPolicyTable store the placement policys.
+	CreatePlacementPolicyTable = `CREATE TABLE IF NOT EXISTS mysql.placement_policy (
+		NAME varchar(64) NOT NULL,
+		PRIMARY_REGION varchar(255) DEFAULT NULL,
+		REGIONS varchar(255) DEFAULT NULL,
+		LEADERS BIGINT UNSIGNED DEFAULT NULL,
+		FOLLOWERS BIGINT UNSIGNED DEFAULT NULL,
+		VOTERS BIGINT UNSIGNED DEFAULT NULL,
+		SCHEDULE varchar(255) DEFAULT NULL,
+		CONSTRAINTS varchar(255) DEFAULT NULL,
+		LEADER_CONSTRAINTS varchar(255) DEFAULT NULL,
+		FOLLOWER_CONSTRAINTS varchar(255) DEFAULT NULL,
+		VOTER_CONSTRAINTS varchar(255) DEFAULT NULL,
+		PRIMARY KEY (NAME)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -498,11 +514,13 @@ const (
 	version71 = 71
 	// version72 adds snapshot column for mysql.stats_meta
 	version72 = 72
+	// version73 adds the placement policy for mysql.placement_meta
+	version73 = 73
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version72
+var currentBootstrapVersion int64 = version73
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -578,6 +596,7 @@ var (
 		upgradeToVer70,
 		upgradeToVer71,
 		upgradeToVer72,
+		upgradeToVer73,
 	}
 )
 
@@ -1527,6 +1546,13 @@ func upgradeToVer72(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN snapshot BIGINT(64) UNSIGNED NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer73(s Session, ver int64) {
+	if ver >= version73 {
+		return
+	}
+	doReentrantDDL(s, CreatePlacementPolicyTable)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1605,6 +1631,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsFMSketchTable)
 	// Create global_grants
 	mustExecute(s, CreateGlobalGrantsTable)
+	// Create placement_policy
+	mustExecute(s, CreatePlacementPolicyTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

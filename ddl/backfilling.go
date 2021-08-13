@@ -705,14 +705,13 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rk := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 
-		more, err := fn(handle, rk, it.Value())
+		more, err := fn(handle, it.Key(), it.Value())
 		if !more || err != nil {
 			return errors.Trace(err)
 		}
 
-		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		err = kv.NextUntil(it, util.RowKeyPrefixFilter(it.Key()))
 		if err != nil {
 			if kv.ErrNotExist.Equal(err) {
 				break

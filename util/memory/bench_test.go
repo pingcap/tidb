@@ -28,3 +28,14 @@ func BenchmarkMemUsed(b *testing.B) {
 		_, _ = MemUsed()
 	}
 }
+
+func BenchmarkConsume(b *testing.B) {
+	tracker := NewTracker(1, -1)
+	b.RunParallel(func(pb *testing.PB) {
+		childTracker := NewTracker(2, -1)
+		childTracker.AttachTo(tracker)
+		for pb.Next() {
+			childTracker.Consume(256 << 20)
+		}
+	})
+}

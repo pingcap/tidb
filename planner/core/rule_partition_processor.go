@@ -184,7 +184,13 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 				if r.HighExclude {
 					posHigh--
 				}
-				rangeScalar := float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
+
+				var rangeScalar float64
+				if mysql.HasUnsignedFlag(col.RetType.Flag) {
+					rangeScalar = float64(uint64(posHigh)) - float64(uint64(posLow)) // use float64 to avoid integer overflow
+				} else {
+					rangeScalar = float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
+				}
 
 				// if range is less than the number of partitions, there will be unused partitions we can prune out.
 				if rangeScalar < float64(numPartitions) && !highIsNull && !lowIsNull {
@@ -465,14 +471,20 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 		var locations []tables.ListPartitionLocation
 		if r.IsPointNullable(sc) {
 			location, err := colPrune.LocatePartition(sc, r.HighVal[0])
+			if types.ErrOverflow.Equal(err) {
+				return nil, true, nil // return full-scan if over-flow
+			}
 			if err != nil {
 				return nil, false, err
 			}
 			locations = []tables.ListPartitionLocation{location}
 		} else {
 			locations, err = colPrune.LocateRanges(sc, r)
+			if types.ErrOverflow.Equal(err) {
+				return nil, true, nil // return full-scan if over-flow
+			}
 			if err != nil {
-				return nil, false, nil
+				return nil, false, err
 			}
 		}
 		for _, location := range locations {
