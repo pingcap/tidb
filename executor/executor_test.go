@@ -8924,7 +8924,6 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	tk.MustQuery("select * from tmp4 as of timestamp(@a), tmp3 as of timestamp(@a) where tmp3.id=1;")
 	tk.MustGetErrMsg("select * from tmp4 as of timestamp(@a), tmp2 as of timestamp(@a)  where tmp2.id=1;", "can not stale read temporary table")
 
-
 	tk.MustExec("start transaction read only as of timestamp NOW(6)")
 	for _, query := range queries {
 		tk.MustGetErrMsg(query.sql, "can not stale read temporary table")
