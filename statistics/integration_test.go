@@ -14,8 +14,6 @@ package statistics_test
 
 import (
 	"fmt"
-	"math"
-	"strconv"
 	"strings"
 
 	. "github.com/pingcap/check"
