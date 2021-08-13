@@ -98,33 +98,27 @@ func TestSetLevel(t *testing.T) {
 	require.Equal(t, zap.DebugLevel, log.GetLevel())
 }
 
-func (s *testLogSuite) TestGrpcLoggerCreation(c *C) {
+func TestGrpcLoggerCreation(t *testing.T) {
 	level := "info"
 	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
-	copiedConfig := *conf
-	// assert that the new conf's address not same as the old one
-	c.Assert(&copiedConfig != conf, Equals, true)
 	_, p, err := initGRPCLogger(conf)
 	// assert after init grpc logger, the original conf is not changed
-	c.Assert(conf.Level, Equals, level)
-	c.Assert(err, IsNil)
-	c.Assert(p.Level.Level(), Equals, zap.ErrorLevel)
+	require.Equal(t, conf.Level, level)
+	require.Nil(t, err)
+	require.Equal(t, p.Level.Level(), zap.ErrorLevel)
 	os.Setenv("GRPC_DEBUG", "1")
 	defer os.Unsetenv("GRPC_DEBUG")
 	_, newP, err := initGRPCLogger(conf)
-	c.Assert(err, IsNil)
-	c.Assert(newP.Level.Level(), Equals, zap.DebugLevel)
+	require.Nil(t, err)
+	require.Equal(t, newP.Level.Level(), zap.DebugLevel)
 }
 
-func (s *testLogSuite) TestSlowQueryLoggerCreation(c *C) {
+func TestSlowQueryLoggerCreation(t *testing.T) {
 	level := "warn"
 	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
-	copiedConfig := *conf
-	// assert that the new conf's address not same as the old one
-	c.Assert(&copiedConfig != conf, Equals, true)
 	_, prop, err := newSlowQueryLogger(conf)
 	// assert after init slow query logger, the original conf is not changed
-	c.Assert(conf.Level, Equals, level)
-	c.Assert(err, IsNil)
-	c.Assert(prop.Level.String(), Equals, conf.Level)
+	require.Equal(t, conf.Level, level)
+	require.Nil(t, err)
+	require.Equal(t, prop.Level.String(), conf.Level)
 }
