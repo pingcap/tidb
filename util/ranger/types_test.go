@@ -196,6 +196,6 @@ func TestIsFullRange(t *testing.T) {
 		},
 	}
 	for _, v := range isFullRangeTests {
-		require.Equal(t, v.isFullRange, v.ran.IsFullRange(t.unsignedIntHandle))
+		require.Equal(t, v.isFullRange, v.ran.IsFullRange(v.unsignedIntHandle))
 	}
 }
