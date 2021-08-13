@@ -2294,7 +2294,7 @@ func (s *testSuite) TestTemporaryTable(c *C) {
 	tk.MustGetErrCode("create binding for delete from t where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
 }
 
-func (s *testSuite) TestLocalTemporaryTable (c *C) {
+func (s *testSuite) TestLocalTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("set @@tidb_enable_noop_functions=1;")
