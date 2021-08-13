@@ -342,7 +342,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema.O)
 	}
-	tbInfo, err := ddl.BuildTableInfoWithCheck(e.ctx, s, dbInfo.Charset, dbInfo.Collate)
+	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.ctx, is, s, dbInfo.Charset, dbInfo.Collate)
 	if err != nil {
 		return err
 	}
