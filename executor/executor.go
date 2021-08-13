@@ -1557,6 +1557,10 @@ func (e *UnionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return errors.Trace(result.err)
 	}
 
+	if result.chk.NumCols() != req.NumCols() {
+		return errors.Errorf("Internal error: UnionExec chunk column count mismatch, req: %d, result: %d",
+			req.NumCols(), result.chk.NumCols())
+	}
 	req.SwapColumns(result.chk)
 	result.src <- result.chk
 	return nil
@@ -1658,7 +1662,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true
-		sc.TruncateAsWarning = !vars.StrictSQLMode
+		// With IGNORE or LOCAL, data-interpretation errors become warnings and the load operation continues,
+		// even if the SQL mode is restrictive. For details: https://dev.mysql.com/doc/refman/8.0/en/load-data.html
+		// TODO: since TiDB only support the LOCAL by now, so the TruncateAsWarning are always true here.
+		sc.TruncateAsWarning = true
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		sc.IgnoreNoPartition = true
