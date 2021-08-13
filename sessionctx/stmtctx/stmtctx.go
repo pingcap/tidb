@@ -181,6 +181,8 @@ type StatementContext struct {
 		LogOnExceed [2]memory.LogOnExceed
 	}
 
+	// OptimInfo maps Plan.ID() to optimization information when generating Plan.
+	OptimInfo map[int]string
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
 }

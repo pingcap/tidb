@@ -77,6 +77,24 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	return ast.IsReadOnly(node)
 }
 
+// GetExecuteForUpdateReadIS is used to check whether the statement is `execute` and target statement has a forUpdateRead flag.
+// If so, we will return the latest information schema.
+func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschema.InfoSchema {
+	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
+		vars := sctx.GetSessionVars()
+		execID := execStmt.ExecID
+		if execStmt.Name != "" {
+			execID = vars.PreparedStmtNameToID[execStmt.Name]
+		}
+		if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
+			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
+				return domain.GetDomain(sctx).InfoSchema()
+			}
+		}
+	}
+	return nil
+}
+
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
@@ -317,18 +335,6 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return nil, nil, 0, err
 	}
 	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
-
-	if execPlan, ok := p.(*plannercore.Execute); ok {
-		execID := execPlan.ExecID
-		if execPlan.Name != "" {
-			execID = sctx.GetSessionVars().PreparedStmtNameToID[execPlan.Name]
-		}
-		if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[execID]; ok {
-			if preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt); ok && preparedObj.ForUpdateRead {
-				is = domain.GetDomain(sctx).InfoSchema()
-			}
-		}
-	}
 
 	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
 	activeRoles := sctx.GetSessionVars().ActiveRoles
