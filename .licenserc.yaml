@@ -28,7 +28,7 @@ header:
     - 'LICENSE'
     - '.github/'
     # The license checker think the following 68 files do not have valid header licenses, need to be discussed.
-    # Ignore them temporarily.
+    # Ignore them for now.
     - 'cmd/explaintest/config.toml'
     - 'cmd/importer/config.toml'
     - 'cmd/portgenerator/portgenerator.go'
