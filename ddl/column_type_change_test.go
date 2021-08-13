@@ -2213,3 +2213,15 @@ func (s *testColumnTypeChangeSuite) TestChangeFromUnsignedIntToTime(c *C) {
 	tk.MustQuery("select a from t;").Check(testkit.Rows("18:08:57"))
 	tk.MustExec("drop table if exists t;")
 }
+
+// See https://github.com/pingcap/tidb/issues/25287.
+func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bit(45));")
+	tk.MustExec("insert into t values (1174717);")
+	errMsg := "[table:1366]Incorrect string value '\\xEC\\xBD' for column 'a'"
+	tk.MustGetErrMsg("alter table t modify column a varchar(31) collate utf8mb4_general_ci;", errMsg)
+}
