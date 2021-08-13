@@ -1282,23 +1282,47 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		gs = append(gs, s)
 	}
 
-	// Show dynamic privileges
-	var dynamicPrivs, grantableDynamicPrivs []string
+	// If the SHOW GRANTS is for the current user, there might be activeRoles (allRoles)
+	// The convention is to merge the Dynamic privileges assigned to the user with
+	// inherited dynamic privileges from those roles
+	dynamicPrivsMap := make(map[string]bool) // privName, grantable
 	for _, record := range p.Dynamic[user] {
 		if record.fullyMatch(user, host) {
-			if record.GrantOption {
-				grantableDynamicPrivs = append(grantableDynamicPrivs, record.PrivilegeName)
-			} else {
-				dynamicPrivs = append(dynamicPrivs, record.PrivilegeName)
+			dynamicPrivsMap[record.PrivilegeName] = record.GrantOption
+		}
+	}
+	for _, r := range allRoles {
+		for _, record := range p.Dynamic[r.Username] {
+			if record.fullyMatch(r.Username, r.Hostname) {
+				// If the record already exists in the map and it's grantable
+				// skip doing anything, because we might inherit a non-grantable permission
+				// from a role, and don't want to clobber the existing privilege.
+				if grantable, ok := dynamicPrivsMap[record.PrivilegeName]; ok && grantable {
+					continue
+				}
+				dynamicPrivsMap[record.PrivilegeName] = record.GrantOption
 			}
 		}
 	}
+
+	// Convert the map to a slice so it can be sorted to be deterministic and joined
+	var dynamicPrivs, grantableDynamicPrivs []string
+	for privName, grantable := range dynamicPrivsMap {
+		if grantable {
+			grantableDynamicPrivs = append(grantableDynamicPrivs, privName)
+		} else {
+			dynamicPrivs = append(dynamicPrivs, privName)
+		}
+	}
+
 	// Merge the DYNAMIC privs into a line for non-grantable and then grantable.
 	if len(dynamicPrivs) > 0 {
+		sort.Strings(dynamicPrivs)
 		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s'", strings.Join(dynamicPrivs, ","), user, host)
 		gs = append(gs, s)
 	}
 	if len(grantableDynamicPrivs) > 0 {
+		sort.Strings(grantableDynamicPrivs)
 		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION", strings.Join(grantableDynamicPrivs, ","), user, host)
 		gs = append(gs, s)
 	}
