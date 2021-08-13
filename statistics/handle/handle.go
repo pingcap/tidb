@@ -1278,7 +1278,7 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			// When there's new collation data, the length of bounds of histogram(the collate key) might be
 			// longer than the FieldType.Flen of this column.
-			// We use change it to TypeBlob to bypass this problem here.
+			// We change it to TypeBlob to bypass the length check here.
 			if tp.EvalType() == types.ETString && tp.Tp != mysql.TypeEnum && tp.Tp != mysql.TypeSet {
 				tp = types.NewFieldType(mysql.TypeBlob)
 			}
