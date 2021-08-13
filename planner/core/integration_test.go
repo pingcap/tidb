@@ -4218,7 +4218,11 @@ func (s *testIntegrationSerialSuite) TestSelectTemporaryTableReopen(c *C) {
 	err = tk.QueryToErr("select * from tmp1 union select * from tmp1;")
 	c.Assert(err.Error(), Equals, "ERROR 1815 (HY000): Can't reopen table: 'tmp1'")
 	err = tk.QueryToErr("select * from tmp1 union select * from tmp1;")
-	c.Assert(err.Error(), Equals, "select * from tmp1 t1 left join tmp1 t2 on t1.c=t2.c;")
+	c.Assert(err.Error(), Equals, "ERROR 1815 (HY000): Can't reopen table: 'tmp1'")
 	err = tk.QueryToErr("select * from tmp1 t1 left join (select * from tmp1) t2 on t1.c=t2.c;")
-	c.Assert(err.Error(), Equals, "select * from tmp1 t1 left join tmp1 t2 on t1.c=t2.c;")
+	c.Assert(err.Error(), Equals, "ERROR 1815 (HY000): Can't reopen table: 'tmp1'")
+	tk.MustExec("create temporary table t1 (i int);")
+	tk.MustExec("insert into t1 values (5),(4),(1),(2),(3);")
+	err = tk.QueryToErr("with c1 as (select i from t1), c2 as (select i from c1 where c1.i=2) select i from c1 where i > 3 union  select i from c2;")
+	c.Assert(err.Error(), Equals, "ERROR 1815 (HY000): Can't reopen table: 't1'")
 }

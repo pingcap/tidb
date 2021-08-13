@@ -3843,18 +3843,14 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			if len(b.cteNameProcessingStack) > 0 {
 				if tblIds, ok := b.cteToTblIDMapper[tn.Name.L]; ok {
 					cteName := b.cteNameProcessingStack[len(b.cteNameProcessingStack)-1]
-					tblIds1 := b.cteToTblIDMapper[cteName]
-					if tblIds1 == nil {
-						tblIds1 = make([]int64, 0, 1)
-					}
 					b.cteToTblIDMapper[cteName] = append(b.cteToTblIDMapper[cteName], tblIds...)
 				}
 			} else {
 				if tblIds, ok := b.cteToTblIDMapper[tn.Name.L]; ok {
 					for _, tblID := range tblIds {
 						if _, ok := b.selTmpTblIds[tblID]; ok {
-							tb, ok1 := b.is.TableByID(tblID)
-							if !ok1 {
+							tb, exist := b.is.TableByID(tblID)
+							if !exist {
 								return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tblID)
 							}
 							errMsg := fmt.Sprintf(errno.MySQLErrName[errno.ErrCantReopenTable].Raw, tb.Meta().Name.L)
