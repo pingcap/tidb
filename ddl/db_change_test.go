@@ -1814,6 +1814,10 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test_db_state")
 
+	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
+	stateWriteOnlySQLs := []string{"insert into t values (8, 8)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 9", "update t set b = 7 where a = 2", "delete from t where b = 3"}
+	stateWriteReorganizationSQLs := []string{"insert into t values (10, 10)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 11", "update t set b = 7 where a = 5", "delete from t where b = 6"}
+
 	var checkErr error
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
@@ -1826,93 +1830,27 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 		c.Assert(err, IsNil)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
-			_, checkErr = tk1.Exec("insert into t values (5, 5)")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("begin;")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("insert into t select * from t")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("rollback")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("insert into t set b = 6")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("update t set b = 7 where a = 1")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("delete from t where b = 4")
-			if checkErr != nil {
-				return
+			for _, sql := range stateDeleteOnlySQLs {
+				_, checkErr = tk1.Exec(sql)
+				if checkErr != nil {
+					return
+				}
 			}
 			// (1, 7), (2, 2), (3, 3), (5, 5), (0, 6)
 		case model.StateWriteOnly:
-			_, checkErr = tk1.Exec("insert into t values (8, 8)")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("begin;")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("insert into t select * from t")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("rollback")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("insert into t set b = 9")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("update t set b = 7 where a = 2")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("delete from t where b = 3")
-			if checkErr != nil {
-				return
+			for _, sql := range stateWriteOnlySQLs {
+				_, checkErr = tk1.Exec(sql)
+				if checkErr != nil {
+					return
+				}
 			}
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
 		case model.StateWriteReorganization:
-			_, checkErr = tk1.Exec("insert into t values (10, 10)")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("begin;")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("insert into t select * from t")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("rollback")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("insert into t set b = 11")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("update t set b = 7 where a = 5")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("delete from t where b = 6")
-			if checkErr != nil {
-				return
+			for _, sql := range stateWriteReorganizationSQLs {
+				_, checkErr = tk1.Exec(sql)
+				if checkErr != nil {
+					return
+				}
 			}
 			// (1, 7), (2, 7), (5, 7), (8, 8), (0, 9), (10, 10), (10, 10), (0, 11), (0, 11)
 		}
@@ -1938,6 +1876,8 @@ func (s *serialTestStateChangeSuite) TestCreateUniqueExpressionIndex(c *C) {
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test_db_state")
 
+	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
+
 	var checkErr error
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
@@ -1950,33 +1890,11 @@ func (s *serialTestStateChangeSuite) TestCreateUniqueExpressionIndex(c *C) {
 		c.Assert(err, IsNil)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
-			_, checkErr = tk1.Exec("insert into t values (5, 5)")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("begin;")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("insert into t select * from t")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("rollback")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("insert into t set b = 6")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("update t set b = 7 where a = 1")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("delete from t where b = 4")
-			if checkErr != nil {
-				return
+			for _, sql := range stateDeleteOnlySQLs {
+				_, checkErr = tk1.Exec(sql)
+				if checkErr != nil {
+					return
+				}
 			}
 			// (1, 7), (2, 2), (3, 3), (5, 5), (0, 6)
 		case model.StateWriteOnly:
@@ -1984,13 +1902,14 @@ func (s *serialTestStateChangeSuite) TestCreateUniqueExpressionIndex(c *C) {
 			if checkErr != nil {
 				return
 			}
-			_, checkErr = tk1.Exec("begin;")
+			_, checkErr = tk1.Exec("begin pessimistic;")
 			if checkErr != nil {
 				return
 			}
 			_, tmpErr := tk1.Exec("insert into t select * from t")
 			if tmpErr == nil {
 				checkErr = errors.New("should not be nil")
+				return
 			}
 			_, checkErr = tk1.Exec("rollback")
 			if checkErr != nil {
@@ -2014,13 +1933,14 @@ func (s *serialTestStateChangeSuite) TestCreateUniqueExpressionIndex(c *C) {
 			if checkErr != nil {
 				return
 			}
-			_, checkErr = tk1.Exec("begin;")
+			_, checkErr = tk1.Exec("begin pessimistic;")
 			if checkErr != nil {
 				return
 			}
 			_, tmpErr := tk1.Exec("insert into t select * from t")
 			if tmpErr == nil {
 				checkErr = errors.New("should not be nil")
+				return
 			}
 			_, checkErr = tk1.Exec("rollback")
 			if checkErr != nil {
@@ -2061,6 +1981,9 @@ func (s *serialTestStateChangeSuite) TestDropExpressionIndex(c *C) {
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test_db_state")
+	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
+	stateWriteOnlySQLs := []string{"insert into t values (8, 8)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 9", "update t set b = 7 where a = 2", "delete from t where b = 3"}
+	stateWriteReorganizationSQLs := []string{"insert into t values (10, 10)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 11", "update t set b = 7 where a = 5", "delete from t where b = 6"}
 
 	var checkErr error
 	d := s.dom.DDL()
@@ -2074,93 +1997,27 @@ func (s *serialTestStateChangeSuite) TestDropExpressionIndex(c *C) {
 		c.Assert(err, IsNil)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
-			_, checkErr = tk1.Exec("insert into t values (5, 5)")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("begin;")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("insert into t select * from t")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("rollback")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("insert into t set b = 6")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("update t set b = 7 where a = 1")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("delete from t where b = 4")
-			if checkErr != nil {
-				return
+			for _, sql := range stateDeleteOnlySQLs {
+				_, checkErr = tk1.Exec(sql)
+				if checkErr != nil {
+					return
+				}
 			}
 			// (1, 7), (2, 7), (5, 5), (8, 8), (0, 9), (0, 6)
 		case model.StateWriteOnly:
-			_, checkErr = tk1.Exec("insert into t values (8, 8)")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("begin;")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("insert into t select * from t")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("rollback")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("insert into t set b = 9")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("update t set b = 7 where a = 2")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("delete from t where b = 3")
-			if checkErr != nil {
-				return
+			for _, sql := range stateWriteOnlySQLs {
+				_, checkErr = tk1.Exec(sql)
+				if checkErr != nil {
+					return
+				}
 			}
 			// (1, 1), (2, 7), (4, 4), (8, 8), (0, 9)
 		case model.StateDeleteReorganization:
-			_, checkErr = tk1.Exec("insert into t values (10, 10)")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("begin;")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("insert into t select * from t")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("rollback")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("insert into t set b = 11")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("update t set b = 7 where a = 5")
-			if checkErr != nil {
-				return
-			}
-			_, checkErr = tk1.Exec("delete from t where b = 6")
-			if checkErr != nil {
-				return
+			for _, sql := range stateWriteReorganizationSQLs {
+				_, checkErr = tk1.Exec(sql)
+				if checkErr != nil {
+					return
+				}
 			}
 			// (1, 7), (2, 7), (5, 7), (8, 8), (0, 9), (10, 10), (0, 11)
 		}
