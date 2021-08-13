@@ -29,6 +29,14 @@ run_sql "create view $DB.view_3 as select m from $DB.table_1 union select a * b 
 run_sql "drop view $DB.view_1;"
 run_sql "create view $DB.view_1 as select 133 as m;"
 
+run_sql "create table $DB.auto_inc (n int primary key auto_incrment);"
+run_sql "insert into $DB.auto_inc values (), (), (), (), ();"
+last_id=$(run_sql "select n from $DB.auto_inc order by n desc limit 1" | tail -n1)
+
+run_sql "insert into $DB.auto_rnd (n bigint primary key auto_random(8));"
+run_sql "insert into $DB.auto_rnd values (), (), (), (), ();"
+last_rnd_id=$(run_sql "select last_insert_id()" | tail -n1)
+
 echo "backup start..."
 run_br backup db --db "$DB" -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
@@ -45,5 +53,9 @@ views_count=$(run_sql "select count(*) c, sum(m) s from $DB.view_3;" | tail -2 |
 run_sql "insert into $DB.table_2 (c) values (33);"
 seq_val=$(run_sql "select a >= 8 and b >= 4 as g from $DB.table_2 where c = 33;" | tail -1)
 [ "$seq_val" = 'g: 1' ]
+
+run_sql "insert into $DB.auto_inc values ();"
+last_id_after_restore=$(run_sql "select n from $DB.auto_inc order by n desc limit 1;" | tail -n1)
+
 
 run_sql "drop schema $DB"
