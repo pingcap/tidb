@@ -567,6 +567,12 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	var err error
+	defer func() {
+		terror.Log(e.Close())
+		a.logAudit()
+	}()
+
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -580,12 +586,6 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 			return nil, errors.New("can not execute write statement when 'tidb_low_resolution_tso' is set")
 		}
 	}
-
-	var err error
-	defer func() {
-		terror.Log(e.Close())
-		a.logAudit()
-	}()
 
 	err = Next(ctx, e, newFirstChunk(e))
 	if err != nil {
@@ -829,6 +829,7 @@ func (a *ExecStmt) logAudit() {
 	if sessVars.InRestrictedSQL {
 		return
 	}
+
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {

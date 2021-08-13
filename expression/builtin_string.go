@@ -1479,15 +1479,8 @@ func (b *builtinLocate2ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) 
 	if int64(len([]rune(subStr))) == 0 {
 		return 1, false, nil
 	}
-	if collate.IsCICollation(b.collation) {
-		str = strings.ToLower(str)
-		subStr = strings.ToLower(subStr)
-	}
-	ret, idx := 0, strings.Index(str, subStr)
-	if idx != -1 {
-		ret = utf8.RuneCountInString(str[:idx]) + 1
-	}
-	return int64(ret), false, nil
+
+	return locateStringWithCollation(str, subStr, b.collation), false, nil
 }
 
 type builtinLocate3ArgsSig struct {
@@ -1569,9 +1562,10 @@ func (b *builtinLocate3ArgsUTF8Sig) evalInt(row chunk.Row) (int64, bool, error) 
 		return pos + 1, false, nil
 	}
 	slice := string([]rune(str)[pos:])
-	idx := strings.Index(slice, subStr)
-	if idx != -1 {
-		return pos + int64(utf8.RuneCountInString(slice[:idx])) + 1, false, nil
+
+	idx := locateStringWithCollation(slice, subStr, b.collation)
+	if idx != 0 {
+		return pos + idx, false, nil
 	}
 	return 0, false, nil
 }

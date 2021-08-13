@@ -296,6 +296,14 @@ func (s *testSuiteP1) TestLoadStats(c *C) {
 	c.Assert(tk.ExecToErr("load stats ./xxx.json"), NotNil)
 }
 
+func (s *testSuiteP1) TestPlanRecreator(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx_a(a))")
+	tk.MustExec("plan recreator dump explain select * from t where a=10")
+}
+
 func (s *testSuiteP1) TestShow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database test_show;")
@@ -4200,7 +4208,7 @@ func (s *testSuiteP1) TestUnionAutoSignedCast(c *C) {
 	tk.MustQuery("select * from t1 union select * from t2 order by id").
 		Check(testkit.Rows("1 -1 -1 -1.1 -1", "2 1 1 1.1 1"))
 	tk.MustQuery("select id, i, b, d, dd from t2 union select id, i, b, d, dd from t1 order by id").
-		Check(testkit.Rows("1 0 0 0 -1", "2 1 1 1.1 1"))
+		Check(testkit.Rows("1 -1 -1 -1.1 -1", "2 1 1 1.1 1"))
 	tk.MustQuery("select id, i from t2 union select id, cast(i as unsigned int) from t1 order by id").
 		Check(testkit.Rows("1 18446744073709551615", "2 1"))
 	tk.MustQuery("select dd from t2 union all select dd from t2").
@@ -4214,7 +4222,7 @@ func (s *testSuiteP1) TestUnionAutoSignedCast(c *C) {
 	tk.MustQuery("select id, v from t3 union select id, v from t4 order by id").
 		Check(testkit.Rows("1 -1", "2 1"))
 	tk.MustQuery("select id, v from t4 union select id, v from t3 order by id").
-		Check(testkit.Rows("1 0", "2 1"))
+		Check(testkit.Rows("1 -1", "2 1"))
 
 	tk.MustExec("drop table if exists t5,t6,t7")
 	tk.MustExec("create table t5 (id int, v bigint unsigned)")
@@ -5224,6 +5232,23 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	tk.MustExec("drop table if exists t_regions_temporary_table")
 	// Test pre split regions
 	_, err = tk.Exec("create global temporary table temporary_table_pre_split(id int ) pre_split_regions=2 ON COMMIT DELETE ROWS;")
+	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error())
+
+	// Test show table regions and split table on local temporary table
+	tk.MustExec("drop table if exists t_regions_local_temporary_table")
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
+	tk.MustExec("create temporary table t_regions_local_temporary_table (a int key, b int, c int, index idx(b), index idx2(c));")
+	// Test show table regions.
+	_, err = tk.Exec("show table t_regions_local_temporary_table regions")
+	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions").Error())
+	// Test split table.
+	_, err = tk.Exec("split table t_regions_local_temporary_table between (-10000) and (10000) regions 4;")
+	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
+	_, err = tk.Exec("split partition table t_regions_local_temporary_table partition (p1,p2) index idx between (0) and (20000) regions 2;")
+	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
+	tk.MustExec("drop table if exists t_regions_local_temporary_table")
+	// Test pre split regions
+	_, err = tk.Exec("create temporary table local_temporary_table_pre_split(id int ) pre_split_regions=2;")
 	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error())
 
 	rows := re.Rows()
@@ -6682,7 +6707,7 @@ func (s *testClusterTableSuite) TestSQLDigestTextRetriever(c *C) {
 
 	insertNormalized, insertDigest := parser.NormalizeDigest("insert into test_sql_digest_text_retriever values (1, 1)")
 	_, updateDigest := parser.NormalizeDigest("update test_sql_digest_text_retriever set v = v + 1 where id = 1")
-	r := &executor.SQLDigestTextRetriever{
+	r := &expression.SQLDigestTextRetriever{
 		SQLDigestsMap: map[string]string{
 			insertDigest.String(): "",
 			updateDigest.String(): "",
@@ -6692,6 +6717,89 @@ func (s *testClusterTableSuite) TestSQLDigestTextRetriever(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r.SQLDigestsMap[insertDigest.String()], Equals, insertNormalized)
 	c.Assert(r.SQLDigestsMap[updateDigest.String()], Equals, "")
+}
+
+func (s *testClusterTableSuite) TestFunctionDecodeSQLDigests(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+	tk.MustExec("drop table if exists test_func_decode_sql_digests")
+	tk.MustExec("create table test_func_decode_sql_digests(id int primary key, v int)")
+
+	q1 := "begin"
+	norm1, digest1 := parser.NormalizeDigest(q1)
+	q2 := "select @@tidb_current_ts"
+	norm2, digest2 := parser.NormalizeDigest(q2)
+	q3 := "select id, v from test_func_decode_sql_digests where id = 1 for update"
+	norm3, digest3 := parser.NormalizeDigest(q3)
+
+	// TIDB_DECODE_SQL_DIGESTS function doesn't actually do "decoding", instead it queries `statements_summary` and it's
+	// variations for the corresponding statements.
+	// Execute the statements so that the queries will be saved into statements_summary table.
+	tk.MustExec(q1)
+	// Save the ts to query the transaction from tidb_trx.
+	ts, err := strconv.ParseUint(tk.MustQuery(q2).Rows()[0][0].(string), 10, 64)
+	c.Assert(err, IsNil)
+	c.Assert(ts, Greater, uint64(0))
+	tk.MustExec(q3)
+	tk.MustExec("rollback")
+
+	// Test statements truncating.
+	decoded := fmt.Sprintf(`["%s","%s","%s"]`, norm1, norm2, norm3)
+	digests := fmt.Sprintf(`["%s","%s","%s"]`, digest1, digest2, digest3)
+	tk.MustQuery("select tidb_decode_sql_digests(?, 0)", digests).Check(testkit.Rows(decoded))
+	// The three queries are shorter than truncate length, equal to truncate length and longer than truncate length respectively.
+	tk.MustQuery("select tidb_decode_sql_digests(?, ?)", digests, len(norm2)).Check(testkit.Rows(
+		"[\"begin\",\"select @@tidb_current_ts\",\"select `id` , `v` from `...\"]"))
+
+	// Empty array.
+	tk.MustQuery("select tidb_decode_sql_digests('[]')").Check(testkit.Rows("[]"))
+
+	// NULL
+	tk.MustQuery("select tidb_decode_sql_digests(null)").Check(testkit.Rows("<nil>"))
+
+	// Array containing wrong types and not-existing digests (maps to null).
+	tk.MustQuery("select tidb_decode_sql_digests(?)", fmt.Sprintf(`["%s",1,null,"%s",{"a":1},[2],"%s","","abcde"]`, digest1, digest2, digest3)).
+		Check(testkit.Rows(fmt.Sprintf(`["%s",null,null,"%s",null,null,"%s",null,null]`, norm1, norm2, norm3)))
+
+	// Not JSON array (throws warnings)
+	tk.MustQuery(`select tidb_decode_sql_digests('{"a":1}')`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1210 The argument can't be unmarshalled as JSON array: '{"a":1}'`))
+	tk.MustQuery(`select tidb_decode_sql_digests('aabbccdd')`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1210 The argument can't be unmarshalled as JSON array: 'aabbccdd'`))
+
+	// Invalid argument count.
+	tk.MustGetErrCode("select tidb_decode_sql_digests('a', 1, 2)", 1582)
+	tk.MustGetErrCode("select tidb_decode_sql_digests()", 1582)
+}
+
+func (s *testClusterTableSuite) TestFunctionDecodeSQLDigestsPrivilege(c *C) {
+	dropUserTk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(dropUserTk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("create user 'testuser'@'localhost'")
+	defer dropUserTk.MustExec("drop user 'testuser'@'localhost'")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser",
+		Hostname: "localhost",
+	}, nil, nil), IsTrue)
+	err := tk.ExecToErr("select tidb_decode_sql_digests('[\"aa\"]')")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	tk = testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("create user 'testuser2'@'localhost'")
+	defer dropUserTk.MustExec("drop user 'testuser2'@'localhost'")
+	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser2",
+		Hostname: "localhost",
+	}, nil, nil), IsTrue)
+	_ = tk.MustQuery("select tidb_decode_sql_digests('[\"aa\"]')")
 }
 
 func prepareLogs(c *C, logData []string, fileNames []string) {
@@ -7772,24 +7880,47 @@ func (s *testSuite) TestInvalidDateValueInCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE';")
+
+	// Test for sql mode 'NO_ZERO_IN_DATE'.
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES,NO_ZERO_IN_DATE';")
 	tk.MustGetErrCode("create table t (a datetime default '2999-00-00 00:00:00');", errno.ErrInvalidDefault)
-	tk.MustGetErrCode("create table t (a datetime default '2999-02-30 00:00:00');", errno.ErrInvalidDefault)
 	tk.MustExec("create table t (a datetime);")
 	tk.MustGetErrCode("alter table t modify column a datetime default '2999-00-00 00:00:00';", errno.ErrInvalidDefault)
 	tk.MustExec("drop table if exists t;")
 
-	tk.MustExec("set @@sql_mode = (select replace(@@sql_mode,'NO_ZERO_IN_DATE',''));")
-	tk.MustExec("set @@sql_mode = (select replace(@@sql_mode,'NO_ZERO_DATE',''));")
-	tk.MustExec("set @@sql_mode=(select concat(@@sql_mode, ',ALLOW_INVALID_DATES'));")
+	// Test for sql mode 'NO_ZERO_DATE'.
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES,NO_ZERO_DATE';")
+	tk.MustGetErrCode("create table t (a datetime default '0000-00-00 00:00:00');", errno.ErrInvalidDefault)
+	tk.MustExec("create table t (a datetime);")
+	tk.MustGetErrCode("alter table t modify column a datetime default '0000-00-00 00:00:00';", errno.ErrInvalidDefault)
+	tk.MustExec("drop table if exists t;")
+
+	// Remove NO_ZERO_DATE and NO_ZERO_IN_DATE.
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES';")
 	// Test create table with zero datetime as a default value.
 	tk.MustExec("create table t (a datetime default '2999-00-00 00:00:00');")
 	tk.MustExec("drop table if exists t;")
-	// Test create table with invalid datetime(02-30) as a default value.
-	tk.MustExec("create table t (a datetime default '2999-02-30 00:00:00');")
+	tk.MustExec("create table t (a datetime default '0000-00-00 00:00:00');")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a datetime);")
 	tk.MustExec("alter table t modify column a datetime default '2999-00-00 00:00:00';")
+	tk.MustExec("alter table t modify column a datetime default '0000-00-00 00:00:00';")
+	tk.MustExec("drop table if exists t;")
+
+	// Test create table with invalid datetime(02-30) as a default value.
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES';")
+	tk.MustGetErrCode("create table t (a datetime default '2999-02-30 00:00:00');", errno.ErrInvalidDefault)
+	tk.MustExec("drop table if exists t;")
+	// NO_ZERO_IN_DATE and NO_ZERO_DATE have nothing to do with invalid datetime(02-30).
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE';")
+	tk.MustGetErrCode("create table t (a datetime default '2999-02-30 00:00:00');", errno.ErrInvalidDefault)
+	tk.MustExec("drop table if exists t;")
+	// ALLOW_INVALID_DATES allows invalid datetime(02-30).
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES,ALLOW_INVALID_DATES';")
+	tk.MustExec("create table t (a datetime default '2999-02-30 00:00:00');")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a datetime);")
+	tk.MustExec("alter table t modify column a datetime default '2999-02-30 00:00:00';")
 	tk.MustExec("drop table if exists t;")
 }
 
@@ -8307,9 +8438,9 @@ func (s *testSerialSuite) TestDeadlocksTable(c *C) {
 	id1 := strconv.FormatUint(rec.ID, 10)
 	id2 := strconv.FormatUint(rec2.ID, 10)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/sqlDigestRetrieverSkipRetrieveGlobal", "return"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal", "return"), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/sqlDigestRetrieverSkipRetrieveGlobal"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/sqlDigestRetrieverSkipRetrieveGlobal"), IsNil)
 	}()
 
 	tk := testkit.NewTestKit(c, s.store)
@@ -8813,27 +8944,33 @@ func (s *testSuite) TestEmptyTableSampleTemporaryTable(c *C) {
 		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
 		"on commit delete rows")
 
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tmp2")
+	tk.MustExec("create temporary table tmp2 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+
 	// sleep 1us to make test stale
 	time.Sleep(time.Microsecond)
 
 	// test tablesample return empty
-	rs := tk.MustQuery("select * from tmp1 tablesample regions()")
-	rs.Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 
 	tk.MustExec("begin")
 	tk.MustExec("insert into tmp1 values (1, 1, 1)")
-	rs = tk.MustQuery("select * from tmp1 tablesample regions()")
-	rs.Check(testkit.Rows())
+	tk.MustExec("insert into tmp2 values (1, 1, 1)")
+	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 	tk.MustExec("commit")
 
 	// tablesample should not return error for compatibility of tools like dumpling
 	tk.MustExec("set @@tidb_snapshot=NOW(6)")
-	rs = tk.MustQuery("select * from tmp1 tablesample regions()")
-	rs.Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 
 	tk.MustExec("begin")
-	rs = tk.MustQuery("select * from tmp1 tablesample regions()")
-	rs.Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 	tk.MustExec("commit")
 }
 
@@ -8867,4 +9004,21 @@ func (s *testSuite) TestIssue25447(c *C) {
 	tk.MustExec("create table t2(a int , b varchar(8) GENERATED ALWAYS AS (c) VIRTUAL, c varchar(8), PRIMARY KEY (a))")
 	tk.MustExec("insert into t2(a) values(1)")
 	tk.MustQuery("select /*+ tidb_inlj(t2) */ t2.b, t1.b from t1 join t2 ON t2.a=t1.a").Check(testkit.Rows("<nil> 1"))
+}
+
+func (s *testSuite) TestIssue23602(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("CREATE TABLE t (a bigint unsigned PRIMARY KEY)")
+	defer tk.MustExec("DROP TABLE t")
+	tk.MustExec("INSERT INTO t VALUES (0),(1),(2),(3),(18446744073709551600),(18446744073709551605),(18446744073709551610),(18446744073709551615)")
+	tk.MustExec("ANALYZE TABLE t")
+	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT a FROM t WHERE a >= 0x1 AND a <= 0x2`).Check(testkit.Rows(
+		"TableReader 2.00 root  data:TableRangeScan]\n" +
+			"[└─TableRangeScan 2.00 cop[tikv] table:t range:[1,2], keep order:false"))
+	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT a FROM t WHERE a BETWEEN 0x1 AND 0x2`).Check(testkit.Rows(
+		"TableReader 2.00 root  data:TableRangeScan]\n" +
+			"[└─TableRangeScan 2.00 cop[tikv] table:t range:[1,2], keep order:false"))
+	tk.MustQuery("SELECT a FROM t WHERE a BETWEEN 0xFFFFFFFFFFFFFFF5 AND X'FFFFFFFFFFFFFFFA'").Check(testkit.Rows("18446744073709551605", "18446744073709551610"))
 }
