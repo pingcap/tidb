@@ -207,6 +207,7 @@ func (s *testSuite2) TestExplainAnalyzeExecutionInfo(c *C) {
 	s.checkExecutionInfo(c, tk, "explain analyze select * from t")
 	s.checkExecutionInfo(c, tk, "explain analyze select k from t use index(k)")
 	s.checkExecutionInfo(c, tk, "explain analyze select * from t use index(k)")
+	s.checkExecutionInfo(c, tk, "explain analyze with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte;")
 
 	tk.MustExec("CREATE TABLE IF NOT EXISTS nation  ( N_NATIONKEY  BIGINT NOT NULL,N_NAME       CHAR(25) NOT NULL,N_REGIONKEY  BIGINT NOT NULL,N_COMMENT    VARCHAR(152),PRIMARY KEY (N_NATIONKEY));")
 	tk.MustExec("CREATE TABLE IF NOT EXISTS part  ( P_PARTKEY     BIGINT NOT NULL,P_NAME        VARCHAR(55) NOT NULL,P_MFGR        CHAR(25) NOT NULL,P_BRAND       CHAR(10) NOT NULL,P_TYPE        VARCHAR(25) NOT NULL,P_SIZE        BIGINT NOT NULL,P_CONTAINER   CHAR(10) NOT NULL,P_RETAILPRICE DECIMAL(15,2) NOT NULL,P_COMMENT     VARCHAR(23) NOT NULL,PRIMARY KEY (P_PARTKEY));")
@@ -320,9 +321,33 @@ func (s *testSuite1) TestCheckActRowsWithUnistore(c *C) {
 			sql:      "select count(*) from t_unistore_act_rows group by b",
 			expected: []string{"2", "2", "2", "4"},
 		},
+		{
+			sql:      "with cte(a) as (select a from t_unistore_act_rows) select (select 1 from cte limit 1) from cte;",
+			expected: []string{"4", "4", "4", "4", "4"},
+		},
 	}
 
 	for _, test := range tests {
 		checkActRows(c, tk, test.sql, test.expected)
 	}
+}
+
+func (s *testSuite2) TestExplainAnalyzeCTEMemoryAndDiskInfo(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000) select * from cte;")
+
+	rows := tk.MustQuery("explain analyze with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000)" +
+		" select * from cte, t;").Rows()
+
+	c.Assert(rows[4][7].(string), Not(Equals), "N/A")
+	c.Assert(rows[4][8].(string), Equals, "0 Bytes")
+
+	tk.MustExec("set @@tidb_mem_quota_query=10240;")
+	rows = tk.MustQuery("explain analyze with recursive cte(a) as (select 1 union select a + 1 from cte where a < 1000)" +
+		" select * from cte, t;").Rows()
+
+	c.Assert(rows[4][7].(string), Not(Equals), "N/A")
+	c.Assert(rows[4][8].(string), Not(Equals), "N/A")
 }

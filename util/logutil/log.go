@@ -94,16 +94,11 @@ const (
 	OldSlowLogTimeFormat = "2006-01-02-15:04:05.999999999 -0700"
 )
 
-// SlowQueryLogger is used to log slow query, InitZapLogger will modify it according to config file.
+// SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
 var SlowQueryLogger = log.L()
 
-// InitLogger delegates to InitZapLogger. Keeping it here for historical reason.
+// InitLogger initializes a logger with cfg.
 func InitLogger(cfg *LogConfig) error {
-	return InitZapLogger(cfg)
-}
-
-// InitZapLogger initializes a zap logger with cfg.
-func InitZapLogger(cfg *LogConfig) error {
 	gl, props, err := log.InitLogger(&cfg.Config, zap.AddStacktrace(zapcore.FatalLevel))
 	if err != nil {
 		return errors.Trace(err)

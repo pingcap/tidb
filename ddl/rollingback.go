@@ -66,8 +66,6 @@ func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 	// So the next state is delete only state.
 	originalState := indexInfo.State
 	indexInfo.State = model.StateDeleteOnly
-	// Change dependent hidden columns if necessary.
-	updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteOnly)
 	job.SchemaState = model.StateDeleteOnly
 	ver, err1 := updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	if err1 != nil {
@@ -110,7 +108,15 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 // Since modifying column job has two types: normal-type and reorg-type, we should handle it respectively.
 // normal-type has only two states:    None -> Public
 // reorg-type has five states:         None -> Delete-only -> Write-only -> Write-org -> Public
-func rollingbackModifyColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
+func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	// If the value of SnapshotVer isn't zero, it means the reorg workers have been started.
+	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
+		// column type change workers are started. we have to ask them to exit.
+		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
+		w.reorgCtx.notifyReorgCancel()
+		// Give the this kind of ddl one more round to run, the errCancelledDDLJob should be fetched from the bottom up.
+		return w.onModifyColumn(d, t, job)
+	}
 	_, tblInfo, oldCol, jp, err := getModifyColumnInfo(t, job)
 	if err != nil {
 		return ver, err
@@ -138,7 +144,7 @@ func rollingbackModifyColumn(t *meta.Meta, job *model.Job) (ver int64, err error
 		job.State = model.JobStateCancelled
 		return ver, errCancelledDDLJob
 	}
-	// The job has been in it's middle state and we roll it back.
+	// The job has been in its middle state (but the reorg worker hasn't started) and we roll it back here.
 	job.State = model.JobStateRollingback
 	return ver, errCancelledDDLJob
 }
@@ -424,7 +430,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	case model.ActionTruncateTable:
 		ver, err = rollingbackTruncateTable(t, job)
 	case model.ActionModifyColumn:
-		ver, err = rollingbackModifyColumn(t, job)
+		ver, err = rollingbackModifyColumn(w, d, t, job)
 	case model.ActionRebaseAutoID, model.ActionShardRowID, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable, model.ActionRenameTables,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,

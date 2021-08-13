@@ -229,7 +229,7 @@ func (r *builder) buildFromColumn(expr *expression.Column) []*point {
 	return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
-func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
+func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
 	var (
@@ -457,9 +457,14 @@ func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val 
 	}
 
 	tmpEnum := types.Enum{}
-	for i := range ft.Elems {
-		tmpEnum.Name = ft.Elems[i]
-		tmpEnum.Value = uint64(i) + 1
+	for i := 0; i <= len(ft.Elems); i++ {
+		if i == 0 {
+			tmpEnum = types.Enum{}
+		} else {
+			tmpEnum.Name = ft.Elems[i-1]
+			tmpEnum.Value = uint64(i)
+		}
+
 		d := types.NewCollateMysqlEnumDatum(tmpEnum, ft.Collate)
 		if v, err := d.CompareDatum(sc, &val); err == nil {
 			switch op {
@@ -748,7 +753,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []*point {
 	switch op := expr.FuncName.L; op {
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE, ast.NullEQ:
-		return r.buildFormBinOp(expr)
+		return r.buildFromBinOp(expr)
 	case ast.LogicAnd:
 		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
 	case ast.LogicOr:

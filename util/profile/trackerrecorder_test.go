@@ -15,16 +15,42 @@ package profile
 
 import (
 	"math/rand"
+	"testing"
 	"time"
 	"unsafe"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&trackRecorderSuite{})
+func TestHeapProfileRecorder(t *testing.T) {
+	t.Parallel()
 
-type trackRecorderSuite struct {
+	// As runtime.MemProfileRate default values is 512 KB , so the num should be greater than 60000
+	// that the memory usage of the values would be greater than 512 KB.
+	num := 60000
+	lru := kvcache.NewSimpleLRUCache(uint(num), 0, 0)
+
+	keys := make([]*mockCacheKey, num)
+	for i := 0; i < num; i++ {
+		keys[i] = newMockHashKey(int64(i))
+		v := getRandomString(10)
+		lru.Put(keys[i], v)
+	}
+	bytes, err := col.getFuncMemUsage(kvcache.ProfileName)
+	require.Nil(t, err)
+
+	valueSize := int(unsafe.Sizeof(getRandomString(10)))
+	// ensure that the consumed bytes is at least larger than num * size of value
+	assert.LessOrEqual(t, int64(valueSize*num), bytes)
+	// we should assert lru size last and value size to reference lru in order to avoid gc
+	for _, k := range lru.Keys() {
+		assert.Len(t, k.Hash(), 8)
+	}
+	for _, v := range lru.Values() {
+		assert.Len(t, v.(string), 10)
+	}
 }
 
 type mockCacheKey struct {
@@ -58,33 +84,4 @@ func getRandomString(l int) string {
 		result = append(result, bytes[r.Intn(len(bytes))])
 	}
 	return string(result)
-}
-
-func (t *trackRecorderSuite) TestHeapProfileRecorder(c *C) {
-	// As runtime.MemProfileRate default values is 512 KB , so the num should be greater than 60000
-	// that the memory usage of the values would be greater than 512 KB.
-	num := 60000
-	lru := kvcache.NewSimpleLRUCache(uint(num), 0, 0)
-
-	keys := make([]*mockCacheKey, num)
-	for i := 0; i < num; i++ {
-		keys[i] = newMockHashKey(int64(i))
-		v := getRandomString(10)
-		lru.Put(keys[i], v)
-	}
-	for _, k := range lru.Keys() {
-		c.Assert(len(k.Hash()), Equals, 8)
-	}
-	for _, v := range lru.Values() {
-		val := v.(string)
-		c.Assert(len(val), Equals, 10)
-	}
-
-	bytes, err := col.getFuncMemUsage(kvcache.ProfileName)
-	c.Assert(err, IsNil)
-	valueSize := int(unsafe.Sizeof(getRandomString(10)))
-	// ensure that the consumed bytes is at least larger than num * size of value
-	c.Assert(int64(valueSize*num), LessEqual, bytes)
-	// we should assert lru size last and value size to reference lru in order to avoid gc
-	c.Assert(lru.Size(), Equals, num)
 }

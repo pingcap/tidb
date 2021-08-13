@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/cteutil"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -77,6 +78,16 @@ type CTEExec struct {
 	curIter    int
 	hCtx       *hashContext
 	sel        []int
+
+	// Limit related info.
+	hasLimit       bool
+	limitBeg       uint64
+	limitEnd       uint64
+	cursor         uint64
+	meetFirstBatch bool
+
+	memTracker  *memory.Tracker
+	diskTracker *disk.Tracker
 }
 
 // Open implements the Executor interface.
@@ -93,6 +104,11 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 		return err
 	}
 
+	e.memTracker = memory.NewTracker(e.id, -1)
+	e.diskTracker = disk.NewTracker(e.id, -1)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
+
 	if e.recursiveExec != nil {
 		if err = e.recursiveExec.Open(ctx); err != nil {
 			return err
@@ -102,8 +118,6 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 		if err = e.iterOutTbl.OpenAndRef(); err != nil {
 			return err
 		}
-
-		setupCTEStorageTracker(e.iterOutTbl, e.ctx)
 	}
 
 	if e.isDistinct {
@@ -124,15 +138,22 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.Reset()
 	e.resTbl.Lock()
+	defer e.resTbl.Unlock()
 	if !e.resTbl.Done() {
-		defer e.resTbl.Unlock()
-		resAction := setupCTEStorageTracker(e.resTbl, e.ctx)
-		iterInAction := setupCTEStorageTracker(e.iterInTbl, e.ctx)
+		resAction := setupCTEStorageTracker(e.resTbl, e.ctx, e.memTracker, e.diskTracker)
+		iterInAction := setupCTEStorageTracker(e.iterInTbl, e.ctx, e.memTracker, e.diskTracker)
+		var iterOutAction *chunk.SpillDiskAction
+		if e.iterOutTbl != nil {
+			iterOutAction = setupCTEStorageTracker(e.iterOutTbl, e.ctx, e.memTracker, e.diskTracker)
+		}
 
 		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
 			if val.(bool) && config.GetGlobalConfig().OOMUseTmpStorage {
 				defer resAction.WaitForTest()
 				defer iterInAction.WaitForTest()
+				if iterOutAction != nil {
+					defer iterOutAction.WaitForTest()
+				}
 			}
 		})
 
@@ -151,10 +172,11 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return err
 		}
 		e.resTbl.SetDone()
-	} else {
-		e.resTbl.Unlock()
 	}
 
+	if e.hasLimit {
+		return e.nextChunkLimit(req)
+	}
 	if e.chkIdx < e.resTbl.NumChunks() {
 		res, err := e.resTbl.GetChunk(e.chkIdx)
 		if err != nil {
@@ -179,13 +201,13 @@ func (e *CTEExec) Close() (err error) {
 		if err = e.recursiveExec.Close(); err != nil {
 			return err
 		}
+		// `iterInTbl` and `resTbl` are shared by multiple operators,
+		// so will be closed when the SQL finishes.
+		if err = e.iterOutTbl.DerefAndClose(); err != nil {
+			return err
+		}
 	}
 
-	// `iterInTbl` and `resTbl` are shared by multiple operators,
-	// so will be closed when the SQL finishes.
-	if err = e.iterOutTbl.DerefAndClose(); err != nil {
-		return err
-	}
 	return e.baseExecutor.Close()
 }
 
@@ -196,6 +218,9 @@ func (e *CTEExec) computeSeedPart(ctx context.Context) (err error) {
 	defer close(e.iterInTbl.GetBegCh())
 	chks := make([]*chunk.Chunk, 0, 10)
 	for {
+		if e.limitDone(e.iterInTbl) {
+			break
+		}
 		chk := newFirstChunk(e.seedExec)
 		if err = Next(ctx, e.seedExec, chk); err != nil {
 			return err
@@ -230,6 +255,10 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 		return ErrCTEMaxRecursionDepth.GenWithStackByArgs(e.curIter)
 	}
 
+	if e.limitDone(e.resTbl) {
+		return nil
+	}
+
 	for {
 		chk := newFirstChunk(e.recursiveExec)
 		if err = Next(ctx, e.recursiveExec, chk); err != nil {
@@ -238,6 +267,9 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 		if chk.NumRows() == 0 {
 			if err = e.setupTblsForNewIteration(); err != nil {
 				return err
+			}
+			if e.limitDone(e.resTbl) {
+				break
 			}
 			if e.iterInTbl.NumChunks() == 0 {
 				break
@@ -261,6 +293,51 @@ func (e *CTEExec) computeRecursivePart(ctx context.Context) (err error) {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+// Get next chunk from resTbl for limit.
+func (e *CTEExec) nextChunkLimit(req *chunk.Chunk) error {
+	if !e.meetFirstBatch {
+		for e.chkIdx < e.resTbl.NumChunks() {
+			res, err := e.resTbl.GetChunk(e.chkIdx)
+			if err != nil {
+				return err
+			}
+			e.chkIdx++
+			numRows := uint64(res.NumRows())
+			if newCursor := e.cursor + numRows; newCursor >= e.limitBeg {
+				e.meetFirstBatch = true
+				begInChk, endInChk := e.limitBeg-e.cursor, numRows
+				if newCursor > e.limitEnd {
+					endInChk = e.limitEnd - e.cursor
+				}
+				e.cursor += endInChk
+				if begInChk == endInChk {
+					break
+				}
+				tmpChk := res.CopyConstructSel()
+				req.Append(tmpChk, int(begInChk), int(endInChk))
+				return nil
+			}
+			e.cursor += numRows
+		}
+	}
+	if e.chkIdx < e.resTbl.NumChunks() && e.cursor < e.limitEnd {
+		res, err := e.resTbl.GetChunk(e.chkIdx)
+		if err != nil {
+			return err
+		}
+		e.chkIdx++
+		numRows := uint64(res.NumRows())
+		if e.cursor+numRows > e.limitEnd {
+			numRows = e.limitEnd - e.cursor
+			req.Append(res.CopyConstructSel(), 0, int(numRows))
+		} else {
+			req.SwapColumns(res.CopyConstructSel())
+		}
+		e.cursor += numRows
 	}
 	return nil
 }
@@ -313,6 +390,8 @@ func (e *CTEExec) reset() {
 	e.curIter = 0
 	e.chkIdx = 0
 	e.hashTbl = nil
+	e.cursor = 0
+	e.meetFirstBatch = false
 }
 
 func (e *CTEExec) reopenTbls() (err error) {
@@ -323,14 +402,20 @@ func (e *CTEExec) reopenTbls() (err error) {
 	return e.iterInTbl.Reopen()
 }
 
-func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context) (actionSpill *chunk.SpillDiskAction) {
+// Check if tbl meets the requirement of limit.
+func (e *CTEExec) limitDone(tbl cteutil.Storage) bool {
+	return e.hasLimit && uint64(tbl.NumRows()) >= e.limitEnd
+}
+
+func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentMemTracker *memory.Tracker,
+	parentDiskTracker *disk.Tracker) (actionSpill *chunk.SpillDiskAction) {
 	memTracker := tbl.GetMemTracker()
 	memTracker.SetLabel(memory.LabelForCTEStorage)
-	memTracker.AttachTo(ctx.GetSessionVars().StmtCtx.MemTracker)
+	memTracker.AttachTo(parentMemTracker)
 
 	diskTracker := tbl.GetDiskTracker()
 	diskTracker.SetLabel(memory.LabelForCTEStorage)
-	diskTracker.AttachTo(ctx.GetSessionVars().StmtCtx.DiskTracker)
+	diskTracker.AttachTo(parentDiskTracker)
 
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill = tbl.ActionSpill()

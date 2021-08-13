@@ -20,13 +20,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var _ sessionctx.Context = (*Context)(nil)
@@ -81,6 +82,16 @@ func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet,
 // ExecuteStmt implements sqlexec.SQLExecutor ExecuteStmt interface.
 func (c *Context) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Supported.")
+}
+
+// SetDiskFullOpt sets allowed options of current operation in each TiKV disk usage level.
+func (c *Context) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	c.txn.Transaction.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+}
+
+// ClearDiskFullOpt clears allowed options of current operation in each TiKV disk usage level.
+func (c *Context) ClearDiskFullOpt() {
+	c.txn.Transaction.ClearDiskFullOpt()
 }
 
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
@@ -156,6 +167,11 @@ func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 		}
 	}
 	return nil
+}
+
+// GetBuiltinFunctionUsage implements sessionctx.Context GetBuiltinFunctionUsage interface.
+func (c *Context) GetBuiltinFunctionUsage() map[string]uint32 {
+	return make(map[string]uint32)
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.

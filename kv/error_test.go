@@ -14,16 +14,16 @@
 package kv
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/stretchr/testify/assert"
 )
 
-type testErrorSuite struct{}
+func TestError(t *testing.T) {
+	t.Parallel()
 
-var _ = Suite(testErrorSuite{})
-
-func (s testErrorSuite) TestError(c *C) {
 	kvErrs := []*terror.Error{
 		ErrNotExist,
 		ErrTxnRetryable,
@@ -35,8 +35,10 @@ func (s testErrorSuite) TestError(c *C) {
 		ErrWriteConflict,
 		ErrWriteConflictInTiDB,
 	}
+
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
-		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
+		assert.NotEqual(t, mysql.ErrUnknown, code)
+		assert.Equal(t, uint16(err.Code()), code)
 	}
 }

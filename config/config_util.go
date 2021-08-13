@@ -24,7 +24,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
-	tikvcfg "github.com/pingcap/tidb/store/tikv/config"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 )
 
 // CloneConf deeply clones this config.
@@ -109,7 +109,7 @@ func atomicWriteConfig(c *Config, confPath string) (err error) {
 		return err
 	}
 	tmpConfPath := filepath.Join(os.TempDir(), fmt.Sprintf("tmp_conf_%v.toml", time.Now().Format("20060102150405")))
-	if err := os.WriteFile(tmpConfPath, []byte(content), 0666); err != nil {
+	if err := os.WriteFile(tmpConfPath, []byte(content), 0600); err != nil {
 		return errors.Trace(err)
 	}
 	return errors.Trace(os.Rename(tmpConfPath, confPath))
@@ -155,7 +155,7 @@ func flatten(flatMap map[string]interface{}, nested interface{}, prefix string) 
 	}
 }
 
-// GetTxnScopeFromConfig extracts @@txn_scope value from config
-func GetTxnScopeFromConfig() (bool, string) {
+// GetTxnScopeFromConfig extracts @@txn_scope value from the config.
+func GetTxnScopeFromConfig() string {
 	return tikvcfg.GetTxnScopeFromConfig()
 }

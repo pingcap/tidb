@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -604,12 +605,15 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 }
 
 func (s *testSerialSuite) TestDropPartitionStats(c *C) {
-	c.Skip("unstable")
+	if israce.RaceEnabled {
+		c.Skip("unstable, skip race test")
+	}
 	// Use the testSerialSuite to fix the unstable test
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec(`create table t (
+	tk.MustExec(`create database if not exists test_drop_gstats`)
+	tk.MustExec("use test_drop_gstats")
+	tk.MustExec("drop table if exists test_drop_gstats;")
+	tk.MustExec(`create table test_drop_gstats (
 	a int,
 	key(a)
 )
@@ -620,7 +624,7 @@ partition by range (a) (
 )`)
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("insert into t values (1), (5), (11), (15), (21), (25)")
+	tk.MustExec("insert into test_drop_gstats values (1), (5), (11), (15), (21), (25)")
 	c.Assert(s.domain.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 
 	checkPartitionStats := func(names ...string) {
@@ -631,26 +635,26 @@ partition by range (a) (
 		}
 	}
 
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table test_drop_gstats")
 	checkPartitionStats("global", "p0", "p1", "global")
 
-	tk.MustExec("drop stats t partition p0")
+	tk.MustExec("drop stats test_drop_gstats partition p0")
 	checkPartitionStats("global", "p1", "global")
 
-	err := tk.ExecToErr("drop stats t partition abcde")
+	err := tk.ExecToErr("drop stats test_drop_gstats partition abcde")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "can not found the specified partition name abcde in the table definition")
 
-	tk.MustExec("drop stats t partition global")
+	tk.MustExec("drop stats test_drop_gstats partition global")
 	checkPartitionStats("global", "p1")
 
-	tk.MustExec("drop stats t global")
+	tk.MustExec("drop stats test_drop_gstats global")
 	checkPartitionStats("p1")
 
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table test_drop_gstats")
 	checkPartitionStats("global", "p0", "p1", "global")
 
-	tk.MustExec("drop stats t partition p0, p1, global")
+	tk.MustExec("drop stats test_drop_gstats partition p0, p1, global")
 	checkPartitionStats("global")
 }
 
@@ -693,7 +697,7 @@ func (s *testSuite3) TestDropStatsFromKV(c *C) {
 	tk.MustExec(`insert into t values("1","1"),("2","2"),("3","3"),("4","4")`)
 	tk.MustExec("insert into t select * from t")
 	tk.MustExec("insert into t select * from t")
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t with 2 topn")
 	tblID := tk.MustQuery(`select tidb_table_id from information_schema.tables where table_name = "t" and table_schema = "test"`).Rows()[0][0].(string)
 	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
 		testkit.Rows("0 16"))

@@ -126,7 +126,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
 	}
-	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
 	if NDV <= 1 {
 		return nil
 	}
@@ -167,7 +167,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 			partitionBy = append(partitionBy, col)
 		}
 	}
-	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
 	if NDV <= 1 {
 		return nil
 	}
@@ -408,6 +408,9 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPla
 		base.children = append(base.children, cloned)
 	}
 	for _, prop := range p.childrenReqProps {
+		if prop == nil {
+			continue
+		}
 		base.childrenReqProps = append(base.childrenReqProps, prop.CloneEssentialFields())
 	}
 	return base, nil
@@ -437,8 +440,8 @@ func (p *basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColum
 	return nil
 }
 
-// GetlogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.
-func (p *baseLogicalPlan) GetlogicalTS4TaskMap() uint64 {
+// GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.
+func (p *baseLogicalPlan) GetLogicalTS4TaskMap() uint64 {
 	p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS += 1
 	return p.ctx.GetSessionVars().StmtCtx.TaskMapBakTS
 }
@@ -480,7 +483,7 @@ func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) 
 	key := prop.HashCode()
 	if p.ctx.GetSessionVars().StmtCtx.StmtHints.TaskMapNeedBackUp() {
 		// Empty string for useless change.
-		TS := p.GetlogicalTS4TaskMap()
+		TS := p.GetLogicalTS4TaskMap()
 		p.taskMapBakTS = append(p.taskMapBakTS, TS)
 		p.taskMapBak = append(p.taskMapBak, string(key))
 	}

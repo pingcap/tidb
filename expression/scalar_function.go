@@ -419,12 +419,18 @@ func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
 	if len(sf.hashcode) > 0 {
 		return sf.hashcode
 	}
+	ReHashCode(sf, sc)
+	return sf.hashcode
+}
+
+// ReHashCode is used after we change the argument in place.
+func ReHashCode(sf *ScalarFunction, sc *stmtctx.StatementContext) {
+	sf.hashcode = sf.hashcode[:0]
 	sf.hashcode = append(sf.hashcode, scalarFunctionFlag)
 	sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
 	for _, arg := range sf.GetArgs() {
 		sf.hashcode = append(sf.hashcode, arg.HashCode(sc)...)
 	}
-	return sf.hashcode
 }
 
 // ResolveIndices implements Expression interface.
@@ -442,6 +448,23 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 		}
 	}
 	return nil
+}
+
+// ResolveIndicesByVirtualExpr implements Expression interface.
+func (sf *ScalarFunction) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) {
+	newSf := sf.Clone()
+	isOK := newSf.resolveIndicesByVirtualExpr(schema)
+	return newSf, isOK
+}
+
+func (sf *ScalarFunction) resolveIndicesByVirtualExpr(schema *Schema) bool {
+	for _, arg := range sf.GetArgs() {
+		isOk := arg.resolveIndicesByVirtualExpr(schema)
+		if !isOk {
+			return false
+		}
+	}
+	return true
 }
 
 // GetSingleColumn returns (Col, Desc) when the ScalarFunction is equivalent to (Col, Desc)

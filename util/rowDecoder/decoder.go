@@ -164,6 +164,8 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle k
 		if err != nil {
 			return nil, err
 		}
+		// Fill the default value into map.
+		row[colInfo.ID] = val
 		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 	}
 	// return the existed column map here.

@@ -123,7 +123,7 @@ func (b *builtinCurrentRoleSig) vectorized() bool {
 }
 
 // evalString evals a builtinCurrentUserSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
+// See https://dev.mysql.com/doc/refman/8.0/en/information-functions.html#function_current-role
 func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
@@ -135,7 +135,7 @@ func (b *builtinCurrentRoleSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	result.ReserveString(n)
 	if len(data.ActiveRoles) == 0 {
 		for i := 0; i < n; i++ {
-			result.AppendString("")
+			result.AppendString("NONE")
 		}
 		return nil
 	}
@@ -219,7 +219,7 @@ func (b *builtinBenchmarkSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	loopCount := b.constLoopCount
 	arg, ctx := b.args[1], b.ctx
 	evalType := arg.GetType().EvalType()
-	buf, err := b.bufAllocator.get(evalType, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -332,7 +332,7 @@ func (b *builtinTiDBDecodeKeySig) vectorized() bool {
 
 func (b *builtinTiDBDecodeKeySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}

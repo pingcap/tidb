@@ -60,12 +60,16 @@ func EncodePlan(p Plan) string {
 func (pn *planEncoder) encodePlanTree(p Plan) string {
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
+	pn.ctes = pn.ctes[:0]
 	pn.encodePlan(p, true, kv.TiKV, 0)
 	pn.encodeCTEPlan()
 	return plancodec.Compress(pn.buf.Bytes())
 }
 
 func (pn *planEncoder) encodeCTEPlan() {
+	if len(pn.ctes) <= 0 {
+		return
+	}
 	explainedCTEPlan := make(map[int]struct{})
 	for i := 0; i < len(pn.ctes); i++ {
 		x := (*CTEDefinition)(pn.ctes[i])
@@ -111,7 +115,7 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth
 		if pn.encodedPlans[child.ID()] {
 			continue
 		}
-		pn.encodePlan(child.(PhysicalPlan), isRoot, store, depth)
+		pn.encodePlan(child, isRoot, store, depth)
 	}
 	switch copPlan := selectPlan.(type) {
 	case *PhysicalTableReader:
@@ -183,7 +187,7 @@ func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, store kv.Store
 		if d.encodedPlans[child.ID()] {
 			continue
 		}
-		d.normalizePlan(child.(PhysicalPlan), isRoot, store, depth)
+		d.normalizePlan(child, isRoot, store, depth)
 	}
 	switch x := p.(type) {
 	case *PhysicalTableReader:

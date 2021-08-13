@@ -33,7 +33,7 @@ func StartMonitor(now func() time.Time, systimeErrHandler func(), successCallbac
 			logutil.BgLogger().Error("system time jump backward", zap.Int64("last", last))
 			systimeErrHandler()
 		}
-		// call sucessCallback per second.
+		// call successCallback per second.
 		tickCount++
 		if tickCount >= 10 {
 			tickCount = 0

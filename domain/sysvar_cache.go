@@ -16,6 +16,7 @@ package domain
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/tidb/sessionctx"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	storekv "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
 )
 
@@ -33,9 +35,10 @@ import (
 
 // SysVarCache represents the cache of system variables broken up into session and global scope.
 type SysVarCache struct {
-	sync.RWMutex
-	global  map[string]string
-	session map[string]string
+	sync.RWMutex // protects global and session maps
+	global       map[string]string
+	session      map[string]string
+	rebuildLock  sync.Mutex // protects concurrent rebuild
 }
 
 // GetSysVarCache gets the global variable cache.
@@ -113,6 +116,10 @@ func (svc *SysVarCache) fetchTableValues(ctx sessionctx.Context) (map[string]str
 func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 	newSessionCache := make(map[string]string)
 	newGlobalCache := make(map[string]string)
+	// Only one rebuild can be in progress at a time, this prevents a lost update race
+	// where an earlier fetchTableValues() finishes last.
+	svc.rebuildLock.Lock()
+	defer svc.rebuildLock.Unlock()
 	tableContents, err := svc.fetchTableValues(ctx)
 	if err != nil {
 		return err
@@ -145,9 +152,15 @@ func (svc *SysVarCache) RebuildSysVarCache(ctx sessionctx.Context) error {
 }
 
 // checkEnableServerGlobalVar processes variables that acts in server and global level.
+// This is required because the SetGlobal function on the sysvar struct only executes on
+// the initiating tidb-server. There is no current method to say "run this function on all
+// tidb servers when the value of this variable changes". If you do not require changes to
+// be applied on all servers, use a getter/setter instead! You don't need to add to this list.
 func checkEnableServerGlobalVar(name, sVal string) {
 	var err error
 	switch name {
+	case variable.TiDBEnableLocalTxn:
+		variable.EnableLocalTxn.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableStmtSummary:
 		err = stmtsummary.StmtSummaryByDigestMap.SetEnabled(sVal, false)
 	case variable.TiDBStmtSummaryInternalQuery:
@@ -162,6 +175,45 @@ func checkEnableServerGlobalVar(name, sVal string) {
 		err = stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(sVal, false)
 	case variable.TiDBCapturePlanBaseline:
 		variable.CapturePlanBaseline.Set(sVal, false)
+	case variable.TiDBEnableTopSQL:
+		variable.TopSQLVariable.Enable.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBTopSQLPrecisionSeconds:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.PrecisionSeconds.Store(val)
+	case variable.TiDBTopSQLMaxStatementCount:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.MaxStatementCount.Store(val)
+	case variable.TiDBTopSQLMaxCollect:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.MaxCollect.Store(val)
+	case variable.TiDBTopSQLReportIntervalSeconds:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.TopSQLVariable.ReportIntervalSeconds.Store(val)
+	case variable.TiDBRestrictedReadOnly:
+		variable.RestrictedReadOnly.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBStoreLimit:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		storekv.StoreLimit.Store(val)
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))

@@ -666,6 +666,14 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 			"create table t1 (id int, a varchar(255) key clustered);",
 			"create table t1 (id int, a varchar(255) key /*T![clustered_index] clustered */ );",
 		},
+		{
+			"alter table t force auto_increment = 12;",
+			"alter table t /*T![force_inc] force */  auto_increment = 12;",
+		},
+		{
+			"alter table t force, auto_increment = 12;",
+			"alter table t force, auto_increment = 12;",
+		},
 	}
 	for _, ca := range testCase {
 		re := binloginfo.AddSpecialComment(ca.input)
@@ -703,6 +711,7 @@ func (s *testBinlogSuite) TestTempTableBinlog(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.GetSessionVars().BinlogClient = s.client
 	tk.MustExec("begin")
+	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("drop table if exists temp_table")
 	ddlQuery := "create global temporary table temp_table(id int) on commit delete rows"
 	tk.MustExec(ddlQuery)

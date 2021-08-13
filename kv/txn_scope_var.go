@@ -15,7 +15,7 @@ package kv
 
 import (
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // TxnScopeVar indicates the used txnScope for oracle
@@ -26,13 +26,14 @@ type TxnScopeVar struct {
 	txnScope string
 }
 
-// GetTxnScopeVar gets TxnScopeVar from config
-func GetTxnScopeVar() TxnScopeVar {
-	isGlobal, location := config.GetTxnScopeFromConfig()
-	if isGlobal {
-		return NewGlobalTxnScopeVar()
+// NewDefaultTxnScopeVar creates a default TxnScopeVar according to the config.
+// If zone label is set, we will check whether it's not the GlobalTxnScope and create a new Local TxnScopeVar.
+// If zone label is not set, we will create a new Global TxnScopeVar.
+func NewDefaultTxnScopeVar() TxnScopeVar {
+	if txnScope := config.GetTxnScopeFromConfig(); txnScope != GlobalTxnScope {
+		return NewLocalTxnScopeVar(txnScope)
 	}
-	return NewLocalTxnScopeVar(location)
+	return NewGlobalTxnScopeVar()
 }
 
 // NewGlobalTxnScopeVar creates a Global TxnScopeVar
@@ -51,6 +52,7 @@ func (t TxnScopeVar) GetVarValue() string {
 }
 
 // GetTxnScope returns the value of the tidb-server holds to request tso to pd.
+// When varValue is 'global`, directly return global here
 func (t TxnScopeVar) GetTxnScope() string {
 	return t.txnScope
 }

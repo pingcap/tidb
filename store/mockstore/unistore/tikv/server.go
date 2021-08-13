@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/kvproto/pkg/coprocessor_v2"
 	deadlockPb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -618,6 +617,11 @@ func (svr *Server) BatchCoprocessor(req *coprocessor.BatchRequest, batchCopServe
 	return nil
 }
 
+// RawCoprocessor implements implements the tikvpb.TikvServer interface.
+func (svr *Server) RawCoprocessor(context.Context, *kvrpcpb.RawCoprocessorRequest) (*kvrpcpb.RawCoprocessorResponse, error) {
+	panic("unimplemented")
+}
+
 func (mrm *MockRegionManager) removeMPPTaskHandler(taskID int64, storeID uint64) error {
 	set := mrm.getMPPTaskSet(storeID)
 	if set == nil {
@@ -632,7 +636,12 @@ func (mrm *MockRegionManager) removeMPPTaskHandler(taskID int64, storeID uint64)
 	return errors.New("cannot find mpp task")
 }
 
-// DispatchMPPTask implements implements the tikvpb.TikvServer interface.
+// IsAlive implements the tikvpb.TikvServer interface.
+func (svr *Server) IsAlive(_ context.Context, _ *mpp.IsAliveRequest) (*mpp.IsAliveResponse, error) {
+	panic("todo")
+}
+
+// DispatchMPPTask implements the tikvpb.TikvServer interface.
 func (svr *Server) DispatchMPPTask(_ context.Context, _ *mpp.DispatchTaskRequest) (*mpp.DispatchTaskResponse, error) {
 	panic("todo")
 }
@@ -779,7 +788,7 @@ func (svr *Server) EstablishMPPConnectionWithStoreID(req *mpp.EstablishMPPConnec
 		}
 	}
 	if mppHandler == nil {
-		return errors.New("tatsk not found")
+		return errors.New("task not found")
 	}
 	ctx1, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -962,11 +971,6 @@ func (svr *Server) RawCompareAndSwap(context.Context, *kvrpcpb.RawCASRequest) (*
 	panic("implement me")
 }
 
-// CoprocessorV2 implements the tikvpb.TikvServer interface.
-func (svr *Server) CoprocessorV2(context.Context, *coprocessor_v2.RawCoprocessorRequest) (*coprocessor_v2.RawCoprocessorResponse, error) {
-	panic("implement me")
-}
-
 // GetStoreSafeTS implements the tikvpb.TikvServer interface.
 func (svr *Server) GetStoreSafeTS(context.Context, *kvrpcpb.StoreSafeTSRequest) (*kvrpcpb.StoreSafeTSResponse, error) {
 	return &kvrpcpb.StoreSafeTSResponse{}, nil
@@ -974,6 +978,11 @@ func (svr *Server) GetStoreSafeTS(context.Context, *kvrpcpb.StoreSafeTSRequest) 
 
 // GetLockWaitInfo implements the tikvpb.TikvServer interface.
 func (svr *Server) GetLockWaitInfo(context.Context, *kvrpcpb.GetLockWaitInfoRequest) (*kvrpcpb.GetLockWaitInfoResponse, error) {
+	panic("unimplemented")
+}
+
+// RawChecksum implements implements the tikvpb.TikvServer interface.
+func (svr *Server) RawChecksum(context.Context, *kvrpcpb.RawChecksumRequest) (*kvrpcpb.RawChecksumResponse, error) {
 	panic("unimplemented")
 }
 
