@@ -1433,11 +1433,12 @@ func (ts *tidbTestSuite) TestNO_DEFAULT_VALUEFlag(c *C) {
 }
 
 func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
-	var err error
-	ts.store, err = mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore()
+	defer store.Close()
 	session.DisableStats4Test()
 	c.Assert(err, IsNil)
-	ts.domain, err = session.BootstrapSession(ts.store)
+	dom, err := session.BootstrapSession(store)
+	defer dom.Close()
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cli := newTestServerClient()
