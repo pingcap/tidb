@@ -46,7 +46,6 @@ func (s testErrorSuite) TestError(c *C) {
 		ErrCastAsSignedOverflow,
 		ErrCastNegIntAsUnsigned,
 		ErrInvalidYearFormat,
-		ErrInvalidYear,
 		ErrTruncatedWrongVal,
 		ErrInvalidWeekModeFormat,
 		ErrWrongValue,

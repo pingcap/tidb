@@ -1392,13 +1392,22 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 func (w *updateColumnWorker) reformatErrors(err error) error {
 	// Since row count is not precious in concurrent reorganization, here we substitute row count with datum value.
 	if types.ErrTruncated.Equal(err) {
-		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
+		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
+		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, dStr)
 	}
 
-	if types.ErrInvalidYear.Equal(err) {
-		err = types.ErrInvalidYear.GenWithStack("Invalid year value for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
+	if types.ErrWarnDataOutOfRange.Equal(err) {
+		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
+		err = types.ErrWarnDataOutOfRange.GenWithStack("Out of range value for column '%s', the value is '%s'", w.oldColInfo.Name, dStr)
 	}
 	return err
+}
+
+func datumToStringNoErr(d types.Datum) string {
+	if v, err := d.ToString(); err == nil {
+		return v
+	}
+	return fmt.Sprintf("%v", d.GetValue())
 }
 
 func (w *updateColumnWorker) cleanRowMap() {
