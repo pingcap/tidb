@@ -266,12 +266,12 @@ func (ts *tidbTestSuite) TestStatusAPI(c *C) {
 
 func (ts *tidbTestSuite) TestStatusPort(c *C) {
 	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
 	defer store.Close()
 	session.DisableStats4Test()
-	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
-	defer dom.Close()
 	c.Assert(err, IsNil)
+	defer dom.Close()
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := newTestConfig()
 	cfg.Port = 0
@@ -670,18 +670,20 @@ func (ts *tidbTestSuite) TestOnlySocket(c *C) {
 			dbt.mustQuery("GRANT SELECT ON test.* TO user1@'%'")
 		})
 	// Test with Network interface connection with all hosts, should fail since server not configured
-	_, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "root"
 		config.DBName = "test"
 		config.Addr = "127.0.0.1"
 	}))
 	c.Assert(err, IsNil, Commentf("Connect succeeded when not configured!?!"))
-	_, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+	defer db.Close()
+	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "user1"
 		config.DBName = "test"
 		config.Addr = "127.0.0.1"
 	}))
 	c.Assert(err, IsNil, Commentf("Connect succeeded when not configured!?!"))
+	defer db.Close()
 	// Test with unix domain socket file connection with all hosts
 	cli.runTests(c, func(config *mysql.Config) {
 		config.Net = "unix"
@@ -1434,12 +1436,12 @@ func (ts *tidbTestSuite) TestNO_DEFAULT_VALUEFlag(c *C) {
 
 func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
 	defer store.Close()
 	session.DisableStats4Test()
-	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
-	defer dom.Close()
 	c.Assert(err, IsNil)
+	defer dom.Close()
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cli := newTestServerClient()
 	cfg := newTestConfig()
