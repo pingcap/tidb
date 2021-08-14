@@ -24,12 +24,17 @@ func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
 
 	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("time.Sleep"),
+		goleak.IgnoreTopFunction("database/sql.(*Tx).awaitDone"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).readLoop"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/server.NewServer.func1"),
+		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("github.com/go-sql-driver/mysql.(*mysqlConn).startWatcher.func1"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/util/topsql/tracecpu.(*sqlCPUProfiler).startAnalyzeProfileWorker"),
 	}
 
 	goleak.VerifyTestMain(m, opts...)
