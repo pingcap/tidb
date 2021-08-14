@@ -1502,6 +1502,7 @@ func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
 func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
+	defer qctx.Close()
 	ctx := context.Background()
 	_, err = Execute(ctx, qctx, "use test;")
 	c.Assert(err, IsNil)
