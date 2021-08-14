@@ -435,7 +435,9 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	}
 }
 
-func (s *testConfigSuite) TestOOMActionValid(c *C) {
+func TestOOMActionValid(t *testing.T) {
+	t.Parallel()
+
 	c1 := NewConfig()
 	tests := []struct {
 		oomAction string
@@ -449,11 +451,13 @@ func (s *testConfigSuite) TestOOMActionValid(c *C) {
 	}
 	for _, tt := range tests {
 		c1.OOMAction = tt.oomAction
-		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+		require.Equal(t, tt.valid, c1.Valid() == nil)
 	}
 }
 
-func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
+func TestTxnTotalSizeLimitValid(t *testing.T) {
+	t.Parallel()
+
 	conf := NewConfig()
 	tests := []struct {
 		limit uint64
@@ -466,11 +470,13 @@ func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
 
 	for _, tt := range tests {
 		conf.Performance.TxnTotalSizeLimit = tt.limit
-		c.Assert(conf.Valid() == nil, Equals, tt.valid)
+		require.Equal(t, tt.valid, conf.Valid() == nil)
 	}
 }
 
-func (s *testConfigSuite) TestPreparePlanCacheValid(c *C) {
+func TestPreparePlanCacheValid(t *testing.T) {
+	t.Parallel()
+
 	conf := NewConfig()
 	tests := map[PreparedPlanCache]bool{
 		{Enabled: true, Capacity: 0}:                        false,
@@ -481,15 +487,17 @@ func (s *testConfigSuite) TestPreparePlanCacheValid(c *C) {
 	}
 	for testCase, res := range tests {
 		conf.PreparedPlanCache = testCase
-		c.Assert(conf.Valid() == nil, Equals, res)
+		require.Equal(t, res, conf.Valid() == nil)
 	}
 }
 
-func (s *testConfigSuite) TestMaxIndexLength(c *C) {
+func TestMaxIndexLength(t *testing.T) {
+	t.Parallel()
+
 	conf := NewConfig()
 	checkValid := func(indexLen int, shouldBeValid bool) {
 		conf.MaxIndexLength = indexLen
-		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
 	}
 	checkValid(DefMaxIndexLength, true)
 	checkValid(DefMaxIndexLength-1, false)
@@ -497,11 +505,13 @@ func (s *testConfigSuite) TestMaxIndexLength(c *C) {
 	checkValid(DefMaxOfMaxIndexLength+1, false)
 }
 
-func (s *testConfigSuite) TestIndexLimit(c *C) {
+func TestIndexLimit(t *testing.T) {
+	t.Parallel()
+
 	conf := NewConfig()
 	checkValid := func(indexLimit int, shouldBeValid bool) {
 		conf.IndexLimit = indexLimit
-		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
 	}
 	checkValid(DefIndexLimit, true)
 	checkValid(DefIndexLimit-1, false)
@@ -509,11 +519,13 @@ func (s *testConfigSuite) TestIndexLimit(c *C) {
 	checkValid(DefMaxOfIndexLimit+1, false)
 }
 
-func (s *testConfigSuite) TestTableColumnCountLimit(c *C) {
+func TestTableColumnCountLimit(t *testing.T) {
+	t.Parallel()
+
 	conf := NewConfig()
 	checkValid := func(tableColumnLimit int, shouldBeValid bool) {
 		conf.TableColumnCountLimit = uint32(tableColumnLimit)
-		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+		require.Equal(t, shouldBeValid, conf.Valid() == nil)
 	}
 	checkValid(DefTableColumnCountLimit, true)
 	checkValid(DefTableColumnCountLimit-1, false)
@@ -521,7 +533,9 @@ func (s *testConfigSuite) TestTableColumnCountLimit(c *C) {
 	checkValid(DefMaxOfTableColumnCountLimit+1, false)
 }
 
-func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
+func TestEncodeDefTempStorageDir(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		host       string
 		statusHost string
@@ -545,11 +559,11 @@ func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
 	dirPrefix := filepath.Join(os.TempDir(), osUID+"_tidb")
 	for _, test := range tests {
 		tempStorageDir := encodeDefTempStorageDir(os.TempDir(), test.host, test.statusHost, test.port, test.statusPort)
-		c.Assert(tempStorageDir, Equals, filepath.Join(dirPrefix, test.expect, "tmp-storage"))
+		require.Equal(t, filepath.Join(dirPrefix, test.expect, "tmp-storage"), tempStorageDir)
 	}
 }
 
-func (s *testConfigSuite) TestModifyThroughLDFlags(c *C) {
+func TestModifyThroughLDFlags(t *testing.T) {
 	tests := []struct {
 		Edition               string
 		CheckBeforeDropLDFlag string
@@ -573,9 +587,9 @@ func (s *testConfigSuite) TestModifyThroughLDFlags(c *C) {
 		initByLDFlags(test.Edition, test.CheckBeforeDropLDFlag)
 
 		conf := GetGlobalConfig()
-		c.Assert(conf.EnableTelemetry, Equals, test.EnableTelemetry)
-		c.Assert(defaultConf.EnableTelemetry, Equals, test.EnableTelemetry)
-		c.Assert(CheckTableBeforeDrop, Equals, test.CheckTableBeforeDrop)
+		require.Equal(t, test.EnableTelemetry, conf.EnableTelemetry)
+		require.Equal(t, test.EnableTelemetry, defaultConf.EnableTelemetry)
+		require.Equal(t, test.CheckTableBeforeDrop, CheckTableBeforeDrop)
 	}
 
 	defaultConf.EnableTelemetry = originalEnableTelemetry
@@ -583,7 +597,9 @@ func (s *testConfigSuite) TestModifyThroughLDFlags(c *C) {
 	StoreGlobalConfig(originalGlobalConfig)
 }
 
-func (s *testConfigSuite) TestSecurityValid(c *C) {
+func TestSecurityValid(t *testing.T) {
+	t.Parallel()
+
 	c1 := NewConfig()
 	tests := []struct {
 		spilledFileEncryptionMethod string
@@ -597,26 +613,41 @@ func (s *testConfigSuite) TestSecurityValid(c *C) {
 	}
 	for _, tt := range tests {
 		c1.Security.SpilledFileEncryptionMethod = tt.spilledFileEncryptionMethod
-		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+		require.Equal(t, tt.valid, c1.Valid() == nil)
 	}
 }
 
-func (s *testConfigSuite) TestTcpNoDelay(c *C) {
+func TestTcpNoDelay(t *testing.T) {
+	t.Parallel()
+
 	c1 := NewConfig()
 	//check default value
-	c.Assert(c1.Performance.TCPNoDelay, Equals, true)
+	require.True(t, c1.Performance.TCPNoDelay)
 }
 
-func (s *testConfigSuite) TestConfigExample(c *C) {
+func TestConfigExample(t *testing.T) {
 	conf := NewConfig()
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile := filepath.Join(filepath.Dir(localFile), "config.toml.example")
 	metaData, err := toml.DecodeFile(configFile, conf)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	keys := metaData.Keys()
 	for _, key := range keys {
 		for _, s := range key {
-			c.Assert(ContainHiddenConfig(s), IsFalse)
+			require.False(t, ContainHiddenConfig(s))
 		}
 	}
+}
+
+func TestInitializeConfig(t *testing.T) {
+	originalGlobalConfig := *GetGlobalConfig()
+	updPort := func(cfg *Config) {
+		cfg.Port = DefPort + 1
+	}
+
+	InitializeConfig("", false, false, updPort)
+	require.Equal(t, uint(DefPort+1), GetGlobalConfig().Port)
+
+	StoreGlobalConfig(&originalGlobalConfig)
+	require.Equal(t, uint(DefPort), GetGlobalConfig().Port)
 }
