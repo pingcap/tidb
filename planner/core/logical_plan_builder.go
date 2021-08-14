@@ -3842,21 +3842,18 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		// Try CTE.
 		p, err := b.tryBuildCTE(ctx, tn, asName)
 		if err != nil || p != nil {
-			if len(b.cteNameProcessingStack) > 0 {
-				if tblIds, ok := b.cteToTblIDMapper[tn.Name.L]; ok {
+			if tblIds, ok := b.cteToTblIDMapper[tn.Name.L]; ok {
+				if len(b.cteNameProcessingStack) > 0 {
 					cteName := b.cteNameProcessingStack[len(b.cteNameProcessingStack)-1]
 					b.cteToTblIDMapper[cteName] = append(b.cteToTblIDMapper[cteName], tblIds...)
-				}
-			} else {
-				if tblIds, ok := b.cteToTblIDMapper[tn.Name.L]; ok {
+				} else {
 					for _, tblID := range tblIds {
 						if _, ok := b.selTmpTblIds[tblID]; ok {
 							tb, exist := b.is.TableByID(tblID)
 							if !exist {
 								return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tblID)
 							}
-							errMsg := fmt.Sprintf(errno.MySQLErrName[errno.ErrCantReopenTable].Raw, tb.Meta().Name.L)
-							return nil, ErrInternal.GenWithStack(errMsg)
+							return nil, ErrInternal.GenWithStack(errno.MySQLErrName[errno.ErrCantReopenTable].Raw, tb.Meta().Name.L)
 						}
 						b.selTmpTblIds[tblID] = struct{}{}
 					}
@@ -4114,8 +4111,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			b.cteToTblIDMapper[cteName] = tblIds
 		} else {
 			if _, ok := b.selTmpTblIds[tableInfo.ID]; ok {
-				errMsg := fmt.Sprintf(errno.MySQLErrName[errno.ErrCantReopenTable].Raw, tbl.Meta().Name)
-				return nil, ErrInternal.GenWithStack(errMsg)
+				return nil, ErrInternal.GenWithStack(errno.MySQLErrName[errno.ErrCantReopenTable].Raw, tbl.Meta().Name.L)
 			}
 			b.selTmpTblIds[tableInfo.ID] = struct{}{}
 		}
