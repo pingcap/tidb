@@ -27,11 +27,11 @@ import (
 type RoundRule int
 
 const (
-	// RoundHalfUp For exact-value numbers, ROUND() uses the “round half up” rule
+	// RoundHalfUp For exact-value numbers, ROUND() uses the "round half up" rule
 	RoundHalfUp RoundRule = iota + 1
 
 	// RoundNearestEven For approximate-value numbers, the result depends on the C library. On many systems,
-	// this means that ROUND() uses the “round to nearest even” rule
+	// this means that ROUND() uses the "round to nearest even" rule
 	RoundNearestEven
 )
 
@@ -42,7 +42,7 @@ func RoundFloat(f float64) float64 {
 	return math.RoundToEven(f)
 }
 
-// Round rounds the argument f to dec decimal places use “round to nearest even” rule as default.
+// Round rounds the argument f to dec decimal places use "round to nearest even" rule as default.
 // dec defaults to 0 if not specified. dec can be negative
 // to cause dec digits left of the decimal point of the
 // value f to become zero.
