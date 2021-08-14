@@ -54,7 +54,7 @@ func TestTableRange(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -312,7 +312,7 @@ func TestIndexRange(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -658,7 +658,7 @@ func TestIndexRangeForUnsignedAndOverflow(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -849,7 +849,7 @@ func TestColumnRange(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1210,12 +1210,12 @@ func TestColumnRange(t *testing.T) {
 	}
 }
 
-func TestIndexRangeElimininatedProjection(t *testing.T) {
+func TestIndexRangeEliminatedProjection(t *testing.T) {
 	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1242,7 +1242,7 @@ func TestCompIndexInExprCorrCol(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1275,7 +1275,7 @@ func TestIndexStringIsTrueRange(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1307,7 +1307,7 @@ func TestCompIndexDNFMatch(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1341,7 +1341,7 @@ func TestCompIndexMultiColDNF1(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1376,7 +1376,7 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1411,7 +1411,7 @@ func TestPrefixIndexMultiColDNF(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1448,7 +1448,7 @@ func TestIndexRangeForBit(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1488,7 +1488,7 @@ func TestIndexRangeForYear(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1651,7 +1651,7 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1723,7 +1723,7 @@ func TestIndexRangeForDecimal(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1758,7 +1758,7 @@ func TestPrefixIndexAppendPointRanges(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
