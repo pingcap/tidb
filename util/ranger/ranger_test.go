@@ -1257,14 +1257,11 @@ func TestCompIndexInExprCorrCol(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
 	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
@@ -1291,12 +1288,11 @@ func TestIndexStringIsTrueRange(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	testData, _ := testdata.LoadTestSuiteData("testdata", "ranger_suite")
 	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
@@ -1322,14 +1318,12 @@ func TestCompIndexDNFMatch(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
 	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
@@ -1358,13 +1352,12 @@ func TestCompIndexMultiColDNF1(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
@@ -1393,13 +1386,12 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
@@ -1426,14 +1418,13 @@ func TestPrefixIndexMultiColDNF(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
+	testData.GetTestCases(t, &input, &output)
 	inputLen := len(input)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
@@ -1470,13 +1461,12 @@ func TestIndexRangeForBit(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
@@ -1740,13 +1730,12 @@ func TestIndexRangeForDecimal(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testData.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
@@ -1779,13 +1768,12 @@ func TestPrefixIndexAppendPointRanges(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testData.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))

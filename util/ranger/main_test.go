@@ -23,19 +23,19 @@ import (
 	"go.uber.org/goleak"
 )
 
-var td testdata.TestData
+var testData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
 
 	var err error
-	td, err = testdata.LoadTestSuiteData("testdata", "ranger_suite")
+	testData, err = testdata.LoadTestSuiteData("testdata", "ranger_suite")
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "testdata: Errors on loads test data from file: %v\n", err)
 		os.Exit(1)
 	}
 	defer func() {
-		_ = td.GenerateOutputIfNeeded()
+		_ = testData.GenerateOutputIfNeeded()
 	}()
 
 	opts := []goleak.Option{

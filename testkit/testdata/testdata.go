@@ -105,6 +105,24 @@ func loadTestSuiteCases(filePath string) (res []testCases, err error) {
 	return res, err
 }
 
+// OnRecord execute the function to update result.
+func OnRecord(updateFunc func()) {
+	if record {
+		updateFunc()
+	}
+}
+
+// ConvertRowsToStrings converts [][]interface{} to []string.
+func ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
+	for _, row := range rows {
+		s := fmt.Sprintf("%v", row)
+		// Trim the leftmost `[` and rightmost `]`.
+		s = s[1 : len(s)-1]
+		rs = append(rs, s)
+	}
+	return rs
+}
+
 // GetTestCases gets the test cases for a test function.
 func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) {
 	// Extract caller's name.
@@ -130,24 +148,6 @@ func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) 
 		}
 	}
 	td.output[casesIdx].decodedOut = out
-}
-
-// OnRecord execute the function to update result.
-func (td *TestData) OnRecord(updateFunc func()) {
-	if record {
-		updateFunc()
-	}
-}
-
-// ConvertRowsToStrings converts [][]interface{} to []string.
-func (td *TestData) ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
-	for _, row := range rows {
-		s := fmt.Sprintf("%v", row)
-		// Trim the leftmost `[` and rightmost `]`.
-		s = s[1 : len(s)-1]
-		rs = append(rs, s)
-	}
-	return rs
 }
 
 // GenerateOutputIfNeeded generate the output file.
