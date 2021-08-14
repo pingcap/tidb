@@ -265,13 +265,14 @@ func (ts *tidbTestSuite) TestStatusAPI(c *C) {
 }
 
 func (ts *tidbTestSuite) TestStatusPort(c *C) {
-	var err error
-	ts.store, err = mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore()
+	defer store.Close()
 	session.DisableStats4Test()
 	c.Assert(err, IsNil)
-	ts.domain, err = session.BootstrapSession(ts.store)
+	dom, err := session.BootstrapSession(store)
+	defer dom.Close()
 	c.Assert(err, IsNil)
-	ts.tidbdrv = NewTiDBDriver(ts.store)
+	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := newTestConfig()
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
