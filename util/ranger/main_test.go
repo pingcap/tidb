@@ -14,6 +14,7 @@
 package ranger_test
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"testing"
@@ -27,6 +28,8 @@ var testData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
+
+	flag.Parse()
 
 	var err error
 	testData, err = testdata.LoadTestSuiteData("testdata", "ranger_suite")
