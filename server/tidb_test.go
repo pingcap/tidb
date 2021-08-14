@@ -364,6 +364,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 		err := server.Run()
 		c.Assert(err, IsNil)
 	}()
+	defer server.Close()
 	time.Sleep(time.Millisecond * 100)
 
 	hc := newTLSHttpClient(c, caPath,
@@ -1183,6 +1184,7 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 		err := server.Run()
 		c.Assert(err, IsNil)
 	}()
+	defer server.Close()
 	time.Sleep(time.Millisecond * 100)
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-cert-rollback-test"
