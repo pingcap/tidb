@@ -14,17 +14,33 @@
 package ranger_test
 
 import (
+	"fmt"
+	"os"
 	"testing"
 
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
 
+var td testdata.TestData
+
 func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+
+	var err error
+	td, err = testdata.LoadTestSuiteData("testdata", "ranger_suite")
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "testdata: Errors on loads test data from file: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() {
+		_ = td.GenerateOutputIfNeeded()
+	}()
+
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	testbridge.WorkaroundGoCheckFlags()
 	goleak.VerifyTestMain(m, opts...)
 }

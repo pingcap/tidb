@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -37,15 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
 )
-
-func TestSetUpTearDown(t *testing.T) {
-	t.Parallel()
-	p := parser.New()
-	require.NotNil(t, *p)
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
-	require.Nil(t, testData.GenerateOutputIfNeeded())
-}
 
 func newDomainStoreWithBootstrap(t *testing.T) (*domain.Domain, kv.Storage, error) {
 	store, err := mockstore.NewMockStore()
