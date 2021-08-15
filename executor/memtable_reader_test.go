@@ -16,9 +16,11 @@ package executor_test
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -33,11 +35,14 @@ import (
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/testkit"
 	pmodel "github.com/prometheus/common/model"
+	"github.com/soheilhy/cmux"
 	"google.golang.org/grpc"
 )
 
@@ -940,5 +945,368 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
 	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
+	c.Assert(rs.Close(), IsNil)
+}
+
+var _ = SerialSuites(&testHotRegionsHistoryTableSuite{testInfoschemaTableSuiteBase: &testInfoschemaTableSuiteBase{}})
+
+type testHotRegionsHistoryTableSuite struct {
+	*testInfoschemaTableSuiteBase
+	startTime time.Time
+}
+
+type mockStoreWithMultiPD struct {
+	helper.Storage
+	hosts []string
+}
+
+func (s *mockStoreWithMultiPD) EtcdAddrs() ([]string, error) { return s.hosts, nil }
+func (s *mockStoreWithMultiPD) TLSConfig() *tls.Config       { panic("not implemented") }
+func (s *mockStoreWithMultiPD) StartGCWorker() error         { panic("not implemented") }
+func (s *mockStoreWithMultiPD) Name() string                 { return "mockStore" }
+func (s *mockStoreWithMultiPD) Describe() string             { return "" }
+
+func (s *testHotRegionsHistoryTableSuite) SetUpSuite(c *C) {
+	s.testInfoschemaTableSuiteBase.SetUpSuite(c)
+	store := &mockStoreWithMultiPD{
+		s.store.(helper.Storage),
+		make([]string, 3),
+	}
+
+	// start 3 PD server with hotRegionsServer and store them in s.store
+	for i := 0; i < 3; i++ {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		c.Assert(err, IsNil)
+		m := cmux.New(listener)
+		// server grpc and http on the same port
+		httpListener := m.Match(cmux.HTTP1Fast())
+		httpServer, mockAddr := s.setUpMockPDHTTPServer(c, httpListener)
+		store.hosts[i] = mockAddr
+		c.Assert(httpServer, NotNil)
+
+		go func() {
+			err = m.Serve()
+		}()
+	}
+	s.store = store
+	s.startTime = time.Now()
+}
+
+var hotRegionsResponses = make(map[string]*executor.HistoryHotRegions, 3)
+
+func (s *testHotRegionsHistoryTableSuite) setUpMockPDHTTPServer(c *C, l net.Listener) (*http.Server, string) {
+	// mock PD http server
+	router := mux.NewRouter()
+	httpServer := &http.Server{
+		Handler: router,
+	}
+	// mock PD API
+	router.Handle(pdapi.ClusterVersion, fn.Wrap(func() (string, error) { return "4.0.0-alpha", nil }))
+	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
+		return struct {
+			GitHash        string `json:"git_hash"`
+			StartTimestamp int64  `json:"start_timestamp"`
+		}{
+			GitHash:        "mock-pd-githash",
+			StartTimestamp: s.startTime.Unix(),
+		}, nil
+	}))
+	// mock response
+	router.Handle(pdapi.HotHistory, fn.Wrap(func() (interface{}, error) {
+		return hotRegionsResponses[l.Addr().String()], nil
+	}))
+	go func() {
+		err := httpServer.Serve(l)
+		c.Assert(err, IsNil)
+	}()
+	return httpServer, l.Addr().String()
+}
+
+func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
+	var unixTimeMs = func(s string) int64 {
+		t, err := time.ParseInLocation("2006/01/02 15:04:05", s, time.Local)
+		c.Assert(err, IsNil)
+		return t.Unix()
+	}
+	fullHotRegions := [][]string{
+		// Record Regions
+		// mysql table_id = 11 table_name = TABLES_PRIV
+		{"2019/10/10 10:10:11", "MYSQL", "TABLES_PRIV", "11", "<nil>", "<nil>", "1", "1", "11111", "READ", "99", "99", "99", "99"},  // start []byte{  0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xb }
+		{"2019/10/10 10:10:12", "MYSQL", "TABLES_PRIV", "11", "<nil>", "<nil>", "2", "2", "22222", "WRITE", "99", "99", "99", "99"}, // end []byte{  0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xb, 0x5f, 0x72, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }
+		// mysql table_id =21  table_name = STATS_META
+		{"2019/10/10 10:10:13", "MYSQL", "STATS_META", "21", "<nil>", "<nil>", "3", "3", "33333", "READ", "99", "99", "99", "99"},  // start []byte{  0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15 }
+		{"2019/10/10 10:10:14", "MYSQL", "STATS_META", "21", "<nil>", "<nil>", "4", "4", "44444", "WRITE", "99", "99", "99", "99"}, // end []byte{  0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15, 0x5f, 0x72, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }
+		// deleted schemas
+		{"2019/10/10 10:10:15", "UNKONW", "UNKONW", "131", "UNKONW", "<nil>", "5", "5", "55555", "READ", "99", "99", "99", "99"},  // start []byte{  0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x83 }
+		{"2019/10/10 10:10:16", "UNKONW", "UNKONW", "131", "UNKONW", "<nil>", "6", "6", "66666", "WRITE", "99", "99", "99", "99"}, // end []byte{  0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x83, 0x5f, 0x72, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff }
+
+		// Index Regions
+		// mysql table_id = 11 table_name = TABLES_PRIV index_id = 1 index_name = PRIMARY
+		{"2019/10/10 10:10:17", "MYSQL", "TABLES_PRIV", "11", "PRIMARY", "1", "1", "1", "11111", "READ", "99", "99", "99", "99"},  // start []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xb, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}
+		{"2019/10/10 10:10:18", "MYSQL", "TABLES_PRIV", "11", "PRIMARY", "1", "2", "2", "22222", "WRITE", "99", "99", "99", "99"}, // end []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xb, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}
+		// mysql table_id = 21 table_name = STATS_META index_id = 1 index_name = IDX_VER
+		{"2019/10/10 10:10:19", "MYSQL", "STATS_META", "21", "IDX_VER", "1", "3", "3", "33333", "READ", "99", "99", "99", "99"},  // start []byte{  0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1 }
+		{"2019/10/10 10:10:20", "MYSQL", "STATS_META", "21", "IDX_VER", "1", "4", "4", "44444", "WRITE", "99", "99", "99", "99"}, // end []byte{  0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1 }
+		// mysql table_id = 21 table_name = STATS_META index_id = 2 index_name = TBL
+		{"2019/10/10 10:10:21", "MYSQL", "STATS_META", "21", "TBL", "2", "5", "5", "55555", "READ", "99", "99", "99", "99"},  // start []byte{  0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2 }
+		{"2019/10/10 10:10:22", "MYSQL", "STATS_META", "21", "TBL", "2", "6", "6", "66666", "WRITE", "99", "99", "99", "99"}, // end []byte{  0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2 }
+		// deleted schemas
+		{"2019/10/10 10:10:23", "UNKONW", "UNKONW", "131", "UNKONW", "1", "5", "5", "55555", "READ", "99", "99", "99", "99"},  // start []byte{  0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x83, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1 }
+		{"2019/10/10 10:10:24", "UNKONW", "UNKONW", "131", "UNKONW", "1", "6", "6", "66666", "WRITE", "99", "99", "99", "99"}, // end []byte{  0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x83, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1 }
+	}
+
+	c.Assert(fullHotRegions, NotNil)
+
+	pdResps := []*executor.HistoryHotRegions{
+		{HistoryHotRegion: []*executor.HistoryHotRegion{
+			// Record Regions
+			// mysql table_id = 11 table_name = TABLES_PRIV
+			{UpdateTime: unixTimeMs("2019/10/10 10:10:11"), RegionID: 1, StoreID: 1, PeerID: 11111, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+				StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xb}, EndKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xb, 0x5f, 0x72, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
+			{UpdateTime: unixTimeMs("2019/10/10 10:10:12"), RegionID: 2, StoreID: 2, PeerID: 22222, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+				StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xb}, EndKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xb, 0x5f, 0x72, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
+			// mysql table_id =21  table_name = STATS_META
+			{UpdateTime: unixTimeMs("2019/10/10 10:10:13"), RegionID: 3, StoreID: 3, PeerID: 33333, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+				StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15}, EndKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15, 0x5f, 0x72, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
+			{UpdateTime: unixTimeMs("2019/10/10 10:10:14"), RegionID: 4, StoreID: 4, PeerID: 44444, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+				StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15}, EndKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15, 0x5f, 0x72, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
+		}},
+		{HistoryHotRegion: []*executor.HistoryHotRegion{
+			// deleted schemas
+			{UpdateTime: unixTimeMs("2019/10/10 10:10:15"), RegionID: 5, StoreID: 5, PeerID: 55555, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+				StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x83}, EndKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x83, 0x5f, 0x72, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
+			{UpdateTime: unixTimeMs("2019/10/10 10:10:16"), RegionID: 6, StoreID: 6, PeerID: 66666, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+				StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x83}, EndKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x83, 0x5f, 0x72, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
+			// Index Regions
+			// mysql table_id = 11 table_name = tables_priv index_id = 1 index_name = PRIMARY
+			{UpdateTime: unixTimeMs("2019/10/10 10:10:17"), RegionID: 1, StoreID: 1, PeerID: 11111, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+				StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xb, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}, EndKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xb, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}},
+			{UpdateTime: unixTimeMs("2019/10/10 10:10:18"), RegionID: 2, StoreID: 2, PeerID: 22222, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+				StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xb, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}, EndKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xb, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}},
+		}},
+		{
+			HistoryHotRegion: []*executor.HistoryHotRegion{
+				// mysql table_id = 21 table_name = STATS_META index_id = 1 index_name = IDX_VER
+				{UpdateTime: unixTimeMs("2019/10/10 10:10:19"), RegionID: 3, StoreID: 3, PeerID: 33333, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}, EndKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}},
+				{UpdateTime: unixTimeMs("2019/10/10 10:10:20"), RegionID: 4, StoreID: 4, PeerID: 44444, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}, EndKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}},
+				// mysql table_id = 21 table_name = STATS_META index_id = 2 index_name = TBL
+				{UpdateTime: unixTimeMs("2019/10/10 10:10:21"), RegionID: 5, StoreID: 5, PeerID: 55555, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2}, EndKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2}},
+				{UpdateTime: unixTimeMs("2019/10/10 10:10:22"), RegionID: 6, StoreID: 6, PeerID: 66666, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2}, EndKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2}},
+				// deleted schemas
+				{UpdateTime: unixTimeMs("2019/10/10 10:10:23"), RegionID: 5, StoreID: 5, PeerID: 55555, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x83, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}, EndKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x83, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}},
+				{UpdateTime: unixTimeMs("2019/10/10 10:10:24"), RegionID: 6, StoreID: 6, PeerID: 66666, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x83, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}, EndKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x83, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1}},
+			},
+		},
+	}
+	// mock http resp
+	store := s.store.(*mockStoreWithMultiPD)
+	for i, resp := range pdResps {
+		hotRegionsResponses[store.hosts[i]] = resp
+	}
+
+	var cases = []struct {
+		conditions []string
+		reqCount   int32
+		expected   [][]string
+	}{
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+			}, // time filtered by PD, assume response suit time range, and ignore deleted schemas
+			expected: [][]string{
+				fullHotRegions[0], fullHotRegions[1], fullHotRegions[2],
+				fullHotRegions[3],
+				fullHotRegions[6], fullHotRegions[7], fullHotRegions[8],
+				fullHotRegions[9], fullHotRegions[10], fullHotRegions[11],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"table_id=11",
+			},
+			expected: [][]string{
+				fullHotRegions[0], fullHotRegions[1], fullHotRegions[6], fullHotRegions[7],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"table_name='TABLES_PRIV'",
+			},
+			expected: [][]string{
+				fullHotRegions[0], fullHotRegions[1], fullHotRegions[6], fullHotRegions[7],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"table_id=21",
+				"index_id=1",
+			},
+			expected: [][]string{
+				fullHotRegions[8], fullHotRegions[9],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"table_id=21",
+				"index_id=1",
+				"table_name='TABLES_PRIV'",
+			}, // table_id != table_name -> nil
+			expected: [][]string{},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"table_id=21",
+				"index_id=1",
+				"table_name='STATS_META'",
+			}, // table_id = table_name
+			expected: [][]string{
+				fullHotRegions[8], fullHotRegions[9],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"table_id=21",
+				"index_id=1",
+				"index_name='UNKONW'",
+			}, // index_id != index_name -> nil
+			expected: [][]string{},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"table_id=21",
+				"index_id=1",
+				"index_name='IDX_VER'",
+			}, // index_id = index_name
+			expected: [][]string{
+				fullHotRegions[8], fullHotRegions[9],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"index_id=1",
+				"index_name='IDX_VER'",
+				"table_id>=21", // unpushed down predicates 21>=21
+			},
+			expected: [][]string{
+				fullHotRegions[8], fullHotRegions[9],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"index_id=1",
+				"index_name='IDX_VER'",
+				"table_id>21", // unpushed down predicates
+			}, // 21!>21 -> nil
+			expected: [][]string{},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"index_id=1",
+				"index_name='IDX_VER'",
+				"table_id>=21", // unpushed down predicates
+				"db_name='MYSQL'",
+			},
+			expected: [][]string{
+				fullHotRegions[8], fullHotRegions[9],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"index_id=1",
+				"index_name='IDX_VER'",
+				"table_id>=21", // unpushed down predicates
+				"db_name='MYSQL'",
+				"peer_id>=33334",
+			},
+			expected: [][]string{
+				fullHotRegions[9],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"index_id=1",
+				"index_name='IDX_VER'",
+				"table_id>=21", // unpushed down predicates
+				"db_name='UNKNOW'",
+			},
+			expected: [][]string{},
+		},
+	}
+	// failpoint
+	fpName := "github.com/pingcap/tidb/executor/mockTiDBHotRegionsHistory"
+	c.Assert(failpoint.Enable(fpName, `return("")`), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	for _, cas := range cases {
+		sql := "select * from information_schema.tidb_hot_regions_history"
+		if len(cas.conditions) > 0 {
+			sql = fmt.Sprintf("%s where %s", sql, strings.Join(cas.conditions, " and "))
+		}
+		result := tk.MustQuery(sql)
+		// rows := result.Rows()
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		c.Assert(len(warnings), Equals, 0, Commentf("unexpected warnigns: %+v", warnings))
+		var expected []string
+		for _, row := range cas.expected {
+			expectedRow := row
+			expected = append(expected, strings.Join(expectedRow, " "))
+		}
+		result.Check(testkit.Rows(expected...))
+	}
+}
+
+func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistoryError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	fpName := "github.com/pingcap/tidb/executor/mockTiDBHotRegionsHistory"
+	c.Assert(failpoint.Enable(fpName, `return("")`), IsNil)
+	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
+
+	// Test without start time error
+	rs, err := tk.Exec("select * from information_schema.tidb_hot_regions_history")
+	c.Assert(err, IsNil)
+	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "denied to scan hot regions, please specified the start time, such as `update_time > '2020-01-01 00:00:00'`")
+	c.Assert(rs.Close(), IsNil)
+
+	// Test without end time error.
+	rs, err = tk.Exec("select * from information_schema.tidb_hot_regions_history where update_time>='2019/08/26 06:18:13.011'")
+	c.Assert(err, IsNil)
+	_, err = session.ResultSetToStringSlice(context.Background(), tk.Se, rs)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "denied to scan hot regions, please specified the end time, such as `update_time < '2020-01-01 00:00:00'`")
 	c.Assert(rs.Close(), IsNil)
 }
