@@ -16,13 +16,7 @@ package hack
 import (
 	"bytes"
 	"testing"
-
-	. "github.com/pingcap/check"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
 
 func TestString(t *testing.T) {
 	b := []byte("hello world")

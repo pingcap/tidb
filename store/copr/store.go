@@ -77,6 +77,7 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	/* #nosec G404 */
 	return &Store{
 		kvStore:         &kvStore{store: s},
 		coprCache:       coprCache,

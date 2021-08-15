@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -524,7 +525,7 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinit
 		switch val.Kind() {
 		case types.KindUint64, types.KindNull:
 		case types.KindInt64:
-			if !ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode() && mysql.HasUnsignedFlag(tp.Flag) && val.GetInt64() < 0 {
+			if mysql.HasUnsignedFlag(tp.Flag) && val.GetInt64() < 0 {
 				return ErrPartitionConstDomain.GenWithStackByArgs()
 			}
 		default:
@@ -666,8 +667,7 @@ func checkRangePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
-	// treat partition value under NoUnsignedSubtractionMode as signed
-	isUnsigned := isColUnsigned(cols, pi) && !ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
+	isUnsigned := isColUnsigned(cols, pi)
 	var prevRangeValue interface{}
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
@@ -967,12 +967,12 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+		physicalTableIDs = updateDroppingPartitionInfo(tblInfo, partNames)
 		err = dropRuleBundles(d, physicalTableIDs)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
-		updateDroppingPartitionInfo(tblInfo, partNames)
 		job.SchemaState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteOnly:
@@ -1074,7 +1074,8 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 	if len(newPartitions) == 0 {
-		return ver, table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O)
+		job.State = model.JobStateCancelled
+		return ver, table.ErrUnknownPartition.GenWithStackByArgs(fmt.Sprintf("pid:%v", oldIDs), tblInfo.Name.O)
 	}
 
 	// Clear the tiflash replica available status.
@@ -1370,11 +1371,11 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	}
 	defer w.sessPool.put(ctx)
 
-	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), sql, paramList...)
+	stmt, err := ctx.(sqlexec.RestrictedSQLExecutor).ParseWithParams(w.ddlJobCtx, sql, paramList...)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(w.ddlJobCtx, stmt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1493,6 +1494,17 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 		physicalTableIDs = append(physicalTableIDs, def.ID)
 	}
 	return physicalTableIDs
+}
+
+func getPartitionRuleIDs(dbName string, table *model.TableInfo) []string {
+	if table.GetPartitionInfo() == nil {
+		return []string{}
+	}
+	partRuleIDs := make([]string, 0, len(table.Partition.Definitions))
+	for _, def := range table.Partition.Definitions {
+		partRuleIDs = append(partRuleIDs, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, dbName, table.Name.L, def.Name.L))
+	}
+	return partRuleIDs
 }
 
 // checkPartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.

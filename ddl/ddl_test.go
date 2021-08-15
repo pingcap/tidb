@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -55,6 +56,11 @@ func (d *ddl) SetInterceptor(i Interceptor) {
 // generalWorker returns the general worker.
 func (d *ddl) generalWorker() *worker {
 	return d.workers[generalWorker]
+}
+
+// GetMaxRowID is used for test.
+func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
+	return getRangeEndKey(store, priority, t, startHandle, endHandle)
 }
 
 func TestT(t *testing.T) {

@@ -395,18 +395,24 @@ func (s *testInfoschemaTableSuite) TestUserPrivileges(c *C) {
 
 func (s *testInfoschemaTableSuite) TestUserPrivilegesTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(c, s.store)
+
 	// test the privilege of new user for information_schema.user_privileges
 	tk.MustExec("create user usageuser")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "usageuser",
+		Hostname: "127.0.0.1",
+	}, nil, nil), IsTrue)
 	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def USAGE NO"))
 	// the usage row disappears when there is a non-dynamic privilege added
-	tk.MustExec("GRANT SELECT ON *.* to usageuser")
-	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def Select NO"))
+	tk1.MustExec("GRANT SELECT ON *.* to usageuser")
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def SELECT NO"))
 	// test grant privilege
-	tk.MustExec("GRANT SELECT ON *.* to usageuser WITH GRANT OPTION")
-	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def Select YES"))
+	tk1.MustExec("GRANT SELECT ON *.* to usageuser WITH GRANT OPTION")
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"`).Check(testkit.Rows("'usageuser'@'%' def SELECT YES"))
 	// test DYNAMIC privs
-	tk.MustExec("GRANT BACKUP_ADMIN ON *.* to usageuser")
-	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'" ORDER BY privilege_type`).Check(testkit.Rows("'usageuser'@'%' def BACKUP_ADMIN NO", "'usageuser'@'%' def Select YES"))
+	tk1.MustExec("GRANT BACKUP_ADMIN ON *.* to usageuser")
+	tk.MustQuery(`SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'" ORDER BY privilege_type`).Check(testkit.Rows("'usageuser'@'%' def BACKUP_ADMIN NO", "'usageuser'@'%' def SELECT YES"))
 }
 
 func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
@@ -579,6 +585,8 @@ func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 	tk.MustExec("create table t1 (a int, b int, index idx(a))")
 	tk.MustExec("insert into t1 values (1,2),(3,4)")
 	tk.MustExec("analyze table t1")
+	tk.MustQuery("show warnings").Check(testkit.Rows()) // no warning
+	c.Assert(s.dom.StatsHandle().LoadNeededHistograms(), IsNil)
 	tk.MustExec("CREATE ROLE r_t1 ;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")
 	tk.MustExec("GRANT r_t1 TO analyze_tester;")
@@ -907,7 +915,40 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 	tk.MustQuery("select TABLE_SCHEMA, sum(TABLE_SIZE) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_SCHEMA;").Check(testkit.Rows(
 		"test 2",
 	))
-	c.Assert(len(tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()), Equals, 24)
+	c.Assert(len(tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()), Equals, 25)
+
+	// More tests about the privileges.
+	tk.MustExec("create user 'testuser'@'localhost'")
+	tk.MustExec("create user 'testuser2'@'localhost'")
+	tk.MustExec("create user 'testuser3'@'localhost'")
+	tk1 := testkit.NewTestKit(c, store)
+	defer tk1.MustExec("drop user 'testuser'@'localhost'")
+	defer tk1.MustExec("drop user 'testuser2'@'localhost'")
+	defer tk1.MustExec("drop user 'testuser3'@'localhost'")
+
+	tk.MustExec("grant all privileges on *.* to 'testuser2'@'localhost'")
+	tk.MustExec("grant select on *.* to 'testuser3'@'localhost'")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser",
+		Hostname: "localhost",
+	}, nil, nil), Equals, true)
+
+	// User has no access to this schema, so the result set is empty.
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("0"))
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser2",
+		Hostname: "localhost",
+	}, nil, nil), Equals, true)
+
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("25"))
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{
+		Username: "testuser3",
+		Hostname: "localhost",
+	}, nil, nil), Equals, true)
+
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("25"))
 }
 
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {
@@ -919,6 +960,7 @@ func (s *testInfoschemaTableSuite) TestSequences(c *C) {
 	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 10 0 1 10 -1 -1 "))
 	tk.MustExec("CREATE SEQUENCE test.seq2 start = -9 minvalue -10 maxvalue 10 increment -1 cache 15")
 	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq2'").Check(testkit.Rows("def test seq2 1 15 0 -1 10 -10 -9 "))
+	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME , TABLE_TYPE, ENGINE, TABLE_ROWS FROM information_schema.tables WHERE TABLE_TYPE='SEQUENCE' AND TABLE_NAME='seq2'").Check(testkit.Rows("def test seq2 SEQUENCE InnoDB 1"))
 }
 
 func (s *testInfoschemaTableSuite) TestTiFlashSystemTables(c *C) {
