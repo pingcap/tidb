@@ -140,6 +140,9 @@ func attachPlan2Task(p PhysicalPlan, t task) task {
 	case *mppTask:
 		p.SetChildren(v.p)
 		v.p = p
+	case *xchgTask:
+		p.SetChildren(v.p)
+		v.p = p
 	}
 	return t
 }
@@ -2202,6 +2205,9 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 type xchgTask struct {
 	rootTask
 	dop int
+	// Only be set when task.p is PhysicalXchg.
+	// Used to count available thread.
+	consumedThr int
 }
 
 func (t *xchgTask) copy() task {
@@ -2224,18 +2230,12 @@ func (p *PhysicalXchg) GetCost(childCost float64, concurrency int) float64 {
 	return (childCost / float64(concurrency)) * 1.2
 }
 
+// p: receiver -> sender -> senderChild -> tasks[0]
+//                                      -> tasks[1]
+//                                      -> ...
 func (p *PhysicalXchg) attach2Task(tasks ...task) task {
 	if p.IsSender() {
 		panic("attach xchgSender to task is unexpected")
-	}
-
-	var dop int
-	concurrency := p.ctx.GetSessionVars().ExecutorConcurrency
-	// TODO: here!!!
-	if p.tp == TypeXchgReceiverPassThrough || p.tp == TypeXchgReceiverPassThroughHT {
-		dop = concurrency
-	} else {
-		dop = 1
 	}
 
 	sender, ok := p.Children()[0].(*PhysicalXchg)
@@ -2243,9 +2243,37 @@ func (p *PhysicalXchg) attach2Task(tasks ...task) task {
 		// TODO: return error
 		panic("receiver's child must be sender")
 	}
+
+	var consumedThr int
+	for _, t := range tasks {
+		tmpXchgTask, ok := t.(*xchgTask)
+		if !ok {
+			// TODO: return error
+			panic("t must be xchgTask")
+		}
+		consumedThr += tmpXchgTask.consumedThr
+	}
+	consumedThr += p.inStreamCnt
+
+	senderChildTask := sender.Children()[0].attach2Task(tasks...)
+
 	t := &xchgTask{
-		rootTask: rootTask{cst: sender.GetCost(sender.Children()[0].Cost(), concurrency), p: p},
-		dop:      dop,
+		rootTask:    rootTask{cst: sender.GetCost(senderChildTask.cost(), p.inStreamCnt), p: p},
+		dop:         p.inStreamCnt,
+		consumedThr: consumedThr + p.inStreamCnt,
 	}
 	return t
+}
+
+func convertToXchgTask(ctx sessionctx.Context, t task) *xchgTask {
+	if tmpTask, ok := t.(*xchgTask); ok {
+		return tmpTask
+	}
+	// dop and consumedThr is only meaningfule when t.p is PhysicalXchg.
+	// So we just set it to default value.
+	return &xchgTask{
+		rootTask:    *t.convertToRootTask(ctx),
+		dop:         0,
+		consumedThr: 0,
+	}
 }

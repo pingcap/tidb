@@ -147,21 +147,28 @@ func findBestXchgTask(ctx sessionctx.Context, node PhysicalPlan, reqProp *XchgPr
 	var bestTask task = invalidTask
 	for _, p := range possiblePlans {
 		planToFind := p
-		if xchgReceiver, isXchg := planToFind.(*PhysicalXchg); isXchg {
+		curAvailable := reqProp.available
+		xchgReceiver, isXchg := planToFind.(*PhysicalXchg)
+		if isXchg {
 			planToFind = xchgReceiver.Children()[0].Children()[0]
+			curAvailable -= xchgReceiver.inStreamCnt
 		}
 
 		// Stop find best task recursively when got xxxReader.
 		if isReaderNode(planToFind) {
-			bestTask = &xchgTask{
-				rootTask: rootTask{
-					cst: planToFind.Cost(),
-					p:   planToFind,
-				},
-				dop: 1,
+			tmpTask := &rootTask{
+				cst: planToFind.Cost(),
+				p:   planToFind,
 			}
 			if p != planToFind {
-				bestTask = p.attach2Task(bestTask)
+				// bestTask = p.attach2Task(convertToXchgTask(ctx, bestTask))
+				bestTask = &xchgTask{
+					rootTask:    *tmpTask,
+					dop:         xchgReceiver.inStreamCnt,
+					consumedThr: xchgReceiver.inStreamCnt,
+				}
+			} else {
+				bestTask = tmpTask
 			}
 			// Here we assume there is only one possible plan for xxxReader.
 			// See xxxReader.TryAddXchg().
@@ -172,26 +179,31 @@ func findBestXchgTask(ctx sessionctx.Context, node PhysicalPlan, reqProp *XchgPr
 		childrenXchgProps := planToFind.GetChildXchgProps()
 		bestChildrenTasksFound := true
 		for i, child := range planToFind.Children() {
+			childrenXchgProps[i].available = curAvailable
 			bestChildTask, err := findBestXchgTask(ctx, child, childrenXchgProps[i])
 			if err != nil {
 				return invalidTask, err
 			}
 			if bestChildTask.invalid() {
 				bestChildrenTasksFound = false
+				break
 			}
 			childTasks = append(childTasks, bestChildTask)
+			tmpTask, ok := bestChildTask.(*xchgTask)
+			if !ok {
+				return nil, errors.New("childTask is not xchgTask")
+			}
+			curAvailable -= tmpTask.consumedThr
 		}
 		if bestChildrenTasksFound {
-			curTask := planToFind.attach2Task(childTasks...)
-			if p != planToFind {
-				curTask = p.attach2Task(curTask)
-			}
+			curTask := p.attach2Task(childTasks...)
+
 			if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 				bestTask = curTask
 			}
 		}
 	}
-	return bestTask, nil
+	return convertToXchgTask(ctx, bestTask), nil
 }
 
 func (p *basePhysicalPlan) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
@@ -259,13 +271,33 @@ func (p *PhysicalHashJoin) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPrope
 		return nil, errors.New("TryAddXchg not support UseOuterToBuild for now")
 	}
 
+	if !hasAvailableThr(reqProp.available, 0) {
+		return nil, nil
+	}
+
+	buildSideIdx, probeSideIdx := 0, 1
+	if p.InnerChildIdx == 1 {
+		buildSideIdx = 1
+		probeSideIdx = 0
+	}
+
+	if res, err = tryAddXchgPreWork(p, reqProp, res); err != nil {
+		return nil, err
+	}
+	if reqProp.output != 1 {
+		// If parent of HashJoin already requires parallel, build child have to enforce BroadcastHT.
+		p.GetChildXchgProps()[buildSideIdx].isBroadcastHT = true
+	}
+
 	outStreamCnt := reqProp.output
 	if outStreamCnt == 1 {
 		outStreamCnt = ctx.GetSessionVars().ExecutorConcurrency
 	}
-	if res, err = tryBroadcastHJ(ctx, p, outStreamCnt, reqProp); err != nil {
+	res1, err := tryBroadcastHJ(ctx, p, outStreamCnt, reqProp, buildSideIdx, probeSideIdx)
+	if err != nil {
 		return nil, err
 	}
+	res = append(res, res1...)
 	// TODO: not support for now.
 	// if res, err = tryHashPartitionHJ(ctx, p, outStreamCnt); err != nil {
 	//     return nil, err
@@ -281,34 +313,7 @@ func (p *PhysicalLimit) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty
 	return res, nil
 }
 
-func tryBroadcastHJ(ctx sessionctx.Context, node *PhysicalHashJoin, outStreamCnt int, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
-	if !hasAvailableThr(reqProp.available, 0) {
-		return nil, nil
-	}
-	if res, err = tryAddXchgPreWork(node, reqProp, res); err != nil {
-		return nil, err
-	}
-	buildSideIdx, probeSideIdx := 0, 1
-	if node.InnerChildIdx == 1 {
-		buildSideIdx = 1
-		probeSideIdx = 0
-	}
-	if reqProp.output != 1 {
-		// If parent of HashJoin already requires parallel, build child have to enforce BroadcastHT.
-		node.GetChildXchgProps()[buildSideIdx].isBroadcastHT = true
-		node.GetChildXchgProps()[probeSideIdx].available -= 1
-	}
-
-	avaBuildThr := reqProp.available - outStreamCnt
-	if avaBuildThr <= 0 {
-		return res, nil
-	}
-	// 1 means build side have to use broadcast, so available thread is less.
-	avaProbeThr := reqProp.available - outStreamCnt - 1
-	if avaProbeThr <= 0 {
-		avaBuildThr = 1
-	}
-
+func tryBroadcastHJ(ctx sessionctx.Context, node *PhysicalHashJoin, outStreamCnt int, reqProp *XchgProperty, buildSideIdx int, probeSideIdx int) (res []PhysicalPlan, err error) {
 	newNode, err := node.Clone()
 	if err != nil {
 		return nil, err
@@ -317,11 +322,9 @@ func tryBroadcastHJ(ctx sessionctx.Context, node *PhysicalHashJoin, outStreamCnt
 	buildReqProp := &XchgProperty{
 		output:        outStreamCnt,
 		isBroadcastHT: true,
-		available:     avaBuildThr,
 	}
 	probeReqProp := &XchgProperty{
-		output:    outStreamCnt,
-		available: avaProbeThr,
+		output: outStreamCnt,
 	}
 	newNode.GetChildXchgProps()[buildSideIdx] = buildReqProp
 	newNode.GetChildXchgProps()[probeSideIdx] = probeReqProp
@@ -506,13 +509,13 @@ func isReaderNode(p PhysicalPlan) bool {
 func getReceiverStreamCount(reqOutput int, tp XchgType) (recvInStreamCnt int, recvOutStreamCnt int, err error) {
 	switch tp {
 	case TypeXchgReceiverPassThrough, TypeXchgReceiverPassThroughHT:
-		return reqOutput, reqOutput, nil
+		return 1, reqOutput, nil
 	case TypeXchgReceiverRandom:
 		return reqOutput, 1, nil
 	case TypeXchgSenderBroadcastHT, TypeXchgSenderRandom:
 		return 1, reqOutput, nil
 	case TypeXchgSenderPassThrough:
-		return reqOutput, reqOutput, nil
+		return reqOutput, 1, nil
 	case TypeXchgSenderHash:
 		// TODO: may be not simple
 		return -1, -1, errors.New("Not implemented Hash Sender for now")
