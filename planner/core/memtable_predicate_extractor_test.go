@@ -16,6 +16,7 @@ package core_test
 
 import (
 	"context"
+	"math"
 	"regexp"
 	"sort"
 	"time"
@@ -266,11 +267,6 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 		patterns           []string
 		level              set.StringSet
 	}{
-		{
-			sql:       "select * from information_schema.cluster_log",
-			nodeTypes: nil,
-			instances: nil,
-		},
 		{
 			// Test for invalid time.
 			sql:       "select * from information_schema.cluster_log where time='2019-10-10 10::10'",
@@ -1045,5 +1041,525 @@ func (s *extractorSuite) TestInspectionRuleTableExtractor(c *C) {
 			c.Assert(clusterConfigExtractor.Types, DeepEquals, ca.tps, Commentf("SQL: %v", ca.sql))
 		}
 		c.Assert(clusterConfigExtractor.SkipRequest, Equals, ca.skip, Commentf("SQL: %v", ca.sql))
+	}
+}
+
+func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	parser := parser.New()
+	var cases = []struct {
+		sql                             string
+		skipRequest                     bool
+		startTime, endTime              int64
+		hotRegionTypes                  set.StringSet
+		regionIDs, storeIDs             []uint64
+		tableIDs, indexIDs              []uint64
+		dbNames, tableNames, indexNames set.StringSet
+		lowHotDegree, highHotDegree     int64
+		lowFlowBytes, highFlowBytes     float64
+	}{
+		// Test full data, will not call Extract(),and executor(retriver) will panic and remind user to add conditions to save network IO.
+		{
+			sql: "select * from information_schema.tidb_hot_regions_history",
+		},
+		// Test startTime and endTime
+		{
+			// Test for invalid update_time.
+			// Fixme Simulated from cluster_log, SQL Parser can parse the error time formate in fact, timestamp() function can not.
+			// It rerurn start_time = end_time !=0 due to the implementation of extractHelper.extractTimeRange.
+			sql: "select * from information_schema.tidb_hot_regions_history where update_time='2019-10-10 10::10'",
+			// highHotDegree,highFlowBytes will be set to the maximum number of the type to cover all range.
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where update_time='2019-10-10 10:10:10'",
+			startTime:     timestamp(c, "2019-10-10 10:10:10"),
+			endTime:       timestamp(c, "2019-10-10 10:10:10"),
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and update_time<='2019-10-11 10:10:10'",
+			startTime:     timestamp(c, "2019-10-10 10:10:10"),
+			endTime:       timestamp(c, "2019-10-11 10:10:10"),
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where update_time>'2019-10-10 10:10:10' and update_time<'2019-10-11 10:10:10'",
+			startTime:     timestamp(c, "2019-10-10 10:10:10") + 1,
+			endTime:       timestamp(c, "2019-10-11 10:10:10") - 1,
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and update_time<'2019-10-11 10:10:10'",
+			startTime:     timestamp(c, "2019-10-10 10:10:10"),
+			endTime:       timestamp(c, "2019-10-11 10:10:10") - 1,
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-12 10:10:10' and update_time<'2019-10-11 10:10:10'",
+			startTime:     timestamp(c, "2019-10-12 10:10:10"),
+			endTime:       timestamp(c, "2019-10-11 10:10:10") - 1,
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			skipRequest:   true,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10'",
+			startTime:     timestamp(c, "2019-10-10 10:10:10"),
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and  update_time>='2019-10-11 10:10:10' and  update_time>='2019-10-12 10:10:10'",
+			startTime:     timestamp(c, "2019-10-12 10:10:10"),
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where update_time>='2019-10-10 10:10:10' and  update_time>='2019-10-11 10:10:10' and  update_time>='2019-10-12 10:10:10' and update_time='2019-10-13 10:10:10'",
+			startTime:     timestamp(c, "2019-10-13 10:10:10"),
+			endTime:       timestamp(c, "2019-10-13 10:10:10"),
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where update_time<='2019-10-10 10:10:10' and update_time='2019-10-13 10:10:10'",
+			startTime:     timestamp(c, "2019-10-13 10:10:10"),
+			endTime:       timestamp(c, "2019-10-10 10:10:10"),
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			skipRequest:   true,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where update_time='2019-10-10 10:10:10' and update_time<='2019-10-13 10:10:10'",
+			startTime:     timestamp(c, "2019-10-10 10:10:10"),
+			endTime:       timestamp(c, "2019-10-10 10:10:10"),
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+		},
+		// Test hotRegionTypes
+		{
+			sql:            "select * from information_schema.tidb_hot_regions_history where type='read'",
+			hotRegionTypes: set.NewStringSet("read"),
+			highHotDegree:  math.MaxInt64,
+			highFlowBytes:  math.MaxFloat64,
+		},
+		{
+			sql:            "select * from information_schema.tidb_hot_regions_history where type in('read')",
+			hotRegionTypes: set.NewStringSet("read"),
+			highHotDegree:  math.MaxInt64,
+			highFlowBytes:  math.MaxFloat64,
+		},
+		{
+			sql: "select * from information_schema.tidb_hot_regions_history where type='read' and type='write'",
+			// skip set maximum code
+			// highHotDegree: math.MaxInt64,
+			// highFlowBytes: math.MaxFloat64,
+			skipRequest: true,
+		},
+		{
+			sql:            "select * from information_schema.tidb_hot_regions_history where type='read' and type in ('read', 'write')",
+			hotRegionTypes: set.NewStringSet("read"),
+			highHotDegree:  math.MaxInt64,
+			highFlowBytes:  math.MaxFloat64,
+		},
+		{
+			sql:         "select * from information_schema.tidb_hot_regions_history where type in ('read') and type in ('write')",
+			skipRequest: true,
+		},
+		// Test regionIDs and storeIDs
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where region_id=100",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			regionIDs:     []uint64{100},
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where 100=region_id",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			regionIDs:     []uint64{100},
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where 100=region_id or region_id=101",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			regionIDs:     []uint64{100, 101},
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where 100=region_id or region_id=101 or region_id=102 or 103 = region_id",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			regionIDs:     []uint64{100, 101, 102, 103},
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where (region_id=100 or region_id=101) and (store_id=200 or store_id=201)",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			regionIDs:     []uint64{100, 101},
+			storeIDs:      []uint64{200, 201},
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where region_id in (100, 101)",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			regionIDs:     []uint64{100, 101},
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where region_id in (100, 101) and store_id=200",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			regionIDs:     []uint64{100, 101},
+			storeIDs:      []uint64{200},
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where region_id in (100, 101) and store_id in (200, 201)",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			regionIDs:     []uint64{100, 101},
+			storeIDs:      []uint64{200, 201},
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where region_id=100 and store_id in (200, 201)",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			regionIDs:     []uint64{100},
+			storeIDs:      []uint64{200, 201},
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where region_id=100 and store_id=200",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			regionIDs:     []uint64{100},
+			storeIDs:      []uint64{200},
+		},
+		{ // and case
+			sql:         "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id=101",
+			skipRequest: true,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id in (100,101)",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			regionIDs:     []uint64{100},
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id in (100,101) and store_id=200 and store_id in (200,201)",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			regionIDs:     []uint64{100},
+			storeIDs:      []uint64{200},
+		},
+		{
+			sql:         "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id in (101,102)",
+			skipRequest: true,
+		},
+		{ // region_id skip, store_id not skip
+			sql:         "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id in (101,102) and store_id=200 and store_id in (200,201)",
+			skipRequest: true,
+		},
+		{ // region_id not skip, store_id skip
+			sql:         "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id in (100,101) and store_id=200 and store_id in (201,202)",
+			skipRequest: true,
+		},
+		{ // region_id skip, store_id not skip, table_id not skip, index_id not skip
+			sql: `select * from information_schema.tidb_hot_regions_history 
+								where region_id=100 and region_id in (100,101) 
+								and store_id=200 and store_id in (201,202)
+								and table_id=10 and store_id in (11,12)
+								and index_id=20 and index_id in (21,22)								`,
+			skipRequest: true,
+		},
+		{ // Intersection
+			sql:           "select * from information_schema.tidb_hot_regions_history where region_id in (100,101) and region_id in (101,102)",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			regionIDs:     []uint64{101},
+		},
+		{
+			sql: `select * from information_schema.tidb_hot_regions_history 
+							where region_id in (100,101) 
+							and region_id in (101,102) 
+							and store_id in (200,201) 
+							and store_id in (201,202)`,
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			regionIDs:     []uint64{101},
+			storeIDs:      []uint64{201},
+		},
+		{
+			sql: `select * from information_schema.tidb_hot_regions_history 
+							where region_id in (100,101) 
+							and region_id in (101,102) 
+							and store_id in (200,201) 
+							and store_id in (201,202)
+							and table_id in (10,11)
+							and table_id in (11,12)
+							and index_id in (20,21)
+							and index_id in (21,22)`,
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			regionIDs:     []uint64{101},
+			storeIDs:      []uint64{201},
+			tableIDs:      []uint64{11},
+			indexIDs:      []uint64{21},
+		},
+		{
+			sql: `select * from information_schema.tidb_hot_regions_history 
+							where region_id in (100,101) 
+							and region_id in (100,102) 
+							and region_id in (102,103) 
+							and region_id in (103,104)`,
+			skipRequest: true,
+		},
+		// Test dbNames, tableNames and indexNames
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where db_name='database1'",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database1"),
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where 'database1'=db_name",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database1"),
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where 'database1'=db_name or db_name='database2'",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database1", "database2"),
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where 'database1'=db_name or db_name='database2' or db_name='database3' or 'database4' = db_name",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database1", "database2", "database3", "database4"),
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where (db_name='database1' or db_name='database2') and (table_name='table1' or table_name='table2')",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database1", "database2"),
+			tableNames:    set.NewStringSet("table1", "table2"),
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where db_name in ('database1', 'database2')",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database1", "database2"),
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where db_name in ('database1', 'database2') and table_name='table1'",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database1", "database2"),
+			tableNames:    set.NewStringSet("table1"),
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where db_name in ('database1', 'database2') and table_name in ('table1', 'table2')",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database1", "database2"),
+			tableNames:    set.NewStringSet("table1", "table2"),
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where db_name='database1' and table_name in ('table1', 'table2')",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database1"),
+			tableNames:    set.NewStringSet("table1", "table2"),
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where db_name='database1' and table_name='table1'",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database1"),
+			tableNames:    set.NewStringSet("table1"),
+		},
+		{ // and case
+			sql:         "select * from information_schema.tidb_hot_regions_history where db_name='database1' and db_name='database2'",
+			skipRequest: true,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where db_name='database1' and db_name in ('database1','database2')",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database1"),
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where db_name='database1' and db_name in ('database1','database2') and table_name='table1' and table_name in ('table1','table2')",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database1"),
+			tableNames:    set.NewStringSet("table1"),
+		},
+		{
+			sql: `select * from information_schema.tidb_hot_regions_history 
+							where db_name='database1' and db_name in ('database1','database2') 
+							and table_name='table1' and table_name in ('table1','table2')
+							and index_name='index1' and index_name in ('index1','index2')`,
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database1"),
+			tableNames:    set.NewStringSet("table1"),
+			indexNames:    set.NewStringSet("index1"),
+		},
+		{
+			sql:         "select * from information_schema.tidb_hot_regions_history where db_name='database1' and db_name in ('database2','database3')",
+			skipRequest: true,
+		},
+		{ // db_name skip, table_name not skip
+			sql:         "select * from information_schema.tidb_hot_regions_history where db_name='database1' and db_name in ('database2','database3') and table_name='table1' and table_name in ('table1','table2')",
+			skipRequest: true,
+		},
+		{ // db_name not skip, table_name skip
+			sql:         "select * from information_schema.tidb_hot_regions_history where db_name='database1' and db_name in ('database1','database2') and table_name='table1' and table_name in ('table2','table3')",
+			skipRequest: true,
+		},
+		{ // db_name skip, table_name not skip, index_name skip
+			sql: `select * from information_schema.tidb_hot_regions_history 
+							where db_name='database1' and db_name in ('database2','database3') 
+							and table_name='table1' and table_name in ('table1','table2')
+							and index_name='index1' and index_name in ('index1','index2')`,
+			skipRequest: true,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where db_name in ('database1','database2') and db_name in ('database2','database3')",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database2"),
+		},
+		{
+			sql: `select * from information_schema.tidb_hot_regions_history 
+							where db_name in ('database1','database2') 
+							and db_name in ('database2','database3') 
+							and table_name in ('table1','table2') 
+							and table_name in ('table2','table3')`,
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database2"),
+			tableNames:    set.NewStringSet("table2"),
+		},
+		{
+			sql: `select * from information_schema.tidb_hot_regions_history 
+							where db_name in ('database1','database2') 
+							and db_name in ('database2','database3') 
+							and table_name in ('table1','table2') 
+							and table_name in ('table2','table3')
+							and index_name in ('index1','index2')
+							and index_name in ('index2','index3')`,
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+			dbNames:       set.NewStringSet("database2"),
+			tableNames:    set.NewStringSet("table2"),
+			indexNames:    set.NewStringSet("index2"),
+		},
+		{
+			sql: `select * from information_schema.tidb_hot_regions_history 
+							where db_name in ('database1','database2') 
+							and db_name in ('database1','database3') 
+							and db_name in ('database3','database4') 
+							and db_name in ('database4','database5')`,
+			skipRequest: true,
+		},
+		// Test lowHotDegree, highHotDegree, lowFlowBytes, highFlowBytes
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where hot_degree > 89",
+			lowHotDegree:  89 + 1,
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where hot_degree < 100",
+			highHotDegree: 100 - 1,
+			highFlowBytes: math.MaxFloat64,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where flow_bytes > 89",
+			highHotDegree: math.MaxInt64,
+			lowFlowBytes:  89 + 1e-12,
+			highFlowBytes: math.MaxFloat64,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where flow_bytes < 100",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: 100 - 1e-12,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where (hot_degree=80 or hot_degree=100) and hot_degree > 89",
+			lowHotDegree:  89 + 1,
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where hot_degree > 89  and hot_degree<=100",
+			lowHotDegree:  89 + 1,
+			highHotDegree: 100,
+			highFlowBytes: math.MaxFloat64,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where hot_degree > 89  and hot_degree<=100 and flow_bytes >= 89 and flow_bytes <100",
+			lowHotDegree:  89 + 1,
+			highHotDegree: 100,
+			lowFlowBytes:  89,
+			highFlowBytes: 100 - 1e-12,
+		},
+		{
+			sql:           "select * from information_schema.tidb_hot_regions_history where hot_degree=100 and flow_bytes = 89",
+			highHotDegree: math.MaxInt64,
+			highFlowBytes: math.MaxFloat64,
+		},
+	}
+
+	for _, ca := range cases {
+		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
+		c.Assert(logicalMemTable.Extractor, NotNil, Commentf("SQL: %v", ca.sql))
+
+		hotRegionsHistoryExtractor := logicalMemTable.Extractor.(*plannercore.HotRegionsHistoryTableExtractor)
+		if ca.startTime > 0 {
+			c.Assert(hotRegionsHistoryExtractor.StartTime, Equals, ca.startTime, Commentf("SQL: %v", ca.sql))
+		}
+		if ca.endTime > 0 {
+			c.Assert(hotRegionsHistoryExtractor.EndTime, Equals, ca.endTime, Commentf("SQL: %v", ca.sql))
+		}
+		c.Assert(hotRegionsHistoryExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
+		if len(ca.hotRegionTypes) > 0 {
+			c.Assert(hotRegionsHistoryExtractor.HotRegionTypes, DeepEquals, ca.hotRegionTypes, Commentf("SQL: %v", ca.sql))
+		}
+		// ues length to avoid case uint64{} != uint64(nil)
+		if len(ca.regionIDs) > 0 {
+			c.Assert(hotRegionsHistoryExtractor.RegionIDs, DeepEquals, ca.regionIDs, Commentf("SQL: %v", ca.sql))
+		}
+		if len(ca.storeIDs) > 0 {
+			c.Assert(hotRegionsHistoryExtractor.StoreIDs, DeepEquals, ca.storeIDs, Commentf("SQL: %v", ca.sql))
+		}
+		if len(ca.tableIDs) > 0 {
+			c.Assert(hotRegionsHistoryExtractor.TableIDs, DeepEquals, ca.tableIDs, Commentf("SQL: %v", ca.sql))
+		}
+		if len(ca.indexIDs) > 0 {
+			c.Assert(hotRegionsHistoryExtractor.IndexIDs, DeepEquals, ca.indexIDs, Commentf("SQL: %v", ca.sql))
+		}
+		if len(ca.dbNames) > 0 {
+			c.Assert(hotRegionsHistoryExtractor.DBNames, DeepEquals, ca.dbNames, Commentf("SQL: %v", ca.sql))
+		}
+		if len(ca.tableNames) > 0 {
+			c.Assert(hotRegionsHistoryExtractor.TableNames, DeepEquals, ca.tableNames, Commentf("SQL: %v", ca.sql))
+		}
+		if len(ca.indexNames) > 0 {
+			c.Assert(hotRegionsHistoryExtractor.IndexNames, DeepEquals, ca.indexNames, Commentf("SQL: %v", ca.sql))
+		}
+		c.Assert(hotRegionsHistoryExtractor.LowHotDegree, DeepEquals, ca.lowHotDegree)
+		c.Assert(hotRegionsHistoryExtractor.HighHotDegree, DeepEquals, ca.highHotDegree)
+		c.Assert(hotRegionsHistoryExtractor.LowFlowBytes, DeepEquals, ca.lowFlowBytes)
+		c.Assert(hotRegionsHistoryExtractor.HighFlowBytes, DeepEquals, ca.highFlowBytes)
 	}
 }
