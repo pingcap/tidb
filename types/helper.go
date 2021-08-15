@@ -42,6 +42,14 @@ func RoundFloat(f float64) float64 {
 	return math.RoundToEven(f)
 }
 
+// RoundInt uses the "round half up" rule: A value with a fractional part of .5 or greater is rounded up to the next integer
+// if positive or down to the next integer if negative. (In other words, it is rounded away from zero.)
+// A value with a fractional part less than .5 is rounded down to the next integer if positive or up to the next integer
+// if negative. (In other words, it is rounded toward zero.)
+func RoundInt(i int64) int64 {
+	return i
+}
+
 // Round rounds the argument f to dec decimal places use "round to nearest even" rule as default.
 // dec defaults to 0 if not specified. dec can be negative
 // to cause dec digits left of the decimal point of the
