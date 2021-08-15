@@ -2225,7 +2225,7 @@ func (p *PhysicalXchg) GetCost(childCost float64, concurrency int) float64 {
 }
 
 func (p *PhysicalXchg) attach2Task(tasks ...task) task {
-	if p.isSender() {
+	if p.IsSender() {
 		panic("attach xchgSender to task is unexpected")
 	}
 

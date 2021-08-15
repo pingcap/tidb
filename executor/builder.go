@@ -90,6 +90,7 @@ type executorBuilder struct {
 	// isStaleness means whether this statement use stale read.
 	isStaleness bool
 	txnScope    string
+	xchgExecMap map[int]Executor
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -108,6 +109,7 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 		snapshotTS:  snapshotTS,
 		isStaleness: isStaleness,
 		txnScope:    txnScope,
+		xchgExecMap: map[int]Executor{},
 	}
 }
 
@@ -260,6 +262,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildCTE(v)
 	case *plannercore.PhysicalCTETable:
 		return b.buildCTETableReader(v)
+	case *plannercore.PhysicalXchg:
+		return b.buildXchg(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -1147,217 +1151,217 @@ func (b *executorBuilder) buildSideEstCount(v *plannercore.PhysicalHashJoin) flo
 	return buildSide.StatsCount()
 }
 
+// func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executor {
+// 	if !b.ctx.GetSessionVars().UseParallel || b.ctx.GetSessionVars().ParallelHashJoinAlreadyBuilt {
+// 		return b.buildSingleHashJoin(v)
+// 	}
+// 	b.ctx.GetSessionVars().ParallelHashJoinAlreadyBuilt = true
+// 	concurrency := b.ctx.GetSessionVars().HashJoinConcurrency()
+//
+// 	// setup channels
+// 	chanSize := 5
+// 	mergeResourceChs := make([]chan *chunk.Chunk, 0, concurrency)
+// 	mergeResultChs := make([]chan *chunk.Chunk, 0, concurrency)
+// 	for i := 0; i < concurrency; i++ {
+// 		mergeResourceChs = append(mergeResourceChs, make(chan *chunk.Chunk, chanSize))
+// 		mergeResultChs = append(mergeResultChs, make(chan *chunk.Chunk, chanSize))
+// 	}
+//
+// 	// build hashjoins
+// 	hashJoins := make([]*NonParallelHashJoinExec, 0, concurrency)
+// 	for i := 0; i < concurrency; i++ {
+// 		tmpExec := b.buildSingleHashJoin(v)
+// 		if b.err != nil {
+// 			return nil
+// 		}
+// 		hashJoinExec, ok := tmpExec.(*NonParallelHashJoinExec)
+// 		if !ok {
+// 			b.err = errors.New("invalid NonParallelHashJoinExec")
+// 			return nil
+// 		}
+// 		hashJoins = append(hashJoins, hashJoinExec)
+// 	}
+//
+// 	// build exchange merge
+// 	execID := 10000
+// 	mergeSenders := make([]Executor, 0, concurrency)
+// 	for i := 0; i < concurrency; i++ {
+// 		mergeSender := &ExchangeSenderPassThrough{
+// 			ExchangeSender: ExchangeSender{
+// 				baseExecutor: newBaseExecutor(b.ctx, hashJoins[i].base().schema, execID, hashJoins[i]),
+// 			},
+// 		}
+// 		execID++
+// 		mergeSender.resCh = mergeResultChs[i]
+// 		mergeSender.chkCh = mergeResourceChs[i]
+// 		mergeSenders = append(mergeSenders, mergeSender)
+// 	}
+//
+// 	mergeReceiver := &ExchangeReceiverFullMerge{
+// 		ExchangeReceiver: ExchangeReceiver{
+// 			baseExecutor: newBaseExecutor(b.ctx, mergeSenders[0].base().schema, execID, mergeSenders...),
+// 		},
+// 		resChs:   mergeResultChs,
+// 		chkChs:   mergeResourceChs,
+// 	}
+// 	execID++
+//
+// 	// build exchange broadcast for hash join
+// 	depth, err := b.getHashJoinDepth(hashJoins[0])
+// 	if err != nil {
+// 		b.err = err
+// 		return nil
+// 	}
+// 	allHashJoins := make([][]*NonParallelHashJoinExec, 0, depth)
+// 	for i := 0; i < depth; i++ {
+// 		allHashJoins = append(allHashJoins, make([]*NonParallelHashJoinExec, 0, concurrency))
+// 	}
+// 	b.getAllHashJoins(allHashJoins, hashJoins)
+//
+// 	for _, joins := range allHashJoins {
+// 		if err := b.addExchangeBroadcast(joins, concurrency, &execID); err != nil {
+// 			b.err = err
+// 			return nil
+// 		}
+// 	}
+// 	if err := b.addExchangeRandom(allHashJoins[len(allHashJoins)-1], chanSize, concurrency, &execID); err != nil {
+// 		b.err = err
+// 		return nil
+// 	}
+//
+// 	// build exchange broadcast for last level table reader
+//
+// 	// // split last level table reader
+// 	// var step int =
+// 	// var tableReader *TableReaderExecutor
+// 	// if tableReader, ok := hashJoins[0].probeSideExec.(*TableReaderExecutor); !ok {
+// 	//     panic("not table reader")
+// 	// }
+// 	// newRanges := tableReader.ranges.Clone()
+// 	// minInt := math.MinInt64
+// 	// for i := 0; i < concurrency; i++ {
+// 	//     newRanges.LowVal[i] = types.Datum{types.NewIntDatum(minInt)}
+// 	//     newRanges.HighVal[i] = types.Datum{types.NewIntDatum(minInt+step)}
+// 	//     minInt += step
+//
+// 	//     var tableReader *TableReaderExecutor
+// 	//     if tableReader, ok := hashJoins[i].probeSideExec.(*TableReaderExecutor); !ok {
+// 	//         panic("not table reader")
+// 	//     }
+// 	//     tableReader.ranges = newRanges
+// 	// }
+// 	return mergeReceiver
+// }
+//
+// func (b *executorBuilder) getHashJoinDepth(join *NonParallelHashJoinExec) (int, error) {
+// 	if childJoin, ok := join.probeSideExec.(*NonParallelHashJoinExec); ok {
+// 		depth, err := b.getHashJoinDepth(childJoin)
+// 		if err != nil {
+// 			return 0, err
+// 		}
+// 		return 1 + depth, nil
+// 	}
+// 	// if _, ok := join.probeSideExec.(*TableReaderExecutor); !ok {
+// 	//     return 0, errors.New("must be table reader")
+// 	// }
+// 	return 1, nil
+// }
+//
+// func (b *executorBuilder) getAllHashJoins(allHashJoins [][]*NonParallelHashJoinExec, topHashJoins []*NonParallelHashJoinExec) {
+// 	depth := 0
+// 	for _, join := range topHashJoins {
+// 		b.getAllHashJoinsHelper(join, allHashJoins, depth)
+// 	}
+// }
+//
+// func (b *executorBuilder) getAllHashJoinsHelper(join *NonParallelHashJoinExec, allHashJoins [][]*NonParallelHashJoinExec, depth int) {
+// 	allHashJoins[depth] = append(allHashJoins[depth], join)
+// 	if childJoin, ok := join.probeSideExec.(*NonParallelHashJoinExec); ok {
+// 		depth++
+// 		b.getAllHashJoinsHelper(childJoin, allHashJoins, depth)
+// 	}
+// }
+//
+// func (b *executorBuilder) addExchangeBroadcast(hashJoins []*NonParallelHashJoinExec, concurrency int, execID *int) error {
+// 	for i, join := range hashJoins {
+// 		join.workerID = i
+// 	}
+// 	var exec Executor
+// 	exec = hashJoins[0].buildSideExec
+// 	broadcastSender := &ExchangeSenderBroadcastHT{
+// 		ExchangeSender: ExchangeSender{
+// 			baseExecutor: newBaseExecutor(b.ctx, exec.base().schema, *execID, exec),
+// 		},
+// 		outputs:           make([]chan *chunk.Chunk, 0, concurrency),
+// 		buildSideEstCount: hashJoins[0].buildSideEstCount,
+// 		buildKeys:         hashJoins[0].buildKeys,
+// 		buildTypes:        hashJoins[0].buildTypes,
+// 		useOuterToBuild:   hashJoins[0].useOuterToBuild,
+// 		isNullEQ:          hashJoins[0].isNullEQ,
+// 	}
+// 	*execID++
+//
+// 	for i := 0; i < concurrency; i++ {
+// 		broadcastSender.outputs = append(broadcastSender.outputs, make(chan *chunk.Chunk, 1))
+// 	}
+//
+// 	for i := 0; i < concurrency; i++ {
+// 		exec = hashJoins[i].buildSideExec
+// 		broadcastReceiver := &ExchangeReceiverPassThroughHT{
+// 			ExchangeReceiver: ExchangeReceiver{
+// 				baseExecutor: newBaseExecutor(b.ctx, broadcastSender.base().schema, *execID, broadcastSender),
+// 			},
+// 			input: broadcastSender.outputs[i],
+// 		}
+// 		*execID++
+//
+// 		if hashJoins[i].base().children[0] == exec {
+// 			hashJoins[i].base().children[0] = broadcastReceiver
+// 		} else {
+// 			hashJoins[i].base().children[1] = broadcastReceiver
+// 		}
+// 		hashJoins[i].buildSideExec = broadcastReceiver
+// 	}
+// 	return nil
+// }
+//
+// func (b *executorBuilder) addExchangeRandom(hashJoins []*NonParallelHashJoinExec, chanSize int, concurrency int, execID *int) error {
+// 	var exec Executor
+// 	exec = hashJoins[0].probeSideExec
+// 	randomSender := &ExchangeSenderRandom{
+// 		ExchangeSender: ExchangeSender{
+// 			baseExecutor: newBaseExecutor(b.ctx, exec.base().schema, *execID, exec),
+// 		},
+// 		outputs: make([]chan *chunk.Chunk, 0, concurrency),
+// 	}
+// 	*execID++
+//
+// 	for i := 0; i < concurrency; i++ {
+// 		randomSender.outputs = append(randomSender.outputs, make(chan *chunk.Chunk, chanSize))
+// 	}
+//
+// 	for i := 0; i < concurrency; i++ {
+// 		exec = hashJoins[i].probeSideExec
+// 		broadcastReceiver := &ExchangeReceiverPassThrough{
+// 			ExchangeReceiver: ExchangeReceiver{
+// 				baseExecutor: newBaseExecutor(b.ctx, randomSender.base().schema, *execID, randomSender),
+// 			},
+// 			input: randomSender.outputs[i],
+// 		}
+// 		*execID++
+//
+// 		if hashJoins[i].base().children[0] == exec {
+// 			hashJoins[i].base().children[0] = broadcastReceiver
+// 		} else {
+// 			hashJoins[i].base().children[1] = broadcastReceiver
+// 		}
+// 		hashJoins[i].probeSideExec = broadcastReceiver
+// 	}
+// 	return nil
+// }
+
+// func (b *executorBuilder) buildSingleHashJoin(v *plannercore.PhysicalHashJoin) Executor {
 func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executor {
-	if !b.ctx.GetSessionVars().UseParallel || b.ctx.GetSessionVars().ParallelHashJoinAlreadyBuilt {
-		return b.buildSingleHashJoin(v)
-	}
-	b.ctx.GetSessionVars().ParallelHashJoinAlreadyBuilt = true
-	concurrency := b.ctx.GetSessionVars().HashJoinConcurrency()
-
-	// setup channels
-	chanSize := 5
-	mergeResourceChs := make([]chan *chunk.Chunk, 0, concurrency)
-	mergeResultChs := make([]chan *chunk.Chunk, 0, concurrency)
-	for i := 0; i < concurrency; i++ {
-		mergeResourceChs = append(mergeResourceChs, make(chan *chunk.Chunk, chanSize))
-		mergeResultChs = append(mergeResultChs, make(chan *chunk.Chunk, chanSize))
-	}
-
-	// build hashjoins
-	hashJoins := make([]*NonParallelHashJoinExec, 0, concurrency)
-	for i := 0; i < concurrency; i++ {
-		tmpExec := b.buildSingleHashJoin(v)
-		if b.err != nil {
-			return nil
-		}
-		hashJoinExec, ok := tmpExec.(*NonParallelHashJoinExec)
-		if !ok {
-			b.err = errors.New("invalid NonParallelHashJoinExec")
-			return nil
-		}
-		hashJoins = append(hashJoins, hashJoinExec)
-	}
-
-	// build exchange merge
-	execID := 10000
-	mergeSenders := make([]Executor, 0, concurrency)
-	for i := 0; i < concurrency; i++ {
-		mergeSender := &ExchangeSenderPassThrough{
-			ExchangeSender: ExchangeSender{
-				baseExecutor: newBaseExecutor(b.ctx, hashJoins[i].base().schema, execID, hashJoins[i]),
-			},
-		}
-		execID++
-		mergeSender.resCh = mergeResultChs[i]
-		mergeSender.chkCh = mergeResourceChs[i]
-		mergeSenders = append(mergeSenders, mergeSender)
-	}
-
-	mergeReceiver := &ExchangeReceiverFullMerge{
-		ExchangeReceiver: ExchangeReceiver{
-			baseExecutor: newBaseExecutor(b.ctx, mergeSenders[0].base().schema, execID, mergeSenders...),
-		},
-		resChs:   mergeResultChs,
-		chkChs:   mergeResourceChs,
-		chanSize: chanSize,
-	}
-	execID++
-
-	// build exchange broadcast for hash join
-	depth, err := b.getHashJoinDepth(hashJoins[0])
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	allHashJoins := make([][]*NonParallelHashJoinExec, 0, depth)
-	for i := 0; i < depth; i++ {
-		allHashJoins = append(allHashJoins, make([]*NonParallelHashJoinExec, 0, concurrency))
-	}
-	b.getAllHashJoins(allHashJoins, hashJoins)
-
-	for _, joins := range allHashJoins {
-		if err := b.addExchangeBroadcast(joins, concurrency, &execID); err != nil {
-			b.err = err
-			return nil
-		}
-	}
-	if err := b.addExchangeRandom(allHashJoins[len(allHashJoins)-1], chanSize, concurrency, &execID); err != nil {
-		b.err = err
-		return nil
-	}
-
-	// build exchange broadcast for last level table reader
-
-	// // split last level table reader
-	// var step int =
-	// var tableReader *TableReaderExecutor
-	// if tableReader, ok := hashJoins[0].probeSideExec.(*TableReaderExecutor); !ok {
-	//     panic("not table reader")
-	// }
-	// newRanges := tableReader.ranges.Clone()
-	// minInt := math.MinInt64
-	// for i := 0; i < concurrency; i++ {
-	//     newRanges.LowVal[i] = types.Datum{types.NewIntDatum(minInt)}
-	//     newRanges.HighVal[i] = types.Datum{types.NewIntDatum(minInt+step)}
-	//     minInt += step
-
-	//     var tableReader *TableReaderExecutor
-	//     if tableReader, ok := hashJoins[i].probeSideExec.(*TableReaderExecutor); !ok {
-	//         panic("not table reader")
-	//     }
-	//     tableReader.ranges = newRanges
-	// }
-	return mergeReceiver
-}
-
-func (b *executorBuilder) getHashJoinDepth(join *NonParallelHashJoinExec) (int, error) {
-	if childJoin, ok := join.probeSideExec.(*NonParallelHashJoinExec); ok {
-		depth, err := b.getHashJoinDepth(childJoin)
-		if err != nil {
-			return 0, err
-		}
-		return 1 + depth, nil
-	}
-	// if _, ok := join.probeSideExec.(*TableReaderExecutor); !ok {
-	//     return 0, errors.New("must be table reader")
-	// }
-	return 1, nil
-}
-
-func (b *executorBuilder) getAllHashJoins(allHashJoins [][]*NonParallelHashJoinExec, topHashJoins []*NonParallelHashJoinExec) {
-	depth := 0
-	for _, join := range topHashJoins {
-		b.getAllHashJoinsHelper(join, allHashJoins, depth)
-	}
-}
-
-func (b *executorBuilder) getAllHashJoinsHelper(join *NonParallelHashJoinExec, allHashJoins [][]*NonParallelHashJoinExec, depth int) {
-	allHashJoins[depth] = append(allHashJoins[depth], join)
-	if childJoin, ok := join.probeSideExec.(*NonParallelHashJoinExec); ok {
-		depth++
-		b.getAllHashJoinsHelper(childJoin, allHashJoins, depth)
-	}
-}
-
-func (b *executorBuilder) addExchangeBroadcast(hashJoins []*NonParallelHashJoinExec, concurrency int, execID *int) error {
-	for i, join := range hashJoins {
-		join.workerID = i
-	}
-	var exec Executor
-	exec = hashJoins[0].buildSideExec
-	broadcastSender := &ExchangeSenderBroadcastHT{
-		ExchangeSender: ExchangeSender{
-			baseExecutor: newBaseExecutor(b.ctx, exec.base().schema, *execID, exec),
-		},
-		outputs:           make([]chan *chunk.Chunk, 0, concurrency),
-		buildSideEstCount: hashJoins[0].buildSideEstCount,
-		buildKeys:         hashJoins[0].buildKeys,
-		buildTypes:        hashJoins[0].buildTypes,
-		useOuterToBuild:   hashJoins[0].useOuterToBuild,
-		isNullEQ:          hashJoins[0].isNullEQ,
-	}
-	*execID++
-
-	for i := 0; i < concurrency; i++ {
-		broadcastSender.outputs = append(broadcastSender.outputs, make(chan *chunk.Chunk, 1))
-	}
-
-	for i := 0; i < concurrency; i++ {
-		exec = hashJoins[i].buildSideExec
-		broadcastReceiver := &ExchangeReceiverPassThroughHT{
-			ExchangeReceiver: ExchangeReceiver{
-				baseExecutor: newBaseExecutor(b.ctx, broadcastSender.base().schema, *execID, broadcastSender),
-			},
-			input: broadcastSender.outputs[i],
-		}
-		*execID++
-
-		if hashJoins[i].base().children[0] == exec {
-			hashJoins[i].base().children[0] = broadcastReceiver
-		} else {
-			hashJoins[i].base().children[1] = broadcastReceiver
-		}
-		hashJoins[i].buildSideExec = broadcastReceiver
-	}
-	return nil
-}
-
-func (b *executorBuilder) addExchangeRandom(hashJoins []*NonParallelHashJoinExec, chanSize int, concurrency int, execID *int) error {
-	var exec Executor
-	exec = hashJoins[0].probeSideExec
-	randomSender := &ExchangeSenderRandom{
-		ExchangeSender: ExchangeSender{
-			baseExecutor: newBaseExecutor(b.ctx, exec.base().schema, *execID, exec),
-		},
-		outputs: make([]chan *chunk.Chunk, 0, concurrency),
-	}
-	*execID++
-
-	for i := 0; i < concurrency; i++ {
-		randomSender.outputs = append(randomSender.outputs, make(chan *chunk.Chunk, chanSize))
-	}
-
-	for i := 0; i < concurrency; i++ {
-		exec = hashJoins[i].probeSideExec
-		broadcastReceiver := &ExchangeReceiverPassThrough{
-			ExchangeReceiver: ExchangeReceiver{
-				baseExecutor: newBaseExecutor(b.ctx, randomSender.base().schema, *execID, randomSender),
-			},
-			input: randomSender.outputs[i],
-		}
-		*execID++
-
-		if hashJoins[i].base().children[0] == exec {
-			hashJoins[i].base().children[0] = broadcastReceiver
-		} else {
-			hashJoins[i].base().children[1] = broadcastReceiver
-		}
-		hashJoins[i].probeSideExec = broadcastReceiver
-	}
-	return nil
-}
-
-func (b *executorBuilder) buildSingleHashJoin(v *plannercore.PhysicalHashJoin) Executor {
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -1464,6 +1468,19 @@ func (b *executorBuilder) buildSingleHashJoin(v *plannercore.PhysicalHashJoin) E
 		e.probeTypes[key.Index].Flag = key.RetType.Flag
 	}
 	if b.ctx.GetSessionVars().UseParallel {
+		if receiver, ok := e.buildSideExec.(*ExchangeReceiverPassThroughHT); ok {
+			sender, ok := receiver.children[0].(*ExchangeSenderBroadcastHT)
+			if !ok {
+				b.err = errors.New("expect xchg sender broadcast HT")
+				return nil
+			}
+			// TODO: make it better, it's strange to setup send's member in receiver.
+			sender.buildSideEstCount = e.buildSideEstCount
+			sender.buildKeys = e.buildKeys
+			sender.buildTypes = e.buildTypes
+			sender.useOuterToBuild = e.useOuterToBuild
+			sender.isNullEQ = e.isNullEQ
+		}
 		return &NonParallelHashJoinExec{
 			HashJoinExec: e,
 		}
@@ -4715,4 +4732,115 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 	}
 
 	return nil
+}
+
+func (b *executorBuilder) buildXchg(v *plannercore.PhysicalXchg) Executor {
+	if v.IsSender() {
+		return b.buildXchgSender(v)
+	}
+	return b.buildXchgReceiver(v)
+}
+
+func (b *executorBuilder) buildXchgReceiver(v *plannercore.PhysicalXchg) Executor {
+	defer func() { v.CurStreamID++ }()
+	var sender Executor
+	var receiver Executor
+	switch v.Tp() {
+	case plannercore.TypeXchgReceiverPassThrough:
+		if sender = b.getOrBuildSenderForReceiver(v.Children()[0]); b.err != nil {
+			return nil
+		}
+		// TODO: input -> chkCh
+		receiver = &ExchangeReceiverPassThrough{
+			ExchangeReceiver: ExchangeReceiver{
+				baseExecutor: newBaseExecutor(b.ctx, sender.base().schema, v.ID(), sender),
+			},
+			input: v.ChkChs[v.CurStreamID],
+		}
+	case plannercore.TypeXchgReceiverPassThroughHT:
+		if sender = b.getOrBuildSenderForReceiver(v.Children()[0]); b.err != nil {
+			return nil
+		}
+		// TODO: input -> chkCh
+		receiver = &ExchangeReceiverPassThroughHT{
+			ExchangeReceiver: ExchangeReceiver{
+				baseExecutor: newBaseExecutor(b.ctx, sender.base().schema, v.ID(), sender),
+			},
+			input: v.ChkChs[v.CurStreamID],
+		}
+	case plannercore.TypeXchgReceiverRandom:
+		senders := make([]Executor, 0, v.InStreamCnt())
+		for i := 0; i < v.InStreamCnt(); i++ {
+			senders = append(senders, b.build(v.Children()[0]))
+			if b.err != nil {
+				return nil
+			}
+		}
+
+		receiver = &ExchangeReceiverFullMerge{
+			ExchangeReceiver: ExchangeReceiver{
+				baseExecutor: newBaseExecutor(b.ctx, senders[0].base().schema, v.ID(), senders...),
+			},
+			chkChs: v.ChkChs,
+			resChs: v.ResChs,
+		}
+	default:
+		b.err = errors.Errorf("unexpected xchg receiver type: %v", v.Tp())
+		return nil
+	}
+	return receiver
+}
+
+func (b *executorBuilder) buildXchgSender(v *plannercore.PhysicalXchg) Executor {
+	defer func() { v.CurStreamID++ }()
+	var sender Executor
+
+	child := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+	b.ctx.GetSessionVars().PlanID++
+	execID := b.ctx.GetSessionVars().PlanID
+	switch v.Tp() {
+	case plannercore.TypeXchgSenderBroadcastHT:
+		sender = &ExchangeSenderBroadcastHT{
+			ExchangeSender: ExchangeSender{
+				// TODO: v.ID maybe duplicated.
+				baseExecutor: newBaseExecutor(b.ctx, child.base().schema, v.ID(), child),
+			},
+			// TODO: chkChs
+			outputs: v.ChkChs,
+		}
+	case plannercore.TypeXchgSenderPassThrough:
+		sender = &ExchangeSenderPassThrough{
+			ExchangeSender: ExchangeSender{
+				baseExecutor: newBaseExecutor(b.ctx, child.base().schema, execID, child),
+			},
+			chkCh: v.ChkChs[v.CurStreamID],
+			resCh: v.ResChs[v.CurStreamID],
+		}
+	case plannercore.TypeXchgSenderRandom:
+		sender = &ExchangeSenderRandom{
+			ExchangeSender: ExchangeSender{
+				baseExecutor: newBaseExecutor(b.ctx, child.base().schema, execID, child),
+			},
+			outputs: v.ChkChs,
+		}
+	default:
+		b.err = errors.Errorf("unexpected xchg sender type: %v", v.Tp())
+		return nil
+	}
+	return sender
+}
+
+func (b *executorBuilder) getOrBuildSenderForReceiver(child plannercore.PhysicalPlan) Executor {
+	sender, ok := b.xchgExecMap[child.ID()]
+	if !ok {
+		sender = b.build(child)
+		if b.err != nil {
+			return nil
+		}
+		b.xchgExecMap[child.ID()] = sender
+	}
+	return sender
 }

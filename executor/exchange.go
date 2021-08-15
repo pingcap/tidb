@@ -43,7 +43,6 @@ type ExchangeReceiverFullMerge struct {
 
 	chkChs          []chan *chunk.Chunk
 	resChs          []chan *chunk.Chunk
-	chanSize        int
 	recvSelectCases []reflect.SelectCase
 }
 
@@ -59,8 +58,9 @@ func (e *ExchangeReceiverFullMerge) Open(ctx context.Context) error {
 	for i, ch := range e.resChs {
 		e.recvSelectCases[i] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)}
 	}
+	chanSize := cap(e.chkChs[0])
 	for i := 0; i < len(e.chkChs); i++ {
-		for j := 0; j < e.chanSize; j++ {
+		for j := 0; j < chanSize; j++ {
 			chk := newFirstChunk(e.children[i])
 			e.chkChs[i] <- chk
 		}
@@ -314,7 +314,7 @@ func (e *ExchangeSenderBroadcastHT) sendAndCloseOutputs() {
 func (e *ExchangeSenderBroadcastHT) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err := Next(ctx, e.children[0], e.childResult); err != nil {
 		// TODO: another way to indicates done
-		panic("go error in BroadcastHT")
+		panic("got error in BroadcastHT")
 	}
 	if e.childResult.NumRows() == 0 {
 		e.sendAndCloseOutputs()

@@ -161,8 +161,10 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 		if err != nil {
 			return nil, 0, err
 		}
-		finalPlan = xchgTask.plan()
-		cost = xchgTask.cost()
+		if !xchgTask.invalid() {
+			finalPlan = xchgTask.plan()
+			cost = xchgTask.cost()
+		}
 	}
 
 	return finalPlan, cost, nil

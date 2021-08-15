@@ -5,6 +5,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 var MaxThrNum int
@@ -20,14 +21,15 @@ type XchgType int
 // 2. isSender
 // 3. initXchg
 const (
-	TypeXchgReceiverRandom        = 0
-	TypeXchgReceiverPassThrough   = 1
-	TypeXchgReceiverPassThroughHT = 2
+	// TODO: change Random -> RandomMerge.
+	TypeXchgReceiverRandom        XchgType = 0
+	TypeXchgReceiverPassThrough   XchgType = 1
+	TypeXchgReceiverPassThroughHT XchgType = 2
 
-	TypeXchgSenderPassThrough = 3
-	TypeXchgSenderBroadcastHT = 4
-	TypeXchgSenderHash        = 5
-	TypeXchgSenderRandom      = 6
+	TypeXchgSenderPassThrough XchgType = 3
+	TypeXchgSenderBroadcastHT XchgType = 4
+	TypeXchgSenderHash        XchgType = 5
+	TypeXchgSenderRandom      XchgType = 6
 )
 
 var XchgNames = []string{
@@ -49,9 +51,26 @@ type PhysicalXchg struct {
 	outStreamCnt int
 	// inStreamCnt is used to record child count.
 	inStreamCnt int
+	// Record the ID of cur stream.
+	CurStreamID int
+	ChkChs      []chan *chunk.Chunk
+	ResChs      []chan *chunk.Chunk
 }
 
-func (p *PhysicalXchg) isSender() bool {
+// TODO: just use Cap initial.
+func (xchg *PhysicalXchg) Tp() XchgType {
+	return xchg.tp
+}
+
+func (xchg *PhysicalXchg) OutStreamCnt() int {
+	return xchg.outStreamCnt
+}
+
+func (xchg *PhysicalXchg) InStreamCnt() int {
+	return xchg.inStreamCnt
+}
+
+func (p *PhysicalXchg) IsSender() bool {
 	switch p.tp {
 	case TypeXchgSenderPassThrough, TypeXchgSenderBroadcastHT, TypeXchgSenderHash, TypeXchgSenderRandom:
 		return true
@@ -227,6 +246,7 @@ func (p *PhysicalTableReader) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPr
 		if err := initXchg(ctx, receiver, sender, newNode.Stats(), reqProp.output); err != nil {
 			return nil, err
 		}
+		setupChans(sender, receiver, reqProp.output)
 
 		res = append(res, receiver)
 	}
@@ -271,7 +291,7 @@ func tryBroadcastHJ(ctx sessionctx.Context, node *PhysicalHashJoin, outStreamCnt
 	buildSideIdx, probeSideIdx := 0, 1
 	if node.InnerChildIdx == 1 {
 		buildSideIdx = 1
-		probeSideIdx = 1
+		probeSideIdx = 0
 	}
 	if reqProp.output != 1 {
 		// If parent of HashJoin already requires parallel, build child have to enforce BroadcastHT.
@@ -314,6 +334,7 @@ func tryBroadcastHJ(ctx sessionctx.Context, node *PhysicalHashJoin, outStreamCnt
 	if err = initXchg(ctx, receiver, sender, newNode.Stats(), outStreamCnt); err != nil {
 		return nil, err
 	}
+	setupChans(sender, receiver, outStreamCnt)
 
 	res = append(res, receiver)
 	return res, nil
@@ -334,7 +355,10 @@ func tryAddXchgForBasicPlan(ctx sessionctx.Context, node PhysicalPlan, reqProp *
 	var newNode PhysicalPlan
 
 	xchgOutput := ctx.GetSessionVars().ExecutorConcurrency
-	if reqProp.output == 1 && hasAvailableThr(reqProp.available, xchgOutput) {
+	if reqProp.output == 1 {
+		if !hasAvailableThr(reqProp.available, xchgOutput) {
+			return res, nil
+		}
 		if newNode, err = node.Clone(); err != nil {
 			return nil, err
 		}
@@ -352,6 +376,7 @@ func tryAddXchgForBasicPlan(ctx sessionctx.Context, node PhysicalPlan, reqProp *
 		if err = initXchg(ctx, receiver, sender, newNode.Stats(), xchgOutput); err != nil {
 			return nil, err
 		}
+		setupChans(sender, receiver, xchgOutput)
 
 		res = append(res, receiver)
 		return res, nil
@@ -374,6 +399,7 @@ func tryAddXchgForBasicPlan(ctx sessionctx.Context, node PhysicalPlan, reqProp *
 		if err = initXchg(ctx, receiver, sender, newNode.Stats(), xchgOutput); err != nil {
 			return nil, err
 		}
+		setupChans(sender, receiver, xchgOutput)
 
 		res = append(res, receiver)
 		return res, nil
@@ -450,6 +476,21 @@ func initXchg(ctx sessionctx.Context, xchg *PhysicalXchg, child PhysicalPlan, ch
 		return err
 	}
 	return nil
+}
+
+func setupChans(xchg1 *PhysicalXchg, xchg2 *PhysicalXchg, chanCnt int) {
+	// TODO: session var to control this.
+	chanSize := 5
+	chkChs := make([]chan *chunk.Chunk, 0, chanCnt)
+	resChs := make([]chan *chunk.Chunk, 0, chanCnt)
+	for i := 0; i < chanCnt; i++ {
+		chkChs = append(chkChs, make(chan *chunk.Chunk, chanSize))
+		resChs = append(resChs, make(chan *chunk.Chunk, chanSize))
+	}
+	xchg1.ChkChs = chkChs
+	xchg1.ResChs = resChs
+	xchg2.ChkChs = chkChs
+	xchg2.ResChs = resChs
 }
 
 func isReaderNode(p PhysicalPlan) bool {

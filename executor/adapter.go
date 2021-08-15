@@ -390,10 +390,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return nil, err
 	}
 
-	if sctx.GetSessionVars().UseParallel {
-		if err := a.cutTreeByExchange(ctx, e); err != nil {
-			return nil, err
-		}
+	if err := a.cutTreeByExchange(ctx, e); err != nil {
+		return nil, err
 	}
 
 	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)

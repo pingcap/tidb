@@ -1499,7 +1499,7 @@ func (p *CTEDefinition) ExplainID() fmt.Stringer {
 
 func (p *PhysicalXchg) ExplainInfo() string {
 	var res string
-	if p.isSender() {
+	if p.IsSender() {
 		res = "DOP: " + strconv.Itoa(p.inStreamCnt)
 	}
 	return res
