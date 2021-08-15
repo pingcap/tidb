@@ -1512,6 +1512,14 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					extractor: v.Extractor.(*plannercore.ClusterLogTableExtractor),
 				},
 			}
+		case strings.ToLower(infoschema.TableTiDBHotRegionsHistory):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				table:        v.Table,
+				retriever: &hotRegionsHistoryRetriver{
+					extractor: v.Extractor.(*plannercore.HotRegionsHistoryTableExtractor),
+				},
+			}
 		case strings.ToLower(infoschema.TableInspectionResult):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
