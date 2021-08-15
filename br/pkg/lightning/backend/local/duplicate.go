@@ -191,7 +191,7 @@ func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
 	startKey := codec.EncodeBytes([]byte{}, req.start)
 	endKey := codec.EncodeBytes([]byte{}, req.end)
 
-	regions, err := paginateScanRegion(ctx, manager.splitCli, startKey, endKey, scanRegionLimit)
+	regions, err := restore.PaginateScanRegion(ctx, manager.splitCli, startKey, endKey, scanRegionLimit)
 	if err != nil {
 		return err
 	}
@@ -282,7 +282,7 @@ func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
 						logutil.Region(region.Region), logutil.Leader(region.Leader),
 						zap.String("RegionError", resp.GetRegionError().GetMessage()))
 
-					r, err := paginateScanRegion(ctx, manager.splitCli, watingRegions[idx].Region.GetStartKey(), watingRegions[idx].Region.GetEndKey(), scanRegionLimit)
+					r, err := restore.PaginateScanRegion(ctx, manager.splitCli, watingRegions[idx].Region.GetStartKey(), watingRegions[idx].Region.GetEndKey(), scanRegionLimit)
 					if err != nil {
 						unfinishedRegions = append(unfinishedRegions, watingRegions[idx])
 					} else {
@@ -465,7 +465,7 @@ func (manager *DuplicateManager) getValues(
 	l := handles.Len()
 	startKey := codec.EncodeBytes([]byte{}, handles.rawHandles[0])
 	endKey := codec.EncodeBytes([]byte{}, nextKey(handles.rawHandles[l-1]))
-	regions, err := paginateScanRegion(ctx, manager.splitCli, startKey, endKey, scanRegionLimit)
+	regions, err := restore.PaginateScanRegion(ctx, manager.splitCli, startKey, endKey, scanRegionLimit)
 	if err != nil {
 		log.L().Error("scan regions errors", zap.Error(err))
 		return handles
