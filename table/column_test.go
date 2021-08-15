@@ -111,7 +111,6 @@ func TestCheck(t *testing.T) {
 	cols = cols[:1]
 	err = CheckNotNull(cols, types.MakeDatums(nil))
 	require.NoError(t, err)
-	require.NoError(t, err)
 	cols[0].Flag |= mysql.NotNullFlag
 	err = CheckNotNull(cols, types.MakeDatums(nil))
 	require.Error(t, err)
