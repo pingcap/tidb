@@ -1128,16 +1128,10 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 	}
 	switch d.k {
 	case KindMysqlTime:
-		// `select timestamp(cast("1000-01-02 23:59:59" as date)); ` casts usage will succeed.
-		// Alter datetime("1000-01-02 23:59:59") to timestamp will error.
-		if sc.InReorgAttribute {
-			t, err = d.GetMysqlTime().Convert(sc, target.Tp)
-			if err != nil {
-				ret.SetMysqlTime(t)
-				return ret, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, t.String()))
-			}
-		} else {
-			t = d.GetMysqlTime()
+		t, err = d.GetMysqlTime().Convert(sc, target.Tp)
+		if err != nil {
+			ret.SetMysqlTime(ZeroTimestamp)
+			return ret, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimestampStr, t.String()))
 		}
 		t, err = t.RoundFrac(sc, fsp)
 	case KindMysqlDuration:
@@ -1261,7 +1255,7 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
-	case KindInt64, KindFloat32, KindFloat64, KindMysqlDecimal:
+	case KindInt64, KindUint64, KindFloat32, KindFloat64, KindMysqlDecimal:
 		// TODO: We need a ParseDurationFromNum to avoid the cost of converting a num to string.
 		timeStr, err := d.ToString()
 		if err != nil {
@@ -1421,8 +1415,6 @@ func (d *Datum) ConvertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		}
 	case KindMysqlTime:
 		y = int64(d.GetMysqlTime().Year())
-	case KindMysqlDuration:
-		y = int64(time.Now().Year())
 	case KindMysqlJSON:
 		y, err = ConvertJSONToInt64(sc, d.GetMysqlJSON(), false)
 		if err != nil {

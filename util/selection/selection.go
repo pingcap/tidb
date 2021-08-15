@@ -82,7 +82,7 @@ func medianOfMedians(data Interface, left, right, k int) int {
 }
 
 func randomPivot(data Interface, left, right int) int {
-	return left + (rand.Int() % (right - left + 1))
+	return left + (rand.Int() % (right - left + 1)) // #nosec G404
 }
 
 func medianOfMediansPivot(data Interface, left, right int) int {

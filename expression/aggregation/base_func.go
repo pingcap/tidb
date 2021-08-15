@@ -115,6 +115,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4LeadLag(ctx)
 	case ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncVarSamp, ast.AggFuncStddevSamp:
 		a.typeInfer4PopOrSamp(ctx)
+	case ast.AggFuncJsonArrayagg:
+		a.typeInfer4JsonFuncs(ctx)
 	case ast.AggFuncJsonObjectAgg:
 		a.typeInfer4JsonFuncs(ctx)
 	default:
@@ -362,6 +364,7 @@ var noNeedCastAggFuncs = map[string]struct{}{
 	ast.AggFuncMin:                 {},
 	ast.AggFuncFirstRow:            {},
 	ast.WindowFuncNtile:            {},
+	ast.AggFuncJsonArrayagg:        {},
 	ast.AggFuncJsonObjectAgg:       {},
 }
 
@@ -431,7 +434,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		if col, ok := a.Args[i].(*expression.Column); ok {
 			col.RetType = types.NewFieldType(col.RetType.Tp)
 		}
-		// originTp is used when the the `Tp` of column is TypeFloat32 while
+		// originTp is used when the `Tp` of column is TypeFloat32 while
 		// the type of the aggregation function is TypeFloat64.
 		originTp := a.Args[i].GetType().Tp
 		*(a.Args[i].GetType()) = *(a.RetTp)

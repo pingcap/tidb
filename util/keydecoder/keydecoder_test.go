@@ -38,7 +38,27 @@ func TestDecodeKey(t *testing.T) {
 		},
 	}
 	tableInfo2 := &model.TableInfo{ID: 2, Name: model.NewCIStr("table2")}
-	stubTableInfos := []*model.TableInfo{tableInfo1, tableInfo2}
+	tableInfo3 := &model.TableInfo{
+		ID:   3,
+		Name: model.NewCIStr("table3"),
+		Columns: []*model.ColumnInfo{
+			{ID: 10, Name: model.NewCIStr("col"), State: model.StatePublic},
+		},
+		Indices: []*model.IndexInfo{
+			{ID: 4, Name: model.NewCIStr("index4"), State: model.StatePublic},
+		},
+		Partition: &model.PartitionInfo{
+			Type:   model.PartitionTypeRange,
+			Expr:   "`col`",
+			Enable: true,
+			Definitions: []model.PartitionDefinition{
+				{ID: 5, Name: model.NewCIStr("p0"), LessThan: []string{"10"}},
+				{ID: 6, Name: model.NewCIStr("p1"), LessThan: []string{"MAXVALUE"}},
+			},
+		},
+	}
+
+	stubTableInfos := []*model.TableInfo{tableInfo1, tableInfo2, tableInfo3}
 	stubInfoschema := infoschema.MockInfoSchema(stubTableInfos)
 
 	decodedKey, err := DecodeKey([]byte{
@@ -51,16 +71,18 @@ func TestDecodeKey(t *testing.T) {
 		0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 	}, stubInfoschema)
 	assert.Nil(t, err)
-	assert.Equal(t, decodedKey.DbID, int64(0))
-	assert.Equal(t, decodedKey.DbName, "test")
-	assert.Equal(t, decodedKey.TableID, int64(1))
-	assert.Equal(t, decodedKey.TableName, "table1")
-	assert.Equal(t, decodedKey.HandleType, IntHandle)
-	assert.Equal(t, decodedKey.IsPartitionHandle, false)
-	assert.Equal(t, decodedKey.HandleValue, "1")
-	// these are default values, ie. will be omitted when got marshaled into json
-	assert.Equal(t, decodedKey.IndexID, int64(0))
-	assert.Equal(t, decodedKey.IndexName, "")
+	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, "test", decodedKey.DbName)
+	assert.Equal(t, int64(1), decodedKey.TableID)
+	assert.Equal(t, "table1", decodedKey.TableName)
+	assert.Equal(t, int64(0), decodedKey.PartitionID)
+	assert.Equal(t, "", decodedKey.PartitionName)
+	assert.Equal(t, IntHandle, decodedKey.HandleType)
+	assert.False(t, decodedKey.IsPartitionHandle)
+	assert.Equal(t, "1", decodedKey.HandleValue)
+	// These are default values, ie. will be omitted when got marshaled into json
+	assert.Equal(t, int64(0), decodedKey.IndexID)
+	assert.Equal(t, "", decodedKey.IndexName)
 	assert.Nil(t, decodedKey.IndexValues)
 
 	ch := testkit.MustNewCommonHandle(t, 100, "abc")
@@ -76,16 +98,18 @@ func TestDecodeKey(t *testing.T) {
 
 	decodedKey, err = DecodeKey(key, stubInfoschema)
 	assert.Nil(t, err)
-	assert.Equal(t, decodedKey.DbID, int64(0))
-	assert.Equal(t, decodedKey.DbName, "test")
-	assert.Equal(t, decodedKey.TableID, int64(2))
-	assert.Equal(t, decodedKey.TableName, "table2")
-	assert.Equal(t, decodedKey.HandleType, CommonHandle)
-	assert.Equal(t, decodedKey.IsPartitionHandle, false)
-	assert.Equal(t, decodedKey.HandleValue, "{100, abc}")
-	// these are default values, ie. will be omitted when got marshaled into json
-	assert.Equal(t, decodedKey.IndexID, int64(0))
-	assert.Equal(t, decodedKey.IndexName, "")
+	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, "test", decodedKey.DbName)
+	assert.Equal(t, int64(2), decodedKey.TableID)
+	assert.Equal(t, "table2", decodedKey.TableName)
+	assert.Equal(t, int64(0), decodedKey.PartitionID)
+	assert.Equal(t, "", decodedKey.PartitionName)
+	assert.Equal(t, CommonHandle, decodedKey.HandleType)
+	assert.False(t, decodedKey.IsPartitionHandle)
+	assert.Equal(t, "{100, abc}", decodedKey.HandleValue)
+	// These are default values, ie. will be omitted when got marshaled into json
+	assert.Equal(t, int64(0), decodedKey.IndexID)
+	assert.Equal(t, "", decodedKey.IndexName)
 	assert.Nil(t, decodedKey.IndexValues)
 
 	values := types.MakeDatums("abc", 1)
@@ -105,19 +129,62 @@ func TestDecodeKey(t *testing.T) {
 
 	decodedKey, err = DecodeKey(key, stubInfoschema)
 	assert.Nil(t, err)
-	assert.Equal(t, decodedKey.DbID, int64(0))
-	assert.Equal(t, decodedKey.DbName, "test")
-	assert.Equal(t, decodedKey.TableID, int64(1))
-	assert.Equal(t, decodedKey.TableName, "table1")
-	assert.Equal(t, decodedKey.IndexID, int64(1))
-	assert.Equal(t, decodedKey.IndexName, "index1")
-	assert.Equal(t, decodedKey.IndexValues, []string{"abc", "1"})
-	// these are default values, ie. will be omitted when got marshaled into json
-	assert.Equal(t, decodedKey.HandleType, HandleType(""))
-	assert.Equal(t, decodedKey.HandleValue, "")
-	assert.Equal(t, decodedKey.IsPartitionHandle, false)
+	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, "test", decodedKey.DbName)
+	assert.Equal(t, int64(1), decodedKey.TableID)
+	assert.Equal(t, "table1", decodedKey.TableName)
+	assert.Equal(t, int64(0), decodedKey.PartitionID)
+	assert.Equal(t, "", decodedKey.PartitionName)
+	assert.Equal(t, int64(1), decodedKey.IndexID)
+	assert.Equal(t, "index1", decodedKey.IndexName)
+	assert.Equal(t, []string{"abc", "1"}, decodedKey.IndexValues)
+	// These are default values, ie. will be omitted when got marshaled into json
+	assert.Equal(t, HandleType(""), decodedKey.HandleType)
+	assert.Equal(t, "", decodedKey.HandleValue)
+	assert.False(t, decodedKey.IsPartitionHandle)
 
-	// totally invalid key
+	// Row key in a partitioned table.
+	key = []byte("t\x80\x00\x00\x00\x00\x00\x00\x05_r\x80\x00\x00\x00\x00\x00\x00\x0a")
+	decodedKey, err = DecodeKey(key, stubInfoschema)
+	assert.Nil(t, err)
+	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, "test", decodedKey.DbName)
+	assert.Equal(t, int64(3), decodedKey.TableID)
+	assert.Equal(t, "table3", decodedKey.TableName)
+	assert.Equal(t, int64(5), decodedKey.PartitionID)
+	assert.Equal(t, "p0", decodedKey.PartitionName)
+	assert.Equal(t, IntHandle, decodedKey.HandleType)
+	assert.Equal(t, "10", decodedKey.HandleValue)
+	// These are default values, ie. will be omitted when got marshaled into json
+	assert.Equal(t, int64(0), decodedKey.IndexID)
+	assert.Equal(t, "", decodedKey.IndexName)
+	assert.Nil(t, decodedKey.IndexValues)
+	assert.False(t, decodedKey.IsPartitionHandle)
+
+	// Index key in a partitioned table.
+	values = types.MakeDatums("abcde", 2)
+	encodedValue, err = codec.EncodeKey(sc, nil, values...)
+	assert.Nil(t, err)
+	key = []byte("t\x80\x00\x00\x00\x00\x00\x00\x06_i\x80\x00\x00\x00\x00\x00\x00\x04")
+	key = append(key, encodedValue...)
+
+	decodedKey, err = DecodeKey(key, stubInfoschema)
+	assert.Nil(t, err)
+	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, "test", decodedKey.DbName)
+	assert.Equal(t, int64(3), decodedKey.TableID)
+	assert.Equal(t, "table3", decodedKey.TableName)
+	assert.Equal(t, int64(6), decodedKey.PartitionID)
+	assert.Equal(t, "p1", decodedKey.PartitionName)
+	assert.Equal(t, int64(4), decodedKey.IndexID)
+	assert.Equal(t, "index4", decodedKey.IndexName)
+	assert.Equal(t, []string{"abcde", "2"}, decodedKey.IndexValues)
+	// These are default values, ie. will be omitted when got marshaled into json
+	assert.Equal(t, HandleType(""), decodedKey.HandleType)
+	assert.Equal(t, "", decodedKey.HandleValue)
+	assert.False(t, decodedKey.IsPartitionHandle)
+
+	// Totally invalid key
 	key = []byte("this-is-a-totally-invalidkey")
 	decodedKey, err = DecodeKey(key, stubInfoschema)
 	assert.NotNil(t, err)
@@ -131,29 +198,31 @@ func TestDecodeKey(t *testing.T) {
 	decodedKey, err = DecodeKey(key, stubInfoschema)
 	assert.NotNil(t, err)
 
-	// table cannot be found in infoschema
-	// this is possible when the schema have changed since when the key is get.
+	// Table cannot be found in infoschema
+	// This is possible when the schema have changed since when the key is get.
 	decodedKey, err = DecodeKey([]byte{
 		't',
 		// table id = 3
-		0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+		0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04,
 		'_',
 		'r',
 		// int handle, value = 1
 		0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 	}, stubInfoschema)
-	// we should get as much information as we can
+	// We should get as much information as we can
 	assert.Nil(t, err)
-	assert.Equal(t, decodedKey.TableID, int64(3))
-	assert.Equal(t, decodedKey.HandleType, IntHandle)
-	assert.Equal(t, decodedKey.HandleValue, "1")
+	assert.Equal(t, int64(4), decodedKey.TableID)
+	assert.Equal(t, IntHandle, decodedKey.HandleType)
+	assert.Equal(t, "1", decodedKey.HandleValue)
 
-	// rest information are all default value, ie. omitted when got marshaled into json
-	assert.Equal(t, decodedKey.DbID, int64(0))
-	assert.Equal(t, decodedKey.DbName, "")
-	assert.Equal(t, decodedKey.TableName, "")
-	assert.Equal(t, decodedKey.IndexID, int64(0))
-	assert.Equal(t, decodedKey.IndexName, "")
-	assert.Equal(t, decodedKey.IsPartitionHandle, false)
+	// Rest information are all default value, ie. omitted when got marshaled into json
+	assert.Equal(t, int64(0), decodedKey.DbID)
+	assert.Equal(t, "", decodedKey.DbName)
+	assert.Equal(t, "", decodedKey.TableName)
+	assert.Equal(t, int64(0), decodedKey.PartitionID)
+	assert.Equal(t, "", decodedKey.PartitionName)
+	assert.Equal(t, int64(0), decodedKey.IndexID)
+	assert.Equal(t, "", decodedKey.IndexName)
+	assert.False(t, decodedKey.IsPartitionHandle)
 	assert.Nil(t, decodedKey.IndexValues)
 }

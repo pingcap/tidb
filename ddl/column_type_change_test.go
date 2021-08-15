@@ -46,15 +46,10 @@ import (
 )
 
 var _ = SerialSuites(&testColumnTypeChangeSuite{})
-var _ = SerialSuites(&testCTCSerialSuiteWrapper{&testColumnTypeChangeSuite{}})
 
 type testColumnTypeChangeSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
-}
-
-type testCTCSerialSuiteWrapper struct {
-	*testColumnTypeChangeSuite
 }
 
 func (s *testColumnTypeChangeSuite) SetUpSuite(c *C) {
@@ -934,15 +929,15 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	// year
 	reset(tk)
 	tk.MustExec("insert into t values (200805.11, 307.333, 2.55555, 98.1111111, 2154.00001, 20200805111307.11111111, b'10101')")
-	tk.MustGetErrMsg("alter table t modify d year", "[types:8033]Invalid year value for column 'd', value is 'KindMysqlDecimal 200805.1100000'")
-	tk.MustGetErrCode("alter table t modify n year", mysql.ErrInvalidYear)
+	tk.MustGetErrMsg("alter table t modify d year", "[types:1264]Out of range value for column 'd', the value is '200805.1100000'")
+	tk.MustGetErrCode("alter table t modify n year", mysql.ErrWarnDataOutOfRange)
 	// MySQL will get "ERROR 1264 (22001) Data truncation: Out of range value for column 'r' at row 1".
 	tk.MustExec("alter table t modify r year")
 	// MySQL will get "ERROR 1264 (22001) Data truncation: Out of range value for column 'db' at row 1".
 	tk.MustExec("alter table t modify db year")
 	// MySQL will get "ERROR 1264 (22001) Data truncation: Out of range value for column 'f32' at row 1".
 	tk.MustExec("alter table t modify f32 year")
-	tk.MustGetErrMsg("alter table t modify f64 year", "[types:8033]Invalid year value for column 'f64', value is 'KindFloat64 2.020080511130711e+13'")
+	tk.MustGetErrMsg("alter table t modify f64 year", "[types:1264]Out of range value for column 'f64', the value is '20200805111307.11'")
 	tk.MustExec("alter table t modify b year")
 	tk.MustQuery("select * from t").Check(testkit.Rows("200805.1100000 307.33 2003 1998 2154 20200805111307.11 2021"))
 
@@ -2131,6 +2126,32 @@ func (s *testColumnTypeChangeSuite) TestCastToTimeStampDecodeError(c *C) {
 	tk.MustQuery("select timestamp(cast('1000-11-11 12-3-1' as date));").Check(testkit.Rows("1000-11-11 00:00:00"))
 }
 
+func (s *testColumnTypeChangeSuite) TestChangeFromTimeToYear(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a time default 0);")
+	tk.MustExec("insert into t values ();")
+	tk.MustExec("insert into t values (NULL);")
+	tk.MustExec("insert into t values ('12');")
+	tk.MustExec("insert into t values ('00:19:59');")
+	tk.MustExec("insert into t values ('00:20:13');")
+	tk.MustExec("alter table t modify column a year;")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("0", "<nil>", "2012", "1959", "2013"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id bigint primary key, a time);")
+	tk.MustExec("replace into t values (1, '10:10:10');")
+	tk.MustGetErrCode("alter table t modify column a year;", mysql.ErrWarnDataOutOfRange)
+	tk.MustExec("replace into t values (1, '12:13:14');")
+	tk.MustGetErrCode("alter table t modify column a year;", mysql.ErrWarnDataOutOfRange)
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("alter table t modify column a year;")
+	tk.MustQuery("show warnings").Check(
+		testkit.Rows("Warning 1264 Out of range value for column 'a', the value is '12:13:14'"))
+}
+
 // Fix issue: https://github.com/pingcap/tidb/issues/26292
 // Cast date to timestamp has two kind behavior: cast("3977-02-22" as date)
 // For select statement, it truncate the string and return no errors. (which is 3977-02-22 00:00:00 here)
@@ -2175,7 +2196,32 @@ func (s *testColumnTypeChangeSuite) TestCastDateToTimestampInReorgAttribute(c *C
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
 	tk.MustExec("alter table t modify column a  TIMESTAMP NULL DEFAULT '2021-04-28 03:35:11' FIRST")
-	c.Assert(checkErr1.Error(), Equals, "[types:1292]Incorrect datetime value: '3977-02-22 00:00:00'")
-	c.Assert(checkErr2.Error(), Equals, "[types:1292]Incorrect datetime value: '3977-02-22 00:00:00'")
+	c.Assert(checkErr1.Error(), Equals, "[types:1292]Incorrect timestamp value: '3977-02-22'")
+	c.Assert(checkErr2.Error(), Equals, "[types:1292]Incorrect timestamp value: '3977-02-22'")
 	tk.MustExec("drop table if exists t")
+}
+
+// https://github.com/pingcap/tidb/issues/25282.
+func (s *testColumnTypeChangeSuite) TestChangeFromUnsignedIntToTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a mediumint unsigned);")
+	tk.MustExec("insert into t values (180857);")
+	tk.MustExec("alter table t modify column a time;")
+	tk.MustQuery("select a from t;").Check(testkit.Rows("18:08:57"))
+	tk.MustExec("drop table if exists t;")
+}
+
+// See https://github.com/pingcap/tidb/issues/25287.
+func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bit(45));")
+	tk.MustExec("insert into t values (1174717);")
+	errMsg := "[table:1366]Incorrect string value '\\xEC\\xBD' for column 'a'"
+	tk.MustGetErrMsg("alter table t modify column a varchar(31) collate utf8mb4_general_ci;", errMsg)
 }
