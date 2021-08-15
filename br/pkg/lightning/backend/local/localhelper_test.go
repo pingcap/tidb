@@ -410,7 +410,7 @@ func (s *localSuite) doTestBatchSplitRegionByRanges(ctx context.Context, c *C, h
 	// current region ranges: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	rangeStart := codec.EncodeBytes([]byte{}, []byte("b"))
 	rangeEnd := codec.EncodeBytes([]byte{}, []byte("c"))
-	regions, err := paginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
+	regions, err := restore.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
 	c.Assert(err, IsNil)
 	// regions is: [aay, bba), [bba, bbh), [bbh, cca)
 	checkRegionRanges(c, regions, [][]byte{[]byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca")})
@@ -435,7 +435,7 @@ func (s *localSuite) doTestBatchSplitRegionByRanges(ctx context.Context, c *C, h
 	splitHook.check(c, client)
 
 	// check split ranges
-	regions, err = paginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
+	regions, err = restore.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
 	c.Assert(err, IsNil)
 	result := [][]byte{
 		[]byte("b"), []byte("ba"), []byte("bb"), []byte("bba"), []byte("bbh"), []byte("bc"),
@@ -499,7 +499,7 @@ func (h *scanRegionEmptyHook) AfterScanRegions(res []*restore.RegionInfo, err er
 }
 
 func (s *localSuite) TestBatchSplitRegionByRangesScanFailed(c *C) {
-	s.doTestBatchSplitRegionByRanges(context.Background(), c, &scanRegionEmptyHook{}, "paginate scan region returns empty result", defaultHook{})
+	s.doTestBatchSplitRegionByRanges(context.Background(), c, &scanRegionEmptyHook{}, ".*scan region return empty result.*", defaultHook{})
 }
 
 type splitRegionEpochNotMatchHook struct {
@@ -649,7 +649,7 @@ func (s *localSuite) doTestBatchSplitByRangesWithClusteredIndex(c *C, hook clien
 	startKey := codec.EncodeBytes([]byte{}, rangeKeys[0])
 	endKey := codec.EncodeBytes([]byte{}, rangeKeys[len(rangeKeys)-1])
 	// check split ranges
-	regions, err := paginateScanRegion(ctx, client, startKey, endKey, 5)
+	regions, err := restore.PaginateScanRegion(ctx, client, startKey, endKey, 5)
 	c.Assert(err, IsNil)
 	c.Assert(len(regions), Equals, len(ranges)+1)
 
