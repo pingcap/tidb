@@ -104,6 +104,8 @@ const (
 	TableTiDBIndexes = "TIDB_INDEXES"
 	// TableTiDBHotRegions is the string constant of infoschema table
 	TableTiDBHotRegions = "TIDB_HOT_REGIONS"
+	// TableTiDBHotRegionsHistory is the string constant of infoschema table
+	TableTiDBHotRegionsHistory = "TIDB_HOT_REGIONS_HISTORY"
 	// TableTiKVStoreStatus is the string constant of infoschema table
 	TableTiKVStoreStatus = "TIKV_STORE_STATUS"
 	// TableAnalyzeStatus is the string constant of Analyze Status
@@ -251,6 +253,7 @@ var tableIDMap = map[string]int64{
 	TableDataLockWaits:                      autoid.InformationSchemaDBID + 74,
 	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 75,
 	ClusterTableStatementsSummaryEvicted:    autoid.InformationSchemaDBID + 76,
+	TableTiDBHotRegionsHistory:              autoid.InformationSchemaDBID + 77,
 }
 
 type columnInfo struct {
@@ -856,6 +859,24 @@ var TableTiDBHotRegionsCols = []columnInfo{
 	{name: "MAX_HOT_DEGREE", tp: mysql.TypeLonglong, size: 21},
 	{name: "REGION_COUNT", tp: mysql.TypeLonglong, size: 21},
 	{name: "FLOW_BYTES", tp: mysql.TypeLonglong, size: 21},
+}
+
+// TableTiDBHotRegionsHistoryCols is TiDB hot region history mem table columns.
+var TableTiDBHotRegionsHistoryCols = []columnInfo{
+	{name: "UPDATE_TIME", tp: mysql.TypeVarchar, size: 64},
+	{name: "DB_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "INDEX_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "REGION_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "STORE_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "PEER_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
+	{name: "HOT_DEGREE", tp: mysql.TypeLonglong, size: 21},
+	{name: "FLOW_BYTES", tp: mysql.TypeDouble, size: 22},
+	{name: "KEY_RATE", tp: mysql.TypeDouble, size: 22},
+	{name: "QUERY_RATE", tp: mysql.TypeDouble, size: 22},
 }
 
 // TableTiKVStoreStatusCols is TiDB kv store status columns.
@@ -1747,6 +1768,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBIndexes:                        tableTiDBIndexesCols,
 	TableSlowQuery:                          slowQueryCols,
 	TableTiDBHotRegions:                     TableTiDBHotRegionsCols,
+	TableTiDBHotRegionsHistory:              TableTiDBHotRegionsHistoryCols,
 	TableTiKVStoreStatus:                    TableTiKVStoreStatusCols,
 	TableAnalyzeStatus:                      tableAnalyzeStatusCols,
 	TableTiKVRegionStatus:                   TableTiKVRegionStatusCols,
