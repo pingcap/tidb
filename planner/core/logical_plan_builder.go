@@ -4209,6 +4209,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = &ClusterTableExtractor{}
 		case infoschema.TableClusterLog:
 			p.Extractor = &ClusterLogTableExtractor{}
+		case infoschema.TableTiDBHotRegionsHistory:
+			p.Extractor = &HotRegionsHistoryTableExtractor{}
 		case infoschema.TableInspectionResult:
 			p.Extractor = &InspectionResultTableExtractor{}
 			p.QueryTimeRange = b.timeRangeForSummaryTable()
