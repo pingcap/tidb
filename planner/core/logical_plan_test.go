@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1069,6 +1070,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.CreatePriv, "test", "", "", nil, false, "", false},
 				{mysql.DropPriv, "test", "", "", nil, false, "", false},
 				{mysql.GrantPriv, "test", "", "", nil, false, "", false},
+				{mysql.ReferencesPriv, "test", "", "", nil, false, "", false},
 				{mysql.AlterPriv, "test", "", "", nil, false, "", false},
 				{mysql.ExecutePriv, "test", "", "", nil, false, "", false},
 				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
@@ -1137,6 +1139,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.CreatePriv, "test", "", "", nil, false, "", false},
 				{mysql.DropPriv, "test", "", "", nil, false, "", false},
 				{mysql.GrantPriv, "test", "", "", nil, false, "", false},
+				{mysql.ReferencesPriv, "test", "", "", nil, false, "", false},
 				{mysql.AlterPriv, "test", "", "", nil, false, "", false},
 				{mysql.ExecutePriv, "test", "", "", nil, false, "", false},
 				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
