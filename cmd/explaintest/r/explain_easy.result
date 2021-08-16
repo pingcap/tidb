@@ -75,9 +75,9 @@ Projection_11	9990.00	root		cast(Column#8, bigint(21) BINARY)->Column#7
 explain select * from t2 order by t2.c2 limit 0, 1;
 id	estRows	task	access object	operator info
 TopN_7	1.00	root		test.t2.c2:asc, offset:0, count:1
-└─TableReader_15	1.00	root		data:TopN_14
-  └─TopN_14	1.00	cop[tikv]		test.t2.c2:asc, offset:0, count:1
-    └─TableFullScan_13	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_13	1.00	root		data:TopN_12
+  └─TopN_12	1.00	cop[tikv]		test.t2.c2:asc, offset:0, count:1
+    └─TableFullScan_11	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	estRows	task	access object	operator info
 IndexLookUp_11	11.08	root		
@@ -124,33 +124,33 @@ Projection_13	10000.00	root		eq(test.t1.c2, test.t2.c2)->Column#11
 └─Apply_15	10000.00	root		CARTESIAN left outer join
   ├─TableReader_17(Build)	10000.00	root		data:TableFullScan_16
   │ └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─Projection_44(Probe)	1.00	root		test.t2.c1, test.t2.c2
-    └─IndexLookUp_43	1.00	root		limit embedded(offset:0, count:1)
-      ├─Limit_42(Build)	1.00	cop[tikv]		offset:0, count:1
-      │ └─IndexRangeScan_40	1.00	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true, stats:pseudo
-      └─TableRowIDScan_41(Probe)	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─Projection_36(Probe)	1.00	root		test.t2.c1, test.t2.c2
+    └─IndexLookUp_35	1.00	root		limit embedded(offset:0, count:1)
+      ├─Limit_34(Build)	1.00	cop[tikv]		offset:0, count:1
+      │ └─IndexRangeScan_32	1.00	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true, stats:pseudo
+      └─TableRowIDScan_33(Probe)	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select * from t1 order by c1 desc limit 1;
 id	estRows	task	access object	operator info
-Limit_10	1.00	root		offset:0, count:1
-└─TableReader_20	1.00	root		data:Limit_19
-  └─Limit_19	1.00	cop[tikv]		offset:0, count:1
-    └─TableFullScan_18	1.00	cop[tikv]	table:t1	keep order:true, desc, stats:pseudo
+Limit_9	1.00	root		offset:0, count:1
+└─TableReader_16	1.00	root		data:Limit_15
+  └─Limit_15	1.00	cop[tikv]		offset:0, count:1
+    └─TableFullScan_14	1.00	cop[tikv]	table:t1	keep order:true, desc, stats:pseudo
 explain select * from t4 use index(idx) where a > 1 and b > 1 and c > 1 limit 1;
 id	estRows	task	access object	operator info
 Limit_9	1.00	root		offset:0, count:1
-└─IndexLookUp_16	1.00	root		
-  ├─Selection_13(Build)	3.00	cop[tikv]		gt(test.t4.b, 1)
-  │ └─IndexRangeScan_11	9.00	cop[tikv]	table:t4, index:idx(a, b)	range:(1,+inf], keep order:false, stats:pseudo
-  └─Limit_15(Probe)	1.00	cop[tikv]		offset:0, count:1
-    └─Selection_14	1.00	cop[tikv]		gt(test.t4.c, 1)
-      └─TableRowIDScan_12	3.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─IndexLookUp_15	1.00	root		
+  ├─Selection_12(Build)	3.00	cop[tikv]		gt(test.t4.b, 1)
+  │ └─IndexRangeScan_10	9.00	cop[tikv]	table:t4, index:idx(a, b)	range:(1,+inf], keep order:false, stats:pseudo
+  └─Limit_14(Probe)	1.00	cop[tikv]		offset:0, count:1
+    └─Selection_13	1.00	cop[tikv]		gt(test.t4.c, 1)
+      └─TableRowIDScan_11	3.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain select * from t4 where a > 1 and c > 1 limit 1;
 id	estRows	task	access object	operator info
 Limit_8	1.00	root		offset:0, count:1
-└─TableReader_14	1.00	root		data:Limit_13
-  └─Limit_13	1.00	cop[tikv]		offset:0, count:1
-    └─Selection_12	1.00	cop[tikv]		gt(test.t4.c, 1)
-      └─TableRangeScan_11	3.00	cop[tikv]	table:t4	range:(1,+inf], keep order:false, stats:pseudo
+└─TableReader_13	1.00	root		data:Limit_12
+  └─Limit_12	1.00	cop[tikv]		offset:0, count:1
+    └─Selection_11	1.00	cop[tikv]		gt(test.t4.c, 1)
+      └─TableRangeScan_10	3.00	cop[tikv]	table:t4	range:(1,+inf], keep order:false, stats:pseudo
 explain select ifnull(null, t1.c1) from t1;
 id	estRows	task	access object	operator info
 TableReader_5	10000.00	root		data:TableFullScan_4
