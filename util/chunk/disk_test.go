@@ -65,6 +65,8 @@ func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
 }
 
 func TestListInDisk(t *testing.T) {
+	t.Parallel()
+
 	numChk, numRow := 2, 2
 	chks, fields := initChunks(numChk, numRow)
 	l := NewListInDisk(fields)

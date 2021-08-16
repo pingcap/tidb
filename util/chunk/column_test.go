@@ -101,6 +101,8 @@ func TestColumnCopyReconstructFixedLen(t *testing.T) {
 }
 
 func TestColumnCopyReconstructVarLen(t *testing.T) {
+	t.Parallel()
+
 	col := NewColumn(types.NewFieldType(mysql.TypeVarString), 1024)
 	results := make([]string, 0, 1024)
 	nulls := make([]bool, 0, 1024)
@@ -157,6 +159,8 @@ func TestColumnCopyReconstructVarLen(t *testing.T) {
 }
 
 func TestLargeStringColumnOffset(t *testing.T) {
+	t.Parallel()
+
 	numRows := 1
 	col := newVarLenColumn(numRows)
 	// The max-length of a string field can be 6M, a typical batch size for Chunk is 1024, which is 1K.
@@ -166,6 +170,8 @@ func TestLargeStringColumnOffset(t *testing.T) {
 }
 
 func TestI64Column(t *testing.T) {
+	t.Parallel()
+
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -188,6 +194,8 @@ func TestI64Column(t *testing.T) {
 }
 
 func TestF64Column(t *testing.T) {
+	t.Parallel()
+
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -210,6 +218,8 @@ func TestF64Column(t *testing.T) {
 }
 
 func TestF32Column(t *testing.T) {
+	t.Parallel()
+
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeFloat)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -232,6 +242,8 @@ func TestF32Column(t *testing.T) {
 }
 
 func TestDurationSliceColumn(t *testing.T) {
+	t.Parallel()
+
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -256,6 +268,8 @@ func TestDurationSliceColumn(t *testing.T) {
 }
 
 func TestMyDecimal(t *testing.T) {
+	t.Parallel()
+
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -298,6 +312,8 @@ func TestMyDecimal(t *testing.T) {
 }
 
 func TestStringColumn(t *testing.T) {
+	t.Parallel()
+
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeVarString)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -314,6 +330,8 @@ func TestStringColumn(t *testing.T) {
 }
 
 func TestSetColumn(t *testing.T) {
+	t.Parallel()
+
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeSet)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -334,6 +352,8 @@ func TestSetColumn(t *testing.T) {
 }
 
 func TestJSONColumn(t *testing.T) {
+	t.Parallel()
+
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeJSON)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -354,6 +374,8 @@ func TestJSONColumn(t *testing.T) {
 }
 
 func TestTimeColumn(t *testing.T) {
+	t.Parallel()
+
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -375,6 +397,8 @@ func TestTimeColumn(t *testing.T) {
 }
 
 func TestDurationColumn(t *testing.T) {
+	t.Parallel()
+
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDuration)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -392,6 +416,8 @@ func TestDurationColumn(t *testing.T) {
 }
 
 func TestEnumColumn(t *testing.T) {
+	t.Parallel()
+
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeEnum)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -412,6 +438,8 @@ func TestEnumColumn(t *testing.T) {
 }
 
 func TestNullsColumn(t *testing.T) {
+	t.Parallel()
+
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -436,6 +464,8 @@ func TestNullsColumn(t *testing.T) {
 }
 
 func TestReconstructFixedLen(t *testing.T) {
+	t.Parallel()
+
 	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
 	results := make([]int64, 0, 1024)
 	nulls := make([]bool, 0, 1024)
@@ -492,6 +522,8 @@ func TestReconstructFixedLen(t *testing.T) {
 }
 
 func TestReconstructVarLen(t *testing.T) {
+	t.Parallel()
+
 	col := NewColumn(types.NewFieldType(mysql.TypeVarString), 1024)
 	results := make([]string, 0, 1024)
 	nulls := make([]bool, 0, 1024)
@@ -548,6 +580,8 @@ func TestReconstructVarLen(t *testing.T) {
 }
 
 func TestPreAllocInt64(t *testing.T) {
+	t.Parallel()
+
 	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 128)
 	col.ResizeInt64(256, true)
 	i64s := col.Int64s()
@@ -562,6 +596,8 @@ func TestPreAllocInt64(t *testing.T) {
 }
 
 func TestPreAllocUint64(t *testing.T) {
+	t.Parallel()
+
 	tll := types.NewFieldType(mysql.TypeLonglong)
 	tll.Flag |= mysql.UnsignedFlag
 	col := NewColumn(tll, 128)
@@ -578,6 +614,8 @@ func TestPreAllocUint64(t *testing.T) {
 }
 
 func TestPreAllocFloat32(t *testing.T) {
+	t.Parallel()
+
 	col := newFixedLenColumn(sizeFloat32, 128)
 	col.ResizeFloat32(256, true)
 	f32s := col.Float32s()
@@ -592,6 +630,8 @@ func TestPreAllocFloat32(t *testing.T) {
 }
 
 func TestPreAllocFloat64(t *testing.T) {
+	t.Parallel()
+
 	col := newFixedLenColumn(sizeFloat64, 128)
 	col.ResizeFloat64(256, true)
 	f64s := col.Float64s()
@@ -606,6 +646,8 @@ func TestPreAllocFloat64(t *testing.T) {
 }
 
 func TestPreAllocDecimal(t *testing.T) {
+	t.Parallel()
+
 	col := newFixedLenColumn(sizeMyDecimal, 128)
 	col.ResizeDecimal(256, true)
 	ds := col.Decimals()
@@ -619,6 +661,8 @@ func TestPreAllocDecimal(t *testing.T) {
 }
 
 func TestPreAllocTime(t *testing.T) {
+	t.Parallel()
+
 	col := newFixedLenColumn(sizeTime, 128)
 	col.ResizeTime(256, true)
 	ds := col.Times()
@@ -632,6 +676,8 @@ func TestPreAllocTime(t *testing.T) {
 }
 
 func TestNull(t *testing.T) {
+	t.Parallel()
+
 	col := newFixedLenColumn(sizeFloat64, 32)
 	col.ResizeFloat64(1024, true)
 	require.Equal(t, 1024, col.nullCount())
@@ -664,6 +710,8 @@ func TestNull(t *testing.T) {
 }
 
 func TestSetNulls(t *testing.T) {
+	t.Parallel()
+
 	col := newFixedLenColumn(sizeFloat64, 32)
 	col.ResizeFloat64(1024, true)
 	require.Equal(t, 1024, col.nullCount())
@@ -692,6 +740,8 @@ func TestSetNulls(t *testing.T) {
 }
 
 func TestResizeReserve(t *testing.T) {
+	t.Parallel()
+
 	cI64s := newFixedLenColumn(sizeInt64, 0)
 	require.Zero(t, cI64s.length)
 	for i := 0; i < 100; i++ {
@@ -715,6 +765,8 @@ func TestResizeReserve(t *testing.T) {
 }
 
 func TestGetRaw(t *testing.T) {
+	t.Parallel()
+
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeFloat)}, 1024)
 	col := chk.Column(0)
 	for i := 0; i < 1024; i++ {
@@ -745,6 +797,8 @@ func TestGetRaw(t *testing.T) {
 }
 
 func TestResize(t *testing.T) {
+	t.Parallel()
+
 	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
 	for i := 0; i < 1024; i++ {
 		col.AppendInt64(int64(i))
@@ -925,6 +979,8 @@ func genNullCols(n int) []*Column {
 }
 
 func TestVectorizedNulls(t *testing.T) {
+	t.Parallel()
+
 	for i := 0; i < 256; i++ {
 		cols := genNullCols(4)
 		lCol, rCol := cols[0], cols[1]
@@ -943,6 +999,8 @@ func TestVectorizedNulls(t *testing.T) {
 }
 
 func TestResetColumn(t *testing.T) {
+	t.Parallel()
+
 	col0 := NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
 	col1 := NewColumn(types.NewFieldType(mysql.TypeLonglong), 0)
 
