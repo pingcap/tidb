@@ -2967,6 +2967,12 @@ func (s *testStatsSuite) TestIssues27147(c *C) {
 	testKit.MustExec("alter table t add index idx((a+5));")
 	err := testKit.ExecToErr("analyze table t;")
 	c.Assert(err, Equals, nil)
+
+	testKit.MustExec("drop table if exists t1")
+	testKit.MustExec("create table t1 (a int, b int as (a+1) virtual, c int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue);")
+	testKit.MustExec("alter table t1 add index idx((a+5));")
+	err = testKit.ExecToErr("analyze table t1;")
+	c.Assert(err, Equals, nil)
 }
 
 func (s *testStatsSuite) TestColumnCountFromStorage(c *C) {
