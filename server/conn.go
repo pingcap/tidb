@@ -977,6 +977,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 
 		startTime := time.Now()
 		if err = cc.dispatch(ctx, data); err != nil {
+			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
 				disconnectNormal.Inc()
@@ -1627,6 +1628,21 @@ func (cc *clientConn) handlePlanRecreator(ctx context.Context, info executor.Pla
 	return "", errors.New("plan recreator: not supporting info type")
 }
 
+func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
+	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		audit := plugin.DeclareAuditManifest(p.Manifest)
+		if audit.OnGeneralEvent != nil {
+			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&cc.ctx.GetSessionVars().CommandValue))]
+			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, cc.ctx.GetSessionVars().StartTime)
+			audit.OnGeneralEvent(ctx, cc.ctx.GetSessionVars(), eventType, cmd)
+		}
+		return nil
+	})
+	if err != nil {
+		terror.Log(err)
+	}
+}
+
 // handleQuery executes the sql query string and writes result set or result ok to the client.
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
@@ -1683,6 +1699,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		defer cc.ctx.ClearValue(plannercore.PointPlanKey)
 	}
 	var retryable bool
+	cc.audit(plugin.Starting)
 	for i, stmt := range stmts {
 		if len(pointPlans) > 0 {
 			// Save the point plan in Session so we don't need to build the point plan again.

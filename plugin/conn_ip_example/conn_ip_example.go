@@ -99,14 +99,12 @@ func OnGeneralEvent(ctx context.Context, sctx *variable.SessionVars, event plugi
 		fmt.Printf("---- executed by user: %#v\n", sctx.User)
 	}
 	switch event {
-	case plugin.Log:
-		fmt.Println("---- event: Log")
+	case plugin.Starting:
+		fmt.Println("---- event: Statement Starting")
+	case plugin.Completed:
+		fmt.Println("---- event: Statement Completed")
 	case plugin.Error:
-		fmt.Println("---- event: Error")
-	case plugin.Result:
-		fmt.Println("---- event: Result")
-	case plugin.Status:
-		fmt.Println("---- event: Status")
+		fmt.Println("---- event: ERROR!")
 	default:
 		fmt.Println("---- event: unrecognized")
 	}
