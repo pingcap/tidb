@@ -4491,7 +4491,7 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeBlob)
 
 	// text to set
-	tk.MustGetErrMsg("alter table tt change a a set('111', '2222');", "[types:1265]Data truncated for column 'a', value is 'KindString 10000'")
+	tk.MustGetErrMsg("alter table tt change a a set('111', '2222');", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a set('111', '10000');")
 	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeSet)
@@ -4504,7 +4504,7 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 
 	// set to enum
-	tk.MustGetErrMsg("alter table tt change a a enum('111', '2222');", "[types:1265]Data truncated for column 'a', value is 'KindMysqlSet 10000'")
+	tk.MustGetErrMsg("alter table tt change a a enum('111', '2222');", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a enum('111', '10000');")
 	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeEnum)
@@ -4516,7 +4516,7 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	// no-strict mode
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustExec("alter table tt change a a enum('111', '2222');")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data truncated for column 'a', value is 'KindMysqlEnum 10000'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data truncated for column 'a', value is '10000'"))
 
 	tk.MustExec("drop table tt;")
 }
@@ -5173,23 +5173,23 @@ func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
 }
 
 func (s *testDBSuite1) TestModifyColumnTime_TimeToYear(c *C) {
-	currentYear := strconv.Itoa(time.Now().Year())
+	outOfRangeCode := uint16(1264)
 	tests := []testModifyColumnTimeCase{
 		// time to year, it's reasonable to return current year and discard the time (even if MySQL may get data out of range error).
-		{"time", `"30 20:00:12"`, "year", currentYear, 0},
-		{"time", `"30 20:00"`, "year", currentYear, 0},
-		{"time", `"30 20"`, "year", currentYear, 0},
-		{"time", `"20:00:12"`, "year", currentYear, 0},
-		{"time", `"20:00"`, "year", currentYear, 0},
-		{"time", `"12"`, "year", currentYear, 0},
-		{"time", `"200012"`, "year", currentYear, 0},
-		{"time", `200012`, "year", currentYear, 0},
-		{"time", `0012`, "year", currentYear, 0},
-		{"time", `12`, "year", currentYear, 0},
-		{"time", `"30 20:00:12.498"`, "year", currentYear, 0},
-		{"time", `"20:00:12.498"`, "year", currentYear, 0},
-		{"time", `"200012.498"`, "year", currentYear, 0},
-		{"time", `200012.498`, "year", currentYear, 0},
+		{"time", `"30 20:00:12"`, "year", "", outOfRangeCode},
+		{"time", `"30 20:00"`, "year", "", outOfRangeCode},
+		{"time", `"30 20"`, "year", "", outOfRangeCode},
+		{"time", `"20:00:12"`, "year", "", outOfRangeCode},
+		{"time", `"20:00"`, "year", "", outOfRangeCode},
+		{"time", `"12"`, "year", "2012", 0},
+		{"time", `"200012"`, "year", "", outOfRangeCode},
+		{"time", `200012`, "year", "", outOfRangeCode},
+		{"time", `0012`, "year", "2012", 0},
+		{"time", `12`, "year", "2012", 0},
+		{"time", `"30 20:00:12.498"`, "year", "", outOfRangeCode},
+		{"time", `"20:00:12.498"`, "year", "", outOfRangeCode},
+		{"time", `"200012.498"`, "year", "", outOfRangeCode},
+		{"time", `200012.498`, "year", "", outOfRangeCode},
 	}
 	testModifyColumnTime(c, s.store, tests)
 }
@@ -5393,9 +5393,8 @@ func (s *testDBSuite1) TestModifyColumnTime_DatetimeToYear(c *C) {
 		{"datetime", `20060102150405`, "year", "2006", 0},
 		{"datetime", `060102150405`, "year", "2006", 0},
 		{"datetime", `"2006-01-02 23:59:59.506"`, "year", "2006", 0},
-		// MySQL will get "Data truncation: Out of range value for column 'a' at row 1.
-		{"datetime", `"1000-01-02 23:59:59"`, "year", "", errno.ErrInvalidYear},
-		{"datetime", `"9999-01-02 23:59:59"`, "year", "", errno.ErrInvalidYear},
+		{"datetime", `"1000-01-02 23:59:59"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"datetime", `"9999-01-02 23:59:59"`, "year", "", errno.ErrWarnDataOutOfRange},
 	}
 	testModifyColumnTime(c, s.store, tests)
 }
@@ -7194,6 +7193,8 @@ func (s *testSerialSuite) TestIssue23872(c *C) {
 	rs, err := tk.Exec("select * from test_create_table;")
 	c.Assert(err, IsNil)
 	cols := rs.Fields()
+	err = rs.Close()
+	c.Assert(err, IsNil)
 	expectFlag := uint16(mysql.NotNullFlag | mysql.PriKeyFlag | mysql.NoDefaultValueFlag)
 	c.Assert(cols[0].Column.Flag, Equals, uint(expectFlag))
 	tk.MustExec("create table t(a int default 1, primary key(a));")
@@ -7201,6 +7202,8 @@ func (s *testSerialSuite) TestIssue23872(c *C) {
 	rs1, err := tk.Exec("select * from t;")
 	c.Assert(err, IsNil)
 	cols1 := rs1.Fields()
+	err = rs1.Close()
+	c.Assert(err, IsNil)
 	expectFlag1 := uint16(mysql.NotNullFlag | mysql.PriKeyFlag)
 	c.Assert(cols1[0].Column.Flag, Equals, uint(expectFlag1))
 }
