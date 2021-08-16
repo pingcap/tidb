@@ -1683,6 +1683,20 @@ func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, false
 }
 
+// checkOrderByItems checks for errors in ORDER BY items.
+func (b *PlanBuilder) checkOrderByItems(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) error {
+	transformer := &itemTransformer{}
+	for _, item := range byItems {
+		newExpr, _ := item.Expr.Accept(transformer)
+		item.Expr = newExpr.(ast.ExprNode)
+		_, _, err := b.rewriteWithPreprocess(ctx, item.Expr, p, aggMapper, windowMapper, true, nil)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
 	return b.buildSortWithCheck(ctx, p, byItems, aggMapper, windowMapper, nil, 0, false)
 }
@@ -1706,6 +1720,7 @@ func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p LogicalPlan, byI
 		}
 
 		// check whether ORDER BY items show up in SELECT DISTINCT fields, see #12442
+		// and MySQL doc https://dev.mysql.com/doc/refman/5.7/en/group-by-handling.html
 		if hasDistinct && projExprs != nil {
 			err = b.checkOrderByInDistinct(item, i, it, p, projExprs, oldLen)
 			if err != nil {
@@ -3644,10 +3659,22 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	if sel.OrderBy != nil {
-		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
-			p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, oldLen, sel.Distinct)
+		// Ignore ORDER BY when the query has aggregate without GROUP BY.
+		// We don't have to build sort when there's at most one row in the result.
+		// e.g.
+		// select count(a) from t order by b;
+		// select count(a) from t order by count(b);
+		ignoreOrderBy := hasAgg && sel.GroupBy == nil
+		if ignoreOrderBy {
+			// Here we have to check for regular errors such as `Unknown column` or `Invalid use of group function`
+			// even if we don't build sort for ORDER BY. This is compatible with MySQL.
+			err = b.checkOrderByItems(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
 		} else {
-			p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
+			if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
+				p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, oldLen, sel.Distinct)
+			} else {
+				p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
+			}
 		}
 		if err != nil {
 			return nil, err

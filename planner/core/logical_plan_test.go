@@ -478,7 +478,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 	s.testData.GetTestCases(c, &input, &output)
 	ctx := context.Background()
 	for i, ca := range input {
-		comment := Commentf("for %s", ca)
+		comment := Commentf("case:%d, for %s", ca)
 		stmt, err := s.ParseOneStmt(ca, "", "")
 		c.Assert(err, IsNil, comment)
 
@@ -494,7 +494,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		s.testData.OnRecord(func() {
 			output[i] = ToString(p)
 		})
-		c.Assert(ToString(p), Equals, output[i], Commentf("for %s", ca))
+		c.Assert(ToString(p), Equals, output[i], comment)
 	}
 }
 
@@ -529,7 +529,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 	ctx := context.Background()
 	s.ctx.GetSessionVars().AllowAggPushDown = true
 	for ith, tt := range input {
-		comment := Commentf("for %s", tt)
+		comment := Commentf("case:%d, for %s", ith, tt)
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
@@ -540,7 +540,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 		s.testData.OnRecord(func() {
 			output[ith] = ToString(p)
 		})
-		c.Assert(ToString(p), Equals, output[ith], Commentf("for %s %d", tt, ith))
+		c.Assert(ToString(p), Equals, output[ith], comment)
 	}
 	s.ctx.GetSessionVars().AllowAggPushDown = false
 }
@@ -555,7 +555,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 	ctx := context.Background()
 	for i, tt := range input {
-		comment := Commentf("case:%v sql:\"%s\"", i, tt)
+		comment := Commentf("case:%d, for %s", i, tt)
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
@@ -567,6 +567,31 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			output[i] = make(map[int][]string)
 		})
 		s.checkDataSourceCols(lp, c, output[i], comment)
+	}
+}
+
+func (s *testPlanSuite) TestIgnoreOrderBy(c *C) {
+	defer testleak.AfterTest(c)()
+	var (
+		input  []string
+		output []string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	s.testData.OnRecord(func() {
+		output = make([]string, len(input))
+	})
+
+	ctx := context.Background()
+	for i, tt := range input {
+		comment := Commentf("case:%d, for %s", i, tt)
+		stmt, err := s.ParseOneStmt(tt, "", "")
+		c.Assert(err, IsNil, comment)
+
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+		lp, err := logicalOptimize(ctx, flagEliminateProjection|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
+		c.Assert(err, IsNil, comment)
+		c.Assert(ToString(lp), Equals, output[i], comment)
 	}
 }
 

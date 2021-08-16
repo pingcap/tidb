@@ -895,20 +895,16 @@
           "11"
         ],
         "Plan": [
-          "Projection 1.00 root  Column#5",
-          "└─Sort 1.00 root  test_partition.t1.id, test_partition.t1.a",
-          "  └─StreamAgg 1.00 root  funcs:count(Column#10)->Column#5, funcs:firstrow(Column#11)->test_partition.t1.id, funcs:firstrow(Column#12)->test_partition.t1.a",
-          "    └─TableReader 1.00 root partition:all data:StreamAgg",
-          "      └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#10, funcs:firstrow(test_partition.t1.id)->Column#11, funcs:firstrow(test_partition.t1.a)->Column#12",
-          "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#8)->Column#5",
+          "└─TableReader 1.00 root partition:all data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#8",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "Projection 1.00 root  Column#5",
-          "└─Sort 1.00 root  test_partition_1.t1.id, test_partition_1.t1.a",
-          "  └─StreamAgg 1.00 root  funcs:count(Column#13)->Column#5, funcs:firstrow(Column#14)->test_partition_1.t1.id, funcs:firstrow(Column#15)->test_partition_1.t1.a",
-          "    └─IndexReader 1.00 root partition:all index:StreamAgg",
-          "      └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#13, funcs:firstrow(test_partition_1.t1.id)->Column#14, funcs:firstrow(test_partition_1.t1.a)->Column#15",
-          "        └─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(Column#17)->Column#5",
+          "└─TableReader 1.00 root partition:all data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#17",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {

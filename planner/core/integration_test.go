@@ -2730,6 +2730,8 @@ func (s *testIntegrationSuite) TestMultiUpdateOnPrimaryKey(c *C) {
 func (s *testIntegrationSuite) TestOrderByHavingNotInSelect(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+
+	// #21112
 	tk.MustExec("drop table if exists ttest")
 	tk.MustExec("create table ttest (v1 int, v2 int)")
 	tk.MustExec("insert into ttest values(1, 2), (4,6), (1, 7)")
@@ -2742,6 +2744,14 @@ func (s *testIntegrationSuite) TestOrderByHavingNotInSelect(c *C) {
 	tk.MustGetErrMsg("select v2, v1 from (select t1.v1, t2.v2 from ttest t1 join ttest t2) t3 join (select 1, 2) t2 group by v1",
 		"[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t3.v2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 
+	// ignore ORDER BY
+	tk.MustQuery("select count(v1) from ttest order by v1").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(v1) from ttest order by v2").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(distinct v1) from ttest order by v2").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(distinct v1) from ttest order by count(v2)").Check(testkit.Rows("2"))
+
+	tk.MustGetErrMsg("select distinct count(v1) from ttest order by sum(v3)",
+		"[planner:1054]Unknown column 'v3' in 'order clause'")
 }
 
 func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
@@ -2854,6 +2864,12 @@ func (s *testIntegrationSuite) TestOrderByNotInSelectDistinct(c *C) {
 	tk.MustQuery("select distinct sum(v1) as z from ttest group by v2 order by z+1").Check(testkit.Rows("1", "4"))
 	tk.MustQuery("select distinct sum(v1)+1 from ttest group by v2 order by sum(v1)+1").Check(testkit.Rows("2", "5"))
 	tk.MustQuery("select distinct v1 as z from ttest order by v1+z").Check(testkit.Rows("1", "4"))
+
+	// ignore ORDER BY
+	tk.MustQuery("select distinct count(v1) from ttest order by v2").Check(testkit.Rows("3"))
+	tk.MustQuery("select distinct count(v1) from ttest order by v1").Check(testkit.Rows("3"))
+	tk.MustQuery("select distinct count(v1) from ttest order by count(v1)").Check(testkit.Rows("3"))
+	tk.MustQuery("select distinct count(v1) from ttest order by sum(v2)").Check(testkit.Rows("3"))
 }
 
 func (s *testIntegrationSuite) TestInvalidNamedWindowSpec(c *C) {
