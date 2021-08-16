@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -1389,13 +1388,6 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			return err
 		}
 
-		if shouldUseDefautCharsetAndCollationInUnion(temTypes) {
-			resultTp.Charset, resultTp.Collate = charset.GetDefaultCharsetAndCollate()
-		} else {
-			resultTp.Charset, resultTp.Collate = expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
-		}
-
-		//resultTp.Charset, resultTp.Collate = charset.GetDefaultCharsetAndCollate()
 		names = append(names, &types.FieldName{ColName: u.children[0].OutputNames()[i].ColName})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
@@ -1406,6 +1398,37 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 	u.names = names
 	// Process each child and add a projection above original child.
 	// So the schema of `UnionAll` can be the same with its children's.
+	buildLogicalUnionAll(u, unionCols, b)
+
+	var rebuild = false
+	for i := range u.children[0].Schema().Columns {
+		tmpExprs := make([]expression.Expression, 0, len(u.Children()))
+		for j := 0; j < len(u.children); j++ {
+			tmpExprs = append(tmpExprs, u.children[j].Schema().Columns[i])
+		}
+
+		dstType := unionCols[i].RetType
+
+		// should use the cast type to refer return type collation and charset
+		charset, collate := expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
+
+		if dstType.Charset != charset || dstType.Collate != collate {
+			//nend to recast the logic
+			dstType.Charset = charset
+			dstType.Collate = collate
+
+			rebuild = true
+		}
+	}
+
+	if rebuild {
+		buildLogicalUnionAll(u, unionCols, b)
+	}
+
+	return nil
+}
+
+func buildLogicalUnionAll(u *LogicalUnionAll, unionCols []*expression.Column, b *PlanBuilder) {
 	for childID, child := range u.children {
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
 		for i, srcCol := range child.Schema().Columns {
@@ -1427,7 +1450,6 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 		proj.SetChildren(child)
 		u.children[childID] = proj
 	}
-	return nil
 }
 
 func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (LogicalPlan, error) {
