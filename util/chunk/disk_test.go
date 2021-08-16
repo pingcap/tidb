@@ -72,10 +72,10 @@ func TestListInDisk(t *testing.T) {
 	l := NewListInDisk(fields)
 	defer func() {
 		err := l.Close()
-		assert.NoError(t, err)
-		assert.NotNil(t, l.disk)
+		require.NoError(t, err)
+		require.NotNil(t, l.disk)
 		_, err = os.Stat(l.disk.Name())
-		assert.True(t, os.IsNotExist(err))
+		require.True(t, os.IsNotExist(err))
 	}()
 	for _, chk := range chks {
 		err := l.Add(chk)

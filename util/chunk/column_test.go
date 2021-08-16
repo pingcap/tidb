@@ -304,7 +304,6 @@ func TestMyDecimal(t *testing.T) {
 
 		fDelta, err := delta.ToFloat64()
 		require.NoError(t, err)
-		require.True(t, fDelta <= 0.0001 && fDelta >= -0.0001)
 		require.InDelta(t, 0, fDelta, 0.0001)
 
 		i++
