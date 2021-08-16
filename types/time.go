@@ -1257,13 +1257,13 @@ func AdjustYear(y int64, adjustZero bool) (int64, error) {
 	}
 	y = int64(adjustYear(int(y)))
 	if y < 0 {
-		return 0, errors.Trace(ErrInvalidYear)
+		return 0, errors.Trace(ErrWarnDataOutOfRange)
 	}
 	if y < int64(MinYear) {
-		return int64(MinYear), errors.Trace(ErrInvalidYear)
+		return int64(MinYear), errors.Trace(ErrWarnDataOutOfRange)
 	}
 	if y > int64(MaxYear) {
-		return int64(MaxYear), errors.Trace(ErrInvalidYear)
+		return int64(MaxYear), errors.Trace(ErrWarnDataOutOfRange)
 	}
 
 	return y, nil
