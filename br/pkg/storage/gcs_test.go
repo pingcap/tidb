@@ -65,6 +65,9 @@ func (r *testStorageSuite) TestGCS(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsFalse)
 
+	err = stg.DeleteFile(ctx, "key")
+	c.Assert(err, ErrorMatches, "not implemented")
+
 	list := ""
 	var totalSize int64 = 0
 	err = stg.WalkDir(ctx, nil, func(name string, size int64) error {
