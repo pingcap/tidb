@@ -345,7 +345,15 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 	// initialized the globalStats
 	globalStats = new(GlobalStats)
 	if isIndex == 0 {
-		globalStats.Num = len(globalTableInfo.Columns)
+		globalStats4Col := 0
+		for _, col := range globalTableInfo.Columns {
+			// The generated column stats can not be merged to the global stats.
+			if col.IsGenerated() && !col.GeneratedStored {
+				break
+			}
+			globalStats4Col++
+		}
+		globalStats.Num = globalStats4Col
 	} else {
 		globalStats.Num = 1
 	}
