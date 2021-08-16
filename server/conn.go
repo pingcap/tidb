@@ -1659,9 +1659,13 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				tmpStr, idx1, idx2, sql)
 		}
 	}
+	if strings.Contains(sql, "use_hash_part_hj") {
+		plannercore.ForceUseHashPart = true
+	} else {
+		plannercore.ForceUseHashPart = false
+	}
 	if strings.Contains(sql, "new_parallel") {
 		cc.ctx.GetSessionVars().UseParallel = true
-		// plannercore.MaxThrNum =
 		defer func() {
 			cc.ctx.GetSessionVars().UseParallel = false
 		}()

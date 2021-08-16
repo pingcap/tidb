@@ -9,6 +9,7 @@ import (
 )
 
 var MaxThrNum int
+var ForceUseHashPart bool
 
 var (
 	_ PhysicalPlan = &PhysicalXchg{}
@@ -55,6 +56,35 @@ type PhysicalXchg struct {
 	CurStreamID int
 	ChkChs      []chan *chunk.Chunk
 	ResChs      []chan *chunk.Chunk
+
+	hashPartition []*expression.Column
+}
+
+func (p *PhysicalXchg) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalXchg)
+	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	cloned.childStat = p.childStat
+	cloned.tp = p.tp
+	cloned.outStreamCnt = p.outStreamCnt
+	cloned.inStreamCnt = p.inStreamCnt
+	cloned.CurStreamID = p.CurStreamID
+	cloned.hashPartition = cloneCols(p.hashPartition)
+
+	chanSize := cap(p.ChkChs[0])
+	chanCnt := len(p.ChkChs)
+	chkChs := make([]chan *chunk.Chunk, 0, chanCnt)
+	resChs := make([]chan *chunk.Chunk, 0, chanCnt)
+	for i := 0; i < chanCnt; i++ {
+		chkChs = append(chkChs, make(chan *chunk.Chunk, chanSize))
+		resChs = append(resChs, make(chan *chunk.Chunk, chanSize))
+	}
+	cloned.ChkChs = chkChs
+	cloned.ResChs = resChs
+	return cloned, nil
 }
 
 // TODO: just use Cap initial.
@@ -82,10 +112,10 @@ func (p *PhysicalXchg) IsSender() bool {
 }
 
 type XchgProperty struct {
-	output              int
-	available           int
-	isBroadcastHT       bool
-	nonOrderedPartition []*expression.Column
+	output        int
+	available     int
+	isBroadcastHT bool
+	hashPartition []*expression.Column
 	// TODO: not implemented yet.
 	// orderedPartition []*expression.Column
 	// sorting []*property.SortItem
@@ -98,12 +128,12 @@ func newXchgProperty() *XchgProperty {
 
 func (prop *XchgProperty) Clone() *XchgProperty {
 	res := &XchgProperty{
-		output:              prop.output,
-		available:           prop.available,
-		isBroadcastHT:       prop.isBroadcastHT,
-		nonOrderedPartition: make([]*expression.Column, len(prop.nonOrderedPartition)),
+		output:        prop.output,
+		available:     prop.available,
+		isBroadcastHT: prop.isBroadcastHT,
+		hashPartition: make([]*expression.Column, len(prop.hashPartition)),
 	}
-	copy(res.nonOrderedPartition, prop.nonOrderedPartition)
+	copy(res.hashPartition, prop.hashPartition)
 	return res
 }
 
@@ -248,6 +278,10 @@ func (p *PhysicalTableReader) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPr
 		if reqProp.isBroadcastHT {
 			sender = &PhysicalXchg{tp: TypeXchgSenderBroadcastHT}
 			receiver = &PhysicalXchg{tp: TypeXchgReceiverPassThroughHT}
+		} else if len(reqProp.hashPartition) != 0 {
+			// TODO: maybe no need copy
+			sender = &PhysicalXchg{tp: TypeXchgSenderHash, hashPartition: cloneCols(reqProp.hashPartition)}
+			receiver = &PhysicalXchg{tp: TypeXchgReceiverPassThrough}
 		} else {
 			sender = &PhysicalXchg{tp: TypeXchgSenderRandom}
 			receiver = &PhysicalXchg{tp: TypeXchgReceiverPassThrough}
@@ -285,24 +319,32 @@ func (p *PhysicalHashJoin) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPrope
 		return nil, err
 	}
 	if reqProp.output != 1 {
-		// If parent of HashJoin already requires parallel, build child have to enforce BroadcastHT.
-		p.GetChildXchgProps()[buildSideIdx].isBroadcastHT = true
-		p.IsBroadcastHJ = true
-	}
+		// TODO: we should use cost model to check if broadcast or hash part is better.
+		// For now we just use hint.
+		if reqProp.isBroadcastHT {
+			// If parent of HashJoin already requires parallel, build child have to enforce BroadcastHT.
+			p.GetChildXchgProps()[buildSideIdx].isBroadcastHT = true
+			p.IsBroadcastHJ = true
+		} else {
+			buildReqProp, probeReqProp := getReqPropsForHashPartition(p, reqProp.output, probeSideIdx, probeSideIdx)
+			p.GetChildXchgProps()[buildSideIdx] = buildReqProp
+			p.GetChildXchgProps()[probeSideIdx] = probeReqProp
+		}
+	} else {
+		outStreamCnt := ctx.GetSessionVars().ExecutorConcurrency
+		var res1 []PhysicalPlan
 
-	outStreamCnt := reqProp.output
-	if outStreamCnt == 1 {
-		outStreamCnt = ctx.GetSessionVars().ExecutorConcurrency
+		if !ForceUseHashPart {
+			if res1, err = tryBroadcastHJ(ctx, p, outStreamCnt, reqProp, buildSideIdx, probeSideIdx); err != nil {
+				return nil, err
+			}
+		} else {
+			if res1, err = tryHashPartitionHJ(ctx, p, outStreamCnt, reqProp, buildSideIdx, probeSideIdx); err != nil {
+				return nil, err
+			}
+		}
+		res = append(res, res1...)
 	}
-	res1, err := tryBroadcastHJ(ctx, p, outStreamCnt, reqProp, buildSideIdx, probeSideIdx)
-	if err != nil {
-		return nil, err
-	}
-	res = append(res, res1...)
-	// TODO: not support for now.
-	// if res, err = tryHashPartitionHJ(ctx, p, outStreamCnt); err != nil {
-	//     return nil, err
-	// }
 	return res, nil
 }
 
@@ -349,8 +391,49 @@ func tryBroadcastHJ(ctx sessionctx.Context, node *PhysicalHashJoin, outStreamCnt
 	return res, nil
 }
 
-func tryHashPartitionHJ(ctx sessionctx.Context, node PhysicalHashJoin, outStreamCnt int) (res []PhysicalHashJoin, err error) {
-	return nil, errors.New("ntryHashPartitionHJ not support for now")
+func tryHashPartitionHJ(ctx sessionctx.Context, node *PhysicalHashJoin, outStreamCnt int, reqProp *XchgProperty, buildSideIdx int, probeSideIdx int) (res []PhysicalPlan, err error) {
+	newNode, err := node.Clone()
+	if err != nil {
+		return nil, err
+	}
+
+	buildReqProp, probeReqProp := getReqPropsForHashPartition(node, outStreamCnt, probeSideIdx, probeSideIdx)
+	newNode.GetChildXchgProps()[buildSideIdx] = buildReqProp
+	newNode.GetChildXchgProps()[probeSideIdx] = probeReqProp
+
+	sender := &PhysicalXchg{tp: TypeXchgSenderPassThrough}
+	if err = initXchg(ctx, sender, newNode, newNode.Stats(), outStreamCnt); err != nil {
+		return nil, err
+	}
+	receiver := &PhysicalXchg{tp: TypeXchgReceiverRandom}
+	if err = initXchg(ctx, receiver, sender, newNode.Stats(), outStreamCnt); err != nil {
+		return nil, err
+	}
+	setupChans(sender, receiver, outStreamCnt)
+
+	res = append(res, receiver)
+	return res, nil
+}
+
+func getReqPropsForHashPartition(node *PhysicalHashJoin, outStreamCnt int, buildSideIdx int, probeSideIdx int) (buildReqProp *XchgProperty, probeReqProp *XchgProperty) {
+	var buildKeys []*expression.Column
+	var probeKeys []*expression.Column
+	if buildSideIdx == 0 {
+		buildKeys = node.LeftJoinKeys
+		probeKeys = node.RightJoinKeys
+	} else {
+		buildKeys = node.RightJoinKeys
+		probeKeys = node.LeftJoinKeys
+	}
+	buildReqProp = &XchgProperty{
+		output:        outStreamCnt,
+		hashPartition: cloneCols(buildKeys),
+	}
+	probeReqProp = &XchgProperty{
+		output:        outStreamCnt,
+		hashPartition: cloneCols(probeKeys),
+	}
+	return buildReqProp, probeReqProp
 }
 
 func tryAddXchgForBasicPlan(ctx sessionctx.Context, node PhysicalPlan, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
@@ -363,8 +446,8 @@ func tryAddXchgForBasicPlan(ctx sessionctx.Context, node PhysicalPlan, reqProp *
 
 	var newNode PhysicalPlan
 
-	xchgOutput := ctx.GetSessionVars().ExecutorConcurrency
 	if reqProp.output == 1 {
+		xchgOutput := ctx.GetSessionVars().ExecutorConcurrency
 		if !hasAvailableThr(reqProp.available, xchgOutput) {
 			return res, nil
 		}
@@ -392,6 +475,7 @@ func tryAddXchgForBasicPlan(ctx sessionctx.Context, node PhysicalPlan, reqProp *
 	}
 
 	if reqProp.isBroadcastHT {
+		xchgOutput := reqProp.output
 		if newNode, err = node.Clone(); err != nil {
 			return nil, err
 		}
@@ -414,24 +498,26 @@ func tryAddXchgForBasicPlan(ctx sessionctx.Context, node PhysicalPlan, reqProp *
 		return res, nil
 	}
 
-	if len(reqProp.nonOrderedPartition) != 0 {
-		// if newNode, err = node.Clone(); err != nil {
-		// 	return nil, err
-		// }
-		// updateChildrenProp(newNode, newXchgProperty())
+	if len(reqProp.hashPartition) != 0 {
+		xchgOutput := reqProp.output
+		if newNode, err = node.Clone(); err != nil {
+			return nil, err
+		}
+		newProp := newXchgProperty()
+		newProp.output = xchgOutput
+		updateChildrenProp(newNode, newProp)
 
-		// sender := &PhysicalXchg{tp: TypeXchgSenderHash}
-		// if err = initXchg(ctx, sender, newNode, newNode.Stats(), reqProp.output); err != nil {
-		// 	return nil, err
-		// }
+		sender := &PhysicalXchg{tp: TypeXchgSenderHash, hashPartition: cloneCols(reqProp.hashPartition)}
+		if err = initXchg(ctx, sender, newNode, newNode.Stats(), xchgOutput); err != nil {
+			return nil, err
+		}
+		receiver := &PhysicalXchg{tp: TypeXchgReceiverPassThrough}
+		if err = initXchg(ctx, receiver, sender, newNode.Stats(), xchgOutput); err != nil {
+			return nil, err
+		}
+		setupChans(sender, receiver, xchgOutput)
 
-		// receiver := &PhysicalXchg{tp: TypeXchgReceiverPassThrough}
-		// if err = initXchg(ctx, receiver, sender, newNode.Stats(), reqProp.output); err != nil {
-		// 	return nil, err
-		// }
-
-		// res = append(res, receiver)
-		// return res, nil
+		res = append(res, receiver)
 		return nil, errors.New("hash partition not implemented yet")
 	}
 	return nil, errors.Errorf("invalid reqProp: %v", reqProp)
@@ -441,12 +527,9 @@ func tryAddXchgPreWork(node PhysicalPlan, reqProp *XchgProperty, res []PhysicalP
 	if err := checkPropValidation(reqProp); err != nil {
 		return nil, err
 	}
-	defProp := newXchgProperty()
-	defProp.available = reqProp.available
-	defProp.output = reqProp.output
 	childrenXchgProps := make([]*XchgProperty, len(node.Children()))
 	for i := 0; i < len(childrenXchgProps); i++ {
-		childrenXchgProps[i] = defProp.Clone()
+		childrenXchgProps[i] = reqProp.Clone()
 	}
 	node.SetChildXchgProps(childrenXchgProps)
 
@@ -459,8 +542,14 @@ func checkPropValidation(reqProp *XchgProperty) error {
 	if reqProp.output < 1 {
 		return errors.Errorf("output stream count not valid: %v", reqProp)
 	}
-	if reqProp.isBroadcastHT && len(reqProp.nonOrderedPartition) != 0 {
+	if reqProp.isBroadcastHT && len(reqProp.hashPartition) != 0 {
 		return errors.New("cannot require both broadcast and non-order partition at the same time")
+	}
+	if reqProp.isBroadcastHT && reqProp.output == 1 {
+		return errors.New("cannot require broadcastHT when output is 1")
+	}
+	if len(reqProp.hashPartition) != 0 && reqProp.output == 1 {
+		return errors.New("cannot require hash partition when output is 1")
 	}
 	return nil
 }
@@ -514,17 +603,16 @@ func isReaderNode(p PhysicalPlan) bool {
 
 func getReceiverStreamCount(reqOutput int, tp XchgType) (recvInStreamCnt int, recvOutStreamCnt int, err error) {
 	switch tp {
-	case TypeXchgReceiverPassThrough, TypeXchgReceiverPassThroughHT:
-		return 1, reqOutput, nil
 	case TypeXchgReceiverRandom:
 		return reqOutput, 1, nil
-	case TypeXchgSenderBroadcastHT, TypeXchgSenderRandom:
-		return 1, reqOutput, nil
 	case TypeXchgSenderPassThrough:
 		return reqOutput, 1, nil
+	case TypeXchgReceiverPassThrough, TypeXchgReceiverPassThroughHT:
+		return 1, reqOutput, nil
+	case TypeXchgSenderBroadcastHT, TypeXchgSenderRandom:
+		return 1, reqOutput, nil
 	case TypeXchgSenderHash:
-		// TODO: may be not simple
-		return -1, -1, errors.New("Not implemented Hash Sender for now")
+		return 1, reqOutput, nil
 	default:
 		return -1, -1, errors.Errorf("unexpected xchg receiver type: %v", tp)
 	}
