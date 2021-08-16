@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -637,17 +638,4 @@ func TestConfigExample(t *testing.T) {
 			require.False(t, ContainHiddenConfig(s))
 		}
 	}
-}
-
-func TestInitializeConfig(t *testing.T) {
-	originalGlobalConfig := *GetGlobalConfig()
-	updPort := func(cfg *Config) {
-		cfg.Port = DefPort + 1
-	}
-
-	InitializeConfig("", false, false, updPort)
-	require.Equal(t, uint(DefPort+1), GetGlobalConfig().Port)
-
-	StoreGlobalConfig(&originalGlobalConfig)
-	require.Equal(t, uint(DefPort), GetGlobalConfig().Port)
 }
