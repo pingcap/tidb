@@ -747,17 +747,6 @@ type hotRegionsHistoryRetriver struct {
 	cancel     context.CancelFunc
 }
 
-func (e *hotRegionsHistoryRetriver) close() error {
-	if e.cancel != nil {
-		e.cancel()
-	}
-	return nil
-}
-
-func (e *hotRegionsHistoryRetriver) getRuntimeStats() execdetails.RuntimeStats {
-	return nil
-}
-
 // HistoryHotRegionsRequest wrap conditions push down to PD.
 type HistoryHotRegionsRequest struct {
 	StartTime      int64    `json:"start_time,omitempty"`
@@ -776,13 +765,13 @@ type HistoryHotRegionsRequest struct {
 	HighQueryRate  float64  `json:"high_query_rate,omitempty"`
 }
 
-// HistoryHotRegions records filtered hot regions stored in each PD
+// HistoryHotRegions records filtered hot regions stored in each PD.
 // it's the response of PD.
 type HistoryHotRegions struct {
 	HistoryHotRegion []*HistoryHotRegion `json:"history_hot_region"`
 }
 
-// HistoryHotRegion records each hot region's statistics
+// HistoryHotRegion records each hot region's statistics.
 // it's the response of PD.
 type HistoryHotRegion struct {
 	UpdateTime    int64   `json:"update_time,omitempty"`
@@ -799,7 +788,6 @@ type HistoryHotRegion struct {
 }
 
 func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan hotRegionsStreamResult, error) {
-	// TODO check whether need it
 	if !hasPriv(sctx, mysql.ProcessPriv) {
 		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
@@ -822,8 +810,8 @@ func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx session
 	}
 
 	historyHotRegionsRequest := &HistoryHotRegionsRequest{
-		StartTime:      e.extractor.StartTime / 1000, // second in PD
-		EndTime:        e.extractor.EndTime / 1000,
+		StartTime:      e.extractor.StartTime,
+		EndTime:        e.extractor.EndTime,
 		RegionIDs:      e.extractor.RegionIDs,
 		StoreIDs:       e.extractor.StoreIDs,
 		PeerIDs:        e.extractor.PeerIDs,
@@ -878,7 +866,6 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 					ch <- hotRegionsStreamResult{err: errors.Errorf("request %s failed: %s", url, resp.Status)}
 					return
 				}
-				// var nested map[string]interface{}
 				var historyHotRegions HistoryHotRegions
 				if err = json.NewDecoder(resp.Body).Decode(&historyHotRegions); err != nil {
 					ch <- hotRegionsStreamResult{err: errors.Trace(err)}
@@ -903,7 +890,7 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 			e.isDrained = true
 			return nil, err
 		}
-		// initialize the heap
+		// Initialize the heap
 		e.heap = &hotRegionsResponseHeap{}
 		for _, ch := range results {
 			result := <-ch
@@ -917,7 +904,7 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		}
 		heap.Init(e.heap)
 	}
-	// filter results by db_name, table_name, index_name, table_id, index_id and mearge the results
+	// Filter results by db_name, table_name, index_name, table_id, index_id and merge the results.
 	var finalRows [][]types.Datum
 	for e.heap.Len() > 0 && len(finalRows) < hotRegionsHistoryBatchSize {
 		minTimeItem := heap.Pop(e.heap).(hotRegionsStreamResult)
@@ -929,7 +916,7 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 			finalRows = append(finalRows, row)
 		}
 		minTimeItem.messages.HistoryHotRegion = minTimeItem.messages.HistoryHotRegion[1:]
-		// Current streaming result is drained, read the next to supply.
+		// Fetch next message item
 		if len(minTimeItem.messages.HistoryHotRegion) != 0 {
 			heap.Push(e.heap, minTimeItem)
 		}
@@ -940,36 +927,24 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 }
 
 func (e *hotRegionsHistoryRetriver) filterBySchemaInfo(f *helper.FrameItem) bool {
-	// TODO Ignore this row  can't find responding schema f.
+	// Ignore this row  can't find responding schema f.
 	if f == nil {
 		return false
 	}
-	if len(e.extractor.DBNames) != 0 && !e.extractor.DBNames.Exist(f.DBName) {
+	if e.extractor.DBNames.Count() != 0 && !e.extractor.DBNames.Exist(f.DBName) {
 		return false
 	}
-	if len(e.extractor.TableNames) != 0 && !e.extractor.TableNames.Exist(f.TableName) {
+	if e.extractor.TableNames.Count() != 0 && !e.extractor.TableNames.Exist(f.TableName) {
 		return false
 	}
-	if len(e.extractor.IndexNames) != 0 && !e.extractor.IndexNames.Exist(f.IndexName) {
+	if e.extractor.IndexNames.Count() != 0 && !e.extractor.IndexNames.Exist(f.IndexName) {
 		return false
 	}
-	if len(e.extractor.TableIDs) != 0 {
-		tableIDset := set.NewInt64Set()
-		for _, tbl := range e.extractor.TableIDs {
-			tableIDset.Insert(int64(tbl))
-		}
-		if !tableIDset.Exist(f.TableID) {
-			return false
-		}
+	if e.extractor.TableIDs.Count() != 0 && !e.extractor.TableIDs.Exist(f.TableID) {
+		return false
 	}
-	if len(e.extractor.IndexIDs) != 0 {
-		indexIDset := set.NewInt64Set()
-		for _, idx := range e.extractor.IndexIDs {
-			indexIDset.Insert(int64(idx))
-		}
-		if !indexIDset.Exist(f.IndexID) {
-			return false
-		}
+	if e.extractor.IndexIDs.Count() != 0 && !e.extractor.IndexIDs.Exist(f.IndexID) {
+		return false
 	}
 	return true
 }
@@ -990,14 +965,12 @@ func (e *hotRegionsHistoryRetriver) parseAndFilterBySchemaInfo(sctx sessionctx.C
 		RegionCache: tikvStore.GetRegionCache(),
 	}
 	f := tikvHelper.FindTableIndexOfRegion(allSchemas, hotRange)
-	// keep this row or not
-	keep := e.filterBySchemaInfo(f)
-	if !keep {
+	// Keep this row or not
+	if !e.filterBySchemaInfo(f) {
 		return nil, nil
 	}
 	updateTime := time.Unix(headMessage.UpdateTime, 0)
 	row := make([]types.Datum, len(infoschema.TableTiDBHotRegionsHistoryCols))
-
 	row[0].SetString(updateTime.Format("2006/01/02 15:04:05"), mysql.DefaultCollationName)
 	row[1].SetString(strings.ToUpper(f.DBName), mysql.DefaultCollationName)
 	row[2].SetString(strings.ToUpper(f.TableName), mysql.DefaultCollationName)
@@ -1034,4 +1007,15 @@ func (e *hotRegionsHistoryRetriver) parseAndFilterBySchemaInfo(sctx sessionctx.C
 		row[13].SetNull()
 	}
 	return row, nil
+}
+
+func (e *hotRegionsHistoryRetriver) close() error {
+	if e.cancel != nil {
+		e.cancel()
+	}
+	return nil
+}
+
+func (e *hotRegionsHistoryRetriver) getRuntimeStats() execdetails.RuntimeStats {
+	return nil
 }
