@@ -63,6 +63,6 @@ func Info() string {
 	fmt.Fprintf(&buf, "Git Branch: %s\n", GitBranch)
 	fmt.Fprintf(&buf, "Go Version: %s\n", goVersion)
 	fmt.Fprintf(&buf, "UTC Build Time: %s\n", BuildTS)
-	fmt.Fprintf(&buf, "Race Enabled: %t", israce.RaceEnabled)
+	fmt.Fprintf(&buf, "Race Enabled: %t\n", israce.RaceEnabled)
 	return buf.String()
 }

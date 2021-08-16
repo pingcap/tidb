@@ -3,8 +3,8 @@
 package summary
 
 import (
-	"bytes"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +12,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -46,7 +47,7 @@ type LogCollector interface {
 
 	SetSuccessStatus(success bool)
 
-	CollectToStr() string
+	CollectToStr(name string) string
 
 	Summary(name string)
 }
@@ -236,12 +237,39 @@ func (tc *logCollector) Summary(name string) {
 	tc.log(name+" success summary", logFields...)
 }
 
-func (tc *logCollector) CollectToStr() string {
-	buf := bytes.Buffer{}
-	logFields := tc.summaryDetail()
-	fmt.Fprintln(&buf, logFields)
+func field2String(field zapcore.Field) string {
+	switch field.Type {
+	case zapcore.StringType:
+		return field.String
+	case zapcore.Int64Type, zapcore.Int32Type, zapcore.Uint32Type, zapcore.Uint64Type:
+		return fmt.Sprintf("%v", field.Integer)
+	case zapcore.Float64Type:
+		return fmt.Sprintf("%v", math.Float64frombits(uint64(field.Integer)))
+	case zapcore.StringerType:
+		return field.Interface.(fmt.Stringer).String()
+	case zapcore.DurationType:
+		return ((time.Duration)(field.Integer)).String()
+	default:
+		return ""
+	}
+}
 
-	return buf.String()
+func (tc *logCollector) CollectToStr(cmdName string) string {
+	var logFields []zap.Field
+
+	logFields = append(logFields, zap.String(cmdName, "success"))
+	summaryDetail := tc.summaryDetail()
+	logFields = append(logFields, summaryDetail...)
+
+	var outstr string
+	for _, f := range logFields {
+		k := f.Key
+		v := field2String(f)
+		if len(k) > 0 && len(v) > 0 {
+			outstr = outstr + "[\"" + k + "\"=" + v + "]"
+		}
+	}
+	return outstr
 }
 
 // SetLogCollector allow pass LogCollector outside.

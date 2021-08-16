@@ -234,14 +234,14 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 		return errors.Trace(err)
 	}
 
-	err = metaWriter.FlushBackupMeta(ctx)
+	// Set task summary to success status.
+	summary.SetSuccessStatus(true)
+	err = metaWriter.FlushBackupMeta(ctx, cmdName)
 	if err != nil {
+		summary.SetSuccessStatus(false)
 		return errors.Trace(err)
 	}
 
 	g.Record(summary.BackupDataSize, metaWriter.ArchiveSize())
-
-	// Set task summary to success status.
-	summary.SetSuccessStatus(true)
 	return nil
 }

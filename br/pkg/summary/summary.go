@@ -44,6 +44,6 @@ func Summary(name string) {
 	collector.Summary(name)
 }
 
-func SummaryToStr() string {
-	return collector.CollectToStr()
+func SummaryToStr(name string) string {
+	return collector.CollectToStr(name)
 }
