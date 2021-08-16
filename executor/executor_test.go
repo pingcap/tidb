@@ -8917,7 +8917,7 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	// Test normal table when local temporary exits.
 	tk.MustExec("insert into tmp6 values(1);")
 	tk.MustExec("set @a=now(6);")
-	tk.MustExec("do sleep(1);")
+	time.Sleep(time.Microsecond)
 	tk.MustExec("drop table tmp6")
 	tk.MustExec("create table tmp6 (id int primary key);")
 	tk.MustQuery("select * from tmp6 as of timestamp(@a) where id=1;").Check(testkit.Rows("1"))

@@ -2069,7 +2069,9 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 			return nil, errors.Trace(err)
 		}
 		isv, err := s.GetSnapshotInfoSchema(snapshotTS)
-		is = isv.(infoschema.InfoSchema)
+		if isv != nil {
+			is = isv.(infoschema.InfoSchema)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
