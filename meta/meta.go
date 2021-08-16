@@ -17,6 +17,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/ddl/placement"
 	"math"
 	"sort"
 	"strconv"
@@ -39,6 +40,7 @@ import (
 
 var (
 	globalIDMutex sync.Mutex
+	policyIDMutex sync.Mutex
 )
 
 // Meta structure:
@@ -69,6 +71,9 @@ var (
 	mRandomIDPrefix   = "TARID"
 	mBootstrapKey     = []byte("BootstrapKey")
 	mSchemaDiffPrefix = "Diff"
+	mPolicies         = []byte("Policies")
+	mPolicyPrefix     = "Policy"
+	mPolicyGlobalID   = []byte("PolicyGlobalID")
 )
 
 var (
@@ -76,6 +81,10 @@ var (
 	ErrDBExists = dbterror.ClassMeta.NewStd(mysql.ErrDBCreateExists)
 	// ErrDBNotExists is the error for db not exists.
 	ErrDBNotExists = dbterror.ClassMeta.NewStd(mysql.ErrBadDB)
+	// ErrPolicyExists is the error for policy exists.
+	ErrPolicyExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyExists)
+	// ErrPolicyNotExists is the error for policy not exists.
+	ErrPolicyNotExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyNotExists)
 	// ErrTableExists is the error for table exists.
 	ErrTableExists = dbterror.ClassMeta.NewStd(mysql.ErrTableExists)
 	// ErrTableNotExists is the error for table not exists.
@@ -142,6 +151,21 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 // GetGlobalID gets current global id.
 func (m *Meta) GetGlobalID() (int64, error) {
 	return m.txn.GetInt64(mNextGlobalIDKey)
+}
+
+func (m *Meta) GenPolicyID() (int64, error) {
+	policyIDMutex.Lock()
+	defer policyIDMutex.Unlock()
+
+	return m.txn.Inc(mPolicyGlobalID, 1)
+}
+
+func (m *Meta) GetPolicyID() (int64, error) {
+	return m.txn.GetInt64(mPolicyGlobalID)
+}
+
+func (m *Meta) policyKey(policyID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mPolicyPrefix, policyID))
 }
 
 func (m *Meta) dbKey(dbID int64) []byte {
@@ -267,6 +291,22 @@ func (m *Meta) GenSchemaVersion() (int64, error) {
 	return m.txn.Inc(mSchemaVersionKey, 1)
 }
 
+func (m *Meta) checkPolicyExists(policyKey []byte) error {
+	v, err := m.txn.HGet(mPolicies, policyKey)
+	if err == nil && v == nil {
+		err = ErrPolicyNotExists.GenWithStack("policy doesn't exist")
+	}
+	return errors.Trace(err)
+}
+
+func (m *Meta) checkPolicyNotExists(policyKey []byte) error {
+	v, err := m.txn.HGet(mPolicies, policyKey)
+	if err == nil && v != nil {
+		err = ErrPolicyExists.GenWithStack("policy already exists")
+	}
+	return errors.Trace(err)
+}
+
 func (m *Meta) checkDBExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
 	if err == nil && v == nil {
@@ -297,6 +337,33 @@ func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 		err = ErrTableExists.GenWithStack("table already exists")
 	}
 	return errors.Trace(err)
+}
+
+func (m *Meta) CreatePolicy(policy *placement.Policy) error {
+	policyKey := m.policyKey(policy.ID)
+
+	if err := m.checkPolicyNotExists(policyKey); err != nil {
+		return errors.Trace(err)
+	}
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.HSet(mPolicies, policyKey, data)
+}
+
+func (m *Meta) UpdatePolicy(policy *placement.Policy) error {
+	policyKey := m.policyKey(policy.ID)
+
+	if err := m.checkPolicyExists(policyKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.HSet(mPolicies, policyKey, data)
 }
 
 // CreateDatabase creates a database with db info.
@@ -549,6 +616,38 @@ func (m *Meta) GetDatabase(dbID int64) (*model.DBInfo, error) {
 	dbInfo := &model.DBInfo{}
 	err = json.Unmarshal(value, dbInfo)
 	return dbInfo, errors.Trace(err)
+}
+
+// ListPolicies shows all policies.
+func (m *Meta) ListPolicies() ([]*placement.Policy, error) {
+	res, err := m.txn.HGetAll(mPolicies)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	policies := make([]*placement.Policy, 0, len(res))
+	for _, r := range res {
+		policy := &placement.Policy{}
+		err = json.Unmarshal(r.Value, policy)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		policies = append(policies, policy)
+	}
+	return policies, nil
+}
+
+// GetPolicy gets the database value with ID.
+func (m *Meta) GetPolicy(policyID int64) (*placement.Policy, error) {
+	policyKey := m.policyKey(policyID)
+	value, err := m.txn.HGet(mPolicies, policyKey)
+	if err != nil || value == nil {
+		return nil, errors.Trace(err)
+	}
+
+	policy := &placement.Policy{}
+	err = json.Unmarshal(value, policy)
+	return policy, errors.Trace(err)
 }
 
 // GetTable gets the table value in database with tableID.

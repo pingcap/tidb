@@ -16,6 +16,7 @@ package meta_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/ddl/placement"
 	"math"
 	"strconv"
 	"sync"
@@ -30,6 +31,104 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPlacementPolicy(t *testing.T) {
+	t.Parallel()
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	// test the independent policy ID allocation.
+	m := meta.NewMeta(txn)
+	id, err := m.GenPolicyID()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), id)
+
+	id, err = m.GetPolicyID()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), id)
+
+	id, err = m.GenPolicyID()
+	require.NoError(t, err)
+	require.Equal(t, int64(2), id)
+
+	// test the meta storage of placemnt policy.
+	policy := &placement.Policy{
+		ID:            1,
+		Name:          model.NewCIStr("aa"),
+		PrimaryRegion: "my primary",
+		Regions:       "my regions",
+		Leaders:       1,
+		Followers:     2,
+		Voters:        3,
+		Schedule:      "even",
+		Constraints: placement.Constraints{
+			{
+				Key:    "disk",
+				Op:     placement.In,
+				Values: []string{"ssd"},
+			},
+		},
+		LeaderConstraints: placement.Constraints{
+			{
+				Key:    "zone",
+				Op:     placement.In,
+				Values: []string{"shanghai"},
+			},
+		},
+	}
+	err = m.CreatePolicy(policy)
+	require.NoError(t, err)
+
+	err = m.CreatePolicy(policy)
+	require.NotNil(t, err)
+	require.True(t, meta.ErrPolicyExists.Equal(err))
+
+	val, err := m.GetPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+
+	// mock updating the placement policy.
+	policy.Name = model.NewCIStr("bb")
+	policy.LeaderConstraints = placement.Constraints{
+		{
+			Key:    "zone",
+			Op:     placement.In,
+			Values: []string{"nanjing"},
+		}}
+	err = m.UpdatePolicy(policy)
+	require.NoError(t, err)
+
+	val, err = m.GetPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+
+	ps, err := m.ListPolicies()
+	require.NoError(t, err)
+	require.Equal(t, []*placement.Policy{policy}, ps)
+
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	// fetch the stored value after committing.
+	txn, err = store.Begin()
+	require.NoError(t, err)
+
+	m = meta.NewMeta(txn)
+	val, err = m.GetPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+}
 
 func TestMeta(t *testing.T) {
 	t.Parallel()
