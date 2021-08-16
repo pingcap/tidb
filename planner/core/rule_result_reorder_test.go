@@ -72,19 +72,19 @@ func (s *testRuleReorderResultsSerial) TestSQLBinding(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, c int, d int, key(b))")
 	tk.MustQuery("explain select * from t where a > 0 limit 1").Check(testkit.Rows(
-		"Limit_11 1.00 root  offset:0, count:1",
-		"└─TableReader_21 1.00 root  data:Limit_20",
-		"  └─Limit_20 1.00 cop[tikv]  offset:0, count:1",
-		"    └─TableRangeScan_19 1.00 cop[tikv] table:t range:(0,+inf], keep order:true, stats:pseudo"))
+		"Limit_10 1.00 root  offset:0, count:1",
+		"└─TableReader_17 1.00 root  data:Limit_16",
+		"  └─Limit_16 1.00 cop[tikv]  offset:0, count:1",
+		"    └─TableRangeScan_15 1.00 cop[tikv] table:t range:(0,+inf], keep order:true, stats:pseudo"))
 
 	tk.MustExec("create session binding for select * from t where a>0 limit 1 using select * from t use index(b) where a>0 limit 1")
 	tk.MustQuery("explain select * from t where a > 0 limit 1").Check(testkit.Rows(
 		"TopN_9 1.00 root  test.t.a:asc, offset:0, count:1",
-		"└─IndexLookUp_18 1.00 root  ",
-		"  ├─TopN_17(Build) 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
-		"  │ └─Selection_16 3333.33 cop[tikv]  gt(test.t.a, 0)",
-		"  │   └─IndexFullScan_14 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_15(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		"└─IndexLookUp_16 1.00 root  ",
+		"  ├─TopN_15(Build) 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+		"  │ └─Selection_14 3333.33 cop[tikv]  gt(test.t.a, 0)",
+		"  │   └─IndexFullScan_12 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_13(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 }
 
 type testRuleReorderResults struct {

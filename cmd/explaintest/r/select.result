@@ -242,9 +242,9 @@ insert into t1 values(9, 10, 11);
 explain select a, c from t1 use index(idx) order by a limit 5;
 id	estRows	task	access object	operator info
 TopN_7	5.00	root		test.t1.a:asc, offset:0, count:5
-└─IndexReader_15	5.00	root		index:TopN_14
-  └─TopN_14	5.00	cop[tikv]		test.t1.a:asc, offset:0, count:5
-    └─IndexFullScan_13	10000.00	cop[tikv]	table:t1, index:idx(b, c)	keep order:false, stats:pseudo
+└─IndexReader_13	5.00	root		index:TopN_12
+  └─TopN_12	5.00	cop[tikv]		test.t1.a:asc, offset:0, count:5
+    └─IndexFullScan_11	10000.00	cop[tikv]	table:t1, index:idx(b, c)	keep order:false, stats:pseudo
 select c, a from t1 use index(idx) order by a limit 5;
 c	a
 3	1
