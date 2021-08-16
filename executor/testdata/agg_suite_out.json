@@ -21,12 +21,12 @@
         "3"
       ],
       [
-        "Projection_15 2.00 root  test.t.i",
+        "Projection_12 2.00 root  test.t.i",
         "└─TopN_7 2.00 root  Column#3:asc, offset:0, count:2",
-        "  └─Projection_16 2.00 root  test.t.i, plus(test.t.i, 1)->Column#3",
-        "    └─TableReader_12 2.00 root  data:TopN_11",
-        "      └─TopN_11 2.00 cop[tikv]  plus(test.t.i, 1):asc, offset:0, count:2",
-        "        └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        "  └─Projection_13 2.00 root  test.t.i, plus(test.t.i, 1)->Column#3",
+        "    └─TableReader_11 2.00 root  data:TopN_10",
+        "      └─TopN_10 2.00 cop[tikv]  plus(test.t.i, 1):asc, offset:0, count:2",
+        "        └─TableFullScan_9 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
       ],
       [
         "1",
@@ -54,27 +54,27 @@
         "  ├─Apply_35(Build) 1.00 root  CARTESIAN left outer join",
         "  │ ├─Apply_37(Build) 1.00 root  CARTESIAN left outer join",
         "  │ │ ├─HashAgg_38(Build) 1.00 root  funcs:sum(Column#28)->Column#9, funcs:firstrow(Column#29)->test.test.a",
-        "  │ │ │ └─Projection_74 10000.00 root  cast(test.test.a, decimal(32,0) BINARY)->Column#28, test.test.a",
+        "  │ │ │ └─Projection_62 10000.00 root  cast(test.test.a, decimal(32,0) BINARY)->Column#28, test.test.a",
         "  │ │ │   └─TableReader_40 10000.00 root  data:TableFullScan_39",
         "  │ │ │     └─TableFullScan_39 10000.00 cop[tikv] table:tt keep order:false, stats:pseudo",
         "  │ │ └─Projection_41(Probe) 1.00 root  <nil>->Column#12",
         "  │ │   └─Limit_42 1.00 root  offset:0, count:1",
-        "  │ │     └─TableReader_48 1.00 root  data:Limit_47",
-        "  │ │       └─Limit_47 1.00 cop[tikv]  offset:0, count:1",
-        "  │ │         └─Selection_46 1.00 cop[tikv]  eq(test.test.a, test.test.a)",
-        "  │ │           └─TableFullScan_45 1000.00 cop[tikv] table:test keep order:false, stats:pseudo",
-        "  │ └─Projection_52(Probe) 1.00 root  <nil>->Column#15",
-        "  │   └─Limit_53 1.00 root  offset:0, count:1",
-        "  │     └─TableReader_59 1.00 root  data:Limit_58",
-        "  │       └─Limit_58 1.00 cop[tikv]  offset:0, count:1",
-        "  │         └─Selection_57 1.00 cop[tikv]  eq(test.test.a, test.test.a)",
-        "  │           └─TableFullScan_56 1000.00 cop[tikv] table:test keep order:false, stats:pseudo",
-        "  └─Projection_63(Probe) 1.00 root  <nil>->Column#18",
-        "    └─Limit_64 1.00 root  offset:0, count:1",
-        "      └─TableReader_70 1.00 root  data:Limit_69",
-        "        └─Limit_69 1.00 cop[tikv]  offset:0, count:1",
-        "          └─Selection_68 1.00 cop[tikv]  eq(test.test.a, test.test.a)",
-        "            └─TableFullScan_67 1000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+        "  │ │     └─TableReader_47 1.00 root  data:Limit_46",
+        "  │ │       └─Limit_46 1.00 cop[tikv]  offset:0, count:1",
+        "  │ │         └─Selection_45 1.00 cop[tikv]  eq(test.test.a, test.test.a)",
+        "  │ │           └─TableFullScan_44 1000.00 cop[tikv] table:test keep order:false, stats:pseudo",
+        "  │ └─Projection_48(Probe) 1.00 root  <nil>->Column#15",
+        "  │   └─Limit_49 1.00 root  offset:0, count:1",
+        "  │     └─TableReader_54 1.00 root  data:Limit_53",
+        "  │       └─Limit_53 1.00 cop[tikv]  offset:0, count:1",
+        "  │         └─Selection_52 1.00 cop[tikv]  eq(test.test.a, test.test.a)",
+        "  │           └─TableFullScan_51 1000.00 cop[tikv] table:test keep order:false, stats:pseudo",
+        "  └─Projection_55(Probe) 1.00 root  <nil>->Column#18",
+        "    └─Limit_56 1.00 root  offset:0, count:1",
+        "      └─TableReader_61 1.00 root  data:Limit_60",
+        "        └─Limit_60 1.00 cop[tikv]  offset:0, count:1",
+        "          └─Selection_59 1.00 cop[tikv]  eq(test.test.a, test.test.a)",
+        "            └─TableFullScan_58 1000.00 cop[tikv] table:test keep order:false, stats:pseudo"
       ]
     ]
   }

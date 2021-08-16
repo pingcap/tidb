@@ -269,7 +269,7 @@
       },
       {
         "SQL": "select * from t where t.c = 1 and t.e = 1 order by t.b limit 1",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->TopN([test.t.b],0,1)"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->TopN([test.t.b],0,1))->TopN([test.t.b],0,1)"
       },
       {
         "SQL": "select * from t where t.e_str is null",

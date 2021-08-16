@@ -9,9 +9,9 @@
         ],
         "Plan": [
           "TopN_8 1.00 root  test.t.a:asc, offset:0, count:1",
-          "└─IndexReader_16 1.00 root  index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
-          "    └─IndexRangeScan_14 10.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false, stats:pseudo"
+          "└─IndexReader_14 1.00 root  index:TopN_13",
+          "  └─TopN_13 1.00 cop[tikv]  test.t.a:asc, offset:0, count:1",
+          "    └─IndexRangeScan_12 10.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -372,9 +372,9 @@
         "Plan": [
           "Projection_7 6.00 root  test.t.c, test.t.b",
           "└─TopN_8 6.00 root  test.t.b:asc, offset:0, count:6",
-          "  └─IndexReader_16 6.00 root  index:TopN_15",
-          "    └─TopN_15 6.00 cop[tikv]  test.t.b:asc, offset:0, count:6",
-          "      └─IndexRangeScan_14 6.68 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+          "  └─IndexReader_14 6.00 root  index:TopN_13",
+          "    └─TopN_13 6.00 cop[tikv]  test.t.b:asc, offset:0, count:6",
+          "      └─IndexRangeScan_12 6.68 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
         ]
       }
     ]

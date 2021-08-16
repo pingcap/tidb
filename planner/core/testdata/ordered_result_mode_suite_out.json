@@ -56,10 +56,10 @@
       {
         "Plan": [
           "TopN_8 10.00 root  test.t.a:asc, offset:0, count:10",
-          "└─IndexLookUp_16 10.00 root  ",
-          "  ├─TopN_15(Build) 10.00 cop[tikv]  test.t.a:asc, offset:0, count:10",
-          "  │ └─IndexFullScan_13 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_14(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─IndexLookUp_14 10.00 root  ",
+          "  ├─TopN_13(Build) 10.00 cop[tikv]  test.t.a:asc, offset:0, count:10",
+          "  │ └─IndexFullScan_11 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_12(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -377,10 +377,10 @@
       },
       {
         "Plan": [
-          "Projection_10 10000.00 root  Column#8, Column#7",
-          "└─Sort_11 10000.00 root  test.t1.a:asc, Column#7:asc, Column#8:asc",
-          "  └─Window_13 10000.00 root  row_number()->Column#8 over(partition by test.t1.a)",
-          "    └─Window_14 10000.00 root  sum(cast(test.t1.b, decimal(32,0) BINARY))->Column#7 over(partition by test.t1.a)",
+          "Projection_10 10000.00 root  Column#7, Column#8",
+          "└─Sort_11 10000.00 root  test.t1.a:asc, test.t1.b:asc, Column#7:asc, Column#8:asc",
+          "  └─Window_13 10000.00 root  sum(cast(test.t1.b, decimal(32,0) BINARY))->Column#8 over(partition by test.t1.a)",
+          "    └─Window_14 10000.00 root  row_number()->Column#7 over(partition by test.t1.a)",
           "      └─TableReader_17 10000.00 root  data:TableFullScan_16",
           "        └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ]
