@@ -90,22 +90,6 @@ func (rs *RegionSplitter) Split(
 	}
 	minKey := codec.EncodeBytes(sortedRanges[0].StartKey)
 	maxKey := codec.EncodeBytes(sortedRanges[len(sortedRanges)-1].EndKey)
-	for _, rule := range rewriteRules.Data {
-		if bytes.Compare(minKey, rule.GetNewKeyPrefix()) > 0 {
-			minKey = rule.GetNewKeyPrefix()
-		}
-		if bytes.Compare(maxKey, rule.GetNewKeyPrefix()) < 0 {
-			maxKey = rule.GetNewKeyPrefix()
-		}
-	}
-	for _, rule := range rewriteRules.Data {
-		if bytes.Compare(minKey, rule.GetNewKeyPrefix()) > 0 {
-			minKey = rule.GetNewKeyPrefix()
-		}
-		if bytes.Compare(maxKey, rule.GetNewKeyPrefix()) < 0 {
-			maxKey = rule.GetNewKeyPrefix()
-		}
-	}
 	interval := SplitRetryInterval
 	scatterRegions := make([]*RegionInfo, 0)
 SplitRegions:
