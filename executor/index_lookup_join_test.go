@@ -272,7 +272,7 @@ func (s *testSuite5) TestIssue19411(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 values (2)")
 	tk.MustExec("insert into t2 values (2)")
-	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */ * from t1 left join t2 on t1.c_int = t2.c_int").Check(testkit.Rows(
+	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */ * from t1 left join t2 on t1.c_int = t2.c_int").Sort().Check(testkit.Rows(
 		"1 1",
 		"2 2"))
 	tk.MustExec("commit")

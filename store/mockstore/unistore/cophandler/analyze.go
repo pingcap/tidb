@@ -421,6 +421,7 @@ func handleAnalyzeFullSamplingReq(
 		colGroups = append(colGroups, colOffsets)
 	}
 	colReq := analyzeReq.ColReq
+	/* #nosec G404 */
 	builder := &statistics.RowSampleBuilder{
 		Sc:              sc,
 		RecordSet:       e,

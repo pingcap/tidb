@@ -916,7 +916,7 @@ type PhysicalExchangeSender struct {
 
 	TargetTasks  []*kv.MPPTask
 	ExchangeType tipb.ExchangeType
-	HashCols     []*expression.Column
+	HashCols     []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks []*kv.MPPTask
 }
@@ -1008,6 +1008,8 @@ const (
 	Mpp2Phase
 	// MppTiDB runs agg on TiDB (and a partial agg on TiFlash if in 2 phase agg)
 	MppTiDB
+	// MppScalar also has 2 phases. The second phase runs in a single task.
+	MppScalar
 )
 
 type basePhysicalAgg struct {
@@ -1016,7 +1018,7 @@ type basePhysicalAgg struct {
 	AggFuncs         []*aggregation.AggFuncDesc
 	GroupByItems     []expression.Expression
 	MppRunMode       AggMppRunMode
-	MppPartitionCols []*expression.Column
+	MppPartitionCols []*property.MPPPartitionColumn
 }
 
 func (p *basePhysicalAgg) isFinalAgg() bool {

@@ -218,7 +218,7 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	name = strings.ToLower(name)
 	sysVar := GetSysVar(name)
 	if sysVar == nil {
-		return ErrUnknownSystemVar
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	sVal, err := sysVar.Validate(vars, value, ScopeSession)
 	if err != nil {
@@ -373,7 +373,7 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 		return err
 	}
 
-	t1, err := t.GoTime(s.TimeZone)
+	t1, err := t.GoTime(s.Location())
 	s.SnapshotTS = oracle.GoTimeToTS(t1)
 	// tx_read_ts should be mutual exclusive with tidb_snapshot
 	s.TxnReadTS = NewTxnReadTS(0)
@@ -390,7 +390,7 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 	if err != nil {
 		return err
 	}
-	t1, err := t.GoTime(s.TimeZone)
+	t1, err := t.GoTime(s.Location())
 	if err != nil {
 		return err
 	}

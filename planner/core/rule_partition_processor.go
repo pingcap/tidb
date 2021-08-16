@@ -15,6 +15,7 @@ package core
 import (
 	"context"
 	"fmt"
+	gomath "math"
 	"sort"
 	"strings"
 
@@ -183,10 +184,16 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 				if r.HighExclude {
 					posHigh--
 				}
-				rangeScalar := posHigh - posLow
+
+				var rangeScalar float64
+				if mysql.HasUnsignedFlag(col.RetType.Flag) {
+					rangeScalar = float64(uint64(posHigh)) - float64(uint64(posLow)) // use float64 to avoid integer overflow
+				} else {
+					rangeScalar = float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
+				}
 
 				// if range is less than the number of partitions, there will be unused partitions we can prune out.
-				if rangeScalar < int64(numPartitions) && !highIsNull && !lowIsNull {
+				if rangeScalar < float64(numPartitions) && !highIsNull && !lowIsNull {
 					for i := posLow; i <= posHigh; i++ {
 						idx := math.Abs(i % int64(pi.Num))
 						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
@@ -200,7 +207,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 				// issue:#22619
 				if col.RetType.Tp == mysql.TypeBit {
 					// maximum number of partitions is 8192
-					if col.RetType.Flen > 0 && col.RetType.Flen < int(math.Log2(ddl.PartitionCountLimit)) {
+					if col.RetType.Flen > 0 && col.RetType.Flen < int(gomath.Log2(ddl.PartitionCountLimit)) {
 						// all possible hash values
 						maxUsedPartitions := 1 << col.RetType.Flen
 						if maxUsedPartitions < numPartitions {
@@ -305,7 +312,6 @@ func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.
 				ColName:     colInfo.Name,
 				OrigTblName: ds.tableInfo.Name,
 				OrigColName: colInfo.Name,
-				Hidden:      colInfo.Hidden,
 			})
 			continue
 		}
@@ -465,14 +471,20 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 		var locations []tables.ListPartitionLocation
 		if r.IsPointNullable(sc) {
 			location, err := colPrune.LocatePartition(sc, r.HighVal[0])
+			if types.ErrOverflow.Equal(err) {
+				return nil, true, nil // return full-scan if over-flow
+			}
 			if err != nil {
 				return nil, false, err
 			}
 			locations = []tables.ListPartitionLocation{location}
 		} else {
 			locations, err = colPrune.LocateRanges(sc, r)
+			if types.ErrOverflow.Equal(err) {
+				return nil, true, nil // return full-scan if over-flow
+			}
 			if err != nil {
-				return nil, false, nil
+				return nil, false, err
 			}
 		}
 		for _, location := range locations {

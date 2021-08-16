@@ -552,6 +552,9 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBEnableTablePartition, "OFF", false},
 		{TiDBEnableTablePartition, "AUTO", false},
 		{TiDBEnableTablePartition, "UN", true},
+		{TiDBEnableListTablePartition, "ON", false},
+		{TiDBEnableListTablePartition, "OFF", false},
+		{TiDBEnableListTablePartition, "list", true},
 		{TiDBOptCorrelationExpFactor, "a", true},
 		{TiDBOptCorrelationExpFactor, "-10", true},
 		{TiDBOptCorrelationThreshold, "a", true},
@@ -729,4 +732,31 @@ func (s *testVarsutilSuite) TestConcurrencyVariables(c *C) {
 	c.Assert(vars.MergeJoinConcurrency(), Equals, mjConcurrency)
 	c.Assert(vars.StreamAggConcurrency(), Equals, saConcurrency)
 
+}
+
+func (s *testVarsutilSuite) TestHelperFuncs(c *C) {
+	c.Assert(int32ToBoolStr(1), Equals, "ON")
+	c.Assert(int32ToBoolStr(0), Equals, "OFF")
+
+	c.Assert(TiDBOptEnableClustered("ON"), Equals, ClusteredIndexDefModeOn)
+	c.Assert(TiDBOptEnableClustered("OFF"), Equals, ClusteredIndexDefModeOff)
+	c.Assert(TiDBOptEnableClustered("bogus"), Equals, ClusteredIndexDefModeIntOnly) // default
+
+	c.Assert(tidbOptPositiveInt32("1234", 5), Equals, 1234)
+	c.Assert(tidbOptPositiveInt32("-1234", 5), Equals, 5)
+	c.Assert(tidbOptPositiveInt32("bogus", 5), Equals, 5)
+
+	c.Assert(tidbOptInt("1234", 5), Equals, 1234)
+	c.Assert(tidbOptInt("-1234", 5), Equals, -1234)
+	c.Assert(tidbOptInt("bogus", 5), Equals, 5)
+}
+
+func (s *testVarsutilSuite) TestStmtVars(c *C) {
+	vars := NewSessionVars()
+	err := SetStmtVar(vars, "bogussysvar", "1")
+	c.Assert(err.Error(), Equals, "[variable:1193]Unknown system variable 'bogussysvar'")
+	err = SetStmtVar(vars, MaxExecutionTime, "ACDC")
+	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'max_execution_time'")
+	err = SetStmtVar(vars, MaxExecutionTime, "100")
+	c.Assert(err, IsNil)
 }

@@ -189,8 +189,8 @@ type ExecStmt struct {
 	// SnapshotTS stores the timestamp for stale read.
 	// It is not equivalent to session variables's snapshot ts, it only use to build the executor.
 	SnapshotTS uint64
-	// ExplicitStaleness means whether the 'SELECT' clause are using 'AS OF TIMESTAMP' to perform stale read explicitly.
-	ExplicitStaleness bool
+	// IsStaleness means whether this statement use stale read.
+	IsStaleness bool
 	// TxnScope indicates the scope the store selector scope the request visited
 	TxnScope string
 	// InfoSchema stores a reference to the schema information.
@@ -247,7 +247,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		}
 	}
 	if a.PsStmt.Executor == nil {
-		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.SnapshotTS, a.ExplicitStaleness, a.TxnScope)
+		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.SnapshotTS, a.IsStaleness, a.TxnScope)
 		newExecutor := b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -292,7 +292,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	}
 	a.InfoSchema = ret.InfoSchema
 	a.SnapshotTS = ret.LastSnapshotTS
-	a.ExplicitStaleness = ret.ExplicitStaleness
+	a.IsStaleness = ret.IsStaleness
 	a.TxnScope = ret.TxnScope
 	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
 	if err != nil {
@@ -307,9 +307,10 @@ func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
 	if a.Plan == nil || !variable.TopSQLEnabled() {
 		return ctx
 	}
-	normalizedSQL, sqlDigest := a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
+	vars := a.Ctx.GetSessionVars()
+	normalizedSQL, sqlDigest := vars.StmtCtx.SQLDigest()
 	normalizedPlan, planDigest := getPlanDigest(a.Ctx, a.Plan)
-	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest)
+	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, vars.InRestrictedSQL)
 }
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
@@ -339,16 +340,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if n, ok := val.(int); ok {
 			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
 			if n != int(startTS) {
-				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
-			}
-			failpoint.Return()
-		}
-	})
-	failpoint.Inject("assertStaleTSOWithTolerance", func(val failpoint.Value) {
-		if n, ok := val.(int); ok {
-			// Convert to seconds
-			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
-			if int(startTS) <= n-1 || n+1 <= int(startTS) {
 				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
 			}
 			failpoint.Return()
@@ -566,6 +557,12 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	var err error
+	defer func() {
+		terror.Log(e.Close())
+		a.logAudit()
+	}()
+
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -579,12 +576,6 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 			return nil, errors.New("can not execute write statement when 'tidb_low_resolution_tso' is set")
 		}
 	}
-
-	var err error
-	defer func() {
-		terror.Log(e.Close())
-		a.logAudit()
-	}()
 
 	err = Next(ctx, e, newFirstChunk(e))
 	if err != nil {
@@ -795,7 +786,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.SnapshotTS, a.ExplicitStaleness, a.TxnScope)
+	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.SnapshotTS, a.IsStaleness, a.TxnScope)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
@@ -828,6 +819,7 @@ func (a *ExecStmt) logAudit() {
 	if sessVars.InRestrictedSQL {
 		return
 	}
+
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		audit := plugin.DeclareAuditManifest(p.Manifest)
 		if audit.OnGeneralEvent != nil {
@@ -906,6 +898,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 	// Reset DurationParse due to the next statement may not need to be parsed (not a text protocol query).
 	sessVars.DurationParse = 0
+	// Clean the stale read flag when statement execution finish
+	sessVars.StmtCtx.IsStaleness = false
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work

@@ -257,6 +257,12 @@ func (s *testSuite) TestMaxSlidingWindow(c *C) {
 			orderByExpect: []string{"1", "2", "3"},
 		},
 		{
+			rowType:       "int unsigned",
+			insertValue:   "(1), (3), (2)",
+			expect:        []string{"3", "3", "3"},
+			orderByExpect: []string{"1", "2", "3"},
+		},
+		{
 			rowType:       "float",
 			insertValue:   "(1.1), (3.3), (2.2)",
 			expect:        []string{"3.3", "3.3", "3.3"},

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/util"
 )
 
@@ -277,6 +278,33 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 	if ds.handleCols != nil && ds.handleCols.IsInt() && ds.schema.ColumnIndex(ds.handleCols.GetCol(0)) == -1 {
 		ds.handleCols = nil
+	}
+	return nil
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) error {
+	switch p.TableInfo.Name.O {
+	case infoschema.TableStatementsSummary,
+		infoschema.TableStatementsSummaryHistory,
+		infoschema.TableSlowQuery,
+		infoschema.ClusterTableStatementsSummary,
+		infoschema.ClusterTableStatementsSummaryHistory,
+		infoschema.ClusterTableSlowLog,
+		infoschema.TableTiDBTrx,
+		infoschema.ClusterTableTiDBTrx,
+		infoschema.TableDataLockWaits,
+		infoschema.TableDeadlocks,
+		infoschema.ClusterTableDeadlocks:
+	default:
+		return nil
+	}
+	used := expression.GetUsedList(parentUsedCols, p.schema)
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] && p.schema.Len() > 1 {
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
+		}
 	}
 	return nil
 }

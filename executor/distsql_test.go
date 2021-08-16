@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
+// nolint:unused
 func checkGoroutineExists(keyword string) bool {
 	buf := new(bytes.Buffer)
 	profile := pprof.Lookup("goroutine")

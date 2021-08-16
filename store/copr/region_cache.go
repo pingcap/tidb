@@ -16,9 +16,9 @@ package copr
 import (
 	"bytes"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/tikv/client-go/v2/logutil"
+	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -39,7 +39,7 @@ func (c *RegionCache) SplitRegionRanges(bo *Backoffer, keyRanges []kv.KeyRange) 
 
 	locations, err := c.SplitKeyRangesByLocations(bo, ranges)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, derr.ToTiDBErr(err)
 	}
 	var ret []kv.KeyRange
 	for _, loc := range locations {
@@ -64,7 +64,7 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 	for ranges.Len() > 0 {
 		loc, err := c.LocateKey(bo.TiKVBackoffer(), ranges.At(0).StartKey)
 		if err != nil {
-			return res, errors.Trace(err)
+			return res, derr.ToTiDBErr(err)
 		}
 
 		// Iterate to the first range that is not complete in the region.

@@ -923,6 +923,7 @@ const (
 	ErrTxnTooLarge                         = 8004
 	ErrWriteConflictInTiDB                 = 8005
 	ErrOptOnTemporaryTable                 = 8006
+	ErrDropTableOnTemporaryTable           = 8007
 	ErrUnsupportedReloadPlugin             = 8018
 	ErrUnsupportedReloadPluginVar          = 8019
 	ErrTableLocked                         = 8020
@@ -1045,6 +1046,7 @@ const (
 	ErrInvalidPlacementSpec               = 8234
 	ErrDDLReorgElementNotExist            = 8235
 	ErrPlacementPolicyCheck               = 8236
+	ErrInvalidAttributesSpec              = 8237
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

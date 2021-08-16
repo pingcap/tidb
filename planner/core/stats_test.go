@@ -78,7 +78,7 @@ func (s *testStatsSuite) TestGroupNDVs(c *C) {
 		err = core.Preprocess(tk.Se, stmt, core.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil)
 		tk.Se.GetSessionVars().PlanColumnID = 0
-		builder, _ := core.NewPlanBuilder(tk.Se, ret.InfoSchema, &hint.BlockHintProcessor{})
+		builder, _ := core.NewPlanBuilder().Init(tk.Se, ret.InfoSchema, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil, comment)
 		p, err = core.LogicalOptimize(ctx, builder.GetOptFlag(), p.(core.LogicalPlan))
@@ -139,7 +139,7 @@ func (s *testStatsSuite) TestGroupNDVs(c *C) {
 	}
 }
 
-func (s *testStatsSuite) TestCardinalityGroupCols(c *C) {
+func (s *testStatsSuite) TestNDVGroupCols(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	defer func() {

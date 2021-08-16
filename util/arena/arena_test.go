@@ -16,73 +16,52 @@ package arena
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
+const (
+	arenaCap       = 1000
+	allocCapSmall  = 10
+	allocCapMedium = 20
+	allocCapOut    = 1024
+)
 
 func TestSimpleArenaAllocator(t *testing.T) {
-	arena := NewAllocator(1000)
-	slice := arena.Alloc(10)
-	if arena.off != 10 {
-		t.Error("off not match, expect 10 bug got", arena.off)
-	}
+	t.Parallel()
 
-	if len(slice) != 0 || cap(slice) != 10 {
-		t.Error("slice length or cap not match")
-	}
+	arena := NewAllocator(arenaCap)
+	slice := arena.Alloc(allocCapSmall)
+	assert.Equal(t, allocCapSmall, arena.off)
+	assert.Len(t, slice, 0)
+	assert.Equal(t, allocCapSmall, cap(slice))
 
-	slice = arena.Alloc(20)
-	if arena.off != 30 {
-		t.Error("off not match, expect 30 bug got", arena.off)
-	}
+	slice = arena.Alloc(allocCapMedium)
+	assert.Equal(t, allocCapSmall+allocCapMedium, arena.off)
+	assert.Len(t, slice, 0)
+	assert.Equal(t, allocCapMedium, cap(slice))
 
-	if len(slice) != 0 || cap(slice) != 20 {
-		t.Error("slice length or cap not match")
-	}
+	slice = arena.Alloc(allocCapOut)
+	assert.Equal(t, allocCapSmall+allocCapMedium, arena.off)
+	assert.Len(t, slice, 0)
+	assert.Equal(t, allocCapOut, cap(slice))
 
-	slice = arena.Alloc(1024)
-	if arena.off != 30 {
-		t.Error("off not match, expect 30 bug got", arena.off)
-	}
-
-	if len(slice) != 0 || cap(slice) != 1024 {
-		t.Error("slice length or cap not match")
-	}
-
-	slice = arena.AllocWithLen(2, 10)
-	if arena.off != 40 {
-		t.Error("off not match, expect 40 bug got", arena.off)
-	}
-
-	if len(slice) != 2 || cap(slice) != 10 {
-		t.Error("slice length or cap not match")
-	}
+	slice = arena.AllocWithLen(2, allocCapSmall)
+	assert.Equal(t, allocCapSmall+allocCapMedium+allocCapSmall, arena.off)
+	assert.Len(t, slice, 2)
+	assert.Equal(t, allocCapSmall, cap(slice))
 
 	arena.Reset()
-	if arena.off != 0 || cap(arena.arena) != 1000 {
-		t.Error("off or cap not match")
-	}
+	assert.Zero(t, arena.off)
+	assert.Equal(t, arenaCap, cap(arena.arena))
 }
 
 func TestStdAllocator(t *testing.T) {
-	slice := StdAllocator.Alloc(20)
-	if len(slice) != 0 {
-		t.Error("length not match")
-	}
+	t.Parallel()
+	slice := StdAllocator.Alloc(allocCapMedium)
+	assert.Len(t, slice, 0)
+	assert.Equal(t, allocCapMedium, cap(slice))
 
-	if cap(slice) != 20 {
-		t.Error("cap not match")
-	}
-
-	slice = StdAllocator.AllocWithLen(10, 20)
-	if len(slice) != 10 {
-		t.Error("length not match")
-	}
-
-	if cap(slice) != 20 {
-		t.Error("cap not match")
-	}
+	slice = StdAllocator.AllocWithLen(allocCapSmall, allocCapMedium)
+	assert.Len(t, slice, allocCapSmall)
+	assert.Equal(t, allocCapMedium, cap(slice))
 }
