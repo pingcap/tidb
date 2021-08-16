@@ -160,7 +160,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	return errors.Trace(err)
 }
 
-// ParseFromFlags parses the backup-related flags from the flag set.
+// parseCompressionFlags parses the backup-related flags from the flag set.
 func parseCompressionFlags(flags *pflag.FlagSet) (*CompressionConfig, error) {
 	compressionStr, err := flags.GetString(flagCompressionType)
 	if err != nil {
@@ -330,23 +330,22 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	// Metafile size should be less than 64MB.
 	metawriter := metautil.NewMetaWriter(client.GetStorage(), metautil.MetaFileSize, cfg.UseBackupMetaV2)
+	// Hack way to update backupmeta.
+	metawriter.Update(func(m *backuppb.BackupMeta) {
+		m.StartVersion = req.StartVersion
+		m.EndVersion = req.EndVersion
+		m.IsRawKv = req.IsRawKv
+		m.ClusterId = req.ClusterId
+		m.ClusterVersion = clusterVersion
+		m.BrVersion = brVersion
+	})
 
 	// nothing to backup
 	if ranges == nil {
-		// Hack way to update backupmeta.
-		metawriter.StartWriteMetasAsync(ctx, metautil.AppendSchema)
-		metawriter.Update(func(m *backuppb.BackupMeta) {
-			m.StartVersion = req.StartVersion
-			m.EndVersion = req.EndVersion
-			m.IsRawKv = req.IsRawKv
-			m.ClusterId = req.ClusterId
-			m.ClusterVersion = clusterVersion
-			m.BrVersion = brVersion
-		})
 		pdAddress := strings.Join(cfg.PD, ",")
 		log.Warn("Nothing to backup, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
-		return metawriter.FinishWriteMetas(ctx, metautil.AppendSchema)
+		return metawriter.FlushBackupMeta(ctx)
 	}
 
 	if isIncrementalBackup {
@@ -431,15 +430,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	metawriter.Update(func(m *backuppb.BackupMeta) {
-		m.StartVersion = req.StartVersion
-		m.EndVersion = req.EndVersion
-		m.IsRawKv = req.IsRawKv
-		m.ClusterId = req.ClusterId
-		m.ClusterVersion = clusterVersion
-		m.BrVersion = brVersion
-	})
-
 	skipChecksum := !cfg.Checksum || isIncrementalBackup
 	checksumProgress := int64(schemas.Len())
 	if skipChecksum {
@@ -460,6 +450,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	err = metawriter.FlushBackupMeta(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// Checksum has finished, close checksum progress.
 	updateCh.Close()
 
