@@ -2182,6 +2182,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBDDLReorgBatchSize,
 	variable.TiDBDDLErrorCountLimit,
 	variable.TiDBOptInSubqToJoinAndAgg,
+	variable.TiDBOptPreferRangeScan,
 	variable.TiDBOptCorrelationThreshold,
 	variable.TiDBOptCorrelationExpFactor,
 	variable.TiDBOptCPUFactor,
@@ -2229,6 +2230,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBMemoryUsageAlarmRatio,
 	variable.TiDBMultiStatementMode,
 	variable.TiDBEnableOrderedResultMode,
+	variable.TiDBOptLimitPushDownThreshold,
 }
 
 var (

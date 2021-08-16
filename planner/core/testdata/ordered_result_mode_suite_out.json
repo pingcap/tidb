@@ -56,18 +56,18 @@
       {
         "Plan": [
           "TopN_8 10.00 root  test.t.a:asc, offset:0, count:10",
-          "└─IndexLookUp_16 10.00 root  ",
-          "  ├─TopN_15(Build) 10.00 cop[tikv]  test.t.a:asc, offset:0, count:10",
-          "  │ └─IndexFullScan_13 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_14(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─IndexLookUp_14 10.00 root  ",
+          "  ├─TopN_13(Build) 10.00 cop[tikv]  test.t.a:asc, offset:0, count:10",
+          "  │ └─IndexFullScan_11 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_12(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "Plan": [
-          "Limit_10 10.00 root  offset:0, count:10",
-          "└─TableReader_20 10.00 root  data:Limit_19",
-          "  └─Limit_19 10.00 cop[tikv]  offset:0, count:10",
-          "    └─TableFullScan_18 10.00 cop[tikv] table:t keep order:true, stats:pseudo"
+          "Limit_9 10.00 root  offset:0, count:10",
+          "└─TableReader_16 10.00 root  data:Limit_15",
+          "  └─Limit_15 10.00 cop[tikv]  offset:0, count:10",
+          "    └─TableFullScan_14 10.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ]
       },
       {
@@ -104,10 +104,10 @@
       {
         "Plan": [
           "Projection_7 1.00 root  test.t.b",
-          "└─Limit_11 1.00 root  offset:0, count:1",
-          "  └─TableReader_21 1.00 root  data:Limit_20",
-          "    └─Limit_20 1.00 cop[tikv]  offset:0, count:1",
-          "      └─TableRangeScan_19 1.00 cop[tikv] table:t range:(0,+inf], keep order:true, stats:pseudo"
+          "└─Limit_10 1.00 root  offset:0, count:1",
+          "  └─TableReader_17 1.00 root  data:Limit_16",
+          "    └─Limit_16 1.00 cop[tikv]  offset:0, count:1",
+          "      └─TableRangeScan_15 1.00 cop[tikv] table:t range:(0,+inf], keep order:true, stats:pseudo"
         ]
       }
     ]

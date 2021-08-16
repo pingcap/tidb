@@ -1660,17 +1660,40 @@ func (lt *LogicalTopN) canPushToCop() bool {
 	return ok
 }
 
-func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
-	if lt.limitHints.preferLimitToCop {
-		if !lt.canPushToCop() {
+func pushLimitOrTopNForcibly(p LogicalPlan) bool {
+	var meetThreshold bool
+	var preferPushDown *bool
+	switch lp := p.(type) {
+	case *LogicalTopN:
+		preferPushDown = &lp.limitHints.preferLimitToCop
+		meetThreshold = lp.Count+lp.Offset <= uint64(lp.ctx.GetSessionVars().LimitPushDownThreshold)
+	case *LogicalLimit:
+		preferPushDown = &lp.limitHints.preferLimitToCop
+		meetThreshold = true // always push Limit down in this case since it has no side effect
+	default:
+		return false
+	}
+
+	if *preferPushDown || meetThreshold {
+		if _, ok := p.Children()[0].(*DataSource); ok {
+			return true
+		}
+
+		// cannot be pushed down
+		if *preferPushDown {
 			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
 			warning := ErrInternal.GenWithStack(errMsg)
-			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-			lt.limitHints.preferLimitToCop = false
+			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+			*preferPushDown = false
 		}
 	}
+
+	return false
+}
+
+func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
-	if !lt.limitHints.preferLimitToCop {
+	if !pushLimitOrTopNForcibly(lt) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
@@ -1692,17 +1715,8 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 		return nil
 	}
 
-	if lt.limitHints.preferLimitToCop {
-		if !lt.canPushToCop() {
-			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
-			warning := ErrInternal.GenWithStack(errMsg)
-			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-			lt.limitHints.preferLimitToCop = false
-		}
-	}
-
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
-	if !lt.limitHints.preferLimitToCop {
+	if !pushLimitOrTopNForcibly(lt) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
@@ -2033,17 +2047,9 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 	if !prop.IsEmpty() {
 		return nil, true
 	}
-	if p.limitHints.preferLimitToCop {
-		if !p.canPushToCop() {
-			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
-			warning := ErrInternal.GenWithStack(errMsg)
-			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
-			p.limitHints.preferLimitToCop = false
-		}
-	}
 
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
-	if !p.limitHints.preferLimitToCop {
+	if !pushLimitOrTopNForcibly(p) {
 		allTaskTypes = append(allTaskTypes, property.RootTaskType)
 	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))

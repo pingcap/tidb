@@ -206,6 +206,9 @@ const (
 	// tidb_opt_insubquery_to_join_and_agg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
 
+	// tidb_opt_prefer_range_scan is used to enable/disable the optimizer to always prefer range scan over table scan, ignoring their costs.
+	TiDBOptPreferRangeScan = "tidb_opt_prefer_range_scan"
+
 	// tidb_opt_correlation_threshold is a guard to enable row count estimation using column order correlation.
 	TiDBOptCorrelationThreshold = "tidb_opt_correlation_threshold"
 
@@ -438,6 +441,9 @@ const (
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
+
+	// tidb_opt_limit_push_down_threshold determines if push Limit or TopN down to TiKV forcibly.
+	TiDBOptLimitPushDownThreshold = "tidb_opt_limit_push_down_threshold"
 )
 
 // Default TiDB system variable values.
@@ -462,6 +468,7 @@ const (
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
+	DefOptLimitPushDownThreshold       = 100
 	DefOptCPUFactor                    = 3.0
 	DefOptCopCPUFactor                 = 3.0
 	DefOptTiFlashConcurrencyFactor     = 24.0
@@ -473,6 +480,7 @@ const (
 	DefOptDiskFactor                   = 1.5
 	DefOptConcurrencyFactor            = 3.0
 	DefOptInSubqToJoinAndAgg           = true
+	DefOptPreferRangeScan              = false
 	DefBatchInsert                     = false
 	DefBatchDelete                     = false
 	DefBatchCommit                     = false

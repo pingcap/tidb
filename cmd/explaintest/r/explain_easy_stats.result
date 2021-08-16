@@ -75,9 +75,9 @@ Projection_11	1985.00	root		cast(Column#8, bigint(21) BINARY)->Column#7
 explain select * from t2 order by t2.c2 limit 0, 1;
 id	estRows	task	access object	operator info
 TopN_7	1.00	root		test.t2.c2:asc, offset:0, count:1
-└─TableReader_15	1.00	root		data:TopN_14
-  └─TopN_14	1.00	cop[tikv]		test.t2.c2:asc, offset:0, count:1
-    └─TableFullScan_13	1985.00	cop[tikv]	table:t2	keep order:false
+└─TableReader_13	1.00	root		data:TopN_12
+  └─TopN_12	1.00	cop[tikv]		test.t2.c2:asc, offset:0, count:1
+    └─TableFullScan_11	1985.00	cop[tikv]	table:t2	keep order:false
 explain select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	estRows	task	access object	operator info
 IndexLookUp_11	0.00	root		
@@ -106,17 +106,17 @@ Projection_13	1999.00	root		eq(test.t1.c2, test.t2.c2)->Column#11
 └─Apply_15	1999.00	root		CARTESIAN left outer join
   ├─TableReader_17(Build)	1999.00	root		data:TableFullScan_16
   │ └─TableFullScan_16	1999.00	cop[tikv]	table:t1	keep order:false
-  └─Projection_44(Probe)	1.00	root		test.t2.c1, test.t2.c2
-    └─IndexLookUp_43	1.00	root		limit embedded(offset:0, count:1)
-      ├─Limit_42(Build)	1.00	cop[tikv]		offset:0, count:1
-      │ └─IndexRangeScan_40	1.25	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true
-      └─TableRowIDScan_41(Probe)	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─Projection_36(Probe)	1.00	root		test.t2.c1, test.t2.c2
+    └─IndexLookUp_35	1.00	root		limit embedded(offset:0, count:1)
+      ├─Limit_34(Build)	1.00	cop[tikv]		offset:0, count:1
+      │ └─IndexRangeScan_32	1.25	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true
+      └─TableRowIDScan_33(Probe)	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select * from t1 order by c1 desc limit 1;
 id	estRows	task	access object	operator info
-Limit_10	1.00	root		offset:0, count:1
-└─TableReader_20	1.00	root		data:Limit_19
-  └─Limit_19	1.00	cop[tikv]		offset:0, count:1
-    └─TableFullScan_18	1.00	cop[tikv]	table:t1	keep order:true, desc
+Limit_9	1.00	root		offset:0, count:1
+└─TableReader_16	1.00	root		data:Limit_15
+  └─Limit_15	1.00	cop[tikv]		offset:0, count:1
+    └─TableFullScan_14	1.00	cop[tikv]	table:t1	keep order:true, desc
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select 1 in (select c2 from t2) from t1;
 id	estRows	task	access object	operator info
@@ -161,11 +161,11 @@ TableDual_5	0.00	root		rows:0
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 1;
 id	estRows	task	access object	operator info
 Limit_9	1.00	root		offset:1, count:1
-└─Point_Get_11	1.00	root	table:index_prune, index:PRIMARY(a, b)	
+└─Point_Get_10	1.00	root	table:index_prune, index:PRIMARY(a, b)	
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 0;
 id	estRows	task	access object	operator info
 Limit_9	0.00	root		offset:1, count:0
-└─Point_Get_11	1.00	root	table:index_prune, index:PRIMARY(a, b)	
+└─Point_Get_10	1.00	root	table:index_prune, index:PRIMARY(a, b)	
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0, 1;
 id	estRows	task	access object	operator info
 Point_Get_1	1.00	root	table:index_prune, index:PRIMARY(a, b)	

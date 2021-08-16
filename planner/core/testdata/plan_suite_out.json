@@ -269,7 +269,7 @@
       },
       {
         "SQL": "select * from t where t.c = 1 and t.e = 1 order by t.b limit 1",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->TopN([test.t.b],0,1)"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->TopN([test.t.b],0,1))->TopN([test.t.b],0,1)"
       },
       {
         "SQL": "select * from t where t.e_str is null",
@@ -281,7 +281,7 @@
       },
       {
         "SQL": "select * from t where t.c = 1 and t.e = 1 order by t.e limit 1",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->TopN([test.t.e],0,1)"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)])->TopN([test.t.e],0,1), Table(t))->TopN([test.t.e],0,1)"
       },
       {
         "SQL": "select * from t where t.c = 1 and t.e = 1 order by t.d limit 1",
@@ -341,7 +341,7 @@
       },
       {
         "SQL": "select c from t where t.c = 1 and t.d = 1 order by t.a limit 1",
-        "Best": "IndexReader(Index(t.c_d_e)[[1 1,1 1]])->TopN([test.t.a],0,1)->Projection"
+        "Best": "IndexReader(Index(t.c_d_e)[[1 1,1 1]]->TopN([test.t.a],0,1))->TopN([test.t.a],0,1)->Projection"
       },
       {
         "SQL": "select * from t where t.c = 1 and t.a > 1 order by t.d limit 1",
@@ -1096,7 +1096,7 @@
       },
       {
         "SQL": "select max(a+1) from t;",
-        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->Projection->TopN([Column#40 true],0,1)->Projection->Projection->StreamAgg"
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->Projection->TopN([Column#27 true],0,1)->Projection->Projection->StreamAgg"
       },
       {
         "SQL": "select max(a), min(a) from t;",
@@ -1461,10 +1461,11 @@
       {
         "SQL": "select * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
         "Plan": [
-          "TopN_10 0.83 root  test.tn.d:asc, offset:0, count:1",
-          "└─IndexReader_20 0.83 root  index:Selection_19",
-          "  └─Selection_19 0.83 cop[tikv]  gt(test.tn.c, 50)",
-          "    └─IndexRangeScan_18 2.50 cop[tikv] table:tn, index:a(a, b, c, d) range:(1 10,1 20), keep order:false, stats:pseudo"
+          "TopN_8 0.83 root  test.tn.d:asc, offset:0, count:1",
+          "└─IndexReader_15 0.83 root  index:TopN_14",
+          "  └─TopN_14 0.83 cop[tikv]  test.tn.d:asc, offset:0, count:1",
+          "    └─Selection_13 0.83 cop[tikv]  gt(test.tn.c, 50)",
+          "      └─IndexRangeScan_12 2.50 cop[tikv] table:tn, index:a(a, b, c, d) range:(1 10,1 20), keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
