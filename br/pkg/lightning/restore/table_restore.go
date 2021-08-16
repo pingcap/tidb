@@ -131,7 +131,7 @@ func (tr *TableRestore) populateChunks(ctx context.Context, rc *Controller, cp *
 	return err
 }
 
-func (t *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
+func (tr *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
 	if rowIDBase == 0 {
 		return
 	}

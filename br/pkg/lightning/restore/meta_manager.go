@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -19,25 +18,12 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
-	pdapi "github.com/tikv/pd/server/api"
 	"go.uber.org/zap"
-)
-
-const (
-	pdEmptyRegions = "/pd/api/v1/regions/check/empty-region"
-
-	warnEmptyRegionCntPerStore  = 500
-	errorEmptyRegionCntPerStore = 1000
-	warnRegionCntMaxMinRatio    = 1.5
-	errorRegionCntMaxMinRatio   = 2.0
-
-	// We only check RegionCntMaxMinRatio when the maximum region count of all stores is larger than this threshold.
-	checkRegionCntRatioThreshold = 1000
 )
 
 type metaMgrBuilder interface {
 	Init(ctx context.Context) error
-	TaskMetaMgr(pd *pdutil.PdController, pdTLS *common.TLS) taskMetaMgr
+	TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr
 	TableMetaMgr(tr *TableRestore) tableMetaMgr
 }
 
@@ -69,12 +55,11 @@ func (b *dbMetaMgrBuilder) Init(ctx context.Context) error {
 	return nil
 }
 
-func (b *dbMetaMgrBuilder) TaskMetaMgr(pd *pdutil.PdController, pdTLS *common.TLS) taskMetaMgr {
+func (b *dbMetaMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
 	return &dbTaskMetaMgr{
 		session:    b.db,
 		taskID:     b.taskID,
 		pd:         pd,
-		pdTLS:      pdTLS,
 		tableName:  common.UniqueTable(b.schema, TaskMetaTableName),
 		schemaName: b.schema,
 	}
@@ -492,6 +477,7 @@ type taskMetaMgr interface {
 	InitTask(ctx context.Context, source int64) error
 	CheckClusterSource(ctx context.Context) (int64, error)
 	CheckTaskExist(ctx context.Context) (bool, error)
+	CheckTasksExclusively(ctx context.Context, action func(tx *sql.Tx, tasks []taskMeta) error) error
 	CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error)
 	// CheckAndFinishRestore check task meta and return whether to switch cluster to normal state and clean up the metadata
 	// Return values: first boolean indicates whether switch back tidb cluster to normal state (restore schedulers, switch tikv to normal)
@@ -507,7 +493,6 @@ type dbTaskMetaMgr struct {
 	session *sql.DB
 	taskID  int64
 	pd      *pdutil.PdController
-	pdTLS   *common.TLS
 	// unique name of task meta table
 	tableName  string
 	schemaName string
@@ -555,6 +540,14 @@ func parseTaskMetaStatus(s string) (taskMetaStatus, error) {
 	default:
 		return taskMetaStatusInitial, errors.Errorf("invalid meta status '%s'", s)
 	}
+}
+
+type taskMeta struct {
+	taskID      int64
+	pdCfgs      string
+	status      taskMetaStatus
+	state       int
+	sourceBytes uint64
 }
 
 type storedCfgs struct {
@@ -621,72 +614,46 @@ func (m *dbTaskMetaMgr) CheckClusterSource(ctx context.Context) (int64, error) {
 	return source, nil
 }
 
-// checkEmptyRegion checks if there are too many empty regions on each store.
-func (m *dbTaskMetaMgr) checkEmptyRegion(ctx context.Context) error {
-	var result pdapi.RegionsInfo
-	if err := m.pdTLS.GetJSON(ctx, pdEmptyRegions, &result); err != nil {
-		return errors.Trace(err)
-	}
-	regions := make(map[uint64]int)
-	for _, region := range result.Regions {
-		for _, peer := range region.Peers {
-			regions[peer.StoreId]++
-		}
-	}
-	for storeID, regionCnt := range regions {
-		if regionCnt >= errorEmptyRegionCntPerStore {
-			return errors.Errorf("store %v contains too many empty regions, expect it to be less than %v, but actual is %v",
-				storeID, errorEmptyRegionCntPerStore, regionCnt)
-		} else if regionCnt >= warnEmptyRegionCntPerStore {
-			log.L().Warn(
-				"there are too many empty regions in store",
-				zap.Uint64("store-id", storeID),
-				zap.Int("empty-region-cnt", regionCnt),
-				zap.Int("expect-less-than", warnEmptyRegionCntPerStore),
-			)
-		}
-	}
-	return nil
-}
-
-// checkRegionDistribution checks if regions distribution is unbalanced.
-func (m *dbTaskMetaMgr) checkRegionDistribution(ctx context.Context) error {
-	result := &pdapi.StoresInfo{}
-	err := m.pdTLS.GetJSON(ctx, pdStores, result)
+func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tx *sql.Tx, tasks []taskMeta) error) error {
+	conn, err := m.session.Conn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(result.Stores) <= 1 {
-		return nil
+	defer conn.Close()
+	exec := &common.SQLWithRetry{
+		DB:     m.session,
+		Logger: log.L(),
 	}
-	sort.Slice(result.Stores, func(i, j int) bool {
-		return result.Stores[i].Status.RegionCount < result.Stores[j].Status.RegionCount
+	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
+	if err != nil {
+		return errors.Annotate(err, "enable pessimistic transaction failed")
+	}
+	return exec.Transact(ctx, "check tasks exclusively", func(ctx context.Context, tx *sql.Tx) error {
+		query := fmt.Sprintf("SELECT task_id, pd_cfgs, status, state, source_bytes from %s FOR UPDATE", m.tableName)
+		rows, err := tx.QueryContext(ctx, query)
+		if err != nil {
+			return errors.Annotate(err, "fetch task metas failed")
+		}
+		defer rows.Close()
+
+		var tasks []taskMeta
+		for rows.Next() {
+			var task taskMeta
+			var statusValue string
+			if err = rows.Scan(&task.taskID, &task.pdCfgs, &statusValue, &task.state, &task.sourceBytes); err != nil {
+				return errors.Trace(err)
+			}
+			status, err := parseTaskMetaStatus(statusValue)
+			if err != nil {
+				return errors.Annotatef(err, "invalid task meta status '%s'", statusValue)
+			}
+			task.status = status
+		}
+		if err = rows.Err(); err != nil {
+			return errors.Trace(err)
+		}
+		return action(tx, tasks)
 	})
-	minStore := result.Stores[0]
-	maxStore := result.Stores[len(result.Stores)-1]
-	if maxStore.Status.RegionCount <= checkRegionCntRatioThreshold {
-		return nil
-	}
-	if minStore.Status.RegionCount == 0 {
-		return errors.Errorf("regions distribution is unbalanced, there is no region on store %v", minStore.Store.Id)
-	}
-	ratio := float64(maxStore.Status.RegionCount) / float64(minStore.Status.RegionCount)
-	if ratio >= errorRegionCntMaxMinRatio {
-		return errors.Errorf("regions distribution is unbalanced, the ratio of the regions count of the store(%v) "+
-			"with most regions(%v) to the store(%v) with least regions(%v) is %v, but we expect it to be less than %v",
-			maxStore.Store.Id, maxStore.Status.RegionCount, minStore.Store.Id, minStore.Status.RegionCount, ratio, errorRegionCntMaxMinRatio)
-	} else if ratio >= warnRegionCntMaxMinRatio {
-		log.L().Warn(
-			"regions distribution is unbalanced",
-			zap.Uint64("max-store-id", maxStore.Store.Id),
-			zap.Int("max-region-cnt", maxStore.Status.RegionCount),
-			zap.Uint64("min-store-id", minStore.Store.Id),
-			zap.Int("min-region-cnt", minStore.Status.RegionCount),
-			zap.Float64("max-min-ratio", ratio),
-			zap.Float64("expect-less-than", warnRegionCntMaxMinRatio),
-		)
-	}
-	return nil
 }
 
 func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error) {
@@ -761,13 +728,6 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 
 		if cfgStr != "" {
 			err = json.Unmarshal([]byte(cfgStr), &pausedCfg)
-			return errors.Trace(err)
-		}
-
-		if err = m.checkEmptyRegion(ctx); err != nil {
-			return errors.Trace(err)
-		}
-		if err = m.checkRegionDistribution(ctx); err != nil {
 			return errors.Trace(err)
 		}
 
@@ -976,7 +936,7 @@ func (b noopMetaMgrBuilder) Init(ctx context.Context) error {
 	return nil
 }
 
-func (b noopMetaMgrBuilder) TaskMetaMgr(pd *pdutil.PdController, pdTLS *common.TLS) taskMetaMgr {
+func (b noopMetaMgrBuilder) TaskMetaMgr(pd *pdutil.PdController) taskMetaMgr {
 	return noopTaskMetaMgr{}
 }
 
@@ -987,6 +947,10 @@ func (b noopMetaMgrBuilder) TableMetaMgr(tr *TableRestore) tableMetaMgr {
 type noopTaskMetaMgr struct{}
 
 func (m noopTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
+	return nil
+}
+
+func (m noopTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tx *sql.Tx, tasks []taskMeta) error) error {
 	return nil
 }
 

@@ -16,10 +16,12 @@ package restore
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/docker/go-units"
@@ -44,22 +46,21 @@ import (
 )
 
 const (
-	pdWriteFlow = "/pd/api/v1/regions/writeflow"
-	pdReadFlow  = "/pd/api/v1/regions/readflow"
-
-	// OnlineBytesLimitation/OnlineKeysLimitation is the statistics of
-	// Bytes/Keys used per region from pdWriteFlow/pdReadFlow
-	// this determines whether the cluster has some region that have other loads
-	// and might influence the import task in the future.
-	OnlineBytesLimitation = 10 * units.MiB
-	OnlineKeysLimitation  = 5000
-
-	pdStores    = "/pd/api/v1/stores"
-	pdReplicate = "/pd/api/v1/config/replicate"
+	pdStores       = "/pd/api/v1/stores"
+	pdReplicate    = "/pd/api/v1/config/replicate"
+	pdEmptyRegions = "/pd/api/v1/regions/check/empty-region"
 
 	defaultCSVSize    = 10 * units.GiB
 	maxSampleDataSize = 10 * 1024 * 1024
 	maxSampleRowCount = 10 * 1024
+
+	warnEmptyRegionCntPerStore  = 500
+	errorEmptyRegionCntPerStore = 1000
+	warnRegionCntMaxMinRatio    = 1.5
+	errorRegionCntMaxMinRatio   = 2.0
+
+	// We only check RegionCntMaxMinRatio when the maximum region count of all stores is larger than this threshold.
+	checkRegionCntRatioThreshold = 1000
 )
 
 func (rc *Controller) isSourceInLocal() bool {
@@ -136,6 +137,108 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
 		message = fmt.Sprintf("cluster available check failed: %s", err.Error())
 	}
 	return nil
+}
+
+func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
+	var result api.RegionsInfo
+	if err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
+		return errors.Trace(err)
+	}
+	regions := make(map[uint64]int)
+	for _, region := range result.Regions {
+		for _, peer := range region.Peers {
+			regions[peer.StoreId]++
+		}
+	}
+	var (
+		warnMsgs     []string
+		criticalMsgs []string
+	)
+	for storeID, regionCnt := range regions {
+		if regionCnt > errorEmptyRegionCntPerStore {
+			message := fmt.Sprintf("TiKV store %v contains too many empty regions, "+
+				"the count must not exceed %v, but actual is %v",
+				storeID, errorEmptyRegionCntPerStore, regionCnt)
+			criticalMsgs = append(criticalMsgs, message)
+		} else if regionCnt > warnEmptyRegionCntPerStore {
+			message := fmt.Sprintf("TiKV store %v contains too many empty regions, "+
+				"the count should not exceed %v, but actual is %v",
+				storeID, warnEmptyRegionCntPerStore, regionCnt)
+			warnMsgs = append(warnMsgs, message)
+		}
+	}
+	if len(warnMsgs) > 0 {
+		rc.checkTemplate.Collect(Warn, false, strings.Join(warnMsgs, "\n"))
+	}
+	if len(criticalMsgs) > 0 {
+		rc.checkTemplate.Collect(Critical, false, strings.Join(criticalMsgs, "\n"))
+	}
+	if len(warnMsgs) == 0 && len(criticalMsgs) == 0 {
+		rc.checkTemplate.Collect(Critical, true, "Cluster doesn't have too many empty regions")
+	}
+	return nil
+}
+
+// checkRegionDistribution checks if regions distribution is unbalanced.
+func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
+	result := &api.StoresInfo{}
+	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(result.Stores) <= 1 {
+		return nil
+	}
+	sort.Slice(result.Stores, func(i, j int) bool {
+		return result.Stores[i].Status.RegionCount < result.Stores[j].Status.RegionCount
+	})
+	minStore := result.Stores[0]
+	maxStore := result.Stores[len(result.Stores)-1]
+	if maxStore.Status.RegionCount <= checkRegionCntRatioThreshold {
+		return nil
+	}
+	if minStore.Status.RegionCount == 0 {
+		rc.checkTemplate.Collect(Critical, false,
+			fmt.Sprintf("Region distribution is unbalanced, there is no region on store %v", minStore.Store.Id))
+		return nil
+	}
+	ratio := float64(maxStore.Status.RegionCount) / float64(minStore.Status.RegionCount)
+	if ratio > errorRegionCntMaxMinRatio {
+		message := fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
+			"with most regions(%v) to the store(%v) with least regions(%v) is %v, but we expect it must not exceed %v",
+			maxStore.Store.Id, maxStore.Status.RegionCount, minStore.Store.Id, minStore.Status.RegionCount, ratio, errorRegionCntMaxMinRatio)
+		rc.checkTemplate.Collect(Critical, false, message)
+	} else if ratio >= warnRegionCntMaxMinRatio {
+		message := fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
+			"with most regions(%v) to the store(%v) with least regions(%v) is %v, but we expect it should not exceed %v",
+			maxStore.Store.Id, maxStore.Status.RegionCount, minStore.Store.Id, minStore.Status.RegionCount, ratio, warnRegionCntMaxMinRatio)
+		rc.checkTemplate.Collect(Warn, false, message)
+	}
+	return nil
+}
+
+// CheckClusterRegion checks cluster if there are too many empty regions or region distribution is unbalanced.
+func (rc *Controller) CheckClusterRegion(ctx context.Context) error {
+	err := rc.taskMgr.CheckTasksExclusively(ctx, func(tx *sql.Tx, tasks []taskMeta) error {
+		noStarted := true
+		for _, task := range tasks {
+			if task.status > taskMetaStatusInitial {
+				noStarted = false
+				break
+			}
+		}
+		if !noStarted {
+			return nil
+		}
+		if err := rc.checkEmptyRegion(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		if err := rc.checkRegionDistribution(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	})
+	return errors.Trace(err)
 }
 
 // StoragePermission checks whether Lightning has enough permission to storage.
