@@ -969,7 +969,7 @@ func (e *hotRegionsHistoryRetriver) parseAndFilterBySchemaInfo(sctx sessionctx.C
 	if !e.filterBySchemaInfo(f) {
 		return nil, nil
 	}
-	updateTime := time.Unix(headMessage.UpdateTime, 0)
+	updateTime := time.Unix(headMessage.UpdateTime/1000, (headMessage.UpdateTime%1000)*int64(time.Millisecond))
 	row := make([]types.Datum, len(infoschema.TableTiDBHotRegionsHistoryCols))
 	row[0].SetString(updateTime.Format("2006/01/02 15:04:05"), mysql.DefaultCollationName)
 	row[1].SetString(strings.ToUpper(f.DBName), mysql.DefaultCollationName)
