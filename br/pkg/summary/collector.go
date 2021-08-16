@@ -3,6 +3,8 @@
 package summary
 
 import (
+	"bytes"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +45,8 @@ type LogCollector interface {
 	CollectUInt(name string, t uint64)
 
 	SetSuccessStatus(success bool)
+
+	CollectToStr() string
 
 	Summary(name string)
 }
@@ -159,7 +163,7 @@ func logKeyFor(key string) string {
 	return strings.ReplaceAll(key, " ", "-")
 }
 
-func (tc *logCollector) Summary(name string) {
+func (tc *logCollector) summaryDetail() []zap.Field {
 	tc.mu.Lock()
 	defer func() {
 		tc.durations = make(map[string]time.Duration)
@@ -191,8 +195,7 @@ func (tc *logCollector) Summary(name string) {
 		for unitName, reason := range tc.failureReasons {
 			logFields = append(logFields, zap.String("unit-name", unitName), zap.Error(reason))
 		}
-		tc.log(name+" failed summary", logFields...)
-		return
+		return logFields
 	}
 
 	totalDureTime := time.Since(tc.startTime)
@@ -225,7 +228,20 @@ func (tc *logCollector) Summary(name string) {
 		logFields = append(logFields, zap.Uint64(logKeyFor(name), data))
 	}
 
+	return logFields
+}
+
+func (tc *logCollector) Summary(name string) {
+	logFields := tc.summaryDetail()
 	tc.log(name+" success summary", logFields...)
+}
+
+func (tc *logCollector) CollectToStr() string {
+	buf := bytes.Buffer{}
+	logFields := tc.summaryDetail()
+	fmt.Fprintln(&buf, logFields)
+
+	return buf.String()
 }
 
 // SetLogCollector allow pass LogCollector outside.

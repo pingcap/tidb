@@ -43,3 +43,7 @@ func SetSuccessStatus(success bool) {
 func Summary(name string) {
 	collector.Summary(name)
 }
+
+func SummaryToStr() string {
+	return collector.CollectToStr()
+}
