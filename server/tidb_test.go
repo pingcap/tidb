@@ -26,7 +26,6 @@ import (
 	"database/sql"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
 	"math/big"
 	"net/http"
 	"os"
@@ -462,7 +461,7 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 
 func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
 	osTempDir := os.TempDir()
-	tempDir, err := ioutil.TempDir(osTempDir, "tidb-test.*.socket")
+	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
 	c.Assert(err, IsNil)
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 	defer os.RemoveAll(tempDir)
@@ -620,7 +619,7 @@ func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
 // TestOnlySocket for server configuration without network interface for mysql clients
 func (ts *tidbTestSuite) TestOnlySocket(c *C) {
 	osTempDir := os.TempDir()
-	tempDir, err := ioutil.TempDir(osTempDir, "tidb-test.*.socket")
+	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
 	c.Assert(err, IsNil)
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 	defer os.RemoveAll(tempDir)
