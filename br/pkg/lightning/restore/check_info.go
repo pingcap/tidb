@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/aerospike/aerospike-client-go/logger"
 	"io"
 	"path/filepath"
 	"reflect"
