@@ -5111,6 +5111,11 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 			Hidden:              true,
 			FieldType:           *expr.GetType(),
 		}
+		if colInfo.Tp == mysql.TypeDatetime || colInfo.Tp == mysql.TypeDate || colInfo.Tp == mysql.TypeTimestamp || colInfo.Tp == mysql.TypeDuration {
+			if colInfo.FieldType.Decimal == types.UnspecifiedLength {
+				colInfo.FieldType.Decimal = int(types.MaxFsp)
+			}
+		}
 		checkDependencies := make(map[string]struct{})
 		for _, colName := range findColumnNamesInExpr(idxPart.Expr) {
 			colInfo.Dependences[colName.Name.L] = struct{}{}
