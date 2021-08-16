@@ -280,7 +280,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(v, Equals, int64(2015))
 	v, err = Convert(ZeroDuration, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(time.Now().Year()))
+	c.Assert(v, Equals, int64(0))
 	bj1, err := json.ParseBinaryFromString("99")
 	c.Assert(err, IsNil)
 	v, err = Convert(bj1, ft)
