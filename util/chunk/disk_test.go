@@ -184,6 +184,8 @@ func checkRow(t *testing.T, row1, row2 Row) {
 }
 
 func testListInDisk(t *testing.T) {
+	t.Parallel()
+
 	numChk, numRow := 10, 1000
 	chks, fields := initChunks(numChk, numRow)
 	lChecksum := NewListInDisk(fields)
@@ -222,10 +224,10 @@ func TestListInDiskWithChecksum(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
 	})
-	testListInDisk(t)
+	t.Run("testListInDisk", testListInDisk)
 
-	testReaderWithCache(t)
-	testReaderWithCacheNoFlush(t)
+	t.Run("testReaderWithCache", testReaderWithCache)
+	t.Run("testReaderWithCacheNoFlush", testReaderWithCacheNoFlush)
 }
 
 func TestListInDiskWithChecksumAndEncrypt(t *testing.T) {
@@ -233,10 +235,10 @@ func TestListInDiskWithChecksumAndEncrypt(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
 	})
-	testListInDisk(t)
+	t.Run("testListInDisk", testListInDisk)
 
-	testReaderWithCache(t)
-	testReaderWithCacheNoFlush(t)
+	t.Run("testReaderWithCache", testReaderWithCache)
+	t.Run("testReaderWithCacheNoFlush", testReaderWithCacheNoFlush)
 }
 
 // Following diagram describes the testdata we use to test:
@@ -253,6 +255,8 @@ func TestListInDiskWithChecksumAndEncrypt(t *testing.T) {
 // |      |                                          | |                             |
 // +------+------------------------------------------+ +-----------------------------+
 func testReaderWithCache(t *testing.T) {
+	t.Parallel()
+
 	testData := "0123456789"
 	buf := bytes.NewBuffer(nil)
 	for i := 0; i < 102; i++ {
@@ -332,6 +336,8 @@ func testReaderWithCache(t *testing.T) {
 
 // Here we test situations where size of data is small, so no data is flushed to disk.
 func testReaderWithCacheNoFlush(t *testing.T) {
+	t.Parallel()
+
 	testData := "0123456789"
 
 	field := []*types.FieldType{types.NewFieldType(mysql.TypeString)}
