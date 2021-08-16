@@ -90,7 +90,9 @@ type gcsStorage struct {
 
 // DeleteFile delete the file in storage
 func (s *gcsStorage) DeleteFile(ctx context.Context, name string) error {
-	return errors.New("not implemented")
+	object := s.objectName(name)
+	err := s.bucket.Object(object).Delete(ctx)
+	return errors.Trace(err)
 }
 
 func (s *gcsStorage) objectName(name string) string {

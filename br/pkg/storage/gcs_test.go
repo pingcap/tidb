@@ -65,8 +65,24 @@ func (r *testStorageSuite) TestGCS(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsFalse)
 
-	err = stg.DeleteFile(ctx, "key")
-	c.Assert(err, ErrorMatches, "not implemented")
+	keyDelete := "key_delete"
+	exist, err = stg.FileExists(ctx, keyDelete)
+	c.Assert(err, IsNil)
+	c.Assert(exist, IsFalse)
+
+	err = stg.WriteFile(ctx, keyDelete, []byte("data"))
+	c.Assert(err, IsNil)
+
+	exist, err = stg.FileExists(ctx, keyDelete)
+	c.Assert(err, IsNil)
+	c.Assert(exist, IsTrue)
+
+	err = stg.DeleteFile(ctx, keyDelete)
+	c.Assert(err, IsNil)
+
+	exist, err = stg.FileExists(ctx, keyDelete)
+	c.Assert(err, IsNil)
+	c.Assert(exist, IsFalse)
 
 	list := ""
 	var totalSize int64 = 0
