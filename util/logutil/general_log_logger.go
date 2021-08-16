@@ -1,6 +1,7 @@
 package logutil
 
 import (
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -12,6 +13,11 @@ import (
 
 var _pool2 = buffer.NewPool()
 
+const (
+	logBatchSize = 102400
+	flushTimeout = 1000 * time.Millisecond
+)
+
 type GeneralLog struct {
 	logger  *zap.Logger
 	logChan chan string
@@ -20,32 +26,40 @@ type GeneralLog struct {
 func newGeneralLog(logger *zap.Logger) *GeneralLog {
 	gl := &GeneralLog{
 		logger:  logger,
-		logChan: make(chan string, 1024),
+		logChan: make(chan string, logBatchSize),
 	}
 	go gl.startWorker()
 	return gl
 }
 
+// startWorker starts a log flushing worker that flushes log periodically or when batch is full
 func (gl *GeneralLog) startWorker() {
-	timeout := time.After(100 * time.Millisecond)
-	logs := make([]string, 0, 1024)
+	var buf strings.Builder
+	logCount := 0
+	timeout := time.After(flushTimeout)
 	for {
 		select {
-		case log := <-gl.logChan:
-			logs = append(logs, log)
-			if len(logs) == 1024 {
-				for _, log := range logs {
-					gl.logger.Info(log)
-				}
-				logs = make([]string, 0, 1024)
+		case logText := <-gl.logChan:
+			if logCount > 0 {
+				buf.WriteByte('\n')
+			}
+			buf.WriteString(logText)
+			logCount += 1
+			if logCount == logBatchSize {
+				gl.logger.Info(buf.String())
+				//gl.logger.Info(fmt.Sprintf("buf size 1: %d", buf.Len()))
+				buf.Reset()
+				logCount = 0
 			}
 		case <-timeout:
-			for _, log := range logs {
-				gl.logger.Info(log)
+			if logCount > 0 {
+				gl.logger.Info(buf.String())
+				//gl.logger.Info(fmt.Sprintf("buf size 2: %d", buf.Len()))
+				buf.Reset()
+				logCount = 0
 			}
-			logs = make([]string, 0, 1024)
+			timeout = time.After(flushTimeout)
 		}
-		timeout = time.After(100 * time.Millisecond)
 	}
 }
 
