@@ -1013,7 +1013,6 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 		for {
 			select {
 			case <-do.exit:
-				owner.Cancel()
 				return
 			case <-bindWorkerTicker.C:
 				err := do.bindHandle.Update(false)
