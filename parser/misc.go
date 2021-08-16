@@ -990,10 +990,10 @@ func handleIdent(lval *yySymType) int {
 	if !strings.HasPrefix(s, "_") {
 		return identifier
 	}
-	cs, _, err := charset.GetCharsetInfo(s[1:])
+	cs, err := charset.GetCharsetInfo(s[1:])
 	if err != nil {
 		return identifier
 	}
-	lval.ident = cs
+	lval.ident = cs.Name
 	return underscoreCS
 }
