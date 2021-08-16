@@ -74,15 +74,15 @@ func (e *DDLExec) toErr(err error) error {
 }
 
 // deleteTemporaryTableRecords delete temporary table data.
-func deleteTemporaryTableRecords(memData kv.MemBuffer, tblID int64) error {
-	if memData == nil {
+func deleteTemporaryTableRecords(sessionData variable.TemporaryTableData, tblID int64) error {
+	if sessionData == nil {
 		return kv.ErrNotExist
 	}
 
 	tblPrefix := tablecodec.EncodeTablePrefix(tblID)
 	endKey := tablecodec.EncodeTablePrefix(tblID + 1)
 
-	iter, err := memData.Iter(tblPrefix, endKey)
+	iter, err := sessionData.Iter(tblPrefix, endKey)
 	if err != nil {
 		return err
 	}
@@ -92,7 +92,7 @@ func deleteTemporaryTableRecords(memData kv.MemBuffer, tblID int64) error {
 			break
 		}
 
-		err = memData.Delete(key)
+		err = sessionData.DeleteTableKey(tblID, key)
 		if err != nil {
 			return err
 		}
@@ -365,7 +365,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 			return err
 		}
 
-		sessVars.TemporaryTableData = bufferTxn.GetMemBuffer()
+		sessVars.TemporaryTableData = variable.NewTemporaryTableData(bufferTxn.GetMemBuffer())
 	}
 
 	err = localTempTables.AddTable(dbInfo.Name, tbl)
