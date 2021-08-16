@@ -8899,3 +8899,12 @@ func (s *testSuite) TestIssue25447(c *C) {
 	tk.MustExec("insert into t2(a) values(1)")
 	tk.MustQuery("select /*+ tidb_inlj(t2) */ t2.b, t1.b from t1 join t2 ON t2.a=t1.a").Check(testkit.Rows("<nil> 1"))
 }
+
+func (s *testSuite) TestPlanRecreatorDumpSingle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_dump_single")
+	tk.MustExec("create table t(a int)")
+	res := tk.MustQuery("plan recreator dump explain select * from t")
+	fmt.Println("[res]", res.Rows()[0])
+}

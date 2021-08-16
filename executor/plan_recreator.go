@@ -24,6 +24,8 @@ import (
 	"os"
 	"strings"
 	"time"
+	"path/filepath"
+	"strconv"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
@@ -70,16 +72,16 @@ type tableNameExtractor struct {
 	curDB string
 	names map[tableNamePair]struct{}
 }
-
-type fileInfo struct {
-	StartTime time.Time
-	Token     [16]byte
-}
-
-type fileList struct {
-	FileInfo map[string]fileInfo
-	TokenMap map[[16]byte]string
-}
+//
+//type fileInfo struct {
+//	StartTime time.Time
+//	Token     [16]byte
+//}
+//
+//type fileList struct {
+//	FileInfo map[string]fileInfo
+//	TokenMap map[[16]byte]string
+//}
 
 func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
 	if _, ok := in.(*ast.TableName); ok {
@@ -101,14 +103,6 @@ func (tne *tableNameExtractor) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 
-// planRecreatorVarKeyType is a dummy type to avoid naming collision in context.
-type planRecreatorVarKeyType int
-
-// String defines a Stringer function for debugging and pretty printing.
-func (k planRecreatorVarKeyType) String() string {
-	return "plan_recreator_var"
-}
-
 // planRecreatorFileListType is a dummy type to avoid naming collision in context.
 type planRecreatorFileListType int
 
@@ -116,9 +110,6 @@ type planRecreatorFileListType int
 func (k planRecreatorFileListType) String() string {
 	return "plan_recreator_file_list"
 }
-
-// PlanRecreatorVarKey is a variable key for plan recreator.
-const PlanRecreatorVarKey planRecreatorVarKeyType = 0
 
 // PlanRecreatorFileList is a variable key for plan recreator's file list.
 const PlanRecreatorFileList planRecreatorFileListType = 0
@@ -132,13 +123,11 @@ func (e *PlanRecreatorSingleExec) Next(ctx context.Context, req *chunk.Chunk) er
 	if e.info.ExecStmt == nil {
 		return errors.New("plan Recreator: sql is empty")
 	}
-	res, err := e.info.dumpSingle()
+	res, err := e.info.dumpSingle(recreatorPath)
 	if err != nil {
 		return err
 	}
-	result := newFirstChunk(e)
-	result.AppendString(0, res)
-	req.Append(result, 0, 1)
+	req.AppendString(0, res)
 	e.endFlag = true
 	return nil
 }
@@ -153,9 +142,8 @@ func (e *PlanRecreatorSingleExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
+func (e *PlanRecreatorSingleInfo) dumpSingle(path string) (string, error) {
 	// Create path
-	path := fmt.Sprintf("%s/%v", recreatorPath, e.Ctx.GetSessionVars().ConnectionID)
 	err := os.MkdirAll(path, os.ModePerm)
 	if err != nil {
 		return "", errors.New("Plan Recreator: cannot create plan recreator path")
@@ -163,8 +151,9 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
 
 	// Create zip file
 	startTime := time.Now()
-	fileName := fmt.Sprintf("recreator_single_%v.zip", startTime.UnixNano())
-	zf, err := os.Create(path + "/" + fileName)
+	fileName := filepath.Join(strconv.FormatUint(e.Ctx.GetSessionVars().ConnectionID, 10),
+								fmt.Sprintf("recreator_single_%v.zip", startTime.UnixNano()))
+	zf, err := os.Create(filepath.Join(path, fileName))
 	if err != nil {
 		return "", errors.New("Plan Recreator: cannot create zip file")
 	}
@@ -177,7 +166,7 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
 		TList := val.(fileList).TokenMap
 		for k, v := range Flist {
 			if time.Since(v.StartTime).Minutes() > remainedInterval {
-				err := os.Remove(path + "/" + k)
+				err := os.Remove(filepath.Join(path, k))
 				if err != nil {
 					logutil.BgLogger().Warn(fmt.Sprintf("Cleaning outdated file %s failed.", k))
 				}
@@ -469,6 +458,16 @@ func getRows4Test(ctx context.Context, rs sqlexec.RecordSet) ([]chunk.Row, error
 		}
 	}
 	return rows, nil
+}
+
+func GetFile4Test(token string) string {
+	b, err := hex.DecodeString(token)
+	if err != nil {
+		return ""
+	}
+	var tb [16]byte
+	copy(tb[:], b)
+	return filepath.Join()
 }
 
 // CleanUpPlanRecreatorFile cleans files corresponding to the session.

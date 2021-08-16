@@ -20,9 +20,15 @@ import (
 	"strconv"
 	"time"
 	"unsafe"
+	"fmt"
+	"os"
+	"path/filepath"
+	"encoding/hex"
+	"archive/zip"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -562,4 +568,32 @@ func (s *pkgTestSuite) TestFilterTemporaryTableKeys(c *C) {
 
 	res := filterTemporaryTableKeys(vars, []kv.Key{tablecodec.EncodeTablePrefix(tableID), tablecodec.EncodeTablePrefix(42)})
 	c.Assert(res, HasLen, 1)
+}
+
+func (s *pkgTestSuite) TestDumpSingle(c *C) {
+	stmt, err := parser.New().ParseOneStmt("plan recreator dump explain select * from t", "", "")
+	c.Assert(err, IsNil)
+	pr, ok := stmt.(*ast.PlanRecreatorStmt)
+	c.Assert(ok, IsTrue)
+	info := PlanRecreatorSingleInfo{
+		ExecStmt: pr.Stmt,
+		Ctx: mock.NewContext(),
+	}
+	path := filepath.Join(os.TempDir(), fmt.Sprintf("test-dump-single-%v", time.Now().Nanosecond()))
+	token, err := info.dumpSingle(path)
+	c.Assert(ok, IsNil)
+	val := info.Ctx.Value(PlanRecreatorFileList)
+//	FList := val.(fileList).FileInfo
+	bytes, err := hex.DecodeString(token)
+	var tokenBytes [16]byte
+	copy(tokenBytes[:], bytes)
+	c.Assert(err, IsNil)
+	filename := val.(fileList).TokenMap[tokenBytes]
+
+	reader, err := zip.OpenReader(filepath.Join(path, filename))
+	c.Assert(err, IsNil)
+	defer reader.Close()
+	for _, file := range reader.File {
+		fmt.Println("[filename]", file.Name)
+	}
 }
