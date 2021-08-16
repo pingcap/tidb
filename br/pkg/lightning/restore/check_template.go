@@ -29,8 +29,7 @@ const (
 
 type Template interface {
 	// Collect mainly collect performance related checks' results and critical level checks' results.
-	// If the performance is not as expect. It will output a warn to user and it won't break the whole import task.
-	// if one of critical check not passed. it will stop import task.
+	// If the performance is not as expect or one of critical check not passed. it will stop import task.
 	Collect(t CheckType, passed bool, msg string)
 
 	// Success represents the whole check has passed or not.
@@ -72,9 +71,7 @@ func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
 	if !passed {
 		switch t {
 		case Critical:
-			{
-				c.criticalFailedCount++
-			}
+			c.criticalFailedCount++
 		case Warn:
 			c.warnFailedCount++
 		}

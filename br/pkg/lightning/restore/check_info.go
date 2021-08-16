@@ -140,6 +140,12 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
 }
 
 func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
+	passed := true
+	message := "Cluster doesn't have too many empty regions"
+	defer func() {
+		rc.checkTemplate.Collect(Critical, passed, message)
+	}()
+
 	var result api.RegionsInfo
 	if err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
 		return errors.Trace(err)
@@ -150,37 +156,32 @@ func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 			regions[peer.StoreId]++
 		}
 	}
-	var (
-		warnMsgs     []string
-		criticalMsgs []string
-	)
+
+	var messages []string
 	for storeID, regionCnt := range regions {
 		if regionCnt > errorEmptyRegionCntPerStore {
-			message := fmt.Sprintf("TiKV store %v contains too many empty regions, "+
-				"the count must not exceed %v, but actual is %v",
-				storeID, errorEmptyRegionCntPerStore, regionCnt)
-			criticalMsgs = append(criticalMsgs, message)
+			passed = false
+			messages = append(messages, fmt.Sprintf("TiKV store %v contains too many empty regions, "+
+				"the count must not exceed %v, but actual is %v", storeID, errorEmptyRegionCntPerStore, regionCnt))
 		} else if regionCnt > warnEmptyRegionCntPerStore {
-			message := fmt.Sprintf("TiKV store %v contains too many empty regions, "+
-				"the count should not exceed %v, but actual is %v",
-				storeID, warnEmptyRegionCntPerStore, regionCnt)
-			warnMsgs = append(warnMsgs, message)
+			messages = append(messages, fmt.Sprintf("TiKV store %v contains too many empty regions, "+
+				"the count should not exceed %v, but actual is %v", storeID, warnEmptyRegionCntPerStore, regionCnt))
 		}
 	}
-	if len(warnMsgs) > 0 {
-		rc.checkTemplate.Collect(Warn, false, strings.Join(warnMsgs, "\n"))
-	}
-	if len(criticalMsgs) > 0 {
-		rc.checkTemplate.Collect(Critical, false, strings.Join(criticalMsgs, "\n"))
-	}
-	if len(warnMsgs) == 0 && len(criticalMsgs) == 0 {
-		rc.checkTemplate.Collect(Critical, true, "Cluster doesn't have too many empty regions")
+	if len(messages) > 0 {
+		message = strings.Join(messages, "\n")
 	}
 	return nil
 }
 
 // checkRegionDistribution checks if regions distribution is unbalanced.
 func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
+	passed := true
+	message := "Cluster region distribution is balanced"
+	defer func() {
+		rc.checkTemplate.Collect(Critical, passed, message)
+	}()
+
 	result := &api.StoresInfo{}
 	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result)
 	if err != nil {
@@ -204,15 +205,14 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 	}
 	ratio := float64(maxStore.Status.RegionCount) / float64(minStore.Status.RegionCount)
 	if ratio > errorRegionCntMaxMinRatio {
-		message := fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
+		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with most regions(%v) to the store(%v) with least regions(%v) is %v, but we expect it must not exceed %v",
 			maxStore.Store.Id, maxStore.Status.RegionCount, minStore.Store.Id, minStore.Status.RegionCount, ratio, errorRegionCntMaxMinRatio)
-		rc.checkTemplate.Collect(Critical, false, message)
+		passed = false
 	} else if ratio >= warnRegionCntMaxMinRatio {
-		message := fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
+		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with most regions(%v) to the store(%v) with least regions(%v) is %v, but we expect it should not exceed %v",
 			maxStore.Store.Id, maxStore.Status.RegionCount, minStore.Store.Id, minStore.Status.RegionCount, ratio, warnRegionCntMaxMinRatio)
-		rc.checkTemplate.Collect(Warn, false, message)
 	}
 	return nil
 }

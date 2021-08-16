@@ -1760,9 +1760,10 @@ func (rc *Controller) isLocalBackend() bool {
 }
 
 // preCheckRequirements checks
-// 1. Cluster resource
-// 2. Local node resource
-// 3. Lightning configuration
+// 1. Cluster region
+// 2. Cluster resource
+// 3. Local node resource
+// 4. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	if err := rc.ClusterIsAvailable(ctx); err != nil {
@@ -1778,11 +1779,6 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	taskExist := false
 
 	if rc.isLocalBackend() {
-		source, err := rc.EstimateSourceData(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
 		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
 			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
 		if err != nil {
@@ -1795,6 +1791,13 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 		if !taskExist {
+			if err := rc.CheckClusterRegion(ctx); err != nil {
+				return errors.Trace(err)
+			}
+			source, err := rc.EstimateSourceData(ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			err = rc.LocalResource(ctx, source)
 			if err != nil {
 				rc.taskMgr.CleanupTask(ctx)
