@@ -631,9 +631,9 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 
 			value := iter.Value()
 			if len(value) == 0 {
-				err = sessionData.Delete(key)
+				err = sessionData.DeleteTableKey(tblID, key)
 			} else {
-				err = sessionData.Set(key, iter.Value())
+				err = sessionData.SetTableKey(tblID, key, iter.Value())
 			}
 
 			if err != nil {
