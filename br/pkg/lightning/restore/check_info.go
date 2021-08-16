@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/tikv/pd/pkg/typeutil"
 	"github.com/tikv/pd/server/api"
 	pdconfig "github.com/tikv/pd/server/config"
 	"go.uber.org/zap"
@@ -77,42 +76,69 @@ func (rc *Controller) getReplicaCount(ctx context.Context) (uint64, error) {
 }
 
 // ClusterResource check cluster has enough resource to import data. this test can by skipped.
-func (rc *Controller) ClusterResource(ctx context.Context, localSource int64) error {
+func (rc *Controller) ClusterResource(ctx context.Context) error {
 	passed := true
 	message := "Cluster resources are rich for this import task"
 	defer func() {
 		rc.checkTemplate.Collect(Critical, passed, message)
 	}()
 
-	result := &api.StoresInfo{}
-	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result)
+	var (
+		clusterAvail  uint64
+		clusterSource uint64
+	)
+	restoreStarted := false
+	err := rc.taskMgr.CheckTasksExclusively(ctx, func(tx *sql.Tx, tasks []taskMeta) error {
+		clusterAvail = 0
+		clusterSource = 0
+		for _, task := range tasks {
+			if task.status > taskMetaStatusInitial {
+				restoreStarted = true
+				return nil
+			}
+			clusterSource += task.sourceBytes
+			if task.clusterAvail > 0 {
+				clusterAvail = task.clusterAvail
+			}
+		}
+		if clusterAvail > 0 {
+			return nil
+		}
+
+		result := &api.StoresInfo{}
+		if err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result); err != nil {
+			return errors.Trace(err)
+		}
+		for _, store := range result.Stores {
+			clusterAvail += uint64(store.Status.Available)
+		}
+		// TODO: Avoid operating meta table outside taskMgr.
+		query := fmt.Sprintf("update %s set cluster_avail = ?",
+			common.UniqueTable(rc.cfg.App.MetaSchemaName, TaskMetaTableName))
+		if _, err := tx.ExecContext(ctx, query, clusterAvail); err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
-	totalCapacity := typeutil.ByteSize(0)
-	for _, store := range result.Stores {
-		totalCapacity += store.Status.Capacity
-	}
-	clusterSource := localSource
-	if rc.taskMgr != nil {
-		clusterSource, err = rc.taskMgr.CheckClusterSource(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	if restoreStarted {
+		return nil
 	}
 
 	replicaCount, err := rc.getReplicaCount(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	estimateSize := uint64(clusterSource) * replicaCount
-	if typeutil.ByteSize(estimateSize) > totalCapacity {
+	estimateSize := clusterSource * replicaCount
+	if estimateSize > clusterAvail {
 		passed = false
-		message = fmt.Sprintf("Cluster doesn't have enough space, capacity is %s, but we need %s",
-			units.BytesSize(float64(totalCapacity)), units.BytesSize(float64(estimateSize)))
+		message = fmt.Sprintf("Cluster doesn't have enough space, available is %s, but we need %s",
+			units.BytesSize(float64(clusterAvail)), units.BytesSize(float64(estimateSize)))
 	} else {
-		message = fmt.Sprintf("Cluster capacity is rich, capacity is %s, we need %s",
-			units.BytesSize(float64(totalCapacity)), units.BytesSize(float64(estimateSize)))
+		message = fmt.Sprintf("Cluster available is rich, available is %s, we need %s",
+			units.BytesSize(float64(clusterAvail)), units.BytesSize(float64(estimateSize)))
 	}
 	return nil
 }
@@ -220,14 +246,14 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 // CheckClusterRegion checks cluster if there are too many empty regions or region distribution is unbalanced.
 func (rc *Controller) CheckClusterRegion(ctx context.Context) error {
 	err := rc.taskMgr.CheckTasksExclusively(ctx, func(tx *sql.Tx, tasks []taskMeta) error {
-		noStarted := true
+		restoreStarted := false
 		for _, task := range tasks {
 			if task.status > taskMetaStatusInitial {
-				noStarted = false
+				restoreStarted = true
 				break
 			}
 		}
-		if !noStarted {
+		if restoreStarted {
 			return nil
 		}
 		if err := rc.checkEmptyRegion(ctx); err != nil {

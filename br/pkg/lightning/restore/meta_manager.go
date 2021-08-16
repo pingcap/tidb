@@ -475,7 +475,6 @@ func RemoveTableMetaByTableName(ctx context.Context, db *sql.DB, metaTable, tabl
 
 type taskMetaMgr interface {
 	InitTask(ctx context.Context, source int64) error
-	CheckClusterSource(ctx context.Context) (int64, error)
 	CheckTaskExist(ctx context.Context) (bool, error)
 	CheckTasksExclusively(ctx context.Context, action func(tx *sql.Tx, tasks []taskMeta) error) error
 	CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error)
@@ -543,11 +542,12 @@ func parseTaskMetaStatus(s string) (taskMetaStatus, error) {
 }
 
 type taskMeta struct {
-	taskID      int64
-	pdCfgs      string
-	status      taskMetaStatus
-	state       int
-	sourceBytes uint64
+	taskID       int64
+	pdCfgs       string
+	status       taskMetaStatus
+	state        int
+	sourceBytes  uint64
+	clusterAvail uint64
 }
 
 type storedCfgs struct {
@@ -595,25 +595,6 @@ func (m *dbTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
 	return exist, errors.Trace(err)
 }
 
-func (m *dbTaskMetaMgr) CheckClusterSource(ctx context.Context) (int64, error) {
-	conn, err := m.session.Conn(ctx)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	defer conn.Close()
-	exec := &common.SQLWithRetry{
-		DB:     m.session,
-		Logger: log.L(),
-	}
-
-	source := int64(0)
-	query := fmt.Sprintf("SELECT SUM(source_bytes) from %s", m.tableName)
-	if err := exec.QueryRow(ctx, "query total source size", query, &source); err != nil {
-		return 0, errors.Annotate(err, "fetch task meta failed")
-	}
-	return source, nil
-}
-
 func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tx *sql.Tx, tasks []taskMeta) error) error {
 	conn, err := m.session.Conn(ctx)
 	if err != nil {
@@ -629,7 +610,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 		return errors.Annotate(err, "enable pessimistic transaction failed")
 	}
 	return exec.Transact(ctx, "check tasks exclusively", func(ctx context.Context, tx *sql.Tx) error {
-		query := fmt.Sprintf("SELECT task_id, pd_cfgs, status, state, source_bytes from %s FOR UPDATE", m.tableName)
+		query := fmt.Sprintf("SELECT task_id, pd_cfgs, status, state, source_bytes, cluster_avail from %s FOR UPDATE", m.tableName)
 		rows, err := tx.QueryContext(ctx, query)
 		if err != nil {
 			return errors.Annotate(err, "fetch task metas failed")
@@ -640,7 +621,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 		for rows.Next() {
 			var task taskMeta
 			var statusValue string
-			if err = rows.Scan(&task.taskID, &task.pdCfgs, &statusValue, &task.state, &task.sourceBytes); err != nil {
+			if err = rows.Scan(&task.taskID, &task.pdCfgs, &statusValue, &task.state, &task.sourceBytes, &task.clusterAvail); err != nil {
 				return errors.Trace(err)
 			}
 			status, err := parseTaskMetaStatus(statusValue)
@@ -963,10 +944,6 @@ func (m noopTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.
 
 func (m noopTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
 	return false, nil
-}
-
-func (m noopTaskMetaMgr) CheckClusterSource(ctx context.Context) (int64, error) {
-	return 0, nil
 }
 
 func (m noopTaskMetaMgr) CheckAndFinishRestore(context.Context, bool) (bool, bool, error) {

@@ -102,6 +102,7 @@ const (
 		status  VARCHAR(32) NOT NULL,
 		state   TINYINT(1) NOT NULL DEFAULT 0 COMMENT '0: normal, 1: exited before finish',
 		source_bytes BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+		cluster_avail BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (task_id)
 	);`
 
@@ -1803,7 +1804,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				rc.taskMgr.CleanupTask(ctx)
 				return errors.Trace(err)
 			}
-			if err := rc.ClusterResource(ctx, source); err != nil {
+			if err := rc.ClusterResource(ctx); err != nil {
 				rc.taskMgr.CleanupTask(ctx)
 				return errors.Trace(err)
 			}
