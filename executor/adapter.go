@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -340,16 +341,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if n, ok := val.(int); ok {
 			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
 			if n != int(startTS) {
-				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
-			}
-			failpoint.Return()
-		}
-	})
-	failpoint.Inject("assertStaleTSOWithTolerance", func(val failpoint.Value) {
-		if n, ok := val.(int); ok {
-			// Convert to seconds
-			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
-			if int(startTS) <= n-1 || n+1 <= int(startTS) {
 				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
 			}
 			failpoint.Return()

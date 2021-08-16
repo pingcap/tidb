@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // +build !race
@@ -25,7 +26,6 @@ import (
 	"database/sql"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
 	"math/big"
 	"net/http"
 	"os"
@@ -461,7 +461,7 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 
 func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
 	osTempDir := os.TempDir()
-	tempDir, err := ioutil.TempDir(osTempDir, "tidb-test.*.socket")
+	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
 	c.Assert(err, IsNil)
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 	defer os.RemoveAll(tempDir)
@@ -619,7 +619,7 @@ func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
 // TestOnlySocket for server configuration without network interface for mysql clients
 func (ts *tidbTestSuite) TestOnlySocket(c *C) {
 	osTempDir := os.TempDir()
-	tempDir, err := ioutil.TempDir(osTempDir, "tidb-test.*.socket")
+	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
 	c.Assert(err, IsNil)
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 	defer os.RemoveAll(tempDir)
