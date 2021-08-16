@@ -72,8 +72,6 @@ func SetUpSuite(t *testing.T) *CTETestSuite {
 }
 
 func TestCTESuite(t *testing.T) {
-	t.Parallel()
-
 	cteTestSuite = SetUpSuite(t)
 	defer cteTestSuite.close()
 
