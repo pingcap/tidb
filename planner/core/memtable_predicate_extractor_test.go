@@ -1044,17 +1044,13 @@ func (s *extractorSuite) TestInspectionRuleTableExtractor(c *C) {
 }
 
 func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-
-	parser := parser.New()
 	var cases = []struct {
 		sql                             string
 		skipRequest                     bool
 		startTime, endTime              int64
 		hotRegionTypes                  set.StringSet
 		regionIDs, storeIDs             []uint64
-		tableIDs, indexIDs              []uint64
+		tableIDs, indexIDs              set.Int64Set
 		dbNames, tableNames, indexNames set.StringSet
 		lowHotDegree, highHotDegree     int64
 		lowFlowBytes, highFlowBytes     float64
@@ -1307,8 +1303,8 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 			highFlowBytes: math.MaxFloat64,
 			regionIDs:     []uint64{101},
 			storeIDs:      []uint64{201},
-			tableIDs:      []uint64{11},
-			indexIDs:      []uint64{21},
+			tableIDs:      set.NewInt64Set(11),
+			indexIDs:      set.NewInt64Set(21),
 		},
 		{
 			sql: `select * from information_schema.tidb_hot_regions_history 
@@ -1518,7 +1514,9 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 			highFlowBytes: math.MaxFloat64,
 		},
 	}
-
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	parser := parser.New()
 	for _, ca := range cases {
 		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
 		c.Assert(logicalMemTable.Extractor, NotNil, Commentf("SQL: %v", ca.sql))
@@ -1541,16 +1539,16 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 		if len(ca.storeIDs) > 0 {
 			c.Assert(hotRegionsHistoryExtractor.StoreIDs, DeepEquals, ca.storeIDs, Commentf("SQL: %v", ca.sql))
 		}
-		if len(ca.tableIDs) > 0 {
+		if ca.tableIDs.Count() > 0 {
 			c.Assert(hotRegionsHistoryExtractor.TableIDs, DeepEquals, ca.tableIDs, Commentf("SQL: %v", ca.sql))
 		}
-		if len(ca.indexIDs) > 0 {
+		if ca.indexIDs.Count() > 0 {
 			c.Assert(hotRegionsHistoryExtractor.IndexIDs, DeepEquals, ca.indexIDs, Commentf("SQL: %v", ca.sql))
 		}
-		if len(ca.dbNames) > 0 {
+		if ca.dbNames.Count() > 0 {
 			c.Assert(hotRegionsHistoryExtractor.DBNames, DeepEquals, ca.dbNames, Commentf("SQL: %v", ca.sql))
 		}
-		if len(ca.tableNames) > 0 {
+		if ca.tableNames.Count() > 0 {
 			c.Assert(hotRegionsHistoryExtractor.TableNames, DeepEquals, ca.tableNames, Commentf("SQL: %v", ca.sql))
 		}
 		if len(ca.indexNames) > 0 {

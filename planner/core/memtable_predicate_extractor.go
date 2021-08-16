@@ -525,13 +525,6 @@ func (helper extractHelper) extractQuantilesRange(
 			mysqlDouble := doubleDatum.GetFloat64()
 
 			switch fnName {
-			case ast.EQ:
-				lowQuantile = math.Max(lowQuantile, mysqlDouble)
-				if HighQuantile == 0 {
-					HighQuantile = mysqlDouble
-				} else {
-					HighQuantile = math.Min(HighQuantile, mysqlDouble)
-				}
 			case ast.GT:
 				// Fixme: add a samll number is not absolutely correct here
 				// add 1e-12 for float 64, add 1 for int
@@ -808,7 +801,7 @@ type HotRegionsHistoryTableExtractor struct {
 	// e.g:
 	// 1. SELECT * FROM tidb_hot_regions_history WHERE region_id=1
 	// 2. SELECT * FROM tidb_hot_regions_history WHERE table_id in (11, 22)
-	// leave range operation to above
+	// Leave range operation to above selection executor.
 	RegionIDs []uint64 // use uint64 to match PD server
 	StoreIDs  []uint64
 	PeerIDs   []uint64
@@ -849,8 +842,8 @@ type HotRegionsHistoryTableExtractor struct {
 	// e.g:
 	// 1. SELECT * FROM tidb_hot_regions_history WHERE table_id=11
 	// 2. SELECT * FROM tidb_hot_regions_history WHERE table_id in (11, 21)
-	TableIDs []uint64
-	IndexIDs []uint64
+	TableIDs set.Int64Set
+	IndexIDs set.Int64Set
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -879,7 +872,16 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	}
 	e.RegionIDs, e.StoreIDs, e.PeerIDs = e.parseQuantilesUint64(regionIDs), e.parseQuantilesUint64(storeIDs), e.parseQuantilesUint64(peerIDs)
 	e.HotRegionTypes, e.DBNames, e.TableNames, e.IndexNames = types, dbNames, tableNames, indexNames
-	e.TableIDs, e.IndexIDs = e.parseQuantilesUint64(tableIDs), e.parseQuantilesUint64(indexIDs)
+	tableIDSlice, indexIDSlice := e.parseQuantilesUint64(tableIDs), e.parseQuantilesUint64(indexIDs)
+	// Intset is convinient to check exist
+	e.TableIDs = set.NewInt64Set()
+	e.IndexIDs = set.NewInt64Set()
+	for _, tbl := range tableIDSlice {
+		e.TableIDs.Insert(int64(tbl))
+	}
+	for _, idx := range indexIDSlice {
+		e.IndexIDs.Insert(int64(idx))
+	}
 
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "update_time", time.Local)
 	// The time unit for search hot regions is millisecond.
@@ -891,11 +893,11 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 		e.SkipRequest = startTime > endTime
 	}
 
-	// Extract the `hot_degree/flow_bytes/query_rate/key_rate` columns
-	// Not extract equal condition in comparison to time range, leave it to upper selection node
+	// Extract the `hot_degree/flow_bytes/query_rate/key_rate` columns.
+	// Not extract equal condition in comparison to time range, leave it to upper selection node.
 	remained, lowHotDegree, highHotDegree := e.extractQuantilesRange(ctx, schema, names, remained, "hot_degree")
 	remained, lowFlowBytes, highFlowBytes := e.extractQuantilesRange(ctx, schema, names, remained, "flow_bytes")
-	remained, lowKeyRate, highKeyRate := e.extractQuantilesRange(ctx, schema, names, remained, "flow_bytes")
+	remained, lowKeyRate, highKeyRate := e.extractQuantilesRange(ctx, schema, names, remained, "key_rate")
 	remained, lowQueryRate, highQueryRate := e.extractQuantilesRange(ctx, schema, names, remained, "query_rate")
 
 	e.LowHotDegree, e.HighHotDegree = int64(lowHotDegree), int64(highHotDegree)
@@ -904,16 +906,18 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	e.LowQueryRate, e.HighQueryRate = lowQueryRate, highQueryRate
 
 	// normal case
-	// low high
-	// 0   100 x<100
-	// 10  100 10<x<100
+	// low | high |  range
+	// 0   | 100  |  0<x<100
+	// 10  | 100  | 10<x<100
+
 	// skip case
-	// 100 10 SkipRequest
+	// 100 | 10   | SkipRequest
 	if lowHotDegree != 0 && highHotDegree != 0 {
 		e.SkipRequest = lowHotDegree > highHotDegree
 	}
-	// 10  0   10<x<math.MaxFloat64
-	// 0   0   0<x<math.MaxFloat64
+	// no hign bound case
+	// 0   | 0    |  0<x<math.MaxFloat64
+	// 10  | 0    | 10<x<math.MaxFloat64
 	if highHotDegree == 0 {
 		e.HighHotDegree = math.MaxInt64
 	}
@@ -953,23 +957,38 @@ func (e *HotRegionsHistoryTableExtractor) explainInfo(p *PhysicalMemTable) strin
 	st, et := e.StartTime, e.EndTime
 	if st > 0 {
 		st := time.Unix(0, st*1e6)
-		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
+		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05")))
 	}
 	if et > 0 {
 		et := time.Unix(0, et*1e6)
-		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
+		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format("2006-01-02 15:04:05")))
 	}
 	if len(e.RegionIDs) > 0 {
-		r.WriteString(fmt.Sprintf("region_ids:[%v], ", e.RegionIDs))
+		r.WriteString(fmt.Sprintf("region_ids:[%s], ", extractStringFromUint64Slice(e.RegionIDs)))
 	}
 	if len(e.StoreIDs) > 0 {
-		r.WriteString(fmt.Sprintf("store_ids:[%v], ", e.StoreIDs))
+		r.WriteString(fmt.Sprintf("store_ids:[%s], ", extractStringFromUint64Slice(e.StoreIDs)))
 	}
 	if len(e.PeerIDs) > 0 {
-		r.WriteString(fmt.Sprintf("peer_ids:[%v], ", e.PeerIDs))
+		r.WriteString(fmt.Sprintf("peer_ids:[%s], ", extractStringFromUint64Slice(e.PeerIDs)))
 	}
 	if len(e.HotRegionTypes) > 0 {
 		r.WriteString(fmt.Sprintf("hot_region_types:[%s], ", extractStringFromStringSet(e.HotRegionTypes)))
+	}
+	if len(e.DBNames) > 0 {
+		r.WriteString(fmt.Sprintf("DB_names:[%s], ", extractStringFromStringSet(e.DBNames)))
+	}
+	if len(e.TableNames) > 0 {
+		r.WriteString(fmt.Sprintf("table_names:[%s], ", extractStringFromStringSet(e.TableNames)))
+	}
+	if len(e.IndexNames) > 0 {
+		r.WriteString(fmt.Sprintf("index_names:[%s], ", extractStringFromStringSet(e.IndexNames)))
+	}
+	if len(e.TableIDs) > 0 {
+		r.WriteString(fmt.Sprintf("table_ids:[%s], ", extractStringFromIntSet(e.TableIDs)))
+	}
+	if len(e.IndexIDs) > 0 {
+		r.WriteString(fmt.Sprintf("index_ids:[%s], ", extractStringFromIntSet(e.IndexIDs)))
 	}
 	if e.LowHotDegree > 0 {
 		r.WriteString(fmt.Sprintf("LowHotDegree:%d, ", e.LowHotDegree))
@@ -994,21 +1013,6 @@ func (e *HotRegionsHistoryTableExtractor) explainInfo(p *PhysicalMemTable) strin
 	}
 	if 0 < e.HighQueryRate && e.HighQueryRate < math.MaxFloat64 {
 		r.WriteString(fmt.Sprintf("HighQueryRate:%f, ", e.HighQueryRate))
-	}
-	if len(e.DBNames) > 0 {
-		r.WriteString(fmt.Sprintf("DB_names:[%s], ", extractStringFromStringSet(e.DBNames)))
-	}
-	if len(e.TableNames) > 0 {
-		r.WriteString(fmt.Sprintf("table_names:[%s], ", extractStringFromStringSet(e.TableNames)))
-	}
-	if len(e.IndexNames) > 0 {
-		r.WriteString(fmt.Sprintf("index_names:[%s], ", extractStringFromStringSet(e.IndexNames)))
-	}
-	if len(e.TableIDs) > 0 {
-		r.WriteString(fmt.Sprintf("table_ids:[%v], ", e.TableIDs))
-	}
-	if len(e.IndexIDs) > 0 {
-		r.WriteString(fmt.Sprintf("index_ids:[%v], ", e.IndexIDs))
 	}
 
 	// remove the last ", " in the message info
