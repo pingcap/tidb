@@ -5,41 +5,41 @@
       {
         "SQL": "explain select * from tbl use index(idx_b_c) where b > 1 limit 2,1",
         "Plan": [
-          "IndexLookUp_14 1.00 root  limit embedded(offset:2, count:1)",
-          "├─Limit_13(Build) 3.00 cop[tikv]  offset:0, count:3",
-          "│ └─IndexRangeScan_11 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:false",
-          "└─TableRowIDScan_12(Probe) 1.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
+          "IndexLookUp_13 1.00 root  limit embedded(offset:2, count:1)",
+          "├─Limit_12(Build) 3.00 cop[tikv]  offset:0, count:3",
+          "│ └─IndexRangeScan_10 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:false",
+          "└─TableRowIDScan_11(Probe) 1.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1",
         "Plan": [
-          "Projection_25 1.00 root  test.tbl.a, test.tbl.b, test.tbl.c",
-          "└─IndexLookUp_24 1.00 root  limit embedded(offset:2, count:1)",
-          "  ├─Limit_23(Build) 3.00 cop[tikv]  offset:0, count:3",
-          "  │ └─IndexRangeScan_21 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:true, desc",
-          "  └─TableRowIDScan_22(Probe) 1.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
+          "Projection_20 1.00 root  test.tbl.a, test.tbl.b, test.tbl.c",
+          "└─IndexLookUp_19 1.00 root  limit embedded(offset:2, count:1)",
+          "  ├─Limit_18(Build) 3.00 cop[tikv]  offset:0, count:3",
+          "  │ └─IndexRangeScan_16 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:true, desc",
+          "  └─TableRowIDScan_17(Probe) 1.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from tbl use index(idx_b_c) where b > 1 and c > 1 limit 2,1",
         "Plan": [
-          "IndexLookUp_15 1.00 root  limit embedded(offset:2, count:1)",
-          "├─Limit_14(Build) 3.00 cop[tikv]  offset:0, count:3",
-          "│ └─Selection_13 3.00 cop[tikv]  gt(test.tbl.c, 1)",
-          "│   └─IndexRangeScan_11 3.75 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:false",
-          "└─TableRowIDScan_12(Probe) 1.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
+          "IndexLookUp_14 1.00 root  limit embedded(offset:2, count:1)",
+          "├─Limit_13(Build) 3.00 cop[tikv]  offset:0, count:3",
+          "│ └─Selection_12 3.00 cop[tikv]  gt(test.tbl.c, 1)",
+          "│   └─IndexRangeScan_10 3.75 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:false",
+          "└─TableRowIDScan_11(Probe) 1.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain select * from tbl use index(idx_b_c) where b > 1 and a > 1 limit 2,1",
         "Plan": [
           "Limit_9 1.00 root  offset:2, count:1",
-          "└─IndexLookUp_15 3.00 root  ",
-          "  ├─IndexRangeScan_11(Build) 3.75 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:false",
-          "  └─Limit_14(Probe) 3.00 cop[tikv]  offset:0, count:3",
-          "    └─Selection_13 3.00 cop[tikv]  gt(test.tbl.a, 1)",
-          "      └─TableRowIDScan_12 3.75 cop[tikv] table:tbl keep order:false"
+          "└─IndexLookUp_14 3.00 root  ",
+          "  ├─IndexRangeScan_10(Build) 3.75 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:false",
+          "  └─Limit_13(Probe) 3.00 cop[tikv]  offset:0, count:3",
+          "    └─Selection_12 3.00 cop[tikv]  gt(test.tbl.a, 1)",
+          "      └─TableRowIDScan_11 3.75 cop[tikv] table:tbl keep order:false"
         ]
       }
     ]
@@ -159,15 +159,15 @@
           "HashAgg_17 2.00 root  group by:Column#5, funcs:firstrow(Column#5)->Column#5",
           "└─Union_18 2.00 root  ",
           "  ├─StreamAgg_21 1.00 root  funcs:max(test.t.a)->Column#4",
-          "  │ └─Limit_25 1.00 root  offset:0, count:1",
-          "  │   └─TableReader_35 1.00 root  data:Limit_34",
-          "  │     └─Limit_34 1.00 cop[tikv]  offset:0, count:1",
-          "  │       └─TableFullScan_33 1.00 cop[tikv] table:t keep order:true, desc, stats:pseudo",
-          "  └─StreamAgg_40 1.00 root  funcs:min(test.t.a)->Column#2",
-          "    └─Limit_44 1.00 root  offset:0, count:1",
-          "      └─TableReader_54 1.00 root  data:Limit_53",
-          "        └─Limit_53 1.00 cop[tikv]  offset:0, count:1",
-          "          └─TableFullScan_52 1.00 cop[tikv] table:t keep order:true, stats:pseudo"
+          "  │ └─Limit_24 1.00 root  offset:0, count:1",
+          "  │   └─TableReader_31 1.00 root  data:Limit_30",
+          "  │     └─Limit_30 1.00 cop[tikv]  offset:0, count:1",
+          "  │       └─TableFullScan_29 1.00 cop[tikv] table:t keep order:true, desc, stats:pseudo",
+          "  └─StreamAgg_34 1.00 root  funcs:min(test.t.a)->Column#2",
+          "    └─Limit_37 1.00 root  offset:0, count:1",
+          "      └─TableReader_44 1.00 root  data:Limit_43",
+          "        └─Limit_43 1.00 cop[tikv]  offset:0, count:1",
+          "          └─TableFullScan_42 1.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ]
       }
     ]
@@ -242,16 +242,17 @@
           "TopN_16 3.00 root  test.t.a:asc, offset:0, count:3",
           "└─PartitionUnion_20 7.00 root  ",
           "  ├─TopN_21 3.00 root  test.t.a:asc, offset:0, count:3",
-          "  │ └─TableReader_29 3.00 root  data:TopN_28",
-          "  │   └─TopN_28 3.00 cop[tikv]  test.t.a:asc, offset:0, count:3",
-          "  │     └─TableFullScan_27 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "  ├─TopN_34 1.00 root  test.t.a:asc, offset:0, count:3",
-          "  │ └─TableReader_42 1.00 root  data:TableFullScan_41",
-          "  │   └─TableFullScan_41 1.00 cop[tikv] table:t, partition:p1 keep order:false",
-          "  └─TopN_43 3.00 root  test.t.a:asc, offset:0, count:3",
-          "    └─TableReader_51 3.00 root  data:TopN_50",
-          "      └─TopN_50 3.00 cop[tikv]  test.t.a:asc, offset:0, count:3",
-          "        └─TableFullScan_49 4.00 cop[tikv] table:t, partition:p2 keep order:false"
+          "  │ └─TableReader_27 3.00 root  data:TopN_26",
+          "  │   └─TopN_26 3.00 cop[tikv]  test.t.a:asc, offset:0, count:3",
+          "  │     └─TableFullScan_25 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
+          "  ├─TopN_28 1.00 root  test.t.a:asc, offset:0, count:3",
+          "  │ └─TableReader_34 1.00 root  data:TopN_33",
+          "  │   └─TopN_33 1.00 cop[tikv]  test.t.a:asc, offset:0, count:3",
+          "  │     └─TableFullScan_32 1.00 cop[tikv] table:t, partition:p1 keep order:false",
+          "  └─TopN_35 3.00 root  test.t.a:asc, offset:0, count:3",
+          "    └─TableReader_41 3.00 root  data:TopN_40",
+          "      └─TopN_40 3.00 cop[tikv]  test.t.a:asc, offset:0, count:3",
+          "        └─TableFullScan_39 4.00 cop[tikv] table:t, partition:p2 keep order:false"
         ]
       },
       {
@@ -307,12 +308,12 @@
           "  │ └─Selection_15 9990.00 cop[tikv]  not(isnull(test.t.b))",
           "  │   └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─Selection_17(Probe) 0.80 root  not(isnull(test.t.a))",
-          "    └─Projection_26 1.00 root  test.t.a",
+          "    └─Projection_23 1.00 root  test.t.a",
           "      └─TopN_18 1.00 root  Column#7:asc, offset:0, count:1",
-          "        └─Projection_27 1.00 root  test.t.a, plus(test.t.a, test.t.a)->Column#7",
-          "          └─TableReader_23 1.00 root  data:TopN_22",
-          "            └─TopN_22 1.00 cop[tikv]  plus(test.t.a, test.t.a):asc, offset:0, count:1",
-          "              └─TableFullScan_21 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "        └─Projection_24 1.00 root  test.t.a, plus(test.t.a, test.t.a)->Column#7",
+          "          └─TableReader_22 1.00 root  data:TopN_21",
+          "            └─TopN_21 1.00 cop[tikv]  plus(test.t.a, test.t.a):asc, offset:0, count:1",
+          "              └─TableFullScan_20 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
       {

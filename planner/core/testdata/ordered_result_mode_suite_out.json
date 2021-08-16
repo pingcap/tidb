@@ -64,10 +64,10 @@
       },
       {
         "Plan": [
-          "Limit_10 10.00 root  offset:0, count:10",
-          "└─TableReader_20 10.00 root  data:Limit_19",
-          "  └─Limit_19 10.00 cop[tikv]  offset:0, count:10",
-          "    └─TableFullScan_18 10.00 cop[tikv] table:t keep order:true, stats:pseudo"
+          "Limit_9 10.00 root  offset:0, count:10",
+          "└─TableReader_16 10.00 root  data:Limit_15",
+          "  └─Limit_15 10.00 cop[tikv]  offset:0, count:10",
+          "    └─TableFullScan_14 10.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ]
       },
       {
@@ -104,10 +104,10 @@
       {
         "Plan": [
           "Projection_7 1.00 root  test.t.b",
-          "└─Limit_11 1.00 root  offset:0, count:1",
-          "  └─TableReader_21 1.00 root  data:Limit_20",
-          "    └─Limit_20 1.00 cop[tikv]  offset:0, count:1",
-          "      └─TableRangeScan_19 1.00 cop[tikv] table:t range:(0,+inf], keep order:true, stats:pseudo"
+          "└─Limit_10 1.00 root  offset:0, count:1",
+          "  └─TableReader_17 1.00 root  data:Limit_16",
+          "    └─Limit_16 1.00 cop[tikv]  offset:0, count:1",
+          "      └─TableRangeScan_15 1.00 cop[tikv] table:t range:(0,+inf], keep order:true, stats:pseudo"
         ]
       }
     ]
@@ -377,10 +377,10 @@
       },
       {
         "Plan": [
-          "Projection_10 10000.00 root  Column#7, Column#8",
-          "└─Sort_11 10000.00 root  test.t1.a:asc, test.t1.b:asc, Column#7:asc, Column#8:asc",
-          "  └─Window_13 10000.00 root  sum(cast(test.t1.b, decimal(32,0) BINARY))->Column#8 over(partition by test.t1.a)",
-          "    └─Window_14 10000.00 root  row_number()->Column#7 over(partition by test.t1.a)",
+          "Projection_10 10000.00 root  Column#8, Column#7",
+          "└─Sort_11 10000.00 root  test.t1.a:asc, Column#7:asc, Column#8:asc",
+          "  └─Window_13 10000.00 root  row_number()->Column#8 over(partition by test.t1.a)",
+          "    └─Window_14 10000.00 root  sum(cast(test.t1.b, decimal(32,0) BINARY))->Column#7 over(partition by test.t1.a)",
           "      └─TableReader_17 10000.00 root  data:TableFullScan_16",
           "        └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ]
