@@ -1349,24 +1349,6 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	return resultTp
 }
 
-// shouldUseDefautCharsetAndCollationInUnion return true if type of any column is time and any type is
-// not (varchar & time)
-func shouldUseDefautCharsetAndCollationInUnion(fieldTypes []*types.FieldType) bool {
-	var hasDate = false
-	var allDateOrVarchar = true
-	for _, e := range fieldTypes {
-		if !hasDate {
-			hasDate = types.IsTypeTime(e.Tp)
-		}
-
-		if !(types.IsTypeVarchar(e.Tp) || types.IsTypeTime(e.Tp)) {
-			allDateOrVarchar = false
-		}
-	}
-
-	return hasDate && !allDateOrVarchar
-}
-
 func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnionAll) error {
 	unionCols := make([]*expression.Column, 0, u.children[0].Schema().Len())
 	names := make([]*types.FieldName, 0, u.children[0].Schema().Len())
