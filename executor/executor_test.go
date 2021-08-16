@@ -8944,27 +8944,33 @@ func (s *testSuite) TestEmptyTableSampleTemporaryTable(c *C) {
 		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
 		"on commit delete rows")
 
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tmp2")
+	tk.MustExec("create temporary table tmp2 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+
 	// sleep 1us to make test stale
 	time.Sleep(time.Microsecond)
 
 	// test tablesample return empty
-	rs := tk.MustQuery("select * from tmp1 tablesample regions()")
-	rs.Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 
 	tk.MustExec("begin")
 	tk.MustExec("insert into tmp1 values (1, 1, 1)")
-	rs = tk.MustQuery("select * from tmp1 tablesample regions()")
-	rs.Check(testkit.Rows())
+	tk.MustExec("insert into tmp2 values (1, 1, 1)")
+	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 	tk.MustExec("commit")
 
 	// tablesample should not return error for compatibility of tools like dumpling
 	tk.MustExec("set @@tidb_snapshot=NOW(6)")
-	rs = tk.MustQuery("select * from tmp1 tablesample regions()")
-	rs.Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 
 	tk.MustExec("begin")
-	rs = tk.MustQuery("select * from tmp1 tablesample regions()")
-	rs.Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 	tk.MustExec("commit")
 }
 
