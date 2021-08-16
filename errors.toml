@@ -121,6 +121,11 @@ error = '''
 storage is not tikv
 '''
 
+["BR:PD:ErrPDBatchScanRegion"]
+error = '''
+batch scan region
+'''
+
 ["BR:PD:ErrPDInvalidResponse"]
 error = '''
 PD invalid response
