@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -7026,6 +7027,22 @@ func (s *testIntegrationSerialSuite) TestIssue16668(c *C) {
 	tk.MustQuery("select count(distinct(b)) from tx").Check(testkit.Rows("4"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue27091(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tx")
+	tk.MustExec("CREATE TABLE `tx` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL, `c` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL)")
+	tk.MustExec("insert into tx values (1, 'a', 'a'), (2, 'A ', 'a '), (3, 'A', 'A'), (4, 'a ', 'A ')")
+	tk.MustQuery("select count(distinct b) from tx").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(distinct c) from tx").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(distinct b, c) from tx where a < 3").Check(testkit.Rows("1"))
+	tk.MustQuery("select approx_count_distinct(b) from tx").Check(testkit.Rows("1"))
+	tk.MustQuery("select approx_count_distinct(c) from tx").Check(testkit.Rows("2"))
+	tk.MustQuery("select approx_count_distinct(b, c) from tx where a < 3").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -8152,7 +8169,7 @@ func (s *testIntegrationSerialSuite) TestIssue19804(c *C) {
 	tk.MustExec(`create table t(a set('a', 'b', 'c'));`)
 	tk.MustExec(`alter table t change a a set('a', 'b', 'c', 'd');`)
 	tk.MustExec(`insert into t values('d');`)
-	tk.MustGetErrMsg(`alter table t change a a set('a', 'b', 'c', 'e', 'f');`, "[types:1265]Data truncated for column 'a', value is 'KindMysqlSet d'")
+	tk.MustGetErrMsg(`alter table t change a a set('a', 'b', 'c', 'e', 'f');`, "[types:1265]Data truncated for column 'a', value is 'd'")
 }
 
 func (s *testIntegrationSerialSuite) TestIssue20209(c *C) {
