@@ -737,12 +737,6 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 		if err = rc.DataCheck(ctx); err != nil {
 			return errors.Trace(err)
 		}
-		// print check template only if check requirements is true.
-		fmt.Println(rc.checkTemplate.Output())
-		if !rc.checkTemplate.Success() {
-			return errors.Errorf("tidb-lightning pre-check failed." +
-				" Please fix the failed check(s) or set --check-requirements=false to skip checks")
-		}
 	}
 
 	// Load new checkpoints

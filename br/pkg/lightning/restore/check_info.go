@@ -318,7 +318,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 			"You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch,"+
 			"For details of this failure, read the log file from the PREVIOUS run",
 			uniqueName, failedStep.MetricName(), action.String()))
-		return nil, false, nil
+		return msgs, false, nil
 	}
 
 	dbInfo, ok := rc.dbInfos[tableInfo.DB]
@@ -331,7 +331,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 					"You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch,"+
 					"For details of this failure, read the log file from the PREVIOUS run",
 					uniqueName))
-				return nil, false, nil
+				return msgs, false, nil
 			}
 		}
 	}
