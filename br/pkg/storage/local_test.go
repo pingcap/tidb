@@ -91,23 +91,4 @@ func (r *testStorageSuite) TestWalkDirWithSoftLinkFile(c *C) {
 	})
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, 2)
-
-	name := "test_delete"
-	ret, err := store.FileExists(context.Background(), name)
-	c.Assert(err, IsNil)
-	c.Assert(ret, Equals, false)
-
-	_, err = store.Create(context.Background(), name)
-	c.Assert(err, IsNil)
-
-	ret, err = store.FileExists(context.Background(), name)
-	c.Assert(err, IsNil)
-	c.Assert(ret, Equals, true)
-
-	err = store.DeleteFile(context.Background(), name)
-	c.Assert(err, IsNil)
-
-	ret, err = store.FileExists(context.Background(), name)
-	c.Assert(err, IsNil)
-	c.Assert(ret, Equals, false)
 }
