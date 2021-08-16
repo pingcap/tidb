@@ -1482,7 +1482,8 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			sender.isNullEQ = e.isNullEQ
 		}
 		return &NonParallelHashJoinExec{
-			HashJoinExec: e,
+			HashJoinExec:  e,
+			isBroadcastHJ: v.IsBroadcastHJ,
 		}
 	}
 	return e

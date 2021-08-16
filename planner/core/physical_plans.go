@@ -769,6 +769,7 @@ type PhysicalHashJoin struct {
 	storeTp          kv.StoreType
 	globalChildIndex int
 	mppShuffleJoin   bool
+	IsBroadcastHJ    bool
 }
 
 // Clone implements PhysicalPlan interface.
@@ -784,6 +785,7 @@ func (p *PhysicalHashJoin) Clone() (PhysicalPlan, error) {
 	for _, c := range p.EqualConditions {
 		cloned.EqualConditions = append(cloned.EqualConditions, c.Clone().(*expression.ScalarFunction))
 	}
+	cloned.IsBroadcastHJ = p.IsBroadcastHJ
 	return cloned, nil
 }
 

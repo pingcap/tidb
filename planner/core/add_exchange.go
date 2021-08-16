@@ -287,6 +287,7 @@ func (p *PhysicalHashJoin) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPrope
 	if reqProp.output != 1 {
 		// If parent of HashJoin already requires parallel, build child have to enforce BroadcastHT.
 		p.GetChildXchgProps()[buildSideIdx].isBroadcastHT = true
+		p.IsBroadcastHJ = true
 	}
 
 	outStreamCnt := reqProp.output
@@ -318,6 +319,11 @@ func tryBroadcastHJ(ctx sessionctx.Context, node *PhysicalHashJoin, outStreamCnt
 	if err != nil {
 		return nil, err
 	}
+	newHJNode, ok := newNode.(*PhysicalHashJoin)
+	if !ok {
+		return nil, errors.New("newNode must be HashJoin")
+	}
+	newHJNode.IsBroadcastHJ = true
 
 	buildReqProp := &XchgProperty{
 		output:        outStreamCnt,

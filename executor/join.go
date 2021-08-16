@@ -47,6 +47,7 @@ var (
 	_ Executor = &NonParallelHashJoinExec{}
 )
 
+// TODO: maybe a better name.
 type NonParallelHashJoinExec struct {
 	*HashJoinExec
 	hashTblDone     bool
@@ -62,6 +63,8 @@ type NonParallelHashJoinExec struct {
 	probeRow            chunk.Row
 	probeChk            *chunk.Chunk
 	resChk              *chunk.Chunk
+
+	isBroadcastHJ bool
 }
 
 func (e *NonParallelHashJoinExec) Open(ctx context.Context) error {
@@ -149,8 +152,33 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 }
 
 func (e *NonParallelHashJoinExec) buildHashTable(ctx context.Context) (err error) {
-	if err = Next(ctx, e.buildSideExec, (*chunk.Chunk)(unsafe.Pointer(&e.rowContainer))); err != nil {
-		return err
+	if e.isBroadcastHJ {
+		if err = Next(ctx, e.buildSideExec, (*chunk.Chunk)(unsafe.Pointer(&e.rowContainer))); err != nil {
+			return err
+		}
+	} else {
+		buildKeyColIdx := make([]int, len(e.buildKeys))
+		for i := range e.buildKeys {
+			buildKeyColIdx[i] = e.buildKeys[i].Index
+		}
+		hCtx := &hashContext{
+			allTypes:  e.buildTypes,
+			keyColIdx: buildKeyColIdx,
+		}
+		e.rowContainer = newHashRowContainerMultiple(e.ctx, int(e.buildSideEstCount), hCtx, 1)
+
+		for {
+			chk := chunk.NewChunkWithCapacity(e.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
+			if err = Next(ctx, e.buildSideExec, chk); err != nil {
+				return err
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+			if err = e.rowContainer.PutChunk(chk, e.isNullEQ); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
