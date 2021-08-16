@@ -648,6 +648,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 				return errors.Annotatef(err, "invalid task meta status '%s'", statusValue)
 			}
 			task.status = status
+			tasks = append(tasks, task)
 		}
 		if err = rows.Err(); err != nil {
 			return errors.Trace(err)
