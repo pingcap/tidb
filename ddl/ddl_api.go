@@ -12,6 +12,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -5111,6 +5112,11 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 			Dependences:         make(map[string]struct{}),
 			Hidden:              true,
 			FieldType:           *expr.GetType(),
+		}
+		if colInfo.Tp == mysql.TypeDatetime || colInfo.Tp == mysql.TypeDate || colInfo.Tp == mysql.TypeTimestamp || colInfo.Tp == mysql.TypeDuration {
+			if colInfo.FieldType.Decimal == types.UnspecifiedLength {
+				colInfo.FieldType.Decimal = int(types.MaxFsp)
+			}
 		}
 		checkDependencies := make(map[string]struct{})
 		for _, colName := range findColumnNamesInExpr(idxPart.Expr) {

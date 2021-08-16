@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -5217,7 +5218,7 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("4 1"))
 	re := tk.MustQuery("show table t_regions regions")
 
-	// Test show table regions and split table on temporary table.
+	// Test show table regions and split table on global temporary table.
 	tk.MustExec("drop table if exists t_regions_temporary_table")
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t_regions_temporary_table (a int key, b int, c int, index idx(b), index idx2(c)) ON COMMIT DELETE ROWS;")
