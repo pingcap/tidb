@@ -158,7 +158,7 @@ func findBestXchgTask(ctx sessionctx.Context, node PhysicalPlan, reqProp *XchgPr
 		if isReaderNode(planToFind) {
 			tmpTask := &rootTask{
 				cst: planToFind.Cost(),
-				p:   planToFind,
+				p:   p,
 			}
 			if p != planToFind {
 				// bestTask = p.attach2Task(convertToXchgTask(ctx, bestTask))
