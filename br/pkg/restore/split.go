@@ -119,10 +119,6 @@ SplitRegions:
 			}
 			return errors.Trace(errScan)
 		}
-		if len(regions) == 0 {
-			log.Warn("split regions cannot scan any region")
-			return nil
-		}
 		splitKeyMap := getSplitKeys(rewriteRules, sortedRanges, regions)
 		regionMap := make(map[uint64]*RegionInfo)
 		for _, region := range regions {
