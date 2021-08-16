@@ -351,7 +351,7 @@ func (importer *FileImporter) Import(
 					logutil.ShortError(errDownload))
 				return errors.Trace(errDownload)
 			}
-			log.Info("download file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)),
+			log.Debug("download file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)),
 				logutil.Key("start", files[0].StartKey),
 				logutil.Key("end", files[0].EndKey),
 			)
@@ -420,7 +420,7 @@ func (importer *FileImporter) Import(
 				return errors.Trace(errIngest)
 			}
 		}
-		log.Info("ingtest file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)))
+		log.Debug("ingtest file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)))
 		for _, f := range files {
 			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
 			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
