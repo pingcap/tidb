@@ -1025,7 +1025,7 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 	var unixTimeMs = func(s string) int64 {
 		t, err := time.ParseInLocation("2006/01/02 15:04:05", s, time.Local)
 		c.Assert(err, IsNil)
-		return t.Unix()
+		return t.UnixNano() / int64(time.Millisecond)
 	}
 	fullHotRegions := [][]string{
 		// Record Regions
