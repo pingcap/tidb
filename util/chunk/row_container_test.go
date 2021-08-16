@@ -25,6 +25,8 @@ import (
 )
 
 func TestNewRowContainer(t *testing.T) {
+	t.Parallel()
+
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, 1024)
 	require.NotNil(t, rc)
@@ -32,6 +34,8 @@ func TestNewRowContainer(t *testing.T) {
 }
 
 func TestSel(t *testing.T) {
+	t.Parallel()
+
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	sz := 4
 	rc := NewRowContainer(fields, sz)
@@ -82,6 +86,8 @@ func TestSel(t *testing.T) {
 }
 
 func TestSpillAction(t *testing.T) {
+	t.Parallel()
+
 	sz := 4
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, sz)
@@ -134,6 +140,8 @@ func TestSpillAction(t *testing.T) {
 }
 
 func TestSpillActionDeadLock(t *testing.T) {
+	t.Parallel()
+
 	// Maybe get deadlock if we use two RLock in one goroutine, for oom-action call stack.
 	// Now the implement avoids the situation.
 	// Goroutine 1: rc.Add() (RLock) -> list.Add() -> tracker.Consume() -> SpillDiskAction -> rc.AlreadySpilledSafeForTest() (RLock)
@@ -170,6 +178,8 @@ func TestSpillActionDeadLock(t *testing.T) {
 }
 
 func TestNewSortedRowContainer(t *testing.T) {
+	t.Parallel()
+
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewSortedRowContainer(fields, 1024, nil, nil, nil)
 	require.NotNil(t, rc)
@@ -177,6 +187,8 @@ func TestNewSortedRowContainer(t *testing.T) {
 }
 
 func TestSortedRowContainerSortSpillAction(t *testing.T) {
+	t.Parallel()
+
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	byItemsDesc := []bool{false}
 	keyColumns := []int{0}
@@ -220,6 +232,8 @@ func TestSortedRowContainerSortSpillAction(t *testing.T) {
 }
 
 func TestActionBlocked(t *testing.T) {
+	t.Parallel()
+
 	sz := 4
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, sz)
@@ -269,6 +283,8 @@ func TestActionBlocked(t *testing.T) {
 }
 
 func TestRowContainerResetAndAction(t *testing.T) {
+	t.Parallel()
+
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	sz := 20
 	rc := NewRowContainer(fields, sz)

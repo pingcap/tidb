@@ -25,6 +25,8 @@ import (
 )
 
 func TestMutRow(t *testing.T) {
+	t.Parallel()
+
 	mutRow := MutRowFromTypes(allTypes)
 	row := mutRow.ToRow()
 	sc := new(stmtctx.StatementContext)
@@ -144,6 +146,8 @@ func BenchmarkMutRowFromValues(b *testing.B) {
 }
 
 func TestMutRowShallowCopyPartialRow(t *testing.T) {
+	t.Parallel()
+
 	colTypes := make([]*types.FieldType, 0, 3)
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
