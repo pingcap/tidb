@@ -9,6 +9,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/HdrHistogram/hdrhistogram-go v1.1.0 // indirect
 	github.com/Jeffail/gabs/v2 v2.5.1
+	github.com/aerospike/aerospike-client-go v4.5.2+incompatible
 	github.com/aws/aws-sdk-go v1.35.3
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
 	github.com/carlmjohnson/flagext v0.21.0
