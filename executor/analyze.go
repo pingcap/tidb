@@ -1825,7 +1825,7 @@ func (e *AnalyzeFastExec) handleBatchSeekResponse(kvMap map[string][]byte) (err 
 }
 
 func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, err error) {
-	rander := rand.New(rand.NewSource(e.randSeed))
+	rander := rand.New(rand.NewSource(e.randSeed)) // #nosec G404
 	sampleSize := int64(e.opts[ast.AnalyzeOptNumSamples])
 	for ; iter.Valid() && err == nil; err = iter.Next() {
 		// reservoir sampling
@@ -1881,7 +1881,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 
-	rander := rand.New(rand.NewSource(e.randSeed))
+	rander := rand.New(rand.NewSource(e.randSeed)) // #nosec G404
 	for i := workID; i < len(e.sampTasks); i += e.concurrency {
 		task := e.sampTasks[i]
 		// randomize the estimate step in range [step - 2 * sqrt(step), step]
