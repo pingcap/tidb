@@ -16,7 +16,6 @@ package meta_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/ddl/placement"
 	"math"
 	"strconv"
 	"sync"
@@ -25,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/store/mockstore"
