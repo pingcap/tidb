@@ -3181,7 +3181,6 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 func (b *PlanBuilder) addAliasName(ctx context.Context, selectFields []*ast.SelectField, p LogicalPlan) (resultList []*ast.SelectField, err error) {
 	projOutNames := make([]*types.FieldName, 0, len(selectFields))
 	for _, field := range selectFields {
-		var expr expression.Expression
 		colNameField, isColumnNameExpr := field.Expr.(*ast.ColumnNameExpr)
 		if isColumnNameExpr {
 			colName := colNameField.Name.Name
@@ -3198,7 +3197,7 @@ func (b *PlanBuilder) addAliasName(ctx context.Context, selectFields []*ast.Sele
 		} else {
 			// create view v as select name_const('col', 100);
 			// The column in v should be 'col', so we call `buildProjectionField` to handle this.
-			_, name, err := b.buildProjectionField(ctx, p, field, expr)
+			_, name, err := b.buildProjectionField(ctx, p, field, nil)
 			if err != nil {
 				return nil, err
 			}
