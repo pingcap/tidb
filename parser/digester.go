@@ -186,7 +186,7 @@ func (d *sqlDigester) normalize(sql string) {
 
 		if currTok.tok == identifier {
 			if strings.HasPrefix(currTok.lit, "_") {
-				_, _, err := charset.GetCharsetInfo(currTok.lit[1:])
+				_, err := charset.GetCharsetInfo(currTok.lit[1:])
 				if err == nil {
 					currTok.tok = underscoreCS
 					goto APPEND

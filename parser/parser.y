@@ -9611,14 +9611,14 @@ CharsetName:
 	StringName
 	{
 		// Validate input charset name to keep the same behavior as parser of MySQL.
-		name, _, err := charset.GetCharsetInfo($1)
+		cs, err := charset.GetCharsetInfo($1)
 		if err != nil {
 			yylex.AppendError(ErrUnknownCharacterSet.GenWithStackByArgs($1))
 			return 1
 		}
 		// Use charset name returned from charset.GetCharsetInfo(),
 		// to keep lower case of input for generated column restore.
-		$$ = name
+		$$ = cs.Name
 	}
 |	binaryType
 	{
@@ -11622,14 +11622,14 @@ OptCharsetWithOptBinary:
 	}
 |	"UNICODE"
 	{
-		name, _, err := charset.GetCharsetInfo("ucs2")
+		cs, err := charset.GetCharsetInfo("ucs2")
 		if err != nil {
 			yylex.AppendError(ErrUnknownCharacterSet.GenWithStackByArgs("ucs2"))
 			return 1
 		}
 		$$ = &ast.OptBinary{
 			IsBinary: false,
-			Charset:  name,
+			Charset:  cs.Name,
 		}
 	}
 |	"BYTE"

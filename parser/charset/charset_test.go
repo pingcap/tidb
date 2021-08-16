@@ -77,13 +77,6 @@ func (s *testCharsetSuite) TestValidCustomCharset(c *C) {
 	}
 }
 
-func (s *testCharsetSuite) TestGetSupportedCharsets(c *C) {
-	charset := &Charset{"test", "test_bin", nil, "Test", 5}
-	charsetInfos = append(charsetInfos, charset)
-	descs := GetSupportedCharsets()
-	c.Assert(len(descs), Equals, len(charsetInfos)-1)
-}
-
 func testGetDefaultCollation(c *C, charset string, expectCollation string, succ bool) {
 	b, err := GetDefaultCollation(charset)
 	if !succ {
@@ -116,13 +109,13 @@ func (s *testCharsetSuite) TestGetDefaultCollation(c *C) {
 	charset_num := 0
 	for _, collate := range collations {
 		if collate.IsDefault {
-			if desc, ok := charsets[collate.CharsetName]; ok {
+			if desc, ok := charsetInfos[collate.CharsetName]; ok {
 				c.Assert(collate.Name, Equals, desc.DefaultCollation)
 				charset_num += 1
 			}
 		}
 	}
-	c.Assert(charset_num, Equals, len(charsets))
+	c.Assert(charset_num, Equals, len(charsetInfos))
 }
 
 func (s *testCharsetSuite) TestSupportedCollations(c *C) {
@@ -159,7 +152,7 @@ func (s *testCharsetSuite) TestGetCharsetDesc(c *C) {
 		{"", "utf8_bin", false},
 	}
 	for _, tt := range tests {
-		desc, err := GetCharsetDesc(tt.cs)
+		desc, err := GetCharsetInfo(tt.cs)
 		if !tt.succ {
 			c.Assert(err, NotNil)
 		} else {
@@ -187,6 +180,6 @@ func BenchmarkGetCharsetDesc(b *testing.B) {
 	cs := charsets[index]
 
 	for i := 0; i < b.N; i++ {
-		GetCharsetDesc(cs)
+		GetCharsetInfo(cs)
 	}
 }
