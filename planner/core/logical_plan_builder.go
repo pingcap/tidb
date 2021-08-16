@@ -1356,14 +1356,11 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 	// Infer union result types by its children's schema.
 	for i, col := range u.children[0].Schema().Columns {
 		tmpExprs := make([]expression.Expression, 0, len(u.Children()))
-		temTypes := make([]*types.FieldType, 0, len(u.Children()))
 		tmpExprs = append(tmpExprs, col)
-		temTypes = append(temTypes, col.RetType)
 		resultTp := col.RetType
 		for j := 1; j < len(u.children); j++ {
 			tmpExprs = append(tmpExprs, u.children[j].Schema().Columns[i])
 			childTp := u.children[j].Schema().Columns[i].RetType
-			temTypes = append(temTypes, childTp)
 			resultTp = unionJoinFieldType(resultTp, childTp)
 		}
 		if err := expression.CheckIllegalMixCollation("UNION", tmpExprs, types.ETInt); err != nil {
