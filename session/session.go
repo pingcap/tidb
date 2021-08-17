@@ -23,16 +23,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"net"
-	"runtime/pprof"
-	"runtime/trace"
-	"strconv"
-	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
-	"unsafe"
-
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -48,6 +38,15 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
+	"net"
+	"runtime/pprof"
+	"runtime/trace"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+	"unsafe"
 
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -2955,10 +2954,7 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 	}
 }
 
-var generalLogBufPool = sync.Pool{New: func() interface{} {
-	ret := strings.Builder{}
-	return &ret
-}}
+var glBufPool = sync.Pool{New: func() interface{} { return make([]byte, 0, 1024) }}
 
 func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 	vars := s.GetSessionVars()
@@ -2986,59 +2982,47 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		// 	vars.GetReadableTxnMode(),
 		// 	query)
 
-		generalLogBuf := generalLogBufPool.Get().(*strings.Builder)
-		connID := strconv.FormatUint(vars.ConnectionID, 10)
-		userString := func(user *auth.UserIdentity) string {
+		appendUserString := func(dst []byte, user *auth.UserIdentity) []byte {
 			if user == nil {
-				return ""
+				return dst
 			}
 			length := len(user.Username) + 1 + len(user.Hostname)
 			buf1 := make([]byte, length)
 			copy(buf1, user.Username)
 			buf1[len(user.Username)] = '@'
 			copy(buf1[len(user.Username)+1:], user.Hostname)
-			return *(*string)(unsafe.Pointer(&buf1))
+			dst = append(dst, buf1...)
+			return dst
 		}
-		//user := vars.User.String()
-		user := userString(vars.User)
-		smVer := strconv.FormatInt(s.GetInfoSchema().SchemaMetaVersion(), 10)
-		txnStartTS := strconv.FormatUint(vars.TxnCtx.StartTS, 10)
-		forUpdateTS := strconv.FormatUint(vars.TxnCtx.GetForUpdateTS(), 10)
-		isReadConsistency := strconv.FormatBool(vars.IsIsolation(ast.ReadCommitted))
-		currentDB := vars.CurrentDB
-		txnMode := vars.GetReadableTxnMode()
-		bufLen := 31 /*time format*/ + 121 /*static strings in general log*/ + len(connID) + len(user) + len(smVer) + len(txnStartTS) + len(forUpdateTS) + len(isReadConsistency) + len(currentDB) + len(txnMode) + 10 /*leave some buffer*/
-		generalLogBuf.Grow(bufLen)
-		generalLogBuf.WriteByte('[')
-		// write the time in format 2006/01/02 15:04:05.000 -07:00, according to github.com/pingcap/log/zap_text_encoder.go:DefaultTimeEncoder
+
+		glBuf := glBufPool.Get().([]byte)
+		glBuf = append(glBuf, '[')
 		now := time.Now()
-		var a [32]byte
-		generalLogBuf.Write(now.AppendFormat(a[:0], "2006/01/02 15:04:05.000 -07:00"))
-		generalLogBuf.WriteString("] ")
+		glBuf = now.AppendFormat(glBuf, "2006/01/02 15:04:05.000 -07:00")
+		glBuf = append(glBuf, "] "...)
+		glBuf = append(glBuf, "[GENERAL_LOG] [conn="...)
+		glBuf = strconv.AppendUint(glBuf, vars.ConnectionID, 10)
+		glBuf = append(glBuf, "] [user="...)
+		glBuf = appendUserString(glBuf, vars.User)
+		glBuf = append(glBuf, "] [schemaVersion="...)
+		glBuf = strconv.AppendInt(glBuf, s.GetInfoSchema().SchemaMetaVersion(), 10)
+		glBuf = append(glBuf, "] [txnStartTS="...)
+		glBuf = strconv.AppendUint(glBuf, vars.TxnCtx.StartTS, 10)
+		glBuf = append(glBuf, "] [forUpdateTS="...)
+		glBuf = strconv.AppendUint(glBuf, vars.TxnCtx.GetForUpdateTS(), 10)
+		glBuf = append(glBuf, "] [isReadConsistency="...)
+		glBuf = strconv.AppendBool(glBuf, vars.IsIsolation(ast.ReadCommitted))
+		glBuf = append(glBuf, "] [current_db="...)
+		glBuf = append(glBuf, vars.CurrentDB...)
+		glBuf = append(glBuf, "] [txn_mode="...)
+		glBuf = append(glBuf, vars.GetReadableTxnMode()...)
+		glBuf = append(glBuf, "] [sql=\""...)
+		glBuf = append(glBuf, query...)
+		glBuf = append(glBuf, "\"]"...)
+		logutil.PutGeneralLogBlocking(*(*string)(unsafe.Pointer(&glBuf)))
+		glBuf = glBuf[:0]
+		glBufPool.Put(glBuf)
 
-		generalLogBuf.WriteString("[GENERAL_LOG] [conn=")
-		generalLogBuf.WriteString(connID)
-		generalLogBuf.WriteString("] [user=")
-		generalLogBuf.WriteString(user)
-		generalLogBuf.WriteString("] [schemaVersion=")
-		generalLogBuf.WriteString(smVer)
-		generalLogBuf.WriteString("] [txnStartTS=")
-		generalLogBuf.WriteString(txnStartTS)
-		generalLogBuf.WriteString("] [forUpdateTS=")
-		generalLogBuf.WriteString(forUpdateTS)
-		generalLogBuf.WriteString("] [isReadConsistency=")
-		generalLogBuf.WriteString(isReadConsistency)
-		generalLogBuf.WriteString("] [current_db=")
-		generalLogBuf.WriteString(currentDB)
-		generalLogBuf.WriteString("] [txn_mode=")
-		generalLogBuf.WriteString(txnMode)
-		generalLogBuf.WriteString("] [sql=\"")
-		generalLogBuf.WriteString(query)
-		generalLogBuf.WriteString("\"]")
-
-		logutil.PutGeneralLogBlocking(generalLogBuf.String())
-		generalLogBuf.Reset()
-		generalLogBufPool.Put(generalLogBuf)
 		// logutil.GeneralLogLogger.Info(generalLogText)
 		// logutil.BgLogger().Info("GENERAL_LOG",
 		// 	zap.Uint64("conn", vars.ConnectionID),
