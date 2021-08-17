@@ -14,6 +14,7 @@
 package charset
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -74,6 +75,10 @@ func GetSupportedCharsets() []*Charset {
 		charsets = append(charsets, ch)
 	}
 
+	// sort charset by name.
+	sort.Slice(charsets, func(i, j int) bool {
+		return charsets[i].Name < charsets[j].Name
+	})
 	return charsets
 }
 
