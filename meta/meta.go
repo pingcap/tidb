@@ -75,6 +75,21 @@ var (
 	mPolicies         = []byte("Policies")
 	mPolicyPrefix     = "Policy"
 	mPolicyGlobalID   = []byte("PolicyGlobalID")
+	mPolicyMagicByte  = CurrentMagicByteVer
+)
+
+const (
+	CurrentMagicByteVer byte = 0x00
+	// PolicyMagicByte handler
+	// 0x00 - 0x3F: Json Handler
+	// 0x40 - 0x7F: Reserved
+	// 0x80 - 0xBF: Reserved
+	// 0xC0 - 0xFF: Reserved
+
+	// type means how to handle the serialized data.
+	typeJson    int = 1
+	typeUnknown int = 2
+	// todo: customized handler.
 )
 
 var (
@@ -350,7 +365,7 @@ func (m *Meta) CreatePolicy(policy *placement.Policy) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return m.txn.HSet(mPolicies, policyKey, data)
+	return m.txn.HSet(mPolicies, policyKey, attachMagicByte(data))
 }
 
 func (m *Meta) UpdatePolicy(policy *placement.Policy) error {
@@ -364,7 +379,7 @@ func (m *Meta) UpdatePolicy(policy *placement.Policy) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return m.txn.HSet(mPolicies, policyKey, data)
+	return m.txn.HSet(mPolicies, policyKey, attachMagicByte(data))
 }
 
 // CreateDatabase creates a database with db info.
@@ -628,8 +643,12 @@ func (m *Meta) ListPolicies() ([]*placement.Policy, error) {
 
 	policies := make([]*placement.Policy, 0, len(res))
 	for _, r := range res {
+		value, err := detachMagicByte(r.Value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		policy := &placement.Policy{}
-		err = json.Unmarshal(r.Value, policy)
+		err = json.Unmarshal(value, policy)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -645,10 +664,39 @@ func (m *Meta) GetPolicy(policyID int64) (*placement.Policy, error) {
 	if err != nil || value == nil {
 		return nil, errors.Trace(err)
 	}
+	value, err = detachMagicByte(value)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	policy := &placement.Policy{}
 	err = json.Unmarshal(value, policy)
 	return policy, errors.Trace(err)
+}
+
+func attachMagicByte(data []byte) []byte {
+	dataWithHeader := make([]byte, 0, len(data)+1)
+	dataWithHeader = append(dataWithHeader, mPolicyMagicByte)
+	dataWithHeader = append(dataWithHeader, data...)
+	return dataWithHeader
+}
+
+func detachMagicByte(value []byte) ([]byte, error) {
+	magic, data := value[:1], value[1:]
+	switch whichMagicType(magic[0]) {
+	case typeJson:
+		return data, nil
+	default:
+		//
+		return nil, errors.New("unknown magic type handling module")
+	}
+}
+
+func whichMagicType(b byte) int {
+	if b < 0x3F {
+		return typeJson
+	}
+	return typeUnknown
 }
 
 // GetTable gets the table value in database with tableID.
