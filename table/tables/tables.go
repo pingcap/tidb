@@ -331,8 +331,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
-			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
-				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
+			if err := checkTempTableSize(sctx, tmpTable, m); err != nil {
+				return err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
@@ -617,6 +617,19 @@ func handleTempTableSize(t tableutil.TempTable, txnSizeBefore int, txn kv.Transa
 	t.SetSize(newSize)
 }
 
+func checkTempTableSize(ctx sessionctx.Context, tmpTable tableutil.TempTable, tblInfo *model.TableInfo) error {
+	tmpTableSize := tmpTable.GetSize()
+	if tempTableData := ctx.GetSessionVars().TemporaryTableData; tempTableData != nil {
+		tmpTableSize += tempTableData.GetTableSize(tblInfo.ID)
+	}
+
+	if tmpTableSize > ctx.GetSessionVars().TMPTableSize {
+		return table.ErrTempTableFull.GenWithStackByArgs(tblInfo.Name.O)
+	}
+
+	return nil
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	txn, err := sctx.Txn(true)
@@ -631,8 +644,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
-			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
-				return nil, table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
+			if err := checkTempTableSize(sctx, tmpTable, m); err != nil {
+				return nil, err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
@@ -1045,8 +1058,8 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	}
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(ctx, m); tmpTable != nil {
-			if tmpTable.GetSize() > ctx.GetSessionVars().TMPTableSize {
-				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
+			if err := checkTempTableSize(ctx, tmpTable, m); err != nil {
+				return err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
