@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/errors"
 )
 
-// Round rounds the argument f to dec decimal places using "round to nearest even" rule.
+// RoundFloat rounds the argument f to dec decimal places using "round to nearest even" rule.
 // dec defaults to 0 if not specified. dec can be negative
 // see https://dev.mysql.com/doc/refman/5.7/en/precision-math-rounding.html
-func Round(f float64, dec int) float64 {
+func RoundFloat(f float64, dec int) float64 {
 	shift := math.Pow10(dec)
 	tmp := f * shift
 	if math.IsInf(tmp, 0) {
@@ -90,7 +90,7 @@ func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 	maxF := GetMaxFloat(flen, decimal)
 
 	if !math.IsInf(f, 0) {
-		f = Round(f, decimal)
+		f = RoundFloat(f, decimal)
 	}
 
 	var err error

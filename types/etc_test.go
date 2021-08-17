@@ -148,7 +148,7 @@ func (s *testTypeEtcSuite) TestRound(c *C) {
 	}
 
 	for _, t := range tbl {
-		f := Round(t.Input, t.Dec)
+		f := RoundFloat(t.Input, t.Dec)
 		c.Assert(f, Equals, t.Expect)
 	}
 }

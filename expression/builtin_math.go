@@ -353,7 +353,7 @@ func (b *builtinRoundRealSig) evalReal(row chunk.Row) (float64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return types.Round(val, 0), false, nil
+	return types.RoundFloat(val, 0), false, nil
 }
 
 type builtinRoundIntSig struct {
@@ -417,7 +417,7 @@ func (b *builtinRoundWithFracRealSig) evalReal(row chunk.Row) (float64, bool, er
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return types.Round(val, int(frac)), false, nil
+	return types.RoundFloat(val, int(frac)), false, nil
 }
 
 type builtinRoundWithFracIntSig struct {
@@ -441,7 +441,7 @@ func (b *builtinRoundWithFracIntSig) evalInt(row chunk.Row) (int64, bool, error)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return int64(types.Round(float64(val), int(frac))), false, nil
+	return int64(types.RoundFloat(float64(val), int(frac))), false, nil
 }
 
 type builtinRoundWithFracDecSig struct {

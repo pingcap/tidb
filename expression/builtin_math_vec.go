@@ -517,7 +517,7 @@ func (b *builtinRoundRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colu
 		if result.IsNull(i) {
 			continue
 		}
-		f64s[i] = types.Round(f64s[i], 0)
+		f64s[i] = types.RoundFloat(f64s[i], 0)
 	}
 	return nil
 }
@@ -547,7 +547,7 @@ func (b *builtinRoundWithFracRealSig) vecEvalReal(input *chunk.Chunk, result *ch
 		if result.IsNull(i) {
 			continue
 		}
-		x[i] = types.Round(x[i], int(d[i]))
+		x[i] = types.RoundFloat(x[i], int(d[i]))
 	}
 	return nil
 }
@@ -654,7 +654,7 @@ func (b *builtinRoundWithFracIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(types.Round(float64(i64s[i]), int(frac[i])))
+		i64s[i] = int64(types.RoundFloat(float64(i64s[i]), int(frac[i])))
 	}
 	return nil
 }
