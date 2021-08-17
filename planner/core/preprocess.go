@@ -237,7 +237,22 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeCreate
 		EraseLastSemicolon(node.OriginNode)
 		EraseLastSemicolon(node.HintedNode)
-		p.checkBindGrammar(node.OriginNode, node.HintedNode, p.ctx.GetSessionVars().CurrentDB)
+//		curNode := node.OriginNode
+		switch node.OriginNode.(type) {
+		case *ast.SelectStmt:
+			curNode := node.OriginNode.(*ast.SelectStmt)
+			p.checkBindGrammar(curNode, node.HintedNode,  p.ctx.GetSessionVars().CurrentDB)
+			q := curNode.Where.(*ast.PatternInExpr).Sel.(*ast.SubqueryExpr).Query.(*ast.SelectStmt)
+			p.checkBindGrammar(q, node.HintedNode, p.ctx.GetSessionVars().CurrentDB)
+		//case *ast.SetOprStmt:
+		//	return TypeSetOpr
+		//case *ast.DeleteStmt:
+		//	return TypeDelete
+		//case *ast.UpdateStmt:
+		//	return TypeUpdate
+		//case *ast.InsertStmt:
+		//	return TypeInsert
+		}
 		return in, true
 	case *ast.DropBindingStmt:
 		p.stmtTp = TypeDrop
