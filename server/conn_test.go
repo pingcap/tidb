@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -34,11 +35,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 type ConnTestSuite struct {
@@ -52,7 +53,7 @@ func (ts *ConnTestSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	var err error
 	ts.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
 			store := c.AllocID()
@@ -205,17 +206,22 @@ func (ts *ConnTestSuite) TestAuthSwitchRequest(c *C) {
 func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Parallel()
 	var outBuffer bytes.Buffer
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(ts.store)
+	srv, err := NewServer(cfg, drv)
+	c.Assert(err, IsNil)
 	cc := &clientConn{
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
-		server: &Server{
-			capability: defaultCapability,
-		},
+		server:       srv,
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(&outBuffer),
 		},
 	}
-	err := cc.writeInitialHandshake(context.TODO())
+
+	err = cc.writeInitialHandshake(context.TODO())
 	c.Assert(err, IsNil)
 
 	expected := new(bytes.Buffer)
@@ -810,9 +816,9 @@ func (ts *ConnTestSuite) TestTiFlashFallback(c *C) {
 
 	// simple TiFlash query (unary + non-streaming)
 	tk.MustExec("set @@tidb_allow_batch_cop=0; set @@tidb_allow_mpp=0;")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult", "return(\"requestTiFlashError\")"), IsNil)
+	c.Assert(failpoint.Enable("tikvclient/tikvStoreSendReqResult", "return(\"requestTiFlashError\")"), IsNil)
 	testFallbackWork(c, tk, cc, "select sum(a) from t")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult"), IsNil)
+	c.Assert(failpoint.Disable("tikvclient/tikvStoreSendReqResult"), IsNil)
 
 	// TiFlash query based on batch cop (batch + streaming)
 	tk.MustExec("set @@tidb_allow_batch_cop=1; set @@tidb_allow_mpp=0;")
@@ -849,4 +855,28 @@ func testFallbackWork(c *C, tk *testkit.TestKit, cc *clientConn, sql string) {
 
 	c.Assert(cc.handleQuery(ctx, sql), IsNil)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
+}
+
+// For issue https://github.com/pingcap/tidb/issues/25069
+func (ts *ConnTestSuite) TestShowErrors(c *C) {
+	cc := &clientConn{
+		alloc: arena.NewAllocator(1024),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+	}
+	ctx := context.Background()
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	cc.ctx = &TiDBContext{Session: tk.Se, stmts: make(map[int]*TiDBStatement)}
+
+	err := cc.handleQuery(ctx, "create database if not exists test;")
+	c.Assert(err, IsNil)
+	err = cc.handleQuery(ctx, "use test;")
+	c.Assert(err, IsNil)
+
+	stmts, err := cc.ctx.Parse(ctx, "drop table idontexist")
+	c.Assert(err, IsNil)
+	_, err = cc.ctx.ExecuteStmt(ctx, stmts[0])
+	c.Assert(err, NotNil)
+	tk.MustQuery("show errors").Check(testkit.Rows("Error 1051 Unknown table 'test.idontexist'"))
 }

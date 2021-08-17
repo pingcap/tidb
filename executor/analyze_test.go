@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -38,9 +39,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -48,6 +46,9 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 var _ = Suite(&testFastAnalyze{})
@@ -240,6 +241,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 }
 
 func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
+	_ = checkHistogram
 	c.Skip("unstable, skip it and fix it before 20210618")
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
@@ -288,9 +290,9 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 }
 
 func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
-	var cls cluster.Cluster
+	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cls = c
 		}),
@@ -341,13 +343,20 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	}
 	opts := make(map[ast.AnalyzeOptionType]uint64)
 	opts[ast.AnalyzeOptNumSamples] = 20
+	// Get a start_ts later than the above inserts.
+	tk.MustExec("begin")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	ts := txn.StartTS()
+	tk.MustExec("commit")
 	mockExec := &executor.AnalyzeTestFastExec{
 		Ctx:         tk.Se.(sessionctx.Context),
 		HandleCols:  handleCols,
 		ColsInfo:    colsInfo,
 		IdxsInfo:    indicesInfo,
 		Concurrency: 1,
-		TableID: core.AnalyzeTableID{
+		Snapshot:    ts,
+		TableID: statistics.AnalyzeTableID{
 			PartitionID: -1,
 			TableID:     tbl.(table.PhysicalTable).GetPhysicalID(),
 		},
@@ -388,9 +397,10 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 }
 
 func (s *testFastAnalyze) TestFastAnalyze(c *C) {
-	var cls cluster.Cluster
+	c.Skip("Skip this unstable test(#25782) and bring it back before 2021-07-29.")
+	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cls = c
 		}),
@@ -522,7 +532,7 @@ func (s *testSerialSuite2) TestFastAnalyze4GlobalStats(c *C) {
 	tk.MustExec("create table test_fast_gstats(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
 	tk.MustExec("insert into test_fast_gstats values(1,1),(3,3),(4,4),(2,2),(5,5);")
 	err := tk.ExecToErr("analyze table test_fast_gstats;")
-	c.Assert(err.Error(), Equals, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
+	c.Assert(err, ErrorMatches, ".*Fast analyze hasn't reached General Availability and only support analyze version 1 currently.*")
 }
 
 func (s *testSuite1) TestIssue15993(c *C) {
@@ -558,7 +568,7 @@ func (s *testSuite1) TestIssue15752(c *C) {
 	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
 }
 
-func (s *testSuite1) TestAnalyzeIndex(c *C) {
+func (s *testSerialSuite2) TestAnalyzeIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -581,7 +591,7 @@ func (s *testSuite1) TestAnalyzeIndex(c *C) {
 	}()
 }
 
-func (s *testSuite1) TestAnalyzeIncremental(c *C) {
+func (s *testSerialSuite2) TestAnalyzeIncremental(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_version = 1")
@@ -589,7 +599,7 @@ func (s *testSuite1) TestAnalyzeIncremental(c *C) {
 	s.testAnalyzeIncremental(tk, c)
 }
 
-func (s *testSuite1) TestAnalyzeIncrementalStreaming(c *C) {
+func (s *testSerialSuite2) TestAnalyzeIncrementalStreaming(c *C) {
 	c.Skip("unistore hasn't support streaming yet.")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -597,7 +607,8 @@ func (s *testSuite1) TestAnalyzeIncrementalStreaming(c *C) {
 	s.testAnalyzeIncremental(tk, c)
 }
 
-func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
+// nolint:unused
+func (s *testSerialSuite2) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, primary key(a), index idx(b))")
@@ -616,13 +627,13 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	// Test analyze incremental with feedback.
 	tk.MustExec("insert into t values (3,3)")
 	oriProbability := statistics.FeedbackProbability.Load()
-	oriMinLogCount := handle.MinLogScanCount
+	oriMinLogCount := handle.MinLogScanCount.Load()
 	defer func() {
 		statistics.FeedbackProbability.Store(oriProbability)
-		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogScanCount.Store(oriMinLogCount)
 	}()
 	statistics.FeedbackProbability.Store(1)
-	handle.MinLogScanCount = 0
+	handle.MinLogScanCount.Store(0)
 	is := s.dom.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -634,6 +645,7 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
 	c.Assert(h.HandleUpdateStats(is), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 3 0 2 2147483647 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
 	tblStats := h.GetTableStats(tblInfo)
 	val, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(3))
@@ -643,13 +655,15 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	c.Assert(statistics.IsAnalyzed(tblStats.Columns[tblInfo.Columns[0].ID].Flag), IsFalse)
 
 	tk.MustExec("analyze incremental table t index")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  a 0 2 3 1 3 3 0",
 		"test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0", "test t  idx 1 2 3 1 3 3 0"))
 	tblStats = h.GetTableStats(tblInfo)
 	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(val), Equals, uint64(1))
 
 	// test analyzeIndexIncremental for global-level stats;
-	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec("set @@session.tidb_analyze_version = 1;")
+	tk.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t (a int, b int, primary key(a), index idx(b)) partition by range (a) (
@@ -658,12 +672,16 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 		partition p2 values less than (30)
 	);`)
 	tk.MustExec("analyze incremental table t index")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows())
 	tk.MustExec("insert into t values (1,1)")
 	tk.MustExec("analyze incremental table t index")
+	tk.MustQuery("show warnings").Check(testkit.Rows()) // no warning
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 idx 1 0 1 1 1 1 0"))
 	tk.MustExec("insert into t values (2,2)")
 	tk.MustExec("analyze incremental table t index")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 a 0 1 2 1 2 2 0", "test t p0 idx 1 0 1 1 1 1 0", "test t p0 idx 1 1 2 1 2 2 0"))
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
 	tk.MustExec("insert into t values (11,11)")
@@ -704,9 +722,9 @@ func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
 		return cli
 	}
 
-	var cls cluster.Cluster
+	var cls testutils.Cluster
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cls = c
 		}),
@@ -937,6 +955,7 @@ func (s *testSerialSuite2) TestIssue20874(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("create table t (a char(10) collate utf8mb4_unicode_ci not null, b char(20) collate utf8mb4_general_ci not null, key idxa(a), key idxb(b))")
 	tk.MustExec("insert into t values ('#', 'C'), ('$', 'c'), ('a', 'a')")
 	tk.MustExec("set @@tidb_analyze_version=1")
@@ -953,9 +972,35 @@ func (s *testSerialSuite2) TestIssue20874(c *C) {
 		"test t  idxb 1 0 1 1 \x00A \x00A 0",
 		"test t  idxb 1 1 3 2 \x00C \x00C 0",
 	))
+	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
+		"0 1 3 0 9 1 1",
+		"0 2 2 0 9 1 -0.5",
+		"1 1 3 0 0 1 0",
+		"1 2 2 0 0 1 0",
+	))
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
+		"test t  a 0 \x02\xd2 1",
+		"test t  a 0 \x0e\x0f 1",
+		"test t  a 0 \x0e3 1",
+		"test t  b 0 \x00A 1",
+		"test t  b 0 \x00C 2",
+		"test t  idxa 1 \x02\xd2 1",
+		"test t  idxa 1 \x0e\x0f 1",
+		"test t  idxa 1 \x0e3 1",
+		"test t  idxb 1 \x00A 1",
+		"test t  idxb 1 \x00C 2",
+	))
+	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
+		"0 1 3 0 6 2 1",
+		"0 2 2 0 6 2 -0.5",
+		"1 1 3 0 6 2 0",
+		"1 2 2 0 6 2 0",
+	))
 }
 
-func (s *testSuite1) TestAnalyzeClusteredIndexPrimary(c *C) {
+func (s *testSerialSuite2) TestAnalyzeClusteredIndexPrimary(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
@@ -981,6 +1026,7 @@ func (s *testSuite1) TestAnalyzeClusteredIndexPrimary(c *C) {
 }
 
 func (s *testSuite1) TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(c *C) {
+	c.Skip("unstable, skip it and fix it before 20210624")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists sampling_index_virtual_col")
@@ -1009,7 +1055,7 @@ func (s *testSuite1) TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColu
 	tk.MustQuery("show stats_topn where table_name = 'sampling_index_prefix_col' and column_name = 'idx'").Check(testkit.Rows("test sampling_index_prefix_col  idx 1 a 3"))
 }
 
-func (s *testSuite2) TestAnalyzeSamplingWorkPanic(c *C) {
+func (s *testSerialSuite2) TestAnalyzeSamplingWorkPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
@@ -1026,4 +1072,50 @@ func (s *testSuite2) TestAnalyzeSamplingWorkPanic(c *C) {
 	err = tk.ExecToErr("analyze table t")
 	c.Assert(err, NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeSamplingMergeWorkerPanic"), IsNil)
+}
+
+func (s *testSuite10) TestSnapshotAnalyze(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index index_a(a))")
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	tid := tblInfo.ID
+	tk.MustExec("insert into t values(1),(1),(1)")
+	tk.MustExec("begin")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	startTS1 := txn.StartTS()
+	tk.MustExec("commit")
+	tk.MustExec("insert into t values(2),(2),(2)")
+	tk.MustExec("begin")
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	startTS2 := txn.StartTS()
+	tk.MustExec("commit")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS1)), IsNil)
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "3")
+	s1Str := rows[0][1].(string)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS2)), IsNil)
+	tk.MustExec("analyze table t")
+	rows = tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "6")
+	s2Str := rows[0][1].(string)
+	c.Assert(s1Str != s2Str, IsTrue)
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS1)), IsNil)
+	tk.MustExec("analyze table t")
+	rows = tk.MustQuery(fmt.Sprintf("select count, snapshot from mysql.stats_meta where table_id = %d", tid)).Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "6")
+	s3Str := rows[0][1].(string)
+	c.Assert(s3Str, Equals, s2Str)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"), IsNil)
 }

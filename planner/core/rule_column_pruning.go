@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/util"
 )
 
@@ -89,6 +91,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	used := expression.GetUsedList(parentUsedCols, la.Schema())
 
 	allFirstRow := true
+	allRemainFirstRow := true
 	for i := len(used) - 1; i >= 0; i-- {
 		if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
 			allFirstRow = false
@@ -96,6 +99,8 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		if !used[i] {
 			la.schema.Columns = append(la.schema.Columns[:i], la.schema.Columns[i+1:]...)
 			la.AggFuncs = append(la.AggFuncs[:i], la.AggFuncs[i+1:]...)
+		} else if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
+			allRemainFirstRow = false
 		}
 	}
 	var selfUsedCols []*expression.Column
@@ -106,7 +111,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		aggrFunc.OrderByItems, cols = pruneByItems(aggrFunc.OrderByItems)
 		selfUsedCols = append(selfUsedCols, cols...)
 	}
-	if len(la.AggFuncs) == 0 {
+	if len(la.AggFuncs) == 0 || (!allFirstRow && allRemainFirstRow) {
 		// If all the aggregate functions are pruned, we should add an aggregate function to maintain the info of row numbers.
 		// For all the aggregate functions except `first_row`, if we have an empty table defined as t(a,b),
 		// `select agg(a) from t` would always return one row, while `select agg(a) from t group by b` would return empty.
@@ -121,12 +126,12 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		if err != nil {
 			return err
 		}
-		la.AggFuncs = []*aggregation.AggFuncDesc{newAgg}
+		la.AggFuncs = append(la.AggFuncs, newAgg)
 		col := &expression.Column{
 			UniqueID: la.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  newAgg.RetTp,
 		}
-		la.schema.Columns = []*expression.Column{col}
+		la.schema.Columns = append(la.schema.Columns, col)
 	}
 
 	if len(la.GroupByItems) > 0 {
@@ -279,6 +284,33 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 }
 
 // PruneColumns implements LogicalPlan interface.
+func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) error {
+	switch p.TableInfo.Name.O {
+	case infoschema.TableStatementsSummary,
+		infoschema.TableStatementsSummaryHistory,
+		infoschema.TableSlowQuery,
+		infoschema.ClusterTableStatementsSummary,
+		infoschema.ClusterTableStatementsSummaryHistory,
+		infoschema.ClusterTableSlowLog,
+		infoschema.TableTiDBTrx,
+		infoschema.ClusterTableTiDBTrx,
+		infoschema.TableDataLockWaits,
+		infoschema.TableDeadlocks,
+		infoschema.ClusterTableDeadlocks:
+	default:
+		return nil
+	}
+	used := expression.GetUsedList(parentUsedCols, p.schema)
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] && p.schema.Len() > 1 {
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
+		}
+	}
+	return nil
+}
+
+// PruneColumns implements LogicalPlan interface.
 func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) error {
 	used := expression.GetUsedList(parentUsedCols, p.Schema())
 
@@ -376,9 +408,8 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 
 	if len(p.partitionedTable) > 0 {
-		// If the children include partitioned tables, do not prune columns.
-		// Because the executor needs the partitioned columns to calculate the lock key.
-		return p.children[0].PruneColumns(p.Schema().Columns)
+		// If the children include partitioned tables, there is an extra partition ID column.
+		parentUsedCols = append(parentUsedCols, p.extraPIDInfo.Columns...)
 	}
 
 	for _, cols := range p.tblID2Handle {
@@ -441,8 +472,14 @@ func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) error {
 		return nil
 	}
 
-	p.inlineProjection(parentUsedCols)
-	return p.children[0].PruneColumns(parentUsedCols)
+	savedUsedCols := make([]*expression.Column, len(parentUsedCols))
+	copy(savedUsedCols, parentUsedCols)
+	if err := p.children[0].PruneColumns(parentUsedCols); err != nil {
+		return err
+	}
+	p.schema = nil
+	p.inlineProjection(savedUsedCols)
+	return nil
 }
 
 func (*columnPruner) name() string {

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -33,12 +34,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver/backoff"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -286,7 +287,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	return result
 }
 
-func (w *backfillWorker) run(d *ddlCtx, bf backfiller) {
+func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	logutil.BgLogger().Info("[ddl] backfill worker start", zap.Int("workerID", w.id))
 	defer func() {
 		w.resultCh <- &backfillResult{err: errReorgPanic}
@@ -297,6 +298,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller) {
 		if !more {
 			break
 		}
+		w.ddlWorker.setDDLLabelForTopSQL(job)
 
 		logutil.BgLogger().Debug("[ddl] backfill worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
 		failpoint.Inject("mockBackfillRunErr", func() {
@@ -443,17 +445,27 @@ func tryDecodeToHandleString(key kv.Key) string {
 }
 
 // sendRangeTaskToWorkers sends tasks to workers, and returns remaining kvRanges that is not handled.
-func (w *worker) sendRangeTaskToWorkers(workers []*backfillWorker, reorgInfo *reorgInfo,
+func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*backfillWorker, reorgInfo *reorgInfo,
 	totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
 	batchTasks := make([]*reorgBackfillTask, 0, len(workers))
 	physicalTableID := reorgInfo.PhysicalTableID
 
 	// Build reorg tasks.
 	for _, keyRange := range kvRanges {
+		endKey := keyRange.EndKey
+		endK, err := getRangeEndKey(workers[0].sessCtx.GetStore(), workers[0].priority, t, keyRange.StartKey, endKey)
+		if err != nil {
+			logutil.BgLogger().Info("[ddl] send range task to workers, get reverse key failed", zap.Error(err))
+		} else {
+			logutil.BgLogger().Info("[ddl] send range task to workers, change end key",
+				zap.String("end key", tryDecodeToHandleString(endKey)), zap.String("current end key", tryDecodeToHandleString(endK)))
+			endKey = endK
+		}
+
 		task := &reorgBackfillTask{
 			physicalTableID: physicalTableID,
 			startKey:        keyRange.StartKey,
-			endKey:          keyRange.EndKey}
+			endKey:          endKey}
 		batchTasks = append(batchTasks, task)
 
 		if len(batchTasks) >= len(workers) {
@@ -497,7 +509,7 @@ func loadDDLReorgVars(w *worker) error {
 		return errors.Trace(err)
 	}
 	defer w.sessPool.put(ctx)
-	return ddlutil.LoadDDLReorgVars(ctx)
+	return ddlutil.LoadDDLReorgVars(w.ddlJobCtx, ctx)
 }
 
 func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]decoder.Column, error) {
@@ -599,17 +611,17 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 				idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
 				idxWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
-				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker)
+				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 			case typeUpdateColumnWorker:
 				updateWorker := newUpdateColumnWorker(sessCtx, w, i, t, oldColInfo, colInfo, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
 				updateWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, updateWorker.backfillWorker)
-				go updateWorker.backfillWorker.run(reorgInfo.d, updateWorker)
+				go updateWorker.backfillWorker.run(reorgInfo.d, updateWorker, job)
 			case typeCleanUpIndexWorker:
 				idxWorker := newCleanUpIndexWorker(sessCtx, w, i, t, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
 				idxWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
-				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker)
+				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 			default:
 				return errors.New("unknow backfill type")
 			}
@@ -642,7 +654,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			zap.Int("regionCnt", len(kvRanges)),
 			zap.String("startHandle", tryDecodeToHandleString(startKey)),
 			zap.String("endHandle", tryDecodeToHandleString(endKey)))
-		remains, err := w.sendRangeTaskToWorkers(backfillWorkers, reorgInfo, &totalAddedCount, kvRanges)
+		remains, err := w.sendRangeTaskToWorkers(t, backfillWorkers, reorgInfo, &totalAddedCount, kvRanges)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -694,14 +706,13 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rk := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 
-		more, err := fn(handle, rk, it.Value())
+		more, err := fn(handle, it.Key(), it.Value())
 		if !more || err != nil {
 			return errors.Trace(err)
 		}
 
-		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		err = kv.NextUntil(it, util.RowKeyPrefixFilter(it.Key()))
 		if err != nil {
 			if kv.ErrNotExist.Equal(err) {
 				break
@@ -711,4 +722,24 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	}
 
 	return nil
+}
+
+// getRegionEndKey gets the actual end key for the range of [startKey, endKey].
+func getRangeEndKey(store kv.Storage, priority int, t table.Table, startKey, endKey kv.Key) (kv.Key, error) {
+	snap := store.GetSnapshot(kv.MaxVersion)
+	snap.SetOption(kv.Priority, priority)
+	it, err := snap.IterReverse(endKey.Next())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer it.Close()
+
+	if !it.Valid() || !it.Key().HasPrefix(t.RecordPrefix()) {
+		return startKey, nil
+	}
+	if it.Key().Cmp(startKey) < 0 {
+		return startKey, nil
+	}
+
+	return it.Key(), nil
 }

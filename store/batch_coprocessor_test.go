@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -28,9 +29,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 type testBatchCopSuite struct {
@@ -40,7 +41,7 @@ var _ = SerialSuites(&testBatchCopSuite{})
 
 func newStoreWithBootstrap(tiflashNum int) (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
 			tiflashIdx := 0

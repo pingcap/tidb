@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,9 +23,9 @@ import (
 	m "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/metrics"
 )
 
 type featureUsage struct {
@@ -38,20 +39,19 @@ type featureUsage struct {
 }
 
 func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
-
-	clusterIdxUsage, err := GetClusterIndexUsageInfo(ctx)
+	clusterIdxUsage, err := getClusterIndexUsageInfo(ctx)
 	if err != nil {
 		logutil.BgLogger().Info(err.Error())
 		return nil, err
 	}
 
 	// transaction related feature
-	txnUsage := GetTxnUsageInfo(ctx)
+	txnUsage := getTxnUsageInfo(ctx)
 
 	// Avoid the circle dependency.
 	temporaryTable := ctx.(TemporaryTableFeatureChecker).TemporaryTableExists()
 
-	cteUsage := GetCTEUsageInfo(ctx)
+	cteUsage := getCTEUsageInfo()
 
 	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage}, nil
 }
@@ -68,8 +68,8 @@ type TableClusteredInfo struct {
 	// NA means this field is no meaningful information
 }
 
-// GetClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
-func GetClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, err error) {
+// getClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
+func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, err error) {
 	usage := make(ClusterIndexUsage)
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 
@@ -155,8 +155,8 @@ type TxnUsage struct {
 var initialTxnCommitCounter metrics.TxnCommitCounter
 var initialCTECounter m.CTEUsageCounter
 
-// GetTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
-func GetTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
+// getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
+func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	asyncCommitUsed := false
 	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableAsyncCommit); err == nil {
 		asyncCommitUsed = val == variable.On
@@ -179,8 +179,8 @@ func postReportCTEUsage() {
 	initialCTECounter = m.GetCTECounter()
 }
 
-// GetCTEUsageInfo gets the CTE usages.
-func GetCTEUsageInfo(ctx sessionctx.Context) *m.CTEUsageCounter {
+// getCTEUsageInfo gets the CTE usages.
+func getCTEUsageInfo() *m.CTEUsageCounter {
 	curr := m.GetCTECounter()
 	diff := curr.Sub(initialCTECounter)
 	return &diff

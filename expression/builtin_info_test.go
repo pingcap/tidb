@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -97,15 +98,24 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 
 func (s *testEvaluatorSuite) TestCurrentRole(c *C) {
 	ctx := mock.NewContext()
+	fc := funcs[ast.CurrentRole]
+	f, err := fc.getFunction(ctx, nil)
+	c.Assert(err, IsNil)
+
+	// empty roles
+	var d types.Datum
+	d, err = evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, "NONE")
+	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())
+
+	// add roles
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.ActiveRoles = make([]*auth.RoleIdentity, 0, 10)
 	sessionVars.ActiveRoles = append(sessionVars.ActiveRoles, &auth.RoleIdentity{Username: "r_1", Hostname: "%"})
 	sessionVars.ActiveRoles = append(sessionVars.ActiveRoles, &auth.RoleIdentity{Username: "r_2", Hostname: "localhost"})
 
-	fc := funcs[ast.CurrentRole]
-	f, err := fc.getFunction(ctx, nil)
-	c.Assert(err, IsNil)
-	d, err := evalBuiltinFunc(f, chunk.Row{})
+	d, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "`r_1`@`%`,`r_2`@`localhost`")
 	c.Assert(f.Clone().PbCode(), Equals, f.PbCode())

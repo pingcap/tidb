@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 )
 
@@ -140,25 +142,25 @@ func findColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
 }
 
 // hasDependentByGeneratedColumn checks whether there are other columns depend on this column or not.
-func hasDependentByGeneratedColumn(tblInfo *model.TableInfo, colName model.CIStr) (bool, string) {
+func hasDependentByGeneratedColumn(tblInfo *model.TableInfo, colName model.CIStr) (bool, string, bool) {
 	for _, col := range tblInfo.Columns {
 		for dep := range col.Dependences {
 			if dep == colName.L {
-				return true, dep
+				return true, dep, col.Hidden
 			}
 		}
 	}
-	return false, ""
+	return false, "", false
 }
 
 func isGeneratedRelatedColumn(tblInfo *model.TableInfo, newCol, col *model.ColumnInfo) error {
 	if newCol.IsGenerated() || col.IsGenerated() {
 		// TODO: Make it compatible with MySQL error.
-		msg := fmt.Sprintf("tidb_enable_change_column_type is true, newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
+		msg := fmt.Sprintf("newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
-	if ok, dep := hasDependentByGeneratedColumn(tblInfo, col.Name); ok {
-		msg := fmt.Sprintf("tidb_enable_change_column_type is true, oldCol is a dependent column '%s' for generated column", dep)
+	if ok, dep, _ := hasDependentByGeneratedColumn(tblInfo, col.Name); ok {
+		msg := fmt.Sprintf("oldCol is a dependent column '%s' for generated column", dep)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 	return nil
@@ -187,7 +189,7 @@ func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 //  3. check if the modified expr contains non-deterministic functions
 //  4. check whether new column refers to any auto-increment columns.
 //  5. check if the new column is indexed or stored
-func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
+func checkModifyGeneratedColumn(sctx sessionctx.Context, tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
 	// rule 1.
 	oldColIsStored := !oldCol.IsGenerated() || oldCol.GeneratedStored
 	newColIsStored := !newCol.IsGenerated() || newCol.GeneratedStored
@@ -248,8 +250,10 @@ func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, n
 
 		// rule 4.
 		_, dependColNames := findDependedColumnNames(newColDef)
-		if err := checkAutoIncrementRef(newColDef.Name.Name.L, dependColNames, tbl.Meta()); err != nil {
-			return errors.Trace(err)
+		if !sctx.GetSessionVars().EnableAutoIncrementInGenerated {
+			if err := checkAutoIncrementRef(newColDef.Name.Name.L, dependColNames, tbl.Meta()); err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		// rule 5.

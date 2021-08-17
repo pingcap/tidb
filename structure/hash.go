@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,7 +17,6 @@ package structure
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -27,20 +27,6 @@ import (
 type HashPair struct {
 	Field []byte
 	Value []byte
-}
-
-type hashMeta struct {
-	FieldCount int64
-}
-
-func (meta hashMeta) Value() []byte {
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf[0:8], uint64(meta.FieldCount))
-	return buf
-}
-
-func (meta hashMeta) IsEmpty() bool {
-	return meta.FieldCount <= 0
 }
 
 // HSet sets the string value of a hash field.
@@ -127,30 +113,7 @@ func (t *TxStructure) updateHash(key []byte, field []byte, fn func(oldValue []by
 		return errors.Trace(err)
 	}
 
-	metaKey := t.encodeHashMetaKey(key)
-	meta, err := t.loadHashMeta(metaKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if oldValue == nil {
-		meta.FieldCount++
-		if err = t.readWriter.Set(metaKey, meta.Value()); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	return nil
-}
-
-// HLen gets the number of fields in a hash.
-func (t *TxStructure) HLen(key []byte) (int64, error) {
-	metaKey := t.encodeHashMetaKey(key)
-	meta, err := t.loadHashMeta(metaKey)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return meta.FieldCount, nil
 }
 
 // HDel deletes one or more hash fields.
@@ -158,17 +121,11 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 	if t.readWriter == nil {
 		return ErrWriteOnSnapshot
 	}
-	metaKey := t.encodeHashMetaKey(key)
-	meta, err := t.loadHashMeta(metaKey)
-	if err != nil || meta.IsEmpty() {
-		return errors.Trace(err)
-	}
 
-	var value []byte
 	for _, field := range fields {
 		dataKey := t.encodeHashDataKey(key, field)
 
-		value, err = t.loadHashValue(dataKey)
+		value, err := t.loadHashValue(dataKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -177,18 +134,10 @@ func (t *TxStructure) HDel(key []byte, fields ...[]byte) error {
 			if err = t.readWriter.Delete(dataKey); err != nil {
 				return errors.Trace(err)
 			}
-
-			meta.FieldCount--
 		}
 	}
 
-	if meta.IsEmpty() {
-		err = t.readWriter.Delete(metaKey)
-	} else {
-		err = t.readWriter.Set(metaKey, meta.Value())
-	}
-
-	return errors.Trace(err)
+	return nil
 }
 
 // HKeys gets all the fields in a hash.
@@ -236,13 +185,7 @@ func (t *TxStructure) HGetLastN(key []byte, num int) ([]HashPair, error) {
 
 // HClear removes the hash value of the key.
 func (t *TxStructure) HClear(key []byte) error {
-	metaKey := t.encodeHashMetaKey(key)
-	meta, err := t.loadHashMeta(metaKey)
-	if err != nil || meta.IsEmpty() {
-		return errors.Trace(err)
-	}
-
-	err = t.iterateHash(key, func(field []byte, value []byte) error {
+	err := t.iterateHash(key, func(field []byte, value []byte) error {
 		k := t.encodeHashDataKey(key, field)
 		return errors.Trace(t.readWriter.Delete(k))
 	})
@@ -251,7 +194,7 @@ func (t *TxStructure) HClear(key []byte) error {
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(t.readWriter.Delete(metaKey))
+	return nil
 }
 
 func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error) error {
@@ -376,28 +319,6 @@ func (t *TxStructure) iterReverseHash(key []byte, fn func(k []byte, v []byte) (b
 		}
 	}
 	return nil
-}
-
-func (t *TxStructure) loadHashMeta(metaKey []byte) (hashMeta, error) {
-	v, err := t.reader.Get(context.TODO(), metaKey)
-	if kv.ErrNotExist.Equal(err) {
-		err = nil
-	}
-	if err != nil {
-		return hashMeta{}, errors.Trace(err)
-	}
-
-	meta := hashMeta{FieldCount: 0}
-	if v == nil {
-		return meta, nil
-	}
-
-	if len(v) != 8 {
-		return meta, ErrInvalidListMetaData
-	}
-
-	meta.FieldCount = int64(binary.BigEndian.Uint64(v[0:8]))
-	return meta, nil
 }
 
 func (t *TxStructure) loadHashValue(dataKey []byte) ([]byte, error) {

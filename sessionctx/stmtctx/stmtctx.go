@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,11 +25,11 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -86,6 +87,7 @@ type StatementContext struct {
 	IgnoreNoPartition         bool
 	OptimDependOnMutableConst bool
 	IgnoreExplainIDSuffix     bool
+	IsStaleness               bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -171,6 +173,19 @@ type StatementContext struct {
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
+
+	// cache is used to reduce object allocation.
+	cache struct {
+		execdetails.RuntimeStatsColl
+		MemTracker  memory.Tracker
+		DiskTracker disk.Tracker
+		LogOnExceed [2]memory.LogOnExceed
+	}
+
+	// OptimInfo maps Plan.ID() to optimization information when generating Plan.
+	OptimInfo map[int]string
+	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
+	InVerboseExplain bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -289,6 +304,18 @@ func (sc *StatementContext) SetEncodedPlan(encodedPlan string) {
 // GetPlanHint gets the hint string generated from the plan.
 func (sc *StatementContext) GetPlanHint() (string, bool) {
 	return sc.planHint, sc.planHintSet
+}
+
+// InitDiskTracker initializes the sc.DiskTracker, use cache to avoid allocation.
+func (sc *StatementContext) InitDiskTracker(label int, bytesLimit int64) {
+	memory.InitTracker(&sc.cache.DiskTracker, label, bytesLimit, &sc.cache.LogOnExceed[0])
+	sc.DiskTracker = &sc.cache.DiskTracker
+}
+
+// InitMemTracker initializes the sc.MemTracker, use cache to avoid allocation.
+func (sc *StatementContext) InitMemTracker(label int, bytesLimit int64) {
+	memory.InitTracker(&sc.cache.MemTracker, label, bytesLimit, &sc.cache.LogOnExceed[1])
+	sc.MemTracker = &sc.cache.MemTracker
 }
 
 // SetPlanHint sets the hint for the plan.

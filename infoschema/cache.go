@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,6 +21,16 @@ import (
 	"github.com/pingcap/tidb/metrics"
 )
 
+var (
+	getLatestCounter  = metrics.InfoCacheCounters.WithLabelValues("get", "latest")
+	getTSCounter      = metrics.InfoCacheCounters.WithLabelValues("get", "ts")
+	getVersionCounter = metrics.InfoCacheCounters.WithLabelValues("get", "version")
+
+	hitLatestCounter  = metrics.InfoCacheCounters.WithLabelValues("hit", "latest")
+	hitTSCounter      = metrics.InfoCacheCounters.WithLabelValues("hit", "ts")
+	hitVersionCounter = metrics.InfoCacheCounters.WithLabelValues("hit", "version")
+)
+
 // InfoCache handles information schema, including getting and setting.
 // The cache behavior, however, is transparent and under automatic management.
 // It only promised to cache the infoschema, if it is newer than all the cached.
@@ -27,6 +38,8 @@ type InfoCache struct {
 	mu sync.RWMutex
 	// cache is sorted by SchemaVersion in descending order
 	cache []InfoSchema
+	// record SnapshotTS of the latest schema Insert.
+	maxUpdatedSnapshotTS uint64
 }
 
 // NewCache creates a new InfoCache.
@@ -38,9 +51,9 @@ func NewCache(capcity int) *InfoCache {
 func (h *InfoCache) GetLatest() InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	metrics.InfoCacheCounters.WithLabelValues("get").Inc()
+	getLatestCounter.Inc()
 	if len(h.cache) > 0 {
-		metrics.InfoCacheCounters.WithLabelValues("hit").Inc()
+		hitLatestCounter.Inc()
 		return h.cache[0]
 	}
 	return nil
@@ -50,13 +63,30 @@ func (h *InfoCache) GetLatest() InfoSchema {
 func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	metrics.InfoCacheCounters.WithLabelValues("get").Inc()
+	getVersionCounter.Inc()
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return h.cache[i].SchemaMetaVersion() <= version
 	})
 	if i < len(h.cache) && h.cache[i].SchemaMetaVersion() == version {
-		metrics.InfoCacheCounters.WithLabelValues("hit").Inc()
+		hitVersionCounter.Inc()
 		return h.cache[i]
+	}
+	return nil
+}
+
+// GetBySnapshotTS gets the information schema based on snapshotTS.
+// If the snapshotTS is new than maxUpdatedSnapshotTS, that's mean it can directly use
+// the latest infoschema. otherwise, will return nil.
+func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	getTSCounter.Inc()
+	if snapshotTS >= h.maxUpdatedSnapshotTS {
+		if len(h.cache) > 0 {
+			hitTSCounter.Inc()
+			return h.cache[0]
+		}
 	}
 	return nil
 }
@@ -64,7 +94,7 @@ func (h *InfoCache) GetByVersion(version int64) InfoSchema {
 // Insert will **TRY** to insert the infoschema into the cache.
 // It only promised to cache the newest infoschema.
 // It returns 'true' if it is cached, 'false' otherwise.
-func (h *InfoCache) Insert(is InfoSchema) bool {
+func (h *InfoCache) Insert(is InfoSchema, snapshotTS uint64) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -72,6 +102,10 @@ func (h *InfoCache) Insert(is InfoSchema) bool {
 	i := sort.Search(len(h.cache), func(i int) bool {
 		return h.cache[i].SchemaMetaVersion() <= version
 	})
+
+	if h.maxUpdatedSnapshotTS < snapshotTS {
+		h.maxUpdatedSnapshotTS = snapshotTS
+	}
 
 	// cached entry
 	if i < len(h.cache) && h.cache[i].SchemaMetaVersion() == version {

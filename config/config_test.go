@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -221,7 +222,6 @@ max-sql-length=1024
 refresh-interval=100
 history-size=100
 [experimental]
-allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
 [labels]
@@ -230,6 +230,9 @@ group= "abc"
 zone= "dc-1"
 [security]
 spilled-file-encryption-method = "plaintext"
+[pessimistic-txn]
+deadlock-history-capacity = 123
+deadlock-history-collect-retryable = true
 `)
 
 	c.Assert(err, IsNil)
@@ -269,7 +272,6 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
-	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(conf.IndexLimit, Equals, 70)
@@ -284,6 +286,8 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.EnableEnumLengthLimit, Equals, false)
 	c.Assert(conf.EnableForwarding, Equals, true)
 	c.Assert(conf.StoresRefreshInterval, Equals, uint64(30))
+	c.Assert(conf.PessimisticTxn.DeadlockHistoryCapacity, Equals, uint(123))
+	c.Assert(conf.PessimisticTxn.DeadlockHistoryCollectRetryable, Equals, true)
 
 	_, err = f.WriteString(`
 [log.file]

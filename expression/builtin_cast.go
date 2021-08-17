@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1438,7 +1439,7 @@ func (b *builtinCastTimeAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if err != nil {
 		return res, false, err
 	}
-	res, err = res.RoundFrac(int8(b.tp.Decimal))
+	res, err = res.RoundFrac(int8(b.tp.Decimal), b.ctx.GetSessionVars().Location())
 	return res, false, err
 }
 
@@ -1457,7 +1458,7 @@ func (b *builtinCastDurationAsDurationSig) evalDuration(row chunk.Row) (res type
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = res.RoundFrac(int8(b.tp.Decimal))
+	res, err = res.RoundFrac(int8(b.tp.Decimal), b.ctx.GetSessionVars().Location())
 	return res, false, err
 }
 
@@ -1476,7 +1477,7 @@ func (b *builtinCastDurationAsIntSig) evalInt(row chunk.Row) (res int64, isNull 
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	dur, err := val.RoundFrac(types.DefaultFsp)
+	dur, err := val.RoundFrac(types.DefaultFsp, b.ctx.GetSessionVars().Location())
 	if err != nil {
 		return res, false, err
 	}

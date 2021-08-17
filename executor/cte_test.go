@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -115,6 +116,9 @@ func (test *CTETestSuite) TestBasicCTE(c *check.C) {
 	rows.Check(testkit.Rows("1"))
 	rows = tk.MustQuery("SELECT * FROM t1 dt WHERE EXISTS( WITH RECURSIVE qn AS (SELECT a*0 AS b UNION ALL SELECT b+1 FROM qn WHERE b=0 or b = 1) SELECT * FROM qn WHERE b=a );")
 	rows.Check(testkit.Rows("1", "2"))
+
+	rows = tk.MustQuery("with recursive  c(p) as (select 1), cte(a, b) as (select 1, 1 union select a+1, 1 from cte, c where a < 5)  select * from cte order by 1, 2;")
+	rows.Check(testkit.Rows("1 1", "2 1", "3 1", "4 1", "5 1"))
 }
 
 func (test *CTESerialTestSuite) TestSpillToDisk(c *check.C) {
@@ -323,7 +327,7 @@ func (test *CTETestSuite) TestCTEWithLimit(c *check.C) {
 	// Test with table.
 	tk.MustExec("drop table if exists t1;")
 	insertStr := "insert into t1 values(0)"
-	for i := 1; i < 5000; i++ {
+	for i := 1; i < 300; i++ {
 		insertStr += fmt.Sprintf(", (%d)", i)
 	}
 
@@ -373,4 +377,75 @@ func (test *CTETestSuite) TestCTEWithLimit(c *check.C) {
 	err = tk.QueryToErr("with recursive cte1 as (select 1/c1 c1 from t1 union select c1 + 1 c1 from cte1 where c1 < 2 limit 1) select * from cte1;")
 	c.Assert(err, check.NotNil)
 	c.Assert(err.Error(), check.Equals, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
+
+	tk.MustExec("set cte_max_recursion_depth = 1000;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec("insert into t1 values(1), (2), (3);")
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 from cte1 limit 0 offset 2) select * from cte1;")
+	rows.Check(testkit.Rows())
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 from cte1 limit 1 offset 2) select * from cte1;")
+	rows.Check(testkit.Rows("3"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 from cte1 limit 2 offset 2) select * from cte1;")
+	rows.Check(testkit.Rows("3", "4"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 from cte1 limit 3 offset 2) select * from cte1;")
+	rows.Check(testkit.Rows("3", "4", "5"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 from cte1 limit 4 offset 2) select * from cte1;")
+	rows.Check(testkit.Rows("3", "4", "5", "6"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 from cte1 limit 0 offset 3) select * from cte1;")
+	rows.Check(testkit.Rows())
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 from cte1 limit 1 offset 3) select * from cte1;")
+	rows.Check(testkit.Rows("4"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 from cte1 limit 2 offset 3) select * from cte1;")
+	rows.Check(testkit.Rows("4", "5"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 from cte1 limit 3 offset 3) select * from cte1;")
+	rows.Check(testkit.Rows("4", "5", "6"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 from cte1 limit 4 offset 3) select * from cte1;")
+	rows.Check(testkit.Rows("4", "5", "6", "7"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 from cte1 limit 0 offset 4) select * from cte1;")
+	rows.Check(testkit.Rows())
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 from cte1 limit 1 offset 4) select * from cte1;")
+	rows.Check(testkit.Rows("5"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 from cte1 limit 2 offset 4) select * from cte1;")
+	rows.Check(testkit.Rows("5", "6"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 from cte1 limit 3 offset 4) select * from cte1;")
+	rows.Check(testkit.Rows("5", "6", "7"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 from cte1 limit 4 offset 4) select * from cte1;")
+	rows.Check(testkit.Rows("5", "6", "7", "8"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 0 offset 2) select * from cte1;")
+	rows.Check(testkit.Rows())
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 1 offset 2) select * from cte1;")
+	rows.Check(testkit.Rows("3"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 2 offset 2) select * from cte1;")
+	rows.Check(testkit.Rows("3", "2"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 3 offset 2) select * from cte1;")
+	rows.Check(testkit.Rows("3", "2", "3"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 4 offset 2) select * from cte1;")
+	rows.Check(testkit.Rows("3", "2", "3", "4"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 0 offset 3) select * from cte1;")
+	rows.Check(testkit.Rows())
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 1 offset 3) select * from cte1;")
+	rows.Check(testkit.Rows("2"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 2 offset 3) select * from cte1;")
+	rows.Check(testkit.Rows("2", "3"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 3 offset 3) select * from cte1;")
+	rows.Check(testkit.Rows("2", "3", "4"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 4 offset 3) select * from cte1;")
+	rows.Check(testkit.Rows("2", "3", "4", "3"))
+
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 0 offset 4) select * from cte1;")
+	rows.Check(testkit.Rows())
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 1 offset 4) select * from cte1;")
+	rows.Check(testkit.Rows("3"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 2 offset 4) select * from cte1;")
+	rows.Check(testkit.Rows("3", "4"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 3 offset 4) select * from cte1;")
+	rows.Check(testkit.Rows("3", "4", "3"))
+	rows = tk.MustQuery("with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 limit 4 offset 4) select * from cte1;")
+	rows.Check(testkit.Rows("3", "4", "3", "4"))
 }

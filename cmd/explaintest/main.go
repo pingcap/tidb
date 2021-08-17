@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -611,7 +612,7 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 func main() {
 	flag.Parse()
 
-	err := logutil.InitZapLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	if err != nil {
 		panic("init logger fail, " + err.Error())
 	}
@@ -697,7 +698,7 @@ func main() {
 	log.Info("Explain test passed")
 }
 
-var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}
+var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin", "with"}
 
 func trimSQL(sql string) string {
 	// Trim space.

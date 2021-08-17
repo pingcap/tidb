@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -558,15 +559,17 @@ func findIdxByColUniqueID(cols []*expression.Column, col *expression.Column) int
 	return -1
 }
 
-func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) ([]*expression.Column, []int, error) {
+func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) (expression.Expression, []*expression.Column, []int, error) {
 	var cols []*expression.Column
+	var partExpr expression.Expression
 	if len(pi.Columns) == 0 {
 		schema := expression.NewSchema(columns...)
 		exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		cols = expression.ExtractColumns(exprs[0])
+		partExpr = exprs[0]
 	} else {
 		for _, col := range pi.Columns {
 			idx := expression.FindFieldNameIdxByColName(names, col.L)
@@ -584,14 +587,14 @@ func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.Partition
 			deDupCols = append(deDupCols, c)
 		}
 	}
-	return deDupCols, offset, nil
+	return partExpr, deDupCols, offset, nil
 }
 
 func generateListPartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
 	pi := tblInfo.GetPartitionInfo()
-	exprCols, offset, err := extractListPartitionExprColumns(ctx, pi, columns, names)
+	partExpr, exprCols, offset, err := extractListPartitionExprColumns(ctx, pi, columns, names)
 	if err != nil {
 		return nil, err
 	}
@@ -607,6 +610,7 @@ func generateListPartitionExpr(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	ret := &PartitionExpr{
 		ForListPruning: listPrune,
 		ColumnOffset:   offset,
+		Expr:           partExpr,
 	}
 	return ret, nil
 }
@@ -834,6 +838,17 @@ func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ra
 	highKey, err := lp.genKey(sc, highVal)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if lp.ExprCol.GetType().EvalType() == types.ETString {
+		// for string type, values returned by GetMinValue and GetMaxValue are already encoded,
+		// so it's unnecessary to invoke genKey to encode them.
+		if r.LowVal[0].Kind() == types.KindMinNotNull {
+			lowKey = (&lowVal).GetBytes()
+		}
+		if r.HighVal[0].Kind() == types.KindMaxValue {
+			highKey = (&highVal).GetBytes()
+		}
 	}
 
 	if r.LowExclude {

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,13 +20,14 @@ import (
 	"time"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/store/tikv"
-	tikvstore "github.com/pingcap/tidb/store/tikv/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/memory"
+	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
@@ -131,6 +133,9 @@ type MemBuffer interface {
 
 	// Len returns the number of entries in the DB.
 	Len() int
+
+	// Size returns sum of keys and values length.
+	Size() int
 }
 
 // LockCtx contains information for LockKeys method.
@@ -186,6 +191,11 @@ type Transaction interface {
 	// GetIndexName returns the cached index name.
 	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
 	GetTableInfo(id int64) *model.TableInfo
+
+	// set allowed options of current operation in each TiKV disk usage level.
+	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
+	// clear allowed flag
+	ClearDiskFullOpt()
 }
 
 // Client is used to send request to KV layer.

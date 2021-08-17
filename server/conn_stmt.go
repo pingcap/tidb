@@ -29,6 +29,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -52,11 +53,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
-	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
@@ -133,7 +134,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	if variable.TopSQLEnabled() {
 		preparedStmt, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
 		if preparedStmt != nil && preparedStmt.SQLDigest != nil {
-			ctx = topsql.AttachSQLInfo(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest, "", nil)
+			ctx = topsql.AttachSQLInfo(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest, "", nil, false)
 		}
 	}
 
@@ -277,7 +278,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	if variable.TopSQLEnabled() {
 		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
 		if prepareObj != nil && prepareObj.SQLDigest != nil {
-			ctx = topsql.AttachSQLInfo(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest, "", nil)
+			ctx = topsql.AttachSQLInfo(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest, "", nil, false)
 		}
 	}
 	sql := ""

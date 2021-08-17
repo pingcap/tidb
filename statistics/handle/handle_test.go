@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -34,11 +35,12 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestT(t *testing.T) {
@@ -558,6 +560,23 @@ func (s *testStatsSuite) TestInitStatsVer2(c *C) {
 	h.SetLease(0)
 }
 
+func (s *testStatsSuite) TestReloadExtStatsLockRelease(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set session tidb_enable_extended_stats = on")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
+	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
+	tk.MustExec("analyze table t")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/statistics/handle/injectExtStatsLoadErr", `return("")`), IsNil)
+	err := tk.ExecToErr("admin reload stats_extended")
+	c.Assert(err.Error(), Equals, "gofail extendedStatsFromStorage error")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/handle/injectExtStatsLoadErr"), IsNil)
+	// Check the lock is released by `admin reload stats_extended` if error happens.
+	tk.MustExec("analyze table t")
+}
+
 func (s *testStatsSuite) TestLoadStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -758,6 +777,18 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	c.Assert(result.Rows()[0][9], Equals, "0")
 }
 
+func (s *testStatsSuite) TestAnalyzeVirtualCol(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int generated always as (-a) virtual, c int generated always as (-a) stored, index (c))")
+	tk.MustExec("insert into t(a) values(2),(1),(1),(3),(NULL)")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("analyze table t")
+	c.Assert(len(tk.MustQuery("show stats_histograms where table_name ='t'").Rows()), Equals, 3)
+}
+
 func (s *testStatsSuite) TestShowGlobalStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
@@ -846,6 +877,7 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 	c.Assert(len(result.Rows()), Equals, 20)
 }
 
+// nolint:unused
 func (s *testStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, tblName, dbName string) {
 	tk.MustExec("create database if not exists " + dbName)
 	tk.MustExec("use " + dbName)
@@ -869,11 +901,12 @@ func (s *testStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit
 	c.Assert(s.do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 }
 
-func (s *testStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, p string, topn, buckets int) {
+// nolint:unused
+func (s *testStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, t string, p string, topn, buckets int) {
 	delta := buckets/2 + 1
 	for _, isIdx := range []int{0, 1} {
-		c.Assert(len(tk.MustQuery(fmt.Sprintf("show stats_topn where partition_name='%v' and is_index=%v", p, isIdx)).Rows()), Equals, topn)
-		numBuckets := len(tk.MustQuery(fmt.Sprintf("show stats_buckets where partition_name='%v' and is_index=%v", p, isIdx)).Rows())
+		c.Assert(len(tk.MustQuery(fmt.Sprintf("show stats_topn where table_name='%v' and partition_name='%v' and is_index=%v", t, p, isIdx)).Rows()), Equals, topn)
+		numBuckets := len(tk.MustQuery(fmt.Sprintf("show stats_buckets where table_name='%v' and partition_name='%v' and is_index=%v", t, p, isIdx)).Rows())
 		// since the hist-building algorithm doesn't stipulate the final bucket number to be equal to the expected number exactly,
 		// we have to check the results by a range here.
 		c.Assert(numBuckets >= buckets-delta, IsTrue)
@@ -882,11 +915,14 @@ func (s *testStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, 
 }
 
 func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
-	c.Skip("unstable, skip race test")
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	s.prepareForGlobalStatsWithOpts(c, tk, "test_gstats_opt", "test_gstats_opt")
 
+	// nolint:unused
 	type opt struct {
 		topn    int
 		buckets int
@@ -907,9 +943,9 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 		sql := fmt.Sprintf("analyze table test_gstats_opt with %v topn, %v buckets", ca.topn, ca.buckets)
 		if !ca.err {
 			tk.MustExec(sql)
-			s.checkForGlobalStatsWithOpts(c, tk, "global", ca.topn, ca.buckets)
-			s.checkForGlobalStatsWithOpts(c, tk, "p0", ca.topn, ca.buckets)
-			s.checkForGlobalStatsWithOpts(c, tk, "p1", ca.topn, ca.buckets)
+			s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt", "global", ca.topn, ca.buckets)
+			s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt", "p0", ca.topn, ca.buckets)
+			s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt", "p1", ca.topn, ca.buckets)
 		} else {
 			err := tk.ExecToErr(sql)
 			c.Assert(err, NotNil)
@@ -918,31 +954,33 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 }
 
 func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
-	c.Skip("unstable, skip race test")
+	if israce.RaceEnabled {
+		c.Skip("exhaustive types test, skip race test")
+	}
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	s.prepareForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "test_gstats_opt2")
 
 	tk.MustExec("analyze table test_gstats_opt2 with 20 topn, 50 buckets, 1000 samples")
-	s.checkForGlobalStatsWithOpts(c, tk, "global", 2, 50)
-	s.checkForGlobalStatsWithOpts(c, tk, "p0", 1, 50)
-	s.checkForGlobalStatsWithOpts(c, tk, "p1", 1, 50)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "global", 2, 50)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p0", 1, 50)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p1", 1, 50)
 
 	// analyze a partition to let its options be different with others'
 	tk.MustExec("analyze table test_gstats_opt2 partition p0 with 10 topn, 20 buckets")
-	s.checkForGlobalStatsWithOpts(c, tk, "global", 10, 20) // use new options
-	s.checkForGlobalStatsWithOpts(c, tk, "p0", 10, 20)
-	s.checkForGlobalStatsWithOpts(c, tk, "p1", 1, 50)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "global", 10, 20) // use new options
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p0", 10, 20)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p1", 1, 50)
 
 	tk.MustExec("analyze table test_gstats_opt2 partition p1 with 100 topn, 200 buckets")
-	s.checkForGlobalStatsWithOpts(c, tk, "global", 100, 200)
-	s.checkForGlobalStatsWithOpts(c, tk, "p0", 10, 20)
-	s.checkForGlobalStatsWithOpts(c, tk, "p1", 100, 200)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "global", 100, 200)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p0", 10, 20)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p1", 100, 200)
 
 	tk.MustExec("analyze table test_gstats_opt2 partition p0 with 20 topn") // change back to 20 topn
-	s.checkForGlobalStatsWithOpts(c, tk, "global", 20, 256)
-	s.checkForGlobalStatsWithOpts(c, tk, "p0", 20, 256)
-	s.checkForGlobalStatsWithOpts(c, tk, "p1", 100, 200)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "global", 20, 256)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p0", 20, 256)
+	s.checkForGlobalStatsWithOpts(c, tk, "test_gstats_opt2", "p1", 100, 200)
 }
 
 func (s *testStatsSuite) TestGlobalStatsHealthy(c *C) {
@@ -2223,13 +2261,13 @@ func (s *statsSerialSuite) TestFeedbackWithGlobalStats(c *C) {
 
 	oriProbability := statistics.FeedbackProbability.Load()
 	oriNumber := statistics.MaxNumberOfRanges
-	oriMinLogCount := handle.MinLogScanCount
-	oriErrorRate := handle.MinLogErrorRate
+	oriMinLogCount := handle.MinLogScanCount.Load()
+	oriErrorRate := handle.MinLogErrorRate.Load()
 	defer func() {
 		statistics.FeedbackProbability.Store(oriProbability)
 		statistics.MaxNumberOfRanges = oriNumber
-		handle.MinLogScanCount = oriMinLogCount
-		handle.MinLogErrorRate = oriErrorRate
+		handle.MinLogScanCount.Store(oriMinLogCount)
+		handle.MinLogErrorRate.Store(oriErrorRate)
 	}()
 	// Case 1: You can't set tidb_analyze_version to 2 if feedback is enabled.
 	// Note: if we want to set @@tidb_partition_prune_mode = 'dynamic'. We must set tidb_analyze_version to 2 first. We have already tested this.
@@ -2829,6 +2867,27 @@ func (s *testSerialStatsSuite) TestCorrelationWithDefinedCollate(c *C) {
 	c.Assert(rows[0][5], Equals, "-1.000000")
 }
 
+func (s *testSerialStatsSuite) TestLoadHistogramWithCollate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a varchar(10) collate utf8mb4_unicode_ci);")
+	testKit.MustExec("insert into t values('abcdefghij');")
+	testKit.MustExec("insert into t values('abcdufghij');")
+	testKit.MustExec("analyze table t with 0 topn;")
+	do := s.do
+	h := do.StatsHandle()
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	_, err = h.TableStatsFromStorage(tblInfo, tblInfo.ID, true, 0)
+	c.Assert(err, IsNil)
+}
+
 func (s *testSerialStatsSuite) TestFastAnalyzeColumnHistWithNullValue(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -2917,4 +2976,100 @@ func (s *testStatsSuite) TestIssues24401(c *C) {
 	testKit.MustExec("analyze table tp")
 	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
 	c.Assert(len(rows), Equals, lenRows)
+}
+
+func (s *testStatsSuite) TestIssues27147(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+
+	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue);")
+	testKit.MustExec("alter table t add index idx((a+5));")
+	err := testKit.ExecToErr("analyze table t;")
+	c.Assert(err, Equals, nil)
+
+	testKit.MustExec("drop table if exists t1")
+	testKit.MustExec("create table t1 (a int, b int as (a+1) virtual, c int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue);")
+	testKit.MustExec("alter table t1 add index idx((a+5));")
+	err = testKit.ExecToErr("analyze table t1;")
+	c.Assert(err, Equals, nil)
+}
+
+func (s *testStatsSuite) TestColumnCountFromStorage(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	do := s.do
+	h := do.StatsHandle()
+	originLease := h.Lease()
+	defer h.SetLease(originLease)
+	// `Update` will not use load by need strategy when `Lease` is 0, and `InitStats` is only called when
+	// `Lease` is not 0, so here we just change it.
+	h.SetLease(time.Millisecond)
+	testKit.MustExec("use test")
+	testKit.MustExec("set tidb_analyze_version = 2")
+	testKit.MustExec("create table tt (c int)")
+	testKit.MustExec("insert into tt values(1), (2)")
+	testKit.MustExec("analyze table tt")
+	is := do.InfoSchema()
+	h = do.StatsHandle()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	h.TableStatsFromStorage(tblInfo, tblInfo.ID, false, 0)
+	statsTbl := h.GetTableStats(tblInfo)
+	c.Assert(statsTbl.Columns[tblInfo.Columns[0].ID].Count, Equals, int64(2))
+}
+
+func (s *testStatsSuite) TestIncrementalModifyCountUpdate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	h := s.do.StatsHandle()
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	tbl, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	tid := tblInfo.ID
+
+	tk.MustExec("insert into t values(1),(2),(3)")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	err = h.Update(s.do.InfoSchema())
+	c.Assert(err, IsNil)
+	tk.MustExec("analyze table t")
+	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
+		"3 0",
+	))
+
+	tk.MustExec("begin")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	startTS := txn.StartTS()
+	tk.MustExec("commit")
+
+	tk.MustExec("insert into t values(4),(5),(6)")
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	err = h.Update(s.do.InfoSchema())
+	c.Assert(err, IsNil)
+
+	// Simulate that the analyze would start before and finish after the second insert.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS)), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/injectBaseCount", "return(3)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/injectBaseModifyCount", "return(0)"), IsNil)
+	tk.MustExec("analyze table t")
+	// Check the count / modify_count changes during the analyze are not lost.
+	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
+		"6 3",
+	))
+	// Check the histogram is correct for the snapshot analyze.
+	tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d", tid)).Check(testkit.Rows(
+		"3",
+	))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseCount"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectBaseModifyCount"), IsNil)
 }

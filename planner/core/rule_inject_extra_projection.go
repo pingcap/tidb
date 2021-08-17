@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -79,6 +80,7 @@ func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
 		for i, dstCol := range un.schema.Columns {
 			dstType := dstCol.RetType
 			srcCol := ch.Schema().Columns[i]
+			srcCol.Index = i
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) || !(mysql.HasNotNullFlag(dstType.Flag) == mysql.HasNotNullFlag(srcType.Flag)) {
 				exprs[i] = expression.BuildCastFunction4Union(un.ctx, srcCol, dstType)

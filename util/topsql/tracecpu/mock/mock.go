@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,8 +21,10 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/uber-go/atomic"
+	"go.uber.org/zap"
 )
 
 // TopSQLCollector uses for testing.
@@ -64,6 +67,9 @@ func (c *TopSQLCollector) Collect(ts uint64, stats []tracecpu.SQLCPUTimeRecord) 
 			c.sqlStatsMap[hash] = stats
 		}
 		stats.CPUTimeMs += stmt.CPUTimeMs
+		logutil.BgLogger().Info("mock top sql collector collected sql",
+			zap.String("sql", c.sqlMap[string(stmt.SQLDigest)]),
+			zap.Bool("has-plan", len(c.planMap[string(stmt.PlanDigest)]) > 0))
 	}
 }
 
@@ -122,7 +128,7 @@ func (c *TopSQLCollector) GetPlan(planDigest []byte) string {
 }
 
 // RegisterSQL uses for testing.
-func (c *TopSQLCollector) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
+func (c *TopSQLCollector) RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool) {
 	digestStr := string(hack.String(sqlDigest))
 	c.Lock()
 	_, ok := c.sqlMap[digestStr]
@@ -151,11 +157,11 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 	for {
 		// Wait for reporter to collect sql stats count >= expected count
 		if c.collectCnt.Load() >= end {
-			break
+			return
 		}
 		select {
 		case <-timeout:
-			break
+			return
 		default:
 			time.Sleep(time.Millisecond * 10)
 		}

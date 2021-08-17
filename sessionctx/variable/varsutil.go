@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,10 +24,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // secondsPerYear represents seconds in a normal year. Leap year is not considered here.
@@ -218,7 +219,7 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	name = strings.ToLower(name)
 	sysVar := GetSysVar(name)
 	if sysVar == nil {
-		return ErrUnknownSystemVar
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	sVal, err := sysVar.Validate(vars, value, ScopeSession)
 	if err != nil {
@@ -359,6 +360,7 @@ func parseTimeZone(s string) (*time.Location, error) {
 func setSnapshotTS(s *SessionVars, sVal string) error {
 	if sVal == "" {
 		s.SnapshotTS = 0
+		s.SnapshotInfoschema = nil
 		return nil
 	}
 
@@ -372,7 +374,7 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 		return err
 	}
 
-	t1, err := t.GoTime(s.TimeZone)
+	t1, err := t.GoTime(s.Location())
 	s.SnapshotTS = oracle.GoTimeToTS(t1)
 	// tx_read_ts should be mutual exclusive with tidb_snapshot
 	s.TxnReadTS = NewTxnReadTS(0)
@@ -384,17 +386,19 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 		s.TxnReadTS = NewTxnReadTS(0)
 		return nil
 	}
+
 	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return err
 	}
-	t1, err := t.GoTime(s.TimeZone)
+	t1, err := t.GoTime(s.Location())
 	if err != nil {
 		return err
 	}
 	s.TxnReadTS = NewTxnReadTS(oracle.GoTimeToTS(t1))
 	// tx_read_ts should be mutual exclusive with tidb_snapshot
 	s.SnapshotTS = 0
+	s.SnapshotInfoschema = nil
 	return err
 }
 

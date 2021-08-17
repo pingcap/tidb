@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -131,8 +132,8 @@ func (t CoreTime) Microsecond() int {
 
 // Weekday returns weekday value.
 func (t CoreTime) Weekday() gotime.Weekday {
-	// TODO: Consider time_zone variable.
-	t1, err := t.GoTime(gotime.Local)
+	// No need to consider timezone, use the date directly.
+	t1, err := t.GoTime(gotime.UTC)
 	// allow invalid dates
 	if err != nil {
 		return t1.Weekday()

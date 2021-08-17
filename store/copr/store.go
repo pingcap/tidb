@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/config"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/tikv/client-go/v2/config"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 type kvStore struct {
@@ -77,6 +78,7 @@ func NewStore(s *tikv.KVStore, coprCacheConfig *config.CoprocessorCache) (*Store
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	/* #nosec G404 */
 	return &Store{
 		kvStore:         &kvStore{store: s},
 		coprCache:       coprCache,

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 type requiredRowsDataSource struct {
@@ -843,7 +845,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType plannercore.JoinType, i
 		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(nil, j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil, nil)
+	b := newExecutorBuilder(ctx, nil, nil, 0, false, oracle.GlobalTxnScope)
 	return b.build(j)
 }
 

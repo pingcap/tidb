@@ -1,0 +1,89 @@
+[
+  {
+    "name": "TestEnforceMPP",
+    "cases": [
+      "select @@tidb_allow_mpp",
+      "select @@tidb_enforce_mpp",
+      "select @@tidb_opt_tiflash_concurrency_factor",
+      "set @@tidb_allow_mpp=0",
+      "explain format='verbose' select count(*) from t where a=1",
+      "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
+      "explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1",
+      "set @@tidb_allow_mpp=1;",
+      "set @@tidb_enforce_mpp=0;",
+      "explain format='verbose' select count(*) from t where a=1",
+      "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
+      "explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1",
+      "set @@tidb_opt_tiflash_concurrency_factor = 1000000",
+      "explain format='verbose' select count(*) from t where a=1",
+      "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
+      "explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1",
+      "set @@tidb_enforce_mpp=1;",
+      "explain format='verbose' select count(*) from t where a=1",
+      "explain format='verbose' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1",
+      "explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1"
+    ]
+  },
+  {
+    "name": "TestEnforceMPPWarning1",
+    "cases": [
+      "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;",
+      "explain select count(*) from t where a=1 -- 1. no replica",
+      "cmd: create-replica",
+      "explain select count(*) from t where a=1 -- 2. replica not ready",
+      "cmd: enable-replica",
+      "set @@session.tidb_isolation_read_engines = 'tikv';",
+      "explain select count(*) from t where a=1 -- 3. isolation_engine not match",
+      "set @@session.tidb_isolation_read_engines = 'tikv, tiflash';",
+      "explain select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1 -- 4. hint use tikv",
+      "explain SELECT a, ROW_NUMBER() OVER (ORDER BY a) FROM t; -- 5. window unsupported",
+      "EXPLAIN SELECT t1.b FROM t t1 join t t2 where t1.a=t2.a; -- 6. virtual column",
+      "EXPLAIN SELECT count(b) from t where a=1; -- 7. agg func has virtual column",
+      "EXPLAIN SELECT count(*) from t group by b; -- 8. group by virtual column",
+      "EXPLAIN SELECT group_concat(a) from t; -- 9. agg func not supported",
+      "EXPLAIN SELECT count(a) from t group by md5(a); -- 10. scalar func not supported",
+      "EXPLAIN SELECT count(a) from t where c=1; -- 11. type not supported"
+    ]
+  },
+  {
+    "name": "TestEnforceMPPWarning2",
+    "cases": [
+      "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;",
+      "set @@tidb_partition_prune_mode=static;",
+      "EXPLAIN SELECT count(*) from t where a=1; -- 1. static partition prune",
+      "set @@tidb_partition_prune_mode=dynamic;"
+
+    ]
+  },
+  {
+    "name": "TestEnforceMPPWarning3",
+    "cases": [
+      "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;set @@tidb_hash_exchange_with_new_collation=0;",
+      "cmd: enable-new-collation",
+      "EXPLAIN SELECT count(*) from t group by b; -- 1. new collation FIXME",
+      "EXPLAIN SELECT * from t t1 join t t2 on t1.b=t2.b; -- 2. new collation FIXME"
+    ]
+  },
+  {
+    "name": "TestEnforceMPPWarning4",
+    "cases": [
+      "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1; -- test joins",
+      "EXPLAIN SELECT /*+ MERGE_JOIN(t,s) */ * from t join s using(a); -- 1. hint use MERGE_JOIN",
+      "EXPLAIN SELECT /*+ INL_JOIN(t,s) */ * from t, s where t.a=s.a; -- 2. hint use INL_JOIN",
+      "EXPLAIN SELECT /*+ INL_HASH_JOIN(t,s) */ * from t join s using(a); -- 3. hint use INL_HASH_JOIN",
+      "EXPLAIN SELECT /*+ HASH_JOIN(t,s) */ * from t join s using(a); -- 4. hint use INL_JOIN",
+      "set @@tidb_opt_broadcast_cartesian_join = 0",
+      "EXPLAIN SELECT * from t join s; -- 5. cartesian join, cartesian banned.",
+      "set @@tidb_broadcast_join_threshold_size = 0; set @@tidb_opt_broadcast_cartesian_join = 1",
+      "EXPLAIN SELECT * from t join s; -- 6. cartesian join, broadcast banned.",
+      "set @@tidb_broadcast_join_threshold_size = 104857600; set @@tidb_opt_broadcast_cartesian_join = 1",
+      "EXPLAIN SELECT * from t join s; -- can use mpp",
+      "set @@tidb_broadcast_join_threshold_size = 0; set @@tidb_opt_broadcast_cartesian_join = 2",
+      "EXPLAIN SELECT * from t join s; -- can use mpp",
+      "set @@tidb_broadcast_join_threshold_size = 104857600; set @@tidb_opt_broadcast_cartesian_join = 1;",
+      "explain select a from t where t.a>1 or t.a in (select a from t); -- 7. left outer semi join",
+      "explain select a from t where t.a>1 or t.a not in (select a from t); -- 8. anti left outer semi join",
+      "explain select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions"
+    ]
+  }
+]

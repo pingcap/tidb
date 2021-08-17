@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -229,7 +230,7 @@ func (r *builder) buildFromColumn(expr *expression.Column) []*point {
 	return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
-func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
+func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
 	var (
@@ -256,7 +257,7 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []*point {
 				return err1
 			}
 			*value, err = value.ConvertToMysqlYear(r.sc, col.RetType)
-			if errors.ErrorEqual(err, types.ErrInvalidYear) {
+			if errors.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 				// Keep err for EQ and NE.
 				switch *op {
 				case ast.GT:
@@ -753,7 +754,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []*point {
 	switch op := expr.FuncName.L; op {
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE, ast.NullEQ:
-		return r.buildFormBinOp(expr)
+		return r.buildFromBinOp(expr)
 	case ast.LogicAnd:
 		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
 	case ast.LogicOr:

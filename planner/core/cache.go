@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -194,13 +196,14 @@ func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*mod
 
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
 type CachedPrepareStmt struct {
-	PreparedAst    *ast.Prepared
-	VisitInfos     []visitInfo
-	ColumnInfos    interface{}
-	Executor       interface{}
-	NormalizedSQL  string
-	NormalizedPlan string
-	SQLDigest      *parser.Digest
-	PlanDigest     *parser.Digest
-	ForUpdateRead  bool
+	PreparedAst         *ast.Prepared
+	VisitInfos          []visitInfo
+	ColumnInfos         interface{}
+	Executor            interface{}
+	NormalizedSQL       string
+	NormalizedPlan      string
+	SQLDigest           *parser.Digest
+	PlanDigest          *parser.Digest
+	ForUpdateRead       bool
+	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
 }

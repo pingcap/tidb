@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -923,6 +924,7 @@ const (
 	ErrTxnTooLarge                         = 8004
 	ErrWriteConflictInTiDB                 = 8005
 	ErrOptOnTemporaryTable                 = 8006
+	ErrDropTableOnTemporaryTable           = 8007
 	ErrUnsupportedReloadPlugin             = 8018
 	ErrUnsupportedReloadPluginVar          = 8019
 	ErrTableLocked                         = 8020
@@ -1005,6 +1007,7 @@ const (
 	ErrNotSupportedWithSem                 = 8132
 	ErrDataInConsistentExtraIndex          = 8133
 	ErrDataInConsistentMisMatchIndex       = 8134
+	ErrAsOf                                = 8135
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1044,6 +1047,7 @@ const (
 	ErrInvalidPlacementSpec               = 8234
 	ErrDDLReorgElementNotExist            = 8235
 	ErrPlacementPolicyCheck               = 8236
+	ErrInvalidAttributesSpec              = 8237
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

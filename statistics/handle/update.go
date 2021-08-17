@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -42,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -162,9 +164,9 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSi
 
 var (
 	// MinLogScanCount is the minimum scan count for a feedback to be logged.
-	MinLogScanCount = int64(1000)
+	MinLogScanCount = atomic.NewInt64(1000)
 	// MinLogErrorRate is the minimum error rate for a feedback to be logged.
-	MinLogErrorRate = 0.5
+	MinLogErrorRate = atomic.NewFloat64(0.5)
 )
 
 // StoreQueryFeedback merges the feedback into stats collector.
@@ -178,7 +180,9 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 		return errors.Trace(err)
 	}
 	rate := q.CalcErrorRate()
-	if !(rate >= MinLogErrorRate && (q.Actual() >= MinLogScanCount || q.Expected >= MinLogScanCount)) {
+	minScanCnt := MinLogScanCount.Load()
+	minErrRate := MinLogErrorRate.Load()
+	if !(rate >= minErrRate && (q.Actual() >= minScanCnt || q.Expected >= minScanCnt)) {
 		return nil
 	}
 	metrics.SignificantFeedbackCounter.Inc()
@@ -876,10 +880,14 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 		return false, ""
 	}
 	// No need to analyze it.
-	if float64(tbl.ModifyCount)/float64(tbl.Count) <= autoAnalyzeRatio {
+	tblCnt := float64(tbl.Count)
+	if histCnt := tbl.GetColRowCount(); histCnt > 0 {
+		tblCnt = histCnt
+	}
+	if float64(tbl.ModifyCount)/tblCnt <= autoAnalyzeRatio {
 		return false, ""
 	}
-	return true, fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tbl.Count, autoAnalyzeRatio)
+	return true, fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tblCnt, autoAnalyzeRatio)
 }
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
@@ -1247,12 +1255,10 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	expected := 0.0
 	if isIndex {
 		idx := t.Indices[id]
-		expected, err = idx.GetRowCount(sc, nil, ranges, t.ModifyCount)
-		expected *= idx.GetIncreaseFactor(t.Count)
+		expected, err = idx.GetRowCount(sc, nil, ranges, t.Count)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.GetColumnRowCount(sc, ranges, t.ModifyCount, true)
-		expected *= c.GetIncreaseFactor(t.Count)
+		expected, err = c.GetColumnRowCount(sc, ranges, t.Count, true)
 	}
 	q.Expected = int64(expected)
 	return err

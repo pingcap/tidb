@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/table"
@@ -445,6 +447,29 @@ func (ts *testSuite) TestCreatePartitionTableNotSupport(c *C) {
 	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
 	_, err = tk.Exec(`create table t7 (a int) partition by range (-(select * from t)) (partition p1 values less than (1));`)
 	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
+}
+
+func (ts *testSuite) TestRangePartitionUnderNoUnsigned(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists tu;")
+	defer tk.MustExec("drop table if exists t2;")
+	defer tk.MustExec("drop table if exists tu;")
+	tk.MustExec("SET @@sql_mode='NO_UNSIGNED_SUBTRACTION';")
+	tk.MustExec(`create table t2 (a bigint unsigned) partition by range (a) (
+  						  partition p1 values less than (0),
+  						  partition p2 values less than (1),
+  						  partition p3 values less than (18446744073709551614),
+  						  partition p4 values less than (18446744073709551615),
+  						  partition p5 values less than maxvalue);`)
+	tk.MustExec("insert into t2 values(10);")
+	tk.MustGetErrCode(`CREATE TABLE tu (c1 BIGINT UNSIGNED) PARTITION BY RANGE(c1 - 10) (
+							PARTITION p0 VALUES LESS THAN (-5),
+							PARTITION p1 VALUES LESS THAN (0),
+							PARTITION p2 VALUES LESS THAN (5),
+							PARTITION p3 VALUES LESS THAN (10),
+							PARTITION p4 VALUES LESS THAN (MAXVALUE));`, mysql.ErrPartitionConstDomain)
 }
 
 func (ts *testSuite) TestIntUint(c *C) {

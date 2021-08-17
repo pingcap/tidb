@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -217,6 +218,7 @@ func (tc *TiDBContext) WarningCount() uint16 {
 func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (ResultSet, error) {
 	rs, err := tc.Session.ExecuteStmt(ctx, stmt)
 	if err != nil {
+		tc.Session.GetSessionVars().StmtCtx.AppendError(err)
 		return nil, err
 	}
 	if rs == nil {

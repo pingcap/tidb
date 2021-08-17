@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -49,7 +50,7 @@ func StrLenOfInt64Fast(x int64) int {
 	return size + StrLenOfUint64Fast(uint64(Abs(x)))
 }
 
-// Log2 is used for export purposes
-func Log2(x float64) float64 {
-	return math.Log2(x)
+// IsFinite reports whether f is neither NaN nor an infinity.
+func IsFinite(f float64) bool {
+	return !math.IsNaN(f - f)
 }

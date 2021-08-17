@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,8 +21,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mockstore/mocktikv"
+	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestT(t *testing.T) {
@@ -37,9 +38,10 @@ var _ = Suite(&testCoprocessorSuite{})
 func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
-	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
-	_, regionIDs, _ := mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &tikv.CodecPDClient{Client: mocktikv.NewPDClient(cluster)}
+	_, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	c.Assert(err, IsNil)
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := &tikv.CodecPDClient{Client: pdClient}
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 
@@ -154,9 +156,10 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
-	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
-	mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
-	pdCli := &tikv.CodecPDClient{Client: mocktikv.NewPDClient(cluster)}
+	_, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	c.Assert(err, IsNil)
+	testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := &tikv.CodecPDClient{Client: pdClient}
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 
@@ -207,9 +210,10 @@ func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {
 func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	// nil --- 'm' --- nil
 	// <-  0  -> <- 1 ->
-	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
-	storeID, regionIDs, peerIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
-	pdCli := &tikv.CodecPDClient{Client: mocktikv.NewPDClient(cluster)}
+	_, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	c.Assert(err, IsNil)
+	storeID, regionIDs, peerIDs := testutils.BootstrapWithMultiRegions(cluster, []byte("m"))
+	pdCli := &tikv.CodecPDClient{Client: pdClient}
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
