@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -4748,6 +4749,8 @@ func (s *testSessionSuite) TestTMPTableSize(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_global_temporary_table=on")
 	tk.MustExec("create global temporary table t (c1 int, c2 varchar(512)) on commit delete rows")
+	tk.MustExec("set tidb_enable_noop_functions=on")
+	tk.MustExec("create temporary table tl (c1 int, c2 varchar(512))")
 
 	tk.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows(strconv.Itoa(variable.DefTMPTableSize)))
 	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(variable.DefTMPTableSize))
@@ -4770,6 +4773,21 @@ func (s *testSessionSuite) TestTMPTableSize(c *C) {
 	tk.MustExec("insert into t values (1, repeat('x', 512))")
 	tk.MustExec("insert into t values (1, repeat('x', 512))")
 	tk.MustGetErrCode("insert into t values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("rollback")
+
+	// Check local temporary table
+	tk.MustExec("begin")
+	tk.MustExec("insert into tl values (1, repeat('x', 512))")
+	tk.MustExec("insert into tl values (1, repeat('x', 512))")
+	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("rollback")
+
+	// Check local temporary table with some data in session
+	tk.MustExec("insert into tl values (1, repeat('x', 512))")
+	tk.MustExec("begin")
+	tk.MustExec("insert into tl values (1, repeat('x', 512))")
+	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("rollback")
 }
 
 func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {

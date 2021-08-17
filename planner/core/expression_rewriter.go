@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -893,11 +894,13 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	} else {
 		args := make([]expression.Expression, 0, np.Schema().Len())
 		for i, col := range np.Schema().Columns {
-			larg := expression.GetFuncArg(lexpr, i)
-			if !expression.ExprNotNull(larg) || !expression.ExprNotNull(col) {
-				rarg := *col
-				rarg.InOperand = true
-				col = &rarg
+			if v.Not || asScalar {
+				larg := expression.GetFuncArg(lexpr, i)
+				if !expression.ExprNotNull(larg) || !expression.ExprNotNull(col) {
+					rarg := *col
+					rarg.InOperand = true
+					col = &rarg
+				}
 			}
 			args = append(args, col)
 		}

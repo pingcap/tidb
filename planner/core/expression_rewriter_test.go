@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -27,6 +28,17 @@ var _ = Suite(&testExpressionRewriterSuite{})
 var _ = SerialSuites(&testExpressionRewriterSuiteSerial{})
 
 type testExpressionRewriterSuite struct {
+	testData testutil.TestData
+}
+
+func (s *testExpressionRewriterSuite) SetUpSuite(c *C) {
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "expression_rewriter_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testExpressionRewriterSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 type testExpressionRewriterSuiteSerial struct {
@@ -451,4 +463,39 @@ func (s *testExpressionRewriterSuiteSerial) TestBetweenExprCollation(c *C) {
 	tk.MustQuery("select * from t1 where a between 'B' and c;").Check(testkit.Rows("c D"))
 
 	tk.MustGetErrMsg("select * from t1 where a between 'B' collate utf8mb4_general_ci and c collate utf8mb4_unicode_ci;", "[expression:1270]Illegal mix of collations (latin1_bin,IMPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT) for operation 'between'")
+}
+
+func (s *testExpressionRewriterSuite) TestMultiColInExpression(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("insert into t1 values(1,1),(2,null),(null,3),(4,4)")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t2 values(1,1),(2,null),(null,3),(5,4)")
+	tk.MustExec("analyze table t2")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
+	}
 }
