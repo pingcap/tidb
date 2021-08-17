@@ -1601,7 +1601,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			return
 		}
 		if is == nil {
-			p.err = errors.New("Get empty information schema based on snapshotTS")
+			p.err = errors.New("can not get any information schema based on snapshotTS")
 			return
 		}
 		// the same as session.wrapWithTemporaryTable
