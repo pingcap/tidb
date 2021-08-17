@@ -1299,6 +1299,10 @@ func (d Duration) Neg() Duration {
 	}
 }
 
+func (d Duration) IsNeg() bool {
+	return d.Duration < 0
+}
+
 // Add adds d to d, returns a duration value.
 func (d Duration) Add(v Duration) (Duration, error) {
 	if v == (Duration{}) {
