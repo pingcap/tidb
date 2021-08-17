@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -38,15 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
 )
-
-func TestSetUpTearDown(t *testing.T) {
-	t.Parallel()
-	p := parser.New()
-	require.NotNil(t, *p)
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
-	require.Nil(t, testData.GenerateOutputIfNeeded())
-}
 
 func newDomainStoreWithBootstrap(t *testing.T) (*domain.Domain, kv.Storage, error) {
 	store, err := mockstore.NewMockStore()
@@ -65,7 +55,7 @@ func TestTableRange(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -323,7 +313,7 @@ func TestIndexRange(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -669,7 +659,7 @@ func TestIndexRangeForUnsignedAndOverflow(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -860,7 +850,7 @@ func TestColumnRange(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1221,12 +1211,12 @@ func TestColumnRange(t *testing.T) {
 	}
 }
 
-func TestIndexRangeElimininatedProjection(t *testing.T) {
+func TestIndexRangeEliminatedProjection(t *testing.T) {
 	t.Parallel()
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1253,7 +1243,7 @@ func TestCompIndexInExprCorrCol(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1268,14 +1258,11 @@ func TestCompIndexInExprCorrCol(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
 	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
@@ -1286,7 +1273,7 @@ func TestIndexStringIsTrueRange(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1302,12 +1289,11 @@ func TestIndexStringIsTrueRange(t *testing.T) {
 		SQL    string
 		Result []string
 	}
-	testData, _ := testdata.LoadTestSuiteData("testdata", "ranger_suite")
 	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
@@ -1318,7 +1304,7 @@ func TestCompIndexDNFMatch(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1333,14 +1319,12 @@ func TestCompIndexDNFMatch(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
 	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
@@ -1352,7 +1336,7 @@ func TestCompIndexMultiColDNF1(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1369,13 +1353,12 @@ func TestCompIndexMultiColDNF1(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
@@ -1387,7 +1370,7 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1404,13 +1387,12 @@ func TestCompIndexMultiColDNF2(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
@@ -1422,7 +1404,7 @@ func TestPrefixIndexMultiColDNF(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1437,14 +1419,13 @@ func TestPrefixIndexMultiColDNF(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
+	testData.GetTestCases(t, &input, &output)
 	inputLen := len(input)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
@@ -1459,7 +1440,7 @@ func TestIndexRangeForBit(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1481,13 +1462,12 @@ func TestIndexRangeForBit(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
@@ -1499,7 +1479,7 @@ func TestIndexRangeForYear(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1662,7 +1642,7 @@ func TestPrefixIndexRangeScan(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1734,7 +1714,7 @@ func TestIndexRangeForDecimal(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1751,13 +1731,12 @@ func TestIndexRangeForDecimal(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testData.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
@@ -1769,7 +1748,7 @@ func TestPrefixIndexAppendPointRanges(t *testing.T) {
 	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
 	require.NoError(t, err)
 	testKit := testkit.NewTestKit(t, store)
@@ -1790,13 +1769,12 @@ func TestPrefixIndexAppendPointRanges(t *testing.T) {
 		Plan   []string
 		Result []string
 	}
-	testData, err := testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	require.NoError(t, err)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = testData.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Result = testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
