@@ -1596,8 +1596,12 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 		dom := domain.GetDomain(p.ctx)
 		is, err := dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
 		// if infoschema is empty, LastSnapshotTS init failed
-		if err != nil || is == nil {
+		if err != nil {
 			p.err = err
+			return
+		}
+		if is == nil {
+			p.err = errors.New("Get empty information schema based on snapshotTS")
 			return
 		}
 		// the same as session.wrapWithTemporaryTable
