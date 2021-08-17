@@ -3203,7 +3203,7 @@ func (s *testIntegrationSuite3) TestDropGlobalTemporaryTableWithDropGlobalStmt(c
 	c.Assert(core.ErrDropTableOnTemporaryTable.Equal(err), IsTrue)
 	err = tk.ExecToErr("drop global temporary table if exists ltemp1")
 	c.Assert(core.ErrDropTableOnTemporaryTable.Equal(err), IsTrue)
-	err = tk.ExecToErr("drop global temporary table if exists xxx")
+	tk.MustExec("drop global temporary table if exists xxx")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1051 Unknown table 'test.xxx'"))
 	err = tk.ExecToErr("drop global temporary table if exists xxx,tb")
 	c.Assert(core.ErrDropTableOnTemporaryTable.Equal(err), IsTrue)
