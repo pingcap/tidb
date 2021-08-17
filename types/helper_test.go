@@ -16,18 +16,14 @@ package types
 
 import (
 	"strconv"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testTypeHelperSuite{})
-
-type testTypeHelperSuite struct {
-}
-
-func (s *testTypeHelperSuite) TestStrToInt(c *C) {
-	c.Parallel()
+func TestStrToInt(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input  string
 		output string
@@ -42,13 +38,13 @@ func (s *testTypeHelperSuite) TestStrToInt(c *C) {
 	}
 	for _, tt := range tests {
 		output, err := strToInt(tt.input)
-		c.Assert(errors.Cause(err), Equals, tt.err)
-		c.Check(strconv.FormatInt(output, 10), Equals, tt.output)
+		require.Equal(t, tt.err, errors.Cause(err))
+		require.Equal(t, tt.output, strconv.FormatInt(output, 10))
 	}
 }
 
-func (s *testTypeHelperSuite) TestTruncate(c *C) {
-	c.Parallel()
+func TestTruncate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		f        float64
 		dec      int
@@ -61,12 +57,12 @@ func (s *testTypeHelperSuite) TestTruncate(c *C) {
 	}
 	for _, tt := range tests {
 		res := Truncate(tt.f, tt.dec)
-		c.Assert(res, Equals, tt.expected)
+		require.Equal(t, tt.expected, res)
 	}
 }
 
-func (s *testTypeHelperSuite) TestTruncateFloatToString(c *C) {
-	c.Parallel()
+func TestTruncateFloatToString(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		f        float64
 		dec      int
@@ -83,6 +79,6 @@ func (s *testTypeHelperSuite) TestTruncateFloatToString(c *C) {
 	}
 	for _, tt := range tests {
 		res := TruncateFloatToString(tt.f, tt.dec)
-		c.Assert(res, Equals, tt.expected)
+		require.Equal(t, tt.expected, res)
 	}
 }
