@@ -639,5 +639,59 @@
     "cases": [
       "select /*+ inl_hash_join(test.t1) */ * from test.t2 join test.t1 on test.t2.a = test.t1.a"
     ]
+<<<<<<< HEAD
+=======
+  },
+  {
+    "name": "TestNthPlanHintWithExplain",
+    "cases": [
+      "select /*+nth_plan(1)*/ * from test.tt where a=1 and b=1",
+      "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+      "select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;",
+      "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+      "select * from test.tt where a=1 and b=1"
+    ]
+  },
+  {
+    "name": "TestEliminateMaxOneRow",
+    "cases": [
+      "select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a);",
+      "select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);",
+      "select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);"
+    ]
+  },
+  {
+    "name": "TestEnumIndex",
+    "cases": [
+      "select e from t where e = 'b'",
+      "select e from t where e != 'b'",
+      "select e from t where e > 'b'",
+      "select e from t where e >= 'b'",
+      "select e from t where e < 'b'",
+      "select e from t where e <= 'b'",
+      "select e from t where e = 2",
+      "select e from t where e != 2",
+      "select e from t where e > 2",
+      "select e from t where e >= 2",
+      "select e from t where e < 2",
+      "select e from t where e <= 2",
+
+      // Out of range
+      "select e from t where e > ''",
+      "select e from t where e > 'd'",
+      "select e from t where e > -1",
+      "select e from t where e > 5",
+
+      // zero-value
+      "select e from t where e = ''",
+      "select e from t where e != ''"
+    ]
+  },
+  {
+    "name": "TestIssue27233",
+    "cases": [
+      "SELECT col2 FROM PK_S_MULTI_31 AS T1 WHERE (SELECT count(DISTINCT COL1, COL2) FROM PK_S_MULTI_31 AS T2 WHERE T2.COL1>T1.COL1)>2 order by col2;"
+    ]
+>>>>>>> 1c6c54833... planner: add missing column for Apply convert to Join (#27246)
   }
 ]
