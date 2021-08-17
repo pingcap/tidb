@@ -175,17 +175,17 @@ a	b	c	e
 2	2.1	3	4.1
 desc select a+1 from t where a+1=3;
 id	estRows	task	access object	operator info
-IndexReader_6	10.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[3,3], keep order:false, stats:pseudo
+Projection_4	10.00	root		plus(test.t.a, 1)
+└─IndexReader_6	10.00	root		index:IndexRangeScan_5
+  └─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[3,3], keep order:false, stats:pseudo
 select a+1 from t where a+1=3;
 a+1
 3
 desc select c from t where a+1=3;
 id	estRows	task	access object	operator info
 Projection_4	10.00	root		test.t.c
-└─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[3,3], keep order:false, stats:pseudo
-  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexReader_6	10.00	root		index:IndexRangeScan_5
+  └─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[3,3], keep order:false, stats:pseudo
 select c from t where a+1=3;
 c
 3
@@ -200,24 +200,25 @@ a	b	c	e
 1	2	2	3
 desc select b+a from t where b+a=3;
 id	estRows	task	access object	operator info
-IndexReader_6	10.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	range:[3,3], keep order:false, stats:pseudo
+Projection_4	10.00	root		plus(test.t.b, cast(test.t.a, double BINARY))
+└─IndexReader_6	10.00	root		index:IndexRangeScan_5
+  └─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	range:[3,3], keep order:false, stats:pseudo
 select b+a from t where b+a=3;
 b+a
 3
 desc select e from t where b+a=3;
 id	estRows	task	access object	operator info
 Projection_4	10.00	root		test.t.e
-└─IndexLookUp_11	10.00	root		
-  ├─IndexRangeScan_9(Build)	10.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	range:[3,3], keep order:false, stats:pseudo
-  └─TableRowIDScan_10(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexReader_6	10.00	root		index:IndexRangeScan_5
+  └─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	range:[3,3], keep order:false, stats:pseudo
 select e from t where b+a=3;
 e
 3
 desc select a+1 from t where a+1 in (1, 2, 3);
 id	estRows	task	access object	operator info
-IndexReader_6	30.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	30.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
+Projection_4	30.00	root		plus(test.t.a, 1)
+└─IndexReader_6	30.00	root		index:IndexRangeScan_5
+  └─IndexRangeScan_5	30.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
 select a+1 from t where a+1 in (1, 2, 3);
 a+1
 1
@@ -238,8 +239,9 @@ a	b	c	e
 0	0	1	0
 desc select a+1 from t where a+1 between 1 and 4;
 id	estRows	task	access object	operator info
-IndexReader_6	250.00	root		index:IndexRangeScan_5
-└─IndexRangeScan_5	250.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[1,4], keep order:false, stats:pseudo
+Projection_4	250.00	root		plus(test.t.a, 1)
+└─IndexReader_6	250.00	root		index:IndexRangeScan_5
+  └─IndexRangeScan_5	250.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	range:[1,4], keep order:false, stats:pseudo
 select a+1 from t where a+1 between 1 and 4;
 a+1
 1
@@ -261,7 +263,7 @@ a	b	c	e
 desc select * from t order by a+1;
 id	estRows	task	access object	operator info
 Projection_5	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e
-└─Projection_13	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e, plus(test.t.a, 1)
+└─Projection_13	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e, plus(test.t.a, 1), plus(test.t.b, cast(test.t.a, double BINARY))
   └─IndexLookUp_12	10000.00	root		
     ├─IndexFullScan_10(Build)	10000.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	keep order:true, stats:pseudo
     └─TableRowIDScan_11(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -276,8 +278,9 @@ a	b	c	e
 5	-1	6	4
 desc select a+1 from t order by a+1;
 id	estRows	task	access object	operator info
-IndexReader_14	10000.00	root		index:IndexFullScan_13
-└─IndexFullScan_13	10000.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	keep order:true, stats:pseudo
+Projection_5	10000.00	root		plus(test.t.a, 1)
+└─IndexReader_14	10000.00	root		index:IndexFullScan_13
+  └─IndexFullScan_13	10000.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	keep order:true, stats:pseudo
 select a+1 from t order by a+1;
 a+1
 0
@@ -289,8 +292,9 @@ a+1
 6
 desc select b+a from t order by b+a;
 id	estRows	task	access object	operator info
-IndexReader_14	10000.00	root		index:IndexFullScan_13
-└─IndexFullScan_13	10000.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	keep order:true, stats:pseudo
+Projection_5	10000.00	root		plus(test.t.b, cast(test.t.a, double BINARY))
+└─IndexReader_14	10000.00	root		index:IndexFullScan_13
+  └─IndexFullScan_13	10000.00	cop[tikv]	table:t, index:expr_idx_e(`b` + `a`)	keep order:true, stats:pseudo
 select b+a from t order by b+a;
 b+a
 -3
@@ -452,3 +456,33 @@ HashAgg	6.00	root		group by:Column#9, funcs:max(Column#8)->Column#7
 └─Projection	6.00	root		upper(test.t.b)->Column#8, upper(test.t.b)->Column#9
   └─TableReader	6.00	root		data:TableFullScan
     └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+drop table if exists t;
+CREATE TABLE t (
+`a` date DEFAULT NULL,
+`b` datetime DEFAULT NULL,
+`c` time DEFAULT NULL,
+`d` timestamp NULL DEFAULT NULL,
+`e` year(4) DEFAULT NULL,
+KEY `expression_index` ((adddate(`a`, interval 10 microsecond))),
+KEY `expression_index2` ((timediff(`b`, '2021-03-30 08:10:00.000001'))),
+KEY `expression_index3` ((`d`+ timestamp'0000-00-00 00:00:00.00001'))
+);
+insert into t values ('2021-01-02', '2021-03-30 08:10:00', '12:01:03', '2021-08-13 04:10:44', 2021);
+select * from t use index(expression_index) where ADDDATE(a, interval 10 MICROSECOND) = ADDDATE('2021-01-02', interval 10 MICROSECOND);
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+select * from t ignore index(expression_index) where ADDDATE(a, interval 10 MICROSECOND) = ADDDATE('2021-01-02', interval 10 MICROSECOND);
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+select * from t use index(expression_index2) where timediff(`b`, '2021-03-30 08:10:00.000001') = timediff('2021-03-30 08:10:00', '2021-03-30 08:10:00.000001');
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+select * from t ignore index(expression_index2) where timediff(`b`, '2021-03-30 08:10:00.000001') = timediff('2021-03-30 08:10:00', '2021-03-30 08:10:00.000001');
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+select * from t use index(expression_index3) where d+ timestamp'0000-00-00 00:00:00.00001' = timestamp'2021-08-13 04:10:44'+ timestamp'0000-00-00 00:00:00.00001';
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+select * from t ignore index(expression_index3) where d+ timestamp'0000-00-00 00:00:00.00001' = timestamp'2021-08-13 04:10:44'+ timestamp'0000-00-00 00:00:00.00001';
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -38,13 +39,6 @@ func TestHeapProfileRecorder(t *testing.T) {
 		v := getRandomString(10)
 		lru.Put(keys[i], v)
 	}
-	for _, k := range lru.Keys() {
-		assert.Len(t, k.Hash(), 8)
-	}
-	for _, v := range lru.Values() {
-		assert.Len(t, v.(string), 10)
-	}
-
 	bytes, err := col.getFuncMemUsage(kvcache.ProfileName)
 	require.Nil(t, err)
 
@@ -52,7 +46,12 @@ func TestHeapProfileRecorder(t *testing.T) {
 	// ensure that the consumed bytes is at least larger than num * size of value
 	assert.LessOrEqual(t, int64(valueSize*num), bytes)
 	// we should assert lru size last and value size to reference lru in order to avoid gc
-	assert.Equal(t, num, lru.Size())
+	for _, k := range lru.Keys() {
+		assert.Len(t, k.Hash(), 8)
+	}
+	for _, v := range lru.Values() {
+		assert.Len(t, v.(string), 10)
+	}
 }
 
 type mockCacheKey struct {

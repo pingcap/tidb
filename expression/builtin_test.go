@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -148,6 +149,14 @@ func (s *testEvaluatorSuite) TestLock(c *C) {
 	v, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
+}
+
+func (s *testEvaluatorSuite) TestDisplayName(c *C) {
+	c.Assert(GetDisplayName(ast.EQ), Equals, "=")
+	c.Assert(GetDisplayName(ast.NullEQ), Equals, "<=>")
+	c.Assert(GetDisplayName(ast.IsTruthWithoutNull), Equals, "IS TRUE")
+	c.Assert(GetDisplayName("abs"), Equals, "abs")
+	c.Assert(GetDisplayName("other_unknown_func"), Equals, "other_unknown_func")
 }
 
 // newFunctionForTest creates a new ScalarFunction using funcName and arguments,

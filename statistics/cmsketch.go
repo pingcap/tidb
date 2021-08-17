@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -530,14 +531,6 @@ func (c *TopN) Num() int {
 	return len(c.TopN)
 }
 
-// outOfRange checks whether the the given value falls back in [TopN.LowestOne, TopN.HighestOne].
-func (c *TopN) outOfRange(val []byte) bool {
-	if c == nil || len(c.TopN) == 0 {
-		return true
-	}
-	return bytes.Compare(c.TopN[0].Encoded, val) > 0 || bytes.Compare(val, c.TopN[c.Num()-1].Encoded) > 0
-}
-
 // DecodedString returns the value with decoded result.
 func (c *TopN) DecodedString(ctx sessionctx.Context, colTypes []byte) (string, error) {
 	builder := &strings.Builder{}
@@ -775,7 +768,7 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs [
 					datum = d
 				}
 				// Get the row count which the value is equal to the encodedVal from histogram.
-				count := hists[j].equalRowCount(datum, isIndex)
+				count, _ := hists[j].equalRowCount(datum, isIndex)
 				if count != 0 {
 					counter[encodedVal] += count
 					// Remove the value corresponding to encodedVal from the histogram.

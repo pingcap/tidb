@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -57,16 +58,22 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk.MustExec("create table prepare_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)")
 		tk.MustExec("insert prepare_test (c1) values (1),(2),(NULL)")
 
-		tk.MustExec(`prepare stmt_test_1 from 'select id from prepare_test where id > ?'; set @a = 1; execute stmt_test_1 using @a;`)
+		tk.MustExec(`prepare stmt_test_1 from 'select id from prepare_test where id > ?';`)
+		tk.MustExec(`set @a = 1;`)
+		tk.MustExec(`execute stmt_test_1 using @a;`)
 		tk.MustExec(`prepare stmt_test_2 from 'select 1'`)
 		// Prepare multiple statement is not allowed.
 		_, err = tk.Exec(`prepare stmt_test_3 from 'select id from prepare_test where id > ?;select id from prepare_test where id > ?;'`)
 		c.Assert(executor.ErrPrepareMulti.Equal(err), IsTrue)
+
 		// The variable count does not match.
-		_, err = tk.Exec(`prepare stmt_test_4 from 'select id from prepare_test where id > ? and id < ?'; set @a = 1; execute stmt_test_4 using @a;`)
+		tk.MustExec(`prepare stmt_test_4 from 'select id from prepare_test where id > ? and id < ?';`)
+		tk.MustExec(`set @a = 1;`)
+		_, err = tk.Exec(`execute stmt_test_4 using @a;`)
 		c.Assert(plannercore.ErrWrongParamCount.Equal(err), IsTrue)
 		// Prepare and deallocate prepared statement immediately.
-		tk.MustExec(`prepare stmt_test_5 from 'select id from prepare_test where id > ?'; deallocate prepare stmt_test_5;`)
+		tk.MustExec(`prepare stmt_test_5 from 'select id from prepare_test where id > ?';`)
+		tk.MustExec(`deallocate prepare stmt_test_5;`)
 
 		// Statement not found.
 		_, err = tk.Exec("deallocate prepare stmt_test_5")
@@ -166,8 +173,11 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		c.Assert(err, IsNil)
 
 		// Should success as the changed schema do not affect the prepared statement.
-		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
+		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(1)})
 		c.Assert(err, IsNil)
+		if rs != nil {
+			rs.Close()
+		}
 
 		// Drop a column so the prepared statement become invalid.
 		query = "select c1, c2 from prepare_test where c1 = ?"

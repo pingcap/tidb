@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -317,6 +318,44 @@ func (s *testSuite6) TestIssue16250(c *C) {
 	tk.MustExec("create view view_issue16250 as select * from t")
 	_, err := tk.Exec("truncate table view_issue16250")
 	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
+}
+
+func (s *testSuite6) TestIssue24771(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists zy_tab;`)
+	tk.MustExec(`create table if not exists zy_tab (
+						zy_code int,
+						zy_name varchar(100)
+					);`)
+	tk.MustExec(`drop table if exists bj_tab;`)
+	tk.MustExec(`create table if not exists bj_tab (
+						bj_code int,
+						bj_name varchar(100),
+						bj_addr varchar(100),
+						bj_person_count int,
+						zy_code int
+					);`)
+	tk.MustExec(`drop table if exists st_tab;`)
+	tk.MustExec(`create table if not exists st_tab (
+						st_code int,
+						st_name varchar(100),
+						bj_code int
+					);`)
+	tk.MustExec(`drop view if exists v_st_2;`)
+	tk.MustExec(`create definer='root'@'localhost' view v_st_2 as
+		select st.st_name,bj.bj_name,zy.zy_name
+		from (
+			select bj_code,
+				bj_name,
+				zy_code
+			from bj_tab as b
+			where b.bj_code = 1
+		) as bj
+		left join zy_tab as zy on zy.zy_code = bj.zy_code
+		left join st_tab as st on bj.bj_code = st.bj_code;`)
+	tk.MustQuery(`show create view v_st_2`)
+	tk.MustQuery(`select * from v_st_2`)
 }
 
 func (s testSuite6) TestTruncateSequence(c *C) {
@@ -1283,6 +1322,10 @@ func (s *testSuite6) TestGeneratedColumnRelatedDDL(c *C) {
 	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (a + 1);")
 	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
 
+	// This mysql compatibility check can be disabled using tidb_enable_auto_increment_in_generated
+	tk.MustExec("set session tidb_enable_auto_increment_in_generated = 1;")
+	tk.MustExec("alter table t1 modify column d bigint generated always as (a + 1);")
+
 	_, err = tk.Exec("alter table t1 add column e bigint as (z + 1);")
 	c.Assert(err.Error(), Equals, ddl.ErrBadField.GenWithStackByArgs("z", "generated column function").Error())
 
@@ -1483,6 +1526,10 @@ func (s *testSuite6) TestAutoIncrementColumnErrorMessage(c *C) {
 
 	_, err = tk.Exec("CREATE INDEX idx1 ON t1 ((t1_id + t1_id));")
 	c.Assert(err.Error(), Equals, ddl.ErrExpressionIndexCanNotRefer.GenWithStackByArgs("idx1").Error())
+
+	// This mysql compatibility check can be disabled using tidb_enable_auto_increment_in_generated
+	tk.MustExec("SET SESSION tidb_enable_auto_increment_in_generated = 1;")
+	tk.MustExec("CREATE INDEX idx1 ON t1 ((t1_id + t1_id));")
 }
 
 func (s *testRecoverTable) TestRenameMultiTables(c *C) {

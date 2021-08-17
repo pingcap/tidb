@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -212,6 +213,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowBRIE(ast.BRIEKindBackup)
 	case ast.ShowRestores:
 		return e.fetchShowBRIE(ast.BRIEKindRestore)
+	case ast.ShowPlacementLabels:
+		return e.fetchShowPlacementLabels(ctx)
 	}
 	return nil
 }
@@ -256,7 +259,36 @@ func (e *ShowExec) fetchShowBind() error {
 	} else {
 		bindRecords = domain.GetDomain(e.ctx).BindHandle().GetAllBindRecord()
 	}
+	// Remove the invalid bindRecord.
+	ind := 0
+	for _, bindData := range bindRecords {
+		if len(bindData.Bindings) > 0 {
+			bindRecords[ind] = bindData
+			ind++
+		}
+	}
+	bindRecords = bindRecords[:ind]
 	parser := parser.New()
+	for _, bindData := range bindRecords {
+		// For the same origin_sql, sort the bindings according to their update time.
+		sort.Slice(bindData.Bindings, func(i int, j int) bool {
+			cmpResult := bindData.Bindings[i].UpdateTime.Compare(bindData.Bindings[j].UpdateTime)
+			if cmpResult == 0 {
+				// Because the create time must be different, the result of sorting is stable.
+				cmpResult = bindData.Bindings[i].CreateTime.Compare(bindData.Bindings[j].CreateTime)
+			}
+			return cmpResult > 0
+		})
+	}
+	// For the different origin_sql, sort the bindRecords according to their max update time.
+	sort.Slice(bindRecords, func(i int, j int) bool {
+		cmpResult := bindRecords[i].Bindings[0].UpdateTime.Compare(bindRecords[j].Bindings[0].UpdateTime)
+		if cmpResult == 0 {
+			// Because the create time must be different, the result of sorting is stable.
+			cmpResult = bindRecords[i].Bindings[0].CreateTime.Compare(bindRecords[j].Bindings[0].CreateTime)
+		}
+		return cmpResult > 0
+	})
 	for _, bindData := range bindRecords {
 		for _, hint := range bindData.Bindings {
 			stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
@@ -614,7 +646,7 @@ func (e *ShowExec) fetchShowIndex() error {
 			var expression interface{}
 			if tblCol.Hidden {
 				colName = "NULL"
-				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+				expression = tblCol.GeneratedExprString
 			}
 
 			e.appendRow([]interface{}{
@@ -779,6 +811,8 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	switch tableInfo.TempTableType {
 	case model.TempTableGlobal:
 		fmt.Fprintf(buf, "CREATE GLOBAL TEMPORARY TABLE %s (\n", tableName)
+	case model.TempTableLocal:
+		fmt.Fprintf(buf, "CREATE TEMPORARY TABLE %s (\n", tableName)
 	default:
 		fmt.Fprintf(buf, "CREATE TABLE %s (\n", tableName)
 	}

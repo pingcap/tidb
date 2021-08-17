@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,11 +19,13 @@ import (
 	"container/list"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
@@ -253,6 +256,18 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	// All times are counted in seconds.
 	now := time.Now().Unix()
+
+	failpoint.Inject("mockTimeForStatementsSummary", func(val failpoint.Value) {
+		// mockTimeForStatementsSummary takes string of Unix timestamp
+		if unixTimeStr, ok := val.(string); ok {
+			unixTime, err := strconv.ParseInt(unixTimeStr, 10, 64)
+			if err != nil {
+				panic(err.Error())
+			} else {
+				now = unixTime
+			}
+		}
+	})
 
 	intervalSeconds := ssMap.refreshInterval()
 	historySize := ssMap.historySize()

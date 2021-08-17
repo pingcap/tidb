@@ -1,0 +1,128 @@
+---
+# Source: tidb-docker-compose/templates/docker-compose.yml
+version: '3.2'
+
+services:
+  control:
+    image: control:nightly
+    build:
+      context: ../
+      dockerfile: ./docker/Dockerfile
+    volumes:
+      - /tmp/br/docker/backup_data/${TAG}:/data
+      - /tmp/br/docker/backup_logs/${TAG}:/tmp
+      - /tmp/br/docker/backup_logs/${TAG}:/logs
+      - ../bin:/go/src/github.com/pingcap/br/bin
+      - ./prepare_data:/prepare_data
+    command: -c "/usr/bin/tail -f /dev/null"
+    environment:
+      TAG: ${TAG}
+    depends_on:
+      - "tidb"
+    restart: on-failure
+    env_file:
+      - ../docker/minio.env
+
+  pd0:
+    image: pingcap/pd:${TAG}
+    ports:
+      - 237${PORT_SUFFIX}:2379
+    volumes:
+      - ../docker/config/pd.toml:/pd.toml:ro
+      - /tmp/br/docker/backup_data/${TAG}:/data
+      - /tmp/br/docker/backup_logs/${TAG}:/logs
+    command:
+      - --name=pd0
+      - --client-urls=http://0.0.0.0:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-client-urls=http://pd0:2379
+      - --advertise-peer-urls=http://pd0:2380
+      - --initial-cluster=pd0=http://pd0:2380
+      - --data-dir=/data/pd0
+      - --config=/pd.toml
+      - --log-file=/logs/pd0.log
+    # sysctls:
+    #   net.core.somaxconn: 32768
+    # ulimits:
+    #   nofile:
+    #     soft: 1000000
+    #     hard: 1000000
+    restart: on-failure
+
+  tikv0:
+    image: pingcap/tikv:${TAG}
+    volumes:
+      - ../docker/config/tikv.toml:/tikv.toml:ro
+      - /tmp/br/docker/backup_data/${TAG}:/data
+      - /tmp/br/docker/backup_logs/${TAG}:/logs
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv0:20160
+      - --data-dir=/data/tikv0
+      - --pd=pd0:2379
+      - --config=/tikv.toml
+      - --log-file=/logs/tikv0.log
+    depends_on:
+      - "pd0"
+    # sysctls:
+    #   net.core.somaxconn: 32768
+    # ulimits:
+    #   nofile:
+    #     soft: 1000000
+    #     hard: 1000000
+    restart: on-failure
+    env_file:
+      - ../docker/minio.env
+
+  tidb:
+    image: pingcap/tidb:${TAG}
+    ports:
+      - 400${PORT_SUFFIX}:4000
+      - 1008${PORT_SUFFIX}:10080
+    volumes:
+      - ../docker/config/tidb.toml:/tidb.toml:ro
+      - /tmp/br/docker/backup_logs/${TAG}:/logs
+      - ./credentials:/credentials
+    command:
+      - --store=tikv
+      - --path=pd0:2379
+      - --config=/tidb.toml
+      - --log-file=/logs/tidb.log
+      - --advertise-address=tidb
+    depends_on:
+      - "tikv0"
+    restart: on-failure
+    env_file:
+      - ../docker/gcs.env
+
+  minio:
+    image: minio/minio
+    ports:
+      - 2492${PORT_SUFFIX}:24927
+    volumes:
+      - /tmp/br/docker/data/s3:/data/s3
+    command:
+      - server
+      - --address=:24927
+      - /data/s3
+    env_file:
+      - ../docker/minio.env
+
+  gcs:
+    image: fsouza/fake-gcs-server
+    ports:
+      - 2081${PORT_SUFFIX}:20818
+    volumes:
+      - /tmp/br/docker/backup_data/gcs:/data/gcs
+    command:
+      - -scheme=http
+      - -host=gcs
+      - -port=20818
+      - -filesystem-root=/data/gcs
+      - -public-host=gcs:20818
+
+  # we need a oauth server for gcs test
+  oauth:
+    image: 3pointer/fake-gcs-oauth
+    ports:
+      - 500${PORT_SUFFIX}:5000

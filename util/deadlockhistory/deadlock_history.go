@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,19 +16,37 @@ package deadlockhistory
 
 import (
 	"encoding/hex"
-	"encoding/json"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
+)
+
+const (
+	// ColDeadlockIDStr is the name of the DEADLOCK_ID column in INFORMATION_SCHEMA.DEADLOCKS and INFORMATION_SCHEMA.CLUSTER_DEADLOCKS table.
+	ColDeadlockIDStr = "DEADLOCK_ID"
+	// ColOccurTimeStr is the name of the OCCUR_TIME column in INFORMATION_SCHEMA.DEADLOCKS and INFORMATION_SCHEMA.CLUSTER_DEADLOCKS table.
+	ColOccurTimeStr = "OCCUR_TIME"
+	// ColRetryableStr is the name of the RETRYABLE column in INFORMATION_SCHEMA.DEADLOCKS and INFORMATION_SCHEMA.CLUSTER_DEADLOCKS table.
+	ColRetryableStr = "RETRYABLE"
+	// ColTryLockTrxIDStr is the name of the TRY_LOCK_TRX_ID column in INFORMATION_SCHEMA.DEADLOCKS and INFORMATION_SCHEMA.CLUSTER_DEADLOCKS table.
+	ColTryLockTrxIDStr = "TRY_LOCK_TRX_ID"
+	// ColCurrentSQLDigestStr is the name of the CURRENT_SQL_DIGEST column in INFORMATION_SCHEMA.DEADLOCKS and INFORMATION_SCHEMA.CLUSTER_DEADLOCKS table.
+	ColCurrentSQLDigestStr = "CURRENT_SQL_DIGEST"
+	// ColCurrentSQLDigestTextStr is the name of the CURRENT_SQL_DIGEST_TEXT column in INFORMATION_SCHEMA.DEADLOCKS and INFORMATION_SCHEMA.CLUSTER_DEADLOCKS table.
+	ColCurrentSQLDigestTextStr = "CURRENT_SQL_DIGEST_TEXT"
+	// ColKeyStr is the name of the KEY column in INFORMATION_SCHEMA.DEADLOCKS and INFORMATION_SCHEMA.CLUSTER_DEADLOCKS table.
+	ColKeyStr = "KEY"
+	// ColKeyInfoStr is the name of the KEY_INFO column in INFORMATION_SCHEMA.DEADLOCKS and INFORMATION_SCHEMA.CLUSTER_DEADLOCKS table.
+	ColKeyInfoStr = "KEY_INFO"
+	// ColTrxHoldingLockStr is the name of the TRX_HOLDING_LOCK column in INFORMATION_SCHEMA.DEADLOCKS and INFORMATION_SCHEMA.CLUSTER_DEADLOCKS table.
+	ColTrxHoldingLockStr = "TRX_HOLDING_LOCK"
 )
 
 // WaitChainItem represents an entry in a deadlock's wait chain.
@@ -47,6 +66,49 @@ type DeadlockRecord struct {
 	OccurTime   time.Time
 	IsRetryable bool
 	WaitChain   []WaitChainItem
+}
+
+var columnValueGetterMap = map[string]func(rec *DeadlockRecord, waitChainIdx int) types.Datum{
+	ColDeadlockIDStr: func(rec *DeadlockRecord, waitChainIdx int) types.Datum {
+		return types.NewDatum(rec.ID)
+	},
+	ColOccurTimeStr: func(rec *DeadlockRecord, waitChainIdx int) types.Datum {
+		return types.NewDatum(types.NewTime(types.FromGoTime(rec.OccurTime), mysql.TypeTimestamp, types.MaxFsp))
+	},
+	ColRetryableStr: func(rec *DeadlockRecord, waitChainIdx int) types.Datum {
+		return types.NewDatum(rec.IsRetryable)
+	},
+	ColTryLockTrxIDStr: func(rec *DeadlockRecord, waitChainIdx int) types.Datum {
+		return types.NewDatum(rec.WaitChain[waitChainIdx].TryLockTxn)
+	},
+	ColCurrentSQLDigestStr: func(rec *DeadlockRecord, waitChainIdx int) types.Datum {
+		digest := rec.WaitChain[waitChainIdx].SQLDigest
+		if len(digest) == 0 {
+			return types.NewDatum(nil)
+		}
+		return types.NewDatum(digest)
+	},
+	ColKeyStr: func(rec *DeadlockRecord, waitChainIdx int) types.Datum {
+		key := rec.WaitChain[waitChainIdx].Key
+		if len(key) == 0 {
+			return types.NewDatum(nil)
+		}
+		return types.NewDatum(strings.ToUpper(hex.EncodeToString(key)))
+	},
+	ColTrxHoldingLockStr: func(rec *DeadlockRecord, waitChainIdx int) types.Datum {
+		return types.NewDatum(rec.WaitChain[waitChainIdx].TxnHoldingLock)
+	},
+}
+
+// ToDatum creates the datum for the specified column of `INFORMATION_SCHEMA.DEADLOCKS` table. Usually a single deadlock
+// record generates multiple rows, one for each item in wait chain. The first parameter `waitChainIdx` specifies which
+// wait chain item is to be used.
+func (r *DeadlockRecord) ToDatum(waitChainIdx int, columnName string) types.Datum {
+	res, ok := columnValueGetterMap[columnName]
+	if !ok {
+		return types.NewDatum(nil)
+	}
+	return res(r, waitChainIdx)
 }
 
 // DeadlockHistory is a collection for maintaining recent several deadlock events. All its public APIs are thread safe.
@@ -144,55 +206,6 @@ func (d *DeadlockHistory) getAll() []*DeadlockRecord {
 		res = append(res, d.deadlocks[:(d.head+d.size)%capacity]...)
 	}
 	return res
-}
-
-// GetAllDatum gets all collected deadlock events, and make it into datum that matches the definition of the table
-// `INFORMATION_SCHEMA.DEADLOCKS`.
-func (d *DeadlockHistory) GetAllDatum(infoschema infoschema.InfoSchema) [][]types.Datum {
-	records := d.GetAll()
-	rowsCount := 0
-	for _, rec := range records {
-		rowsCount += len(rec.WaitChain)
-	}
-	rows := make([][]types.Datum, 0, rowsCount)
-	row := make([]interface{}, 8)
-	for _, rec := range records {
-		row[0] = rec.ID
-		row[1] = types.NewTime(types.FromGoTime(rec.OccurTime), mysql.TypeTimestamp, types.MaxFsp)
-		row[2] = rec.IsRetryable
-
-		for _, item := range rec.WaitChain {
-			row[3] = item.TryLockTxn
-
-			row[4] = nil
-			if len(item.SQLDigest) > 0 {
-				row[4] = item.SQLDigest
-			}
-
-			row[5] = nil
-			row[6] = nil
-			if len(item.Key) > 0 {
-				row[5] = strings.ToUpper(hex.EncodeToString(item.Key))
-				decodedKey, err := keydecoder.DecodeKey(item.Key, infoschema)
-				if err == nil {
-					decodedKeyJSON, err := json.Marshal(decodedKey)
-					if err != nil {
-						logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
-					} else {
-						row[6] = string(decodedKeyJSON)
-					}
-				} else {
-					logutil.BgLogger().Warn("decode key failed", zap.Error(err))
-				}
-			}
-
-			row[7] = item.TxnHoldingLock
-
-			rows = append(rows, types.MakeDatums(row...))
-		}
-	}
-
-	return rows
 }
 
 // Clear clears content from deadlock histories
