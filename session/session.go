@@ -2957,7 +2957,6 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 
 var generalLogBufPool = sync.Pool{New: func() interface{} {
 	ret := strings.Builder{}
-	ret.Grow(1024)
 	return &ret
 }}
 
@@ -2989,11 +2988,11 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 
 		generalLogBuf := generalLogBufPool.Get().(*strings.Builder)
 		connID := strconv.FormatUint(vars.ConnectionID, 10)
-		userString := func (user *auth.UserIdentity) string {
+		userString := func(user *auth.UserIdentity) string {
 			if user == nil {
 				return ""
 			}
-			length := len(user.Username)+1+len(user.Hostname)
+			length := len(user.Username) + 1 + len(user.Hostname)
 			buf1 := make([]byte, length)
 			copy(buf1, user.Username)
 			buf1[len(user.Username)] = '@'
@@ -3010,66 +3009,12 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		txnMode := vars.GetReadableTxnMode()
 		bufLen := 31 /*time format*/ + 121 /*static strings in general log*/ + len(connID) + len(user) + len(smVer) + len(txnStartTS) + len(forUpdateTS) + len(isReadConsistency) + len(currentDB) + len(txnMode) + 10 /*leave some buffer*/
 		generalLogBuf.Grow(bufLen)
-		// write the time in format 2006/01/02 15:04:05.000 -07:00, according to github.com/pingcap/log/zap_text_encoder.go:DefaultTimeEncoder
-		t := time.Now()
 		generalLogBuf.WriteByte('[')
-		generalLogBuf.WriteString(strconv.FormatInt(int64(t.Year()), 10))
-		generalLogBuf.WriteByte('/')
-		if t.Month() < 10 {
-			generalLogBuf.WriteByte('0')
-		}
-		generalLogBuf.WriteString(strconv.FormatInt(int64(t.Month()), 10))
-		generalLogBuf.WriteByte('/')
-		if t.Day() < 10 {
-			generalLogBuf.WriteByte('0')
-		}
-		generalLogBuf.WriteString(strconv.FormatInt(int64(t.Day()), 10))
-		generalLogBuf.WriteByte(' ')
-		if t.Hour() < 10 {
-			generalLogBuf.WriteByte('0')
-		}
-		generalLogBuf.WriteString(strconv.FormatInt(int64(t.Hour()), 10))
-		generalLogBuf.WriteByte(':')
-		if t.Minute() < 10 {
-			generalLogBuf.WriteByte('0')
-		}
-		generalLogBuf.WriteString(strconv.FormatInt(int64(t.Minute()), 10))
-		generalLogBuf.WriteByte(':')
-		if t.Second() < 10 {
-			generalLogBuf.WriteByte('0')
-		}
-		generalLogBuf.WriteString(strconv.FormatInt(int64(t.Second()), 10))
-		generalLogBuf.WriteByte('.')
-		generalLogBuf.WriteString(strconv.FormatInt(int64(t.Nanosecond()/1000000), 10))
-		generalLogBuf.WriteByte(' ')
-		_, offset := t.Zone()
-		offsetAbs := offset
-		if offsetAbs < 0 {
-			offsetAbs = -offsetAbs
-		}
-		offsetHour := offset / 3600
-		offsetHourAbs := offsetHour
-		if offsetHourAbs < 0 {
-			offsetHourAbs = -offsetHourAbs
-		}
-		offsetMinuteAbs := offsetAbs/60 - offsetHourAbs*60
-		if offsetMinuteAbs < 0 {
-			offsetMinuteAbs = -offsetMinuteAbs
-		}
-		if offsetHour > 0 {
-			generalLogBuf.WriteByte('+')
-		}
-		if offsetHourAbs < 10 {
-			generalLogBuf.WriteByte('0')
-		}
-		generalLogBuf.WriteString(strconv.FormatInt(int64(offsetHour), 10))
-		generalLogBuf.WriteByte(':')
-		if offsetMinuteAbs < 10 {
-			generalLogBuf.WriteByte('0')
-		}
-		generalLogBuf.WriteString(strconv.FormatInt(int64(offsetMinuteAbs), 10))
+		// write the time in format 2006/01/02 15:04:05.000 -07:00, according to github.com/pingcap/log/zap_text_encoder.go:DefaultTimeEncoder
+		now := time.Now()
+		var a [32]byte
+		generalLogBuf.Write(now.AppendFormat(a[:0], "2006/01/02 15:04:05.000 -07:00"))
 		generalLogBuf.WriteString("] ")
-		// finish writing time format
 
 		generalLogBuf.WriteString("[GENERAL_LOG] [conn=")
 		generalLogBuf.WriteString(connID)
