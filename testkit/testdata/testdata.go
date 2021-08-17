@@ -189,6 +189,28 @@ func (td *TestData) GenerateOutputIfNeeded() error {
 	return err
 }
 
+// TestDataMap contains multiple TestData suite.
+type TestDataMap map[string]TestData
+
+func (m *TestDataMap) LoadTestSuiteData(dir, suiteName string) {
+	testData, err := LoadTestSuiteData(dir, suiteName)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "testdata: Errors on loading test data from file: %v\n", err)
+		os.Exit(1)
+	}
+	(*m)[suiteName] = testData
+}
+
+func (m *TestDataMap) GenerateOutputIfNeeded() {
+	for _, testData := range *m {
+		err := testData.GenerateOutputIfNeeded()
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "testdata: Errors on generating output: %v\n", err)
+			os.Exit(1)
+		}
+	}
+}
+
 // Record is a temporary method for testutil to avoid "flag redefined: record" error,
 // After we migrate all tests based on former testdata, we should remove testutil and this method.
 func Record() bool {

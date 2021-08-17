@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ranger_test
+package cascades
 
 import (
 	"flag"
@@ -25,16 +25,20 @@ import (
 	"go.uber.org/goleak"
 )
 
-var testDataMap = make(testdata.TestDataMap, 1)
-var rangerSuiteData testdata.TestData
+var testDataMap = make(testdata.TestDataMap, 2)
+var stringerSuiteData testdata.TestData
+var transformationRulesSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
 
 	flag.Parse()
 
-	testDataMap.LoadTestSuiteData("testdata", "ranger_suite")
-	rangerSuiteData = testDataMap["ranger_suite"]
+	testDataMap = make(testdata.TestDataMap, 2)
+	testDataMap.LoadTestSuiteData("testdata", "stringer_suite")
+	testDataMap.LoadTestSuiteData("testdata", "transformation_rules_suite")
+	stringerSuiteData = testDataMap["stringer_suite"]
+	transformationRulesSuiteData = testDataMap["transformation_rules_suite"]
 
 	if exitCode := m.Run(); exitCode != 0 {
 		os.Exit(exitCode)

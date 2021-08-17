@@ -16,6 +16,7 @@ package cascades_test
 
 import (
 	"fmt"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
@@ -31,6 +32,11 @@ var _ = Suite(&testIntegrationSuite{})
 type testIntegrationSuite struct {
 	store    kv.Storage
 	testData testutil.TestData
+}
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
 }
 
 func newStoreWithBootstrap() (kv.Storage, error) {
