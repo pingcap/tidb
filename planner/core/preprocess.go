@@ -1594,7 +1594,8 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	if p.LastSnapshotTS != 0 {
 		dom := domain.GetDomain(p.ctx)
 		is, err := dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
-		if err != nil {
+		// if infoschema is empty, LastSnapshotTS init failed
+		if err != nil || is == nil{
 			p.err = err
 			return
 		}
