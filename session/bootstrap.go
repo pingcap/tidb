@@ -1535,7 +1535,7 @@ func upgradeToVer73(s Session, ver int64) {
 	if ver >= version73 {
 		return
 	}
-	mustExecute(s, fmt.Sprintf("set @@global.tidb_stmt_summary_max_stmt_count = %v", config.GetGlobalConfig().StmtSummary.MaxStmtCount))
+	mustExecute(s, fmt.Sprintf("UPDATE mysql.global_variables SET VARIABLE_VALUE='%[1]v' WHERE VARIABLE_NAME = 'tidb_stmt_summary_max_stmt_count' AND CAST(VARIABLE_VALUE AS SIGNED) < %[1]v", config.GetGlobalConfig().StmtSummary.MaxStmtCount))
 }
 
 func writeOOMAction(s Session) {
