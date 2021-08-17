@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1269,7 +1270,7 @@ workLoop:
 				// When it's new collation data, we need to use its collate key instead of original value because only
 				// the collate key can ensure the correct ordering.
 				// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
-				if ft.EvalType() == types.ETString {
+				if ft.EvalType() == types.ETString && ft.Tp != mysql.TypeEnum && ft.Tp != mysql.TypeSet {
 					val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
 				}
 				sampleItems = append(sampleItems, &statistics.SampleItem{
@@ -1825,7 +1826,7 @@ func (e *AnalyzeFastExec) handleBatchSeekResponse(kvMap map[string][]byte) (err 
 }
 
 func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, err error) {
-	rander := rand.New(rand.NewSource(e.randSeed))
+	rander := rand.New(rand.NewSource(e.randSeed)) // #nosec G404
 	sampleSize := int64(e.opts[ast.AnalyzeOptNumSamples])
 	for ; iter.Valid() && err == nil; err = iter.Next() {
 		// reservoir sampling
@@ -1881,7 +1882,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 
-	rander := rand.New(rand.NewSource(e.randSeed))
+	rander := rand.New(rand.NewSource(e.randSeed)) // #nosec G404
 	for i := workID; i < len(e.sampTasks); i += e.concurrency {
 		task := e.sampTasks[i]
 		// randomize the estimate step in range [step - 2 * sqrt(step), step]

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -88,7 +89,7 @@ var (
 // See http://www.awsarchitectureblog.com/2015/03/backoff.html.
 func BackOff(attempts uint) int {
 	upper := int(math.Min(float64(retryBackOffCap), float64(retryBackOffBase)*math.Pow(2.0, float64(attempts))))
-	sleep := time.Duration(rand.Intn(upper)) * time.Millisecond
+	sleep := time.Duration(rand.Intn(upper)) * time.Millisecond // #nosec G404
 	time.Sleep(sleep)
 	return int(sleep)
 }

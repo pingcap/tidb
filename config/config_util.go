@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -109,7 +110,7 @@ func atomicWriteConfig(c *Config, confPath string) (err error) {
 		return err
 	}
 	tmpConfPath := filepath.Join(os.TempDir(), fmt.Sprintf("tmp_conf_%v.toml", time.Now().Format("20060102150405")))
-	if err := os.WriteFile(tmpConfPath, []byte(content), 0666); err != nil {
+	if err := os.WriteFile(tmpConfPath, []byte(content), 0600); err != nil {
 		return errors.Trace(err)
 	}
 	return errors.Trace(os.Rename(tmpConfPath, confPath))

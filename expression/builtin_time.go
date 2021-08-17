@@ -12,6 +12,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -2533,6 +2534,10 @@ func evalNowWithFsp(ctx sessionctx.Context, fsp int8) (types.Time, bool, error) 
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
+
+	failpoint.Inject("injectNow", func(val failpoint.Value) {
+		nowTs = time.Unix(int64(val.(int)), 0)
+	})
 
 	// In MySQL's implementation, now() will truncate the result instead of rounding it.
 	// Results below are from MySQL 5.7, which can prove it.

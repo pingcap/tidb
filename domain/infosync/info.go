@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -691,7 +692,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	} else {
 		url = fmt.Sprintf("http://%s%s", pdAddrs[0], pdapi.Config)
 	}
-	resp, err := http.Get(url)
+	resp, err := http.Get(url) // #nosec G107
 	if err != nil {
 		return "", err
 	}

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -339,6 +340,11 @@ func (s *testSerialDBSuite) TestWriteReorgForColumnTypeChangeOnAmendTxn(c *C) {
 
 		var checkErr error
 		tk1 := testkit.NewTestKit(c, s.store)
+		defer func() {
+			if tk1.Se != nil {
+				tk1.Se.Close()
+			}
+		}()
 		hook := &ddl.TestDDLCallback{Do: s.dom}
 		times := 0
 		hook.OnJobUpdatedExported = func(job *model.Job) {
@@ -3323,16 +3329,22 @@ func (s *testDBSuite2) TestTemporaryTableForeignKey(c *C) {
 	tk.MustExec("create table t1 (a int, b int);")
 	tk.MustExec("drop table if exists t1_tmp;")
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
+	tk.MustExec("set tidb_enable_noop_functions=1")
 	tk.MustExec("create global temporary table t1_tmp (a int, b int) on commit delete rows;")
+	tk.MustExec("create temporary table t2_tmp (a int, b int)")
 	// test add foreign key.
 	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("create table t2 (a int, b int);")
 	failSQL := "alter table t1_tmp add foreign key (c) REFERENCES t2(a);"
 	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
+	failSQL = "alter table t2_tmp add foreign key (c) REFERENCES t2(a);"
+	tk.MustGetErrCode(failSQL, errno.ErrUnsupportedDDLOperation)
 	// Test drop column with foreign key.
 	failSQL = "create global temporary table t3 (c int,d int,foreign key (d) references t1 (b)) on commit delete rows;"
 	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
-	tk.MustExec("drop table if exists t1,t2,t3,t1_tmp;")
+	failSQL = "create temporary table t4(c int,d int,foreign key (d) references t1 (b));"
+	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
+	tk.MustExec("drop table if exists t1,t2,t3, t4,t1_tmp,t2_tmp;")
 }
 
 func (s *testDBSuite8) TestFKOnGeneratedColumns(c *C) {
@@ -3828,6 +3840,26 @@ func (s *testDBSuite3) TestVirtualColumnDDL(c *C) {
 	tk.MustQuery("select * from test_gv_ddl").Check(testkit.Rows("1 9 11"))
 	_, err = tk.Exec("commit")
 	c.Assert(err, IsNil)
+
+	// for local temporary table
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
+	tk.MustExec(`create temporary table test_local_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);`)
+	defer tk.MustExec("drop table if exists test_local_gv_ddl")
+	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_local_gv_ddl"))
+	c.Assert(err, IsNil)
+	for i, column := range table.Meta().Columns {
+		c.Assert(column.GeneratedExprString, Equals, testCases[i].generatedExprString)
+		c.Assert(column.GeneratedStored, Equals, testCases[i].generatedStored)
+	}
+	result = tk.MustQuery(`DESC test_local_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test_local_gv_ddl values (1, default, default)")
+	tk.MustQuery("select * from test_local_gv_ddl").Check(testkit.Rows("1 9 11"))
+	_, err = tk.Exec("commit")
+	c.Assert(err, IsNil)
+	tk.MustQuery("select * from test_local_gv_ddl").Check(testkit.Rows("1 9 11"))
 }
 
 func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
@@ -4486,7 +4518,7 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeBlob)
 
 	// text to set
-	tk.MustGetErrMsg("alter table tt change a a set('111', '2222');", "[types:1265]Data truncated for column 'a', value is 'KindString 10000'")
+	tk.MustGetErrMsg("alter table tt change a a set('111', '2222');", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a set('111', '10000');")
 	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeSet)
@@ -4499,7 +4531,7 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 
 	// set to enum
-	tk.MustGetErrMsg("alter table tt change a a enum('111', '2222');", "[types:1265]Data truncated for column 'a', value is 'KindMysqlSet 10000'")
+	tk.MustGetErrMsg("alter table tt change a a enum('111', '2222');", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a enum('111', '10000');")
 	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeEnum)
@@ -4511,7 +4543,7 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	// no-strict mode
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustExec("alter table tt change a a enum('111', '2222');")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data truncated for column 'a', value is 'KindMysqlEnum 10000'"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data truncated for column 'a', value is '10000'"))
 
 	tk.MustExec("drop table tt;")
 }
@@ -5168,23 +5200,23 @@ func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
 }
 
 func (s *testDBSuite1) TestModifyColumnTime_TimeToYear(c *C) {
-	currentYear := strconv.Itoa(time.Now().Year())
+	outOfRangeCode := uint16(1264)
 	tests := []testModifyColumnTimeCase{
 		// time to year, it's reasonable to return current year and discard the time (even if MySQL may get data out of range error).
-		{"time", `"30 20:00:12"`, "year", currentYear, 0},
-		{"time", `"30 20:00"`, "year", currentYear, 0},
-		{"time", `"30 20"`, "year", currentYear, 0},
-		{"time", `"20:00:12"`, "year", currentYear, 0},
-		{"time", `"20:00"`, "year", currentYear, 0},
-		{"time", `"12"`, "year", currentYear, 0},
-		{"time", `"200012"`, "year", currentYear, 0},
-		{"time", `200012`, "year", currentYear, 0},
-		{"time", `0012`, "year", currentYear, 0},
-		{"time", `12`, "year", currentYear, 0},
-		{"time", `"30 20:00:12.498"`, "year", currentYear, 0},
-		{"time", `"20:00:12.498"`, "year", currentYear, 0},
-		{"time", `"200012.498"`, "year", currentYear, 0},
-		{"time", `200012.498`, "year", currentYear, 0},
+		{"time", `"30 20:00:12"`, "year", "", outOfRangeCode},
+		{"time", `"30 20:00"`, "year", "", outOfRangeCode},
+		{"time", `"30 20"`, "year", "", outOfRangeCode},
+		{"time", `"20:00:12"`, "year", "", outOfRangeCode},
+		{"time", `"20:00"`, "year", "", outOfRangeCode},
+		{"time", `"12"`, "year", "2012", 0},
+		{"time", `"200012"`, "year", "", outOfRangeCode},
+		{"time", `200012`, "year", "", outOfRangeCode},
+		{"time", `0012`, "year", "2012", 0},
+		{"time", `12`, "year", "2012", 0},
+		{"time", `"30 20:00:12.498"`, "year", "", outOfRangeCode},
+		{"time", `"20:00:12.498"`, "year", "", outOfRangeCode},
+		{"time", `"200012.498"`, "year", "", outOfRangeCode},
+		{"time", `200012.498`, "year", "", outOfRangeCode},
 	}
 	testModifyColumnTime(c, s.store, tests)
 }
@@ -5388,9 +5420,8 @@ func (s *testDBSuite1) TestModifyColumnTime_DatetimeToYear(c *C) {
 		{"datetime", `20060102150405`, "year", "2006", 0},
 		{"datetime", `060102150405`, "year", "2006", 0},
 		{"datetime", `"2006-01-02 23:59:59.506"`, "year", "2006", 0},
-		// MySQL will get "Data truncation: Out of range value for column 'a' at row 1.
-		{"datetime", `"1000-01-02 23:59:59"`, "year", "", errno.ErrInvalidYear},
-		{"datetime", `"9999-01-02 23:59:59"`, "year", "", errno.ErrInvalidYear},
+		{"datetime", `"1000-01-02 23:59:59"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"datetime", `"9999-01-02 23:59:59"`, "year", "", errno.ErrWarnDataOutOfRange},
 	}
 	testModifyColumnTime(c, s.store, tests)
 }
@@ -5756,6 +5787,7 @@ func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 func (s *testSerialDBSuite) TestShardRowIDBitsOnTemporaryTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	// for global temporary table
 	tk.MustExec("drop table if exists shard_row_id_temporary")
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	_, err := tk.Exec("create global temporary table shard_row_id_temporary (a int) shard_row_id_bits = 5 on commit delete rows;")
@@ -5764,6 +5796,15 @@ func (s *testSerialDBSuite) TestShardRowIDBitsOnTemporaryTable(c *C) {
 	defer tk.MustExec("drop table if exists shard_row_id_temporary")
 	_, err = tk.Exec("alter table shard_row_id_temporary shard_row_id_bits = 4;")
 	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
+	// for local temporary table
+	tk.MustExec("set tidb_enable_noop_functions=true")
+	tk.MustExec("drop table if exists local_shard_row_id_temporary")
+	_, err = tk.Exec("create temporary table local_shard_row_id_temporary (a int) shard_row_id_bits = 5;")
+	c.Assert(err.Error(), Equals, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
+	tk.MustExec("create temporary table local_shard_row_id_temporary (a int);")
+	defer tk.MustExec("drop table if exists local_shard_row_id_temporary")
+	_, err = tk.Exec("alter table local_shard_row_id_temporary shard_row_id_bits = 4;")
+	c.Assert(err.Error(), Equals, ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE").Error())
 }
 
 // port from mysql
@@ -7189,6 +7230,8 @@ func (s *testSerialSuite) TestIssue23872(c *C) {
 	rs, err := tk.Exec("select * from test_create_table;")
 	c.Assert(err, IsNil)
 	cols := rs.Fields()
+	err = rs.Close()
+	c.Assert(err, IsNil)
 	expectFlag := uint16(mysql.NotNullFlag | mysql.PriKeyFlag | mysql.NoDefaultValueFlag)
 	c.Assert(cols[0].Column.Flag, Equals, uint(expectFlag))
 	tk.MustExec("create table t(a int default 1, primary key(a));")
@@ -7196,6 +7239,8 @@ func (s *testSerialSuite) TestIssue23872(c *C) {
 	rs1, err := tk.Exec("select * from t;")
 	c.Assert(err, IsNil)
 	cols1 := rs1.Fields()
+	err = rs1.Close()
+	c.Assert(err, IsNil)
 	expectFlag1 := uint16(mysql.NotNullFlag | mysql.PriKeyFlag)
 	c.Assert(cols1[0].Column.Flag, Equals, uint(expectFlag1))
 }

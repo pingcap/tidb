@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -705,14 +706,13 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rk := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 
-		more, err := fn(handle, rk, it.Value())
+		more, err := fn(handle, it.Key(), it.Value())
 		if !more || err != nil {
 			return errors.Trace(err)
 		}
 
-		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
+		err = kv.NextUntil(it, util.RowKeyPrefixFilter(it.Key()))
 		if err != nil {
 			if kv.ErrNotExist.Equal(err) {
 				break

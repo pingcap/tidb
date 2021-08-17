@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,7 +19,6 @@ package testutil
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -226,13 +227,6 @@ func RowsWithSep(sep string, args ...string) [][]interface{} {
 	return rows
 }
 
-// record is a flag used for generate test result.
-var record bool
-
-func init() {
-	flag.BoolVar(&record, "record", false, "to generate test result")
-}
-
 type testCases struct {
 	Name       string
 	Cases      *json.RawMessage // For delayed parse.
@@ -240,6 +234,7 @@ type testCases struct {
 }
 
 // TestData stores all the data of a test suite.
+// TODO: please use testkit.TestData to migrate to testify
 type TestData struct {
 	input          []testCases
 	output         []testCases
@@ -254,7 +249,7 @@ func LoadTestSuiteData(dir, suiteName string) (res TestData, err error) {
 	if err != nil {
 		return res, err
 	}
-	if record {
+	if testdata.Record() {
 		res.output = make([]testCases, len(res.input))
 		for i := range res.input {
 			res.output[i].Name = res.input[i].Name
@@ -304,7 +299,7 @@ func (t *TestData) GetTestCasesByName(caseName string, c *check.C, in interface{
 	c.Assert(ok, check.IsTrue, check.Commentf("Must get test %s", caseName))
 	err := json.Unmarshal(*t.input[casesIdx].Cases, in)
 	c.Assert(err, check.IsNil)
-	if !record {
+	if !testdata.Record() {
 		err = json.Unmarshal(*t.output[casesIdx].Cases, out)
 		c.Assert(err, check.IsNil)
 	} else {
@@ -331,7 +326,7 @@ func (t *TestData) GetTestCases(c *check.C, in interface{}, out interface{}) {
 	c.Assert(ok, check.IsTrue, check.Commentf("Must get test %s", funcName))
 	err := json.Unmarshal(*t.input[casesIdx].Cases, in)
 	c.Assert(err, check.IsNil)
-	if !record {
+	if !testdata.Record() {
 		err = json.Unmarshal(*t.output[casesIdx].Cases, out)
 		c.Assert(err, check.IsNil)
 	} else {
@@ -347,7 +342,7 @@ func (t *TestData) GetTestCases(c *check.C, in interface{}, out interface{}) {
 
 // OnRecord execute the function to update result.
 func (t *TestData) OnRecord(updateFunc func()) {
-	if record {
+	if testdata.Record() {
 		updateFunc()
 	}
 }
@@ -373,7 +368,7 @@ func (t *TestData) ConvertSQLWarnToStrings(warns []stmtctx.SQLWarn) (rs []string
 
 // GenerateOutputIfNeeded generate the output file.
 func (t *TestData) GenerateOutputIfNeeded() error {
-	if !record {
+	if !testdata.Record() {
 		return nil
 	}
 
