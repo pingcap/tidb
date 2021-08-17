@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -2975,6 +2976,25 @@ func (s *testStatsSuite) TestIssues24401(c *C) {
 	testKit.MustExec("analyze table tp")
 	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
 	c.Assert(len(rows), Equals, lenRows)
+}
+
+func (s *testStatsSuite) TestIssues27147(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+
+	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue);")
+	testKit.MustExec("alter table t add index idx((a+5));")
+	err := testKit.ExecToErr("analyze table t;")
+	c.Assert(err, Equals, nil)
+
+	testKit.MustExec("drop table if exists t1")
+	testKit.MustExec("create table t1 (a int, b int as (a+1) virtual, c int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue);")
+	testKit.MustExec("alter table t1 add index idx((a+5));")
+	err = testKit.ExecToErr("analyze table t1;")
+	c.Assert(err, Equals, nil)
 }
 
 func (s *testStatsSuite) TestColumnCountFromStorage(c *C) {
