@@ -693,7 +693,7 @@ func detachMagicByte(value []byte) ([]byte, error) {
 }
 
 func whichMagicType(b byte) int {
-	if b < 0x3F {
+	if b <= 0x3F {
 		return typeJson
 	}
 	return typeUnknown
