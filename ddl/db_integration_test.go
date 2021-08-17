@@ -3162,7 +3162,7 @@ func (s *testIntegrationSuite3) TestDropTemporaryTable(c *C) {
 	tk.MustQuery("select * from a_local_temp_table_8").Check(testkit.Rows())
 }
 
-func (s *testIntegrationSuite3) TestDropGlobalTemporaryTableWithDropGlobalStmt(c *C) {
+func (s *testIntegrationSuite3) TestDropWithGlobalTemporaryTableKeyWord(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_noop_functions=true")
@@ -3170,7 +3170,7 @@ func (s *testIntegrationSuite3) TestDropGlobalTemporaryTableWithDropGlobalStmt(c
 	clearSQL := "drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2"
 	tk.MustExec(clearSQL)
 	defer tk.MustExec(clearSQL)
-	// two normal table test.tb, test.tb2, a temporary table with name test.tb2
+	// two normal table test.tb, test.tb2
 	tk.MustExec("create table tb(id int)")
 	tk.MustExec("create table tb2(id int)")
 	// two global temporary table test.temp, test.temp1
@@ -3237,7 +3237,7 @@ func (s *testIntegrationSuite3) TestDropGlobalTemporaryTableWithDropGlobalStmt(c
 	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
 }
 
-func (s *testIntegrationSuite3) TestDropLocalTemporaryTableWithDropTemporaryStmt(c *C) {
+func (s *testIntegrationSuite3) TestDropWithLocalTemporaryTableKeyWord(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_noop_functions=true")
