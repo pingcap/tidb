@@ -654,7 +654,7 @@ func (b *builtinRoundWithFracIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(types.RoundFloat(float64(i64s[i]), int(frac[i])))
+		i64s[i] = types.RoundInt(i64s[i], int(frac[i]))
 	}
 	return nil
 }
