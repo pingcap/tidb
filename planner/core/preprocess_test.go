@@ -236,6 +236,15 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE t IGNORE SELECT * FROM u UNION SELECT * from v", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
 		{"CREATE TABLE t (m int) REPLACE AS (SELECT * FROM u) UNION (SELECT * FROM v)", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
 
+<<<<<<< HEAD
+=======
+		// issue 24309
+		{"SELECT * FROM t INTO OUTFILE 'ttt' UNION SELECT * FROM u", false, core.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
+
+		// Error caused by "Table 'test.u' doesn't exist".
+		// {"(SELECT * FROM t INTO OUTFILE 'ttt') UNION SELECT * FROM u", false, core.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")},
+
+>>>>>>> 09e3090ba... go.mod: update parser to fix the parse error for subquery (#25647)
 		{"select * from ( select 1 ) a, (select 2) a;", false, core.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) a;", false, core.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) A;", false, core.ErrNonUniqTable},
