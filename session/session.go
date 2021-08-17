@@ -2966,7 +2966,13 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			query = execStmt.GetTextToLog()
 		}
 
-		query = executor.QueryReplacer.Replace(query)
+		queryMutable := *(*[]byte)(unsafe.Pointer(&query))
+		for i, b := range queryMutable {
+			if b == '\r' || b == '\n' || b == '\t' {
+				queryMutable[i] = ' '
+			}
+		}
+		query = *(*string)(unsafe.Pointer(&queryMutable))
 		if !vars.EnableRedactLog {
 			query += vars.PreparedParams.String()
 		}
@@ -2982,16 +2988,17 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		// 	vars.GetReadableTxnMode(),
 		// 	query)
 
+		var bufUserString [256]byte
 		appendUserString := func(dst []byte, user *auth.UserIdentity) []byte {
 			if user == nil {
 				return dst
 			}
 			length := len(user.Username) + 1 + len(user.Hostname)
-			buf1 := make([]byte, length)
-			copy(buf1, user.Username)
-			buf1[len(user.Username)] = '@'
-			copy(buf1[len(user.Username)+1:], user.Hostname)
-			dst = append(dst, buf1...)
+			buf := bufUserString[:length]
+			copy(buf, user.Username)
+			buf[len(user.Username)] = '@'
+			copy(buf[len(user.Username)+1:], user.Hostname)
+			dst = append(dst, buf...)
 			return dst
 		}
 
