@@ -189,14 +189,6 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 				resetNotNullFlag(apply.schema, outerPlan.Schema().Len(), apply.schema.Len())
 
 				for i, aggFunc := range agg.AggFuncs {
-<<<<<<< HEAD
-					switch expr := aggFunc.Args[0].(type) {
-					case *expression.Column:
-						if idx := apply.schema.ColumnIndex(expr); idx != -1 {
-							desc, err := aggregation.NewAggFuncDesc(agg.ctx, agg.AggFuncs[i].Name, []expression.Expression{apply.schema.Columns[idx]}, false)
-							if err != nil {
-								return nil, err
-=======
 					aggArgs := make([]expression.Expression, 0, len(aggFunc.Args))
 					for _, arg := range aggFunc.Args {
 						switch expr := arg.(type) {
@@ -205,7 +197,6 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 								aggArgs = append(aggArgs, apply.schema.Columns[idx])
 							} else {
 								aggArgs = append(aggArgs, expr)
->>>>>>> 1c6c54833... planner: add missing column for Apply convert to Join (#27246)
 							}
 						case *expression.ScalarFunction:
 							expr.RetType = expr.RetType.Clone()
