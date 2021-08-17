@@ -711,6 +711,47 @@ func (s *testBootstrapSuite) TestUpgradeVersion66(c *C) {
 	c.Assert(row.GetInt64(1), Equals, int64(1))
 }
 
+func (s *testBootstrapSuite) TestUpgradeVersion73(c *C) {
+	var err error
+	defer testleak.AfterTest(c)()
+	ctx := context.Background()
+	store, _ := newStoreWithBootstrap(c, s.dbName)
+	defer func() {
+		c.Assert(store.Close(), IsNil)
+	}()
+
+	seV72 := newSession(c, store, s.dbName)
+	txn, err := store.Begin()
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(72))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	mustExecSQL(c, seV72, "update mysql.tidb set variable_value='72' where variable_name='tidb_server_version'")
+	mustExecSQL(c, seV72, "set @@global.tidb_stmt_summary_max_stmt_count = 200")
+	mustExecSQL(c, seV72, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV72)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, int64(72))
+
+	domV73, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer domV73.Close()
+	seV73 := newSession(c, store, s.dbName)
+	ver, err = getBootstrapVersion(seV73)
+	c.Assert(err, IsNil)
+	c.Assert(ver, Equals, currentBootstrapVersion)
+	r := mustExecSQL(c, seV73, `select @@global.tidb_stmt_summary_max_stmt_count, @@session.tidb_stmt_summary_max_stmt_count`)
+	req := r.NewChunk()
+	c.Assert(r.Next(ctx, req), IsNil)
+	c.Assert(req.NumRows(), Equals, 1)
+	row := req.GetRow(0)
+	c.Assert(row.GetString(0), Equals, "3000")
+	c.Assert(row.GetString(1), Equals, "3000")
+}
+
 func (s *testBootstrapSuite) TestForIssue23387(c *C) {
 	// For issue https://github.com/pingcap/tidb/issues/23387
 	saveCurrentBootstrapVersion := currentBootstrapVersion

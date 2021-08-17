@@ -499,11 +499,13 @@ const (
 	version71 = 71
 	// version72 adds snapshot column for mysql.stats_meta
 	version72 = 72
+	// version73 changes global variable `tidb_stmt_summary_max_stmt_count` value from 200 to 3000.
+	version73 = 73
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version72
+var currentBootstrapVersion int64 = version73
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -579,6 +581,7 @@ var (
 		upgradeToVer70,
 		upgradeToVer71,
 		upgradeToVer72,
+		upgradeToVer73,
 	}
 )
 
@@ -1526,6 +1529,13 @@ func upgradeToVer72(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN snapshot BIGINT(64) UNSIGNED NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer73(s Session, ver int64) {
+	if ver >= version73 {
+		return
+	}
+	mustExecute(s, fmt.Sprintf("set @@global.tidb_stmt_summary_max_stmt_count = %v", config.GetGlobalConfig().StmtSummary.MaxStmtCount))
 }
 
 func writeOOMAction(s Session) {
