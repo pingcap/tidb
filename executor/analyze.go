@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1269,7 +1270,7 @@ workLoop:
 				// When it's new collation data, we need to use its collate key instead of original value because only
 				// the collate key can ensure the correct ordering.
 				// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
-				if ft.EvalType() == types.ETString {
+				if ft.EvalType() == types.ETString && ft.Tp != mysql.TypeEnum && ft.Tp != mysql.TypeSet {
 					val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
 				}
 				sampleItems = append(sampleItems, &statistics.SampleItem{

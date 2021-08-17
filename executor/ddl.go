@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -73,15 +74,15 @@ func (e *DDLExec) toErr(err error) error {
 }
 
 // deleteTemporaryTableRecords delete temporary table data.
-func deleteTemporaryTableRecords(memData kv.MemBuffer, tblID int64) error {
-	if memData == nil {
+func deleteTemporaryTableRecords(sessionData variable.TemporaryTableData, tblID int64) error {
+	if sessionData == nil {
 		return kv.ErrNotExist
 	}
 
 	tblPrefix := tablecodec.EncodeTablePrefix(tblID)
 	endKey := tablecodec.EncodeTablePrefix(tblID + 1)
 
-	iter, err := memData.Iter(tblPrefix, endKey)
+	iter, err := sessionData.Iter(tblPrefix, endKey)
 	if err != nil {
 		return err
 	}
@@ -91,7 +92,7 @@ func deleteTemporaryTableRecords(memData kv.MemBuffer, tblID int64) error {
 			break
 		}
 
-		err = memData.Delete(key)
+		err = sessionData.DeleteTableKey(tblID, key)
 		if err != nil {
 			return err
 		}
@@ -339,7 +340,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema.O)
 	}
-	tbInfo, err := ddl.BuildTableInfoWithCheck(e.ctx, s, dbInfo.Charset, dbInfo.Collate)
+	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.ctx, is, s, dbInfo.Charset, dbInfo.Collate)
 	if err != nil {
 		return err
 	}
@@ -364,7 +365,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 			return err
 		}
 
-		sessVars.TemporaryTableData = bufferTxn.GetMemBuffer()
+		sessVars.TemporaryTableData = variable.NewTemporaryTableData(bufferTxn.GetMemBuffer())
 	}
 
 	err = localTempTables.AddTable(dbInfo.Name, tbl)
