@@ -2128,10 +2128,46 @@ func (s *testStatsSuite) TestDuplicateFMSketch(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("3"))
 
+<<<<<<< HEAD
 	tk.MustExec("alter table t drop column a")
 	s.do.StatsHandle().SetLastUpdateVersion(s.do.StatsHandle().LastUpdateVersion() + 1)
 	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), time.Duration(0)), IsNil)
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
+=======
+func (s *testSerialStatsSuite) TestLoadHistogramWithCollate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a varchar(10) collate utf8mb4_unicode_ci);")
+	testKit.MustExec("insert into t values('abcdefghij');")
+	testKit.MustExec("insert into t values('abcdufghij');")
+	testKit.MustExec("analyze table t with 0 topn;")
+	do := s.do
+	h := do.StatsHandle()
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	_, err = h.TableStatsFromStorage(tblInfo, tblInfo.ID, true, 0)
+	c.Assert(err, IsNil)
+}
+
+func (s *testSerialStatsSuite) TestFastAnalyzeColumnHistWithNullValue(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a int)")
+	testKit.MustExec("insert into t values (1), (2), (3), (4), (NULL)")
+	testKit.MustExec("set @@tidb_enable_fast_analyze=1")
+	defer testKit.MustExec("set @@tidb_enable_fast_analyze=0")
+	testKit.MustExec("analyze table t with 0 topn, 2 buckets")
+	// If NULL is in hist, the min(lower_bound) will be "".
+	testKit.MustQuery("select min(lower_bound) from mysql.stats_buckets").Check(testkit.Rows("1"))
+>>>>>>> d06fd6776... statistics: fix "data too long" error when dumping stats from table with new collation data (#27033)
 }
 
 func (s *testStatsSuite) TestStatsCacheUpdateSkip(c *C) {
