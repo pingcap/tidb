@@ -12,6 +12,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -620,9 +621,9 @@ func (s *session) commitTxnWithTemporaryData(ctx context.Context, txn kv.Transac
 
 			value := iter.Value()
 			if len(value) == 0 {
-				err = sessionData.Delete(key)
+				err = sessionData.DeleteTableKey(tblID, key)
 			} else {
-				err = sessionData.Set(key, iter.Value())
+				err = sessionData.SetTableKey(tblID, key, iter.Value())
 			}
 
 			if err != nil {

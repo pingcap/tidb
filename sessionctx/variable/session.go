@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -354,6 +355,69 @@ func (r *RewritePhaseInfo) Reset() {
 	r.DurationRewrite = 0
 	r.DurationPreprocessSubQuery = 0
 	r.PreprocessSubQueries = 0
+}
+
+// TemporaryTableData is a interface to maintain temporary data in session
+type TemporaryTableData interface {
+	kv.Retriever
+	// Staging create a new staging buffer inside the MemBuffer.
+	// Subsequent writes will be temporarily stored in this new staging buffer.
+	// When you think all modifications looks good, you can call `Release` to public all of them to the upper level buffer.
+	Staging() kv.StagingHandle
+	// Release publish all modifications in the latest staging buffer to upper level.
+	Release(kv.StagingHandle)
+	// Cleanup cleanups the resources referenced by the StagingHandle.
+	// If the changes are not published by `Release`, they will be discarded.
+	Cleanup(kv.StagingHandle)
+	// GetTableSize get the size of a table
+	GetTableSize(tblID int64) int64
+	// DeleteTableKey removes the entry for key k from table
+	DeleteTableKey(tblID int64, k kv.Key) error
+	// SetTableKey sets the entry for k from table
+	SetTableKey(tblID int64, k kv.Key, val []byte) error
+}
+
+// temporaryTableData is used for store temporary table data in session
+type temporaryTableData struct {
+	kv.MemBuffer
+	tblSize map[int64]int64
+}
+
+// NewTemporaryTableData creates a new TemporaryTableData
+func NewTemporaryTableData(memBuffer kv.MemBuffer) TemporaryTableData {
+	return &temporaryTableData{
+		MemBuffer: memBuffer,
+		tblSize:   make(map[int64]int64),
+	}
+}
+
+// GetTableSize get the size of a table
+func (d *temporaryTableData) GetTableSize(tblID int64) int64 {
+	if tblSize, ok := d.tblSize[tblID]; ok {
+		return tblSize
+	}
+	return 0
+}
+
+// DeleteTableKey removes the entry for key k from table
+func (d *temporaryTableData) DeleteTableKey(tblID int64, k kv.Key) error {
+	bufferSize := d.MemBuffer.Size()
+	defer d.updateTblSize(tblID, bufferSize)
+
+	return d.MemBuffer.Delete(k)
+}
+
+// SetTableKey sets the entry for k from table
+func (d *temporaryTableData) SetTableKey(tblID int64, k kv.Key, val []byte) error {
+	bufferSize := d.MemBuffer.Size()
+	defer d.updateTblSize(tblID, bufferSize)
+
+	return d.MemBuffer.Set(k, val)
+}
+
+func (d *temporaryTableData) updateTblSize(tblID int64, beforeSize int) {
+	delta := int64(d.MemBuffer.Size() - beforeSize)
+	d.tblSize[tblID] = d.GetTableSize(tblID) + delta
 }
 
 const (
@@ -875,7 +939,7 @@ type SessionVars struct {
 	LocalTemporaryTables interface{}
 
 	// TemporaryTableData stores committed kv values for temporary table for current session.
-	TemporaryTableData kv.MemBuffer
+	TemporaryTableData TemporaryTableData
 
 	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed.
 	MPPStoreLastFailTime map[string]time.Time
@@ -2237,16 +2301,16 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 
 // TemporaryTableSnapshotReader can read the temporary table snapshot data
 type TemporaryTableSnapshotReader struct {
-	memBuffer kv.MemBuffer
+	temporaryTableData TemporaryTableData
 }
 
 // Get gets the value for key k from snapshot.
 func (s *TemporaryTableSnapshotReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	if s.memBuffer == nil {
+	if s.temporaryTableData == nil {
 		return nil, kv.ErrNotExist
 	}
 
-	v, err := s.memBuffer.Get(ctx, k)
+	v, err := s.temporaryTableData.Get(ctx, k)
 	if err != nil {
 		return v, err
 	}
