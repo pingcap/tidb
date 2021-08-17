@@ -16,7 +16,6 @@ package restore
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -75,8 +74,20 @@ func (rc *Controller) getReplicaCount(ctx context.Context) (uint64, error) {
 	return result.MaxReplicas, nil
 }
 
+func (rc *Controller) getClusterAvail(ctx context.Context) (uint64, error) {
+	result := &api.StoresInfo{}
+	if err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result); err != nil {
+		return 0, errors.Trace(err)
+	}
+	clusterAvail := uint64(0)
+	for _, store := range result.Stores {
+		clusterAvail += uint64(store.Status.Available)
+	}
+	return clusterAvail, nil
+}
+
 // ClusterResource check cluster has enough resource to import data. this test can by skipped.
-func (rc *Controller) ClusterResource(ctx context.Context) error {
+func (rc *Controller) ClusterResource(ctx context.Context, localSource int64) error {
 	passed := true
 	message := "Cluster resources are rich for this import task"
 	defer func() {
@@ -87,44 +98,44 @@ func (rc *Controller) ClusterResource(ctx context.Context) error {
 		clusterAvail  uint64
 		clusterSource uint64
 	)
-	restoreStarted := false
-	err := rc.taskMgr.CheckTasksExclusively(ctx, func(tx *sql.Tx, tasks []taskMeta) error {
-		clusterAvail = 0
-		clusterSource = 0
-		for _, task := range tasks {
-			if task.status > taskMetaStatusInitial {
-				restoreStarted = true
-				return nil
-			}
-			clusterSource += task.sourceBytes
-			if task.clusterAvail > 0 {
-				clusterAvail = task.clusterAvail
-			}
+	if rc.taskMgr == nil {
+		var err error
+		clusterAvail, err = rc.getClusterAvail(ctx)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		if clusterAvail > 0 {
-			return nil
-		}
+		clusterSource = uint64(localSource)
+	} else {
+		if err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
+			clusterAvail = 0
+			clusterSource = 0
+			restoreStarted := false
+			for _, task := range tasks {
+				if task.status > taskMetaStatusInitial {
+					restoreStarted = true
+				}
+				clusterSource += task.sourceBytes
+				if task.clusterAvail > 0 {
+					clusterAvail = task.clusterAvail
+				}
+			}
+			if restoreStarted || clusterAvail > 0 {
+				return nil, nil
+			}
 
-		result := &api.StoresInfo{}
-		if err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result); err != nil {
+			var err error
+			clusterAvail, err = rc.getClusterAvail(ctx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			newTasks := append([]taskMeta(nil), tasks...)
+			for i := 0; i < len(newTasks); i++ {
+				newTasks[i].clusterAvail = clusterAvail
+			}
+			return newTasks, nil
+		}); err != nil {
 			return errors.Trace(err)
 		}
-		for _, store := range result.Stores {
-			clusterAvail += uint64(store.Status.Available)
-		}
-		// TODO: Avoid operating meta table outside taskMgr.
-		query := fmt.Sprintf("update %s set cluster_avail = ?",
-			common.UniqueTable(rc.cfg.App.MetaSchemaName, TaskMetaTableName))
-		if _, err := tx.ExecContext(ctx, query, clusterAvail); err != nil {
-			return errors.Trace(err)
-		}
-		return nil
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if restoreStarted {
-		return nil
 	}
 
 	replicaCount, err := rc.getReplicaCount(ctx)
@@ -245,7 +256,7 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 
 // CheckClusterRegion checks cluster if there are too many empty regions or region distribution is unbalanced.
 func (rc *Controller) CheckClusterRegion(ctx context.Context) error {
-	err := rc.taskMgr.CheckTasksExclusively(ctx, func(tx *sql.Tx, tasks []taskMeta) error {
+	err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 		restoreStarted := false
 		for _, task := range tasks {
 			if task.status > taskMetaStatusInitial {
@@ -254,15 +265,15 @@ func (rc *Controller) CheckClusterRegion(ctx context.Context) error {
 			}
 		}
 		if restoreStarted {
-			return nil
+			return nil, nil
 		}
 		if err := rc.checkEmptyRegion(ctx); err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if err := rc.checkRegionDistribution(ctx); err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
-		return nil
+		return nil, nil
 	})
 	return errors.Trace(err)
 }

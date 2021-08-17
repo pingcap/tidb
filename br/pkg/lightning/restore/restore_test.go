@@ -1597,7 +1597,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 							"id": 2
 						},
 						"status": {
-							"capacity": "24"
+							"available": "24"
 						}
 					}
 				]
@@ -1605,7 +1605,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 			[]byte(`{
 				"max-replicas": 1
 			}`),
-			"(.*)Cluster capacity is rich(.*)",
+			"(.*)Cluster available is rich(.*)",
 			true,
 			0,
 		},
@@ -1618,7 +1618,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 							"id": 2
 						},
 						"status": {
-							"capacity": "15"
+							"available": "15"
 						}
 					}
 				]
@@ -1668,7 +1668,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 			sourceSize += size
 			return nil
 		})
-		err = rc.ClusterResource(ctx)
+		err = rc.ClusterResource(ctx, sourceSize)
 		c.Assert(err, IsNil)
 
 		c.Assert(template.FailedCount(Critical), Equals, ca.expectErrorCount)

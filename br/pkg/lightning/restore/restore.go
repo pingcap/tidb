@@ -1804,7 +1804,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				rc.taskMgr.CleanupTask(ctx)
 				return errors.Trace(err)
 			}
-			if err := rc.ClusterResource(ctx); err != nil {
+			if err := rc.ClusterResource(ctx, source); err != nil {
 				rc.taskMgr.CleanupTask(ctx)
 				return errors.Trace(err)
 			}
