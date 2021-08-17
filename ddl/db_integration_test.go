@@ -3242,7 +3242,7 @@ func (s *testIntegrationSuite3) TestDropLocalTemporaryTableWithDropTemporaryStmt
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_noop_functions=true")
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
-	clearSQL := "drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2, test2.ltemp3"
+	clearSQL := "drop table if exists tb, tb2, temp, temp1, ltemp1, ltemp2, testt.ltemp3"
 	tk.MustExec(clearSQL)
 	defer tk.MustExec(clearSQL)
 	// two normal table test.tb, test.tb2, a temporary table with name test.tb2
@@ -3257,8 +3257,8 @@ func (s *testIntegrationSuite3) TestDropLocalTemporaryTableWithDropTemporaryStmt
 	tk.MustExec("create temporary table ltemp1(id int)")
 	tk.MustExec("create temporary table ltemp2(id int)")
 	// a local temporary table test.ltemp3
-	tk.MustExec("create database test2")
-	tk.MustExec("create temporary table test2.ltemp3(id int)")
+	tk.MustExec("create database if not exists testt")
+	tk.MustExec("create temporary table testt.ltemp3(id int)")
 
 	// testing for drop table which is not local temporary
 	err := tk.ExecToErr("drop temporary table tb")
@@ -3287,9 +3287,9 @@ func (s *testIntegrationSuite3) TestDropLocalTemporaryTableWithDropTemporaryStmt
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1051 Unknown table 'test.tb1,test.xxx'"))
 	tk.MustExec("drop temporary table if exists temp1, xxx")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1051 Unknown table 'test.temp1,test.xxx'"))
-	tk.MustExec("drop temporary table if exists test2.ltemp4")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1051 Unknown table 'test2.ltemp4'"))
-	tk.MustExec("drop temporary table if exists test2.ltemp3, tb1")
+	tk.MustExec("drop temporary table if exists testt.ltemp4")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1051 Unknown table 'testt.ltemp4'"))
+	tk.MustExec("drop temporary table if exists testt.ltemp3, tb1")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1051 Unknown table 'test.tb1'"))
 
 	// testing for drop temporary table successfully
@@ -3307,8 +3307,8 @@ func (s *testIntegrationSuite3) TestDropLocalTemporaryTableWithDropTemporaryStmt
 	tk.MustExec("create temporary table ltemp1 (id int)")
 	tk.MustExec("create temporary table ltemp2 (id int)")
 
-	tk.MustExec("drop temporary table test2.ltemp3, ltemp1")
-	err = tk.ExecToErr("select * from test2.ltemp3")
+	tk.MustExec("drop temporary table testt.ltemp3, ltemp1")
+	err = tk.ExecToErr("select * from testt.ltemp3")
 	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
 	err = tk.ExecToErr("select * from ltemp1")
 	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
@@ -3330,13 +3330,13 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustExec("insert into t1 values(10), (11), (12)")
 	tk.MustExec("create temporary table t1 (id int primary key auto_increment)")
 	tk.MustExec("create temporary table t2 (id int primary key)")
-	tk.MustExec("create database test2")
+	tk.MustExec("create database if not exist testt")
 	tk.MustExec("create temporary table test2.t2 (id int)")
 
 	// truncate table out of txn
 	tk.MustExec("insert into t1 values(1), (2), (3)")
 	tk.MustExec("insert into t2 values(4), (5), (6)")
-	tk.MustExec("insert into test2.t2 values(7), (8), (9)")
+	tk.MustExec("insert into testt.t2 values(7), (8), (9)")
 	tk.MustExec("truncate table t1")
 	tk.MustQuery("select * from t1").Check(testkit.Rows())
 	tk.MustExec("insert into t1 values()")
@@ -3345,16 +3345,16 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustQuery("select * from t2").Check(testkit.Rows("4", "5", "6"))
 	tk.MustExec("truncate table t2")
 	tk.MustQuery("select * from t2").Check(testkit.Rows())
-	tk.MustQuery("select * from test2.t2").Check(testkit.Rows("7", "8", "9"))
+	tk.MustQuery("select * from testt.t2").Check(testkit.Rows("7", "8", "9"))
 	tk.MustExec("drop table t1")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("10", "11", "12"))
 	tk.MustExec("create temporary table t1 (id int primary key auto_increment)")
 
 	// truncate table with format dbName.tableName
 	tk.MustExec("insert into t2 values(4), (5), (6)")
-	tk.MustExec("insert into test2.t2 values(7), (8), (9)")
-	tk.MustExec("truncate table test2.t2")
-	tk.MustQuery("select * from test2.t2").Check(testkit.Rows())
+	tk.MustExec("insert into testt.t2 values(7), (8), (9)")
+	tk.MustExec("truncate table testt.t2")
+	tk.MustQuery("select * from testt.t2").Check(testkit.Rows())
 	tk.MustQuery("select * from t2").Check(testkit.Rows("4", "5", "6"))
 	tk.MustExec("truncate table test.t2")
 	tk.MustQuery("select * from t2").Check(testkit.Rows())
