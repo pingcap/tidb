@@ -1375,38 +1375,46 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 	}
 	u.schema = expression.NewSchema(unionCols...)
 	u.names = names
-	// Process each child and add a projection above original child.
-	// So the schema of `UnionAll` can be the same with its children's.
-	buildLogicalUnionAll(u, unionCols, b)
 
-	var rebuild = false
-	for i := range u.children[0].Schema().Columns {
+	allExprs := make([][]expression.Expression, 0)
+	for _, child := range u.children {
+		exprs := make([]expression.Expression, len(child.Schema().Columns))
+		for i, srcCol := range child.Schema().Columns {
+			dstType := unionCols[i].RetType
+			srcType := srcCol.RetType
+			if !srcType.Equal(dstType) {
+				exprs[i] = expression.BuildCastFunction4Union(b.ctx, srcCol, dstType)
+			} else {
+				exprs[i] = srcCol
+			}
+		}
+
+		allExprs = append(allExprs, exprs)
+	}
+
+	// use cast type to modify result charset and collation
+	for i := 0; i < len(u.children[0].Schema().Columns); i++ {
 		tmpExprs := make([]expression.Expression, 0, len(u.Children()))
 		for j := 0; j < len(u.children); j++ {
-			tmpExprs = append(tmpExprs, u.children[j].Schema().Columns[i])
+			tmpExprs = append(tmpExprs, allExprs[j][i])
 		}
 
 		dstType := unionCols[i].RetType
-
-		// should use the cast type to refer return type collation and charset
 		charset, collate := expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
 
 		if dstType.Charset != charset || dstType.Collate != collate {
-			//nend to recast the logic
 			dstType.Charset = charset
 			dstType.Collate = collate
-
-			rebuild = true
 		}
 	}
 
-	if rebuild {
-		buildLogicalUnionAll(u, unionCols, b)
-	}
+	buildLogicalUnionAll(u, unionCols, b)
 
 	return nil
 }
 
+// buildLogicalUnionAll process each child and add a projection above original child.
+// So the schema of `UnionAll` can be the same with its children's.
 func buildLogicalUnionAll(u *LogicalUnionAll, unionCols []*expression.Column, b *PlanBuilder) {
 	for childID, child := range u.children {
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
