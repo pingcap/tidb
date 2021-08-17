@@ -3330,7 +3330,7 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustExec("insert into t1 values(10), (11), (12)")
 	tk.MustExec("create temporary table t1 (id int primary key auto_increment)")
 	tk.MustExec("create temporary table t2 (id int primary key)")
-	tk.MustExec("create database if not exist testt")
+	tk.MustExec("create database if not exists testt")
 	tk.MustExec("create temporary table test2.t2 (id int)")
 
 	// truncate table out of txn
