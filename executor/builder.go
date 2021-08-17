@@ -4827,6 +4827,14 @@ func (b *executorBuilder) buildXchgSender(v *plannercore.PhysicalXchg) Executor 
 			},
 			outputs: v.ChkChs,
 		}
+	case plannercore.TypeXchgSenderHash:
+		sender = &ExchangeSenderHash{
+			ExchangeSender: ExchangeSender{
+				baseExecutor: newBaseExecutor(b.ctx, child.base().schema, execID, child),
+			},
+			outputs:     v.ChkChs,
+			hashColumns: v.HashPartition,
+		}
 	default:
 		b.err = errors.Errorf("unexpected xchg sender type: %v", v.Tp())
 		return nil

@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/codec"
 	"reflect"
 	"unsafe"
 
@@ -20,11 +21,12 @@ var _ Executor = &ExchangeReceiverPassThroughHT{}
 var _ Executor = &ExchangeReceiverPassThrough{}
 
 func IsExchangeSender(e Executor) bool {
-	_, ok1 := e.(*ExchangeSenderBroadcast)
-	_, ok2 := e.(*ExchangeSenderPassThrough)
-	_, ok3 := e.(*ExchangeSenderRandom)
-	_, ok4 := e.(*ExchangeSenderBroadcastHT)
-	return ok1 || ok2 || ok3 || ok4
+	switch e.(type) {
+	case *ExchangeSenderBroadcast, *ExchangeSenderPassThrough, *ExchangeSenderRandom, *ExchangeSenderBroadcastHT, *ExchangeSenderHash:
+		return true
+	default:
+		return false
+	}
 }
 
 type ExchangeSender struct {
@@ -360,4 +362,69 @@ func (e *ExchangeReceiverPassThroughHT) Next(ctx context.Context, req *chunk.Chu
 
 func (e *ExchangeReceiverPassThroughHT) Close() error {
 	return e.baseExecutor.Close()
+}
+
+type ExchangeSenderHash struct {
+	ExchangeSender
+	outputs []chan *chunk.Chunk
+
+	hashPartitionChunk []*chunk.Chunk
+	hashColumns        []*expression.Column
+	hashContext
+}
+
+func (e *ExchangeSenderHash) Open(ctx context.Context) error {
+	if e.opened {
+		return nil
+	}
+	e.opened = true
+	e.hashPartitionChunk = make([]*chunk.Chunk, len(e.outputs))
+	for i := range e.outputs {
+		e.hashPartitionChunk[i] = newFirstChunk(e)
+	}
+	e.hashContext.allTypes = e.retFieldTypes
+	for _, col := range e.hashColumns {
+		e.hashContext.keyColIdx = append(e.hashContext.keyColIdx, col.Index)
+	}
+	return e.baseExecutor.Open(ctx)
+}
+
+func (e *ExchangeSenderHash) sendAndCloseOutputs() {
+	for i, ch := range e.outputs {
+		if e.hashPartitionChunk[i].NumRows() > 0 {
+			ch <- e.hashPartitionChunk[i]
+		}
+		close(ch)
+	}
+}
+
+func (e *ExchangeSenderHash) Next(ctx context.Context, req *chunk.Chunk) error {
+	// req.Reset()
+	chk := newFirstChunk(e)
+	if err := Next(ctx, e.children[0], chk); err != nil {
+		e.sendAndCloseOutputs()
+		return err
+	}
+	if chk.NumRows() == 0 {
+		e.sendAndCloseOutputs()
+		return errors.New("sender hashPartition done")
+	}
+	e.initHash(chk.NumRows())
+	// Hash
+	for _, i := range e.hashContext.keyColIdx {
+		err := codec.HashChunkColumns(e.ctx.GetSessionVars().StmtCtx, e.hashVals, chk, e.allTypes[i], i, e.buf, e.hasNull)
+		if err != nil {
+			return err
+		}
+	}
+	// Partition
+	for i := 0; i < chk.NumRows(); i++ {
+		outputIndex := e.hashVals[i].Sum64() % uint64(len(e.outputs))
+		e.hashPartitionChunk[outputIndex].AppendRow(chk.GetRow(i))
+		if e.hashPartitionChunk[outputIndex].IsFull() {
+			e.outputs[outputIndex] <- e.hashPartitionChunk[outputIndex]
+			e.hashPartitionChunk[outputIndex] = newFirstChunk(e)
+		}
+	}
+	return nil
 }

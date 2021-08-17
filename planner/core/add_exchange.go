@@ -57,7 +57,7 @@ type PhysicalXchg struct {
 	ChkChs      []chan *chunk.Chunk
 	ResChs      []chan *chunk.Chunk
 
-	hashPartition []*expression.Column
+	HashPartition []*expression.Column
 }
 
 func (p *PhysicalXchg) Clone() (PhysicalPlan, error) {
@@ -72,7 +72,7 @@ func (p *PhysicalXchg) Clone() (PhysicalPlan, error) {
 	cloned.outStreamCnt = p.outStreamCnt
 	cloned.inStreamCnt = p.inStreamCnt
 	cloned.CurStreamID = p.CurStreamID
-	cloned.hashPartition = cloneCols(p.hashPartition)
+	cloned.HashPartition = cloneCols(p.HashPartition)
 
 	chanSize := cap(p.ChkChs[0])
 	chanCnt := len(p.ChkChs)
@@ -280,7 +280,7 @@ func (p *PhysicalTableReader) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPr
 			receiver = &PhysicalXchg{tp: TypeXchgReceiverPassThroughHT}
 		} else if len(reqProp.hashPartition) != 0 {
 			// TODO: maybe no need copy
-			sender = &PhysicalXchg{tp: TypeXchgSenderHash, hashPartition: cloneCols(reqProp.hashPartition)}
+			sender = &PhysicalXchg{tp: TypeXchgSenderHash, HashPartition: cloneCols(reqProp.hashPartition)}
 			receiver = &PhysicalXchg{tp: TypeXchgReceiverPassThrough}
 		} else {
 			sender = &PhysicalXchg{tp: TypeXchgSenderRandom}
@@ -507,7 +507,7 @@ func tryAddXchgForBasicPlan(ctx sessionctx.Context, node PhysicalPlan, reqProp *
 		newProp.output = xchgOutput
 		updateChildrenProp(newNode, newProp)
 
-		sender := &PhysicalXchg{tp: TypeXchgSenderHash, hashPartition: cloneCols(reqProp.hashPartition)}
+		sender := &PhysicalXchg{tp: TypeXchgSenderHash, HashPartition: cloneCols(reqProp.hashPartition)}
 		if err = initXchg(ctx, sender, newNode, newNode.Stats(), xchgOutput); err != nil {
 			return nil, err
 		}
