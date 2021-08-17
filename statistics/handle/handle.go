@@ -345,8 +345,17 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 
 	// initialized the globalStats
 	globalStats = new(GlobalStats)
+	var validColStatsIdx []int
 	if isIndex == 0 {
-		globalStats.Num = len(globalTableInfo.Columns)
+		validColStatsIdx = make([]int, 0, len(globalTableInfo.Columns))
+		for i, col := range globalTableInfo.Columns {
+			// The virtual generated column stats can not be merged to the global stats.
+			if col.IsGenerated() && !col.GeneratedStored {
+				continue
+			}
+			validColStatsIdx = append(validColStatsIdx, i)
+		}
+		globalStats.Num = len(validColStatsIdx)
 	} else {
 		globalStats.Num = 1
 	}
@@ -403,10 +412,11 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 			return
 		}
 		for i := 0; i < globalStats.Num; i++ {
-			ID := tableInfo.Columns[i].ID
-			if isIndex != 0 {
-				// If the statistics is the index stats, we should use the index ID to replace the column ID.
-				ID = idxID
+			// If the statistics is the index stats, we should use the index ID.
+			ID := idxID
+			if isIndex == 0 {
+				// If the statistics is the column stats, we should use the column ID to replace the index ID.
+				ID = tableInfo.Columns[validColStatsIdx[i]].ID
 			}
 			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(ID, isIndex == 1)
 			if i == 0 {
