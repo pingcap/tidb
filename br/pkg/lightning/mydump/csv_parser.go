@@ -41,6 +41,7 @@ type CSVParser struct {
 	quote   []byte
 	newLine []byte
 
+	charsetConvertor *CharsetConvertor
 	// These variables are used with IndexAnyByte to search a byte slice for the
 	// first index which some special character may appear.
 	// quoteByteSet is used inside quoted fields (so the first characters of
@@ -77,20 +78,35 @@ func NewCSVParser(
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
 	shouldParseHeader bool,
-) *CSVParser {
-	escFlavor := backslashEscapeFlavorNone
-	var quoteStopSet, newLineStopSet []byte
-	unquoteStopSet := []byte{cfg.Separator[0]}
-	if len(cfg.Delimiter) > 0 {
-		quoteStopSet = []byte{cfg.Delimiter[0]}
-		unquoteStopSet = append(unquoteStopSet, cfg.Delimiter[0])
+) (*CSVParser, error) {
+	// Create the utf8mb4 convertor and encode some special symbols with the charset of CSV files.
+	charsetConvertor, err := NewCharsetConvertor(cfg)
+	if err != nil {
+		return nil, err
 	}
-	if len(cfg.Terminator) > 0 {
-		newLineStopSet = []byte{cfg.Terminator[0]}
+	encodedSymbols, err := encodeSpecialSymbols(cfg, charsetConvertor)
+	if err != nil {
+		return nil, err
+	}
+	separator := encodedSymbols[cfg.Separator]
+	delimiter := encodedSymbols[cfg.Delimiter]
+	terminator := encodedSymbols[cfg.Terminator]
+
+	var quoteStopSet, newLineStopSet []byte
+	unquoteStopSet := []byte{separator[0]}
+	if len(cfg.Delimiter) > 0 {
+		quoteStopSet = []byte{delimiter[0]}
+		unquoteStopSet = append(unquoteStopSet, delimiter[0])
+	}
+	if len(terminator) > 0 {
+		newLineStopSet = []byte{terminator[0]}
 	} else {
+		// The character set encoding of '\r' and '\n' is the same in UTF-8 and GBK.
 		newLineStopSet = []byte{'\r', '\n'}
 	}
 	unquoteStopSet = append(unquoteStopSet, newLineStopSet...)
+
+	escFlavor := backslashEscapeFlavorNone
 	if cfg.BackslashEscape {
 		escFlavor = backslashEscapeFlavorMySQL
 		quoteStopSet = append(quoteStopSet, '\\')
@@ -104,6 +120,7 @@ func NewCSVParser(
 	return &CSVParser{
 		blockParser:       makeBlockParser(reader, blockBufSize, ioWorkers),
 		cfg:               cfg,
+		charsetConvertor:  charsetConvertor,
 		comma:             []byte(cfg.Separator),
 		quote:             []byte(cfg.Delimiter),
 		newLine:           []byte(cfg.Terminator),
@@ -112,14 +129,43 @@ func NewCSVParser(
 		unquoteByteSet:    makeByteSet(unquoteStopSet),
 		newLineByteSet:    makeByteSet(newLineStopSet),
 		shouldParseHeader: shouldParseHeader,
-	}
+	}, nil
 }
 
-func (parser *CSVParser) unescapeString(input string) (unescaped string, isNull bool) {
-	if parser.escFlavor == backslashEscapeFlavorMySQLWithNull && input == `\N` {
-		return input, true
+// encodeSpecialSymbols will encode the special symbols, e,g, separator, delimiter and terminator
+// with the given charset according to the charset convertor.
+func encodeSpecialSymbols(cfg *config.CSVConfig, cc *CharsetConvertor) (map[string][]byte, error) {
+	var err error
+	encodedSymbols := make(map[string][]byte, 3)
+	// Separator
+	encodedSymbols[cfg.Separator], err = cc.Encode([]byte(cfg.Separator))
+	if err != nil {
+		return nil, err
 	}
-	unescaped = unescape(input, "", parser.escFlavor)
+	// Delimiter
+	encodedSymbols[cfg.Delimiter], err = cc.Encode([]byte(cfg.Delimiter))
+	if err != nil {
+		return nil, err
+	}
+	// Terminator
+	encodedSymbols[cfg.Terminator], err = cc.Encode([]byte(cfg.Terminator))
+	if err != nil {
+		return nil, err
+	}
+	return encodedSymbols, nil
+}
+
+func (parser *CSVParser) unescapeString(input string) (unescaped string, isNull bool, err error) {
+	// Convert the input from another charset to utf8mb4 before we return the string.
+	decodedInputBytes, err := parser.charsetConvertor.Decode([]byte(input))
+	if err != nil {
+		return
+	}
+	decodedInput := string(decodedInputBytes)
+	if parser.escFlavor == backslashEscapeFlavorMySQLWithNull && decodedInput == `\N` {
+		return decodedInput, true, nil
+	}
+	unescaped = unescape(decodedInput, "", parser.escFlavor)
 	isNull = parser.escFlavor != backslashEscapeFlavorMySQLWithNull &&
 		!parser.cfg.NotNull &&
 		unescaped == parser.cfg.Null
@@ -478,7 +524,10 @@ func (parser *CSVParser) ReadRow() error {
 	}
 	for i, record := range records {
 		row.Length += len(record)
-		unescaped, isNull := parser.unescapeString(record)
+		unescaped, isNull, err := parser.unescapeString(record)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if isNull {
 			row.Row[i].SetNull()
 		} else {
@@ -496,7 +545,10 @@ func (parser *CSVParser) ReadColumns() error {
 	}
 	parser.columns = make([]string, 0, len(columns))
 	for _, colName := range columns {
-		colName, _ = parser.unescapeString(colName)
+		colName, _, err = parser.unescapeString(colName)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		parser.columns = append(parser.columns, strings.ToLower(colName))
 	}
 	return nil

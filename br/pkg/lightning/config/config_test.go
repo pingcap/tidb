@@ -710,3 +710,87 @@ func (s *configTestSuite) TestAdjustDiskQuota(c *C) {
 	c.Assert(cfg.Adjust(ctx), IsNil)
 	c.Assert(int64(cfg.TikvImporter.DiskQuota), Equals, int64(0))
 }
+
+func (s *configTestSuite) TestDataCharacterSet(c *C) {
+	testCases := []struct {
+		input string
+		err   string
+	}{
+		{
+			input: `
+				[mydumper.csv]
+				data-character-set = 'binary'
+			`,
+			err: "",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				data-character-set = 'utf8mb4'
+			`,
+			err: "",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				data-character-set = 'gb18030'
+			`,
+			err: "",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				data-invalid-char-replace = "\u2323"
+			`,
+			err: "",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				data-invalid-char-replace = "a"
+			`,
+			err: "",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				data-invalid-char-replace = "INV"
+			`,
+			err: "",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				data-invalid-char-replace = "😊"
+			`,
+			err: "",
+		},
+		{
+			input: `
+				[mydumper.csv]
+				data-invalid-char-replace = "😊😭😅😄"
+			`,
+			err: "",
+		},
+	}
+
+	for _, tc := range testCases {
+		comment := Commentf("input = %s", tc.input)
+
+		cfg := config.NewConfig()
+		cfg.Mydumper.SourceDir = "file://."
+		cfg.TiDB.Port = 4000
+		cfg.TiDB.PdAddr = "test.invalid:2379"
+		cfg.TikvImporter.Backend = config.BackendLocal
+		cfg.TikvImporter.SortedKVDir = "."
+		cfg.TiDB.DistSQLScanConcurrency = 1
+		err := cfg.LoadFromTOML([]byte(tc.input))
+		c.Assert(err, IsNil)
+		err = cfg.Adjust(context.Background())
+		if tc.err != "" {
+			c.Assert(err, ErrorMatches, regexp.QuoteMeta(tc.err), comment)
+		} else {
+			c.Assert(err, IsNil, comment)
+		}
+	}
+}

@@ -538,7 +538,10 @@ func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydu
 	switch dataFileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := rc.cfg.Mydumper.CSV.Header
-		parser = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader)
+		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader)
+		if err != nil {
+			return nil, 0, errors.Trace(err)
+		}
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
 	case mydump.SourceTypeParquet:
@@ -706,7 +709,10 @@ func (rc *Controller) SampleDataFromTable(ctx context.Context, dbName string, ta
 	switch tableMeta.DataFiles[0].FileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := rc.cfg.Mydumper.CSV.Header
-		parser = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader)
+		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
 	case mydump.SourceTypeParquet:

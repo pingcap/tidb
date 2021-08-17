@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
@@ -93,6 +94,9 @@ const (
 	maxRetryTimes           = 4
 	defaultRetryBackoffTime = 100 * time.Millisecond
 	pdStores                = "/pd/api/v1/stores"
+
+	defaultMydumperDataCharacterSet       = "binary"
+	defaultMydumperDataInvalidCharReplace = utf8.RuneError
 )
 
 var (
@@ -251,6 +255,15 @@ type CSVConfig struct {
 	TrimLastSep     bool   `toml:"trim-last-separator" json:"trim-last-separator"`
 	NotNull         bool   `toml:"not-null" json:"not-null"`
 	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
+	// DataCharacterSet is the character set of the source file. Only CSV files are supported now. The following options are supported.
+	//   - utf8mb4
+	//   - GB18030
+	//   - GBK: an extension of the GB2312 character set and is also known as Code Page 936.
+	//   - binary: no attempt to convert the encoding.
+	DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
+	// DataInvalidCharReplace is the replacement characters for non-compatible characters, which shouldn't duplicate with the separators or line breaks.
+	// Changing the default value will result in increased parsing time. Non-compatible characters do not cause an increase in error.
+	DataInvalidCharReplace string `toml:"data-invalid-char-replace" json:"data-invalid-char-replace"`
 }
 
 type MydumperRuntime struct {
@@ -309,6 +322,10 @@ type FileRouteRule struct {
 	Type        string `json:"type" toml:"type" yaml:"type"`
 	Key         string `json:"key" toml:"key" yaml:"key"`
 	Compression string `json:"compression" toml:"compression" yaml:"compression"`
+	// TODO: DataCharacterSet here can overide the same field in [mydumper.csv] with a higher level.
+	// This could provide users a more flexable usage to configure different files with
+	// different data charsets.
+	// DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
 }
 
 type TikvImporter struct {
@@ -419,13 +436,15 @@ func NewConfig() *Config {
 		Mydumper: MydumperRuntime{
 			ReadBlockSize: ReadBlockSize,
 			CSV: CSVConfig{
-				Separator:       ",",
-				Delimiter:       `"`,
-				Header:          true,
-				NotNull:         false,
-				Null:            `\N`,
-				BackslashEscape: true,
-				TrimLastSep:     false,
+				Separator:              ",",
+				Delimiter:              `"`,
+				Header:                 true,
+				NotNull:                false,
+				Null:                   `\N`,
+				BackslashEscape:        true,
+				TrimLastSep:            false,
+				DataCharacterSet:       defaultMydumperDataCharacterSet,
+				DataInvalidCharReplace: string(defaultMydumperDataInvalidCharReplace),
 			},
 			StrictFormat:  false,
 			MaxRegionSize: MaxRegionSize,

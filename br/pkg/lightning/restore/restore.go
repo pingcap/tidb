@@ -1820,7 +1820,10 @@ func newChunkRestore(
 	switch chunk.FileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := cfg.Mydumper.CSV.Header && chunk.Chunk.Offset == 0
-		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader)
+		parser, err = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
