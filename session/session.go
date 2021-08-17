@@ -31,6 +31,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
@@ -2988,7 +2989,19 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 
 		generalLogBuf := generalLogBufPool.Get().(*strings.Builder)
 		connID := strconv.FormatUint(vars.ConnectionID, 10)
-		user := vars.User.String()
+		userString := func (user *auth.UserIdentity) string {
+			if user == nil {
+				return ""
+			}
+			length := len(user.Username)+1+len(user.Hostname)
+			buf1 := make([]byte, length)
+			copy(buf1, user.Username)
+			buf1[len(user.Username)] = '@'
+			copy(buf1[len(user.Username)+1:], user.Hostname)
+			return *(*string)(unsafe.Pointer(&buf1))
+		}
+		//user := vars.User.String()
+		user := userString(vars.User)
 		smVer := strconv.FormatInt(s.GetInfoSchema().SchemaMetaVersion(), 10)
 		txnStartTS := strconv.FormatUint(vars.TxnCtx.StartTS, 10)
 		forUpdateTS := strconv.FormatUint(vars.TxnCtx.GetForUpdateTS(), 10)
