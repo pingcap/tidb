@@ -1593,10 +1593,22 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	}
 	if p.LastSnapshotTS != 0 {
 		dom := domain.GetDomain(p.ctx)
-		p.InfoSchema, p.err = dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
-		if p.err != nil {
+		is, err := dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
+		if err != nil {
+			p.err = err
 			return
 		}
+		// the same as session.wrapWithTemporaryTable
+		if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); !ok {
+			localTmp := p.ctx.GetSessionVars().LocalTemporaryTables
+			if localTmp != nil {
+				is = &infoschema.TemporaryTableAttachedInfoSchema{
+					InfoSchema:           is,
+					LocalTemporaryTables: localTmp.(*infoschema.LocalTemporaryTables),
+				}
+			}
+		}
+		p.InfoSchema = is
 	}
 	if p.flag&inPrepare == 0 {
 		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
