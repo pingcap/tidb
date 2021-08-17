@@ -25,7 +25,7 @@ import (
 	"go.uber.org/goleak"
 )
 
-var testDataMap = make(testdata.TestDataMap, 2)
+var testDataMap = make(testdata.TestDataMap, 3)
 var stringerSuiteData testdata.TestData
 var transformationRulesSuiteData testdata.TestData
 
@@ -34,9 +34,9 @@ func TestMain(m *testing.M) {
 
 	flag.Parse()
 
-	testDataMap = make(testdata.TestDataMap, 2)
 	testDataMap.LoadTestSuiteData("testdata", "stringer_suite")
 	testDataMap.LoadTestSuiteData("testdata", "transformation_rules_suite")
+	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
 	stringerSuiteData = testDataMap["stringer_suite"]
 	transformationRulesSuiteData = testDataMap["transformation_rules_suite"]
 
@@ -55,4 +55,8 @@ func TestMain(m *testing.M) {
 		_, _ = fmt.Fprintf(os.Stderr, "goleak: Errors on successful test run: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func GetIntegrationSuiteData() testdata.TestData {
+	return testDataMap["integration_suite"]
 }
