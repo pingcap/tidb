@@ -38,7 +38,7 @@ run_sql "insert into $DB.auto_inc values (), (), (), (), ();"
 last_id=$(run_sql "select n from $DB.auto_inc order by n desc limit 1" | trim_sql_result)
 
 run_sql "create table $DB.auto_rnd (n BIGINT primary key AUTO_RANDOM(8));"
-last_rnd_id=$(run_sql "insert into $DB.auto_rnd values (), (), (), (), ();select last_insert_id();" | trim_sql_result )
+last_rnd_id=$(run_sql "insert into $DB.auto_rnd values (), (), (), (), ();select last_insert_id() & 0xffffffffffffff;" | trim_sql_result )
 
 echo "backup start..."
 run_br backup db --db "$DB" -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
@@ -60,8 +60,8 @@ seq_val=$(run_sql "select a >= 8 and b >= 4 as g from $DB.table_2 where c = 33;"
 run_sql "insert into $DB.auto_inc values ();"
 last_id_after_restore=$(run_sql "select n from $DB.auto_inc order by n desc limit 1;" | trim_sql_result)
 [ $last_id_after_restore -gt $last_id ]
-rnd_last_id_after_restore=$(run_sql "insert into $DB.auto_rnd values ();select last_insert_id();" | trim_sql_result )
-[ $(( rnd_last_id_after_restore & 0xff )) -gt $(( last_rnd_id & 0xff )) ]
+rnd_last_id_after_restore=$(run_sql "insert into $DB.auto_rnd values ();select last_insert_id() & 0xffffffffffffff;" | trim_sql_result )
+[ $rnd_last_id_after_restore -gt $last_rnd_id ]
 rnd_count_after_restore=$(run_sql "select count(*) from $DB.auto_rnd;" | trim_sql_result )
 [ $rnd_count_after_restore -gt 5 ]
 
