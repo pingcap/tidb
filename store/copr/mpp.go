@@ -55,13 +55,13 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 }
 
 // ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTaskMeta for them and returns.
-func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest) ([]kv.MPPTaskMeta, error) {
+func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, storeStatus map[string]time.Time, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTS)
 	bo := tikv.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	if req.KeyRanges == nil {
 		return c.selectAllTiFlashStore(), nil
 	}
-	tasks, err := buildBatchCopTasks(bo, c.store, tikv.NewKeyRanges(req.KeyRanges), kv.TiFlash, true)
+	tasks, err := buildBatchCopTasks(bo, c.store, tikv.NewKeyRanges(req.KeyRanges), kv.TiFlash, storeStatus, ttl)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -331,15 +331,9 @@ func (m *mppIterator) establishMPPConns(bo *tikv.Backoffer, req *kv.MPPDispatchR
 	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutUltraLong)
 
 	if err != nil {
-		logutil.BgLogger().Warn("establish mpp connection meet error, and retrying", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
-		err = bo.Backoff(tikv.BoTiFlashRPC, err)
-		if err != nil {
-			logutil.BgLogger().Warn("establish mpp connection meet error and cannot retry", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
-			// we return timeout to trigger tikv's fallback
-			m.sendError(tikv.ErrTiFlashServerTimeout)
-			return
-		}
-		m.establishMPPConns(bo, req, taskMeta)
+		logutil.BgLogger().Warn("establish mpp connection meet error and cannot retry", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
+		// we return timeout to trigger tikv's fallback
+		m.sendError(tikv.ErrTiFlashServerTimeout)
 		return
 	}
 
