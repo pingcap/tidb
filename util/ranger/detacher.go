@@ -617,7 +617,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 			var accesses, filters []expression.Expression
 			res, err := d.detachCNFCondAndBuildRangeForIndex(cnfItems, newTpSlice, true)
 			if err != nil {
-				return nil, nil, nil, false, nil
+				return nil, nil, nil, false, errors.Trace(err)
 			}
 			ranges := res.Ranges
 			accesses = res.AccessConds
