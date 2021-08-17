@@ -3285,6 +3285,8 @@ func (s *testIntegrationSuite3) TestDropLocalTemporaryTableWithDropTemporaryStmt
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1051 Unknown table 'test.xxx'"))
 	tk.MustExec("drop temporary table if exists tb1, xxx")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1051 Unknown table 'test.tb1,test.xxx'"))
+	tk.MustExec("drop temporary table if exists temp1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1051 Unknown table 'test.temp1'"))
 	tk.MustExec("drop temporary table if exists temp1, xxx")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1051 Unknown table 'test.temp1,test.xxx'"))
 	tk.MustExec("drop temporary table if exists testt.ltemp4")
