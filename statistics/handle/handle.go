@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"runtime/pprof"
 	"sort"
 	"strconv"
 	"sync"
@@ -122,10 +122,6 @@ func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.
 
 func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		if variable.TopSQLEnabled() {
-			//  Restore the goroutine label by using the original ctx after execution is finished.
-			defer pprof.SetGoroutineLabels(ctx)
-		}
 		stmt, err := exec.ParseWithParams(ctx, sql, params...)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -349,8 +345,17 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 
 	// initialized the globalStats
 	globalStats = new(GlobalStats)
+	var validColStatsIdx []int
 	if isIndex == 0 {
-		globalStats.Num = len(globalTableInfo.Columns)
+		validColStatsIdx = make([]int, 0, len(globalTableInfo.Columns))
+		for i, col := range globalTableInfo.Columns {
+			// The virtual generated column stats can not be merged to the global stats.
+			if col.IsGenerated() && !col.GeneratedStored {
+				continue
+			}
+			validColStatsIdx = append(validColStatsIdx, i)
+		}
+		globalStats.Num = len(validColStatsIdx)
 	} else {
 		globalStats.Num = 1
 	}
@@ -407,10 +412,11 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context, opts map
 			return
 		}
 		for i := 0; i < globalStats.Num; i++ {
-			ID := tableInfo.Columns[i].ID
-			if isIndex != 0 {
-				// If the statistics is the index stats, we should use the index ID to replace the column ID.
-				ID = idxID
+			// If the statistics is the index stats, we should use the index ID.
+			ID := idxID
+			if isIndex == 0 {
+				// If the statistics is the column stats, we should use the column ID to replace the index ID.
+				ID = tableInfo.Columns[validColStatsIdx[i]].ID
 			}
 			count, hg, cms, topN, fms := partitionStats.GetStatsInfo(ID, isIndex == 1)
 			if i == 0 {
@@ -910,6 +916,9 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 }
 
 func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics.Table, physicalID int64, loadAll bool) (*statistics.Table, error) {
+	failpoint.Inject("injectExtStatsLoadErr", func() {
+		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))
+	})
 	lastVersion := uint64(0)
 	if table.ExtendedStats != nil && !loadAll {
 		lastVersion = table.ExtendedStats.LastUpdateVersion
@@ -1546,11 +1555,17 @@ func (h *Handle) removeExtendedStatsItem(tableID int64, statsName string) {
 
 // ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
 func (h *Handle) ReloadExtendedStatistics() error {
-	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-		reader, err := h.getStatsReader(0)
-		if err != nil {
-			return err
+	reader, err := h.getStatsReader(0)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err1 := h.releaseStatsReader(reader)
+		if err1 != nil && err == nil {
+			err = err1
 		}
+	}()
+	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
 		oldCache := h.statsCache.Load().(statsCache)
 		tables := make([]*statistics.Table, 0, len(oldCache.tables))
 		for physicalID, tbl := range oldCache.tables {
@@ -1559,10 +1574,6 @@ func (h *Handle) ReloadExtendedStatistics() error {
 				return err
 			}
 			tables = append(tables, t)
-		}
-		err = h.releaseStatsReader(reader)
-		if err != nil {
-			return err
 		}
 		if h.updateStatsCache(oldCache.update(tables, nil, oldCache.version)) {
 			return nil

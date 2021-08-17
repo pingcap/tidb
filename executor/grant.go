@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -121,7 +122,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	// Check which user is not exist.
 	for _, user := range e.Users {
-		exists, err := userExists(e.ctx, user.User.Username, user.User.Hostname)
+		exists, err := userExists(ctx, e.ctx, user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -360,7 +361,7 @@ func tlsOption2GlobalPriv(tlsOptions []*ast.TLSOption) (priv []byte, err error) 
 	gp := privileges.GlobalPrivValue{SSLType: privileges.SslTypeNotSpecified}
 	for _, tlsOpt := range tlsOptions {
 		switch tlsOpt.Type {
-		case ast.TslNone:
+		case ast.TlsNone:
 			gp.SSLType = privileges.SslTypeNone
 		case ast.Ssl:
 			gp.SSLType = privileges.SslTypeAny

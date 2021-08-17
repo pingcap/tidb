@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -137,6 +138,38 @@ func (*testSysVarSuite) TestIntValidation(c *C) {
 
 	_, err = sv.Validate(vars, "301", ScopeSession)
 	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '301'")
+
+	_, err = sv.Validate(vars, "5", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '5'")
+
+	val, err := sv.Validate(vars, "300", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "300")
+
+	// out of range but permitted due to auto value
+	val, err = sv.Validate(vars, "-1", ScopeSession)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "-1")
+}
+
+func (*testSysVarSuite) TestUintValidation(c *C) {
+	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "123", Type: TypeUnsigned, MinValue: 10, MaxValue: 300, AllowAutoValue: true}
+	vars := NewSessionVars()
+
+	_, err := sv.Validate(vars, "oN", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'")
+
+	_, err = sv.Validate(vars, "", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:1232]Incorrect argument type to variable 'mynewsysvar'")
+
+	_, err = sv.Validate(vars, "301", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '301'")
+
+	_, err = sv.Validate(vars, "-301", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '-301'")
+
+	_, err = sv.Validate(vars, "-ERR", ScopeSession)
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '-ERR'")
 
 	_, err = sv.Validate(vars, "5", ScopeSession)
 	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'mynewsysvar' can't be set to the value of '5'")
@@ -506,13 +539,6 @@ func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()))
 
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBConfig)
-	c.Assert(err, IsNil)
-	conf := config.GetGlobalConfig()
-	j, err := json.MarshalIndent(conf, "", "\t")
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, config.HideConfig(string(j)))
-
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBForcePriority)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))])
@@ -570,33 +596,6 @@ func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
 	c.Assert(val, Equals, vars.TxnScope.GetVarValue())
 }
 
-// Calling GetSysVars/GetSysVar needs to return a deep copy, otherwise there will be data races.
-// This is a bit unfortunate, since the only time the race occurs is in the testsuite (Enabling/Disabling SEM) and
-// during startup (setting the .Value of ScopeNone variables). In future it might also be able
-// to fix this by delaying the LoadSysVarCacheLoop start time until after the server is fully initialized.
-func (*testSysVarSuite) TestDeepCopyGetSysVars(c *C) {
-	// Check GetSysVar
-	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "datarace", Value: On, Type: TypeBool}
-	RegisterSysVar(&sv)
-	svcopy := GetSysVar("datarace")
-	svcopy.Name = "datarace2"
-	c.Assert(sv.Name, Equals, "datarace")
-	c.Assert(GetSysVar("datarace").Name, Equals, "datarace")
-	UnregisterSysVar("datarace")
-
-	// Check GetSysVars
-	sv = SysVar{Scope: ScopeGlobal | ScopeSession, Name: "datarace", Value: On, Type: TypeBool}
-	RegisterSysVar(&sv)
-	for name, svcopy := range GetSysVars() {
-		if name == "datarace" {
-			svcopy.Name = "datarace2"
-		}
-	}
-	c.Assert(sv.Name, Equals, "datarace")
-	c.Assert(GetSysVar("datarace").Name, Equals, "datarace")
-	UnregisterSysVar("datarace")
-}
-
 // Test that sysvars defaults are logically valid. i.e.
 // the default itself must validate without error provided the scope and read-only is correct.
 // The default values should also be normalized for consistency.
@@ -620,4 +619,45 @@ func (*testSysVarSuite) TestDefaultValuesAreSettable(c *C) {
 			c.Assert(err, IsNil)
 		}
 	}
+}
+
+// This tests that sysvars are logically correct with getter and setter functions.
+// i.e. it doesn't make sense to have a SetSession function on a variable that is only globally scoped.
+func (*testSysVarSuite) TestSettersandGetters(c *C) {
+	for _, sv := range GetSysVars() {
+		if !sv.HasSessionScope() {
+			// There are some historial exceptions where global variables are loaded into the session.
+			// Please don't add to this list, the behavior is not MySQL compatible.
+			switch sv.Name {
+			case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize, TiDBEnableAlterPlacement,
+				TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
+				TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
+				TiDBEnableTelemetry, TiDBEnablePointGetCache:
+				continue
+			}
+			c.Assert(sv.SetSession, IsNil)
+			c.Assert(sv.GetSession, IsNil)
+		}
+		if !sv.HasGlobalScope() {
+			c.Assert(sv.SetGlobal, IsNil)
+			c.Assert(sv.GetGlobal, IsNil)
+		}
+	}
+}
+
+func (*testSysVarSuite) TestSecureAuth(c *C) {
+	sv := GetSysVar(SecureAuth)
+	vars := NewSessionVars()
+	_, err := sv.Validate(vars, "OFF", ScopeGlobal)
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'secure_auth' can't be set to the value of 'OFF'")
+	val, err := sv.Validate(vars, "ON", ScopeGlobal)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "ON")
+}
+
+func (*testSysVarSuite) TestValidateWithRelaxedValidation(c *C) {
+	sv := GetSysVar(SecureAuth)
+	vars := NewSessionVars()
+	val := sv.ValidateWithRelaxedValidation(vars, "1", ScopeGlobal)
+	c.Assert(val, Equals, "ON")
 }

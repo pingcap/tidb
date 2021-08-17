@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,11 +24,14 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -47,8 +51,24 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 	return rows, err
 }
 
+func newSlowQueryRetriever() (*slowQueryRetriever, error) {
+	newISBuilder, err := infoschema.NewBuilder(nil).InitWithDBInfos(nil, nil, 0)
+	if err != nil {
+		return nil, err
+	}
+	is := newISBuilder.Build()
+	tbl, err := is.TableByName(util.InformationSchemaName, model.NewCIStr(infoschema.TableSlowQuery))
+	if err != nil {
+		return nil, err
+	}
+	return &slowQueryRetriever{outputCols: tbl.Meta().Columns}, nil
+}
+
 func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader, logNum int) ([][]types.Datum, error) {
-	retriever := &slowQueryRetriever{}
+	retriever, err := newSlowQueryRetriever()
+	if err != nil {
+		return nil, err
+	}
 	// Ignore the error is ok for test.
 	terror.Log(retriever.initialize(context.Background(), sctx))
 	rows, err := parseLog(retriever, sctx, reader, logNum)
@@ -212,7 +232,7 @@ select * from t;
 	c.Assert(err, IsNil)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warnings, HasLen, 1)
-	c.Assert(warnings[0].Err.Error(), Equals, "Parse slow log at line 2 failed. Field: `Succ`, error: strconv.ParseBool: parsing \"abc\": invalid syntax")
+	c.Assert(warnings[0].Err.Error(), Equals, "Parse slow log at line 2, failed field is Succ, failed value is abc, error is strconv.ParseBool: parsing \"abc\": invalid syntax")
 }
 
 // It changes variable.MaxOfMaxAllowedPacket, so must be stayed in SerialSuite.
@@ -303,7 +323,7 @@ select * from t;
 	c.Assert(err, IsNil)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warnings, HasLen, 1)
-	c.Assert(warnings[0].Err.Error(), Equals, "Parse slow log at line 2 failed. Field: `Txn_start_ts`, error: strconv.ParseUint: parsing \"405888132465033227#\": invalid syntax")
+	c.Assert(warnings[0].Err.Error(), Equals, "Parse slow log at line 2, failed field is Txn_start_ts, failed value is 405888132465033227#, error is strconv.ParseUint: parsing \"405888132465033227#\": invalid syntax")
 
 }
 
@@ -437,8 +457,10 @@ select 7;`
 			c.Assert(err, IsNil)
 			extractor.TimeRanges = []*plannercore.TimeRange{{StartTime: startTime, EndTime: endTime}}
 		}
-		retriever := &slowQueryRetriever{extractor: extractor}
-		err := retriever.initialize(context.Background(), sctx)
+		retriever, err := newSlowQueryRetriever()
+		c.Assert(err, IsNil)
+		retriever.extractor = extractor
+		err = retriever.initialize(context.Background(), sctx)
 		c.Assert(err, IsNil)
 		comment := Commentf("case id: %v", i)
 		c.Assert(retriever.files, HasLen, len(cas.files), comment)
@@ -560,9 +582,11 @@ select 9;`
 			c.Assert(err, IsNil)
 			extractor.TimeRanges = []*plannercore.TimeRange{{StartTime: startTime, EndTime: endTime}}
 		}
-		retriever := &slowQueryRetriever{extractor: extractor}
+		retriever, err := newSlowQueryRetriever()
+		c.Assert(err, IsNil)
+		retriever.extractor = extractor
 		sctx.GetSessionVars().SlowQueryFile = fileName4
-		err := retriever.initialize(context.Background(), sctx)
+		err = retriever.initialize(context.Background(), sctx)
 		c.Assert(err, IsNil)
 		comment := Commentf("case id: %v", i)
 		c.Assert(retriever.files, HasLen, len(cas.files), comment)

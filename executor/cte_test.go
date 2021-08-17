@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -115,6 +116,9 @@ func (test *CTETestSuite) TestBasicCTE(c *check.C) {
 	rows.Check(testkit.Rows("1"))
 	rows = tk.MustQuery("SELECT * FROM t1 dt WHERE EXISTS( WITH RECURSIVE qn AS (SELECT a*0 AS b UNION ALL SELECT b+1 FROM qn WHERE b=0 or b = 1) SELECT * FROM qn WHERE b=a );")
 	rows.Check(testkit.Rows("1", "2"))
+
+	rows = tk.MustQuery("with recursive  c(p) as (select 1), cte(a, b) as (select 1, 1 union select a+1, 1 from cte, c where a < 5)  select * from cte order by 1, 2;")
+	rows.Check(testkit.Rows("1 1", "2 1", "3 1", "4 1", "5 1"))
 }
 
 func (test *CTESerialTestSuite) TestSpillToDisk(c *check.C) {
@@ -323,7 +327,7 @@ func (test *CTETestSuite) TestCTEWithLimit(c *check.C) {
 	// Test with table.
 	tk.MustExec("drop table if exists t1;")
 	insertStr := "insert into t1 values(0)"
-	for i := 1; i < 5000; i++ {
+	for i := 1; i < 300; i++ {
 		insertStr += fmt.Sprintf(", (%d)", i)
 	}
 

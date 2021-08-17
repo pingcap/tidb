@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -153,15 +154,15 @@ func (s *SetConfigExec) doRequest(url string) (retErr error) {
 }
 
 func isValidInstance(instance string) bool {
-	ip, port, err := net.SplitHostPort(instance)
+	host, port, err := net.SplitHostPort(instance)
 	if err != nil {
 		return false
 	}
 	if port == "" {
 		return false
 	}
-	v := net.ParseIP(ip)
-	return v != nil
+	_, err = net.LookupIP(host)
+	return err == nil
 }
 
 // ConvertConfigItem2JSON converts the config item specified by key and val to json.

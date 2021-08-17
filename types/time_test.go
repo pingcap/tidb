@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -143,6 +144,9 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		{"1710.10+00", 0, "1710-10-00 00:00:00"},
 		{"2020-10:15", 0, "2020-10-15 00:00:00"},
 		{"2020.09-10:15", 0, "2020-09-10 15:00:00"},
+
+		// For issue 24387
+		{"2.0.8 hotfix", 6, "2002-00-08 00:00:00.000000"},
 	}
 
 	for _, test := range fspTbl {
@@ -2112,4 +2116,20 @@ func BenchmarkParseDatetimeFormat(b *testing.B) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	benchmarkDatetimeFormat(b, "datetime without timezone", sc, "2020-10-10T10:10:10")
 	benchmarkDatetimeFormat(b, "datetime with timezone", sc, "2020-10-10T10:10:10Z+08:00")
+}
+
+func benchmarkStrToDate(b *testing.B, name string, sc *stmtctx.StatementContext, str, format string) {
+	b.Run(name, func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			var t types.Time
+			t.StrToDate(sc, str, format)
+		}
+	})
+}
+
+func BenchmarkStrToDate(b *testing.B) {
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	benchmarkStrToDate(b, "strToDate yyyyMMdd hhmmss ffff", sc, "31/05/2016 12:34:56.1234", "%d/%m/%Y %H:%i:%S.%f")
+	benchmarkStrToDate(b, "strToDate %r ddMMyyyy", sc, "04:13:56 AM 13/05/2019", "%r %d/%c/%Y")
+	benchmarkStrToDate(b, "strToDate %T ddMMyyyy", sc, " 4:13:56 13/05/2019", "%T %d/%c/%Y")
 }

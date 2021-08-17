@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -206,6 +207,8 @@ func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Parallel()
 	var outBuffer bytes.Buffer
 	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
 	drv := NewTiDBDriver(ts.store)
 	srv, err := NewServer(cfg, drv)
 	c.Assert(err, IsNil)

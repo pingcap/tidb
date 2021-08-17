@@ -12,6 +12,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -285,6 +286,11 @@ func (t *TableCommon) WritableCols() []*table.Column {
 	return writableColumns
 }
 
+// DeletableCols implements table DeletableCols interface.
+func (t *TableCommon) DeletableCols() []*table.Column {
+	return t.Columns
+}
+
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
 	if len(t.FullHiddenColsAndVisibleColumns) > 0 {
@@ -325,8 +331,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
-			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
-				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
+			if err := checkTempTableSize(sctx, tmpTable, m); err != nil {
+				return err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
@@ -611,6 +617,19 @@ func handleTempTableSize(t tableutil.TempTable, txnSizeBefore int, txn kv.Transa
 	t.SetSize(newSize)
 }
 
+func checkTempTableSize(ctx sessionctx.Context, tmpTable tableutil.TempTable, tblInfo *model.TableInfo) error {
+	tmpTableSize := tmpTable.GetSize()
+	if tempTableData := ctx.GetSessionVars().TemporaryTableData; tempTableData != nil {
+		tmpTableSize += tempTableData.GetTableSize(tblInfo.ID)
+	}
+
+	if tmpTableSize > ctx.GetSessionVars().TMPTableSize {
+		return table.ErrTempTableFull.GenWithStackByArgs(tblInfo.Name.O)
+	}
+
+	return nil
+}
+
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	txn, err := sctx.Txn(true)
@@ -625,8 +644,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(sctx, m); tmpTable != nil {
-			if tmpTable.GetSize() > sctx.GetSessionVars().TMPTableSize {
-				return nil, table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
+			if err := checkTempTableSize(sctx, tmpTable, m); err != nil {
+				return nil, err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
@@ -770,7 +789,10 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	var setPresume bool
 	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
 	if (t.meta.IsCommonHandle || t.meta.PKIsHandle) && !skipCheck && !opt.SkipHandleCheck {
-		if sctx.GetSessionVars().LazyCheckKeyNotExists() {
+		if t.meta.TempTableType != model.TempTableNone {
+			// Always check key for temporary table because it does not write to TiKV
+			_, err = sctx.GetSessionVars().TemporaryTableTxnReader(txn, t.meta).Get(ctx, key)
+		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() {
 			var v []byte
 			v, err = txn.GetMemBuffer().Get(ctx, key)
 			if err != nil {
@@ -1036,8 +1058,8 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	}
 	if m := t.Meta(); m.TempTableType != model.TempTableNone {
 		if tmpTable := addTemporaryTable(ctx, m); tmpTable != nil {
-			if tmpTable.GetSize() > ctx.GetSessionVars().TMPTableSize {
-				return table.ErrTempTableFull.GenWithStackByArgs(m.Name.O)
+			if err := checkTempTableSize(ctx, tmpTable, m); err != nil {
+				return err
 			}
 			defer handleTempTableSize(tmpTable, txn.Size(), txn)
 		}
@@ -1186,6 +1208,9 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 		return err
 	}
 	for _, v := range t.deletableIndices() {
+		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
+			continue
+		}
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
@@ -1827,6 +1852,8 @@ type TemporaryTable struct {
 	autoIDAllocator autoid.Allocator
 	// Table size.
 	size int64
+
+	meta *model.TableInfo
 }
 
 // TempTableFromMeta builds a TempTable from model.TableInfo.
@@ -1835,6 +1862,7 @@ func TempTableFromMeta(tblInfo *model.TableInfo) tableutil.TempTable {
 		modified:        false,
 		stats:           statistics.PseudoTable(tblInfo),
 		autoIDAllocator: autoid.NewAllocatorFromTempTblInfo(tblInfo),
+		meta:            tblInfo,
 	}
 }
 
@@ -1866,4 +1894,9 @@ func (t *TemporaryTable) GetSize() int64 {
 // SetSize sets the table size.
 func (t *TemporaryTable) SetSize(v int64) {
 	t.size = v
+}
+
+// GetMeta gets the table meta.
+func (t *TemporaryTable) GetMeta() *model.TableInfo {
+	return t.meta
 }

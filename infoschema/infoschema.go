@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -375,7 +376,7 @@ func (is *infoSchema) deleteBundle(id string) {
 	delete(is.ruleBundleMap, id)
 }
 
-// GetBundle get the first available bundle by array of IDs, possibbly fallback to the default.
+// GetBundle get the first available bundle by array of IDs, possibly fallback to the default.
 // If fallback to the default, only rules applied to all regions(empty keyrange) will be returned.
 // If the default bundle is unavailable, an empty bundle with an GroupID(ids[0]) is returned.
 func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
@@ -445,8 +446,8 @@ func (is *LocalTemporaryTables) TableByID(id int64) (tbl table.Table, ok bool) {
 }
 
 // AddTable add a table
-func (is *LocalTemporaryTables) AddTable(schema *model.DBInfo, tbl table.Table) error {
-	schemaTables := is.ensureSchema(schema.Name)
+func (is *LocalTemporaryTables) AddTable(schema model.CIStr, tbl table.Table) error {
+	schemaTables := is.ensureSchema(schema)
 
 	tblMeta := tbl.Meta()
 	if _, ok := schemaTables.tables[tblMeta.Name.L]; ok {

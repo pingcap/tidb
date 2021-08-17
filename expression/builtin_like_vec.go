@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,7 +18,6 @@ import (
 	"regexp"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -27,7 +27,7 @@ func (b *builtinLikeSig) vectorized() bool {
 
 func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	bufVal, err := b.bufAllocator.get(types.ETString, n)
+	bufVal, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -35,7 +35,7 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	if err = b.args[0].VecEvalString(b.ctx, input, bufVal); err != nil {
 		return err
 	}
-	bufPattern, err := b.bufAllocator.get(types.ETString, n)
+	bufPattern, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -44,7 +44,7 @@ func (b *builtinLikeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 		return err
 	}
 
-	bufEscape, err := b.bufAllocator.get(types.ETInt, n)
+	bufEscape, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -109,7 +109,7 @@ func (b *builtinRegexpSharedSig) initMemoizedRegexp(patterns *chunk.Column, n in
 
 func (b *builtinRegexpSharedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	bufExpr, err := b.bufAllocator.get(types.ETString, n)
+	bufExpr, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -118,7 +118,7 @@ func (b *builtinRegexpSharedSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 
-	bufPat, err := b.bufAllocator.get(types.ETString, n)
+	bufPat, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -142,13 +143,18 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if !e.resTbl.Done() {
 		resAction := setupCTEStorageTracker(e.resTbl, e.ctx, e.memTracker, e.diskTracker)
 		iterInAction := setupCTEStorageTracker(e.iterInTbl, e.ctx, e.memTracker, e.diskTracker)
-		iterOutAction := setupCTEStorageTracker(e.iterOutTbl, e.ctx, e.memTracker, e.diskTracker)
+		var iterOutAction *chunk.SpillDiskAction
+		if e.iterOutTbl != nil {
+			iterOutAction = setupCTEStorageTracker(e.iterOutTbl, e.ctx, e.memTracker, e.diskTracker)
+		}
 
 		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
 			if val.(bool) && config.GetGlobalConfig().OOMUseTmpStorage {
 				defer resAction.WaitForTest()
 				defer iterInAction.WaitForTest()
-				defer iterOutAction.WaitForTest()
+				if iterOutAction != nil {
+					defer iterOutAction.WaitForTest()
+				}
 			}
 		})
 
@@ -196,13 +202,13 @@ func (e *CTEExec) Close() (err error) {
 		if err = e.recursiveExec.Close(); err != nil {
 			return err
 		}
+		// `iterInTbl` and `resTbl` are shared by multiple operators,
+		// so will be closed when the SQL finishes.
+		if err = e.iterOutTbl.DerefAndClose(); err != nil {
+			return err
+		}
 	}
 
-	// `iterInTbl` and `resTbl` are shared by multiple operators,
-	// so will be closed when the SQL finishes.
-	if err = e.iterOutTbl.DerefAndClose(); err != nil {
-		return err
-	}
 	return e.baseExecutor.Close()
 }
 

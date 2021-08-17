@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -127,7 +128,7 @@ func (c *TopSQLCollector) GetPlan(planDigest []byte) string {
 }
 
 // RegisterSQL uses for testing.
-func (c *TopSQLCollector) RegisterSQL(sqlDigest []byte, normalizedSQL string) {
+func (c *TopSQLCollector) RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool) {
 	digestStr := string(hack.String(sqlDigest))
 	c.Lock()
 	_, ok := c.sqlMap[digestStr]

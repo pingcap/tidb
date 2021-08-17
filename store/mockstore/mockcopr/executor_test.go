@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/tikv/client-go/v2/mockstore/mocktikv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -114,7 +114,7 @@ func (s *testExecutorSuite) TestResolvedLargeTxnLocks(c *C) {
 	// And check the large txn is still alive.
 	pairs = s.mvccStore.Scan([]byte("primary"), nil, 1, tso, kvrpcpb.IsolationLevel_SI, nil)
 	c.Assert(pairs, HasLen, 1)
-	_, ok := errors.Cause(pairs[0].Err).(*mocktikv.ErrLocked)
+	_, ok := errors.Cause(pairs[0].Err).(*testutils.ErrLocked)
 	c.Assert(ok, IsTrue)
 }
 

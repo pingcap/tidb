@@ -12,6 +12,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // +build leak
@@ -65,13 +66,14 @@ func interestingGoroutines() (gs []string) {
 		"tikv.(*RegionCache).asyncCheckAndResolveLoop",
 		"github.com/pingcap/badger",
 		"github.com/ngaut/unistore/tikv.(*MVCCStore).runUpdateSafePointLoop",
+		"github.com/tikv/client-go/v2/tikv.(*ttlManager).keepAlive", // See https://github.com/tikv/client-go/issues/174
 	}
 	shouldIgnore := func(stack string) bool {
 		if stack == "" {
 			return true
 		}
 		for _, ident := range ignoreList {
-			if strings.Contains(stack, ident) {
+			if strings.Contains(strings.ToLower(stack), strings.ToLower(ident)) {
 				return true
 			}
 		}

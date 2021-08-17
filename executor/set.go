@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -150,8 +151,10 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	}
 	if sessionVars.InTxn() {
 		if name == variable.TxnIsolationOneShot ||
-			name == variable.TiDBTxnReadTS ||
-			name == variable.TiDBSnapshot {
+			name == variable.TiDBTxnReadTS {
+			return errors.Trace(ErrCantChangeTxCharacteristics)
+		}
+		if name == variable.TiDBSnapshot && sessionVars.TxnCtx.IsStaleness {
 			return errors.Trace(ErrCantChangeTxCharacteristics)
 		}
 	}

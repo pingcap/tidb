@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -142,9 +143,11 @@ func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Ma
 	cnt := 0
 	sqlMap.Range(func(key, value interface{}) bool {
 		cnt++
+		meta := value.(SQLMeta)
 		sqlMeta := &tipb.SQLMeta{
 			SqlDigest:     []byte(key.(string)),
-			NormalizedSql: value.(string),
+			NormalizedSql: meta.normalizedSQL,
+			IsInternalSql: meta.isInternal,
 		}
 		if err = stream.Send(sqlMeta); err != nil {
 			return false
