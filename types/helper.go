@@ -24,8 +24,7 @@ import (
 )
 
 // RoundFloat rounds float val to the nearest even integer value with float64 format, like MySQL Round function.
-// RoundFloat uses default rounding mode, see https://dev.mysql.com/doc/refman/5.7/en/precision-math-rounding.html
-// so rounding use "round to nearest even".
+// see https://dev.mysql.com/doc/refman/5.7/en/precision-math-rounding.html
 // e.g, 1.5 -> 2, -1.5 -> -2.
 func RoundFloat(f float64) float64 {
 	return math.RoundToEven(f)
@@ -47,6 +46,27 @@ func Round(f float64, dec int) float64 {
 	}
 	return result
 }
+
+// RoundInt rounds the argument i to dec decimal places.
+// dec defaults to 0 if not specified. dec can be negative
+// to cause dec digits left of the decimal point of the
+// value f to become zero.
+func RoundInt(i int64, dec int) int64 {
+	// is itself when dec >= 0
+	if dec >= 0 {
+		return i
+	}
+	// The integer part of a fraction
+	shift := math.Pow10(dec)
+	intPart := math.Round(float64(i) * shift)
+	r := int64(intPart)
+	// the zero part
+	for i := 1; i <= -dec; i++ {
+		r *= 10
+	}
+	return r
+}
+
 
 // Truncate truncates the argument f to dec decimal places.
 // dec defaults to 0 if not specified. dec can be negative
