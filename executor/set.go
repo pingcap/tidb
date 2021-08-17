@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -149,8 +151,10 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	}
 	if sessionVars.InTxn() {
 		if name == variable.TxnIsolationOneShot ||
-			name == variable.TiDBTxnReadTS ||
-			name == variable.TiDBSnapshot {
+			name == variable.TiDBTxnReadTS {
+			return errors.Trace(ErrCantChangeTxCharacteristics)
+		}
+		if name == variable.TiDBSnapshot && sessionVars.TxnCtx.IsStaleness {
 			return errors.Trace(ErrCantChangeTxCharacteristics)
 		}
 	}
@@ -265,6 +269,14 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(snapshotTS uint64) error {
 	if err != nil {
 		return err
 	}
+
+	if local := vars.LocalTemporaryTables; local != nil {
+		snapInfo = &infoschema.TemporaryTableAttachedInfoSchema{
+			InfoSchema:           snapInfo,
+			LocalTemporaryTables: local.(*infoschema.LocalTemporaryTables),
+		}
+	}
+
 	vars.SnapshotInfoschema = snapInfo
 	return nil
 }

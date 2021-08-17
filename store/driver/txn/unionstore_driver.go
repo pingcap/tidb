@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,19 +20,23 @@ import (
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/unionstore"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
-// memBuffer wraps unionstore.MemDB as kv.MemBuffer.
+// memBuffer wraps tikv.MemDB as kv.MemBuffer.
 type memBuffer struct {
-	*unionstore.MemDB
+	*tikv.MemDB
 }
 
-func newMemBuffer(m *unionstore.MemDB) kv.MemBuffer {
+func newMemBuffer(m *tikv.MemDB) kv.MemBuffer {
 	if m == nil {
 		return nil
 	}
 	return &memBuffer{MemDB: m}
+}
+
+func (m *memBuffer) Size() int {
+	return m.MemDB.Size()
 }
 
 func (m *memBuffer) Delete(k kv.Key) error {
@@ -112,10 +117,10 @@ func (m *memBuffer) SnapshotGetter() kv.Getter {
 }
 
 type tikvGetter struct {
-	unionstore.Getter
+	tikv.Getter
 }
 
-func newKVGetter(getter unionstore.Getter) kv.Getter {
+func newKVGetter(getter tikv.Getter) kv.Getter {
 	return &tikvGetter{Getter: getter}
 }
 
@@ -124,12 +129,12 @@ func (g *tikvGetter) Get(_ context.Context, k kv.Key) ([]byte, error) {
 	return data, derr.ToTiDBErr(err)
 }
 
-// tikvIterator wraps unionstore.Iterator as kv.Iterator
+// tikvIterator wraps tikv.Iterator as kv.Iterator
 type tikvIterator struct {
-	unionstore.Iterator
+	tikv.Iterator
 }
 
-func newKVIterator(it unionstore.Iterator) kv.Iterator {
+func newKVIterator(it tikv.Iterator) kv.Iterator {
 	if it == nil {
 		return nil
 	}

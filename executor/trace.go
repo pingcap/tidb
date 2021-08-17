@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -63,6 +64,12 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.exhausted = true
 		return nil
 	}
+
+	// For audit log plugin to set the correct statement.
+	stmtCtx := e.ctx.GetSessionVars().StmtCtx
+	defer func() {
+		e.ctx.GetSessionVars().StmtCtx = stmtCtx
+	}()
 
 	switch e.format {
 	case core.TraceFormatLog:
@@ -130,6 +137,14 @@ func (e *TraceExec) nextRowJSON(ctx context.Context, se sqlexec.SQLExecutor, req
 }
 
 func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
+	// For audit log plugin to log the statement correctly.
+	// Should be logged as 'explain ...', instead of the executed SQL.
+	vars := e.ctx.GetSessionVars()
+	origin := vars.InRestrictedSQL
+	vars.InRestrictedSQL = true
+	defer func() {
+		vars.InRestrictedSQL = origin
+	}()
 	rs, err := se.ExecuteStmt(ctx, e.stmtNode)
 	if err != nil {
 		var errCode uint16

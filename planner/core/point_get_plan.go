@@ -8,16 +8,17 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package core
 
 import (
-	"bytes"
-	"fmt"
 	math2 "math"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -44,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/tikv"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
 )
 
@@ -133,21 +134,27 @@ func (p *PointGetPlan) ExplainNormalizedInfo() string {
 
 // AccessObject implements dataAccesser interface.
 func (p *PointGetPlan) AccessObject(normalized bool) string {
-	buffer := bytes.NewBufferString("")
+	var buffer strings.Builder
 	tblName := p.TblInfo.Name.O
-	fmt.Fprintf(buffer, "table:%s", tblName)
+	buffer.WriteString("table:")
+	buffer.WriteString(tblName)
 	if p.PartitionInfo != nil {
 		if normalized {
-			fmt.Fprintf(buffer, ", partition:?")
+			buffer.WriteString(", partition:?")
 		} else {
-			fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
+			buffer.WriteString(", partition:")
+			buffer.WriteString(p.PartitionInfo.Name.L)
 		}
 	}
 	if p.IndexInfo != nil {
 		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
-			buffer.WriteString(", clustered index:" + p.IndexInfo.Name.O + "(")
+			buffer.WriteString(", clustered index:")
+			buffer.WriteString(p.IndexInfo.Name.O)
+			buffer.WriteString("(")
 		} else {
-			buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+			buffer.WriteString(", index:")
+			buffer.WriteString(p.IndexInfo.Name.O)
+			buffer.WriteString("(")
 		}
 		for i, idxCol := range p.IndexInfo.Columns {
 			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
@@ -166,23 +173,28 @@ func (p *PointGetPlan) AccessObject(normalized bool) string {
 
 // OperatorInfo implements dataAccesser interface.
 func (p *PointGetPlan) OperatorInfo(normalized bool) string {
-	buffer := bytes.NewBufferString("")
+	if p.Handle == nil && !p.Lock {
+		return ""
+	}
+	var buffer strings.Builder
 	if p.Handle != nil {
 		if normalized {
-			fmt.Fprintf(buffer, "handle:?, ")
+			buffer.WriteString("handle:?")
 		} else {
+			buffer.WriteString("handle:")
 			if p.UnsignedHandle {
-				fmt.Fprintf(buffer, "handle:%d, ", uint64(p.Handle.IntValue()))
+				buffer.WriteString(strconv.FormatUint(uint64(p.Handle.IntValue()), 10))
 			} else {
-				fmt.Fprintf(buffer, "handle:%s, ", p.Handle)
+				buffer.WriteString(p.Handle.String())
 			}
 		}
 	}
 	if p.Lock {
-		fmt.Fprintf(buffer, "lock, ")
-	}
-	if buffer.Len() >= 2 {
-		buffer.Truncate(buffer.Len() - 2)
+		if p.Handle != nil {
+			buffer.WriteString(", lock")
+		} else {
+			buffer.WriteString("lock")
+		}
 	}
 	return buffer.String()
 }
@@ -330,9 +342,10 @@ func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
 
 // AccessObject implements physicalScan interface.
 func (p *BatchPointGetPlan) AccessObject(_ bool) string {
-	buffer := bytes.NewBufferString("")
+	var buffer strings.Builder
 	tblName := p.TblInfo.Name.O
-	fmt.Fprintf(buffer, "table:%s", tblName)
+	buffer.WriteString("table:")
+	buffer.WriteString(tblName)
 	if p.IndexInfo != nil {
 		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
 			buffer.WriteString(", clustered index:" + p.IndexInfo.Name.O + "(")
@@ -356,21 +369,27 @@ func (p *BatchPointGetPlan) AccessObject(_ bool) string {
 
 // OperatorInfo implements dataAccesser interface.
 func (p *BatchPointGetPlan) OperatorInfo(normalized bool) string {
-	buffer := bytes.NewBufferString("")
+	var buffer strings.Builder
 	if p.IndexInfo == nil {
 		if normalized {
-			fmt.Fprintf(buffer, "handle:?, ")
+			buffer.WriteString("handle:?, ")
 		} else {
-			fmt.Fprintf(buffer, "handle:%v, ", p.Handles)
+			buffer.WriteString("handle:[")
+			for i, handle := range p.Handles {
+				if i != 0 {
+					buffer.WriteString(" ")
+				}
+				buffer.WriteString(handle.String())
+			}
+			buffer.WriteString("], ")
 		}
 	}
-	fmt.Fprintf(buffer, "keep order:%v, ", p.KeepOrder)
-	fmt.Fprintf(buffer, "desc:%v, ", p.Desc)
+	buffer.WriteString("keep order:")
+	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
+	buffer.WriteString(", desc:")
+	buffer.WriteString(strconv.FormatBool(p.Desc))
 	if p.Lock {
-		fmt.Fprintf(buffer, "lock, ")
-	}
-	if buffer.Len() >= 2 {
-		buffer.Truncate(buffer.Len() - 2)
+		buffer.WriteString(", lock")
 	}
 	return buffer.String()
 }
@@ -445,6 +464,11 @@ type PointPlanVal struct {
 
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
+	if checkStableResultMode(ctx) {
+		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here in this mode
+		return nil
+	}
+
 	ctx.GetSessionVars().PlanID = 0
 	ctx.GetSessionVars().PlanColumnID = 0
 	switch x := node.(type) {
@@ -519,7 +543,7 @@ func getLockWaitTime(ctx sessionctx.Context, lockInfo *ast.SelectLockInfo) (lock
 				if lockInfo.LockType == ast.SelectLockForUpdateWaitN {
 					waitTime = int64(lockInfo.WaitSec * 1000)
 				} else if lockInfo.LockType == ast.SelectLockForUpdateNoWait {
-					waitTime = tikv.LockNoWait
+					waitTime = tikvstore.LockNoWait
 				}
 			}
 		}

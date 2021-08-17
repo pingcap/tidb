@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -93,6 +94,9 @@ func (s *testSuite3) TestGrantDBScope(c *C) {
 	// Grant in wrong scope.
 	_, err := tk.Exec(` grant create user on test.* to 'testDB1'@'localhost';`)
 	c.Assert(terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")), IsTrue)
+
+	_, err = tk.Exec("GRANT SUPER ON test.* TO 'testDB1'@'localhost';")
+	c.Assert(terror.ErrorEqual(err, executor.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")), IsTrue)
 }
 
 func (s *testSuite3) TestWithGrantOption(c *C) {
@@ -116,7 +120,7 @@ func (s *testSuite3) TestWithGrantOption(c *C) {
 	tk.MustQuery("SELECT grant_priv FROM mysql.user WHERE User=\"testWithGrant1\"").Check(testkit.Rows("Y"))
 }
 
-func (s *testSuiteP1) TestTableScope(c *C) {
+func (s *testSuiteP1) TestGrantTableScope(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testTbl'@'localhost' IDENTIFIED BY '123';`
@@ -152,9 +156,12 @@ func (s *testSuiteP1) TestTableScope(c *C) {
 		p := fmt.Sprintf("%v", row[0])
 		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Greater, -1)
 	}
+
+	_, err := tk.Exec("GRANT SUPER ON test2 TO 'testTbl1'@'localhost';")
+	c.Assert(err, ErrorMatches, "\\[executor:1144\\]Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used")
 }
 
-func (s *testSuite3) TestColumnScope(c *C) {
+func (s *testSuite3) TestGrantColumnScope(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
 	createUserSQL := `CREATE USER 'testCol'@'localhost' IDENTIFIED BY '123';`
@@ -192,6 +199,9 @@ func (s *testSuite3) TestColumnScope(c *C) {
 		p := fmt.Sprintf("%v", row[0])
 		c.Assert(strings.Index(p, mysql.Priv2SetStr[v]), Greater, -1)
 	}
+
+	_, err := tk.Exec("GRANT SUPER(c2) ON test3 TO 'testCol1'@'localhost';")
+	c.Assert(err, ErrorMatches, "\\[executor:1221\\]Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES")
 }
 
 func (s *testSuite3) TestIssue2456(c *C) {

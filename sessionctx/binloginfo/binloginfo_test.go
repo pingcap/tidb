@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -665,6 +666,14 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 		{
 			"create table t1 (id int, a varchar(255) key clustered);",
 			"create table t1 (id int, a varchar(255) key /*T![clustered_index] clustered */ );",
+		},
+		{
+			"alter table t force auto_increment = 12;",
+			"alter table t /*T![force_inc] force */  auto_increment = 12;",
+		},
+		{
+			"alter table t force, auto_increment = 12;",
+			"alter table t force, auto_increment = 12;",
 		},
 	}
 	for _, ca := range testCase {

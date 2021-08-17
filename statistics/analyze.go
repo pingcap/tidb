@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -75,4 +76,8 @@ type AnalyzeResults struct {
 	Job      *AnalyzeJob
 	StatsVer int
 	Snapshot uint64
+	// BaseCount is the original count in mysql.stats_meta at the beginning of analyze.
+	BaseCount int64
+	// BaseModifyCnt is the original modify_count in mysql.stats_meta at the beginning of analyze.
+	BaseModifyCnt int64
 }

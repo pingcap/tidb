@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -153,7 +154,7 @@ func (s *tableRegionSampler) pickRanges(count int) ([]kv.KeyRange, error) {
 }
 
 func (s *tableRegionSampler) writeChunkFromRanges(ranges []kv.KeyRange, req *chunk.Chunk) error {
-	decLoc, sysLoc := s.ctx.GetSessionVars().TimeZone, time.UTC
+	decLoc, sysLoc := s.ctx.GetSessionVars().Location(), time.UTC
 	cols, decColMap, err := s.buildSampleColAndDecodeColMap()
 	if err != nil {
 		return err

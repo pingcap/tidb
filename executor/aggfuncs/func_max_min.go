@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -468,7 +469,7 @@ func (e *maxMin4UintSliding) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		if isNull {
 			continue
 		}
-		err = p.deque.Enqueue(uint64(i)+e.start, input)
+		err = p.deque.Enqueue(uint64(i)+e.start, uint64(input))
 		if err != nil {
 			return 0, err
 		}

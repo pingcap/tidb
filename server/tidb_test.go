@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // +build !race
@@ -92,6 +93,10 @@ func (ts *tidbTestSuite) SetUpSuite(c *C) {
 	ts.tidbTestSuiteBase.SetUpSuite(c)
 }
 
+func (ts *tidbTestSuite) TearDownSuite(c *C) {
+	ts.tidbTestSuiteBase.TearDownSuite(c)
+}
+
 func (ts *tidbTestTopSQLSuite) SetUpSuite(c *C) {
 	ts.tidbTestSuiteBase.SetUpSuite(c)
 
@@ -109,6 +114,10 @@ func (ts *tidbTestTopSQLSuite) SetUpSuite(c *C) {
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 
 	tracecpu.GlobalSQLCPUProfiler.Run()
+}
+
+func (ts *tidbTestTopSQLSuite) TearDownSuite(c *C) {
+	ts.tidbTestSuiteBase.TearDownSuite(c)
 }
 
 func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
@@ -304,7 +313,6 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	time.Sleep(time.Millisecond * 100)
-	c.Assert(server.isUnixSocket(), IsFalse) // If listening on tcp-only, return FALSE
 
 	// https connection should work.
 	ts.runTestStatusAPI(c)
@@ -411,7 +419,6 @@ func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	time.Sleep(time.Millisecond * 100)
-	c.Assert(server.isUnixSocket(), IsFalse) // If listening on both, return FALSE
 	defer server.Close()
 
 	cli.runTestRegression(c, func(config *mysql.Config) {
@@ -438,7 +445,6 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 		c.Assert(err, IsNil)
 	}()
 	time.Sleep(time.Millisecond * 100)
-	c.Assert(server.isUnixSocket(), IsTrue) // If listening on socket-only, return TRUE
 	defer server.Close()
 
 	// a fake server client, config is override, just used to run tests
@@ -450,6 +456,302 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 		config.DBName = "test"
 		config.Params = map[string]string{"sql_mode": "STRICT_ALL_TABLES"}
 	}, "SocketRegression")
+
+}
+
+func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
+	osTempDir := os.TempDir()
+	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
+	c.Assert(err, IsNil)
+	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
+	defer os.RemoveAll(tempDir)
+	cli := newTestServerClient()
+	cfg := newTestConfig()
+	cfg.Socket = socketFile
+	cfg.Port = cli.port
+	cfg.Status.ReportStatus = false
+
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
+	time.Sleep(time.Millisecond * 100)
+	defer server.Close()
+
+	// Test with Socket connection + Setup user1@% for all host access
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	defer func() {
+		cli.runTests(c, func(config *mysql.Config) {
+			config.User = "root"
+		},
+			func(dbt *DBTest) {
+				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'%'")
+				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'localhost'")
+				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'127.0.0.1'")
+			})
+	}()
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "root"
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "root@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.mustQuery("CREATE USER user1@'%'")
+			dbt.mustQuery("GRANT SELECT ON test.* TO user1@'%'")
+		})
+	// Test with Network interface connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
+			cli.checkRows(c, rows, "user1@127.0.0.1")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+		})
+	// Test with unix domain socket file connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "user1@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+		})
+
+	// Setup user1@127.0.0.1 for loop back network interface access
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "root"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
+			cli.checkRows(c, rows, "root@127.0.0.1")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.mustQuery("CREATE USER user1@127.0.0.1")
+			dbt.mustQuery("GRANT SELECT,INSERT ON test.* TO user1@'127.0.0.1'")
+		})
+	// Test with Network interface connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
+			cli.checkRows(c, rows, "user1@127.0.0.1")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT SELECT,INSERT ON test.* TO 'user1'@'127.0.0.1'")
+		})
+	// Test with unix domain socket file connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "user1@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+		})
+
+	// Setup user1@localhost for socket (and if MySQL compatible; loop back network interface access)
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "root"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "root@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.mustQuery("CREATE USER user1@localhost")
+			dbt.mustQuery("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
+		})
+	// Test with Network interface connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
+			cli.checkRows(c, rows, "user1@127.0.0.1")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT SELECT,INSERT ON test.* TO 'user1'@'127.0.0.1'")
+		})
+	// Test with unix domain socket file connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "user1@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
+		})
+
+}
+
+// TestOnlySocket for server configuration without network interface for mysql clients
+func (ts *tidbTestSuite) TestOnlySocket(c *C) {
+	osTempDir := os.TempDir()
+	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
+	c.Assert(err, IsNil)
+	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
+	defer os.RemoveAll(tempDir)
+	cli := newTestServerClient()
+	cfg := newTestConfig()
+	cfg.Socket = socketFile
+	cfg.Host = "" // No network interface listening for mysql traffic
+	cfg.Status.ReportStatus = false
+
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
+	time.Sleep(time.Millisecond * 100)
+	defer server.Close()
+	c.Assert(server.listener, IsNil)
+	c.Assert(server.socket, NotNil)
+
+	// Test with Socket connection + Setup user1@% for all host access
+	defer func() {
+		cli.runTests(c, func(config *mysql.Config) {
+			config.User = "root"
+			config.Net = "unix"
+			config.Addr = socketFile
+		},
+			func(dbt *DBTest) {
+				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'%'")
+				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'localhost'")
+				dbt.mustQuery("DROP USER IF EXISTS 'user1'@'127.0.0.1'")
+			})
+	}()
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "root"
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "root@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.mustQuery("CREATE USER user1@'%'")
+			dbt.mustQuery("GRANT SELECT ON test.* TO user1@'%'")
+		})
+	// Test with Network interface connection with all hosts, should fail since server not configured
+	_, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+		config.User = "root"
+		config.DBName = "test"
+		config.Addr = "127.0.0.1"
+	}))
+	c.Assert(err, IsNil, Commentf("Connect succeeded when not configured!?!"))
+	_, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+		config.User = "user1"
+		config.DBName = "test"
+		config.Addr = "127.0.0.1"
+	}))
+	c.Assert(err, IsNil, Commentf("Connect succeeded when not configured!?!"))
+	// Test with unix domain socket file connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "user1@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+		})
+
+	// Setup user1@127.0.0.1 for loop back network interface access
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "root"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
+			cli.checkRows(c, rows, "root@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.mustQuery("CREATE USER user1@127.0.0.1")
+			dbt.mustQuery("GRANT SELECT,INSERT ON test.* TO user1@'127.0.0.1'")
+		})
+	// Test with unix domain socket file connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "user1@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+		})
+
+	// Setup user1@localhost for socket (and if MySQL compatible; loop back network interface access)
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "root"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "root@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION")
+			dbt.mustQuery("CREATE USER user1@localhost")
+			dbt.mustQuery("GRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO user1@localhost")
+		})
+	// Test with unix domain socket file connection with all hosts
+	cli.runTests(c, func(config *mysql.Config) {
+		config.Net = "unix"
+		config.Addr = socketFile
+		config.User = "user1"
+		config.DBName = "test"
+	},
+		func(dbt *DBTest) {
+			rows := dbt.mustQuery("select user()")
+			cli.checkRows(c, rows, "user1@localhost")
+			rows = dbt.mustQuery("show grants")
+			cli.checkRows(c, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
+		})
 
 }
 
@@ -569,7 +871,100 @@ func (ts *tidbTestSuite) TestSystemTimeZone(c *C) {
 	tk.MustQuery("select @@system_time_zone").Check(tz1)
 }
 
-func (ts *tidbTestSerialSuite) TestTLS(c *C) {
+func (ts *tidbTestSerialSuite) TestTLSAuto(c *C) {
+	// Start the server without TLS configure, letting the server create these as AutoTLS is enabled
+	connOverrider := func(config *mysql.Config) {
+		config.TLSConfig = "skip-verify"
+	}
+	cli := newTestServerClient()
+	cfg := newTestConfig()
+	cfg.Port = cli.port
+	cfg.Status.ReportStatus = false
+	cfg.Security.AutoTLS = true
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
+	time.Sleep(time.Millisecond * 100)
+	err = cli.runTestTLSConnection(c, connOverrider) // Relying on automatically created TLS certificates
+	c.Assert(err, IsNil)
+
+	server.Close()
+}
+
+func (ts *tidbTestSerialSuite) TestTLSBasic(c *C) {
+	// Generate valid TLS certificates.
+	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
+	c.Assert(err, IsNil)
+	serverCert, _, err := generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key.pem", "/tmp/server-cert.pem")
+	c.Assert(err, IsNil)
+	_, _, err = generateCert(2, "SQL Client Certificate", caCert, caKey, "/tmp/client-key.pem", "/tmp/client-cert.pem")
+	c.Assert(err, IsNil)
+	err = registerTLSConfig("client-certificate", "/tmp/ca-cert.pem", "/tmp/client-cert.pem", "/tmp/client-key.pem", "tidb-server", true)
+	c.Assert(err, IsNil)
+
+	defer func() {
+		err := os.Remove("/tmp/ca-key.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/ca-cert.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/server-key.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/server-cert.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/client-key.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/client-cert.pem")
+		c.Assert(err, IsNil)
+	}()
+
+	// Start the server with TLS but without CA, in this case the server will not verify client's certificate.
+	connOverrider := func(config *mysql.Config) {
+		config.TLSConfig = "skip-verify"
+	}
+	cli := newTestServerClient()
+	cfg := newTestConfig()
+	cfg.Port = cli.port
+	cfg.Status.ReportStatus = false
+	cfg.Security = config.Security{
+		SSLCert: "/tmp/server-cert.pem",
+		SSLKey:  "/tmp/server-key.pem",
+	}
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
+	time.Sleep(time.Millisecond * 100)
+	err = cli.runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
+	c.Assert(err, IsNil)
+	cli.runTestRegression(c, connOverrider, "TLSRegression")
+	// Perform server verification.
+	connOverrider = func(config *mysql.Config) {
+		config.TLSConfig = "client-certificate"
+	}
+	err = cli.runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
+	c.Assert(err, IsNil, Commentf("%v", errors.ErrorStack(err)))
+	cli.runTestRegression(c, connOverrider, "TLSRegression")
+
+	// Test SSL/TLS session vars
+	var v *variable.SessionVars
+	stats, err := server.Stats(v)
+	c.Assert(err, IsNil)
+	c.Assert(stats, HasKey, "Ssl_server_not_after")
+	c.Assert(stats, HasKey, "Ssl_server_not_before")
+	c.Assert(stats["Ssl_server_not_after"], Equals, serverCert.NotAfter.Format("Jan _2 15:04:05 2006 MST"))
+	c.Assert(stats["Ssl_server_not_before"], Equals, serverCert.NotBefore.Format("Jan _2 15:04:05 2006 MST"))
+
+	server.Close()
+}
+
+func (ts *tidbTestSerialSuite) TestTLSVerify(c *C) {
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
 	c.Assert(err, IsNil)
@@ -595,62 +990,9 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	// Start the server without TLS.
-	connOverrider := func(config *mysql.Config) {
-		config.TLSConfig = "skip-verify"
-	}
+	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
 	cli := newTestServerClient()
 	cfg := newTestConfig()
-	cfg.Port = cli.port
-	cfg.Status.ReportStatus = false
-	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go func() {
-		err := server.Run()
-		c.Assert(err, IsNil)
-	}()
-	time.Sleep(time.Millisecond * 100)
-	err = cli.runTestTLSConnection(c, connOverrider) // We should get ErrNoTLS.
-	c.Assert(err, NotNil)
-	c.Assert(errors.Cause(err).Error(), Equals, mysql.ErrNoTLS.Error())
-	server.Close()
-
-	// Start the server with TLS but without CA, in this case the server will not verify client's certificate.
-	connOverrider = func(config *mysql.Config) {
-		config.TLSConfig = "skip-verify"
-	}
-	cli = newTestServerClient()
-	cfg = newTestConfig()
-	cfg.Port = cli.port
-	cfg.Status.ReportStatus = false
-	cfg.Security = config.Security{
-		SSLCert: "/tmp/server-cert.pem",
-		SSLKey:  "/tmp/server-key.pem",
-	}
-	server, err = NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go func() {
-		err := server.Run()
-		c.Assert(err, IsNil)
-	}()
-	time.Sleep(time.Millisecond * 100)
-	err = cli.runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
-	c.Assert(err, IsNil)
-	cli.runTestRegression(c, connOverrider, "TLSRegression")
-	// Perform server verification.
-	connOverrider = func(config *mysql.Config) {
-		config.TLSConfig = "client-certificate"
-	}
-	err = cli.runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
-	c.Assert(err, IsNil, Commentf("%v", errors.ErrorStack(err)))
-	cli.runTestRegression(c, connOverrider, "TLSRegression")
-	server.Close()
-
-	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
-	cli = newTestServerClient()
-	cfg = newTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -658,7 +1000,7 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 		SSLCert: "/tmp/server-cert.pem",
 		SSLKey:  "/tmp/server-key.pem",
 	}
-	server, err = NewServer(cfg, ts.tidbdrv)
+	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
@@ -669,6 +1011,9 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	// The client does not provide a certificate, the connection should succeed.
 	err = cli.runTestTLSConnection(c, nil)
 	c.Assert(err, IsNil)
+	connOverrider := func(config *mysql.Config) {
+		config.TLSConfig = "client-certificate"
+	}
 	cli.runTestRegression(c, connOverrider, "TLSRegression")
 	// The client provides a valid certificate.
 	connOverrider = func(config *mysql.Config) {
@@ -683,9 +1028,9 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	c.Assert(util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}), IsFalse)
 	c.Assert(util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}), IsTrue)
 
-	_, err = util.LoadTLSCertificates("", "wrong key", "wrong cert")
+	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert", true)
 	c.Assert(err, NotNil)
-	_, err = util.LoadTLSCertificates("wrong ca", "/tmp/server-key.pem", "/tmp/server-cert.pem")
+	_, _, err = util.LoadTLSCertificates("wrong ca", "/tmp/server-key.pem", "/tmp/server-cert.pem", true)
 	c.Assert(err, NotNil)
 }
 
@@ -1464,9 +1809,9 @@ func (ts *tidbTestTopSQLSuite) TestTopSQLAgent(c *C) {
 		records := agentServer.GetLatestRecords()
 		c.Assert(len(records), Equals, n)
 		for _, r := range records {
-			sqlNormalized, exist := agentServer.GetSQLMetaByDigestBlocking(r.SqlDigest, time.Second)
+			sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(r.SqlDigest, time.Second)
 			c.Assert(exist, IsTrue)
-			c.Check(sqlNormalized, Matches, "select.*from.*join.*")
+			c.Check(sqlMeta.NormalizedSql, Matches, "select.*from.*join.*")
 			if len(r.PlanDigest) == 0 {
 				continue
 			}

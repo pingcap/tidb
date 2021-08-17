@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -99,10 +100,11 @@ func (r *GRPCReportClient) Close() {
 }
 
 // sendBatchCPUTimeRecord sends a batch of TopSQL records by stream.
-func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records map[string]*dataPoints) error {
+func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records []*dataPoints) error {
 	if len(records) == 0 {
 		return nil
 	}
+	start := time.Now()
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportCPUTimeRecords(ctx)
 	if err != nil {
@@ -119,22 +121,33 @@ func (r *GRPCReportClient) sendBatchCPUTimeRecord(ctx context.Context, records m
 			return err
 		}
 	}
+	topSQLReportRecordCounterHistogram.Observe(float64(len(records)))
 	// See https://pkg.go.dev/google.golang.org/grpc#ClientConn.NewStream for how to avoid leaking the stream
 	_, err = stream.CloseAndRecv()
-	return err
+	if err != nil {
+		reportRecordDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		return err
+	}
+	reportRecordDurationSuccHistogram.Observe(time.Since(start).Seconds())
+	return nil
 }
 
 // sendBatchSQLMeta sends a batch of SQL metas by stream.
 func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Map) error {
+	start := time.Now()
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportSQLMeta(ctx)
 	if err != nil {
 		return err
 	}
+	cnt := 0
 	sqlMap.Range(func(key, value interface{}) bool {
+		cnt++
+		meta := value.(SQLMeta)
 		sqlMeta := &tipb.SQLMeta{
 			SqlDigest:     []byte(key.(string)),
-			NormalizedSql: value.(string),
+			NormalizedSql: meta.normalizedSQL,
+			IsInternalSql: meta.isInternal,
 		}
 		if err = stream.Send(sqlMeta); err != nil {
 			return false
@@ -145,23 +158,32 @@ func (r *GRPCReportClient) sendBatchSQLMeta(ctx context.Context, sqlMap *sync.Ma
 	if err != nil {
 		return err
 	}
+	topSQLReportSQLCountHistogram.Observe(float64(cnt))
 	_, err = stream.CloseAndRecv()
-	return err
+	if err != nil {
+		reportSQLDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		return err
+	}
+	reportSQLDurationSuccHistogram.Observe(time.Since(start).Seconds())
+	return nil
 }
 
 // sendBatchPlanMeta sends a batch of SQL metas by stream.
 func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.Map) error {
+	start := time.Now()
 	client := tipb.NewTopSQLAgentClient(r.conn)
 	stream, err := client.ReportPlanMeta(ctx)
 	if err != nil {
 		return err
 	}
+	cnt := 0
 	planMap.Range(func(key, value interface{}) bool {
 		planDecoded, errDecode := r.decodePlan(value.(string))
 		if errDecode != nil {
 			logutil.BgLogger().Warn("[top-sql] decode plan failed", zap.Error(errDecode))
 			return true
 		}
+		cnt++
 		planMeta := &tipb.PlanMeta{
 			PlanDigest:     []byte(key.(string)),
 			NormalizedPlan: planDecoded,
@@ -175,7 +197,13 @@ func (r *GRPCReportClient) sendBatchPlanMeta(ctx context.Context, planMap *sync.
 	if err != nil {
 		return err
 	}
+	topSQLReportPlanCountHistogram.Observe(float64(cnt))
 	_, err = stream.CloseAndRecv()
+	if err != nil {
+		reportPlanDurationFailedHistogram.Observe(time.Since(start).Seconds())
+		return err
+	}
+	reportPlanDurationSuccHistogram.Observe(time.Since(start).Seconds())
 	return err
 }
 
