@@ -3355,7 +3355,7 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		if err != nil {
 			return nil, err
 		}
-		if dateEvalTp == types.ETDatetime && (args[0].GetType().Tp == mysql.TypeDate || args[0].GetType().Tp == mysql.TypeTimestamp) {
+		if dateEvalTp == types.ETDatetime && args[0].GetType().Tp == mysql.TypeTimestamp {
 			tp := types.NewFieldType(mysql.TypeDatetime)
 			tp.Decimal = args[0].GetType().Decimal
 			tp.Flen = mysql.MaxDatetimeWidthNoFsp
@@ -4039,7 +4039,7 @@ func (c *subDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		if err != nil {
 			return nil, err
 		}
-		if dateEvalTp == types.ETDatetime && (args[0].GetType().Tp == mysql.TypeDate || args[0].GetType().Tp == mysql.TypeTimestamp) {
+		if dateEvalTp == types.ETDatetime && args[0].GetType().Tp == mysql.TypeTimestamp {
 			tp := types.NewFieldType(mysql.TypeDatetime)
 			tp.Decimal = args[0].GetType().Decimal
 			tp.Flen = mysql.MaxDatetimeWidthNoFsp
