@@ -1762,9 +1762,9 @@ func (rc *Controller) isLocalBackend() bool {
 }
 
 // preCheckRequirements checks
-// 1. Cluster region
-// 2. Cluster resource
-// 3. Local node resource
+// 1. Cluster resource
+// 2. Local node resource
+// 3. Cluster region
 // 4. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
@@ -1793,9 +1793,6 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 		if !taskExist {
-			if err := rc.CheckClusterRegion(ctx); err != nil {
-				return errors.Trace(err)
-			}
 			source, err := rc.EstimateSourceData(ctx)
 			if err != nil {
 				return errors.Trace(err)
@@ -1807,6 +1804,9 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			}
 			if err := rc.ClusterResource(ctx, source); err != nil {
 				rc.taskMgr.CleanupTask(ctx)
+				return errors.Trace(err)
+			}
+			if err := rc.CheckClusterRegion(ctx); err != nil {
 				return errors.Trace(err)
 			}
 		}
