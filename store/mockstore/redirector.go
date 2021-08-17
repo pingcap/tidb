@@ -54,7 +54,7 @@ func (c *clientRedirector) Close() error {
 func (c *clientRedirector) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	if req.StoreTp == tikvrpc.TiDB {
 		c.Once.Do(func() {
-			c.rpcClient = tikv.NewRPCClient(config.GetGlobalConfig().Security.ClusterSecurity())
+			c.rpcClient = tikv.NewRPCClient(tikv.WithSecurity(config.GetGlobalConfig().Security.ClusterSecurity()))
 		})
 		return c.rpcClient.SendRequest(ctx, addr, req, timeout)
 	}
