@@ -314,6 +314,44 @@ func (s *testSuite6) TestIssue16250(c *C) {
 	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
 }
 
+func (s *testSuite6) TestIssue24771(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists zy_tab;`)
+	tk.MustExec(`create table if not exists zy_tab (
+						zy_code int,
+						zy_name varchar(100)
+					);`)
+	tk.MustExec(`drop table if exists bj_tab;`)
+	tk.MustExec(`create table if not exists bj_tab (
+						bj_code int,
+						bj_name varchar(100),
+						bj_addr varchar(100),
+						bj_person_count int,
+						zy_code int
+					);`)
+	tk.MustExec(`drop table if exists st_tab;`)
+	tk.MustExec(`create table if not exists st_tab (
+						st_code int,
+						st_name varchar(100),
+						bj_code int
+					);`)
+	tk.MustExec(`drop view if exists v_st_2;`)
+	tk.MustExec(`create definer='root'@'localhost' view v_st_2 as
+		select st.st_name,bj.bj_name,zy.zy_name
+		from (
+			select bj_code,
+				bj_name,
+				zy_code
+			from bj_tab as b
+			where b.bj_code = 1
+		) as bj
+		left join zy_tab as zy on zy.zy_code = bj.zy_code
+		left join st_tab as st on bj.bj_code = st.bj_code;`)
+	tk.MustQuery(`show create view v_st_2`)
+	tk.MustQuery(`select * from v_st_2`)
+}
+
 func (s testSuite6) TestTruncateSequence(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
