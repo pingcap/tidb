@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -2101,6 +2102,7 @@ func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 	tk.MustExec("GRANT ROLE_ADMIN ON *.* TO tsg_u1")
 	tk.MustExec("GRANT ROLE_ADMIN ON *.* TO tsg_u2")
 	tk.MustExec("GRANT ROLE_ADMIN ON *.* TO tsg_r1 WITH GRANT OPTION") // grant a superior privilege to the role
+	tk.MustExec("GRANT CONFIG ON *.* TO tsg_r1")                       // grant a static privilege to the role
 
 	tk.MustExec("GRANT tsg_r1 TO tsg_u1, tsg_u2")    // grant the role to both users
 	tk.MustExec("SET DEFAULT ROLE tsg_r1 TO tsg_u1") // u1 has the role by default, but results should be identical.
@@ -2111,10 +2113,16 @@ func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil)
 	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows(
-		"GRANT PROCESS ON *.* TO 'tsg_u1'@'%'",
+		"GRANT PROCESS,CONFIG ON *.* TO 'tsg_u1'@'%'",
 		"GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'",
 		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u1'@'%'",
 		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION",
+	))
+	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'tsg_u1'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'",
+		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u1'@'%'",
+		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION",
 	))
 
 	// login as tsg_u2 + SET ROLE
@@ -2128,7 +2136,7 @@ func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
 		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
 	))
-	// same for SHOW GRANTS FOR CURRENT_USER()
+	// This should not show the privileges gained from (default) roles
 	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'tsg_u2'@'%'",
 		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
@@ -2137,16 +2145,17 @@ func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 	))
 	tk.MustExec("SET ROLE tsg_r1")
 	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows(
-		"GRANT PROCESS ON *.* TO 'tsg_u2'@'%'",
+		"GRANT PROCESS,CONFIG ON *.* TO 'tsg_u2'@'%'",
 		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
 		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'",
 		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
 	))
-	// same for SHOW GRANTS FOR CURRENT_USER()
+	// This should not show the privileges gained from SET ROLE tsg_r1.
+	// This is the case for SHOW GRANTS FOR CURRENT_USER() and SHOW GRANTS FOR 'tsg_u2';
 	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
-		"GRANT PROCESS ON *.* TO 'tsg_u2'@'%'",
+		"GRANT USAGE ON *.* TO 'tsg_u2'@'%'",
 		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
-		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'",
-		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
 	))
 }

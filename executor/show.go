@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1414,20 +1415,24 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 }
 
 func (e *ShowExec) fetchShowGrants() error {
-	// Get checker
+	vars := e.ctx.GetSessionVars()
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
-	sessVars := e.ctx.GetSessionVars()
-	if !e.User.CurrentUser {
-		userName := sessVars.User.AuthUsername
-		hostName := sessVars.User.AuthHostname
+	if e.User == nil {
+		// The input is a "SHOW GRANTS" statement with no users.
+		// Note: "show grants" result are different from "show grants for current_user",
+		// The former determine privileges with roles, while the later doesn't.
+		e.User = &auth.UserIdentity{Username: vars.User.AuthUsername, Hostname: vars.User.AuthHostname}
+		e.Roles = vars.ActiveRoles
+	} else if !e.User.CurrentUser {
+		userName := vars.User.AuthUsername
+		hostName := vars.User.AuthHostname
 		// Show grant user requires the SELECT privilege on mysql schema.
 		// Ref https://dev.mysql.com/doc/refman/8.0/en/show-grants.html
 		if userName != e.User.Username || hostName != e.User.Hostname {
-			activeRoles := sessVars.ActiveRoles
-			if !checker.RequestVerification(activeRoles, mysql.SystemDB, "", "", mysql.SelectPriv) {
+			if !checker.RequestVerification(vars.ActiveRoles, mysql.SystemDB, "", "", mysql.SelectPriv) {
 				return ErrDBaccessDenied.GenWithStackByArgs(userName, hostName, mysql.SystemDB)
 			}
 		}
