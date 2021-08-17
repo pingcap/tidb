@@ -554,7 +554,7 @@ func (writer *MetaWriter) FlushBackupMeta(ctx context.Context, cmdName string) e
 		writer.backupMeta.Version = MetaV1
 	}
 
-	writer.backupMeta.Result = summary.SummaryToStr(cmdName)
+	writer.backupMeta.BackupResult = summary.SummaryToStr(cmdName)
 
 	// Flush the writer.backupMeta to storage
 	backupMetaData, err := proto.Marshal(writer.backupMeta)
