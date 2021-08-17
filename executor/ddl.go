@@ -73,6 +73,53 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.done = true
 
 	// For each DDL, we should commit the previous transaction and create a new transaction.
+<<<<<<< HEAD
+=======
+	// Following cases are exceptions
+	var localTempTablesToDrop []*ast.TableName
+	switch s := e.stmt.(type) {
+	case *ast.CreateTableStmt:
+		if s.TemporaryKeyword == ast.TemporaryLocal {
+			return e.createSessionTemporaryTable(s)
+		}
+	case *ast.DropTableStmt:
+		if s.IsView {
+			break
+		}
+		sessVars := e.ctx.GetSessionVars()
+		sessVarsTempTable := sessVars.LocalTemporaryTables
+		if sessVarsTempTable == nil {
+			break
+		}
+		localTemporaryTables := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
+		for tbIdx := len(s.Tables) - 1; tbIdx >= 0; tbIdx-- {
+			if _, ok := localTemporaryTables.TableByName(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name); ok {
+				localTempTablesToDrop = append(localTempTablesToDrop, s.Tables[tbIdx])
+				s.Tables = append(s.Tables[:tbIdx], s.Tables[tbIdx+1:]...)
+			}
+		}
+
+		// Statement `DROP TEMPORARY TABLE ...` should not have non-local temporary tables
+		if s.TemporaryKeyword == ast.TemporaryLocal && len(s.Tables) > 0 {
+			nonExistsTables := make([]string, 0, len(s.Tables))
+			for _, tn := range s.Tables {
+				nonExistsTables = append(nonExistsTables, ast.Ident{Schema: tn.Schema, Name: tn.Name}.String())
+			}
+			err = infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(nonExistsTables, ","))
+			if s.IfExists {
+				e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
+				return nil
+			}
+			return err
+		}
+
+		// if all tables are local temporary, directly drop those tables.
+		if len(s.Tables) == 0 {
+			return e.dropLocalTemporaryTables(localTempTablesToDrop)
+		}
+	}
+
+>>>>>>> d4ec0233c... ddl: fix `DROP [GLOBAL] TEMPORARY TABLE IF EXISTS` returns error when table not exist (#27287)
 	if err = e.ctx.NewTxn(ctx); err != nil {
 		return err
 	}
