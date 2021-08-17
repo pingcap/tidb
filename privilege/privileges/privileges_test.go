@@ -2128,8 +2128,22 @@ func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
 		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
 	))
+	// same for SHOW GRANTS FOR CURRENT_USER()
+	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
 	tk.MustExec("SET ROLE tsg_r1")
 	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows(
+		"GRANT PROCESS ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
+	// same for SHOW GRANTS FOR CURRENT_USER()
+	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
 		"GRANT PROCESS ON *.* TO 'tsg_u2'@'%'",
 		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
 		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'",
