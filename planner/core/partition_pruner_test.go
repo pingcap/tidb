@@ -486,3 +486,14 @@ func (s *testPartitionPruneSuit) TestRangePartitionPredicatePruner(c *C) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
+
+func (s *testPartitionPruneSuit) TestIssue26551(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t (`COL1` int, `COL3` bigint) PARTITION BY HASH ((`COL1` * `COL3`))PARTITIONS 13;")
+	tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE col3 =2659937067964964513 and col1 = 783367513002;").Check(testkit.Rows(
+		"TableDual 0.00 root  rows:0"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT value is out of range in '(test.t.col1 * test.t.col3)'"))
+}

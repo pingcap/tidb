@@ -321,7 +321,8 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	}
 	used, err := s.pruneHashPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols, names)
 	if err != nil {
-		return nil, err
+		// Just report warning and generate the tableDual
+		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(err)
 	}
 	if used != nil {
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi))
