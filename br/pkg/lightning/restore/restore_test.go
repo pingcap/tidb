@@ -16,6 +16,7 @@ package restore
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -60,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/ddl"
 	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/tikv/pd/server/api"
 )
 
 var _ = Suite(&restoreSuite{})
@@ -1675,6 +1678,130 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 		c.Assert(template.FailedCount(Critical), Equals, ca.expectErrorCount)
 		c.Assert(template.Success(), Equals, ca.expectResult)
 		c.Assert(strings.ReplaceAll(template.Output(), "\n", ""), Matches, ca.expectMsg)
+
+		server.Close()
+	}
+}
+
+type mockTaskMetaMgr struct {
+	taskMetaMgr
+}
+
+func (mockTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
+	_, err := action([]taskMeta{{
+		taskID: 1,
+		pdCfgs: "",
+		status: taskMetaStatusInitial,
+		state:  taskStateNormal,
+	}})
+	return err
+}
+
+func (s *tableRestoreSuite) TestCheckClusterEmptyRegion(c *C) {
+	type testCase struct {
+		stores         api.StoresInfo
+		emptyRegions   api.RegionsInfo
+		expectMsgs     []string
+		expectResult   bool
+		expectErrorCnt int
+	}
+
+	makeRegions := func(regionCnt int, storeID uint64) []api.RegionInfo {
+		var regions []api.RegionInfo
+		for i := 0; i < regionCnt; i++ {
+			regions = append(regions, api.RegionInfo{Peers: []api.MetaPeer{{Peer: &metapb.Peer{StoreId: storeID}}}})
+		}
+		return regions
+	}
+
+	testCases := []testCase{
+		{
+			stores: api.StoresInfo{Stores: []*api.StoreInfo{
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 200}},
+			}},
+			emptyRegions: api.RegionsInfo{
+				Regions: append([]api.RegionInfo(nil), makeRegions(100, 1)...),
+			},
+			expectMsgs:     []string{".*Cluster doesn't have too many empty regions.*", ".*Cluster region distribution is balanced.*"},
+			expectResult:   true,
+			expectErrorCnt: 0,
+		},
+		{
+			stores: api.StoresInfo{Stores: []*api.StoreInfo{
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 2000}},
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &api.StoreStatus{RegionCount: 3100}},
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &api.StoreStatus{RegionCount: 2500}},
+			}},
+			emptyRegions: api.RegionsInfo{
+				Regions: append(append(append([]api.RegionInfo(nil),
+					makeRegions(600, 1)...),
+					makeRegions(300, 2)...),
+					makeRegions(1200, 3)...),
+			},
+			expectMsgs: []string{
+				".*TiKV store 3 contains too many empty regions, the count must not exceed 1000, but actual is 1200.*",
+				".*TiKV store 1 contains too many empty regions, the count should not exceed 500, but actual is 600.*",
+				".*Region distribution is unbalanced.*but we expect it should not exceed 1.5.*",
+			},
+			expectResult:   false,
+			expectErrorCnt: 1,
+		},
+		{
+			stores: api.StoresInfo{Stores: []*api.StoreInfo{
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 1200}},
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &api.StoreStatus{RegionCount: 3000}},
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &api.StoreStatus{RegionCount: 2500}},
+			}},
+			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not exceed 2.*"},
+			expectResult:   false,
+			expectErrorCnt: 1,
+		},
+		{
+			stores: api.StoresInfo{Stores: []*api.StoreInfo{
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 0}},
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &api.StoreStatus{RegionCount: 2800}},
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &api.StoreStatus{RegionCount: 2500}},
+			}},
+			expectMsgs:     []string{".*Region distribution is unbalanced, there is no region on store 1.*"},
+			expectResult:   false,
+			expectErrorCnt: 1,
+		},
+	}
+
+	mustMarshal := func(v interface{}) []byte {
+		data, err := json.Marshal(v)
+		c.Assert(err, IsNil)
+		return data
+	}
+
+	for _, ca := range testCases {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			var err error
+			if req.URL.Path == pdStores {
+				_, err = w.Write(mustMarshal(ca.stores))
+			} else if req.URL.Path == pdEmptyRegions {
+				_, err = w.Write(mustMarshal(ca.emptyRegions))
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
+			c.Assert(err, IsNil)
+		}))
+
+		tls := common.NewTLSFromMockServer(server)
+		template := NewSimpleTemplate()
+
+		url := strings.TrimPrefix(server.URL, "https://")
+		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
+		rc := &Controller{cfg: cfg, tls: tls, taskMgr: mockTaskMetaMgr{}, checkTemplate: template}
+
+		err := rc.CheckClusterRegion(context.Background())
+		c.Assert(err, IsNil)
+		c.Assert(template.FailedCount(Critical), Equals, ca.expectErrorCnt)
+		c.Assert(template.Success(), Equals, ca.expectResult)
+
+		for _, expectMsg := range ca.expectMsgs {
+			c.Assert(strings.ReplaceAll(template.Output(), "\n", ""), Matches, expectMsg)
+		}
 
 		server.Close()
 	}

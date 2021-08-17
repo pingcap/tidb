@@ -237,16 +237,16 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 		return nil
 	}
 	if minStore.Status.RegionCount == 0 {
-		rc.checkTemplate.Collect(Critical, false,
-			fmt.Sprintf("Region distribution is unbalanced, there is no region on store %v", minStore.Store.Id))
+		passed = false
+		message = fmt.Sprintf("Region distribution is unbalanced, there is no region on store %v", minStore.Store.Id)
 		return nil
 	}
 	ratio := float64(maxStore.Status.RegionCount) / float64(minStore.Status.RegionCount)
 	if ratio > errorRegionCntMaxMinRatio {
+		passed = false
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with most regions(%v) to the store(%v) with least regions(%v) is %v, but we expect it must not exceed %v",
 			maxStore.Store.Id, maxStore.Status.RegionCount, minStore.Store.Id, minStore.Status.RegionCount, ratio, errorRegionCntMaxMinRatio)
-		passed = false
 	} else if ratio >= warnRegionCntMaxMinRatio {
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with most regions(%v) to the store(%v) with least regions(%v) is %v, but we expect it should not exceed %v",
