@@ -23,10 +23,9 @@ import (
 	"github.com/pingcap/errors"
 )
 
-// Round rounds the argument f to dec decimal places.
+// Round rounds the argument f to dec decimal places using "round to nearest even" rule.
 // dec defaults to 0 if not specified. dec can be negative
-// to cause dec digits left of the decimal point of the
-// value f to become zero.
+// see https://dev.mysql.com/doc/refman/5.7/en/precision-math-rounding.html
 func Round(f float64, dec int) float64 {
 	shift := math.Pow10(dec)
 	tmp := f * shift
@@ -40,10 +39,8 @@ func Round(f float64, dec int) float64 {
 	return result
 }
 
-// RoundInt rounds the argument i to dec decimal places.
+// RoundInt rounds the argument i to dec decimal places using "round half up" rule.
 // dec defaults to 0 if not specified. dec can be negative
-// to cause dec digits left of the decimal point of the
-// value f to become zero.
 func RoundInt(i int64, dec int) int64 {
 	// is itself when dec >= 0
 	if dec >= 0 {
