@@ -1299,6 +1299,7 @@ func (d Duration) Neg() Duration {
 	}
 }
 
+// IsNeg check if this duration value is negative or not.
 func (d Duration) IsNeg() bool {
 	return d.Duration < 0
 }
