@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1065,7 +1066,10 @@ func (w *worker) doModifyColumnTypeWithData(
 				func() {
 					addIndexErr = errCancelledDDLJob.GenWithStack("modify table `%v` column `%v` panic", tblInfo.Name, oldCol.Name)
 				}, false)
-			return w.updateColumnAndIndexes(tbl, oldCol, changingCol, changingIdxs, reorgInfo)
+			// Use old column name to generate less confusing error messages.
+			changingColCpy := changingCol.Clone()
+			changingColCpy.Name = oldCol.Name
+			return w.updateColumnAndIndexes(tbl, oldCol, changingColCpy, changingIdxs, reorgInfo)
 		})
 		if err != nil {
 			if errWaitReorgTimeout.Equal(err) {
@@ -1388,13 +1392,22 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 func (w *updateColumnWorker) reformatErrors(err error) error {
 	// Since row count is not precious in concurrent reorganization, here we substitute row count with datum value.
 	if types.ErrTruncated.Equal(err) {
-		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
+		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
+		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, dStr)
 	}
 
-	if types.ErrInvalidYear.Equal(err) {
-		err = types.ErrInvalidYear.GenWithStack("Invalid year value for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
+	if types.ErrWarnDataOutOfRange.Equal(err) {
+		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
+		err = types.ErrWarnDataOutOfRange.GenWithStack("Out of range value for column '%s', the value is '%s'", w.oldColInfo.Name, dStr)
 	}
 	return err
+}
+
+func datumToStringNoErr(d types.Datum) string {
+	if v, err := d.ToString(); err == nil {
+		return v
+	}
+	return fmt.Sprintf("%v", d.GetValue())
 }
 
 func (w *updateColumnWorker) cleanRowMap() {
@@ -1842,9 +1855,9 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 
 	if odValue == strings.ToUpper(ast.CurrentTimestamp) {
 		if col.Tp == mysql.TypeTimestamp {
-			odValue = time.Now().UTC().Format(types.TimeFormat)
+			odValue = types.NewTime(types.FromGoTime(time.Now().UTC()), col.Tp, int8(col.Decimal)).String()
 		} else if col.Tp == mysql.TypeDatetime {
-			odValue = time.Now().Format(types.TimeFormat)
+			odValue = types.NewTime(types.FromGoTime(time.Now()), col.Tp, int8(col.Decimal)).String()
 		}
 	}
 	return odValue, nil

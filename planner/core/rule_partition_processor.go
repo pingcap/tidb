@@ -7,6 +7,7 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 // // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -184,7 +185,13 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 				if r.HighExclude {
 					posHigh--
 				}
-				rangeScalar := float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
+
+				var rangeScalar float64
+				if mysql.HasUnsignedFlag(col.RetType.Flag) {
+					rangeScalar = float64(uint64(posHigh)) - float64(uint64(posLow)) // use float64 to avoid integer overflow
+				} else {
+					rangeScalar = float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
+				}
 
 				// if range is less than the number of partitions, there will be unused partitions we can prune out.
 				if rangeScalar < float64(numPartitions) && !highIsNull && !lowIsNull {
