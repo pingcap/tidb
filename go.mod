@@ -87,9 +87,9 @@ require (
 	golang.org/x/net v0.0.0-20210503060351-7fd8e65b6420
 	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	golang.org/x/sys v0.0.0-20210630005230-0f9fa26af87c
+	golang.org/x/sys v0.0.0-20210510120138-977fb7262007
 	golang.org/x/text v0.3.6
-	golang.org/x/tools v0.1.5
+	golang.org/x/tools v0.1.4
 	google.golang.org/api v0.22.0
 	google.golang.org/grpc v1.29.1
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
