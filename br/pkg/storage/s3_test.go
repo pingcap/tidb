@@ -508,6 +508,52 @@ func (s *s3Suite) TestFileExistsNoError(c *C) {
 	c.Assert(exists, IsTrue)
 }
 
+func (s *s3Suite) TestDeleteFileNoError(c *C) {
+	s.setUpTest(c)
+	defer s.tearDownTest()
+	ctx := aws.BackgroundContext()
+
+	s.s3.EXPECT().
+		DeleteObjectWithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.DeleteObjectInput, opt ...request.Option) (*s3.DeleteObjectInput, error) {
+			c.Assert(aws.StringValue(input.Bucket), Equals, "bucket")
+			c.Assert(aws.StringValue(input.Key), Equals, "prefix/file")
+			return &s3.DeleteObjectInput{}, nil
+		})
+
+	err := s.storage.DeleteFile(ctx, "file")
+	c.Assert(err, IsNil)
+}
+
+func (s *s3Suite) TestDeleteFileMissing(c *C) {
+	s.setUpTest(c)
+	defer s.tearDownTest()
+	ctx := aws.BackgroundContext()
+
+	awserr := awserr.New(s3.ErrCodeNoSuchKey, "no such key", nil)
+	s.s3.EXPECT().
+		DeleteObjectWithContext(ctx, gomock.Any()).
+		Return(nil, awserr)
+
+	err := s.storage.DeleteFile(ctx, "file-missing")
+	c.Assert(err, ErrorMatches, awserr.Error())
+}
+
+func (s *s3Suite) TestDeleteFileError(c *C) {
+	s.setUpTest(c)
+	defer s.tearDownTest()
+	ctx := aws.BackgroundContext()
+
+	expectedErr := errors.New("just some unrelated error")
+
+	s.s3.EXPECT().
+		DeleteObjectWithContext(ctx, gomock.Any()).
+		Return(nil, expectedErr)
+
+	err := s.storage.DeleteFile(ctx, "file3")
+	c.Assert(err, ErrorMatches, `\Q`+expectedErr.Error()+`\E`)
+}
+
 // TestFileExistsNoSuckKey ensures FileExists API reports file missing if S3's
 // HeadObject request replied NoSuchKey.
 func (s *s3Suite) TestFileExistsMissing(c *C) {
