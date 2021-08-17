@@ -132,29 +132,6 @@ func (s *testTypeEtcSuite) TestMaxFloat(c *C) {
 	}
 }
 
-func (s *testTypeEtcSuite) TestRoundFloat(c *C) {
-	defer testleak.AfterTest(c)()
-	tbl := []struct {
-		Input  float64
-		Expect float64
-	}{
-		{2.5, 2},
-		{1.5, 2},
-		{0.5, 0},
-		{0.49999999999999997, 0},
-		{0, 0},
-		{-0.49999999999999997, 0},
-		{-0.5, 0},
-		{-2.5, -2},
-		{-1.5, -2},
-	}
-
-	for _, t := range tbl {
-		f := RoundFloat(t.Input)
-		c.Assert(f, Equals, t.Expect)
-	}
-}
-
 func (s *testTypeEtcSuite) TestRound(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {

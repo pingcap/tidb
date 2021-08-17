@@ -23,13 +23,6 @@ import (
 	"github.com/pingcap/errors"
 )
 
-// RoundFloat rounds float val to the nearest even integer value with float64 format, like MySQL Round function.
-// see https://dev.mysql.com/doc/refman/5.7/en/precision-math-rounding.html
-// e.g, 1.5 -> 2, -1.5 -> -2.
-func RoundFloat(f float64) float64 {
-	return math.RoundToEven(f)
-}
-
 // Round rounds the argument f to dec decimal places.
 // dec defaults to 0 if not specified. dec can be negative
 // to cause dec digits left of the decimal point of the
@@ -40,7 +33,7 @@ func Round(f float64, dec int) float64 {
 	if math.IsInf(tmp, 0) {
 		return f
 	}
-	result := RoundFloat(tmp) / shift
+	result := math.RoundToEven(tmp) / shift
 	if math.IsNaN(result) {
 		return 0
 	}
