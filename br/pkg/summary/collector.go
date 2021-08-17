@@ -164,18 +164,21 @@ func logKeyFor(key string) string {
 	return strings.ReplaceAll(key, " ", "-")
 }
 
-func (tc *logCollector) summaryDetail() []zap.Field {
+func (tc *logCollector) summaryDetail(needClean bool) []zap.Field {
 	tc.mu.Lock()
 	defer func() {
-		tc.durations = make(map[string]time.Duration)
-		tc.ints = make(map[string]int)
-		tc.successCosts = make(map[string]time.Duration)
-		tc.failureReasons = make(map[string]error)
+		if needClean {
+			tc.durations = make(map[string]time.Duration)
+			tc.ints = make(map[string]int)
+			tc.successCosts = make(map[string]time.Duration)
+			tc.failureReasons = make(map[string]error)
+			tc.ints = make(map[string]int)
+			tc.uints = make(map[string]uint64)
+		}
 		tc.mu.Unlock()
 	}()
 
 	logFields := make([]zap.Field, 0, len(tc.durations)+len(tc.ints)+3)
-
 	logFields = append(logFields,
 		zap.Int("total-ranges", tc.failureUnitCount+tc.successUnitCount),
 		zap.Int("ranges-succeed", tc.successUnitCount),
@@ -233,7 +236,7 @@ func (tc *logCollector) summaryDetail() []zap.Field {
 }
 
 func (tc *logCollector) Summary(name string) {
-	logFields := tc.summaryDetail()
+	logFields := tc.summaryDetail(true)
 	tc.log(name+" success summary", logFields...)
 }
 
@@ -258,7 +261,7 @@ func (tc *logCollector) CollectToStr(cmdName string) string {
 	var logFields []zap.Field
 
 	logFields = append(logFields, zap.String(cmdName, "success"))
-	summaryDetail := tc.summaryDetail()
+	summaryDetail := tc.summaryDetail(false)
 	logFields = append(logFields, summaryDetail...)
 
 	var outstr string
