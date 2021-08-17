@@ -376,47 +376,5 @@ func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
 	s.runSQL(c, "drop global temporary table temp, temp1", false, nil)
 	s.runSQL(c, "drop global temporary table temp, tb", false, core.ErrDropTableOnTemporaryTable)
 	s.runSQL(c, "drop global temporary table temp, ltemp1", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop temporary table xxxx, ltemp1", false, infoschema.ErrTableDropExists)
 	s.runSQL(c, "drop global temporary table test2.temp2, temp1", false, nil)
-}
-
-func (s *testValidatorSuite) TestDropLocalTempTable(c *C) {
-	defer testleak.AfterTest(c)()
-	defer func() {
-		s.dom.Close()
-		s.store.Close()
-	}()
-
-	ctx := context.Background()
-	execSQLList := []string{
-		"use test",
-		"set tidb_enable_global_temporary_table=true",
-		"set tidb_enable_noop_functions=true",
-		"create table tb(id int);",
-		"create table tb2(id int);",
-		"create global temporary table temp(id int) on commit delete rows;",
-		"create global temporary table temp1(id int) on commit delete rows;",
-		"create temporary table ltemp1(id int);",
-		"create temporary table ltemp2(id int);",
-		"create temporary table tb2(id int);",
-		"create database test2",
-		"create temporary table test2.ltemp3(id int);",
-	}
-	for _, execSQL := range execSQLList {
-		_, err := s.se.Execute(ctx, execSQL)
-		c.Assert(err, IsNil)
-	}
-	s.is = s.se.GetInfoSchema().(infoschema.InfoSchema)
-	s.runSQL(c, "drop temporary table tb;", false, infoschema.ErrTableDropExists)
-	s.runSQL(c, "drop temporary table ltemp1", false, nil)
-	s.runSQL(c, "drop temporary table test.tb;", false, infoschema.ErrTableDropExists)
-	s.runSQL(c, "drop temporary table test.ltemp1", false, nil)
-	s.runSQL(c, "drop temporary table temp1", false, infoschema.ErrTableDropExists)
-	s.runSQL(c, "drop temporary table test.temp1", false, infoschema.ErrTableDropExists)
-	s.runSQL(c, "drop temporary table ltemp1, ltemp2", false, nil)
-	s.runSQL(c, "drop temporary table ltemp1, tb", false, infoschema.ErrTableDropExists)
-	s.runSQL(c, "drop temporary table temp, ltemp1", false, infoschema.ErrTableDropExists)
-	s.runSQL(c, "drop temporary table xxxx, ltemp1", false, infoschema.ErrTableDropExists)
-	s.runSQL(c, "drop temporary table test2.ltemp3, ltemp1", false, nil)
-	s.runSQL(c, "drop temporary table tb2", false, nil)
 }
