@@ -2133,7 +2133,6 @@ func (s *testStatsSuite) TestDuplicateFMSketch(c *C) {
 	s.do.StatsHandle().SetLastUpdateVersion(s.do.StatsHandle().LastUpdateVersion() + 1)
 	c.Assert(s.do.StatsHandle().GCStats(s.do.InfoSchema(), time.Duration(0)), IsNil)
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
-
 }
 
 func (s *testStatsSuite) TestStatsCacheUpdateSkip(c *C) {
