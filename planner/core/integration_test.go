@@ -4201,3 +4201,42 @@ func (s *testIntegrationSuite) TestOutputSkylinePruningInfo(c *C) {
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warnings...))
 	}
 }
+
+func (s *testIntegrationSuite) TestIssues27130(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1( a enum('y','b','Abc','null'),b enum('y','b','Abc','null'),key(a));")
+	tk.MustQuery(`explain format=brief select * from t1 where a like "A%"`).Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  like(test.t1.a, \"A%\", 92)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
+	tk.MustQuery(`explain format=brief select * from t1 where b like "A%"`).Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  like(test.t1.b, \"A%\", 92)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2( a enum('y','b','Abc','null'),b enum('y','b','Abc','null'),key(a, b));")
+	tk.MustQuery(`explain format=brief select * from t2 where a like "A%"`).Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  like(test.t2.a, \"A%\", 92)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+	))
+	tk.MustQuery(`explain format=brief select * from t2 where a like "A%" and b like "A%"`).Check(testkit.Rows(
+		"TableReader 8000.00 root  data:Selection",
+		"└─Selection 8000.00 cop[tikv]  like(test.t2.a, \"A%\", 92), like(test.t2.b, \"A%\", 92)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+	))
+
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3( a int,b enum('y','b','Abc','null'), c enum('y','b','Abc','null'),key(a, b, c));")
+	tk.MustQuery(`explain format=brief select * from t3 where a = 1 and b like "A%"`).Check(testkit.Rows(
+		"IndexReader 8.00 root  index:Selection",
+		"└─Selection 8.00 cop[tikv]  like(test.t3.b, \"A%\", 92)",
+		"  └─IndexRangeScan 10.00 cop[tikv] table:t3, index:a(a, b, c) range:[1,1], keep order:false, stats:pseudo",
+	))
+}
