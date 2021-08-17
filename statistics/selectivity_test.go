@@ -843,6 +843,10 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 	// If we don't have a check against this, DNF condition could lead to infinite recursion in Selectivity().
 	testKit.MustExec("alter table t add column n timestamp;")
 	testKit.MustExec("select * from t where n = '2000-01-01' or n = '2000-01-02';")
+
+	// Test issue 27294
+	testKit.MustExec("create table tt (COL1 blob DEFAULT NULL,COL2 decimal(37,4) DEFAULT NULL,COL3 timestamp NULL DEFAULT NULL,COL4 int(11) DEFAULT NULL,UNIQUE KEY U_M_COL4(COL1(10),COL2), UNIQUE KEY U_M_COL5(COL3,COL2));")
+	testKit.MustExec("explain select * from tt where col1 is not null or col2 not between 454623814170074.2771 and -975540642273402.9269 and col3 not between '2039-1-19 10:14:57' and '2002-3-27 14:40:23';")
 }
 
 func (s *testStatsSuite) TestIndexEstimationCrossValidate(c *C) {
