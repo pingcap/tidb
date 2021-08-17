@@ -232,7 +232,6 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	tableScan := &PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
-		PkCols:          []*expression.Column{col},
 		Hist:            hist,
 	}
 	tableScan = tableScan.Init(ctx, 0)
