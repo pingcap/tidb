@@ -3331,7 +3331,7 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustExec("create temporary table t1 (id int primary key auto_increment)")
 	tk.MustExec("create temporary table t2 (id int primary key)")
 	tk.MustExec("create database if not exists testt")
-	tk.MustExec("create temporary table test2.t2 (id int)")
+	tk.MustExec("create temporary table testt.t2 (id int)")
 
 	// truncate table out of txn
 	tk.MustExec("insert into t1 values(1), (2), (3)")
@@ -3409,9 +3409,9 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	c.Assert(iter.Valid(), IsFalse)
 
 	// truncate after drop database should be successful
-	tk.MustExec("create temporary table test2.t3 (id int)")
-	tk.MustExec("insert into test2.t3 values(1)")
-	tk.MustExec("drop database test2")
-	tk.MustExec("truncate table test2.t3")
-	tk.MustQuery("select * from test2.t3").Check(testkit.Rows())
+	tk.MustExec("create temporary table testt.t3 (id int)")
+	tk.MustExec("insert into testt.t3 values(1)")
+	tk.MustExec("drop database testt")
+	tk.MustExec("truncate table testt.t3")
+	tk.MustQuery("select * from testt.t3").Check(testkit.Rows())
 }
