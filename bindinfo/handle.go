@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -25,6 +26,7 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
@@ -752,7 +754,22 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 		bindSQL = bindSQL[updateIdx:]
 		return strings.Replace(bindSQL, "UPDATE", fmt.Sprintf("UPDATE /*+ %s*/", planHint), 1)
 	case *ast.SelectStmt:
-		selectIdx := strings.Index(bindSQL, "SELECT")
+		var selectIdx int
+		if n.With != nil {
+			var withSb strings.Builder
+			withIdx := strings.Index(bindSQL, "WITH")
+			restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &withSb)
+			restoreCtx.DefaultDB = defaultDB
+			err := n.With.Restore(restoreCtx)
+			if err != nil {
+				logutil.BgLogger().Debug("[sql-bind] restore SQL failed", zap.Error(err))
+				return ""
+			}
+			withEnd := withIdx + len(withSb.String())
+			tmp := strings.Replace(bindSQL[withEnd:], "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
+			return strings.Join([]string{bindSQL[withIdx:withEnd], tmp}, "")
+		}
+		selectIdx = strings.Index(bindSQL, "SELECT")
 		// Remove possible `explain` prefix.
 		bindSQL = bindSQL[selectIdx:]
 		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
