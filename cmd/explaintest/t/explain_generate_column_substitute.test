@@ -192,3 +192,8 @@ desc format = 'brief' select count(upper(b)) from t group by upper(b);
 desc format = 'brief' select max(upper(b)) from t group by upper(b);
 desc format = 'brief' select count(upper(b)) from t use index() group by upper(b);
 desc format = 'brief' select max(upper(b)) from t use index() group by upper(b);
+
+drop table if exists t;
+create table t(a int, b int as (a+1), key((a+1)), key(b));
+desc format = 'brief' select a+1 from t;
+desc format = 'brief' select b from t;

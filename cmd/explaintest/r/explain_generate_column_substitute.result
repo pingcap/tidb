@@ -456,3 +456,13 @@ HashAgg	6.00	root		group by:Column#9, funcs:max(Column#8)->Column#7
 └─Projection	6.00	root		upper(test.t.b)->Column#8, upper(test.t.b)->Column#9
   └─TableReader	6.00	root		data:TableFullScan
     └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+drop table if exists t;
+create table t(a int, b int as (a+1), key((a+1)), key(b));
+desc format = 'brief' select a+1 from t;
+id	estRows	task	access object	operator info
+IndexReader	10000.00	root		index:IndexFullScan
+└─IndexFullScan	10000.00	cop[tikv]	table:t, index:expression_index(`a` + 1)	keep order:false, stats:pseudo
+desc format = 'brief' select b from t;
+id	estRows	task	access object	operator info
+IndexReader	10000.00	root		index:IndexFullScan
+└─IndexFullScan	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
