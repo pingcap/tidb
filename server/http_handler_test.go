@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1439,67 +1440,6 @@ func (ts *HTTPHandlerTestSuite) TestCheckCN(c *C) {
 	c.Assert(err, IsNil)
 	err = tlsConfig.VerifyPeerCertificate(nil, [][]*x509.Certificate{{{Subject: pkix.Name{CommonName: "d"}}}})
 	c.Assert(err, NotNil)
-}
-
-func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
-	ts.startServer(c)
-	defer ts.stopServer(c)
-
-	db, err := sql.Open("mysql", ts.getDSN())
-	c.Assert(err, IsNil, Commentf("Error connecting"))
-	defer func() {
-		err := db.Close()
-		c.Assert(err, IsNil)
-	}()
-	dbt := &DBTest{c, db}
-
-	dbt.mustExec("use test")
-	dbt.mustExec("create table if not exists t (a int)")
-
-	urlValues := url.Values{
-		"sql":        {"select * from t"},
-		"current_db": {"test"},
-	}
-	resp, err := ts.formStatus("/debug/sub-optimal-plan", urlValues)
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	b, err := httputil.DumpResponse(resp, true)
-	c.Assert(err, IsNil)
-	c.Assert(len(b), Greater, 0)
-	c.Assert(resp.Body.Close(), IsNil)
-
-	resp, err = ts.formStatus("/debug/sub-optimal-plan?pprof_time=5&timeout=0", urlValues)
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	b, err = httputil.DumpResponse(resp, true)
-	c.Assert(err, IsNil)
-	c.Assert(len(b), Greater, 0)
-	c.Assert(resp.Body.Close(), IsNil)
-
-	resp, err = ts.formStatus("/debug/sub-optimal-plan?pprof_time=5", urlValues)
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	b, err = httputil.DumpResponse(resp, true)
-	c.Assert(err, IsNil)
-	c.Assert(len(b), Greater, 0)
-	c.Assert(resp.Body.Close(), IsNil)
-
-	resp, err = ts.formStatus("/debug/sub-optimal-plan?timeout=1", urlValues)
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusOK)
-	b, err = httputil.DumpResponse(resp, true)
-	c.Assert(err, IsNil)
-	c.Assert(len(b), Greater, 0)
-	c.Assert(resp.Body.Close(), IsNil)
-
-	urlValues.Set("current_db", "non_exists_db")
-	resp, err = ts.formStatus("/debug/sub-optimal-plan", urlValues)
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusInternalServerError)
-	b, err = io.ReadAll(resp.Body)
-	c.Assert(err, IsNil)
-	c.Assert(string(b), Equals, "use database non_exists_db failed, err: [schema:1049]Unknown database 'non_exists_db'\n")
-	c.Assert(resp.Body.Close(), IsNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestFailpointHandler(c *C) {
