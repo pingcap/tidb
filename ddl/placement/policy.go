@@ -15,8 +15,11 @@ package placement
 
 import "github.com/pingcap/parser/model"
 
+const DefaultPolicyMagicVer uint32 = 0
+
 // Policy is the struct to store the placement policy.
 type Policy struct {
+	MagicVer            uint32      `json:"magic_ver"`
 	ID                  int64       `json:"id"`
 	Name                model.CIStr `json:"name"`
 	PrimaryRegion       string      `json:"primary_region"`
@@ -25,8 +28,8 @@ type Policy struct {
 	Followers           int64       `json:"followers"`
 	Voters              int64       `json:"voters"`
 	Schedule            string      `json:"schedule"`
-	Constraints         Constraints `json:"constraints"`
-	LeaderConstraints   Constraints `json:"leader_constraints"`
-	FollowerConstraints Constraints `json:"follower_constraints"`
-	VoterConstraints    Constraints `json:"voter_constraints"`
+	Constraints         string      `json:"constraints"`
+	LeaderConstraints   string      `json:"leader_constraints"`
+	FollowerConstraints string      `json:"follower_constraints"`
+	VoterConstraints    string      `json:"voter_constraints"`
 }

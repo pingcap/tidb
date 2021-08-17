@@ -63,28 +63,17 @@ func TestPlacementPolicy(t *testing.T) {
 
 	// test the meta storage of placemnt policy.
 	policy := &placement.Policy{
-		ID:            1,
-		Name:          model.NewCIStr("aa"),
-		PrimaryRegion: "my primary",
-		Regions:       "my regions",
-		Leaders:       1,
-		Followers:     2,
-		Voters:        3,
-		Schedule:      "even",
-		Constraints: placement.Constraints{
-			{
-				Key:    "disk",
-				Op:     placement.In,
-				Values: []string{"ssd"},
-			},
-		},
-		LeaderConstraints: placement.Constraints{
-			{
-				Key:    "zone",
-				Op:     placement.In,
-				Values: []string{"shanghai"},
-			},
-		},
+		MagicVer:          placement.DefaultPolicyMagicVer,
+		ID:                1,
+		Name:              model.NewCIStr("aa"),
+		PrimaryRegion:     "my primary",
+		Regions:           "my regions",
+		Leaders:           1,
+		Followers:         2,
+		Voters:            3,
+		Schedule:          "even",
+		Constraints:       "+disk=ssd",
+		LeaderConstraints: "+zone=shanghai",
 	}
 	err = m.CreatePolicy(policy)
 	require.NoError(t, err)
@@ -99,12 +88,7 @@ func TestPlacementPolicy(t *testing.T) {
 
 	// mock updating the placement policy.
 	policy.Name = model.NewCIStr("bb")
-	policy.LeaderConstraints = placement.Constraints{
-		{
-			Key:    "zone",
-			Op:     placement.In,
-			Values: []string{"nanjing"},
-		}}
+	policy.LeaderConstraints = "+zone=nanjing"
 	err = m.UpdatePolicy(policy)
 	require.NoError(t, err)
 

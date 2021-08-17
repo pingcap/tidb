@@ -368,13 +368,6 @@ func (is *infoSchema) SetPolicy(policy *placement.Policy) {
 	is.policyMap[policy.Name.L] = policy
 }
 
-// DeletePolicy is used to delete the policy.
-func (is *infoSchema) DeletePolicy(name string) {
-	is.policyMutex.Lock()
-	defer is.policyMutex.Unlock()
-	delete(is.policyMap, name)
-}
-
 func (is *infoSchema) PlacementPolicies() []*placement.Policy {
 	is.policyMutex.RLock()
 	defer is.policyMutex.RUnlock()
