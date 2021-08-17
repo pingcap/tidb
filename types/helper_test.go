@@ -82,3 +82,27 @@ func TestTruncateFloatToString(t *testing.T) {
 		require.Equal(t, tt.expected, res)
 	}
 }
+
+func TestRoundInt(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		i        int64
+		dec      int
+		expected int64
+	}{
+		{1, 0, 1},
+		{2146213728964879326, -15, 2146000000000000000},
+		{123456789, -5, 123500000},
+		{50, -2, 100},
+		{150, 2, 150},
+		{-1, 0, -1},
+		{-2146213728964879326, -15, -2146000000000000000},
+		{-123456789, -5, -123500000},
+		{-50, -2, -100},
+		{-150, 2, -150},
+	}
+	for _, tt := range tests {
+		res := RoundInt(tt.i, tt.dec)
+		require.Equal(t, tt.expected, res)
+	}
+}
