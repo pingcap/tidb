@@ -1659,10 +1659,16 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				tmpStr, idx1, idx2, sql)
 		}
 	}
+	// TODO: use cost model instead of hint.
 	if strings.Contains(sql, "use_hash_part_hj") {
 		plannercore.ForceUseHashPart = true
 	} else {
 		plannercore.ForceUseHashPart = false
+	}
+	if strings.Contains(sql, "force_parallel_hash_agg") {
+		plannercore.ForceParallelHashAgg = true
+	} else {
+		plannercore.ForceParallelHashAgg = false
 	}
 	if strings.Contains(sql, "new_parallel") {
 		cc.ctx.GetSessionVars().UseParallel = true

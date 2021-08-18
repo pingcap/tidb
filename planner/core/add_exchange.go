@@ -10,6 +10,7 @@ import (
 
 var MaxThrNum int
 var ForceUseHashPart bool
+var ForceParallelHashAgg bool
 
 var (
 	_ PhysicalPlan = &PhysicalXchg{}
@@ -188,7 +189,7 @@ func (p *PhysicalXchg) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgPro
 	} else {
 		sender, ok = p.children[0].(*PhysicalXchg)
 		if !ok {
-			return nil, errors.New("must be sender")
+			return nil, errors.Errorf("child of xchg receiver must be sender: %v", p.TP())
 		}
 	}
 	consumedThr := p.inStreamCnt
@@ -358,7 +359,7 @@ func (p *PhysicalTopN) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty)
 		node = res[xchgIdx]
 		xchgReceiver, isXchg = node.(*PhysicalXchg)
 		if !isXchg {
-			return nil, errors.New("one of possible plans must be xchg")
+			return nil, errors.Errorf("one of possible plans must be xchg: %v", node.TP())
 		}
 	}
 	newNode, err := p.Clone()
@@ -367,7 +368,7 @@ func (p *PhysicalTopN) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty)
 	}
 	tmpNode, ok := newNode.(*PhysicalTopN)
 	if !ok {
-		return nil, errors.New("must be topn")
+		return nil, errors.Errorf("cloned node must be topn: %v", tmpNode.TP())
 	}
 	ctx.GetSessionVars().PlanID++
 	tmpNode.id = ctx.GetSessionVars().PlanID
@@ -420,10 +421,87 @@ func (p *PhysicalTableReader) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPr
 	return res, nil
 }
 
+func (p *PhysicalHashAgg) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
+	if !hasAvailableThr(reqProp.available, 0) {
+		return nil, nil
+	}
+	if res, err = tryAddXchgPreWork(p, reqProp, res); err != nil {
+		return nil, err
+	}
+
+	// TODO: we can support multi level HashAgg later.
+	if len(p.GroupByItems) == 0 {
+		return nil, nil
+	}
+	newProp := newXchgProperty()
+	newProp.hashPartition = make([]*expression.Column, 0, len(p.GroupByItems))
+	for i := 0; i < len(p.GroupByItems); i++ {
+		newProp.hashPartition = append(newProp.hashPartition, expression.ExtractColumns(p.GroupByItems[i])...)
+	}
+
+	if ForceParallelHashAgg {
+		res = res[:0]
+	}
+
+	if reqProp.output == 1 {
+		newNode, err := p.Clone()
+		if err != nil {
+			return nil, err
+		}
+		xchgOutput := ctx.GetSessionVars().ExecutorConcurrency
+		newProp.output = xchgOutput
+		updateChildrenProp(newNode, newProp)
+
+		sender := &PhysicalXchg{tp: TypeXchgSenderPassThrough}
+		if err = initXchg(ctx, sender, newNode, newNode.Stats(), xchgOutput); err != nil {
+			return nil, err
+		}
+		receiver := &PhysicalXchg{tp: TypeXchgReceiverRandom}
+		if err = initXchg(ctx, receiver, sender, newNode.Stats(), xchgOutput); err != nil {
+			return nil, err
+		}
+		setupChans(sender, receiver, xchgOutput)
+		res = append(res, receiver)
+	} else {
+		res = res[:0]
+		// if len(reqProp.hashPartition) != 0 {
+		//     if !isSubset(reqProp.hashPartition, newProp.hashPartition) {
+		//         // TODO: log to denote why cannot generate paralle plan.
+		//         return nil, nil
+		//     }
+		// }
+		newNode, err := p.Clone()
+		if err != nil {
+			return nil, err
+		}
+		newProp.output = reqProp.output
+		updateChildrenProp(newNode, newProp)
+		res = append(res, newNode)
+	}
+	return res, nil
+}
+
+// check if cols2 is the subset of cols2
+func isSubset(cols1 []*expression.Column, cols2 []*expression.Column) bool {
+	for _, c2 := range cols2 {
+		var found bool
+		for _, c1 := range cols1 {
+			if c2.UniqueID == c1.UniqueID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 func (p *PhysicalHashJoin) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
 	// TODO: useOuterToBuild
 	if p.UseOuterToBuild {
-		return nil, errors.New("TryAddXchg not support UseOuterToBuild for now")
+		return nil, nil
 	}
 
 	if !hasAvailableThr(reqProp.available, 0) {
@@ -448,6 +526,9 @@ func (p *PhysicalHashJoin) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPrope
 			p.IsBroadcastHJ = true
 		} else {
 			buildReqProp, probeReqProp := getReqPropsForHashPartition(p, reqProp.output, probeSideIdx, probeSideIdx)
+			// if !isSubset(reqProp.hashPartition, buildReqProp.hashPartition) || !isSubset(reqProp.hashPartition, probeReqProp.hashPartition) {
+			//     return nil, nil
+			// }
 			p.GetChildXchgProps()[buildSideIdx] = buildReqProp
 			p.GetChildXchgProps()[probeSideIdx] = probeReqProp
 		}
@@ -476,7 +557,7 @@ func tryBroadcastHJ(ctx sessionctx.Context, node *PhysicalHashJoin, outStreamCnt
 	}
 	newHJNode, ok := newNode.(*PhysicalHashJoin)
 	if !ok {
-		return nil, errors.New("newNode must be HashJoin")
+		return nil, errors.Errorf("Cloned node must be HashJoin: %v", newHJNode.TP())
 	}
 	newHJNode.IsBroadcastHJ = true
 
@@ -511,6 +592,9 @@ func tryHashPartitionHJ(ctx sessionctx.Context, node *PhysicalHashJoin, outStrea
 	}
 
 	buildReqProp, probeReqProp := getReqPropsForHashPartition(node, outStreamCnt, probeSideIdx, probeSideIdx)
+	// if !isSubset(reqProp.hashPartition, buildReqProp.hashPartition) || !isSubset(reqProp.hashPartition, probeReqProp.hashPartition) {
+	//     return nil, nil
+	// }
 	newNode.GetChildXchgProps()[buildSideIdx] = buildReqProp
 	newNode.GetChildXchgProps()[probeSideIdx] = probeReqProp
 
@@ -631,7 +715,7 @@ func tryAddXchgForBasicPlan(ctx sessionctx.Context, node PhysicalPlan, reqProp *
 		setupChans(sender, receiver, xchgOutput)
 
 		res = append(res, receiver)
-		return nil, errors.New("hash partition not implemented yet")
+		return res, nil
 	}
 	return nil, errors.Errorf("invalid reqProp: %v", reqProp)
 }
@@ -674,7 +758,7 @@ func updateChildrenProp(node PhysicalPlan, newProp *XchgProperty) {
 	}
 }
 
-func initXchg(ctx sessionctx.Context, xchg *PhysicalXchg, child PhysicalPlan, childStat *property.StatsInfo, reqOutput int) (err error) {
+func initXchg(ctx sessionctx.Context, xchg *PhysicalXchg, child PhysicalPlan, childStat *property.StatsInfo, streamCnt int) (err error) {
 	// TODO: add string name.
 	var tpStr string
 	xchg.basePhysicalPlan = newBasePhysicalPlan(ctx, tpStr, xchg, 0)
@@ -682,7 +766,7 @@ func initXchg(ctx sessionctx.Context, xchg *PhysicalXchg, child PhysicalPlan, ch
 	xchg.childStat = childStat
 	xchg.stats = childStat
 
-	xchg.inStreamCnt, xchg.outStreamCnt, err = getReceiverStreamCount(reqOutput, xchg.tp)
+	xchg.inStreamCnt, xchg.outStreamCnt, err = getReceiverStreamCount(streamCnt, xchg.tp)
 	if err != nil {
 		return err
 	}
