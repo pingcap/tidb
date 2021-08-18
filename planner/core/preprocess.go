@@ -868,6 +868,7 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 			return
 		}
 	}
+
 }
 
 func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {

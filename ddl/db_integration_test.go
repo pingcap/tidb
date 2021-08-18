@@ -2790,6 +2790,9 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	tk.MustGetErrCode("create global temporary table t (id int) engine = 'innodb' on commit delete rows", errno.ErrUnsupportedDDLOperation)
 	// Follow the behaviour of the old version TiDB: parse and ignore the 'temporary' keyword.
 	tk.MustGetErrCode("create temporary table t(id int)", errno.ErrNotSupportedYet)
+	tk.MustExec("set @@tidb_enable_noop_functions = 1")
+	tk.MustExec("create temporary table t (id int)")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1105 local TEMPORARY TABLE is not supported yet, TEMPORARY will be parsed but ignored"))
 }
 
 func (s *testIntegrationSuite3) TestDropWithGlobalTemporaryTableKeyWord(c *C) {
