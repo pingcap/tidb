@@ -6007,6 +6007,11 @@ func (s *testRecoverTable) TestRecoverTempTable(c *C) {
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t_recover (a int) on commit delete rows;")
 
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists tmp2_recover")
+	tk.MustExec("create temporary table tmp2_recover (a int);")
+
 	timeBeforeDrop, _, safePointSQL, resetGC := s.mockGC(tk)
 	defer resetGC()
 	// Set GC safe point
@@ -6015,6 +6020,10 @@ func (s *testRecoverTable) TestRecoverTempTable(c *C) {
 	tk.MustExec("drop table t_recover")
 	tk.MustGetErrCode("recover table t_recover;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("flashback table t_recover;", errno.ErrUnsupportedDDLOperation)
+	//tk.MustGetErrCode("alter table tmp2_recover add column b int;", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("drop table tmp2_recover")
+	tk.MustGetErrMsg("recover table tmp2_recover;", "Can't find localTemporary/dropped/truncated table: tmp2_recover in DDL history jobs")
+	tk.MustGetErrMsg("flashback table tmp2_recover;", "Can't find localTemporary/dropped/truncated table: tmp2_recover in DDL history jobs")
 }
 
 func (s *testSuiteP2) TestPointGetPreparedPlan(c *C) {
