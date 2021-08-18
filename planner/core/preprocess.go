@@ -417,11 +417,11 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 		resNode = n
 	case *ast.SetOprStmt:
 		resNode = n
-		//TODO: What about insert into (select * from t)
 	case *ast.DeleteStmt:
 		resNode = n.TableRefs.TableRefs
 	case *ast.UpdateStmt:
 		resNode = n.TableRefs.TableRefs
+	//TODO: What about insert into (select * from t)
 	case *ast.InsertStmt:
 		resNode = n.Table.TableRefs
 	}

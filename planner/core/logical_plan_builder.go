@@ -5882,7 +5882,7 @@ func buildWindowSpecs(specs []ast.WindowSpec) (map[string]*ast.WindowSpec, error
 func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName bool) []*ast.TableName {
 	switch x := node.(type) {
 	case *ast.SubqueryExpr:
-		input = extractTableList(x.Query.(ast.ResultSetNode), input, asName)
+		input = extractTableList(x.Query, input, asName)
 	case *ast.SelectStmt:
 		input = extractTableList(x.From.TableRefs.Left, input, asName)
 		input = extractTableList(x.From.TableRefs.Right, input, asName)
