@@ -5875,6 +5875,20 @@ func buildWindowSpecs(specs []ast.WindowSpec) (map[string]*ast.WindowSpec, error
 	return specsMap, nil
 }
 
+func unfoldSelectList(list *ast.SetOprSelectList, unfoldList *ast.SetOprSelectList) {
+	for _, sel := range list.Selects {
+		switch s := sel.(type) {
+			case *ast.SelectStmt:
+				unfoldList.Selects = append(unfoldList.Selects, s)
+			case *ast.SetOprSelectList:
+				for _, sel := range s.Selects {
+					unfoldSelectList(sel, unfoldList)
+				}
+			}
+		}
+	}
+}
+
 // extractTableList extracts all the TableNames from node.
 // If asName is true, extract AsName prior to OrigName.
 // Privilege check should use OrigName, while expression may use AsName.
@@ -5897,7 +5911,9 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 			}
 		}
 	case *ast.SetOprStmt:
-		for _, s := range x.SelectList.Selects {
+		l := &ast.SetOprSelectList{}
+		unfoldSelectList(x.SelectList, l)
+		for _, s := range l {
 			input = extractTableList(s.(ast.ResultSetNode), input, asName)
 		}
 	case *ast.Join:
