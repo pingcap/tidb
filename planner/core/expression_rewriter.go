@@ -894,11 +894,13 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	} else {
 		args := make([]expression.Expression, 0, np.Schema().Len())
 		for i, col := range np.Schema().Columns {
-			larg := expression.GetFuncArg(lexpr, i)
-			if !expression.ExprNotNull(larg) || !expression.ExprNotNull(col) {
-				rarg := *col
-				rarg.InOperand = true
-				col = &rarg
+			if v.Not || asScalar {
+				larg := expression.GetFuncArg(lexpr, i)
+				if !expression.ExprNotNull(larg) || !expression.ExprNotNull(col) {
+					rarg := *col
+					rarg.InOperand = true
+					col = &rarg
+				}
 			}
 			args = append(args, col)
 		}

@@ -423,7 +423,7 @@ func handleAnalyzeFullSamplingReq(
 	}
 	colReq := analyzeReq.ColReq
 	/* #nosec G404 */
-	builder := &statistics.RowSampleBuilder{
+	builder := &statistics.ReservoirRowSampleBuilder{
 		Sc:              sc,
 		RecordSet:       e,
 		ColsFieldType:   fts,
