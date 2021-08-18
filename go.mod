@@ -67,7 +67,7 @@ require (
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210806085616-14892a598eab
-	github.com/tikv/pd v1.1.0-beta.0.20210816095559-9c0ea3279695
+	github.com/tikv/pd v1.1.0-beta.0.20210818112400-0c5667766690
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.4.0
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
