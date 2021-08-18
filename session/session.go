@@ -3002,11 +3002,8 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			return dst
 		}
 
+		// TODO(dragonly): use zap.String like formatter to escape string fields
 		glBuf := glBufPool.Get().([]byte)
-		glBuf = append(glBuf, '[')
-		now := time.Now()
-		glBuf = now.AppendFormat(glBuf, "2006/01/02 15:04:05.000 -07:00")
-		glBuf = append(glBuf, "] "...)
 		glBuf = append(glBuf, "[GENERAL_LOG] [conn="...)
 		glBuf = strconv.AppendUint(glBuf, vars.ConnectionID, 10)
 		glBuf = append(glBuf, "] [user="...)

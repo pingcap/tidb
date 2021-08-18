@@ -35,6 +35,7 @@ func newGeneralLog(logger *zap.Logger) *GeneralLog {
 // startWorker starts a log flushing worker that flushes log periodically or when batch is full
 func (gl *GeneralLog) startWorker() {
 	var buf strings.Builder
+	var timeBuf [64]byte
 	logCount := 0
 	timeout := time.After(flushTimeout)
 	for {
@@ -43,6 +44,12 @@ func (gl *GeneralLog) startWorker() {
 			if logCount > 0 {
 				buf.WriteByte('\n')
 			}
+			timeSlice := timeBuf[:0]
+			timeSlice = append(timeSlice, '[')
+			now := time.Now()
+			timeSlice = now.AppendFormat(timeSlice, "2006/01/02 15:04:05.000 -07:00")
+			timeSlice = append(timeSlice, "] "...)
+			buf.Write(timeSlice)
 			buf.WriteString(logText)
 			logCount += 1
 			if logCount == logBatchSize {
