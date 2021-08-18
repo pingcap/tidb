@@ -28,7 +28,7 @@ run_sql 'DROP DATABASE IF EXISTS cpdt'
 export GO_FAILPOINTS=""
 set +e
 # put stdout to log file for next grep
-+run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "tests/$TEST_NAME/mysql.toml" -d "tests/$TEST_NAME/data" >> "$TEST_DIR/lightning-checkpoint-dirty-tableid.log"
+run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "tests/$TEST_NAME/mysql.toml" -d "tests/$TEST_NAME/data" >> "$TEST_DIR/lightning-checkpoint-dirty-tableid.log"
 set -e
 
 # some msg will split into two lines when put them into chart.
@@ -53,7 +53,7 @@ run_sql 'DROP DATABASE IF EXISTS cpdt'
 export GO_FAILPOINTS=""
 set +e
 # put stdout to log file for next grep
-+run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "tests/$TEST_NAME/mysql.toml" -d "tests/$TEST_NAME/data" >> "$TEST_DIR/lightning-checkpoint-dirty-tableid.log"
+run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-dirty-tableid.log" --config "tests/$TEST_NAME/mysql.toml" -d "tests/$TEST_NAME/data" >> "$TEST_DIR/lightning-checkpoint-dirty-tableid.log"
 set -e
 
 # some msg will split into two lines when put them into chart.
