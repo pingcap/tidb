@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -33,7 +34,7 @@ func (t *testRuleSuite) TestApplyAttributesSpec(c *C) {
 
 func (t *testRuleSuite) TestResetID(c *C) {
 	rule := NewRule()
-	rule.ResetTable(1, "db1", "t1")
+	rule.Reset(1, "db1", "t1")
 	c.Assert(rule.ID, Equals, "schema/db1/t1")
 	c.Assert(rule.RuleType, Equals, ruleType)
 	c.Assert(rule.Labels, HasLen, 2)
