@@ -121,11 +121,11 @@ func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 	if normalizedValue == "" {
 		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
 	}
-	cht, _, err := charset.GetCharsetInfo(normalizedValue)
+	cs, err := charset.GetCharsetInfo(normalizedValue)
 	if err != nil {
 		return normalizedValue, errors.Trace(err)
 	}
-	return cht, nil
+	return cs.Name, nil
 }
 
 // checkReadOnly requires TiDBEnableNoopFuncs=1 for the same scope otherwise an error will be returned.

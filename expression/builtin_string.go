@@ -2853,7 +2853,7 @@ func chooseOrdFunc(charSet string) (func(string) int64, error) {
 	if charSet == "" {
 		charSet = charset.CharsetUTF8
 	}
-	desc, err := charset.GetCharsetDesc(charSet)
+	desc, err := charset.GetCharsetInfo(charSet)
 	if err != nil {
 		return nil, err
 	}
