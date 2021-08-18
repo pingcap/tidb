@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -31,10 +32,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -102,6 +105,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataForStatistics(sctx, dbs)
 		case infoschema.TableTables:
 			err = e.setDataFromTables(ctx, sctx, dbs)
+		case infoschema.TableReferConst:
+			err = e.setDataFromReferConst(ctx, sctx, dbs)
 		case infoschema.TableSequences:
 			e.setDataFromSequences(sctx, dbs)
 		case infoschema.TablePartitions:
@@ -159,6 +164,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByUser,
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
+		case infoschema.TableRegionLabel:
+			err = e.setDataForRegionLabel(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -460,6 +467,46 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 	e.rows = append(e.rows, rows...)
 }
 
+func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
+	checker := privilege.GetPrivilegeManager(sctx)
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if !table.IsBaseTable() {
+				continue
+			}
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+			for _, fk := range table.ForeignKeys {
+				updateRule, deleteRule := "NO ACTION", "NO ACTION"
+				if ast.ReferOptionType(fk.OnUpdate) != 0 {
+					updateRule = ast.ReferOptionType(fk.OnUpdate).String()
+				}
+				if ast.ReferOptionType(fk.OnDelete) != 0 {
+					deleteRule = ast.ReferOptionType(fk.OnDelete).String()
+				}
+				record := types.MakeDatums(
+					infoschema.CatalogVal, // CONSTRAINT_CATALOG
+					schema.Name.O,         // CONSTRAINT_SCHEMA
+					fk.Name.O,             // CONSTRAINT_NAME
+					infoschema.CatalogVal, // UNIQUE_CONSTRAINT_CATALOG
+					schema.Name.O,         // UNIQUE_CONSTRAINT_SCHEMA
+					"PRIMARY",             // UNIQUE_CONSTRAINT_NAME
+					"NONE",                // MATCH_OPTION
+					updateRule,            // UPDATE_RULE
+					deleteRule,            // DELETE_RULE
+					table.Name.O,          // TABLE_NAME
+					fk.RefTable.O,         // REFERENCED_TABLE_NAME
+				)
+				rows = append(rows, record)
+			}
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx, sctx)
 	if err != nil {
@@ -479,10 +526,6 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 			createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
 
 			createOptions := ""
-
-			if table.IsSequence() {
-				continue
-			}
 
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
@@ -520,6 +563,12 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				tableType := "BASE TABLE"
 				if util.IsSystemView(schema.Name.L) {
 					tableType = "SYSTEM VIEW"
+				}
+				if table.IsSequence() {
+					tableType = "SEQUENCE"
+					if rowCount == 0 {
+						rowCount = 1
+					}
 				}
 				if table.PKIsHandle || table.IsCommonHandle {
 					pkType = "CLUSTERED"
@@ -2716,4 +2765,84 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 		e.rowIdx = 0
 	}
 	return rows, nil
+}
+
+func (e *memtableRetriever) setDataForRegionLabel(ctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	rules, err := infosync.GetAllLabelRules(context.TODO())
+	failpoint.Inject("mockOutputOfRegionLabel", func() {
+		convert := func(i interface{}) interface{} {
+			return i
+		}
+		rules = []*label.Rule{
+			{
+				ID:       "schema/test/test_label",
+				Labels:   []label.Label{{Key: "nomerge", Value: "true"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				RuleType: "key-range",
+				Rule: convert(map[string]interface{}{
+					"start_key": "7480000000000000ff395f720000000000fa",
+					"end_key":   "7480000000000000ff3a5f720000000000fa",
+				}),
+			},
+		}
+		err = nil
+	})
+
+	if err != nil {
+		return errors.Wrap(err, "get region label failed")
+	}
+	for _, rule := range rules {
+		skip := true
+		dbName, tableName, err := checkRule(rule)
+		if err != nil {
+			return err
+		}
+		if tableName != "" && dbName != "" && (checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.SelectPriv)) {
+			skip = false
+		}
+		if skip {
+			continue
+		}
+
+		labels := rule.Labels.Restore()
+		keyRange := make(map[string]string)
+		for k, v := range rule.Rule.(map[string]interface{}) {
+			keyRange[k] = v.(string)
+		}
+
+		row := types.MakeDatums(
+			rule.ID,
+			rule.RuleType,
+			labels,
+			keyRange["start_key"],
+			keyRange["end_key"],
+		)
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
+func checkRule(rule *label.Rule) (dbName, tableName string, err error) {
+	s := strings.Split(rule.ID, "/")
+	if len(s) < 3 {
+		err = errors.Errorf("invalid label rule ID: %v", rule.ID)
+		return
+	}
+	if rule.RuleType == "" {
+		err = errors.New("empty label rule type")
+		return
+	}
+	if rule.Labels == nil || len(rule.Labels) == 0 {
+		err = errors.New("the label rule has no label")
+		return
+	}
+	if rule.Rule == nil {
+		err = errors.New("the label rule has no rule")
+		return
+	}
+	dbName = s[1]
+	tableName = s[2]
+	return
 }

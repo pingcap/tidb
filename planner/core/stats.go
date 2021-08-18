@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -344,7 +345,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 		// TODO: Can we make a more careful check on whether the optimization depends on mutable constants?
 		ds.ctx.GetSessionVars().StmtCtx.OptimDependOnMutableConst = true
-		if ds.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+		if ds.ctx.GetSessionVars().StmtCtx.InVerboseExplain {
 			var tableName string
 			if ds.TableAsName.O == "" {
 				tableName = ds.tableInfo.Name.O

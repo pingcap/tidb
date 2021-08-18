@@ -12,6 +12,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -783,6 +784,11 @@ type tidbDecodeSQLDigestsFunctionClass struct {
 func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
+	}
+
+	pm := privilege.GetPrivilegeManager(ctx)
+	if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
+		return nil, errSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 
 	var argTps []types.EvalType

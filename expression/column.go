@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -235,7 +236,7 @@ func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 func (col *Column) EqualByExprAndID(_ sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
 		expr, isOk := col.VirtualExpr.(*ScalarFunction)
-		isVirExprMatched := isOk && expr.Equal(nil, newCol.VirtualExpr) && expr.RetType.Equal(newCol.RetType)
+		isVirExprMatched := isOk && expr.Equal(nil, newCol.VirtualExpr) && col.RetType.Equal(newCol.RetType)
 		return (newCol.UniqueID == col.UniqueID) || isVirExprMatched
 	}
 	return false

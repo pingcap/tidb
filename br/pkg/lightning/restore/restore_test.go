@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -947,8 +948,8 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 			s.tableInfo.DB: s.dbInfo,
 		},
 		tableWorkers:      worker.NewPool(ctx, 6, "table"),
-		indexWorkers:      worker.NewPool(ctx, 2, "index"),
 		ioWorkers:         worker.NewPool(ctx, 5, "io"),
+		indexWorkers:      worker.NewPool(ctx, 2, "index"),
 		regionWorkers:     worker.NewPool(ctx, 10, "region"),
 		checksumWorks:     worker.NewPool(ctx, 2, "region"),
 		saveCpCh:          chptCh,
@@ -1597,7 +1598,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 							"id": 2
 						},
 						"status": {
-							"available": "24"
+							"capacity": "24"
 						}
 					}
 				]
@@ -1605,7 +1606,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 			[]byte(`{
 				"max-replicas": 1
 			}`),
-			"(.*)Cluster resources are rich for this import task(.*)",
+			"(.*)Cluster capacity is rich(.*)",
 			true,
 			0,
 		},
@@ -1618,7 +1619,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 							"id": 2
 						},
 						"status": {
-							"available": "23"
+							"capacity": "15"
 						}
 					}
 				]
@@ -1663,7 +1664,12 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 		url := strings.TrimPrefix(server.URL, "https://")
 		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
 		rc := &Controller{cfg: cfg, tls: tls, store: mockStore, checkTemplate: template}
-		err := rc.ClusterResource(ctx)
+		var sourceSize int64
+		err = rc.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+			sourceSize += size
+			return nil
+		})
+		err = rc.ClusterResource(ctx, sourceSize)
 		c.Assert(err, IsNil)
 
 		c.Assert(template.FailedCount(Critical), Equals, ca.expectErrorCount)

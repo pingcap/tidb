@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,11 +17,10 @@ package ranger_test
 import (
 	"context"
 	"fmt"
+
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -30,39 +30,17 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = SerialSuites(&testRangerSuite{})
-
-type testRangerSuite struct {
-	*parser.Parser
-	testData testutil.TestData
-}
-
-func (s *testRangerSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
-	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "ranger_suite")
-	c.Assert(err, IsNil)
-}
-
-func (s *testRangerSuite) TearDownSuite(c *C) {
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
-}
-
-func newDomainStoreWithBootstrap(c *C) (*domain.Domain, kv.Storage, error) {
+func newDomainStoreWithBootstrap(t *testing.T) (*domain.Domain, kv.Storage, error) {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	if err != nil {
@@ -72,15 +50,15 @@ func newDomainStoreWithBootstrap(c *C) (*domain.Domain, kv.Storage, error) {
 	return dom, store, errors.Trace(err)
 }
 
-func (s *testRangerSuite) TestTableRange(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestTableRange(t *testing.T) {
+	t.Parallel()
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int unsigned)")
@@ -299,44 +277,46 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 
 	ctx := context.Background()
 	for _, tt := range tests {
-		sql := "select * from t where " + tt.exprStr
-		sctx := testKit.Se.(sessionctx.Context)
-		stmts, err := session.Parse(sctx, sql)
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
-		c.Assert(stmts, HasLen, 1)
-		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		conds := make([]expression.Expression, len(selection.Conditions))
-		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
-		}
-		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
-		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
-		c.Assert(col, NotNil)
-		var filter []expression.Expression
-		conds, filter = ranger.DetachCondsForColumn(sctx, conds, col)
-		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		result, err := ranger.BuildTableRange(conds, new(stmtctx.StatementContext), col.RetType)
-		c.Assert(err, IsNil, Commentf("failed to build table range for expr %s", tt.exprStr))
-		got := fmt.Sprintf("%v", result)
-		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+		t.Run(tt.exprStr, func(t *testing.T) {
+			sql := "select * from t where " + tt.exprStr
+			sctx := testKit.Session().(sessionctx.Context)
+			stmts, err := session.Parse(sctx, sql)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			ret := &plannercore.PreprocessorReturn{}
+			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
+			require.NoError(t, err)
+			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			conds := make([]expression.Expression, len(selection.Conditions))
+			for i, cond := range selection.Conditions {
+				conds[i] = expression.PushDownNot(sctx, cond)
+			}
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
+			require.NotNil(t, col)
+			var filter []expression.Expression
+			conds, filter = ranger.DetachCondsForColumn(sctx, conds, col)
+			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
+			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", filter))
+			result, err := ranger.BuildTableRange(conds, new(stmtctx.StatementContext), col.RetType)
+			require.NoError(t, err)
+			got := fmt.Sprintf("%v", result)
+			require.Equal(t, tt.resultStr, got)
+		})
 	}
 }
 
-func (s *testRangerSuite) TestIndexRange(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestIndexRange(t *testing.T) {
+	t.Parallel()
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec(`
@@ -643,44 +623,46 @@ create table t(
 	defer func() { collate.SetNewCollationEnabledForTest(false) }()
 	ctx := context.Background()
 	for _, tt := range tests {
-		sql := "select * from t where " + tt.exprStr
-		sctx := testKit.Se.(sessionctx.Context)
-		stmts, err := session.Parse(sctx, sql)
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
-		c.Assert(stmts, HasLen, 1)
-		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
-		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
-		conds := make([]expression.Expression, len(selection.Conditions))
-		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
-		}
-		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
-		c.Assert(cols, NotNil)
-		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
-		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		got := fmt.Sprintf("%v", res.Ranges)
-		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+		t.Run(tt.exprStr, func(t *testing.T) {
+			sql := "select * from t where " + tt.exprStr
+			sctx := testKit.Session().(sessionctx.Context)
+			stmts, err := session.Parse(sctx, sql)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			ret := &plannercore.PreprocessorReturn{}
+			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
+			require.NoError(t, err)
+			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			require.NotNil(t, selection)
+			conds := make([]expression.Expression, len(selection.Conditions))
+			for i, cond := range selection.Conditions {
+				conds[i] = expression.PushDownNot(sctx, cond)
+			}
+			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+			require.NotNil(t, cols)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+			require.NoError(t, err)
+			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
+			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
+			got := fmt.Sprintf("%v", res.Ranges)
+			require.Equal(t, tt.resultStr, got)
+		})
 	}
 }
 
 // for issue #6661
-func (s *testRangerSuite) TestIndexRangeForUnsignedAndOverflow(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestIndexRangeForUnsignedAndOverflow(t *testing.T) {
+	t.Parallel()
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec(`
@@ -834,43 +816,44 @@ create table t(
 
 	ctx := context.Background()
 	for _, tt := range tests {
-		sql := "select * from t where " + tt.exprStr
-		sctx := testKit.Se.(sessionctx.Context)
-		stmts, err := session.Parse(sctx, sql)
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
-		c.Assert(stmts, HasLen, 1)
-		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
-		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
-		conds := make([]expression.Expression, len(selection.Conditions))
-		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
-		}
-		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
-		c.Assert(cols, NotNil)
-		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
-		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		got := fmt.Sprintf("%v", res.Ranges)
-		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+		t.Run(tt.exprStr, func(t *testing.T) {
+			sql := "select * from t where " + tt.exprStr
+			sctx := testKit.Session().(sessionctx.Context)
+			stmts, err := session.Parse(sctx, sql)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			ret := &plannercore.PreprocessorReturn{}
+			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
+			require.NoError(t, err)
+			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			require.NotNil(t, selection)
+			conds := make([]expression.Expression, len(selection.Conditions))
+			for i, cond := range selection.Conditions {
+				conds[i] = expression.PushDownNot(sctx, cond)
+			}
+			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+			require.NotNil(t, cols)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+			require.NoError(t, err)
+			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
+			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
+			got := fmt.Sprintf("%v", res.Ranges)
+			require.Equal(t, tt.resultStr, got)
+		})
 	}
 }
 
-func (s *testRangerSuite) TestColumnRange(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestColumnRange(t *testing.T) {
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b double, c float(3, 2), d varchar(3), e bigint unsigned)")
@@ -1198,46 +1181,48 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 
 	ctx := context.Background()
 	for _, tt := range tests {
-		sql := "select * from t where " + tt.exprStr
-		sctx := testKit.Se.(sessionctx.Context)
-		stmts, err := session.Parse(sctx, sql)
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
-		c.Assert(stmts, HasLen, 1)
-		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		ds, ok := sel.Children()[0].(*plannercore.DataSource)
-		c.Assert(ok, IsTrue, Commentf("expr:%v", tt.exprStr))
-		conds := make([]expression.Expression, len(sel.Conditions))
-		for i, cond := range sel.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
-		}
-		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
-		c.Assert(col, NotNil)
-		conds = ranger.ExtractAccessConditionsForColumn(conds, col)
-		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType, tt.length)
-		c.Assert(err, IsNil)
-		got := fmt.Sprintf("%v", result)
-		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s, col: %v", tt.exprStr, col))
+		t.Run(tt.exprStr, func(t *testing.T) {
+			sql := "select * from t where " + tt.exprStr
+			sctx := testKit.Session().(sessionctx.Context)
+			stmts, err := session.Parse(sctx, sql)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			ret := &plannercore.PreprocessorReturn{}
+			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
+			require.NoError(t, err)
+			sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			ds, ok := sel.Children()[0].(*plannercore.DataSource)
+			require.True(t, ok)
+			conds := make([]expression.Expression, len(sel.Conditions))
+			for i, cond := range sel.Conditions {
+				conds[i] = expression.PushDownNot(sctx, cond)
+			}
+			col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
+			require.NotNil(t, col)
+			conds = ranger.ExtractAccessConditionsForColumn(conds, col)
+			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
+			result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType, tt.length)
+			require.NoError(t, err)
+			got := fmt.Sprintf("%v", result)
+			require.Equal(t, tt.resultStr, got)
+		})
 	}
 }
 
-func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestIndexRangeEliminatedProjection(t *testing.T) {
+	t.Parallel()
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	testKit.MustExec("create table t(a int not null, b int not null, primary key(a,b))")
 	testKit.MustExec("insert into t values(1,2)")
 	testKit.MustExec("analyze table t")
@@ -1254,15 +1239,14 @@ func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
 	))
 }
 
-func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestCompIndexInExprCorrCol(t *testing.T) {
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int primary key, b int, c int, d int, e int, index idx(b,c,d))")
@@ -1274,25 +1258,25 @@ func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
 		SQL    string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func (s *testRangerSuite) TestIndexStringIsTrueRange(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestIndexStringIsTrueRange(t *testing.T) {
+	t.Parallel()
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t0")
 	testKit.MustExec("CREATE TABLE t0(c0 TEXT(10));")
@@ -1305,25 +1289,25 @@ func (s *testRangerSuite) TestIndexStringIsTrueRange(c *C) {
 		SQL    string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func (s *testRangerSuite) TestCompIndexDNFMatch(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestCompIndexDNFMatch(t *testing.T) {
+	t.Parallel()
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, key(a,b,c));")
@@ -1335,29 +1319,29 @@ func (s *testRangerSuite) TestCompIndexDNFMatch(c *C) {
 		Plan   []string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func (s *testRangerSuite) TestCompIndexMultiColDNF1(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestCompIndexMultiColDNF1(t *testing.T) {
+	t.Parallel()
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a,b));")
 	testKit.MustExec("insert into t values(1,1,1),(2,2,3)")
@@ -1369,29 +1353,29 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF1(c *C) {
 		Plan   []string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func (s *testRangerSuite) TestCompIndexMultiColDNF2(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestCompIndexMultiColDNF2(t *testing.T) {
+	t.Parallel()
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a,b,c));")
 	testKit.MustExec("insert into t values(1,1,1),(2,2,3)")
@@ -1403,27 +1387,27 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF2(c *C) {
 		Plan   []string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func (s *testRangerSuite) TestPrefixIndexMultiColDNF(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestPrefixIndexMultiColDNF(t *testing.T) {
+	t.Parallel()
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test;")
 	testKit.MustExec("drop table if exists t2;")
 	testKit.MustExec("create table t2 (id int unsigned not null auto_increment primary key, t text, index(t(3)));")
@@ -1435,13 +1419,13 @@ func (s *testRangerSuite) TestPrefixIndexMultiColDNF(c *C) {
 		Plan   []string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	testData.GetTestCases(t, &input, &output)
 	inputLen := len(input)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
@@ -1451,15 +1435,15 @@ func (s *testRangerSuite) TestPrefixIndexMultiColDNF(c *C) {
 	}
 }
 
-func (s *testRangerSuite) TestIndexRangeForBit(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestIndexRangeForBit(t *testing.T) {
+	t.Parallel()
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test;")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	testKit.MustExec("set @@tidb_executor_concurrency = 1;")
@@ -1478,27 +1462,27 @@ func (s *testRangerSuite) TestIndexRangeForBit(c *C) {
 		Plan   []string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestIndexRangeForYear(t *testing.T) {
+	t.Parallel()
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 
 	// for issue #20101: overflow when converting integer to year
 	testKit.MustExec("use test")
@@ -1622,44 +1606,46 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 
 	ctx := context.Background()
 	for _, tt := range tests {
-		sql := "select * from t where " + tt.exprStr
-		sctx := testKit.Se.(sessionctx.Context)
-		stmts, err := session.Parse(sctx, sql)
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
-		c.Assert(stmts, HasLen, 1)
-		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
-		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
-		conds := make([]expression.Expression, len(selection.Conditions))
-		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
-		}
-		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
-		c.Assert(cols, NotNil)
-		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
-		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		got := fmt.Sprintf("%v", res.Ranges)
-		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+		t.Run(tt.exprStr, func(t *testing.T) {
+			sql := "select * from t where " + tt.exprStr
+			sctx := testKit.Session().(sessionctx.Context)
+			stmts, err := session.Parse(sctx, sql)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			ret := &plannercore.PreprocessorReturn{}
+			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
+			require.NoError(t, err)
+			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			require.NotNil(t, selection)
+			conds := make([]expression.Expression, len(selection.Conditions))
+			for i, cond := range selection.Conditions {
+				conds[i] = expression.PushDownNot(sctx, cond)
+			}
+			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+			require.NotNil(t, cols)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+			require.NoError(t, err)
+			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
+			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
+			got := fmt.Sprintf("%v", res.Ranges)
+			require.Equal(t, tt.resultStr, got)
+		})
 	}
 }
 
 // For https://github.com/pingcap/tidb/issues/22032
-func (s *testRangerSuite) TestPrefixIndexRangeScan(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestPrefixIndexRangeScan(t *testing.T) {
+	t.Parallel()
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -1693,43 +1679,45 @@ func (s *testRangerSuite) TestPrefixIndexRangeScan(c *C) {
 
 	ctx := context.Background()
 	for _, tt := range tests {
-		sql := "select * from t where " + tt.exprStr
-		sctx := testKit.Se.(sessionctx.Context)
-		stmts, err := session.Parse(sctx, sql)
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
-		c.Assert(stmts, HasLen, 1)
-		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
-		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
-		conds := make([]expression.Expression, len(selection.Conditions))
-		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
-		}
-		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
-		c.Assert(cols, NotNil)
-		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
-		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		got := fmt.Sprintf("%v", res.Ranges)
-		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+		t.Run(tt.exprStr, func(t *testing.T) {
+			sql := "select * from t where " + tt.exprStr
+			sctx := testKit.Session().(sessionctx.Context)
+			stmts, err := session.Parse(sctx, sql)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			ret := &plannercore.PreprocessorReturn{}
+			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
+			require.NoError(t, err)
+			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			require.NotNil(t, selection)
+			conds := make([]expression.Expression, len(selection.Conditions))
+			for i, cond := range selection.Conditions {
+				conds[i] = expression.PushDownNot(sctx, cond)
+			}
+			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+			require.NotNil(t, cols)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+			require.NoError(t, err)
+			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
+			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
+			got := fmt.Sprintf("%v", res.Ranges)
+			require.Equal(t, tt.resultStr, got)
+		})
 	}
 }
 
-func (s *testRangerSuite) TestIndexRangeForDecimal(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestIndexRangeForDecimal(t *testing.T) {
+	t.Parallel()
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test;")
 	testKit.MustExec("drop table if exists t1, t2;")
 	testKit.MustExec("create table t1(a decimal unsigned, key(a));")
@@ -1743,27 +1731,27 @@ func (s *testRangerSuite) TestIndexRangeForDecimal(c *C) {
 		Plan   []string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func (s *testRangerSuite) TestPrefixIndexAppendPointRanges(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
+func TestPrefixIndexAppendPointRanges(t *testing.T) {
+	t.Parallel()
+	dom, store, err := newDomainStoreWithBootstrap(t)
 	defer func() {
 		dom.Close()
-		store.Close()
+		require.NoError(t, store.Close())
 	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	require.NoError(t, err)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("USE test")
 	testKit.MustExec("DROP TABLE IF EXISTS IDT_20755")
 	testKit.MustExec("CREATE TABLE `IDT_20755` (\n" +
@@ -1781,12 +1769,12 @@ func (s *testRangerSuite) TestPrefixIndexAppendPointRanges(c *C) {
 		Plan   []string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	testData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))

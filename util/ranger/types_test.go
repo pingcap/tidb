@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,19 +16,16 @@ package ranger_test
 
 import (
 	"math"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testRangeSuite{})
-
-type testRangeSuite struct {
-}
-
-func (s *testRangeSuite) TestRange(c *C) {
+func TestRange(t *testing.T) {
+	t.Parallel()
 	simpleTests := []struct {
 		ran ranger.Range
 		str string
@@ -73,8 +71,8 @@ func (s *testRangeSuite) TestRange(c *C) {
 			str: "[-inf,1)",
 		},
 	}
-	for _, t := range simpleTests {
-		c.Assert(t.ran.String(), Equals, t.str)
+	for _, v := range simpleTests {
+		require.Equal(t, v.str, v.ran.String())
 	}
 
 	isPointTests := []struct {
@@ -127,12 +125,13 @@ func (s *testRangeSuite) TestRange(c *C) {
 		},
 	}
 	sc := new(stmtctx.StatementContext)
-	for _, t := range isPointTests {
-		c.Assert(t.ran.IsPoint(sc), Equals, t.isPoint)
+	for _, v := range isPointTests {
+		require.Equal(t, v.isPoint, v.ran.IsPoint(sc))
 	}
 }
 
-func (s *testRangeSuite) TestIsFullRange(c *C) {
+func TestIsFullRange(t *testing.T) {
+	t.Parallel()
 	nullDatum := types.MinNotNullDatum()
 	nullDatum.SetNull()
 	isFullRangeTests := []struct {
@@ -182,7 +181,7 @@ func (s *testRangeSuite) TestIsFullRange(c *C) {
 			isFullRange: true,
 		},
 	}
-	for _, t := range isFullRangeTests {
-		c.Assert(t.ran.IsFullRange(), Equals, t.isFullRange)
+	for _, v := range isFullRangeTests {
+		require.Equal(t, v.isFullRange, v.ran.IsFullRange())
 	}
 }

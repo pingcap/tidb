@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -65,6 +66,7 @@ import (
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.etcd.io/etcd/clientv3"
 	"google.golang.org/grpc"
 )
@@ -841,6 +843,50 @@ func (s *testSessionSuite) TestRetryGlobalTempTable(c *C) {
 	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 2", "100 104"))
 }
 
+func (s *testSessionSuite) TestRetryLocalTempTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_noop_functions=true")
+	tk.MustExec("drop table if exists normal_table")
+	tk.MustExec("create table normal_table(a int primary key, b int)")
+	defer tk.MustExec("drop table if exists normal_table")
+	tk.MustExec("drop table if exists temp_table")
+	tk.MustExec("create temporary table l_temp_table(a int primary key, b int)")
+	defer tk.MustExec("drop table if exists l_temp_table")
+
+	// insert select
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("insert normal_table value(100, 100)")
+	tk.MustExec("set @@autocommit = 0")
+	// used to make conflicts
+	tk.MustExec("update normal_table set b=b+1 where a=100")
+	tk.MustExec("insert l_temp_table value(1, 2)")
+	tk.MustExec("insert normal_table select * from l_temp_table")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 3)
+
+	// try to conflict with tk
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("update normal_table set b=b+1 where a=100")
+
+	// It will retry internally.
+	tk.MustExec("commit")
+	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 2", "100 102"))
+	tk.MustQuery("select a, b from l_temp_table order by a").Check(testkit.Rows("1 2"))
+
+	// update multi-tables
+	tk.MustExec("update normal_table set b=b+1 where a=100")
+	tk.MustExec("insert l_temp_table value(3, 4)")
+	// before update: normal_table=(1 1) (100 102), temp_table=(1 2)
+	tk.MustExec("update normal_table, l_temp_table set normal_table.b=l_temp_table.b where normal_table.a=l_temp_table.a")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 3)
+
+	// try to conflict with tk
+	tk1.MustExec("update normal_table set b=b+1 where a=100")
+
+	// It will retry internally.
+	tk.MustExec("commit")
+	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 2", "100 104"))
+}
+
 func (s *testSessionSuite) TestRetryShow(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set @@autocommit = 0")
@@ -1328,8 +1374,9 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	c.Assert(id, Equals, uint32(1))
 	c.Assert(ps, Equals, 1)
 	tk.MustExec(`set @a=1`)
-	_, err = tk.Se.ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum("1")})
+	rs, err := tk.Se.ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum("1")})
 	c.Assert(err, IsNil)
+	rs.Close()
 	err = tk.Se.DropPreparedStmt(id)
 	c.Assert(err, IsNil)
 
@@ -1349,7 +1396,7 @@ func (s *testSessionSuite) TestPrepare(c *C) {
 	tk.MustExec("insert multiexec values (1, 1), (2, 2)")
 	id, _, _, err = tk.Se.PrepareStmt("select a from multiexec where b = ? order by b")
 	c.Assert(err, IsNil)
-	rs, err := tk.Se.ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum(1)})
+	rs, err = tk.Se.ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum(1)})
 	c.Assert(err, IsNil)
 	rs.Close()
 	rs, err = tk.Se.ExecutePreparedStmt(ctx, id, []types.Datum{types.NewDatum(2)})
@@ -1963,17 +2010,26 @@ func (s *testSessionSuite3) TestCaseInsensitive(c *C) {
 
 	tk.MustExec("create table T (a text, B int)")
 	tk.MustExec("insert t (A, b) values ('aaa', 1)")
-	rs, _ := tk.Exec("select * from t")
+	rs, err := tk.Exec("select * from t")
+	c.Assert(err, IsNil)
 	fields := rs.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "a")
 	c.Assert(fields[1].ColumnAsName.O, Equals, "B")
-	rs, _ = tk.Exec("select A, b from t")
+	rs.Close()
+
+	rs, err = tk.Exec("select A, b from t")
+	c.Assert(err, IsNil)
 	fields = rs.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
 	c.Assert(fields[1].ColumnAsName.O, Equals, "b")
-	rs, _ = tk.Exec("select a as A from t where A > 0")
+	rs.Close()
+
+	rs, err = tk.Exec("select a as A from t where A > 0")
+	c.Assert(err, IsNil)
 	fields = rs.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "A")
+	rs.Close()
+
 	tk.MustExec("update T set b = B + 1")
 	tk.MustExec("update T set B = b + 1")
 	tk.MustQuery("select b from T").Check(testkit.Rows("3"))
@@ -2823,8 +2879,8 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	c.Assert(failpoint.Enable("tikvclient/probeSetVars", `return(true)`), IsNil)
 	tk.MustExec("select * from kvvars where a = 1")
 	c.Assert(failpoint.Disable("tikvclient/probeSetVars"), IsNil)
-	c.Assert(tikv.SetSuccess, IsTrue)
-	tikv.SetSuccess = false
+	c.Assert(transaction.SetSuccess, IsTrue)
+	transaction.SetSuccess = false
 }
 
 func (s *testSessionSuite2) TestCommitRetryCount(c *C) {
@@ -4693,6 +4749,8 @@ func (s *testSessionSuite) TestTMPTableSize(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_global_temporary_table=on")
 	tk.MustExec("create global temporary table t (c1 int, c2 varchar(512)) on commit delete rows")
+	tk.MustExec("set tidb_enable_noop_functions=on")
+	tk.MustExec("create temporary table tl (c1 int, c2 varchar(512))")
 
 	tk.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows(strconv.Itoa(variable.DefTMPTableSize)))
 	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(variable.DefTMPTableSize))
@@ -4715,6 +4773,21 @@ func (s *testSessionSuite) TestTMPTableSize(c *C) {
 	tk.MustExec("insert into t values (1, repeat('x', 512))")
 	tk.MustExec("insert into t values (1, repeat('x', 512))")
 	tk.MustGetErrCode("insert into t values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("rollback")
+
+	// Check local temporary table
+	tk.MustExec("begin")
+	tk.MustExec("insert into tl values (1, repeat('x', 512))")
+	tk.MustExec("insert into tl values (1, repeat('x', 512))")
+	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("rollback")
+
+	// Check local temporary table with some data in session
+	tk.MustExec("insert into tl values (1, repeat('x', 512))")
+	tk.MustExec("begin")
+	tk.MustExec("insert into tl values (1, repeat('x', 512))")
+	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("rollback")
 }
 
 func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {

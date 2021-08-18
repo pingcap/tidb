@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,8 +20,15 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/types"
 )
+
+type testSlice []int
+
+func (a testSlice) Len() int           { return len(a) }
+func (a testSlice) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a testSlice) Less(i, j int) bool { return a[i] < a[j] }
 
 func (s *testSuite) TestPercentile(c *C) {
 	tests := []aggTest{
@@ -33,5 +41,14 @@ func (s *testSuite) TestPercentile(c *C) {
 	}
 	for _, test := range tests {
 		s.testAggFunc(c, test)
+	}
+
+	data := testSlice{}
+	for i := 1; i <= 28; i++ {
+		data = append(data, i)
+	}
+	for i := 0; i < 10; i++ {
+		index := aggfuncs.PercentileForTesting(data, 100)
+		c.Assert(28, Equals, data[index])
 	}
 }
