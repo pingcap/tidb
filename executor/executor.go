@@ -269,9 +269,10 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	base := e.base()
 	if base.runtimeStats != nil {
 		start := time.Now()
-		if _, ok := e.(*ExchangeReceiverPassThroughHT); !ok {
-			defer func() { base.runtimeStats.Record(time.Since(start), req.NumRows()) }()
-		}
+		// if _, ok := e.(*ExchangeReceiverPassThroughHT); !ok {
+		// TODO: finish row num stats
+		defer func() { base.runtimeStats.Record(time.Since(start), 0) }()
+		// }
 	}
 	sessVars := base.ctx.GetSessionVars()
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {

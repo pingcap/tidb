@@ -466,9 +466,9 @@ func (a *ExecStmt) cutTreeByExchangeHelper(ctx context.Context, e Executor) erro
 			}
 			a.startedSender[e.base().id] = true
 			go func(ctx context.Context, e Executor, startedSender map[int]bool) {
-				req := newFirstChunk(e)
+				// req := newFirstChunk(e)
 				for {
-					if err := Next(ctx, e, req); err != nil {
+					if err := Next(ctx, e, nil); err != nil {
 						// TODO: another way to indicates done
 						// fmt.Println(err)
 						break
