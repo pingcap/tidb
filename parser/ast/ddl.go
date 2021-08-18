@@ -71,12 +71,25 @@ const (
 	DatabaseOptionCharset
 	DatabaseOptionCollate
 	DatabaseOptionEncryption
+	DatabaseOptionPlacementPrimaryRegion       = DatabaseOptionType(PlacementOptionPrimaryRegion)
+	DatabaseOptionPlacementRegions             = DatabaseOptionType(PlacementOptionRegions)
+	DatabaseOptionPlacementFollowerCount       = DatabaseOptionType(PlacementOptionFollowerCount)
+	DatabaseOptionPlacementVoterCount          = DatabaseOptionType(PlacementOptionVoterCount)
+	DatabaseOptionPlacementLearnerCount        = DatabaseOptionType(PlacementOptionLearnerCount)
+	DatabaseOptionPlacementSchedule            = DatabaseOptionType(PlacementOptionSchedule)
+	DatabaseOptionPlacementConstraints         = DatabaseOptionType(PlacementOptionConstraints)
+	DatabaseOptionPlacementLeaderConstraints   = DatabaseOptionType(PlacementOptionLeaderConstraints)
+	DatabaseOptionPlacementLearnerConstraints  = DatabaseOptionType(PlacementOptionLearnerConstraints)
+	DatabaseOptionPlacementFollowerConstraints = DatabaseOptionType(PlacementOptionFollowerConstraints)
+	DatabaseOptionPlacementVoterConstraints    = DatabaseOptionType(PlacementOptionVoterConstraints)
+	DatabaseOptionPlacementPolicy              = DatabaseOptionType(PlacementOptionPolicy)
 )
 
 // DatabaseOption represents database option.
 type DatabaseOption struct {
-	Tp    DatabaseOptionType
-	Value string
+	Tp        DatabaseOptionType
+	Value     string
+	UintValue uint64
 }
 
 // Restore implements Node interface.
@@ -94,6 +107,13 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ENCRYPTION")
 		ctx.WritePlain(" = ")
 		ctx.WriteString(n.Value)
+	case DatabaseOptionPlacementPrimaryRegion, DatabaseOptionPlacementRegions, DatabaseOptionPlacementFollowerCount, DatabaseOptionPlacementLeaderConstraints, DatabaseOptionPlacementLearnerCount, DatabaseOptionPlacementVoterCount, DatabaseOptionPlacementSchedule, DatabaseOptionPlacementConstraints, DatabaseOptionPlacementFollowerConstraints, DatabaseOptionPlacementVoterConstraints, DatabaseOptionPlacementLearnerConstraints, DatabaseOptionPlacementPolicy:
+		placementOpt := PlacementOption{
+			Tp:        PlacementOptionType(n.Tp),
+			UintValue: n.UintValue,
+			StrValue:  n.Value,
+		}
+		return placementOpt.Restore(ctx)
 	default:
 		return errors.Errorf("invalid DatabaseOptionType: %d", n.Tp)
 	}
@@ -1808,6 +1828,88 @@ func (n *RepairTableStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+// PlacementOptionType is the type for PlacementOption
+type PlacementOptionType int
+
+// PlacementOption types.
+const (
+	PlacementOptionPrimaryRegion PlacementOptionType = 0x3000 + iota
+	PlacementOptionRegions
+	PlacementOptionFollowerCount
+	PlacementOptionVoterCount
+	PlacementOptionLearnerCount
+	PlacementOptionSchedule
+	PlacementOptionConstraints
+	PlacementOptionLeaderConstraints
+	PlacementOptionLearnerConstraints
+	PlacementOptionFollowerConstraints
+	PlacementOptionVoterConstraints
+	PlacementOptionPolicy
+)
+
+// PlacementOption is used for parsing placement option.
+type PlacementOption struct {
+	Tp        PlacementOptionType
+	StrValue  string
+	UintValue uint64
+}
+
+func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
+	switch n.Tp {
+	case PlacementOptionPrimaryRegion:
+		ctx.WriteKeyWord("PRIMARY_REGION ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	case PlacementOptionRegions:
+		ctx.WriteKeyWord("REGIONS ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	case PlacementOptionFollowerCount:
+		ctx.WriteKeyWord("FOLLOWERS ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+	case PlacementOptionVoterCount:
+		ctx.WriteKeyWord("VOTERS ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+	case PlacementOptionLearnerCount:
+		ctx.WriteKeyWord("LEARNERS ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+	case PlacementOptionSchedule:
+		ctx.WriteKeyWord("SCHEDULE ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	case PlacementOptionConstraints:
+		ctx.WriteKeyWord("CONSTRAINTS ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	case PlacementOptionLeaderConstraints:
+		ctx.WriteKeyWord("LEADER_CONSTRAINTS ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	case PlacementOptionFollowerConstraints:
+		ctx.WriteKeyWord("FOLLOWER_CONSTRAINTS ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	case PlacementOptionVoterConstraints:
+		ctx.WriteKeyWord("VOTER_CONSTRAINTS ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	case PlacementOptionLearnerConstraints:
+		ctx.WriteKeyWord("LEARNER_CONSTRAINTS ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	case PlacementOptionPolicy:
+		ctx.WriteKeyWord("PLACEMENT POLICY ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.StrValue)
+	default:
+		return errors.Errorf("invalid PlacementOption: %d", n.Tp)
+	}
+	return nil
+}
+
 // TableOptionType is the type for TableOption
 type TableOptionType int
 
@@ -1848,6 +1950,18 @@ const (
 	TableOptionTableCheckSum
 	TableOptionUnion
 	TableOptionEncryption
+	TableOptionPlacementPrimaryRegion       = TableOptionType(PlacementOptionPrimaryRegion)
+	TableOptionPlacementRegions             = TableOptionType(PlacementOptionRegions)
+	TableOptionPlacementFollowerCount       = TableOptionType(PlacementOptionFollowerCount)
+	TableOptionPlacementVoterCount          = TableOptionType(PlacementOptionVoterCount)
+	TableOptionPlacementLearnerCount        = TableOptionType(PlacementOptionLearnerCount)
+	TableOptionPlacementSchedule            = TableOptionType(PlacementOptionSchedule)
+	TableOptionPlacementConstraints         = TableOptionType(PlacementOptionConstraints)
+	TableOptionPlacementLeaderConstraints   = TableOptionType(PlacementOptionLeaderConstraints)
+	TableOptionPlacementLearnerConstraints  = TableOptionType(PlacementOptionLearnerConstraints)
+	TableOptionPlacementFollowerConstraints = TableOptionType(PlacementOptionFollowerConstraints)
+	TableOptionPlacementVoterConstraints    = TableOptionType(PlacementOptionVoterConstraints)
+	TableOptionPlacementPolicy              = TableOptionType(PlacementOptionPolicy)
 )
 
 // RowFormat types
@@ -2113,6 +2227,13 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ENCRYPTION ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.StrValue)
+	case TableOptionPlacementPrimaryRegion, TableOptionPlacementRegions, TableOptionPlacementFollowerCount, TableOptionPlacementLeaderConstraints, TableOptionPlacementLearnerCount, TableOptionPlacementVoterCount, TableOptionPlacementSchedule, TableOptionPlacementConstraints, TableOptionPlacementFollowerConstraints, TableOptionPlacementVoterConstraints, TableOptionPlacementLearnerConstraints, TableOptionPlacementPolicy:
+		placementOpt := PlacementOption{
+			Tp:        PlacementOptionType(n.Tp),
+			UintValue: n.UintValue,
+			StrValue:  n.StrValue,
+		}
+		return placementOpt.Restore(ctx)
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}
@@ -2263,6 +2384,7 @@ const (
 	AlterTableAddPartitions
 	AlterTableAlterPartition
 	AlterTablePartitionAttributes
+	AlterTablePartitionOptions
 	AlterTableCoalescePartitions
 	AlterTableDropPartition
 	AlterTableTruncatePartition
@@ -2698,6 +2820,19 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			}
 			if err := spec.Restore(ctx); err != nil {
 				return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.PlacementSpecs[%d]", i)
+			}
+		}
+	case AlterTablePartitionOptions:
+		ctx.WriteKeyWord("PARTITION ")
+		ctx.WriteName(n.PartitionNames[0].O)
+		ctx.WritePlain(" ")
+
+		for i, opt := range n.Options {
+			if i != 0 {
+				ctx.WritePlain(" ")
+			}
+			if err := opt.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.Options[%d] for PARTITION `%s`", i, n.PartitionNames[0].O)
 			}
 		}
 	case AlterTablePartitionAttributes:
