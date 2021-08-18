@@ -750,7 +750,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 
 func calcCharOctLength(lenInChar int, cs string) int {
 	lenInBytes := lenInChar
-	if desc, err := charset.GetCharsetDesc(cs); err == nil {
+	if desc, err := charset.GetCharsetInfo(cs); err == nil {
 		lenInBytes = desc.Maxlen * lenInChar
 	}
 	return lenInBytes
