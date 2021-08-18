@@ -1,11 +1,8 @@
 package logutil
 
 import (
-	"strconv"
-	"strings"
-	"sync"
 	"time"
-	"unsafe"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -15,10 +12,6 @@ import (
 )
 
 var _pool2 = buffer.NewPool()
-var glBufPool = sync.Pool{New: func() interface{} {
-	slice := make([]byte, 0, 1024)
-	return &slice
-}}
 
 const (
 	logBatchSize = 102400
@@ -26,6 +19,7 @@ const (
 )
 
 type GeneralLogEntry struct {
+	buf                    *buffer.Buffer
 	ConnID                 uint64
 	FnGetUser              func() string
 	FnGetSchemaMetaVersion func() int64
@@ -37,59 +31,144 @@ type GeneralLogEntry struct {
 	FnGetQuery             func() string
 }
 
-func (e GeneralLogEntry) String() string {
+const _hex = "0123456789abcdef"
+
+func (e *GeneralLogEntry) writeToBuffer(buf *buffer.Buffer) {
+	e.buf = buf
 	query := e.FnGetQuery()
 	user := e.FnGetUser()
 
-	// TODO(dragonly): use zap.String like formatter to escape string fields
-	glBuf := *glBufPool.Get().(*([]byte))
-	glBuf = append(glBuf, "[GENERAL_LOG] [conn="...)
-	glBuf = strconv.AppendUint(glBuf, e.ConnID, 10)
-	glBuf = append(glBuf, "] [user="...)
-	glBuf = append(glBuf, user...)
-	glBuf = append(glBuf, "] [schemaVersion="...)
-	glBuf = strconv.AppendInt(glBuf, e.FnGetSchemaMetaVersion(), 10)
-	glBuf = append(glBuf, "] [txnStartTS="...)
-	glBuf = strconv.AppendUint(glBuf, e.TxnStartTS, 10)
-	glBuf = append(glBuf, "] [forUpdateTS="...)
-	glBuf = strconv.AppendUint(glBuf, e.TxnForUpdateTS, 10)
-	glBuf = append(glBuf, "] [isReadConsistency="...)
-	glBuf = strconv.AppendBool(glBuf, e.IsReadConsistency)
-	glBuf = append(glBuf, "] [current_db="...)
-	glBuf = append(glBuf, e.CurrentDB...)
-	glBuf = append(glBuf, "] [txn_mode="...)
-	glBuf = append(glBuf, e.TxnMode...)
-	glBuf = append(glBuf, "] [sql=\""...)
-	glBuf = append(glBuf, query...)
-	glBuf = append(glBuf, "\"]"...)
-	putBack := glBuf[:0]
-	glBufPool.Put(&putBack)
-	return *(*string)(unsafe.Pointer(&glBuf))
+	e.buf.AppendString("[GENERAL_LOG] [conn=")
+	e.buf.AppendUint(e.ConnID)
+	e.buf.AppendString("] [user=")
+	e.safeAddStringWithQuote(user)
+	e.buf.AppendString("] [schemaVersion=")
+	e.buf.AppendInt(e.FnGetSchemaMetaVersion())
+	e.buf.AppendString("] [txnStartTS=")
+	e.buf.AppendUint(e.TxnStartTS)
+	e.buf.AppendString("] [forUpdateTS=")
+	e.buf.AppendUint(e.TxnForUpdateTS)
+	e.buf.AppendString("] [isReadConsistency=")
+	e.buf.AppendBool(e.IsReadConsistency)
+	e.buf.AppendString("] [current_db=")
+	e.buf.AppendString(e.CurrentDB)
+	e.buf.AppendString("] [txn_mode=")
+	e.buf.AppendString(e.TxnMode)
+	e.buf.AppendString("] [sql=")
+	e.safeAddStringWithQuote(query)
+	e.buf.AppendString("]")
+}
+
+// adapted from pingcap/log.textEncoder
+func (e *GeneralLogEntry) safeAddStringWithQuote(s string) {
+	if !needDoubleQuotes(s) {
+		e.safeAddString(s)
+		return
+	}
+	e.buf.AppendByte('"')
+	e.safeAddString(s)
+	e.buf.AppendByte('"')
+}
+
+// adapted from pingcap/log.textEncoder
+func (e *GeneralLogEntry) safeAddString(s string) {
+	for i := 0; i < len(s); {
+		if e.tryAddRuneSelf(s[i]) {
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if e.tryAddRuneError(r, size) {
+			i++
+			continue
+		}
+		e.buf.AppendString(s[i : i+size])
+		i += size
+	}
+}
+
+// adapted from pingcap/log.textEncoder
+func (e *GeneralLogEntry) tryAddRuneSelf(b byte) bool {
+	if b >= utf8.RuneSelf {
+		return false
+	}
+	if 0x20 <= b && b != '\\' && b != '"' {
+		e.buf.AppendByte(b)
+		return true
+	}
+	switch b {
+	case '\\', '"':
+		e.buf.AppendByte('\\')
+		e.buf.AppendByte(b)
+	case '\n':
+		e.buf.AppendByte('\\')
+		e.buf.AppendByte('n')
+	case '\r':
+		e.buf.AppendByte('\\')
+		e.buf.AppendByte('r')
+	case '\t':
+		e.buf.AppendByte('\\')
+		e.buf.AppendByte('t')
+
+	default:
+		// Encode bytes < 0x20, except for the escape sequences above.
+		e.buf.AppendString(`\u00`)
+		e.buf.AppendByte(_hex[b>>4])
+		e.buf.AppendByte(_hex[b&0xF])
+	}
+	return true
+}
+
+// adapted from pingcap/log.textEncoder
+func (e *GeneralLogEntry) tryAddRuneError(r rune, size int) bool {
+	if r == utf8.RuneError && size == 1 {
+		e.buf.AppendString(`\ufffd`)
+		return true
+	}
+	return false
+}
+
+// copied from pingcap/log.textEncoder
+// See [log-fileds](https://github.com/tikv/rfcs/blob/master/text/0018-unified-log-format.md#log-fields-section).
+func needDoubleQuotes(s string) bool {
+	for i := 0; i < len(s); {
+		b := s[i]
+		if b <= 0x20 {
+			return true
+		}
+		switch b {
+		case '\\', '"', '[', ']', '=':
+			return true
+		}
+		i++
+	}
+	return false
 }
 
 type GeneralLog struct {
-	logger  *zap.Logger
-	logChan chan *GeneralLogEntry
+	logger       *zap.Logger
+	logEntryChan chan *GeneralLogEntry
 }
 
 func newGeneralLog(logger *zap.Logger) *GeneralLog {
 	gl := &GeneralLog{
-		logger:  logger,
-		logChan: make(chan *GeneralLogEntry, logBatchSize),
+		logger:       logger,
+		logEntryChan: make(chan *GeneralLogEntry, logBatchSize),
 	}
 	go gl.startWorker()
 	return gl
 }
 
+// TODO(dragonly): try zapcore.BufferedWriteSyncer
 // startWorker starts a log flushing worker that flushes log periodically or when batch is full
 func (gl *GeneralLog) startWorker() {
-	var buf strings.Builder
+	var buf buffer.Buffer
 	var timeBuf [64]byte
 	logCount := 0
 	timeout := time.After(flushTimeout)
 	for {
 		select {
-		case logEntry := <-gl.logChan:
+		case logEntry := <-gl.logEntryChan:
 			if logCount > 0 {
 				buf.WriteByte('\n')
 			}
@@ -99,7 +178,7 @@ func (gl *GeneralLog) startWorker() {
 			timeSlice = now.AppendFormat(timeSlice, "2006/01/02 15:04:05.000 -07:00")
 			timeSlice = append(timeSlice, "] "...)
 			buf.Write(timeSlice)
-			buf.WriteString(logEntry.String())
+			logEntry.writeToBuffer(&buf)
 			logCount += 1
 			if logCount == logBatchSize {
 				gl.logger.Info(buf.String())
@@ -142,97 +221,39 @@ func newGeneralLogLogger(cfg *LogConfig) (*zap.Logger, error) {
 	return generalLogLogger, nil
 }
 
+// generalLogEncoder implements a minimal textEncoder as pingcap/log, which only has the AddString() implementation
 type generalLogEncoder struct{}
 
-func (e *generalLogEncoder) EncodeEntry(entry zapcore.Entry, _ []zapcore.Field) (*buffer.Buffer, error) {
-	b := _pool2.Get()
-	// t := entry.Time
-	// b.WriteByte('[')
-	// b.WriteString(strconv.FormatInt(int64(t.Year()), 10))
-	// b.WriteByte('/')
-	// if t.Month() < 10 {
-	// 	b.WriteByte('0')
-	// }
-	// b.WriteString(strconv.FormatInt(int64(t.Month()), 10))
-	// b.WriteByte('/')
-	// if t.Day() < 10 {
-	// 	b.WriteByte('0')
-	// }
-	// b.WriteString(strconv.FormatInt(int64(t.Day()), 10))
-	// b.WriteByte(' ')
-	// if t.Hour() < 10 {
-	// 	b.WriteByte('0')
-	// }
-	// b.WriteString(strconv.FormatInt(int64(t.Hour()), 10))
-	// b.WriteByte(':')
-	// if t.Minute() < 10 {
-	// 	b.WriteByte('0')
-	// }
-	// b.WriteString(strconv.FormatInt(int64(t.Minute()), 10))
-	// b.WriteByte(':')
-	// if t.Second() < 10 {
-	// 	b.WriteByte('0')
-	// }
-	// b.WriteString(strconv.FormatInt(int64(t.Second()), 10))
-	// b.WriteByte('.')
-	// b.WriteString(strconv.FormatInt(int64(t.Nanosecond()/1000000), 10))
-	// b.WriteByte(' ')
-	// _, offset := t.Zone()
-	// offsetAbs := offset
-	// if offsetAbs < 0 {
-	// 	offsetAbs = -offsetAbs
-	// }
-	// offsetHour := offset / 3600
-	// offsetHourAbs := offsetHour
-	// if offsetHourAbs < 0 {
-	// 	offsetHourAbs = -offsetHourAbs
-	// }
-	// offsetMinuteAbs := offsetAbs/60 - offsetHourAbs*60
-	// if offsetMinuteAbs < 0 {
-	// 	offsetMinuteAbs = -offsetMinuteAbs
-	// }
-	// if offsetHour > 0 {
-	// 	b.WriteByte('+')
-	// }
-	// if offsetHourAbs < 10 {
-	// 	b.WriteByte('0')
-	// }
-	// b.WriteString(strconv.FormatInt(int64(offsetHour), 10))
-	// b.WriteByte(':')
-	// if offsetMinuteAbs < 10 {
-	// 	b.WriteByte('0')
-	// }
-	// b.WriteString(strconv.FormatInt(int64(offsetMinuteAbs), 10))
-	// b.WriteString("] ")
-	b.WriteString(entry.Message)
-	b.WriteByte('\n')
-	// fmt.Fprintf(b, "[%s] %s\n", entry.Time.Format("2006/01/02 15:04:05.000 -07:00") /* keep up with pingcap/log */, entry.Message)
-	return b, nil
+func (enc *generalLogEncoder) EncodeEntry(entry zapcore.Entry, fields []zapcore.Field) (*buffer.Buffer, error) {
+	buf := _pool2.Get()
+	buf.WriteString(entry.Message)
+	buf.WriteByte('\n')
+	return buf, nil
 }
 
-func (e *generalLogEncoder) Clone() zapcore.Encoder                          { return e }
-func (e *generalLogEncoder) AddArray(string, zapcore.ArrayMarshaler) error   { return nil }
-func (e *generalLogEncoder) AddObject(string, zapcore.ObjectMarshaler) error { return nil }
-func (e *generalLogEncoder) AddBinary(string, []byte)                        {}
-func (e *generalLogEncoder) AddByteString(string, []byte)                    {}
-func (e *generalLogEncoder) AddBool(string, bool)                            {}
-func (e *generalLogEncoder) AddComplex128(string, complex128)                {}
-func (e *generalLogEncoder) AddComplex64(string, complex64)                  {}
-func (e *generalLogEncoder) AddDuration(string, time.Duration)               {}
-func (e *generalLogEncoder) AddFloat64(string, float64)                      {}
-func (e *generalLogEncoder) AddFloat32(string, float32)                      {}
-func (e *generalLogEncoder) AddInt(string, int)                              {}
-func (e *generalLogEncoder) AddInt64(string, int64)                          {}
-func (e *generalLogEncoder) AddInt32(string, int32)                          {}
-func (e *generalLogEncoder) AddInt16(string, int16)                          {}
-func (e *generalLogEncoder) AddInt8(string, int8)                            {}
-func (e *generalLogEncoder) AddString(string, string)                        {}
-func (e *generalLogEncoder) AddTime(string, time.Time)                       {}
-func (e *generalLogEncoder) AddUint(string, uint)                            {}
-func (e *generalLogEncoder) AddUint64(string, uint64)                        {}
-func (e *generalLogEncoder) AddUint32(string, uint32)                        {}
-func (e *generalLogEncoder) AddUint16(string, uint16)                        {}
-func (e *generalLogEncoder) AddUint8(string, uint8)                          {}
-func (e *generalLogEncoder) AddUintptr(string, uintptr)                      {}
-func (e *generalLogEncoder) AddReflected(string, interface{}) error          { return nil }
-func (e *generalLogEncoder) OpenNamespace(string)                            {}
+func (enc *generalLogEncoder) Clone() zapcore.Encoder                          { return enc }
+func (enc *generalLogEncoder) AddArray(string, zapcore.ArrayMarshaler) error   { return nil }
+func (enc *generalLogEncoder) AddObject(string, zapcore.ObjectMarshaler) error { return nil }
+func (enc *generalLogEncoder) AddBinary(string, []byte)                        {}
+func (enc *generalLogEncoder) AddByteString(string, []byte)                    {}
+func (enc *generalLogEncoder) AddBool(string, bool)                            {}
+func (enc *generalLogEncoder) AddComplex128(string, complex128)                {}
+func (enc *generalLogEncoder) AddComplex64(string, complex64)                  {}
+func (enc *generalLogEncoder) AddDuration(string, time.Duration)               {}
+func (enc *generalLogEncoder) AddFloat64(string, float64)                      {}
+func (enc *generalLogEncoder) AddFloat32(string, float32)                      {}
+func (enc *generalLogEncoder) AddInt(string, int)                              {}
+func (enc *generalLogEncoder) AddInt64(string, int64)                          {}
+func (enc *generalLogEncoder) AddInt32(string, int32)                          {}
+func (enc *generalLogEncoder) AddInt16(string, int16)                          {}
+func (enc *generalLogEncoder) AddInt8(string, int8)                            {}
+func (enc *generalLogEncoder) AddString(string, string)                        {}
+func (enc *generalLogEncoder) AddTime(string, time.Time)                       {}
+func (enc *generalLogEncoder) AddUint(string, uint)                            {}
+func (enc *generalLogEncoder) AddUint64(string, uint64)                        {}
+func (enc *generalLogEncoder) AddUint32(string, uint32)                        {}
+func (enc *generalLogEncoder) AddUint16(string, uint16)                        {}
+func (enc *generalLogEncoder) AddUint8(string, uint8)                          {}
+func (enc *generalLogEncoder) AddUintptr(string, uintptr)                      {}
+func (enc *generalLogEncoder) AddReflected(string, interface{}) error          { return nil }
+func (enc *generalLogEncoder) OpenNamespace(string)                            {}

@@ -103,7 +103,7 @@ var GeneralLogLogger = log.L()
 var generalLog *GeneralLog
 
 func PutGeneralLogBlocking(entry *GeneralLogEntry) {
-	generalLog.logChan <- entry
+	generalLog.logEntryChan <- entry
 }
 
 // InitLogger initializes a logger with cfg.
