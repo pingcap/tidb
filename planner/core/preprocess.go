@@ -871,7 +871,6 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 	}
 
 	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
-	nonExistsTables := make([]string, 0)
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
@@ -885,7 +884,7 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 
 		tbl, err := p.ensureInfoSchema().TableByName(schema, t.Name)
 		if infoschema.ErrTableNotExists.Equal(err) {
-			nonExistsTables = append(nonExistsTables, ast.Ident{Schema: schema, Name: t.Name}.String())
+			// Non-exist table will be checked in ddl executor
 			continue
 		}
 
@@ -899,14 +898,6 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 			p.err = ErrDropTableOnTemporaryTable
 			return
 		}
-
-		if stmt.TemporaryKeyword == ast.TemporaryLocal && tblInfo.TempTableType != model.TempTableLocal {
-			nonExistsTables = append(nonExistsTables, ast.Ident{Schema: schema, Name: t.Name}.String())
-		}
-	}
-
-	if len(nonExistsTables) > 0 {
-		p.err = infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(nonExistsTables, ","))
 	}
 }
 
@@ -1594,10 +1585,27 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	}
 	if p.LastSnapshotTS != 0 {
 		dom := domain.GetDomain(p.ctx)
-		p.InfoSchema, p.err = dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
-		if p.err != nil {
+		is, err := dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
+		// if infoschema is empty, LastSnapshotTS init failed
+		if err != nil {
+			p.err = err
 			return
 		}
+		if is == nil {
+			p.err = fmt.Errorf("can not get any information schema based on snapshotTS: %d", p.LastSnapshotTS)
+			return
+		}
+		// the same as session.wrapWithTemporaryTable
+		if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); !ok {
+			localTmp := p.ctx.GetSessionVars().LocalTemporaryTables
+			if localTmp != nil {
+				is = &infoschema.TemporaryTableAttachedInfoSchema{
+					InfoSchema:           is,
+					LocalTemporaryTables: localTmp.(*infoschema.LocalTemporaryTables),
+				}
+			}
+		}
+		p.InfoSchema = is
 	}
 	if p.flag&inPrepare == 0 {
 		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
