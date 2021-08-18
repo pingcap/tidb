@@ -1585,10 +1585,27 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	}
 	if p.LastSnapshotTS != 0 {
 		dom := domain.GetDomain(p.ctx)
-		p.InfoSchema, p.err = dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
-		if p.err != nil {
+		is, err := dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
+		// if infoschema is empty, LastSnapshotTS init failed
+		if err != nil {
+			p.err = err
 			return
 		}
+		if is == nil {
+			p.err = fmt.Errorf("can not get any information schema based on snapshotTS: %d", p.LastSnapshotTS)
+			return
+		}
+		// the same as session.wrapWithTemporaryTable
+		if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); !ok {
+			localTmp := p.ctx.GetSessionVars().LocalTemporaryTables
+			if localTmp != nil {
+				is = &infoschema.TemporaryTableAttachedInfoSchema{
+					InfoSchema:           is,
+					LocalTemporaryTables: localTmp.(*infoschema.LocalTemporaryTables),
+				}
+			}
+		}
+		p.InfoSchema = is
 	}
 	if p.flag&inPrepare == 0 {
 		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
