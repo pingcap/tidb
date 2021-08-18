@@ -77,3 +77,33 @@ func SimpleResolveName(node ast.ExprNode, tblInfo *model.TableInfo) (ast.ExprNod
 	}
 	return node, nil
 }
+
+
+// tableResolver is the visitor to get all tables of stmt node
+type tableResolver struct {
+	subQueries []*ast.SubqueryExpr
+	err       error
+}
+
+// Enter implements ast.Visitor interface.
+func (tr *tableResolver) Enter(inNode ast.Node) (ast.Node, bool) {
+	return inNode, false
+}
+
+// Leave implements ast.Visitor interface.
+func (tr *tableResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+	switch v := inNode.(type) {
+	case *ast.SubqueryExpr:
+		tr.subQueries = append(tr.subQueries, v)
+		return inNode, true
+	}
+	return inNode, true
+}
+
+func GetAllSubQuery(node ast.StmtNode) ([]*ast.SubqueryExpr, error) {
+	tr := tableResolver{[]*ast.SubqueryExpr{},nil}
+	if _, ok := node.Accept(&tr); !ok {
+		return nil, errors.Trace(tr.err)
+	}
+	return tr.subQueries, nil
+}
