@@ -1543,6 +1543,20 @@ func (s *testPlanSuite) TestDAGPlanBuilderWindowParallel(c *C) {
 	s.doTestDAGPlanBuilderWindow(c, vars, input, output)
 }
 
+func (s *testPlanSuite) TestTopNPushDownEmpty(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index idx_a(a))")
+	tk.MustQuery("select extract(day_hour from 'ziy') as res from t order by res limit 1").Check(testkit.Rows())
+}
+
 func (s *testPlanSuite) doTestDAGPlanBuilderWindow(c *C, vars, input []string, output []struct {
 	SQL  string
 	Best string
