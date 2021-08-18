@@ -5882,7 +5882,7 @@ func unfoldSelectList(list *ast.SetOprSelectList, unfoldList *ast.SetOprSelectLi
 				unfoldList.Selects = append(unfoldList.Selects, s)
 			case *ast.SetOprSelectList:
 				for _, sel := range s.Selects {
-					unfoldSelectList(sel, unfoldList)
+					unfoldSelectList(&ast.SetOprSelectList{Selects: []ast.Node{sel}}, unfoldList)
 				}
 			}
 		}
