@@ -1,8 +1,11 @@
 package logutil
 
 import (
+	"strconv"
 	"strings"
+	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -12,21 +15,67 @@ import (
 )
 
 var _pool2 = buffer.NewPool()
+var glBufPool = sync.Pool{New: func() interface{} {
+	slice := make([]byte, 0, 1024)
+	return &slice
+}}
 
 const (
 	logBatchSize = 102400
 	flushTimeout = 1000 * time.Millisecond
 )
 
+type GeneralLogEntry struct {
+	ConnID                 uint64
+	FnGetUser              func() string
+	FnGetSchemaMetaVersion func() int64
+	TxnStartTS             uint64
+	TxnForUpdateTS         uint64
+	IsReadConsistency      bool
+	CurrentDB              string
+	TxnMode                string
+	FnGetQuery             func() string
+}
+
+func (e GeneralLogEntry) String() string {
+	query := e.FnGetQuery()
+	user := e.FnGetUser()
+
+	// TODO(dragonly): use zap.String like formatter to escape string fields
+	glBuf := *glBufPool.Get().(*([]byte))
+	glBuf = append(glBuf, "[GENERAL_LOG] [conn="...)
+	glBuf = strconv.AppendUint(glBuf, e.ConnID, 10)
+	glBuf = append(glBuf, "] [user="...)
+	glBuf = append(glBuf, user...)
+	glBuf = append(glBuf, "] [schemaVersion="...)
+	glBuf = strconv.AppendInt(glBuf, e.FnGetSchemaMetaVersion(), 10)
+	glBuf = append(glBuf, "] [txnStartTS="...)
+	glBuf = strconv.AppendUint(glBuf, e.TxnStartTS, 10)
+	glBuf = append(glBuf, "] [forUpdateTS="...)
+	glBuf = strconv.AppendUint(glBuf, e.TxnForUpdateTS, 10)
+	glBuf = append(glBuf, "] [isReadConsistency="...)
+	glBuf = strconv.AppendBool(glBuf, e.IsReadConsistency)
+	glBuf = append(glBuf, "] [current_db="...)
+	glBuf = append(glBuf, e.CurrentDB...)
+	glBuf = append(glBuf, "] [txn_mode="...)
+	glBuf = append(glBuf, e.TxnMode...)
+	glBuf = append(glBuf, "] [sql=\""...)
+	glBuf = append(glBuf, query...)
+	glBuf = append(glBuf, "\"]"...)
+	putBack := glBuf[:0]
+	glBufPool.Put(&putBack)
+	return *(*string)(unsafe.Pointer(&glBuf))
+}
+
 type GeneralLog struct {
 	logger  *zap.Logger
-	logChan chan string
+	logChan chan *GeneralLogEntry
 }
 
 func newGeneralLog(logger *zap.Logger) *GeneralLog {
 	gl := &GeneralLog{
 		logger:  logger,
-		logChan: make(chan string, logBatchSize),
+		logChan: make(chan *GeneralLogEntry, logBatchSize),
 	}
 	go gl.startWorker()
 	return gl
@@ -40,7 +89,7 @@ func (gl *GeneralLog) startWorker() {
 	timeout := time.After(flushTimeout)
 	for {
 		select {
-		case logText := <-gl.logChan:
+		case logEntry := <-gl.logChan:
 			if logCount > 0 {
 				buf.WriteByte('\n')
 			}
@@ -50,7 +99,7 @@ func (gl *GeneralLog) startWorker() {
 			timeSlice = now.AppendFormat(timeSlice, "2006/01/02 15:04:05.000 -07:00")
 			timeSlice = append(timeSlice, "] "...)
 			buf.Write(timeSlice)
-			buf.WriteString(logText)
+			buf.WriteString(logEntry.String())
 			logCount += 1
 			if logCount == logBatchSize {
 				gl.logger.Info(buf.String())

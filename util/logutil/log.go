@@ -102,8 +102,8 @@ var GeneralLogLogger = log.L()
 
 var generalLog *GeneralLog
 
-func PutGeneralLogBlocking(log string) {
-	generalLog.logChan <- log
+func PutGeneralLogBlocking(entry *GeneralLogEntry) {
+	generalLog.logChan <- entry
 }
 
 // InitLogger initializes a logger with cfg.
@@ -126,9 +126,7 @@ func InitLogger(cfg *LogConfig) error {
 		return errors.Trace(err)
 	}
 
-	fmt.Println("newGeneralLogLogger")
 	generalLog = newGeneralLog(GeneralLogLogger)
-	fmt.Println("newGeneralLog")
 
 	// init logger for grpc debugging
 	if len(os.Getenv("GRPC_DEBUG")) > 0 {

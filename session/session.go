@@ -23,6 +23,16 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net"
+	"runtime/pprof"
+	"runtime/trace"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+	"unsafe"
+
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -38,15 +48,6 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
-	"net"
-	"runtime/pprof"
-	"runtime/trace"
-	"strconv"
-	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
-	"unsafe"
 
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -2954,78 +2955,57 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 	}
 }
 
-var glBufPool = sync.Pool{New: func() interface{} { return make([]byte, 0, 1024) }}
-
 func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 	vars := s.GetSessionVars()
 	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
-		var query string
-		if isPrepared {
-			query = execStmt.OriginText()
-		} else {
-			query = execStmt.GetTextToLog()
-		}
-
-		queryMutable := *(*[]byte)(unsafe.Pointer(&query))
-		for i, b := range queryMutable {
-			if b == '\r' || b == '\n' || b == '\t' {
-				queryMutable[i] = ' '
+		fnGetQuery := func() string {
+			var query string
+			if isPrepared {
+				query = execStmt.OriginText()
+			} else {
+				query = execStmt.GetTextToLog()
 			}
-		}
-		query = *(*string)(unsafe.Pointer(&queryMutable))
-		if !vars.EnableRedactLog {
-			query += vars.PreparedParams.String()
+
+			queryMutable := *(*[]byte)(unsafe.Pointer(&query))
+			for i, b := range queryMutable {
+				if b == '\r' || b == '\n' || b == '\t' {
+					queryMutable[i] = ' '
+				}
+			}
+			query = *(*string)(unsafe.Pointer(&queryMutable))
+			if !vars.EnableRedactLog {
+				query += vars.PreparedParams.String()
+			}
+			return query
 		}
 
-		// generalLogText := fmt.Sprintf("[GENERAL_LOG] [conn=%d] [user=%s] [schemaVersion=%d] [txnStartTS=%d] [forUpdateTS=%d] [isReadConsistency=%t] [current_db=%s] [txn_mode=%s] [sql=\"%s\"]",
-		// 	vars.ConnectionID,
-		// 	vars.User.String(),
-		// 	s.GetInfoSchema().SchemaMetaVersion(),
-		// 	vars.TxnCtx.StartTS,
-		// 	vars.TxnCtx.GetForUpdateTS(),
-		// 	vars.IsIsolation(ast.ReadCommitted),
-		// 	vars.CurrentDB,
-		// 	vars.GetReadableTxnMode(),
-		// 	query)
-
-		var bufUserString [256]byte
-		appendUserString := func(dst []byte, user *auth.UserIdentity) []byte {
+		fnGetUser := func() string {
+			var bufUserString [256]byte
+			user := vars.User
 			if user == nil {
-				return dst
+				return ""
 			}
 			length := len(user.Username) + 1 + len(user.Hostname)
 			buf := bufUserString[:length]
 			copy(buf, user.Username)
 			buf[len(user.Username)] = '@'
 			copy(buf[len(user.Username)+1:], user.Hostname)
-			dst = append(dst, buf...)
-			return dst
+			return *(*string)(unsafe.Pointer(&buf))
 		}
 
-		// TODO(dragonly): use zap.String like formatter to escape string fields
-		glBuf := glBufPool.Get().([]byte)
-		glBuf = append(glBuf, "[GENERAL_LOG] [conn="...)
-		glBuf = strconv.AppendUint(glBuf, vars.ConnectionID, 10)
-		glBuf = append(glBuf, "] [user="...)
-		glBuf = appendUserString(glBuf, vars.User)
-		glBuf = append(glBuf, "] [schemaVersion="...)
-		glBuf = strconv.AppendInt(glBuf, s.GetInfoSchema().SchemaMetaVersion(), 10)
-		glBuf = append(glBuf, "] [txnStartTS="...)
-		glBuf = strconv.AppendUint(glBuf, vars.TxnCtx.StartTS, 10)
-		glBuf = append(glBuf, "] [forUpdateTS="...)
-		glBuf = strconv.AppendUint(glBuf, vars.TxnCtx.GetForUpdateTS(), 10)
-		glBuf = append(glBuf, "] [isReadConsistency="...)
-		glBuf = strconv.AppendBool(glBuf, vars.IsIsolation(ast.ReadCommitted))
-		glBuf = append(glBuf, "] [current_db="...)
-		glBuf = append(glBuf, vars.CurrentDB...)
-		glBuf = append(glBuf, "] [txn_mode="...)
-		glBuf = append(glBuf, vars.GetReadableTxnMode()...)
-		glBuf = append(glBuf, "] [sql=\""...)
-		glBuf = append(glBuf, query...)
-		glBuf = append(glBuf, "\"]"...)
-		logutil.PutGeneralLogBlocking(*(*string)(unsafe.Pointer(&glBuf)))
-		glBuf = glBuf[:0]
-		glBufPool.Put(glBuf)
+		logEntry := logutil.GeneralLogEntry{
+			ConnID:                 vars.ConnectionID,
+			FnGetUser:              fnGetUser,
+			FnGetSchemaMetaVersion: func() int64 { return s.GetInfoSchema().SchemaMetaVersion() },
+			TxnStartTS:             vars.TxnCtx.StartTS,
+			TxnForUpdateTS:         vars.TxnCtx.GetForUpdateTS(),
+			IsReadConsistency:      vars.IsIsolation(ast.ReadCommitted),
+			CurrentDB:              vars.CurrentDB,
+			TxnMode:                vars.GetReadableTxnMode(),
+			FnGetQuery:             fnGetQuery,
+		}
+
+		logutil.PutGeneralLogBlocking(&logEntry)
 
 		// logutil.GeneralLogLogger.Info(generalLogText)
 		// logutil.BgLogger().Info("GENERAL_LOG",
