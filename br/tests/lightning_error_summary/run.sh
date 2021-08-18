@@ -53,16 +53,18 @@ grep -Fq '[-] [table=`error_summary`.`c`] [status=checksum] [error="checksum mis
 # Now check the error log when the checkpoint is not cleaned.
 
 set +e
-run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-error-summary.log"
+# put stdout to log for next grep
+run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-error-summary.log" >> "$TEST_DIR/lightning-error-summary.log"
 ERRORCODE=$?
 set -e
 
 [ "$ERRORCODE" -ne 0 ]
 
-tail -20 "$TEST_DIR/lightning-error-summary.log" > "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq '["TiDB Lightning has failed last time. To prevent data loss, this run will stop now. Please resolve errors first"] [count=2]' "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq '[-] [table=`error_summary`.`a`] [status=18] [failedStep=checksum] [recommendedAction="./tidb-lightning-ctl --checkpoint-error-destroy='"'"'`error_summary`.`a`'"'"' --config=..."]' "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq '[-] [table=`error_summary`.`c`] [status=18] [failedStep=checksum] [recommendedAction="./tidb-lightning-ctl --checkpoint-error-destroy='"'"'`error_summary`.`c`'"'"' --config=..."]' "$TEST_DIR/lightning-error-summary.tail"
-! grep -Fq '[-] [table=`error_summary`.`b`] [status=18] [failedStep=checksum]' "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq '["You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch"]' "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq '["For details of this failure, read the log file from the PREVIOUS run"]' "$TEST_DIR/lightning-error-summary.tail"
+tail -100 "$TEST_DIR/lightning-error-summary.log" > "$TEST_DIR/lightning-error-summary.tail"
+grep -Fq 'TiDB Lightning has failed last time. To prevent data loss, this run will stop now' "$TEST_DIR/lightning-error-summary.tail"
+grep -Fq './tidb-lightning-ctl --checkpoint-error-destroy='"'"'`error_summary`.`a`'"'"' --config=...' "$TEST_DIR/lightning-error-summary.tail"
+grep -Fq './tidb-lightning-ctl --checkpoint-error-destroy='"'"'`error_summary`.`c`'"'"' --config=...' "$TEST_DIR/lightning-error-summary.tail"
+! grep -Fq './tidb-lightning-ctl --checkpoint-error-destroy='"'"'`error_summary`.`b`'"'"' --config=...' "$TEST_DIR/lightning-error-summary.tail"
+grep -Fq 'checkpoint-error-destroy=all --config=...` to start from scratch"]' "$TEST_DIR/lightning-error-summary.tail"
+grep -Fq 'For details of this failure, read the log file' "$TEST_DIR/lightning-error-summary.tail"
+grep -Fq 'PREVIOUS run' "$TEST_DIR/lightning-error-summary.tail"
