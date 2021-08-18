@@ -1013,6 +1013,8 @@ func benchmarkChunkGrow(t benchChunkGrowCase) func(b *testing.B) {
 }
 
 func TestAppendRows(t *testing.T) {
+	t.Parallel()
+
 	numCols := 6
 	numRows := 10
 	chk := newChunk(8, 8, 0, 0, 40, 0)

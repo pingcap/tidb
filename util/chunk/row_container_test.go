@@ -141,8 +141,6 @@ func TestSpillAction(t *testing.T) {
 }
 
 func TestSpillActionDeadLock(t *testing.T) {
-	t.Parallel()
-
 	// Maybe get deadlock if we use two RLock in one goroutine, for oom-action call stack.
 	// Now the implement avoids the situation.
 	// Goroutine 1: rc.Add() (RLock) -> list.Add() -> tracker.Consume() -> SpillDiskAction -> rc.AlreadySpilledSafeForTest() (RLock)
@@ -233,8 +231,6 @@ func TestSortedRowContainerSortSpillAction(t *testing.T) {
 }
 
 func TestActionBlocked(t *testing.T) {
-	t.Parallel()
-
 	sz := 4
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, sz)
