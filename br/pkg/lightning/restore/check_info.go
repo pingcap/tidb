@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/docker/go-units"
@@ -55,8 +56,8 @@ const (
 
 	warnEmptyRegionCntPerStore  = 500
 	errorEmptyRegionCntPerStore = 1000
-	warnRegionCntMaxMinRatio    = 1.5
-	errorRegionCntMaxMinRatio   = 2.0
+	warnRegionCntMinMaxRatio    = 0.75
+	errorRegionCntMinMaxRatio   = 0.5
 
 	// We only check RegionCntMaxMinRatio when the maximum region count of all stores is larger than this threshold.
 	checkRegionCntRatioThreshold = 1000
@@ -195,16 +196,27 @@ func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 		}
 	}
 
-	var messages []string
+	var (
+		errStores  []string
+		warnStores []string
+	)
 	for storeID, regionCnt := range regions {
 		if regionCnt > errorEmptyRegionCntPerStore {
-			passed = false
-			messages = append(messages, fmt.Sprintf("TiKV store %v contains too many empty regions, "+
-				"the count must not exceed %v, but actual is %v", storeID, errorEmptyRegionCntPerStore, regionCnt))
+			errStores = append(errStores, strconv.Itoa(int(storeID)))
 		} else if regionCnt > warnEmptyRegionCntPerStore {
-			messages = append(messages, fmt.Sprintf("TiKV store %v contains too many empty regions, "+
-				"the count should not exceed %v, but actual is %v", storeID, warnEmptyRegionCntPerStore, regionCnt))
+			warnStores = append(warnStores, strconv.Itoa(int(storeID)))
 		}
+	}
+
+	var messages []string
+	if len(errStores) > 0 {
+		passed = false
+		messages = append(messages, fmt.Sprintf("TiKV stores (%s) contains more than %v empty regions respectively, "+
+			"which will greatly affect the import speed and success rate", strings.Join(errStores, ", "), errorEmptyRegionCntPerStore))
+	}
+	if len(warnStores) > 0 {
+		messages = append(messages, fmt.Sprintf("TiKV stores (%s) contains more than %v empty regions respectively, "+
+			"which will affect the import speed and success rate", strings.Join(warnStores, ", "), warnEmptyRegionCntPerStore))
 	}
 	if len(messages) > 0 {
 		message = strings.Join(messages, "\n")
@@ -236,21 +248,16 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 	if maxStore.Status.RegionCount <= checkRegionCntRatioThreshold {
 		return nil
 	}
-	if minStore.Status.RegionCount == 0 {
-		passed = false
-		message = fmt.Sprintf("Region distribution is unbalanced, there is no region on store %v", minStore.Store.Id)
-		return nil
-	}
-	ratio := float64(maxStore.Status.RegionCount) / float64(minStore.Status.RegionCount)
-	if ratio > errorRegionCntMaxMinRatio {
+	ratio := float64(minStore.Status.RegionCount) / float64(maxStore.Status.RegionCount)
+	if ratio < errorRegionCntMinMaxRatio {
 		passed = false
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
-			"with most regions(%v) to the store(%v) with least regions(%v) is %v, but we expect it must not exceed %v",
-			maxStore.Store.Id, maxStore.Status.RegionCount, minStore.Store.Id, minStore.Status.RegionCount, ratio, errorRegionCntMaxMinRatio)
-	} else if ratio >= warnRegionCntMaxMinRatio {
+			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it must not be less than %v",
+			minStore.Store.Id, minStore.Status.RegionCount, maxStore.Store.Id, maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
+	} else if ratio < warnRegionCntMinMaxRatio {
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
-			"with most regions(%v) to the store(%v) with least regions(%v) is %v, but we expect it should not exceed %v",
-			maxStore.Store.Id, maxStore.Status.RegionCount, minStore.Store.Id, minStore.Status.RegionCount, ratio, warnRegionCntMaxMinRatio)
+			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it should not be less than %v",
+			minStore.Store.Id, minStore.Status.RegionCount, maxStore.Store.Id, maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
 	}
 	return nil
 }

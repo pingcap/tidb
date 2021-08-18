@@ -1697,7 +1697,7 @@ func (mockTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(ta
 	return err
 }
 
-func (s *tableRestoreSuite) TestCheckClusterEmptyRegion(c *C) {
+func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
 	type testCase struct {
 		stores         api.StoresInfo
 		emptyRegions   api.RegionsInfo
@@ -1739,9 +1739,9 @@ func (s *tableRestoreSuite) TestCheckClusterEmptyRegion(c *C) {
 					makeRegions(1200, 3)...),
 			},
 			expectMsgs: []string{
-				".*TiKV store 3 contains too many empty regions, the count must not exceed 1000, but actual is 1200.*",
-				".*TiKV store 1 contains too many empty regions, the count should not exceed 500, but actual is 600.*",
-				".*Region distribution is unbalanced.*but we expect it should not exceed 1.5.*",
+				".*TiKV stores \\(3\\) contains more than 1000 empty regions respectively.*",
+				".*TiKV stores \\(1\\) contains more than 500 empty regions respectively.*",
+				".*Region distribution is unbalanced.*but we expect it should not be less than 0.75.*",
 			},
 			expectResult:   false,
 			expectErrorCnt: 1,
@@ -1752,7 +1752,7 @@ func (s *tableRestoreSuite) TestCheckClusterEmptyRegion(c *C) {
 				{Store: &api.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &api.StoreStatus{RegionCount: 3000}},
 				{Store: &api.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &api.StoreStatus{RegionCount: 2500}},
 			}},
-			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not exceed 2.*"},
+			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
 			expectResult:   false,
 			expectErrorCnt: 1,
 		},
@@ -1762,7 +1762,7 @@ func (s *tableRestoreSuite) TestCheckClusterEmptyRegion(c *C) {
 				{Store: &api.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &api.StoreStatus{RegionCount: 2800}},
 				{Store: &api.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &api.StoreStatus{RegionCount: 2500}},
 			}},
-			expectMsgs:     []string{".*Region distribution is unbalanced, there is no region on store 1.*"},
+			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
 			expectResult:   false,
 			expectErrorCnt: 1,
 		},
