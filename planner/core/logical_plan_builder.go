@@ -1382,7 +1382,7 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 		for i, srcCol := range child.Schema().Columns {
 			dstType := unionCols[i].RetType
 			srcType := srcCol.RetType
-			if !srcType.Equal(dstType) {
+			if srcType.Tp != dstType.Tp {
 				exprs[i] = expression.BuildCastFunction4Union(b.ctx, srcCol, dstType)
 			} else {
 				exprs[i] = srcCol
