@@ -5878,10 +5878,10 @@ func buildWindowSpecs(specs []ast.WindowSpec) (map[string]*ast.WindowSpec, error
 func unfoldSelectList(list *ast.SetOprSelectList, unfoldList *ast.SetOprSelectList) {
 	for _, sel := range list.Selects {
 		switch s := sel.(type) {
-			case *ast.SelectStmt:
-				unfoldList.Selects = append(unfoldList.Selects, s)
-			case *ast.SetOprSelectList:
-				unfoldSelectList(s, unfoldList)
+		case *ast.SelectStmt:
+			unfoldList.Selects = append(unfoldList.Selects, s)
+		case *ast.SetOprSelectList:
+			unfoldSelectList(s, unfoldList)
 		}
 	}
 }
