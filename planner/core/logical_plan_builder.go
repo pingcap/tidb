@@ -5854,8 +5854,28 @@ func buildWindowSpecs(specs []ast.WindowSpec) (map[string]*ast.WindowSpec, error
 // extractTableList extracts all the TableNames from node.
 // If asName is true, extract AsName prior to OrigName.
 // Privilege check should use OrigName, while expression may use AsName.
+// TODO: extracting all tables by vistor model maybe a better way
 func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName bool) []*ast.TableName {
 	switch x := node.(type) {
+	case *ast.SubqueryExpr:
+		input = extractTableList(x.Query.(ast.ResultSetNode), input, asName)
+	case *ast.SelectStmt:
+		input = extractTableList(x.From.TableRefs.Left, input, asName)
+		input = extractTableList(x.From.TableRefs.Right, input, asName)
+		switch w := x.Where.(type) {
+		case *ast.PatternInExpr:
+			if s, ok := w.Sel.(*ast.SubqueryExpr); ok {
+				input = extractTableList(s, input, asName)
+			}
+		case *ast.ExistsSubqueryExpr:
+			if s, ok := w.Sel.(*ast.SubqueryExpr); ok {
+				input = extractTableList(s, input, asName)
+			}
+		}
+	case *ast.SetOprStmt:
+		for _, s := range x.SelectList.Selects {
+			input = extractTableList(s.(ast.ResultSetNode), input, asName)
+		}
 	case *ast.Join:
 		input = extractTableList(x.Left, input, asName)
 		input = extractTableList(x.Right, input, asName)

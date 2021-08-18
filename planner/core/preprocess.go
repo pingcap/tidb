@@ -16,7 +16,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/generatedexpr"
 	"math"
 	"strings"
 
@@ -238,31 +237,15 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeCreate
 		EraseLastSemicolon(node.OriginNode)
 		EraseLastSemicolon(node.HintedNode)
-//		curNode := node.OriginNode
-		//switch node.OriginNode.(type) {
-		//case *ast.SelectStmt:
-		//	curNode := node.OriginNode.(*ast.SelectStmt)
-		//	p.checkBindGrammar(curNode, node.HintedNode,  p.ctx.GetSessionVars().CurrentDB)
-		//	q := curNode.Where.(*ast.PatternInExpr).Sel.(*ast.SubqueryExpr).Query.(*ast.SelectStmt)
-		//	p.checkBindGrammar(q, node.HintedNode, p.ctx.GetSessionVars().CurrentDB)
-		//case *ast.SetOprStmt:
-		//	return TypeSetOpr
-		//case *ast.DeleteStmt:
-		//	return TypeDelete
-		//case *ast.UpdateStmt:
-		//	return TypeUpdate
-		//case *ast.InsertStmt:
-		//	return TypeInsert
+		p.checkBindGrammar(node.OriginNode, node.HintedNode, p.ctx.GetSessionVars().CurrentDB)
+		//subs, err := generatedexpr.GetAllSubQuery(node.OriginNode)
+		//if err != nil {
+		//	p.err = err
+		//	return
 		//}
-		p.checkBindGrammar(node.OriginNode, node.HintedNode,  p.ctx.GetSessionVars().CurrentDB)
-	 	subs, err := generatedexpr.GetAllSubQuery(node.OriginNode)
-	 	if err != nil {
-	 		p.err = err
-	 		return
-		}
-		for _, sub := range subs {
-			p.checkBindGrammar(sub.Query.(ast.StmtNode), node.HintedNode,  p.ctx.GetSessionVars().CurrentDB)
-		}
+		//for _, sub := range subs {
+		//	p.checkBindGrammar(sub.Query.(ast.StmtNode), node.HintedNode,  p.ctx.GetSessionVars().CurrentDB)
+		//}
 		return in, true
 	case *ast.DropBindingStmt:
 		p.stmtTp = TypeDrop
@@ -438,7 +421,10 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	var resNode ast.ResultSetNode
 	switch n := originNode.(type) {
 	case *ast.SelectStmt:
-		resNode = n.From.TableRefs
+		resNode = n
+	case *ast.SetOprStmt:
+		resNode = n
+		//TODO: What about insert into (select * from t)
 	case *ast.DeleteStmt:
 		resNode = n.TableRefs.TableRefs
 	case *ast.UpdateStmt:
