@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
@@ -950,7 +951,9 @@ func (e *hotRegionsHistoryRetriver) filterBySchemaInfo(f *helper.FrameItem) bool
 }
 
 func (e *hotRegionsHistoryRetriver) parseAndFilterBySchemaInfo(sctx sessionctx.Context, headMessage *HistoryHotRegion) ([]types.Datum, error) {
-	region := &tikv.KeyLocation{StartKey: headMessage.StartKey, EndKey: headMessage.EndKey}
+	_, startKey, _ := codec.DecodeBytes(headMessage.StartKey, []byte{})
+	_, endKey, _ := codec.DecodeBytes(headMessage.EndKey, []byte{})
+	region := &tikv.KeyLocation{StartKey: startKey, EndKey: endKey}
 	hotRange, err := helper.NewRegionFrameRange(region)
 	if err != nil {
 		return nil, err
