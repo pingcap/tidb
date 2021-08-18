@@ -25,7 +25,7 @@ import (
 	"go.uber.org/goleak"
 )
 
-var testDataMap = make(testdata.TestDataMap, 1)
+var testDataMap = make(testdata.BookKeeper, 1)
 var rangerSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {

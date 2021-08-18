@@ -55,8 +55,7 @@ type TestData struct {
 	funcMap        map[string]int
 }
 
-// LoadTestSuiteData loads test suite data from file.
-func LoadTestSuiteData(dir, suiteName string) (res TestData, err error) {
+func loadTestSuiteData(dir, suiteName string) (res TestData, err error) {
 	res.filePathPrefix = filepath.Join(dir, suiteName)
 	res.input, err = loadTestSuiteCases(fmt.Sprintf("%s_in.json", res.filePathPrefix))
 	if err != nil {
@@ -151,8 +150,7 @@ func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) 
 	td.output[casesIdx].decodedOut = out
 }
 
-// GenerateOutputIfNeeded generate the output file.
-func (td *TestData) GenerateOutputIfNeeded() error {
+func (td *TestData) generateOutputIfNeeded() error {
 	if !record {
 		return nil
 	}
@@ -189,11 +187,12 @@ func (td *TestData) GenerateOutputIfNeeded() error {
 	return err
 }
 
-// TestDataMap contains multiple TestData suite.
-type TestDataMap map[string]TestData
+// BookKeeper does TestData suite bookkeeping.
+type BookKeeper map[string]TestData
 
-func (m *TestDataMap) LoadTestSuiteData(dir, suiteName string) {
-	testData, err := LoadTestSuiteData(dir, suiteName)
+// LoadTestSuiteData loads test suite data from file and bookkeeping in the map.
+func (m *BookKeeper) LoadTestSuiteData(dir, suiteName string) {
+	testData, err := loadTestSuiteData(dir, suiteName)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "testdata: Errors on loading test data from file: %v\n", err)
 		os.Exit(1)
@@ -201,9 +200,10 @@ func (m *TestDataMap) LoadTestSuiteData(dir, suiteName string) {
 	(*m)[suiteName] = testData
 }
 
-func (m *TestDataMap) GenerateOutputIfNeeded() {
+// GenerateOutputIfNeeded generate the output file from data bookkeeping in the map.
+func (m *BookKeeper) GenerateOutputIfNeeded() {
 	for _, testData := range *m {
-		err := testData.GenerateOutputIfNeeded()
+		err := testData.generateOutputIfNeeded()
 		if err != nil {
 			_, _ = fmt.Fprintf(os.Stderr, "testdata: Errors on generating output: %v\n", err)
 			os.Exit(1)
