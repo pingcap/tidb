@@ -169,7 +169,12 @@ func (rc *Client) Close() {
 }
 
 // InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
-func (rc *Client) InitBackupMeta(c context.Context, backupMeta *backuppb.BackupMeta, backend *backuppb.StorageBackend, externalStorage storage.ExternalStorage, reader *metautil.MetaReader) error {
+func (rc *Client) InitBackupMeta(
+	c context.Context,
+	backupMeta *backuppb.BackupMeta,
+	backend *backuppb.StorageBackend,
+	externalStorage storage.ExternalStorage,
+	reader *metautil.MetaReader) error {
 	if !backupMeta.IsRawKv {
 		databases, err := utils.LoadBackupTables(c, reader)
 		if err != nil {
