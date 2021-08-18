@@ -1275,10 +1275,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	estRows, estCost, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 
 	var row []string
-	if e.Analyze {
-		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, nil)
-		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
-	} else if e.RuntimeStatsColl != nil {
+	if e.Analyze || e.RuntimeStatsColl != nil {
 		row = []string{id, estRows}
 		if e.Format == types.ExplainFormatVerbose {
 			row = append(row, estCost)
