@@ -20,29 +20,34 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"testing"
 
 	"github.com/BurntSushi/toml"
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testConfigSuite) TestCloneConf(c *C) {
+func TestCloneConf(t *testing.T) {
+	t.Parallel()
+
 	c1, err := CloneConf(&defaultConf)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	c2, err := CloneConf(c1)
-	c.Assert(err, IsNil)
-	c.Assert(reflect.DeepEqual(c1, c2), IsTrue)
+	require.NoError(t, err)
+	require.True(t, reflect.DeepEqual(c1, c2))
 
 	c1.Store = "abc"
 	c1.Port = 2333
 	c1.Log.EnableSlowLog = !c1.Log.EnableSlowLog
 	c1.RepairTableList = append(c1.RepairTableList, "abc")
-	c.Assert(c1.Store, Not(Equals), c2.Store)
-	c.Assert(c1.Port, Not(Equals), c2.Port)
-	c.Assert(c1.Log.EnableSlowLog, Not(Equals), c2.Log.EnableSlowLog)
-	c.Assert(fmt.Sprintf("%v", c1.RepairTableList), Not(Equals), fmt.Sprintf("%v", c2.RepairTableList))
+	require.NotEqual(t, c2.Store, c1.Store)
+	require.NotEqual(t, c2.Port, c1.Port)
+	require.NotEqual(t, c2.Log.EnableSlowLog, c1.Log.EnableSlowLog)
+	require.NotEqual(t, fmt.Sprintf("%v", c2.RepairTableList), fmt.Sprintf("%v", c1.RepairTableList))
 }
 
-func (s *testConfigSuite) TestMergeConfigItems(c *C) {
+func TestMergeConfigItems(t *testing.T) {
+	t.Parallel()
+
 	oriConf, _ := CloneConf(&defaultConf)
 	oldConf, _ := CloneConf(oriConf)
 	newConf, _ := CloneConf(oldConf)
@@ -65,67 +70,69 @@ func (s *testConfigSuite) TestMergeConfigItems(c *C) {
 	newConf.Log.SlowThreshold = 2345
 
 	as, rs := MergeConfigItems(oldConf, newConf)
-	c.Assert(len(as), Equals, 10)
-	c.Assert(len(rs), Equals, 3)
+	require.Equal(t, 10, len(as))
+	require.Equal(t, 3, len(rs))
 	for _, a := range as {
 		_, ok := dynamicConfigItems[a]
-		c.Assert(ok, IsTrue)
+		require.True(t, ok)
 	}
 	for _, a := range rs {
 		_, ok := dynamicConfigItems[a]
-		c.Assert(ok, IsFalse)
+		require.False(t, ok)
 	}
 
-	c.Assert(oldConf.Performance.MaxProcs, Equals, newConf.Performance.MaxProcs)
-	c.Assert(oldConf.Performance.MaxMemory, Equals, newConf.Performance.MaxMemory)
-	c.Assert(oldConf.Performance.CrossJoin, Equals, newConf.Performance.CrossJoin)
-	c.Assert(oldConf.Performance.FeedbackProbability, Equals, newConf.Performance.FeedbackProbability)
-	c.Assert(oldConf.Performance.QueryFeedbackLimit, Equals, newConf.Performance.QueryFeedbackLimit)
-	c.Assert(oldConf.Performance.PseudoEstimateRatio, Equals, newConf.Performance.PseudoEstimateRatio)
-	c.Assert(oldConf.OOMAction, Equals, newConf.OOMAction)
-	c.Assert(oldConf.MemQuotaQuery, Equals, newConf.MemQuotaQuery)
-	c.Assert(oldConf.TiKVClient.StoreLimit, Equals, newConf.TiKVClient.StoreLimit)
-	c.Assert(oldConf.Log.SlowThreshold, Equals, newConf.Log.SlowThreshold)
+	require.Equal(t, newConf.Performance.MaxProcs, oldConf.Performance.MaxProcs)
+	require.Equal(t, newConf.Performance.MaxMemory, oldConf.Performance.MaxMemory)
+	require.Equal(t, newConf.Performance.CrossJoin, oldConf.Performance.CrossJoin)
+	require.Equal(t, newConf.Performance.FeedbackProbability, oldConf.Performance.FeedbackProbability)
+	require.Equal(t, newConf.Performance.QueryFeedbackLimit, oldConf.Performance.QueryFeedbackLimit)
+	require.Equal(t, newConf.Performance.PseudoEstimateRatio, oldConf.Performance.PseudoEstimateRatio)
+	require.Equal(t, newConf.OOMAction, oldConf.OOMAction)
+	require.Equal(t, newConf.MemQuotaQuery, oldConf.MemQuotaQuery)
+	require.Equal(t, newConf.TiKVClient.StoreLimit, oldConf.TiKVClient.StoreLimit)
+	require.Equal(t, newConf.Log.SlowThreshold, oldConf.Log.SlowThreshold)
 
-	c.Assert(oldConf.Store, Equals, oriConf.Store)
-	c.Assert(oldConf.Port, Equals, oriConf.Port)
-	c.Assert(oldConf.AdvertiseAddress, Equals, oriConf.AdvertiseAddress)
+	require.Equal(t, oriConf.Store, oldConf.Store)
+	require.Equal(t, oriConf.Port, oldConf.Port)
+	require.Equal(t, oriConf.AdvertiseAddress, oldConf.AdvertiseAddress)
 }
 
-func (s *testConfigSuite) TestAtomicWriteConfig(c *C) {
+func TestAtomicWriteConfig(t *testing.T) {
 	conf, _ := CloneConf(&defaultConf)
 	confPath := filepath.Join(os.TempDir(), "test-write-config.toml")
 	conf.Performance.MaxMemory = 123
 	conf.Performance.MaxProcs = 234
 	conf.Performance.PseudoEstimateRatio = 3.45
-	c.Assert(atomicWriteConfig(conf, confPath), IsNil)
+	require.NoError(t, atomicWriteConfig(conf, confPath))
 
 	content, err := os.ReadFile(confPath)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	dconf, err := decodeConfig(string(content))
-	c.Assert(err, IsNil)
-	c.Assert(dconf.Performance.MaxMemory, Equals, uint64(123))
-	c.Assert(dconf.Performance.MaxProcs, Equals, uint(234))
-	c.Assert(dconf.Performance.PseudoEstimateRatio, Equals, 3.45)
+	require.NoError(t, err)
+	require.Equal(t, uint64(123), dconf.Performance.MaxMemory)
+	require.Equal(t, uint(234), dconf.Performance.MaxProcs)
+	require.Equal(t, 3.45, dconf.Performance.PseudoEstimateRatio)
 
 	conf.Performance.MaxMemory = 321
 	conf.Performance.MaxProcs = 432
 	conf.Performance.PseudoEstimateRatio = 54.3
-	c.Assert(atomicWriteConfig(conf, confPath), IsNil)
+	require.NoError(t, atomicWriteConfig(conf, confPath))
 
 	content, err = os.ReadFile(confPath)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	dconf, err = decodeConfig(string(content))
-	c.Assert(err, IsNil)
-	c.Assert(dconf.Performance.MaxMemory, Equals, uint64(321))
-	c.Assert(dconf.Performance.MaxProcs, Equals, uint(432))
-	c.Assert(dconf.Performance.PseudoEstimateRatio, Equals, 54.3)
+	require.NoError(t, err)
+	require.Equal(t, uint64(321), dconf.Performance.MaxMemory)
+	require.Equal(t, uint(432), dconf.Performance.MaxProcs)
+	require.Equal(t, 54.3, dconf.Performance.PseudoEstimateRatio)
 }
 
-func (s *testConfigSuite) TestFlattenConfig(c *C) {
+func TestFlattenConfig(t *testing.T) {
+	t.Parallel()
+
 	toJSONStr := func(v interface{}) string {
 		str, err := json.Marshal(v)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		return string(str)
 	}
 
@@ -140,16 +147,16 @@ func (s *testConfigSuite) TestFlattenConfig(c *C) {
 		"k4-3": [666]
 	}}`
 	nested := make(map[string]interface{})
-	c.Assert(json.Unmarshal([]byte(jsonConf), &nested), IsNil)
+	require.NoError(t, json.Unmarshal([]byte(jsonConf), &nested))
 	flatMap := FlattenConfigItems(nested)
-	c.Assert(len(flatMap), Equals, 7)
-	c.Assert(toJSONStr(flatMap["k0"]), Equals, "233333")
-	c.Assert(flatMap["k1"], Equals, "v1")
-	c.Assert(toJSONStr(flatMap["k2"]), Equals, `["v2-1","v2-2","v2-3"]`)
-	c.Assert(toJSONStr(flatMap["k3"]), Equals, `[{"k3-1":"v3-1"},{"k3-2":"v3-2"},{"k3-3":"v3-3"}]`)
-	c.Assert(toJSONStr(flatMap["k4.k4-1"]), Equals, `[1,2,3,4]`)
-	c.Assert(toJSONStr(flatMap["k4.k4-2"]), Equals, `[5,6,7,8]`)
-	c.Assert(toJSONStr(flatMap["k4.k4-3"]), Equals, `[666]`)
+	require.Equal(t, 7, len(flatMap))
+	require.Equal(t, "233333", toJSONStr(flatMap["k0"]))
+	require.Equal(t, "v1", flatMap["k1"])
+	require.Equal(t, `["v2-1","v2-2","v2-3"]`, toJSONStr(flatMap["k2"]))
+	require.Equal(t, `[{"k3-1":"v3-1"},{"k3-2":"v3-2"},{"k3-3":"v3-3"}]`, toJSONStr(flatMap["k3"]))
+	require.Equal(t, `[1,2,3,4]`, toJSONStr(flatMap["k4.k4-1"]))
+	require.Equal(t, `[5,6,7,8]`, toJSONStr(flatMap["k4.k4-2"]))
+	require.Equal(t, `[666]`, toJSONStr(flatMap["k4.k4-3"]))
 
 	tomlConf := `
 port=4000
@@ -160,11 +167,11 @@ format='text'
 engines = ["tikv", "tiflash", "tidb"]
 `
 	nested = make(map[string]interface{})
-	c.Assert(toml.Unmarshal([]byte(tomlConf), &nested), IsNil)
+	require.NoError(t, toml.Unmarshal([]byte(tomlConf), &nested))
 	flatMap = FlattenConfigItems(nested)
-	c.Assert(len(flatMap), Equals, 4)
-	c.Assert(toJSONStr(flatMap["port"]), Equals, "4000")
-	c.Assert(toJSONStr(flatMap["log.level"]), Equals, `"info"`)
-	c.Assert(toJSONStr(flatMap["log.format"]), Equals, `"text"`)
-	c.Assert(toJSONStr(flatMap["isolation-read.engines"]), Equals, `["tikv","tiflash","tidb"]`)
+	require.Equal(t, 4, len(flatMap))
+	require.Equal(t, "4000", toJSONStr(flatMap["port"]))
+	require.Equal(t, `"info"`, toJSONStr(flatMap["log.level"]))
+	require.Equal(t, `"text"`, toJSONStr(flatMap["log.format"]))
+	require.Equal(t, `["tikv","tiflash","tidb"]`, toJSONStr(flatMap["isolation-read.engines"]))
 }
