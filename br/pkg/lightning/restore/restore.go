@@ -733,7 +733,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	}
 	rc.dbInfos = dbInfos
 
-	if rc.cfg.App.CheckRequirements && rc.tidbGlue.OwnsSQLExecutor() {
+	if rc.tidbGlue.OwnsSQLExecutor() {
 		if err = rc.DataCheck(ctx); err != nil {
 			return errors.Trace(err)
 		}
@@ -1736,14 +1736,12 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 
 // DataCheck checks the data schema which needs #rc.restoreSchema finished.
 func (rc *Controller) DataCheck(ctx context.Context) error {
-	if !rc.cfg.App.CheckRequirements {
-		log.L().Info("skip data check due to user requirement")
-		return nil
-	}
 	var err error
-	err = rc.HasLargeCSV(rc.dbMetas)
-	if err != nil {
-		return errors.Trace(err)
+	if rc.cfg.App.CheckRequirements {
+		err = rc.HasLargeCSV(rc.dbMetas)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	checkPointCriticalMsgs := make([]string, 0, len(rc.dbMetas))
 	schemaCriticalMsgs := make([]string, 0, len(rc.dbMetas))
@@ -1761,7 +1759,8 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 					checkPointCriticalMsgs = append(checkPointCriticalMsgs, msgs...)
 				}
 			}
-			if noCheckpoint && rc.cfg.TikvImporter.Backend != config.BackendTiDB {
+
+			if rc.cfg.App.CheckRequirements && noCheckpoint && rc.cfg.TikvImporter.Backend != config.BackendTiDB {
 				if msgs, err = rc.SchemaIsValid(ctx, tableInfo); err != nil {
 					return errors.Trace(err)
 				}
