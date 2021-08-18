@@ -19,8 +19,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/tidb/infoschema"
-
 	"github.com/pingcap/check"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -30,6 +28,7 @@ import (
 	parsertypes "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
