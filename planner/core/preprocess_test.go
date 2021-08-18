@@ -362,13 +362,8 @@ func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
 	s.runSQL(c, "drop global temporary table temp", false, nil)
 	s.runSQL(c, "drop global temporary table test.tb;", false, core.ErrDropTableOnTemporaryTable)
 	s.runSQL(c, "drop global temporary table test.temp1", false, nil)
-<<<<<<< HEAD
-=======
-	s.runSQL(c, "drop global temporary table ltemp1", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table test.ltemp1", false, core.ErrDropTableOnTemporaryTable)
 	s.runSQL(c, "drop global temporary table temp, temp1", false, nil)
 	s.runSQL(c, "drop global temporary table temp, tb", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table temp, ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	s.runSQL(c, "drop global temporary table test2.temp2, tb", false, core.ErrDropTableOnTemporaryTable)
 	s.runSQL(c, "drop global temporary table test2.temp2, temp1", false, nil)
->>>>>>> d4ec0233c... ddl: fix `DROP [GLOBAL] TEMPORARY TABLE IF EXISTS` returns error when table not exist (#27287)
 }

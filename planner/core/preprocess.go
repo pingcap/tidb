@@ -849,23 +849,16 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
-<<<<<<< HEAD
+
+		schema := currentDB
 		if t.Schema.String() != "" {
-			currentDB = t.Schema
-=======
-
-		schema := t.Schema
-		if schema.L == "" {
-			schema = currentDB
+			schema = t.Schema
 		}
-
-		tbl, err := p.ensureInfoSchema().TableByName(schema, t.Name)
+		tableInfo, err := p.ensureInfoSchema().TableByName(schema, t.Name)
 		if infoschema.ErrTableNotExists.Equal(err) {
 			// Non-exist table will be checked in ddl executor
 			continue
->>>>>>> d4ec0233c... ddl: fix `DROP [GLOBAL] TEMPORARY TABLE IF EXISTS` returns error when table not exist (#27287)
 		}
-		tableInfo, err := p.ensureInfoSchema().TableByName(currentDB, t.Name)
 		if err != nil {
 			p.err = err
 			return
@@ -875,10 +868,6 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 			return
 		}
 	}
-<<<<<<< HEAD
-
-=======
->>>>>>> d4ec0233c... ddl: fix `DROP [GLOBAL] TEMPORARY TABLE IF EXISTS` returns error when table not exist (#27287)
 }
 
 func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
