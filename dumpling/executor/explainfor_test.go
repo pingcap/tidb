@@ -136,6 +136,48 @@ func (s *testSerialSuite) TestExplainFor(c *C) {
 	tkRoot.MustExec(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 }
 
+func (s *testSerialSuite) TestExplainForVerbose(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int);")
+	tk.MustQuery("select * from t1;")
+	tkRootProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkRootProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tk2.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+
+	rs := tk.MustQuery("explain format = 'verbose' select * from t1").Rows()
+	rs2 := tk2.MustQuery(fmt.Sprintf("explain format = 'verbose' for connection %d", tkRootProcess.ID)).Rows()
+	c.Assert(len(rs), Equals, len(rs2))
+	for i := range rs {
+		c.Assert(rs[i], DeepEquals, rs2[i])
+	}
+
+	tk.MustExec("set @@tidb_enable_collect_execution_info=1;")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(id int);")
+	tk.MustQuery("select * from t2;")
+	tkRootProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkRootProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tk2.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	rs = tk.MustQuery("explain format = 'verbose' select * from t2").Rows()
+	rs2 = tk2.MustQuery(fmt.Sprintf("explain format = 'verbose' for connection %d", tkRootProcess.ID)).Rows()
+	c.Assert(len(rs), Equals, len(rs2))
+	for i := range rs {
+		// "id", "estRows", "estCost", "task", "access object", "operator info"
+		c.Assert(len(rs[i]), Equals, 6)
+		// "id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"
+		c.Assert(len(rs2[i]), Equals, 10)
+		for j := 0; j < 3; j++ {
+			c.Assert(rs[i][j], Equals, rs2[i][j])
+		}
+	}
+}
+
 func (s *testSerialSuite) TestIssue11124(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
