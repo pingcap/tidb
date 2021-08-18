@@ -5884,7 +5884,6 @@ func unfoldSelectList(list *ast.SetOprSelectList, unfoldList *ast.SetOprSelectLi
 				for _, sel := range s.Selects {
 					unfoldSelectList(&ast.SetOprSelectList{Selects: []ast.Node{sel}}, unfoldList)
 				}
-			}
 		}
 	}
 }
@@ -5913,7 +5912,7 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 	case *ast.SetOprStmt:
 		l := &ast.SetOprSelectList{}
 		unfoldSelectList(x.SelectList, l)
-		for _, s := range l {
+		for _, s := range l.Selects {
 			input = extractTableList(s.(ast.ResultSetNode), input, asName)
 		}
 	case *ast.Join:
