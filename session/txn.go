@@ -377,6 +377,7 @@ func (txn *LazyTxn) Rollback() error {
 
 // LockKeys Wrap the inner transaction's `LockKeys` to record the status
 func (txn *LazyTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
+	failpoint.Inject("beforeLockKeys", func() {})
 	t := time.Now()
 
 	var originState txninfo.TxnRunningState
