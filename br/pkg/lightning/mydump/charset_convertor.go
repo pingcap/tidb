@@ -67,10 +67,6 @@ func NewCharsetConvertor(cfg *config.CSVConfig) (*CharsetConvertor, error) {
 	if err != nil {
 		return nil, err
 	}
-	// No need to convert the charset encoding, just return the original reader.
-	// if sourceCharacterSet == BINARY || sourceCharacterSet == UTF8MB4 {
-	// 	return nil, nil
-	// }
 	invalidCharReplacementBytes := []byte(invalidCharReplacement)
 	log.L().Warn(
 		"incompatible strings may be encountered during the transcoding process and will be replaced, please be aware of the risk of not being able to retain the original information",
@@ -105,8 +101,7 @@ var utf8RuneErrorBytes = []byte(string(utf8.RuneError))
 // It will return a byte slice as the conversion result whose length may be less or greater
 // than the original byte slice `src`.
 func (cc *CharsetConvertor) Decode(src []byte) ([]byte, error) {
-	// No need to convert the charset encoding, just return the original data.
-	if cc.sourceCharacterSet == BINARY || cc.sourceCharacterSet == UTF8MB4 {
+	if !cc.precheck(src) {
 		return src, nil
 	}
 	// To make sure the res have enough room to store the transcoded bytes, we assume every byte of src
@@ -126,13 +121,20 @@ func (cc *CharsetConvertor) Decode(src []byte) ([]byte, error) {
 	return bytes.Trim(res, "\x00"), nil
 }
 
+func (cc *CharsetConvertor) precheck(src []byte) bool {
+	// No need to convert the charset encoding, just return the original data.
+	if len(src) == 0 || cc.sourceCharacterSet == BINARY || cc.sourceCharacterSet == UTF8MB4 {
+		return false
+	}
+	return true
+}
+
 // GBKMax is the maximum number of bytes of a GBK encoded character.
 const GBKMax = 2
 
 // Encode will encode the data from utf8mb4 to sourceCharacterSet.
 func (cc *CharsetConvertor) Encode(src []byte) ([]byte, error) {
-	// No need to convert the charset encoding, just return the original data.
-	if cc.sourceCharacterSet == BINARY || cc.sourceCharacterSet == UTF8MB4 {
+	if !cc.precheck(src) {
 		return src, nil
 	}
 	// To make sure the res have enough room to store the transcoded bytes, we assume every byte of src

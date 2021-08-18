@@ -95,8 +95,8 @@ const (
 	defaultRetryBackoffTime = 100 * time.Millisecond
 	pdStores                = "/pd/api/v1/stores"
 
-	defaultMydumperDataCharacterSet       = "binary"
-	defaultMydumperDataInvalidCharReplace = utf8.RuneError
+	defaultCSVDataCharacterSet       = "binary"
+	defaultCSVDataInvalidCharReplace = utf8.RuneError
 )
 
 var (
@@ -247,6 +247,7 @@ type PostRestore struct {
 }
 
 type CSVConfig struct {
+	// Separator, Delimiter and Terminator should all be in utf8mb4 encoding.
 	Separator       string `toml:"separator" json:"separator"`
 	Delimiter       string `toml:"delimiter" json:"delimiter"`
 	Terminator      string `toml:"terminator" json:"terminator"`
@@ -260,6 +261,7 @@ type CSVConfig struct {
 	//   - GB18030
 	//   - GBK: an extension of the GB2312 character set and is also known as Code Page 936.
 	//   - binary: no attempt to convert the encoding.
+	// Leave DataCharacterSet empty will make it use `binary` by default.
 	DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
 	// DataInvalidCharReplace is the replacement characters for non-compatible characters, which shouldn't duplicate with the separators or line breaks.
 	// Changing the default value will result in increased parsing time. Non-compatible characters do not cause an increase in error.
@@ -443,8 +445,8 @@ func NewConfig() *Config {
 				Null:                   `\N`,
 				BackslashEscape:        true,
 				TrimLastSep:            false,
-				DataCharacterSet:       defaultMydumperDataCharacterSet,
-				DataInvalidCharReplace: string(defaultMydumperDataInvalidCharReplace),
+				DataCharacterSet:       defaultCSVDataCharacterSet,
+				DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 			},
 			StrictFormat:  false,
 			MaxRegionSize: MaxRegionSize,
@@ -575,6 +577,10 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		if csv.Terminator == `\` {
 			return errors.New("invalid config: cannot use '\\' as CSV terminator when `mydumper.csv.backslash-escape` is true")
 		}
+	}
+
+	if len(csv.DataCharacterSet) == 0 {
+		csv.DataCharacterSet = defaultCSVDataCharacterSet
 	}
 
 	// adjust file routing

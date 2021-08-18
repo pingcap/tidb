@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -902,6 +903,43 @@ func (s *testMydumpCSVParserSuite) TestTerminator(c *C) {
 			},
 		},
 	}
+	s.runTestCases(c, &cfg, 1, testCases)
+}
+
+func (s *testMydumpCSVParserSuite) TestCharsetConversion(c *C) {
+	cfg := config.CSVConfig{
+		Separator:              "，",
+		Terminator:             "。\n",
+		DataCharacterSet:       "gb18030",
+		DataInvalidCharReplace: string(utf8.RuneError),
+	}
+	charsetConvertor, err := mydump.NewCharsetConvertor(&cfg)
+	c.Assert(err, IsNil)
+	originalInputPart1 := []byte(`不要温驯地走进那个良夜，老年应当在日暮时燃烧咆哮，怒斥，怒斥光明的消逝。
+`)
+	originalInputPart2 := []byte(`虽然智慧的人临终时懂得黑暗有理，因为他们的话没有迸发出闪电，他们也并不温驯地走进那个良夜。
+`)
+	// Insert an invalid char to test DataInvalidCharReplace.
+	originalInput := append(originalInputPart1, 0x99)
+	originalInput = append(originalInput, originalInputPart2...)
+	rawInput, err := charsetConvertor.Encode(originalInput)
+	c.Assert(err, IsNil)
+
+	testCases := []testCase{
+		{
+			input: string(rawInput),
+			expected: [][]types.Datum{
+				{types.NewStringDatum("不要温驯地走进那个良夜"),
+					types.NewStringDatum("老年应当在日暮时燃烧咆哮"),
+					types.NewStringDatum("怒斥"),
+					types.NewStringDatum("怒斥光明的消逝")},
+				{types.NewStringDatum(cfg.DataInvalidCharReplace + "虽然智慧的人临终时懂得黑暗有理"),
+					types.NewStringDatum("因为他们的话没有迸发出闪电"),
+					types.NewStringDatum("他们也并不温驯地走进那个良夜")},
+			},
+		},
+	}
+
 	s.runTestCases(c, &cfg, 1, testCases)
 }
 
