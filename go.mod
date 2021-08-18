@@ -51,7 +51,7 @@ require (
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20210806074406-317f69fb54b4
 	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
-	github.com/pingcap/parser v0.0.0-20210816062559-b4bbfaee6b0a
+	github.com/pingcap/parser v0.0.0-20210817054159-11374803a2c2
 	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
 	github.com/pingcap/tipb v0.0.0-20210708040514-0f154bb0dc0f
