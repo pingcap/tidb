@@ -161,14 +161,109 @@ func (p *BatchPointGetPlan) GetChildXchgProps() []*XchgProperty {
 	return nil
 }
 
-func FindBestXchgTask(ctx sessionctx.Context, root PhysicalPlan) (task, error) {
+func findBestXchgTask(ctx sessionctx.Context, root PhysicalPlan) (task, error) {
 	initProp := newXchgProperty()
 	// 1 means the main thread.
 	initProp.available = MaxThrNum - 1
-	return findBestXchgTask(ctx, root, initProp)
+	return root.FindBestXchgTask(ctx, initProp)
 }
 
-func findBestXchgTask(ctx sessionctx.Context, node PhysicalPlan, reqProp *XchgProperty) (task, error) {
+func (p *PointGetPlan) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgProperty) (task, error) {
+	return nil, errors.Errorf("FindBestXchgTask not implemented yet for PointGet")
+}
+
+func (p *BatchPointGetPlan) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgProperty) (task, error) {
+	return nil, errors.Errorf("FindBestXchgTask not implemented yet for BatchPointGet")
+}
+
+func (p *basePhysicalPlan) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgProperty) (task, error) {
+	return findBestXchgTaskForBasic(ctx, p.self, reqProp)
+}
+
+func (p *PhysicalXchg) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgProperty) (task, error) {
+	var ok bool
+	var sender *PhysicalXchg
+	if p.IsSender() {
+		sender = p
+	} else {
+		sender, ok = p.children[0].(*PhysicalXchg)
+		if !ok {
+			return nil, errors.New("must be sender")
+		}
+	}
+	consumedThr := p.inStreamCnt
+	if consumedThr == 1 {
+		consumedThr = p.outStreamCnt
+	}
+	var bestTask task
+	senderChild := sender.children[0]
+	childTasks := make([]task, 0, len(senderChild.Children()))
+	childrenReqProps := senderChild.GetChildXchgProps()
+	bestChildrenTasksFound := true
+	curAvailable := reqProp.available
+	for i, child := range senderChild.Children() {
+		childrenReqProps[i].available = curAvailable
+		bestChildTask, err := child.FindBestXchgTask(ctx, childrenReqProps[i])
+		if err != nil {
+			return invalidTask, err
+		}
+		if bestChildTask.invalid() {
+			bestChildrenTasksFound = false
+			break
+		}
+		childTasks = append(childTasks, bestChildTask)
+		tmpTask, ok := bestChildTask.(*xchgTask)
+		if !ok {
+			return nil, errors.New("childTask is not xchgTask")
+		}
+		curAvailable -= tmpTask.consumedThr
+	}
+	if !bestChildrenTasksFound {
+		return invalidTask, nil
+	}
+	if p.IsSender() {
+		bestTask = p.attach2Task(childTasks...)
+	} else {
+		bestSenderTask := sender.attach2Task(childTasks...)
+		bestTask = p.attach2Task(bestSenderTask)
+	}
+	return bestTask, nil
+}
+
+func (p *PhysicalTableReader) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgProperty) (res task, err error) {
+	possiblePlans, err := p.TryAddXchg(ctx, reqProp)
+	if err != nil {
+		return nil, err
+	}
+	if possiblePlans == nil {
+		return invalidTask, nil
+	}
+	// Here we assume there is only one possible plan for xxxReader.
+	// See xxxReader.TryAddXchg().
+	if len(possiblePlans) != 1 {
+		return nil, errors.New("Got multiple xchg plans for TableReader")
+	}
+	root, isRootXchg := possiblePlans[0].(*PhysicalXchg)
+	if isRootXchg {
+		res = &xchgTask{
+			rootTask: rootTask{
+				cst: p.Cost(),
+				p:   root,
+			},
+			dop:         root.outStreamCnt,
+			consumedThr: root.outStreamCnt,
+		}
+	} else {
+		tmpTask := &rootTask{
+			cst: p.Cost(),
+			p:   p,
+		}
+		res = convertToXchgTask(ctx, tmpTask)
+	}
+	return res, nil
+}
+
+func findBestXchgTaskForBasic(ctx sessionctx.Context, node PhysicalPlan, reqProp *XchgProperty) (task, error) {
 	possiblePlans, err := node.TryAddXchg(ctx, reqProp)
 	if err != nil {
 		return nil, err
@@ -176,41 +271,18 @@ func findBestXchgTask(ctx sessionctx.Context, node PhysicalPlan, reqProp *XchgPr
 
 	var bestTask task = invalidTask
 	for _, p := range possiblePlans {
-		planToFind := p
 		curAvailable := reqProp.available
-		xchgReceiver, isXchg := planToFind.(*PhysicalXchg)
-		if isXchg {
-			planToFind = xchgReceiver.Children()[0].Children()[0]
-			curAvailable -= xchgReceiver.inStreamCnt
-		}
 
-		// Stop find best task recursively when got xxxReader.
-		if isReaderNode(planToFind) {
-			tmpTask := &rootTask{
-				cst: planToFind.Cost(),
-				p:   p,
-			}
-			if p != planToFind {
-				// bestTask = p.attach2Task(convertToXchgTask(ctx, bestTask))
-				bestTask = &xchgTask{
-					rootTask:    *tmpTask,
-					dop:         xchgReceiver.inStreamCnt,
-					consumedThr: xchgReceiver.inStreamCnt,
-				}
-			} else {
-				bestTask = tmpTask
-			}
-			// Here we assume there is only one possible plan for xxxReader.
-			// See xxxReader.TryAddXchg().
-			continue
+		childTasks := make([]task, 0, len(p.Children()))
+		childrenReqProps := p.GetChildXchgProps()
+		// TODO: better to setup xchg's prop in initXchg()
+		if _, isXchg := p.(*PhysicalXchg); isXchg {
+			childrenReqProps = []*XchgProperty{reqProp.Clone()}
 		}
-
-		childTasks := make([]task, 0, len(planToFind.Children()))
-		childrenXchgProps := planToFind.GetChildXchgProps()
 		bestChildrenTasksFound := true
-		for i, child := range planToFind.Children() {
-			childrenXchgProps[i].available = curAvailable
-			bestChildTask, err := findBestXchgTask(ctx, child, childrenXchgProps[i])
+		for i, child := range p.Children() {
+			childrenReqProps[i].available = curAvailable
+			bestChildTask, err := child.FindBestXchgTask(ctx, childrenReqProps[i])
 			if err != nil {
 				return invalidTask, err
 			}
@@ -245,7 +317,21 @@ func (p *PointGetPlan) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty)
 }
 
 func (p *BatchPointGetPlan) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) ([]PhysicalPlan, error) {
-	return nil, errors.Errorf("TryAddXchg not implemented yet for PointGet")
+	return nil, errors.Errorf("TryAddXchg not implemented yet for BatchPointGet")
+}
+
+func (p *PhysicalLimit) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
+	if res, err = tryAddXchgPreWork(p, reqProp, res); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+func (p *PhysicalXchg) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
+	if res, err = tryAddXchgPreWork(p, reqProp, res); err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 func (p *PhysicalSelection) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
@@ -254,6 +340,41 @@ func (p *PhysicalSelection) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProp
 
 func (p *PhysicalProjection) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
 	return tryAddXchgForBasicPlan(ctx, p, reqProp)
+}
+
+func (p *PhysicalTopN) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
+	// TODO: we may still have some cost model problem for TopN(rethink the attach2Task of the topmost TopN).
+	if res, err = tryAddXchgForBasicPlan(ctx, p, reqProp); err != nil {
+		return nil, err
+	}
+	if len(res) != 2 {
+		return nil, errors.New("only expect two possible plans for TopN")
+	}
+	xchgIdx := 1
+	node := res[xchgIdx]
+	xchgReceiver, isXchg := node.(*PhysicalXchg)
+	if !isXchg {
+		xchgIdx = 0
+		node = res[xchgIdx]
+		xchgReceiver, isXchg = node.(*PhysicalXchg)
+		if !isXchg {
+			return nil, errors.New("one of possible plans must be xchg")
+		}
+	}
+	newNode, err := p.Clone()
+	if err != nil {
+		return nil, err
+	}
+	tmpNode, ok := newNode.(*PhysicalTopN)
+	if !ok {
+		return nil, errors.New("must be topn")
+	}
+	ctx.GetSessionVars().PlanID++
+	tmpNode.id = ctx.GetSessionVars().PlanID
+	updateChildrenProp(newNode, newXchgProperty())
+	newNode.SetChildren(xchgReceiver)
+	res[xchgIdx] = newNode
+	return res, nil
 }
 
 func (p *PhysicalTableReader) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
@@ -345,14 +466,6 @@ func (p *PhysicalHashJoin) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPrope
 		}
 		res = append(res, res1...)
 	}
-	return res, nil
-}
-
-func (p *PhysicalLimit) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
-	if res, err = tryAddXchgPreWork(p, reqProp, res); err != nil {
-		return nil, err
-	}
-
 	return res, nil
 }
 

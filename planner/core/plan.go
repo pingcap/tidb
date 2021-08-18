@@ -356,6 +356,8 @@ type PhysicalPlan interface {
 	GetChildXchgProps() []*XchgProperty
 	SetChildXchgProps(props []*XchgProperty)
 	TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) ([]PhysicalPlan, error)
+	// TODO: del ctx, because p.ctx is enough.
+	FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgProperty) (task, error)
 }
 
 type baseLogicalPlan struct {

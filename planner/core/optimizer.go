@@ -157,7 +157,7 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 
 	// TODO: disable paralle Xchg by default.
 	if sctx.GetSessionVars().UseParallel {
-		xchgTask, err := FindBestXchgTask(sctx, finalPlan)
+		xchgTask, err := findBestXchgTask(sctx, finalPlan)
 		if err != nil {
 			return nil, 0, err
 		}

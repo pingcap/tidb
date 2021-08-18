@@ -2230,18 +2230,23 @@ func (p *PhysicalXchg) GetCost(childCost float64, concurrency int) float64 {
 	return (childCost / float64(concurrency)) * 1.2
 }
 
-// p: receiver -> sender -> senderChild -> tasks[0]
-//                                      -> tasks[1]
-//                                      -> ...
+// NOTE: different handling for Sender and Receiver.
+// Sender:
+//  1. need to attach tasks to sender's child.
+//  2. need to compute consumedThr by adding all tasks' consumedThr.
+// Receiver:
+// 1. tasks[0] already include Sender, attaching and comsumtedThr are already done, so just use them.
 func (p *PhysicalXchg) attach2Task(tasks ...task) task {
-	if p.IsSender() {
-		panic("attach xchgSender to task is unexpected")
-	}
-
-	sender, ok := p.Children()[0].(*PhysicalXchg)
-	if !ok {
-		// TODO: return error
-		panic("receiver's child must be sender")
+	if !p.IsSender() {
+		senderTask, ok := tasks[0].(*xchgTask)
+		if !ok {
+			panic("task must be xchgTask")
+		}
+		return &xchgTask{
+			rootTask:    rootTask{cst: tasks[0].cost(), p: p},
+			dop:         p.inStreamCnt,
+			consumedThr: p.inStreamCnt + senderTask.consumedThr,
+		}
 	}
 
 	var consumedThr int
@@ -2255,14 +2260,13 @@ func (p *PhysicalXchg) attach2Task(tasks ...task) task {
 	}
 	consumedThr += p.inStreamCnt
 
-	senderChildTask := sender.Children()[0].attach2Task(tasks...)
+	senderChildTask := p.Children()[0].attach2Task(tasks...)
 
-	t := &xchgTask{
-		rootTask:    rootTask{cst: sender.GetCost(senderChildTask.cost(), p.inStreamCnt), p: p},
+	return &xchgTask{
+		rootTask:    rootTask{cst: p.GetCost(senderChildTask.cost(), p.inStreamCnt), p: p},
 		dop:         p.inStreamCnt,
-		consumedThr: consumedThr + p.inStreamCnt,
+		consumedThr: consumedThr,
 	}
-	return t
 }
 
 func convertToXchgTask(ctx sessionctx.Context, t task) *xchgTask {
