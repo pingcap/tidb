@@ -871,7 +871,6 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 	}
 
 	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
-	nonExistsTables := make([]string, 0)
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
@@ -885,7 +884,7 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 
 		tbl, err := p.ensureInfoSchema().TableByName(schema, t.Name)
 		if infoschema.ErrTableNotExists.Equal(err) {
-			nonExistsTables = append(nonExistsTables, ast.Ident{Schema: schema, Name: t.Name}.String())
+			// Non-exist table will be checked in ddl executor
 			continue
 		}
 
@@ -899,14 +898,6 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 			p.err = ErrDropTableOnTemporaryTable
 			return
 		}
-
-		if stmt.TemporaryKeyword == ast.TemporaryLocal && tblInfo.TempTableType != model.TempTableLocal {
-			nonExistsTables = append(nonExistsTables, ast.Ident{Schema: schema, Name: t.Name}.String())
-		}
-	}
-
-	if len(nonExistsTables) > 0 {
-		p.err = infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(nonExistsTables, ","))
 	}
 }
 
