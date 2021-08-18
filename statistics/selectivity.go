@@ -375,10 +375,10 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 		}
 		var res *ranger.DetachRangeResult
 		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
-		ranges, accessConds, remainedConds, isDNF = res.Ranges, res.AccessConds, res.RemainedConds, res.IsDNFCond
 		if err != nil {
 			return 0, nil, false, err
 		}
+		ranges, accessConds, remainedConds, isDNF = res.Ranges, res.AccessConds, res.RemainedConds, res.IsDNFCond
 	default:
 		panic("should never be here")
 	}
