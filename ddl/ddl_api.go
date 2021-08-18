@@ -986,7 +986,7 @@ func checkColumnValueConstraint(col *table.Column, collation string) error {
 	valueMap := make(map[string]bool, len(col.Elems))
 	ctor := collate.GetCollator(collation)
 	enumLengthLimit := config.GetGlobalConfig().EnableEnumLengthLimit
-	desc, err := charset.GetCharsetDesc(col.Charset)
+	desc, err := charset.GetCharsetInfo(col.Charset)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1133,7 +1133,7 @@ func checkColumnFieldLength(col *table.Column) error {
 
 // IsTooBigFieldLength check if the varchar type column exceeds the maximum length limit.
 func IsTooBigFieldLength(colDefTpFlen int, colDefName, setCharset string) error {
-	desc, err := charset.GetCharsetDesc(setCharset)
+	desc, err := charset.GetCharsetInfo(setCharset)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2333,7 +2333,7 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 		// the charset will be utf8, collate will be utf8_bin
 		switch opt.Tp {
 		case ast.TableOptionCharset:
-			info, err := charset.GetCharsetDesc(opt.StrValue)
+			info, err := charset.GetCharsetInfo(opt.StrValue)
 			if err != nil {
 				return "", "", err
 			}
