@@ -486,3 +486,14 @@ a	b	c	d	e
 select * from t ignore index(expression_index3) where d+ timestamp'0000-00-00 00:00:00.00001' = timestamp'2021-08-13 04:10:44'+ timestamp'0000-00-00 00:00:00.00001';
 a	b	c	d	e
 2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+create table t02 (a varchar(20));
+insert into t02 values ('a'), ('b'), ('c');
+select * from t02 where lower(a) < 'c';
+a
+a
+b
+create index eidx on t02 ((lower(a)));
+select * from t02 use index(eidx) where lower(a) < 'c';
+a
+a
+b
