@@ -1299,11 +1299,6 @@ func (d Duration) Neg() Duration {
 	}
 }
 
-// IsNeg check if this duration value is negative or not.
-func (d Duration) IsNeg() bool {
-	return d.Duration < 0
-}
-
 // Add adds d to d, returns a duration value.
 func (d Duration) Add(v Duration) (Duration, error) {
 	if v == (Duration{}) {
@@ -1815,6 +1810,9 @@ func splitDuration(t gotime.Duration) (int, int, int, int, int) {
 	t -= seconds * gotime.Second
 	fraction := t / gotime.Microsecond
 
+	if sign < 0 {
+		return sign, -int(hours), -int(minutes), -int(seconds), -int(fraction)
+	}
 	return sign, int(hours), int(minutes), int(seconds), int(fraction)
 }
 

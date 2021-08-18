@@ -2773,9 +2773,6 @@ func (b *builtinExtractDurationSig) evalInt(row chunk.Row) (int64, bool, error) 
 		return 0, isNull, err
 	}
 	res, err := types.ExtractDurationNum(&dur, unit)
-	if dur.IsNeg() {
-		res = -res
-	}
 	return res, err != nil, err
 }
 

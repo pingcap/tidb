@@ -1145,9 +1145,6 @@ func (b *builtinExtractDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk
 		if err != nil {
 			return err
 		}
-		if duration.IsNeg() {
-			i64s[i] = -i64s[i]
-		}
 	}
 	return nil
 }
