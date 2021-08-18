@@ -238,14 +238,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		EraseLastSemicolon(node.OriginNode)
 		EraseLastSemicolon(node.HintedNode)
 		p.checkBindGrammar(node.OriginNode, node.HintedNode, p.ctx.GetSessionVars().CurrentDB)
-		//subs, err := generatedexpr.GetAllSubQuery(node.OriginNode)
-		//if err != nil {
-		//	p.err = err
-		//	return
-		//}
-		//for _, sub := range subs {
-		//	p.checkBindGrammar(sub.Query.(ast.StmtNode), node.HintedNode,  p.ctx.GetSessionVars().CurrentDB)
-		//}
 		return in, true
 	case *ast.DropBindingStmt:
 		p.stmtTp = TypeDrop
