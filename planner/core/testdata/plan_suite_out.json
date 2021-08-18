@@ -2304,6 +2304,67 @@
     ]
   },
   {
+    "Name": "TestINMJHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ inl_merge_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "IndexMergeJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_hash_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "IndexHashJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "IndexJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 1.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join(t2) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "HashJoin 12500.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 <nil>"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestEliminateMaxOneRow",
     "Cases": [
       {
