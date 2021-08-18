@@ -24,7 +24,7 @@ require (
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2
 	github.com/docker/go-units v0.4.0
 	github.com/fsouza/fake-gcs-server v1.19.0
-	github.com/go-sql-driver/mysql v1.5.0
+	github.com/go-sql-driver/mysql v1.6.0
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/mock v1.6.0
 	github.com/golang/protobuf v1.5.2
@@ -52,7 +52,7 @@ require (
 	github.com/pingcap/kvproto v0.0.0-20210806074406-317f69fb54b4
 	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
 	github.com/pingcap/parser v0.0.0-20210817100948-a02f7a058395
-	github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3
+	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
 	github.com/pingcap/tipb v0.0.0-20210708040514-0f154bb0dc0f
 	github.com/prometheus/client_golang v1.5.1
@@ -67,7 +67,7 @@ require (
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210806085616-14892a598eab
-	github.com/tikv/pd v1.1.0-beta.0.20210609101029-3ba158cf41a4
+	github.com/tikv/pd v1.1.0-beta.0.20210818112400-0c5667766690
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.4.0
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -75,8 +75,6 @@ require (
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f
 	github.com/xitongsys/parquet-go v1.5.5-0.20201110004701-b09c49d6d457
 	github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0
-	// Fix panic in unit test with go >= 1.14, ref: etcd-io/bbolt#201 https://github.com/etcd-io/bbolt/pull/201
-	go.etcd.io/bbolt v1.3.5 // indirect
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b
 	go.opencensus.io v0.22.5 // indirect
 	go.uber.org/atomic v1.9.0
