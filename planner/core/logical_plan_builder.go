@@ -1363,6 +1363,11 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			childTp := u.children[j].Schema().Columns[i].RetType
 			resultTp = unionJoinFieldType(resultTp, childTp)
 		}
+
+		if !types.IsTypeVarchar(resultTp.Tp) {
+			resultTp.Charset, resultTp.Collate = expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
+		}
+
 		if err := expression.CheckIllegalMixCollation("UNION", tmpExprs, types.ETInt); err != nil {
 			return err
 		}
@@ -1382,7 +1387,8 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 		for i, srcCol := range child.Schema().Columns {
 			dstType := unionCols[i].RetType
 			srcType := srcCol.RetType
-			if srcType.Tp != dstType.Tp {
+
+			if !srcType.Equal(dstType) {
 				exprs[i] = expression.BuildCastFunction4Union(b.ctx, srcCol, dstType)
 			} else {
 				exprs[i] = srcCol
