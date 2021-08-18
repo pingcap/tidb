@@ -79,6 +79,7 @@ var (
 )
 
 const (
+	// CurrentMagicByteVer is the current magic byte version.
 	CurrentMagicByteVer byte = 0x00
 	// PolicyMagicByte handler
 	// 0x00 - 0x3F: Json Handler
@@ -87,7 +88,7 @@ const (
 	// 0xC0 - 0xFF: Reserved
 
 	// type means how to handle the serialized data.
-	typeJson    int = 1
+	typeJSON    int = 1
 	typeUnknown int = 2
 	// todo: customized handler.
 )
@@ -169,6 +170,7 @@ func (m *Meta) GetGlobalID() (int64, error) {
 	return m.txn.GetInt64(mNextGlobalIDKey)
 }
 
+// GenPolicyID generates the next policy global id.
 func (m *Meta) GenPolicyID() (int64, error) {
 	policyIDMutex.Lock()
 	defer policyIDMutex.Unlock()
@@ -176,6 +178,7 @@ func (m *Meta) GenPolicyID() (int64, error) {
 	return m.txn.Inc(mPolicyGlobalID, 1)
 }
 
+// GetPolicyID gets current policy global id.
 func (m *Meta) GetPolicyID() (int64, error) {
 	return m.txn.GetInt64(mPolicyGlobalID)
 }
@@ -355,6 +358,7 @@ func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 	return errors.Trace(err)
 }
 
+// CreatePolicy creates a policy.
 func (m *Meta) CreatePolicy(policy *placement.Policy) error {
 	policyKey := m.policyKey(policy.ID)
 
@@ -368,6 +372,7 @@ func (m *Meta) CreatePolicy(policy *placement.Policy) error {
 	return m.txn.HSet(mPolicies, policyKey, attachMagicByte(data))
 }
 
+// UpdatePolicy updates a policy.
 func (m *Meta) UpdatePolicy(policy *placement.Policy) error {
 	policyKey := m.policyKey(policy.ID)
 
@@ -684,7 +689,7 @@ func attachMagicByte(data []byte) []byte {
 func detachMagicByte(value []byte) ([]byte, error) {
 	magic, data := value[:1], value[1:]
 	switch whichMagicType(magic[0]) {
-	case typeJson:
+	case typeJSON:
 		return data, nil
 	default:
 		//
