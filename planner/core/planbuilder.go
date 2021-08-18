@@ -2069,6 +2069,7 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
 	ast.AnalyzeOptNumSamples:    500000,
+	ast.AnalyzeOptSampleRate:    100,
 }
 
 var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
@@ -2077,6 +2078,7 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptCMSketchWidth: 2048,
 	ast.AnalyzeOptCMSketchDepth: 5,
 	ast.AnalyzeOptNumSamples:    10000,
+	ast.AnalyzeOptSampleRate:    0,
 }
 
 var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
@@ -2084,7 +2086,8 @@ var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumTopN:       500,
 	ast.AnalyzeOptCMSketchWidth: 2048,
 	ast.AnalyzeOptCMSketchDepth: 5,
-	ast.AnalyzeOptNumSamples:    100000,
+	ast.AnalyzeOptNumSamples:    0,
+	ast.AnalyzeOptSampleRate:    1,
 }
 
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeOptionType]uint64, error) {
@@ -2098,17 +2101,33 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 			optMap[key] = val
 		}
 	}
+	sampleNum, sampleRate := 0, 0
 	for _, opt := range opts {
-		if opt.Type == ast.AnalyzeOptNumTopN {
+		switch opt.Type {
+		case ast.AnalyzeOptNumTopN:
 			if opt.Value > analyzeOptionLimit[opt.Type] {
 				return nil, errors.Errorf("value of analyze option %s should not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
-		} else {
+		case ast.AnalyzeOptSampleRate:
+			if statsVer == statistics.Version1 && opt.Value > 0 {
+				return nil, errors.Errorf("Version 1's statistics doesn't support the SAMPLE RATE option, please set tidb_analyze_version to 2")
+			}
+			if opt.Value > analyzeOptionLimit[opt.Type] {
+				return nil, errors.Errorf("value of analyze option %s should not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
+			}
+			sampleRate = int(opt.Value)
+		default:
 			if opt.Value == 0 || opt.Value > analyzeOptionLimit[opt.Type] {
 				return nil, errors.Errorf("value of analyze option %s should be positive and not larger than %d", ast.AnalyzeOptionString[opt.Type], analyzeOptionLimit[opt.Type])
 			}
+			if opt.Type == ast.AnalyzeOptNumSamples {
+				sampleNum = int(opt.Value)
+			}
 		}
 		optMap[opt.Type] = opt.Value
+	}
+	if sampleNum > 0 && sampleRate > 0 {
+		return nil, errors.Errorf("You can only either set the value of the sample num of set the value of the sample rate. Don't set both of them")
 	}
 	if optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > CMSketchSizeLimit {
 		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", CMSketchSizeLimit)

@@ -178,7 +178,7 @@ func (s *testSampleSuite) TestWeightedSampling(c *C) {
 	// for x := 0; x < 800; x++ {
 	itemCnt := make([]int, rowNum)
 	for loopI := 0; loopI < loopCnt; loopI++ {
-		builder := &ReservoirRowSampleBuilder{
+		builder := &RowSampleBuilder{
 			Sc:              sc,
 			RecordSet:       rs,
 			ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
@@ -190,8 +190,8 @@ func (s *testSampleSuite) TestWeightedSampling(c *C) {
 		}
 		collector, err := builder.Collect()
 		c.Assert(err, IsNil)
-		for i := 0; i < collector.MaxSampleSize; i++ {
-			a := collector.Samples[i].Columns[0].GetInt64()
+		for i := 0; i < int(sampleNum); i++ {
+			a := collector.Base().Samples[i].Columns[0].GetInt64()
 			itemCnt[a]++
 		}
 		c.Assert(rs.Close(), IsNil)
@@ -221,7 +221,7 @@ func (s *testSampleSuite) TestDistributedWeightedSampling(c *C) {
 		rootRowCollector := NewReservoirRowSampleCollector(int(sampleNum), 1)
 		rootRowCollector.FMSketches = append(rootRowCollector.FMSketches, NewFMSketch(1000))
 		for i := 0; i < batch; i++ {
-			builder := &ReservoirRowSampleBuilder{
+			builder := &RowSampleBuilder{
 				Sc:              sc,
 				RecordSet:       sets[i],
 				ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},

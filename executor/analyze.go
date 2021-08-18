@@ -770,7 +770,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 // decodeSampleDataWithVirtualColumn constructs the virtual column by evaluating from the deocded normal columns.
 // If it failed, it would return false to trigger normal decoding way without the virtual column.
 func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
-	collector *statistics.ReservoirRowSampleCollector,
+	collector statistics.RowSampleCollector,
 	fieldTps []*types.FieldType,
 	virtualColIdx []int,
 	schema *expression.Schema,
@@ -779,9 +779,9 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	for _, col := range e.schemaForVirtualColEval.Columns {
 		totFts = append(totFts, col.RetType)
 	}
-	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Samples))
+	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Base().Samples))
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
-	for _, sample := range collector.Samples {
+	for _, sample := range collector.Base().Samples {
 		for i := range sample.Columns {
 			if schema.Columns[i].VirtualExpr != nil {
 				continue
@@ -799,7 +799,7 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	iter := chunk.NewIterator4Chunk(chk)
 	for row, i := iter.Begin(), 0; row != iter.End(); row, i = iter.Next(), i+1 {
 		datums := row.GetDatumRow(totFts)
-		collector.Samples[i].Columns = datums
+		collector.Base().Samples[i].Columns = datums
 	}
 	return nil
 }
@@ -827,9 +827,9 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}()
 
 	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
-	rootRowCollector := statistics.NewReservoirRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), l)
+	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), int(e.analyzePB.ColReq.GetSampleRate()), l)
 	for i := 0; i < l; i++ {
-		rootRowCollector.FMSketches = append(rootRowCollector.FMSketches, statistics.NewFMSketch(maxSketchSize))
+		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
 	sc := e.ctx.GetSessionVars().StmtCtx
 	statsConcurrency, err := getBuildStatsConcurrency(e.ctx)
@@ -886,7 +886,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 	} else {
 		// If there's no virtual column or we meet error during eval virtual column, we fallback to normal decode otherwise.
-		for _, sample := range rootRowCollector.Samples {
+		for _, sample := range rootRowCollector.Base().Samples {
 			for i := range sample.Columns {
 				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone)
 				if err != nil {
@@ -896,7 +896,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 	}
 
-	for _, sample := range rootRowCollector.Samples {
+	for _, sample := range rootRowCollector.Base().Samples {
 		// Calculate handle from the row data for each row. It will be used to sort the samples.
 		sample.Handle, err = e.handleCols.BuildHandleByDatums(sample.Columns)
 		if err != nil {
@@ -908,8 +908,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 
 	// The order of the samples are broken when merging samples from sub-collectors.
 	// So now we need to sort the samples according to the handle in order to calculate correlation.
-	sort.Slice(rootRowCollector.Samples, func(i, j int) bool {
-		return rootRowCollector.Samples[i].Handle.Compare(rootRowCollector.Samples[j].Handle) < 0
+	sort.Slice(rootRowCollector.Base().Samples, func(i, j int) bool {
+		return rootRowCollector.Base().Samples[i].Handle.Compare(rootRowCollector.Base().Samples[j].Handle) < 0
 	})
 
 	totalLen := len(e.colsInfo) + len(e.indexes)
@@ -933,7 +933,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			isColumn:         true,
 			slicePos:         i,
 		}
-		fmSketches = append(fmSketches, rootRowCollector.FMSketches[i])
+		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[i])
 	}
 
 	indexPushedDownResult := <-idxNDVPushDownCh
@@ -942,8 +942,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 	for _, offset := range indexesWithVirtualColOffsets {
 		ret := indexPushedDownResult.results[e.indexes[offset].ID]
-		rootRowCollector.NullCount[colLen+offset] = ret.Count
-		rootRowCollector.FMSketches[colLen+offset] = ret.Ars[0].Fms[0]
+		rootRowCollector.Base().NullCount[colLen+offset] = ret.Count
+		rootRowCollector.Base().FMSketches[colLen+offset] = ret.Ars[0].Fms[0]
 	}
 
 	// build index stats
@@ -955,7 +955,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			isColumn:         false,
 			slicePos:         colLen + i,
 		}
-		fmSketches = append(fmSketches, rootRowCollector.FMSketches[colLen+i])
+		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[colLen+i])
 	}
 	close(buildTaskChan)
 	panicCnt := 0
@@ -975,7 +975,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
-	count = rootRowCollector.Count
+	count = rootRowCollector.Base().Count
 	if needExtStats {
 		statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 		extStats, err = statsHandle.BuildExtendedStats(e.TableID.GetStatisticsID(), e.colsInfo, sampleCollectors)
@@ -1152,7 +1152,7 @@ func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(indexInfos []*model
 }
 
 type samplingMergeResult struct {
-	collector *statistics.ReservoirRowSampleCollector
+	collector statistics.RowSampleCollector
 	err       error
 }
 
@@ -1182,9 +1182,9 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 	failpoint.Inject("mockAnalyzeSamplingMergeWorkerPanic", func() {
 		panic("failpoint triggered")
 	})
-	retCollector := statistics.NewReservoirRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), l)
+	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), int(e.analyzePB.ColReq.GetSampleRate()), l)
 	for i := 0; i < l; i++ {
-		retCollector.FMSketches = append(retCollector.FMSketches, statistics.NewFMSketch(maxSketchSize))
+		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
 	for {
 		data, ok := <-taskCh
@@ -1209,7 +1209,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 
 type samplingBuildTask struct {
 	id               int64
-	rootRowCollector *statistics.ReservoirRowSampleCollector
+	rootRowCollector statistics.RowSampleCollector
 	tp               *types.FieldType
 	isColumn         bool
 	slicePos         int
@@ -1248,8 +1248,8 @@ workLoop:
 				topns[task.slicePos] = nil
 				continue
 			}
-			sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.MaxSampleSize)
-			for j, row := range task.rootRowCollector.Samples {
+			sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.Base().Samples.Len())
+			for j, row := range task.rootRowCollector.Base().Samples {
 				if row.Columns[task.slicePos].IsNull() {
 					continue
 				}
@@ -1268,17 +1268,17 @@ workLoop:
 			}
 			collector = &statistics.SampleCollector{
 				Samples:   sampleItems,
-				NullCount: task.rootRowCollector.NullCount[task.slicePos],
-				Count:     task.rootRowCollector.Count - task.rootRowCollector.NullCount[task.slicePos],
-				FMSketch:  task.rootRowCollector.FMSketches[task.slicePos],
-				TotalSize: task.rootRowCollector.TotalSizes[task.slicePos],
+				NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
+				Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
+				FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
+				TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
 			}
 		} else {
 			var tmpDatum types.Datum
 			var err error
 			idx := e.indexes[task.slicePos-colLen]
-			sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.MaxSampleSize)
-			for _, row := range task.rootRowCollector.Samples {
+			sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.Base().Samples.Len())
+			for _, row := range task.rootRowCollector.Base().Samples {
 				if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
 					continue
 				}
@@ -1307,10 +1307,10 @@ workLoop:
 			}
 			collector = &statistics.SampleCollector{
 				Samples:   sampleItems,
-				NullCount: task.rootRowCollector.NullCount[task.slicePos],
-				Count:     task.rootRowCollector.Count - task.rootRowCollector.NullCount[task.slicePos],
-				FMSketch:  task.rootRowCollector.FMSketches[task.slicePos],
-				TotalSize: task.rootRowCollector.TotalSizes[task.slicePos],
+				NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
+				Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
+				FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
+				TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
 			}
 		}
 		if task.isColumn {

@@ -2224,10 +2224,13 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:   int64(opts[ast.AnalyzeOptNumSamples]),
+		SampleRate:   new(int32),
 		SketchSize:   maxSketchSize,
 		ColumnsInfo:  util.ColumnsToProto(task.ColsInfo, task.TblInfo.PKIsHandle),
 		ColumnGroups: colGroups,
 	}
+	*e.analyzePB.ColReq.SampleRate = int32(opts[ast.AnalyzeOptSampleRate])
+
 	if task.TblInfo != nil {
 		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
 		if task.TblInfo.IsCommonHandle {

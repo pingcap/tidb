@@ -423,7 +423,7 @@ func handleAnalyzeFullSamplingReq(
 	}
 	colReq := analyzeReq.ColReq
 	/* #nosec G404 */
-	builder := &statistics.ReservoirRowSampleBuilder{
+	builder := &statistics.RowSampleBuilder{
 		Sc:              sc,
 		RecordSet:       e,
 		ColsFieldType:   fts,
@@ -431,6 +431,7 @@ func handleAnalyzeFullSamplingReq(
 		ColGroups:       colGroups,
 		MaxSampleSize:   int(colReq.SampleSize),
 		MaxFMSketchSize: int(colReq.SketchSize),
+		SampleRate:      int(colReq.GetSampleRate()),
 		Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	collector, err := builder.Collect()
