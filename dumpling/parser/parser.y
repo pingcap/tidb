@@ -346,7 +346,6 @@ import (
 	connection            "CONNECTION"
 	consistency           "CONSISTENCY"
 	consistent            "CONSISTENT"
-	constraints           "CONSTRAINTS"
 	context               "CONTEXT"
 	cpu                   "CPU"
 	csvBackslashEscape    "CSV_BACKSLASH_ESCAPE"
@@ -632,29 +631,44 @@ import (
 	briefType             "BRIEF"
 	cast                  "CAST"
 	copyKwd               "COPY"
+	constraints           "CONSTRAINTS"
 	curTime               "CURTIME"
 	dateAdd               "DATE_ADD"
 	dateSub               "DATE_SUB"
 	dotType               "DOT"
 	dump                  "DUMP"
 	exact                 "EXACT"
+	exprPushdownBlacklist "EXPR_PUSHDOWN_BLACKLIST"
 	extract               "EXTRACT"
 	flashback             "FLASHBACK"
+	follower              "FOLLOWER"
+	followerConstraints   "FOLLOWER_CONSTRAINTS"
+	followers             "FOLLOWERS"
 	getFormat             "GET_FORMAT"
 	groupConcat           "GROUP_CONCAT"
 	next_row_id           "NEXT_ROW_ID"
 	inplace               "INPLACE"
 	instant               "INSTANT"
 	internal              "INTERNAL"
+	jsonArrayagg          "JSON_ARRAYAGG"
+	jsonObjectAgg         "JSON_OBJECTAGG"
+	leader                "LEADER"
+	leaderConstraints     "LEADER_CONSTRAINTS"
+	learner               "LEARNER"
+	learnerConstraints    "LEARNER_CONSTRAINTS"
+	learners              "LEARNERS"
 	min                   "MIN"
 	max                   "MAX"
 	now                   "NOW"
+	optRuleBlacklist      "OPT_RULE_BLACKLIST"
 	plan                  "PLAN"
 	position              "POSITION"
+	primaryRegion         "PRIMARY_REGION"
 	recent                "RECENT"
 	recreator             "RECREATOR"
 	running               "RUNNING"
 	s3                    "S3"
+	schedule              "SCHEDULE"
 	staleness             "STALENESS"
 	std                   "STD"
 	stddev                "STDDEV"
@@ -668,6 +682,7 @@ import (
 	substring             "SUBSTRING"
 	timestampAdd          "TIMESTAMPADD"
 	timestampDiff         "TIMESTAMPDIFF"
+	tls                   "TLS"
 	tokudbDefault         "TOKUDB_DEFAULT"
 	tokudbFast            "TOKUDB_FAST"
 	tokudbLzma            "TOKUDB_LZMA"
@@ -681,16 +696,10 @@ import (
 	variance              "VARIANCE"
 	varPop                "VAR_POP"
 	varSamp               "VAR_SAMP"
-	exprPushdownBlacklist "EXPR_PUSHDOWN_BLACKLIST"
-	optRuleBlacklist      "OPT_RULE_BLACKLIST"
-	jsonArrayagg          "JSON_ARRAYAGG"
-	jsonObjectAgg         "JSON_OBJECTAGG"
-	tls                   "TLS"
-	follower              "FOLLOWER"
-	leader                "LEADER"
-	learner               "LEARNER"
 	verboseType           "VERBOSE"
 	voter                 "VOTER"
+	voterConstraints      "VOTER_CONSTRAINTS"
+	voters                "VOTERS"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -1289,7 +1298,8 @@ import (
 	PlacementCount                         "Placement rules count option"
 	PlacementLabelConstraints              "Placement rules label constraints option"
 	PlacementRole                          "Placement rules role option"
-	PlacementOptions                       "Placement rules options"
+	OldPlacementOptions                    "Placement rules options"
+	PlacementOption                        "Anonymous or direct placement option"
 	PlacementSpec                          "Placement rules specification"
 	PlacementSpecList                      "Placement rules specifications"
 	AttributesOpt                          "Attributes options"
@@ -1513,7 +1523,57 @@ PlacementLabelConstraints:
 		$$ = $3
 	}
 
-PlacementOptions:
+PlacementOption:
+	"PRIMARY_REGION" EqOpt stringLit
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPrimaryRegion, StrValue: $3}
+	}
+|	"REGIONS" EqOpt stringLit
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionRegions, StrValue: $3}
+	}
+|	"FOLLOWERS" EqOpt LengthNum
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionFollowerCount, UintValue: $3.(uint64)}
+	}
+|	"VOTERS" EqOpt LengthNum
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionVoterCount, UintValue: $3.(uint64)}
+	}
+|	"LEARNERS" EqOpt LengthNum
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionLearnerCount, UintValue: $3.(uint64)}
+	}
+|	"SCHEDULE" EqOpt stringLit
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionSchedule, StrValue: $3}
+	}
+|	"CONSTRAINTS" EqOpt stringLit
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionConstraints, StrValue: $3}
+	}
+|	"LEADER_CONSTRAINTS" EqOpt stringLit
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionLeaderConstraints, StrValue: $3}
+	}
+|	"FOLLOWER_CONSTRAINTS" EqOpt stringLit
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionFollowerConstraints, StrValue: $3}
+	}
+|	"VOTER_CONSTRAINTS" EqOpt stringLit
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionVoterConstraints, StrValue: $3}
+	}
+|	"LEARNER_CONSTRAINTS" EqOpt stringLit
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionLearnerConstraints, StrValue: $3}
+	}
+|	"PLACEMENT" "POLICY" EqOpt stringLit
+	{
+		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
+	}
+
+OldPlacementOptions:
 	PlacementCount
 	{
 		$$ = &ast.PlacementSpec{
@@ -1532,7 +1592,7 @@ PlacementOptions:
 			Role: $1.(ast.PlacementRole),
 		}
 	}
-|	PlacementOptions PlacementCount
+|	OldPlacementOptions PlacementCount
 	{
 		spec := $1.(*ast.PlacementSpec)
 		if spec.Replicas != 0 {
@@ -1542,7 +1602,7 @@ PlacementOptions:
 		spec.Replicas = $2.(uint64)
 		$$ = spec
 	}
-|	PlacementOptions PlacementLabelConstraints
+|	OldPlacementOptions PlacementLabelConstraints
 	{
 		spec := $1.(*ast.PlacementSpec)
 		if len(spec.Constraints) > 0 {
@@ -1552,7 +1612,7 @@ PlacementOptions:
 		spec.Constraints = $2.(string)
 		$$ = spec
 	}
-|	PlacementOptions PlacementRole
+|	OldPlacementOptions PlacementRole
 	{
 		spec := $1.(*ast.PlacementSpec)
 		if spec.Role != ast.PlacementRoleNone {
@@ -1564,13 +1624,13 @@ PlacementOptions:
 	}
 
 PlacementSpec:
-	"ADD" "PLACEMENT" "POLICY" PlacementOptions
+	"ADD" "PLACEMENT" "POLICY" OldPlacementOptions
 	{
 		spec := $4.(*ast.PlacementSpec)
 		spec.Tp = ast.PlacementAdd
 		$$ = spec
 	}
-|	"ALTER" "PLACEMENT" "POLICY" PlacementOptions
+|	"ALTER" "PLACEMENT" "POLICY" OldPlacementOptions
 	{
 		spec := $4.(*ast.PlacementSpec)
 		spec.Tp = ast.PlacementAlter
@@ -1633,6 +1693,14 @@ AlterTablePartitionOpt:
 			Tp:             ast.AlterTablePartitionAttributes,
 			PartitionNames: []model.CIStr{model.NewCIStr($2)},
 			AttributesSpec: $3.(*ast.AttributesSpec),
+		}
+	}
+|	"PARTITION" Identifier PartDefOptionList
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:             ast.AlterTablePartitionOptions,
+			PartitionNames: []model.CIStr{model.NewCIStr($2)},
+			Options:        $3.([]*ast.TableOption),
 		}
 	}
 
@@ -3599,6 +3667,16 @@ DatabaseOption:
 	{
 		$$ = &ast.DatabaseOption{Tp: ast.DatabaseOptionEncryption, Value: $4}
 	}
+|	PlacementOption
+	{
+		placementOptions := $1.(*ast.PlacementOption)
+		$$ = &ast.DatabaseOption{
+			// offset trick, enums are identical but of different type
+			Tp:        ast.DatabaseOptionType(placementOptions.Tp),
+			Value:     placementOptions.StrValue,
+			UintValue: placementOptions.UintValue,
+		}
+	}
 
 DatabaseOptionListOpt:
 	{
@@ -3957,6 +4035,16 @@ PartDefOption:
 |	"NODEGROUP" EqOpt LengthNum
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionNodegroup, UintValue: $3.(uint64)}
+	}
+|	PlacementOption
+	{
+		placementOptions := $1.(*ast.PlacementOption)
+		$$ = &ast.TableOption{
+			// offset trick, enums are identical but of different type
+			Tp:        ast.TableOptionType(placementOptions.Tp),
+			StrValue:  placementOptions.StrValue,
+			UintValue: placementOptions.UintValue,
+		}
 	}
 
 PartDefValuesOpt:
@@ -5932,7 +6020,6 @@ UnReservedKeyword:
 |	"CSV_SEPARATOR"
 |	"ON_DUPLICATE"
 |	"TIKV_IMPORTER"
-|	"CONSTRAINTS"
 |	"REPLICAS"
 |	"POLICY"
 |	"WAIT"
@@ -6055,10 +6142,20 @@ NotKeywordToken:
 |	"JSON_ARRAYAGG"
 |	"TLS"
 |	"FOLLOWER"
+|	"FOLLOWERS"
 |	"LEADER"
 |	"LEARNER"
+|	"LEARNERS"
 |	"VERBOSE"
 |	"VOTER"
+|	"VOTERS"
+|	"CONSTRAINTS"
+|	"PRIMARY_REGION"
+|	"SCHEDULE"
+|	"LEADER_CONSTRAINTS"
+|	"FOLLOWER_CONSTRAINTS"
+|	"LEARNER_CONSTRAINTS"
+|	"VOTER_CONSTRAINTS"
 
 /************************************************************************************
  *
