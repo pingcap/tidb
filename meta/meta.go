@@ -675,10 +675,10 @@ func (m *Meta) GetPolicy(policyID int64) (*placement.Policy, error) {
 }
 
 func attachMagicByte(data []byte) []byte {
-	dataWithHeader := make([]byte, 0, len(data)+1)
-	dataWithHeader = append(dataWithHeader, mPolicyMagicByte)
-	dataWithHeader = append(dataWithHeader, data...)
-	return dataWithHeader
+	data = append(data, 0)
+	copy(data[1:], data)
+	data[0] = mPolicyMagicByte
+	return data
 }
 
 func detachMagicByte(value []byte) ([]byte, error) {
