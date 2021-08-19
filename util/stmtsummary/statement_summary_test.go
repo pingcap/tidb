@@ -1131,8 +1131,8 @@ func TestEnableSummaryParallel(t *testing.T) {
 	require.True(t, ssMap.Enabled())
 }
 
-// Test GetMoreThanOnceBindableStmt.
-func TestGetMoreThanOnceBindableStmt(t *testing.T) {
+// Test GetMoreThanCntBindableStmt.
+func TestGetMoreThanCntBindableStmt(t *testing.T) {
 	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 
@@ -1141,18 +1141,18 @@ func TestGetMoreThanOnceBindableStmt(t *testing.T) {
 	stmtExecInfo1.NormalizedSQL = "insert ?"
 	stmtExecInfo1.StmtCtx.StmtType = "Insert"
 	ssMap.AddStatement(stmtExecInfo1)
-	stmts := ssMap.GetMoreThanOnceBindableStmt()
+	stmts := ssMap.GetMoreThanCntBindableStmt(1)
 	require.Equal(t, 0, len(stmts))
 
 	stmtExecInfo1.NormalizedSQL = "select ?"
 	stmtExecInfo1.Digest = "digest1"
 	stmtExecInfo1.StmtCtx.StmtType = "Select"
 	ssMap.AddStatement(stmtExecInfo1)
-	stmts = ssMap.GetMoreThanOnceBindableStmt()
+	stmts = ssMap.GetMoreThanCntBindableStmt(1)
 	require.Equal(t, 0, len(stmts))
 
 	ssMap.AddStatement(stmtExecInfo1)
-	stmts = ssMap.GetMoreThanOnceBindableStmt()
+	stmts = ssMap.GetMoreThanCntBindableStmt(1)
 	require.Equal(t, 1, len(stmts))
 }
 
