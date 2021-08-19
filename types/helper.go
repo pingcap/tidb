@@ -57,7 +57,6 @@ func RoundInt(i int64, dec int) int64 {
 	return r
 }
 
-
 // Truncate truncates the argument f to dec decimal places.
 // dec defaults to 0 if not specified. dec can be negative
 // to cause dec digits left of the decimal point of the
