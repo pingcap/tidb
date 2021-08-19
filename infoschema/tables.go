@@ -883,7 +883,7 @@ var TableTiDBHotRegionsCols = []columnInfo{
 
 // TableTiDBHotRegionsHistoryCols is TiDB hot region history mem table columns.
 var TableTiDBHotRegionsHistoryCols = []columnInfo{
-	{name: "UPDATE_TIME", tp: mysql.TypeVarchar, size: 64},
+	{name: "UPDATE_TIME", tp: mysql.TypeTimestamp, size: 26, decimal: 6},
 	{name: "DB_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
