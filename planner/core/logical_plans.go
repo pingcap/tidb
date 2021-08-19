@@ -1148,6 +1148,20 @@ func ExtractCorColumnsBySchema4PhysicalPlan(p PhysicalPlan, schema *expression.S
 	return ExtractCorColumnsBySchema(corCols, schema, true)
 }
 
+type PlanRecreatorContents struct {
+	baseSchemaProducer
+	ExecStmt ast.StmtNode
+	Analyze  bool
+	Load     bool
+	File     string
+}
+
+type LogicalPlanRecreator struct {
+	logicalSchemaProducer
+
+	PlanRecreatorContents
+}
+
 // ShowContents stores the contents for the `SHOW` statement.
 type ShowContents struct {
 	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
