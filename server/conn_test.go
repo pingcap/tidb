@@ -690,22 +690,30 @@ func TestConnExecutionTimeout(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"))
 }
 
-func (ts *ConnTestSuite) TestShutDown(c *C) {
+func TestShutDown(t *testing.T) {
+	t.Parallel()
+
+	th := setupConnTestHelper(t)
+	defer th.TearDown()
+
 	cc := &clientConn{}
-	se, err := session.CreateSession4Test(ts.store)
-	c.Assert(err, IsNil)
+	se, err := session.CreateSession4Test(th.store)
+	require.NoError(t, err)
 	cc.ctx = &TiDBContext{Session: se}
 	// set killed flag
 	cc.status = connStatusShutdown
 	// assert ErrQueryInterrupted
 	err = cc.handleQuery(context.Background(), "select 1")
-	c.Assert(err, Equals, executor.ErrQueryInterrupted)
+	require.Equal(t, executor.ErrQueryInterrupted, err)
 }
 
-func (ts *ConnTestSuite) TestShutdownOrNotify(c *C) {
-	c.Parallel()
-	se, err := session.CreateSession4Test(ts.store)
-	c.Assert(err, IsNil)
+func TestShutdownOrNotify(t *testing.T) {
+	t.Parallel()
+
+	th := setupConnTestHelper(t)
+	defer th.TearDown()
+	se, err := session.CreateSession4Test(th.store)
+	require.NoError(t, err)
 	tc := &TiDBContext{
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
@@ -718,13 +726,13 @@ func (ts *ConnTestSuite) TestShutdownOrNotify(c *C) {
 		status: connStatusWaitShutdown,
 		ctx:    tc,
 	}
-	c.Assert(cc.ShutdownOrNotify(), IsFalse)
+	require.False(t, cc.ShutdownOrNotify())
 	cc.status = connStatusReading
-	c.Assert(cc.ShutdownOrNotify(), IsTrue)
-	c.Assert(cc.status, Equals, connStatusShutdown)
+	require.True(t, cc.ShutdownOrNotify())
+	require.Equal(t, connStatusShutdown, cc.status)
 	cc.status = connStatusDispatching
-	c.Assert(cc.ShutdownOrNotify(), IsFalse)
-	c.Assert(cc.status, Equals, connStatusWaitShutdown)
+	require.False(t, cc.ShutdownOrNotify())
+	require.Equal(t, connStatusWaitShutdown, cc.status)
 }
 
 type snapshotCache interface {
