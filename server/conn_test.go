@@ -232,15 +232,19 @@ func TestAuthSwitchRequest(t *testing.T) {
 	require.Equal(t, "caching_sha2_password", resp.AuthPlugin)
 }
 
-func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
-	c.Parallel()
+func TestInitialHandshake(t *testing.T) {
+	t.Parallel()
+
+	th := setupConnTestHelper(t)
+	defer th.TearDown()
+
 	var outBuffer bytes.Buffer
 	cfg := newTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
-	drv := NewTiDBDriver(ts.store)
+	drv := NewTiDBDriver(th.store)
 	srv, err := NewServer(cfg, drv)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	cc := &clientConn{
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
@@ -251,28 +255,28 @@ func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 	}
 
 	err = cc.writeInitialHandshake(context.TODO())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	expected := new(bytes.Buffer)
 	expected.WriteByte(0x0a)                                     // Protocol
 	expected.WriteString(mysql.ServerVersion)                    // Version
 	expected.WriteByte(0x00)                                     // NULL
 	err = binary.Write(expected, binary.LittleEndian, uint32(1)) // Connection ID
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	expected.Write([]byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00})        // Salt
 	err = binary.Write(expected, binary.LittleEndian, uint16(defaultCapability&0xFFFF)) // Server Capability
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	expected.WriteByte(uint8(mysql.DefaultCollationID))                             // Server Language
 	err = binary.Write(expected, binary.LittleEndian, mysql.ServerStatusAutocommit) // Server Status
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = binary.Write(expected, binary.LittleEndian, uint16((defaultCapability>>16)&0xFFFF)) // Extended Server Capability
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	expected.WriteByte(0x15)                                                                             // Authentication Plugin Length
 	expected.Write([]byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})                   // Unused
 	expected.Write([]byte{0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x00}) // Salt
 	expected.WriteString("mysql_native_password")                                                        // Authentication Plugin
 	expected.WriteByte(0x00)                                                                             // NULL
-	c.Assert(outBuffer.Bytes()[4:], DeepEquals, expected.Bytes())
+	require.Equal(t, expected.Bytes(), outBuffer.Bytes()[4:])
 }
 
 type dispatchInput struct {
