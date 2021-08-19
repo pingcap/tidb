@@ -103,6 +103,7 @@ const (
 		status  VARCHAR(32) NOT NULL,
 		state   TINYINT(1) NOT NULL DEFAULT 0 COMMENT '0: normal, 1: exited before finish',
 		source_bytes BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+		cluster_avail BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (task_id)
 	);`
 
@@ -1763,7 +1764,8 @@ func (rc *Controller) isLocalBackend() bool {
 // preCheckRequirements checks
 // 1. Cluster resource
 // 2. Local node resource
-// 3. Lightning configuration
+// 3. Cluster region
+// 4. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	if err := rc.ClusterIsAvailable(ctx); err != nil {
@@ -1779,11 +1781,6 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	taskExist := false
 
 	if rc.isLocalBackend() {
-		source, err := rc.EstimateSourceData(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
 		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
 			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
 		if err != nil {
@@ -1796,6 +1793,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 		if !taskExist {
+			source, err := rc.EstimateSourceData(ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			err = rc.LocalResource(ctx, source)
 			if err != nil {
 				rc.taskMgr.CleanupTask(ctx)
@@ -1803,6 +1804,9 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			}
 			if err := rc.ClusterResource(ctx, source); err != nil {
 				rc.taskMgr.CleanupTask(ctx)
+				return errors.Trace(err)
+			}
+			if err := rc.CheckClusterRegion(ctx); err != nil {
 				return errors.Trace(err)
 			}
 		}
