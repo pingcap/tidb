@@ -2458,12 +2458,17 @@ func (s *testSerialSuite) TestIssue26377(c *C) {
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_global_temporary_table = true")
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
 	tk.MustExec("drop table if exists t1,tmp1")
 	tk.MustExec("create table t1(a int(11))")
 	tk.MustExec("create global temporary table tmp1(a int(11), key idx_a(a)) on commit delete rows;")
-	//tk.MustGetErrCode("create global binding for select * from t1 inner join tmp1 on t1.a=tmp1.a using select * from  t1 inner join tmp1 on t1.a=tmp1.a;", errno.ErrOptOnTemporaryTable)
+	tk.MustExec("create temporary table tmp2(a int(11), key idx_a(a));")
+	tk.MustGetErrCode("create global binding for select * from t1 inner join tmp1 on t1.a=tmp1.a using select * from  t1 inner join tmp1 on t1.a=tmp1.a;", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("create global binding for select * from t1 where t1.a in (select a from tmp1) using select * from t1 where t1.a in (select a from tmp1 use index (idx_a));", errno.ErrOptOnTemporaryTable)
 	tk.MustGetErrCode("create global binding for select a from t1 union select a from tmp1 using select a from t1 union select a from tmp1 use index (idx_a);", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create global binding for select * from t1 inner join tmp2 on t1.a=tmp2.a using select * from  t1 inner join tmp2 on t1.a=tmp2.a;", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create global binding for select * from t1 where t1.a in (select a from tmp2) using select * from t1 where t1.a in (select a from tmp2 use index (idx_a));", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create global binding for select a from t1 union select a from tmp2 using select a from t1 union select a from tmp2 use index (idx_a);", errno.ErrOptOnTemporaryTable)
 }
 
 func (s *testSuite) TestCaptureFilter(c *C) {
