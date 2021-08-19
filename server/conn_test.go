@@ -899,7 +899,12 @@ func testFallbackWork(c *C, tk *testkit.TestKit, cc *clientConn, sql string) {
 }
 
 // For issue https://github.com/pingcap/tidb/issues/25069
-func (ts *ConnTestSuite) TestShowErrors(c *C) {
+func TestShowErrors(t *testing.T) {
+	t.Parallel()
+
+	th := setupConnTestHelper(t)
+	defer th.TearDown()
+
 	cc := &clientConn{
 		alloc: arena.NewAllocator(1024),
 		pkt: &packetIO{
@@ -907,17 +912,17 @@ func (ts *ConnTestSuite) TestShowErrors(c *C) {
 		},
 	}
 	ctx := context.Background()
-	tk := testkit.NewTestKitWithInit(c, ts.store)
-	cc.ctx = &TiDBContext{Session: tk.Se, stmts: make(map[int]*TiDBStatement)}
+	tk := newtestkit.NewTestKit(t, th.store)
+	cc.ctx = &TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)}
 
 	err := cc.handleQuery(ctx, "create database if not exists test;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = cc.handleQuery(ctx, "use test;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	stmts, err := cc.ctx.Parse(ctx, "drop table idontexist")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = cc.ctx.ExecuteStmt(ctx, stmts[0])
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	tk.MustQuery("show errors").Check(testkit.Rows("Error 1051 Unknown table 'test.idontexist'"))
 }
