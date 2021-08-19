@@ -15,8 +15,9 @@
 package parser_test
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/parser"
 	_ "github.com/pingcap/tidb/types/parser_driver"
