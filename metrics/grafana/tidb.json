@@ -4602,7 +4602,7 @@
               "show": true
             },
             {
-              "format": "Bps",
+              "format": "bytes",
               "label": null,
               "logBase": 1,
               "max": null,

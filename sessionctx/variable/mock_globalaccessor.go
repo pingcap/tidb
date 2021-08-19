@@ -41,3 +41,13 @@ func (m *MockGlobalAccessor) SetGlobalSysVar(name string, value string) error {
 func (m *MockGlobalAccessor) SetGlobalSysVarOnly(name string, value string) error {
 	panic("not supported")
 }
+
+// GetTiDBTableValue implements GlobalVarAccessor.GetTiDBTableValue interface.
+func (m *MockGlobalAccessor) GetTiDBTableValue(name string) (string, error) {
+	panic("not supported")
+}
+
+// SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
+func (m *MockGlobalAccessor) SetTiDBTableValue(name, value, comment string) error {
+	panic("not supported")
+}
