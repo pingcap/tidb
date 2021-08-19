@@ -6020,7 +6020,6 @@ func (s *testRecoverTable) TestRecoverTempTable(c *C) {
 	tk.MustExec("drop table t_recover")
 	tk.MustGetErrCode("recover table t_recover;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("flashback table t_recover;", errno.ErrUnsupportedDDLOperation)
-	//tk.MustGetErrCode("alter table tmp2_recover add column b int;", errno.ErrUnsupportedDDLOperation)
 	tk.MustExec("drop table tmp2_recover")
 	tk.MustGetErrMsg("recover table tmp2_recover;", "Can't find localTemporary/dropped/truncated table: tmp2_recover in DDL history jobs")
 	tk.MustGetErrMsg("flashback table tmp2_recover;", "Can't find localTemporary/dropped/truncated table: tmp2_recover in DDL history jobs")
