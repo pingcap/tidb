@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -102,6 +103,7 @@ const (
 		status  VARCHAR(32) NOT NULL,
 		state   TINYINT(1) NOT NULL DEFAULT 0 COMMENT '0: normal, 1: exited before finish',
 		source_bytes BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+		cluster_avail BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (task_id)
 	);`
 
@@ -732,15 +734,9 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	}
 	rc.dbInfos = dbInfos
 
-	if rc.cfg.App.CheckRequirements && rc.tidbGlue.OwnsSQLExecutor() {
+	if rc.tidbGlue.OwnsSQLExecutor() {
 		if err = rc.DataCheck(ctx); err != nil {
 			return errors.Trace(err)
-		}
-		// print check template only if check requirements is true.
-		fmt.Println(rc.checkTemplate.Output())
-		if !rc.checkTemplate.Success() {
-			return errors.Errorf("tidb-lightning pre-check failed." +
-				" Please fix the failed check(s) or set --check-requirements=false to skip checks")
 		}
 	}
 
@@ -1310,87 +1306,6 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 		}()
 	}
 
-	// first collect all tables where the checkpoint is invalid
-	allInvalidCheckpoints := make(map[string]checkpoints.CheckpointStatus)
-	// collect all tables whose checkpoint's tableID can't match current tableID
-	allDirtyCheckpoints := make(map[string]struct{})
-	for _, dbMeta := range rc.dbMetas {
-		dbInfo, ok := rc.dbInfos[dbMeta.Name]
-		if !ok {
-			return errors.Errorf("database %s not found in rc.dbInfos", dbMeta.Name)
-		}
-		for _, tableMeta := range dbMeta.Tables {
-			tableInfo, ok := dbInfo.Tables[tableMeta.Name]
-			if !ok {
-				return errors.Errorf("table info %s.%s not found", dbMeta.Name, tableMeta.Name)
-			}
-
-			tableName := common.UniqueTable(dbInfo.Name, tableInfo.Name)
-			cp, err := rc.checkpointsDB.Get(ctx, tableName)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if cp.Status <= checkpoints.CheckpointStatusMaxInvalid {
-				allInvalidCheckpoints[tableName] = cp.Status
-			} else if cp.TableID > 0 && cp.TableID != tableInfo.ID {
-				allDirtyCheckpoints[tableName] = struct{}{}
-			}
-		}
-	}
-
-	if len(allInvalidCheckpoints) != 0 {
-		logger := log.L()
-		logger.Error(
-			"TiDB Lightning has failed last time. To prevent data loss, this run will stop now. Please resolve errors first",
-			zap.Int("count", len(allInvalidCheckpoints)),
-		)
-
-		for tableName, status := range allInvalidCheckpoints {
-			failedStep := status * 10
-			var action strings.Builder
-			action.WriteString("./tidb-lightning-ctl --checkpoint-error-")
-			switch failedStep {
-			case checkpoints.CheckpointStatusAlteredAutoInc, checkpoints.CheckpointStatusAnalyzed:
-				action.WriteString("ignore")
-			default:
-				action.WriteString("destroy")
-			}
-			action.WriteString("='")
-			action.WriteString(tableName)
-			action.WriteString("' --config=...")
-
-			logger.Info("-",
-				zap.String("table", tableName),
-				zap.Uint8("status", uint8(status)),
-				zap.String("failedStep", failedStep.MetricName()),
-				zap.Stringer("recommendedAction", &action),
-			)
-		}
-
-		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch")
-		logger.Info("For details of this failure, read the log file from the PREVIOUS run")
-
-		return errors.New("TiDB Lightning has failed last time; please resolve these errors first")
-	}
-	if len(allDirtyCheckpoints) > 0 {
-		logger := log.L()
-		logger.Error(
-			"TiDB Lightning has detected tables with illegal checkpoints. To prevent data mismatch, this run will stop now. Please remove these checkpoints first",
-			zap.Int("count", len(allDirtyCheckpoints)),
-		)
-
-		for tableName := range allDirtyCheckpoints {
-			logger.Info("-",
-				zap.String("table", tableName),
-				zap.String("recommendedAction", "./tidb-lightning-ctl --checkpoint-remove='"+tableName+"' --config=..."),
-			)
-		}
-
-		logger.Info("You may also run `./tidb-lightning-ctl --checkpoint-remove=all --config=...` to start from scratch")
-
-		return errors.New("TiDB Lightning has detected tables with illegal checkpoints; please remove these checkpoints first")
-	}
-
 	for _, dbMeta := range rc.dbMetas {
 		dbInfo := rc.dbInfos[dbMeta.Name]
 		for _, tableMeta := range dbMeta.Tables {
@@ -1762,7 +1677,8 @@ func (rc *Controller) isLocalBackend() bool {
 // preCheckRequirements checks
 // 1. Cluster resource
 // 2. Local node resource
-// 3. Lightning configuration
+// 3. Cluster region
+// 4. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	if err := rc.ClusterIsAvailable(ctx); err != nil {
@@ -1778,11 +1694,6 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	taskExist := false
 
 	if rc.isLocalBackend() {
-		source, err := rc.EstimateSourceData(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
 		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
 			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
 		if err != nil {
@@ -1795,6 +1706,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 		if !taskExist {
+			source, err := rc.EstimateSourceData(ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			err = rc.LocalResource(ctx, source)
 			if err != nil {
 				rc.taskMgr.CleanupTask(ctx)
@@ -1804,12 +1719,16 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				rc.taskMgr.CleanupTask(ctx)
 				return errors.Trace(err)
 			}
+			if err := rc.CheckClusterRegion(ctx); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
-	if rc.cfg.App.CheckRequirements && rc.tidbGlue.OwnsSQLExecutor() {
-		// print check template only if check requirements is true.
+	if rc.tidbGlue.OwnsSQLExecutor() {
+		// print check info at any time.
 		fmt.Print(rc.checkTemplate.Output())
-		if !rc.checkTemplate.Success() {
+		if rc.cfg.App.CheckRequirements && !rc.checkTemplate.Success() {
+			// if check requirements is true, return error.
 			if !taskExist && rc.taskMgr != nil {
 				rc.taskMgr.CleanupTask(ctx)
 			}
@@ -1822,14 +1741,12 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 
 // DataCheck checks the data schema which needs #rc.restoreSchema finished.
 func (rc *Controller) DataCheck(ctx context.Context) error {
-	if !rc.cfg.App.CheckRequirements {
-		log.L().Info("skip data check due to user requirement")
-		return nil
-	}
 	var err error
-	err = rc.HasLargeCSV(rc.dbMetas)
-	if err != nil {
-		return errors.Trace(err)
+	if rc.cfg.App.CheckRequirements {
+		err = rc.HasLargeCSV(rc.dbMetas)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	checkPointCriticalMsgs := make([]string, 0, len(rc.dbMetas))
 	schemaCriticalMsgs := make([]string, 0, len(rc.dbMetas))
@@ -1847,7 +1764,8 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 					checkPointCriticalMsgs = append(checkPointCriticalMsgs, msgs...)
 				}
 			}
-			if noCheckpoint && rc.cfg.TikvImporter.Backend != config.BackendTiDB {
+
+			if rc.cfg.App.CheckRequirements && noCheckpoint && rc.cfg.TikvImporter.Backend != config.BackendTiDB {
 				if msgs, err = rc.SchemaIsValid(ctx, tableInfo); err != nil {
 					return errors.Trace(err)
 				}

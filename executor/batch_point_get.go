@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -172,17 +173,17 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 // temporaryTableSnapshot inherits kv.Snapshot and override the BatchGet methods to return empty.
 type temporaryTableSnapshot struct {
 	kv.Snapshot
-	memBuffer kv.MemBuffer
+	sessionData variable.TemporaryTableData
 }
 
 func (s temporaryTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	values := make(map[string][]byte)
-	if s.memBuffer == nil {
+	if s.sessionData == nil {
 		return values, nil
 	}
 
 	for _, key := range keys {
-		val, err := s.memBuffer.Get(ctx, key)
+		val, err := s.sessionData.Get(ctx, key)
 		if err == kv.ErrNotExist {
 			continue
 		}

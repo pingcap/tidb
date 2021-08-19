@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -2029,6 +2030,13 @@ func (cli *testServerClient) runTestInitConnect(c *C) {
 		c.Assert(rows.Close(), IsNil)
 		// change the init-connect to invalid.
 		dbt.mustExec(`SET GLOBAL init_connect="invalidstring"`)
+	})
+	// set global init_connect to empty to avoid fail other tests
+	defer cli.runTests(c, func(config *mysql.Config) {
+		config.User = "init_super"
+	}, func(dbt *DBTest) {
+		// set init_connect to empty to avoid fail other tests
+		dbt.mustExec(`SET GLOBAL init_connect=""`)
 	})
 
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {

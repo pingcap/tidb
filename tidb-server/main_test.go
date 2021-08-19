@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,12 +17,23 @@ package main
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 )
 
-var isCoverageServer = "0"
+var isCoverageServer string
+
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	}
+	goleak.VerifyTestMain(m, opts...)
+}
 
 // TestRunMain is a dummy test case, which contains only the main function of tidb-server,
 // and it is used to generate coverage_server.
@@ -31,23 +43,16 @@ func TestRunMain(t *testing.T) {
 	}
 }
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
+func TestSetGlobalVars(t *testing.T) {
+	require.Equal(t, "tikv,tiflash,tidb", variable.GetSysVar(variable.TiDBIsolationReadEngines).Value)
+	require.Equal(t, "1073741824", variable.GetSysVar(variable.TiDBMemQuotaQuery).Value)
 
-var _ = Suite(&testMainSuite{})
-
-type testMainSuite struct{}
-
-func (t *testMainSuite) TestSetGlobalVars(c *C) {
-	c.Assert(variable.GetSysVar(variable.TiDBIsolationReadEngines).Value, Equals, "tikv,tiflash,tidb")
-	c.Assert(variable.GetSysVar(variable.TiDBMemQuotaQuery).Value, Equals, "1073741824")
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tikv", "tidb"}
 		conf.MemQuotaQuery = 9999999
 	})
 	setGlobalVars()
 
-	c.Assert(variable.GetSysVar(variable.TiDBIsolationReadEngines).Value, Equals, "tikv,tidb")
-	c.Assert(variable.GetSysVar(variable.TiDBMemQuotaQuery).Value, Equals, "9999999")
+	require.Equal(t, "tikv,tidb", variable.GetSysVar(variable.TiDBIsolationReadEngines).Value)
+	require.Equal(t, "9999999", variable.GetSysVar(variable.TiDBMemQuotaQuery).Value)
 }
