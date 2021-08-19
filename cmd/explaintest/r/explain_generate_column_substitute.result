@@ -509,3 +509,14 @@ a
 drop table if exists t1;
 create table t1(a char, b varchar(20), c char, d varchar(20));
 alter table t1 add index eidx ((export_set(3, a, c, ',', 5)));
+create table t02 (a varchar(20));
+insert into t02 values ('a'), ('b'), ('c');
+select * from t02 where lower(a) < 'c';
+a
+a
+b
+create index eidx on t02 ((lower(a)));
+select * from t02 use index(eidx) where lower(a) < 'c';
+a
+a
+b
