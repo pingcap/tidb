@@ -586,10 +586,14 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 	}
 }
 
-func (ts *ConnTestSuite) TestGetSessionVarsWaitTimeout(c *C) {
-	c.Parallel()
-	se, err := session.CreateSession4Test(ts.store)
-	c.Assert(err, IsNil)
+func TestGetSessionVarsWaitTimeout(t *testing.T) {
+	t.Parallel()
+
+	th := setupConnTestHelper(t)
+	defer th.TearDown()
+
+	se, err := session.CreateSession4Test(th.store)
+	require.NoError(t, err)
 	tc := &TiDBContext{
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
@@ -601,7 +605,7 @@ func (ts *ConnTestSuite) TestGetSessionVarsWaitTimeout(c *C) {
 		},
 		ctx: tc,
 	}
-	c.Assert(cc.getSessionVarsWaitTimeout(context.Background()), Equals, uint64(0))
+	require.Equal(t, uint64(0), cc.getSessionVarsWaitTimeout(context.Background()))
 }
 
 func mapIdentical(m1, m2 map[string]string) bool {
@@ -743,17 +747,23 @@ type snapshotCache interface {
 	SnapCacheHitCount() int
 }
 
-func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
+func TestPrefetchPointKeys(t *testing.T) {
+	t.Parallel()
+
+	th := setupConnTestHelper(t)
+	defer th.TearDown()
+
 	cc := &clientConn{
 		alloc: arena.NewAllocator(1024),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 	}
-	tk := testkit.NewTestKitWithInit(c, ts.store)
-	cc.ctx = &TiDBContext{Session: tk.Se}
+	tk := newtestkit.NewTestKit(t, th.store)
+	cc.ctx = &TiDBContext{Session: tk.Session()}
 	ctx := context.Background()
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.MustExec("use test")
 	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk.MustExec("begin optimistic")
@@ -767,24 +777,24 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 		"update prefetch set c = c + 1 where a = 2 and b = 2;" +
 		"update prefetch set c = c + 1 where a = 3 and b = 3;"
 	err := cc.handleQuery(ctx, query)
-	c.Assert(err, IsNil)
-	txn, err := tk.Se.Txn(false)
-	c.Assert(err, IsNil)
-	c.Assert(txn.Valid(), IsTrue)
+	require.NoError(t, err)
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	require.True(t, txn.Valid())
 	snap := txn.GetSnapshot()
-	c.Assert(snap.(snapshotCache).SnapCacheHitCount(), Equals, 4)
+	require.Equal(t, 4, snap.(snapshotCache).SnapCacheHitCount())
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 2", "2 2 4", "3 3 4"))
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update prefetch set c = c + 1 where a = 2 and b = 2")
-	c.Assert(tk.Se.GetSessionVars().TxnCtx.PessimisticCacheHit, Equals, 1)
+	require.Equal(t, 1, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
 	err = cc.handleQuery(ctx, query)
-	c.Assert(err, IsNil)
-	txn, err = tk.Se.Txn(false)
-	c.Assert(err, IsNil)
-	c.Assert(txn.Valid(), IsTrue)
-	c.Assert(tk.Se.GetSessionVars().TxnCtx.PessimisticCacheHit, Equals, 5)
+	require.NoError(t, err)
+	txn, err = tk.Session().Txn(false)
+	require.NoError(t, err)
+	require.True(t, txn.Valid())
+	require.Equal(t, 5, tk.Session().GetSessionVars().TxnCtx.PessimisticCacheHit)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 3", "2 2 6", "3 3 5"))
 }
