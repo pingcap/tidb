@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -732,8 +733,8 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: CharsetDatabase, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, CharsetDatabase)
 	}, SetSession: func(s *SessionVars, val string) error {
-		if _, coll, err := charset.GetCharsetInfo(val); err == nil {
-			s.systems[CollationDatabase] = coll
+		if cs, err := charset.GetCharsetInfo(val); err == nil {
+			s.systems[CollationDatabase] = cs.DefaultCollation
 		}
 		return nil
 	}},
@@ -765,16 +766,16 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetConnection, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, CharacterSetConnection)
 	}, SetSession: func(s *SessionVars, val string) error {
-		if _, coll, err := charset.GetCharsetInfo(val); err == nil {
-			s.systems[CollationConnection] = coll
+		if cs, err := charset.GetCharsetInfo(val); err == nil {
+			s.systems[CollationConnection] = cs.DefaultCollation
 		}
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetServer, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, CharacterSetServer)
 	}, SetSession: func(s *SessionVars, val string) error {
-		if _, coll, err := charset.GetCharsetInfo(val); err == nil {
-			s.systems[CollationServer] = coll
+		if cs, err := charset.GetCharsetInfo(val); err == nil {
+			s.systems[CollationServer] = cs.DefaultCollation
 		}
 		return nil
 	}},

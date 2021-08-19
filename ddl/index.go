@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -164,7 +165,7 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	}
 
 	if types.IsString(col.FieldType.Tp) {
-		desc, err := charset.GetCharsetDesc(col.Charset)
+		desc, err := charset.GetCharsetInfo(col.Charset)
 		if err != nil {
 			return err
 		}
@@ -191,7 +192,7 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 		return (length + 7) >> 3, nil
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
 		// Different charsets occupy different numbers of bytes on each character.
-		desc, err := charset.GetCharsetDesc(col.Charset)
+		desc, err := charset.GetCharsetInfo(col.Charset)
 		if err != nil {
 			return 0, errUnsupportedCharset.GenWithStackByArgs(col.Charset, col.Collate)
 		}
