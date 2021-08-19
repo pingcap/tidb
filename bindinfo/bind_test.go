@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -2468,14 +2469,14 @@ func (s *testSerialSuite) TestIssue26377(c *C) {
 		"create global binding for select * from t1 inner join tmp1 on t1.a=tmp1.a using select * from  t1 inner join tmp1 on t1.a=tmp1.a;",
 		"create global binding for select * from t1 where t1.a in (select a from tmp1) using select * from t1 where t1.a in (select a from tmp1 use index (idx_a));",
 		"create global binding for select a from t1 union select a from tmp1 using select a from t1 union select a from tmp1 use index (idx_a);",
-		"create global bind for select t1.a, (select b from tmp1 where tmp1.id=1) as t2 from t1 using select t1.a, (select b from tmp1 where tmp1.id=1) as t2 from t1;",
-		"create global bind for create global bind for select * from (select * from tmp1) using select * from (select * from tmp1);",
+//		"create global binding for select t1.a, (select a from tmp1 where tmp1.a=1) as t2 from t1 using select t1.a, (select a from tmp1 where tmp1.a=1) as t2 from t1;",
+		"create global binding for select * from (select * from tmp1) using select * from (select * from tmp1);",
 	}
 	genLocalTemporarySQL := func(sql string) string {
 		return strings.Replace(sql, "tmp1", "tmp2", -1)
 	}
 	for _, query := range queries {
-		localSQL := genLocalTemporarySQL(query.sql)
+		localSQL := genLocalTemporarySQL(query)
 		queries = append(queries, localSQL)
 	}
 
