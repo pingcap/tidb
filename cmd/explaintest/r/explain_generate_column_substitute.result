@@ -496,3 +496,14 @@ desc format = 'brief' select b from t;
 id	estRows	task	access object	operator info
 IndexReader	10000.00	root		index:IndexFullScan
 └─IndexFullScan	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
+create table t02 (a varchar(20));
+insert into t02 values ('a'), ('b'), ('c');
+select * from t02 where lower(a) < 'c';
+a
+a
+b
+create index eidx on t02 ((lower(a)));
+select * from t02 use index(eidx) where lower(a) < 'c';
+a
+a
+b
