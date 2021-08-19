@@ -283,21 +283,16 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storag
 	c := s3.New(ses)
 	// TODO remove it after BR remove cfg skip-check-path
 	if !opts.SkipCheckPath {
-		err = checkS3Bucket(c, &qs)
-		if err != nil {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "Bucket %s is not accessible: %v", qs.Bucket, err)
+		for _, p := range opts.CheckPermissions {
+			err := permissionCheckFn[p](c, &qs)
+			if err != nil {
+				return nil, errors.Annotatef(berrors.ErrStorageInvalidPermission, "check permission %s failed due to %v", p, err)
+			}
 		}
 	}
 
 	if len(qs.Prefix) > 0 && !strings.HasSuffix(qs.Prefix, "/") {
 		qs.Prefix += "/"
-	}
-
-	for _, p := range opts.CheckPermissions {
-		err := permissionCheckFn[p](c, &qs)
-		if err != nil {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidPermission, "check permission %s failed due to %v", p, err)
-		}
 	}
 
 	return &S3Storage{
