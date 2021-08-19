@@ -2187,39 +2187,43 @@ func ExtractDatetimeNum(t *Time, unit string) (int64, error) {
 }
 
 // ExtractDurationNum extracts duration value number from duration unit and format.
-func ExtractDurationNum(d *Duration, unit string) (int64, error) {
+func ExtractDurationNum(d *Duration, unit string) (res int64, err error) {
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
-		return int64(d.MicroSecond()), nil
+		res = int64(d.MicroSecond())
 	case "SECOND":
-		return int64(d.Second()), nil
+		res = int64(d.Second())
 	case "MINUTE":
-		return int64(d.Minute()), nil
+		res = int64(d.Minute())
 	case "HOUR":
-		return int64(d.Hour()), nil
+		res = int64(d.Hour())
 	case "SECOND_MICROSECOND":
-		return int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
+		res = int64(d.Second())*1000000 + int64(d.MicroSecond())
 	case "MINUTE_MICROSECOND":
-		return int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
+		res = int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond())
 	case "MINUTE_SECOND":
-		return int64(d.Minute()*100 + d.Second()), nil
+		res = int64(d.Minute()*100 + d.Second())
 	case "HOUR_MICROSECOND":
-		return int64(d.Hour())*10000000000 + int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond()), nil
+		res = int64(d.Hour())*10000000000 + int64(d.Minute())*100000000 + int64(d.Second())*1000000 + int64(d.MicroSecond())
 	case "HOUR_SECOND":
-		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
+		res = int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second())
 	case "HOUR_MINUTE":
-		return int64(d.Hour())*100 + int64(d.Minute()), nil
+		res = int64(d.Hour())*100 + int64(d.Minute())
 	case "DAY_MICROSECOND":
-		return int64(d.Hour()*10000+d.Minute()*100+d.Second())*1000000 + int64(d.MicroSecond()), nil
+		res = int64(d.Hour()*10000+d.Minute()*100+d.Second())*1000000 + int64(d.MicroSecond())
 	case "DAY_SECOND":
-		return int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second()), nil
+		res = int64(d.Hour())*10000 + int64(d.Minute())*100 + int64(d.Second())
 	case "DAY_MINUTE":
-		return int64(d.Hour())*100 + int64(d.Minute()), nil
+		res = int64(d.Hour())*100 + int64(d.Minute())
 	case "DAY_HOUR":
-		return int64(d.Hour()), nil
+		res = int64(d.Hour())
 	default:
 		return 0, errors.Errorf("invalid unit %s", unit)
 	}
+	if d.Duration < 0 {
+		res = -res
+	}
+	return res, nil
 }
 
 // parseSingleTimeValue parse the format according the given unit. If we set strictCheck true, we'll check whether
