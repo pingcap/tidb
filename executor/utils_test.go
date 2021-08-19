@@ -8,14 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package executor
 
 import (
-	"context"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 )
@@ -91,66 +90,4 @@ func (s *pkgTestSuite) TestBatchRetrieverHelper(c *C) {
 	}
 	c.Assert(rangeStarts, DeepEquals, []int{0})
 	c.Assert(rangeEnds, DeepEquals, []int{10})
-}
-
-func (s *pkgTestSuite) TestSQLDigestTextRetriever(c *C) {
-	// Create a fake session as the argument to the retriever, though it's actually not used when mock data is set.
-
-	r := NewSQLDigestTextRetriever()
-	clearResult := func() {
-		r.SQLDigestsMap = map[string]string{
-			"digest1": "",
-			"digest2": "",
-			"digest3": "",
-			"digest4": "",
-			"digest5": "",
-		}
-	}
-	clearResult()
-	r.mockLocalData = map[string]string{
-		"digest1": "text1",
-		"digest2": "text2",
-		"digest6": "text6",
-	}
-	r.mockGlobalData = map[string]string{
-		"digest2": "text2",
-		"digest3": "text3",
-		"digest4": "text4",
-		"digest7": "text7",
-	}
-
-	expectedLocalResult := map[string]string{
-		"digest1": "text1",
-		"digest2": "text2",
-		"digest3": "",
-		"digest4": "",
-		"digest5": "",
-	}
-	expectedGlobalResult := map[string]string{
-		"digest1": "text1",
-		"digest2": "text2",
-		"digest3": "text3",
-		"digest4": "text4",
-		"digest5": "",
-	}
-
-	err := r.RetrieveLocal(context.Background(), nil)
-	c.Assert(err, IsNil)
-	c.Assert(r.SQLDigestsMap, DeepEquals, expectedLocalResult)
-	clearResult()
-
-	err = r.RetrieveGlobal(context.Background(), nil)
-	c.Assert(err, IsNil)
-	c.Assert(r.SQLDigestsMap, DeepEquals, expectedGlobalResult)
-	clearResult()
-
-	r.fetchAllLimit = 1
-	err = r.RetrieveLocal(context.Background(), nil)
-	c.Assert(err, IsNil)
-	c.Assert(r.SQLDigestsMap, DeepEquals, expectedLocalResult)
-	clearResult()
-
-	err = r.RetrieveGlobal(context.Background(), nil)
-	c.Assert(err, IsNil)
-	c.Assert(r.SQLDigestsMap, DeepEquals, expectedGlobalResult)
 }

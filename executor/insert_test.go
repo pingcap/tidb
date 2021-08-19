@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -334,8 +335,20 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a year);`)
-	_, err = tk.Exec(`insert into t values(2156);`)
-	c.Assert(err.Error(), Equals, `[types:8033]invalid year`)
+	tk.MustGetErrMsg(`insert into t values(2156);`,
+		"[types:1264]Out of range value for column 'a' at row 1")
+
+	tk.MustExec(`DROP TABLE IF EXISTS ts`)
+	tk.MustExec(`CREATE TABLE ts (id int DEFAULT NULL, time1 TIMESTAMP NULL DEFAULT NULL)`)
+	tk.MustExec(`SET @@sql_mode=''`)
+	tk.MustExec(`INSERT INTO ts (id, time1) VALUES (1, TIMESTAMP '1018-12-23 00:00:00')`)
+	tk.MustQuery(`SHOW WARNINGS`).Check(testkit.Rows(`Warning 1292 Incorrect timestamp value: '1018-12-23 00:00:00'`))
+	tk.MustQuery(`SELECT * FROM ts ORDER BY id`).Check(testkit.Rows(`1 0000-00-00 00:00:00`))
+
+	tk.MustExec(`SET @@sql_mode='STRICT_TRANS_TABLES'`)
+	_, err = tk.Exec(`INSERT INTO ts (id, time1) VALUES (2, TIMESTAMP '1018-12-24 00:00:00')`)
+	c.Assert(err.Error(), Equals, `[table:1292]Incorrect timestamp value: '1018-12-24 00:00:00' for column 'time1' at row 1`)
+	tk.MustExec(`DROP TABLE ts`)
 }
 
 func (s *testSuite3) TestInsertValueForCastDecimalField(c *C) {

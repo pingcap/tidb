@@ -12,6 +12,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -224,11 +225,13 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 
 	ignoreErr := sc.DupKeyAsWarning
 
+	// Timestamp in MySQL is since EPOCH 1970-01-01 00:00:00 UTC and can by definition not have invalid dates!
+	// Zero date is special for MySQL timestamp and *NOT* 1970-01-01 00:00:00, but 0000-00-00 00:00:00!
 	// in MySQL 8.0, the Timestamp's case is different to Datetime/Date, as shown below:
 	//
 	// |              | NZD               | NZD|ST  | ELSE              | ELSE|ST  |
 	// | ------------ | ----------------- | ------- | ----------------- | -------- |
-	// | `0000-00-01` | Success + Warning | Error   | Success + Warning | Error    |
+	// | `0000-00-01` | Truncate + Warning| Error   | Truncate + Warning| Error    |
 	// | `0000-00-00` | Success + Warning | Error   | Success           | Success  |
 	//
 	// * **NZD**: NO_ZERO_DATE_MODE
@@ -273,21 +276,13 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 
 // CastValue casts a value based on column type.
 // If forceIgnoreTruncate is true, truncated errors will be ignored.
-// If returnOverflow is true, don't handle overflow errors in this function.
+// If returnErr is true, directly return any conversion errors.
 // It's safe now and it's the same as the behavior of select statement.
 // Set it to true only in FillVirtualColumnValue and UnionScanExec.Next()
 // If the handle of err is changed latter, the behavior of forceIgnoreTruncate also need to change.
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
 func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
-	// Set the reorg attribute for cast value functionality.
-	if col.ChangeStateInfo != nil {
-		origin := ctx.GetSessionVars().StmtCtx.InReorgAttribute
-		ctx.GetSessionVars().StmtCtx.InReorgAttribute = true
-		defer func() {
-			ctx.GetSessionVars().StmtCtx.InReorgAttribute = origin
-		}()
-	}
 	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {
@@ -302,7 +297,12 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	} else if (sc.InInsertStmt || sc.InUpdateStmt) && !casted.IsNull() &&
 		(val.Kind() != types.KindMysqlTime || !val.GetMysqlTime().IsZero()) &&
 		(col.Tp == mysql.TypeDate || col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeTimestamp) {
-		if innCasted, exit, innErr := handleZeroDatetime(ctx, col, casted, val.GetString(), types.ErrWrongValue.Equal(err)); exit {
+		str, err1 := val.ToString()
+		if err1 != nil {
+			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
+			str = val.GetString()
+		}
+		if innCasted, exit, innErr := handleZeroDatetime(ctx, col, casted, str, types.ErrWrongValue.Equal(err)); exit {
 			return innCasted, innErr
 		}
 	}

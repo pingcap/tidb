@@ -29,6 +29,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1617,6 +1618,15 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 	return nil
 }
 
+// handlePlanRecreator dose the export/import work for reproducing sql queries.
+func (cc *clientConn) handlePlanRecreator(ctx context.Context, info executor.PlanRecreatorInfo) (string, error) {
+	switch info.(type) {
+	case *executor.PlanRecreatorSingleInfo:
+		return info.Process()
+	}
+	return "", errors.New("plan recreator: not supporting info type")
+}
+
 // handleQuery executes the sql query string and writes result set or result ok to the client.
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
@@ -1735,6 +1745,13 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	var rowKeys []kv.Key
 	sc := vars.StmtCtx
 	for i, stmt := range stmts {
+		switch stmt.(type) {
+		case *ast.UseStmt:
+			// If there is a "use db" statement, we shouldn't cache even if it's possible.
+			// Consider the scenario where there are statements that could execute on multiple
+			// schemas, but the schema is actually different.
+			return nil, nil
+		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
 		// TODO: handle the PreprocessorReturn.
 		if err = plannercore.Preprocess(cc.ctx, stmt); err != nil {
@@ -1879,6 +1896,20 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 			return handled, err
 		}
 	}
+
+	planRecreator := cc.ctx.Value(executor.PlanRecreatorVarKey)
+	if planRecreator != nil {
+		handled = true
+		defer cc.ctx.SetValue(executor.PlanRecreatorVarKey, nil)
+		token, err := cc.handlePlanRecreator(ctx, planRecreator.(executor.PlanRecreatorInfo))
+		if err != nil {
+			return handled, err
+		}
+		if token != "" {
+			return handled, cc.writeOkWith(ctx, token, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
+		}
+	}
+
 	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
 }
 

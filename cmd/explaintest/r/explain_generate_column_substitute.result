@@ -456,3 +456,43 @@ HashAgg	6.00	root		group by:Column#9, funcs:max(Column#8)->Column#7
 └─Projection	6.00	root		upper(test.t.b)->Column#8, upper(test.t.b)->Column#9
   └─TableReader	6.00	root		data:TableFullScan
     └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+drop table if exists t;
+CREATE TABLE t (
+`a` date DEFAULT NULL,
+`b` datetime DEFAULT NULL,
+`c` time DEFAULT NULL,
+`d` timestamp NULL DEFAULT NULL,
+`e` year(4) DEFAULT NULL,
+KEY `expression_index` ((adddate(`a`, interval 10 microsecond))),
+KEY `expression_index2` ((timediff(`b`, '2021-03-30 08:10:00.000001'))),
+KEY `expression_index3` ((`d`+ timestamp'0000-00-00 00:00:00.00001'))
+);
+insert into t values ('2021-01-02', '2021-03-30 08:10:00', '12:01:03', '2021-08-13 04:10:44', 2021);
+select * from t use index(expression_index) where ADDDATE(a, interval 10 MICROSECOND) = ADDDATE('2021-01-02', interval 10 MICROSECOND);
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+select * from t ignore index(expression_index) where ADDDATE(a, interval 10 MICROSECOND) = ADDDATE('2021-01-02', interval 10 MICROSECOND);
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+select * from t use index(expression_index2) where timediff(`b`, '2021-03-30 08:10:00.000001') = timediff('2021-03-30 08:10:00', '2021-03-30 08:10:00.000001');
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+select * from t ignore index(expression_index2) where timediff(`b`, '2021-03-30 08:10:00.000001') = timediff('2021-03-30 08:10:00', '2021-03-30 08:10:00.000001');
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+select * from t use index(expression_index3) where d+ timestamp'0000-00-00 00:00:00.00001' = timestamp'2021-08-13 04:10:44'+ timestamp'0000-00-00 00:00:00.00001';
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+select * from t ignore index(expression_index3) where d+ timestamp'0000-00-00 00:00:00.00001' = timestamp'2021-08-13 04:10:44'+ timestamp'0000-00-00 00:00:00.00001';
+a	b	c	d	e
+2021-01-02	2021-03-30 08:10:00	12:01:03	2021-08-13 04:10:44	2021
+drop table if exists t;
+create table t(a int, b int as (a+1), key((a+1)), key(b));
+desc format = 'brief' select a+1 from t;
+id	estRows	task	access object	operator info
+IndexReader	10000.00	root		index:IndexFullScan
+└─IndexFullScan	10000.00	cop[tikv]	table:t, index:expression_index(`a` + 1)	keep order:false, stats:pseudo
+desc format = 'brief' select b from t;
+id	estRows	task	access object	operator info
+IndexReader	10000.00	root		index:IndexFullScan
+└─IndexFullScan	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
