@@ -2463,12 +2463,25 @@ func (s *testSerialSuite) TestIssue26377(c *C) {
 	tk.MustExec("create table t1(a int(11))")
 	tk.MustExec("create global temporary table tmp1(a int(11), key idx_a(a)) on commit delete rows;")
 	tk.MustExec("create temporary table tmp2(a int(11), key idx_a(a));")
-	tk.MustGetErrCode("create global binding for select * from t1 inner join tmp1 on t1.a=tmp1.a using select * from  t1 inner join tmp1 on t1.a=tmp1.a;", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create global binding for select * from t1 where t1.a in (select a from tmp1) using select * from t1 where t1.a in (select a from tmp1 use index (idx_a));", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create global binding for select a from t1 union select a from tmp1 using select a from t1 union select a from tmp1 use index (idx_a);", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create global binding for select * from t1 inner join tmp2 on t1.a=tmp2.a using select * from  t1 inner join tmp2 on t1.a=tmp2.a;", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create global binding for select * from t1 where t1.a in (select a from tmp2) using select * from t1 where t1.a in (select a from tmp2 use index (idx_a));", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create global binding for select a from t1 union select a from tmp2 using select a from t1 union select a from tmp2 use index (idx_a);", errno.ErrOptOnTemporaryTable)
+
+	queries := []string{
+		"create global binding for select * from t1 inner join tmp1 on t1.a=tmp1.a using select * from  t1 inner join tmp1 on t1.a=tmp1.a;",
+		"create global binding for select * from t1 where t1.a in (select a from tmp1) using select * from t1 where t1.a in (select a from tmp1 use index (idx_a));",
+		"create global binding for select a from t1 union select a from tmp1 using select a from t1 union select a from tmp1 use index (idx_a);",
+		"create global bind for select t1.a, (select b from tmp1 where tmp1.id=1) as t2 from t1 using select t1.a, (select b from tmp1 where tmp1.id=1) as t2 from t1;",
+		"create global bind for create global bind for select * from (select * from tmp1) using select * from (select * from tmp1);",
+	}
+	genLocalTemporarySQL := func(sql string) string {
+		return strings.Replace(sql, "tmp1", "tmp2", -1)
+	}
+	for _, query := range queries {
+		localSQL := genLocalTemporarySQL(query.sql)
+		queries = append(queries, localSQL)
+	}
+
+	for _, q := range queries {
+		tk.MustGetErrCode(q, errno.ErrOptOnTemporaryTable)
+	}
 }
 
 func (s *testSuite) TestCaptureFilter(c *C) {
