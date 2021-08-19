@@ -49,6 +49,32 @@ type ConnTestSuite struct {
 	store kv.Storage
 }
 
+type connTestHelper ConnTestSuite
+
+func (th *connTestHelper) TearDown() {
+	th.dom.Close()
+	th.store.Close()
+}
+
+func setupConnTestHelper(t *testing.T) *connTestHelper {
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
+			store := c.AllocID()
+			peer := c.AllocID()
+			mockCluster.AddStore(store, "tiflash0", &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+			mockCluster.AddPeer(region1, store, peer)
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
+	require.NoError(t, err)
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+
+	return &connTestHelper{store: store, dom: dom}
+}
+
 var _ = SerialSuites(&ConnTestSuite{})
 
 func (ts *ConnTestSuite) SetUpSuite(c *C) {
