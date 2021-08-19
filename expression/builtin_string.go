@@ -3411,9 +3411,13 @@ func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		return nil, err
 	}
 	// The calculation of Flen is the same as MySQL.
-	bf.tp.Flen = args[0].GetType().Flen * 3
-	if bf.tp.Flen > mysql.MaxBlobWidth {
-		bf.tp.Flen = mysql.MaxBlobWidth
+	if args[0].GetType().Flen == types.UnspecifiedLength {
+		bf.tp.Flen = types.UnspecifiedLength
+	} else {
+		bf.tp.Flen = args[0].GetType().Flen * 3
+		if bf.tp.Flen > mysql.MaxBlobWidth {
+			bf.tp.Flen = mysql.MaxBlobWidth
+		}
 	}
 
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
