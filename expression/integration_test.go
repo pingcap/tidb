@@ -8251,3 +8251,16 @@ func (s *testIntegrationSuite) TestJiraSetInnoDBDefaultRowFormat(c *C) {
 	tk.MustQuery("SHOW VARIABLES LIKE 'innodb_file_format'").Check(testkit.Rows("innodb_file_format Barracuda"))
 	tk.MustQuery("SHOW VARIABLES LIKE 'innodb_large_prefix'").Check(testkit.Rows("innodb_large_prefix ON"))
 }
+
+func (s *testIntegrationSuite) TestIssue27236(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	row := tk.MustQuery(`select extract(hour_second from "-838:59:59.00");`)
+	row.Check(testkit.Rows("-8385959"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(c1 varchar(100));`)
+	tk.MustExec(`insert into t values('-838:59:59.00'), ('700:59:59.00');`)
+	row = tk.MustQuery(`select extract(hour_second from c1) from t order by c1;`)
+	row.Check(testkit.Rows("-8385959", "7005959"))
+}
