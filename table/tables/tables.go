@@ -457,7 +457,11 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction,
 		}
 		for _, ic := range idx.Meta().Columns {
 			// delete-only index column doesn't exist in the touched array.
-			if mysql.HasDropColumnWithIndexFlag(t.Columns[ic.Offset].Flag) || !touched[ic.Offset] {
+			if mysql.HasDropColumnWithIndexFlag(t.Columns[ic.Offset].Flag) &&
+				(t.Columns[ic.Offset].State == model.StateDeleteOnly || t.Columns[ic.Offset].State == model.StateDeleteReorganization) {
+				continue
+			}
+			if !touched[ic.Offset] {
 				continue
 			}
 			oldVs, err := idx.FetchValues(oldData, nil)
