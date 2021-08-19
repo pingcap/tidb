@@ -60,6 +60,11 @@ func (s *testTableSampleSuite) SetUpSuite(c *C) {
 	s.domain = d
 }
 
+func (s *testTableSampleSuite) TearDownSuite(c *C) {
+	s.domain.Close()
+	c.Assert(s.store.Close(), IsNil)
+}
+
 func (s *testTableSampleSuite) initSampleTest(c *C) *testkit.TestKit {
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk := testkit.NewTestKit(c, s.store)
