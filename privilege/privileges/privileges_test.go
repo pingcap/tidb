@@ -2119,6 +2119,12 @@ func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION",
 	))
 	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT PROCESS,CONFIG ON *.* TO 'tsg_u1'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'",
+		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u1'@'%'",
+		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION",
+	))
+	tk.MustQuery("SHOW GRANTS FOR 'tsg_u1'").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'tsg_u1'@'%'",
 		"GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'",
 		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u1'@'%'",
@@ -2136,8 +2142,14 @@ func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
 		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
 	))
-	// This should not show the privileges gained from (default) roles
 	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
+	// This should not show the privileges gained from (default) roles
+	tk.MustQuery("SHOW GRANTS FOR 'tsg_u2'").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'tsg_u2'@'%'",
 		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
 		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
@@ -2150,9 +2162,14 @@ func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'",
 		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
 	))
-	// This should not show the privileges gained from SET ROLE tsg_r1.
-	// This is the case for SHOW GRANTS FOR CURRENT_USER() and SHOW GRANTS FOR 'tsg_u2';
 	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT PROCESS,CONFIG ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
+	// This should not show the privileges gained from SET ROLE tsg_r1.
+	tk.MustQuery("SHOW GRANTS FOR 'tsg_u2'").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'tsg_u2'@'%'",
 		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
 		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
