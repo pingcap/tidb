@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1350,6 +1351,14 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		copTask.finishIndexPlan()
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats, is.blockOffset)
+		if len(copTask.rootTaskConds) != 0 {
+			selectivity, _, err := copTask.tblColHists.Selectivity(is.ctx, tableConds, nil)
+			if err != nil {
+				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+				selectivity = SelectionFactor
+			}
+			tableSel.stats = copTask.plan().statsInfo().Scale(selectivity)
+		}
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
@@ -1933,6 +1942,14 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *pro
 	if len(ts.filterCondition) > 0 {
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
+		if len(copTask.rootTaskConds) != 0 {
+			selectivity, _, err := copTask.tblColHists.Selectivity(ts.ctx, ts.filterCondition, nil)
+			if err != nil {
+				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+				selectivity = SelectionFactor
+			}
+			sel.stats = ts.stats.Scale(selectivity)
+		}
 		sel.SetChildren(ts)
 		sel.cost = copTask.cst
 		copTask.tablePlan = sel

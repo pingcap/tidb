@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -316,11 +317,12 @@ func (s *testSuiteP1) TestShow(c *C) {
 	c.Assert(len(tk.MustQuery("show index from t").Rows()), Equals, 1)
 
 	tk.MustQuery("show charset").Check(testkit.Rows(
+		"ascii US ASCII ascii_bin 1",
+		"binary binary binary 1",
+		"latin1 Latin1 latin1_bin 1",
 		"utf8 UTF-8 Unicode utf8_bin 3",
 		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
-		"ascii US ASCII ascii_bin 1",
-		"latin1 Latin1 latin1_bin 1",
-		"binary binary binary 1"))
+	))
 	c.Assert(len(tk.MustQuery("show master status").Rows()), Equals, 1)
 	tk.MustQuery("show create database test_show").Check(testkit.Rows("test_show CREATE DATABASE `test_show` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show privileges").Check(testkit.Rows("Alter Tables To alter the table",
@@ -4208,7 +4210,7 @@ func (s *testSuiteP1) TestUnionAutoSignedCast(c *C) {
 	tk.MustQuery("select * from t1 union select * from t2 order by id").
 		Check(testkit.Rows("1 -1 -1 -1.1 -1", "2 1 1 1.1 1"))
 	tk.MustQuery("select id, i, b, d, dd from t2 union select id, i, b, d, dd from t1 order by id").
-		Check(testkit.Rows("1 0 0 0 -1", "2 1 1 1.1 1"))
+		Check(testkit.Rows("1 -1 -1 -1.1 -1", "2 1 1 1.1 1"))
 	tk.MustQuery("select id, i from t2 union select id, cast(i as unsigned int) from t1 order by id").
 		Check(testkit.Rows("1 18446744073709551615", "2 1"))
 	tk.MustQuery("select dd from t2 union all select dd from t2").
@@ -4222,7 +4224,7 @@ func (s *testSuiteP1) TestUnionAutoSignedCast(c *C) {
 	tk.MustQuery("select id, v from t3 union select id, v from t4 order by id").
 		Check(testkit.Rows("1 -1", "2 1"))
 	tk.MustQuery("select id, v from t4 union select id, v from t3 order by id").
-		Check(testkit.Rows("1 0", "2 1"))
+		Check(testkit.Rows("1 -1", "2 1"))
 
 	tk.MustExec("drop table if exists t5,t6,t7")
 	tk.MustExec("create table t5 (id int, v bigint unsigned)")
@@ -5217,7 +5219,7 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("4 1"))
 	re := tk.MustQuery("show table t_regions regions")
 
-	// Test show table regions and split table on temporary table.
+	// Test show table regions and split table on global temporary table.
 	tk.MustExec("drop table if exists t_regions_temporary_table")
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t_regions_temporary_table (a int key, b int, c int, index idx(b), index idx2(c)) ON COMMIT DELETE ROWS;")
@@ -8849,6 +8851,14 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	tk.MustExec("create global temporary table tmp1 " +
 		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
 		"on commit delete rows")
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tmp2")
+	tk.MustExec("create temporary table tmp2 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+	tk.MustExec("create table tmp3 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+	tk.MustExec("create table tmp4 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+	tk.MustExec("create temporary table tmp5(id int);")
+	tk.MustExec("create table tmp6 (id int primary key);")
 
 	// sleep 1us to make test stale
 	time.Sleep(time.Microsecond)
@@ -8889,7 +8899,14 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 		}
 		return sql[0:idx] + " as of timestamp NOW(6)" + sql[idx:]
 	}
+	genLocalTemporarySQL := func(sql string) string {
+		return strings.Replace(sql, "tmp1", "tmp2", -1)
+	}
 
+	for _, query := range queries {
+		localSQL := genLocalTemporarySQL(query.sql)
+		queries = append(queries, struct{ sql string }{sql: localSQL})
+	}
 	for _, query := range queries {
 		sql := addStaleReadToSQL(query.sql)
 		if sql != "" {
@@ -8906,6 +8923,16 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 	for _, query := range queries {
 		tk.MustExec(query.sql)
 	}
+
+	// Test normal table when local temporary exits.
+	tk.MustExec("insert into tmp6 values(1);")
+	tk.MustExec("set @a=now(6);")
+	time.Sleep(time.Microsecond)
+	tk.MustExec("drop table tmp6")
+	tk.MustExec("create table tmp6 (id int primary key);")
+	tk.MustQuery("select * from tmp6 as of timestamp(@a) where id=1;").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from tmp4 as of timestamp(@a), tmp3 as of timestamp(@a) where tmp3.id=1;")
+	tk.MustGetErrMsg("select * from tmp4 as of timestamp(@a), tmp2 as of timestamp(@a) where tmp2.id=1;", "can not stale read temporary table")
 
 	tk.MustExec("set transaction read only as of timestamp NOW(6)")
 	tk.MustExec("start transaction")
@@ -8944,27 +8971,33 @@ func (s *testSuite) TestEmptyTableSampleTemporaryTable(c *C) {
 		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
 		"on commit delete rows")
 
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tmp2")
+	tk.MustExec("create temporary table tmp2 (id int not null primary key, code int not null, value int default null, unique key code(code));")
+
 	// sleep 1us to make test stale
 	time.Sleep(time.Microsecond)
 
 	// test tablesample return empty
-	rs := tk.MustQuery("select * from tmp1 tablesample regions()")
-	rs.Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 
 	tk.MustExec("begin")
 	tk.MustExec("insert into tmp1 values (1, 1, 1)")
-	rs = tk.MustQuery("select * from tmp1 tablesample regions()")
-	rs.Check(testkit.Rows())
+	tk.MustExec("insert into tmp2 values (1, 1, 1)")
+	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 	tk.MustExec("commit")
 
 	// tablesample should not return error for compatibility of tools like dumpling
 	tk.MustExec("set @@tidb_snapshot=NOW(6)")
-	rs = tk.MustQuery("select * from tmp1 tablesample regions()")
-	rs.Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 
 	tk.MustExec("begin")
-	rs = tk.MustQuery("select * from tmp1 tablesample regions()")
-	rs.Check(testkit.Rows())
+	tk.MustQuery("select * from tmp1 tablesample regions()").Check(testkit.Rows())
+	tk.MustQuery("select * from tmp2 tablesample regions()").Check(testkit.Rows())
 	tk.MustExec("commit")
 }
 
@@ -8998,4 +9031,21 @@ func (s *testSuite) TestIssue25447(c *C) {
 	tk.MustExec("create table t2(a int , b varchar(8) GENERATED ALWAYS AS (c) VIRTUAL, c varchar(8), PRIMARY KEY (a))")
 	tk.MustExec("insert into t2(a) values(1)")
 	tk.MustQuery("select /*+ tidb_inlj(t2) */ t2.b, t1.b from t1 join t2 ON t2.a=t1.a").Check(testkit.Rows("<nil> 1"))
+}
+
+func (s *testSuite) TestIssue23602(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test")
+	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("CREATE TABLE t (a bigint unsigned PRIMARY KEY)")
+	defer tk.MustExec("DROP TABLE t")
+	tk.MustExec("INSERT INTO t VALUES (0),(1),(2),(3),(18446744073709551600),(18446744073709551605),(18446744073709551610),(18446744073709551615)")
+	tk.MustExec("ANALYZE TABLE t")
+	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT a FROM t WHERE a >= 0x1 AND a <= 0x2`).Check(testkit.Rows(
+		"TableReader 2.00 root  data:TableRangeScan]\n" +
+			"[└─TableRangeScan 2.00 cop[tikv] table:t range:[1,2], keep order:false"))
+	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT a FROM t WHERE a BETWEEN 0x1 AND 0x2`).Check(testkit.Rows(
+		"TableReader 2.00 root  data:TableRangeScan]\n" +
+			"[└─TableRangeScan 2.00 cop[tikv] table:t range:[1,2], keep order:false"))
+	tk.MustQuery("SELECT a FROM t WHERE a BETWEEN 0xFFFFFFFFFFFFFFF5 AND X'FFFFFFFFFFFFFFFA'").Check(testkit.Rows("18446744073709551605", "18446744073709551610"))
 }

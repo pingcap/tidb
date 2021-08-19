@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -768,6 +769,60 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionAlterPK(c *C) {
 	tk.MustExec(`alter table tcollist add primary key(a)`)
 	tk.MustExec(`alter table tcollist drop primary key`)
 	c.Assert(tk.ExecToErr(`alter table tcollist add primary key(b)`), ErrorMatches, ".*must include all columns.*")
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionRandomTransaction(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_random_tran")
+	tk.MustExec("use list_partition_random_tran")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+
+	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (` +
+		` partition p0 values in ` + genListPartition(0, 20) +
+		`, partition p1 values in ` + genListPartition(20, 40) +
+		`, partition p2 values in ` + genListPartition(40, 60) +
+		`, partition p3 values in ` + genListPartition(60, 80) +
+		`, partition p4 values in ` + genListPartition(80, 100) + `)`)
+	tk.MustExec(`create table tcollist (a int, b int) partition by list columns(a) (` +
+		` partition p0 values in ` + genListPartition(0, 20) +
+		`, partition p1 values in ` + genListPartition(20, 40) +
+		`, partition p2 values in ` + genListPartition(40, 60) +
+		`, partition p3 values in ` + genListPartition(60, 80) +
+		`, partition p4 values in ` + genListPartition(80, 100) + `)`)
+	tk.MustExec(`create table tnormal (a int, b int)`)
+
+	inTrans := false
+	for i := 0; i < 50; i++ {
+		switch rand.Intn(4) {
+		case 0: // begin
+			if inTrans {
+				continue
+			}
+			tk.MustExec(`begin`)
+			inTrans = true
+		case 1: // sel
+			cond := fmt.Sprintf("where a>=%v and a<=%v", rand.Intn(50), 50+rand.Intn(50))
+			rnormal := tk.MustQuery(`select * from tnormal ` + cond).Sort().Rows()
+			tk.MustQuery(`select * from tlist ` + cond).Sort().Check(rnormal)
+			tk.MustQuery(`select * from tcollist ` + cond).Sort().Check(rnormal)
+		case 2: // insert
+			values := fmt.Sprintf("(%v, %v)", rand.Intn(100), rand.Intn(100))
+			tk.MustExec(`insert into tnormal values ` + values)
+			tk.MustExec(`insert into tlist values ` + values)
+			tk.MustExec(`insert into tcollist values ` + values)
+		case 3: // commit or rollback
+			if !inTrans {
+				continue
+			}
+			tk.MustExec([]string{"commit", "rollback"}[rand.Intn(2)])
+			inTrans = false
+		}
+	}
 }
 
 func (s *testIntegrationPartitionSerialSuite) TestIssue27018(c *C) {

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -92,8 +93,6 @@ var (
 type RetrieverMutator interface {
 	Retriever
 	Mutator
-	// set allowed options of current operation in each TiKV disk usage level.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 }
 
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
@@ -135,8 +134,8 @@ type MemBuffer interface {
 	// Len returns the number of entries in the DB.
 	Len() int
 
-	// set allowed options of current operation in each TiKV disk usage level.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
+	// Size returns sum of keys and values length.
+	Size() int
 }
 
 // LockCtx contains information for LockKeys method.

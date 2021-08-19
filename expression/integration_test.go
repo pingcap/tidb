@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -7026,6 +7027,22 @@ func (s *testIntegrationSerialSuite) TestIssue16668(c *C) {
 	tk.MustQuery("select count(distinct(b)) from tx").Check(testkit.Rows("4"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue27091(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tx")
+	tk.MustExec("CREATE TABLE `tx` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL, `c` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL)")
+	tk.MustExec("insert into tx values (1, 'a', 'a'), (2, 'A ', 'a '), (3, 'A', 'A'), (4, 'a ', 'A ')")
+	tk.MustQuery("select count(distinct b) from tx").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(distinct c) from tx").Check(testkit.Rows("2"))
+	tk.MustQuery("select count(distinct b, c) from tx where a < 3").Check(testkit.Rows("1"))
+	tk.MustQuery("select approx_count_distinct(b) from tx").Check(testkit.Rows("1"))
+	tk.MustQuery("select approx_count_distinct(c) from tx").Check(testkit.Rows("2"))
+	tk.MustQuery("select approx_count_distinct(b, c) from tx where a < 3").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -7111,6 +7128,14 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustQuery("select LOCATE(p4,n2) from t1;").Check(testkit.Rows("0", "1", "1"))
 	tk.MustQuery("select LOCATE(p4,n3) from t1;").Check(testkit.Rows("0", "0", "0"))
 	tk.MustQuery("select LOCATE(p4,n4) from t1;").Check(testkit.Rows("0", "1", "1"))
+
+	tk.MustQuery("select locate('S', 's' collate utf8mb4_general_ci);").Check(testkit.Rows("1"))
+	tk.MustQuery("select locate('S', 'a' collate utf8mb4_general_ci);").Check(testkit.Rows("0"))
+	// MySQL return 0 here, I believe it is a bug in MySQL since 'ß' == 's' under utf8mb4_general_ci collation.
+	tk.MustQuery("select locate('ß', 's' collate utf8mb4_general_ci);").Check(testkit.Rows("1"))
+	tk.MustQuery("select locate('S', 's' collate utf8mb4_unicode_ci);").Check(testkit.Rows("1"))
+	tk.MustQuery("select locate('S', 'a' collate utf8mb4_unicode_ci);").Check(testkit.Rows("0"))
+	tk.MustQuery("select locate('ß', 'ss' collate utf8mb4_unicode_ci);").Check(testkit.Rows("1"))
 
 	tk.MustExec("truncate table t1;")
 	tk.MustExec("insert into t1 (a) values (1);")
@@ -7667,6 +7692,14 @@ func (s *testIntegrationSuite) TestIssue17287(c *C) {
 	tk.MustQuery("execute stmt7 using @val2;").Check(testkit.Rows("1589873946"))
 }
 
+func (s *testIntegrationSuite) TestIssue26989(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
+	tk.MustQuery("select position('a' in 'AA');").Check(testkit.Rows("0"))
+	tk.MustQuery("select locate('a', 'AA');").Check(testkit.Rows("0"))
+	tk.MustQuery("select locate('a', 'a');").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestIssue17898(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -8136,7 +8169,7 @@ func (s *testIntegrationSerialSuite) TestIssue19804(c *C) {
 	tk.MustExec(`create table t(a set('a', 'b', 'c'));`)
 	tk.MustExec(`alter table t change a a set('a', 'b', 'c', 'd');`)
 	tk.MustExec(`insert into t values('d');`)
-	tk.MustGetErrMsg(`alter table t change a a set('a', 'b', 'c', 'e', 'f');`, "[types:1265]Data truncated for column 'a', value is 'KindMysqlSet d'")
+	tk.MustGetErrMsg(`alter table t change a a set('a', 'b', 'c', 'e', 'f');`, "[types:1265]Data truncated for column 'a', value is 'd'")
 }
 
 func (s *testIntegrationSerialSuite) TestIssue20209(c *C) {
@@ -9699,6 +9732,35 @@ func (s *testIntegrationSuite) TestGlobalCacheCorrectness(c *C) {
 	tk.MustExec("SET GLOBAL max_connections=151")
 }
 
+func (s *testIntegrationSuite) TestRedundantColumnResolve(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int not null)")
+	tk.MustExec("create table t2(a int not null)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("insert into t2 values(1)")
+	tk.MustQuery("select a, count(*) from t1 join t2 using (a) group by a").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select a, count(*) from t1 natural join t2 group by a").Check(testkit.Rows("1 1"))
+	err := tk.ExecToErr("select a, count(*) from t1 join t2 on t1.a=t2.a group by a")
+	c.Assert(err.Error(), Equals, "[planner:1052]Column 'a' in field list is ambiguous")
+	tk.MustQuery("select t1.a, t2.a from t1 join t2 using (a) group by t1.a").Check(testkit.Rows("1 1"))
+	err = tk.ExecToErr("select t1.a, t2.a from t1 join t2 using(a) group by a")
+	c.Assert(err.Error(), Equals, "[planner:1052]Column 'a' in group statement is ambiguous")
+	tk.MustQuery("select t2.a from t1 join t2 using (a) group by t1.a").Check(testkit.Rows("1"))
+	tk.MustQuery("select t1.a from t1 join t2 using (a) group by t1.a").Check(testkit.Rows("1"))
+	tk.MustQuery("select t2.a from t1 join t2 using (a) group by t2.a").Check(testkit.Rows("1"))
+	// The test below cannot pass now since we do not infer functional dependencies from filters as MySQL, hence would fail in only_full_group_by check.
+	// tk.MustQuery("select t1.a from t1 join t2 using (a) group by t2.a").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from t1 join t2 using (a) group by t2.a").Check(testkit.Rows("1"))
+	tk.MustQuery("select t2.a from t1 join t2 using (a) group by a").Check(testkit.Rows("1"))
+	tk.MustQuery("select t1.a from t1 join t2 using (a) group by a").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t1 join t2 using(a)").Check(testkit.Rows("1"))
+	tk.MustQuery("select t1.a, t2.a from t1 join t2 using(a)").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t1 natural join t2").Check(testkit.Rows("1"))
+	tk.MustQuery("select t1.a, t2.a from t1 natural join t2").Check(testkit.Rows("1 1"))
+}
+
 func (s *testIntegrationSuite) TestControlFunctionWithEnumOrSet(c *C) {
 	defer s.cleanEnv(c)
 
@@ -10054,6 +10116,16 @@ func (s *testIntegrationSuite) TestTimestampIssue25093(c *C) {
 	tk.MustQuery("select timestamp(101.234) from t;").Check(testkit.Rows("2000-01-01 00:00:00.000"))
 }
 
+func (s *testIntegrationSuite) TestIssue24953(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tbl_0,tbl_9;")
+	tk.MustExec("CREATE TABLE `tbl_9` (\n  `col_54` mediumint NOT NULL DEFAULT '2412996',\n  `col_55` int NOT NULL,\n  `col_56` bigint unsigned NOT NULL,\n  `col_57` varchar(108) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,\n  PRIMARY KEY (`col_57`(3),`col_55`,`col_56`,`col_54`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `tbl_0` (\n  `col_76` bigint(20) unsigned DEFAULT NULL,\n  `col_1` time NOT NULL DEFAULT '13:11:28',\n  `col_2` datetime DEFAULT '1990-07-29 00:00:00',\n  `col_3` date NOT NULL DEFAULT '1976-09-16',\n  `col_4` date DEFAULT NULL,\n  `col_143` varbinary(208) DEFAULT 'lXRTXUkTeWaJ',\n  KEY `idx_0` (`col_2`,`col_1`,`col_76`,`col_4`,`col_3`),\n  PRIMARY KEY (`col_1`,`col_3`) /*T![clustered_index] NONCLUSTERED */,\n  KEY `idx_2` (`col_1`,`col_4`,`col_76`,`col_3`),\n  KEY `idx_3` (`col_4`,`col_76`,`col_3`,`col_2`,`col_1`),\n  UNIQUE KEY `idx_4` (`col_76`,`col_3`,`col_1`,`col_4`),\n  KEY `idx_5` (`col_3`,`col_4`,`col_76`,`col_2`),\n  KEY `idx_6` (`col_2`),\n  KEY `idx_7` (`col_76`,`col_3`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into tbl_9 values (-5765442,-597990898,384599625723370089,\"ZdfkUJiHcOfi\");")
+	tk.MustQuery("(select col_76,col_1,col_143,col_2 from tbl_0) union (select   col_54,col_57,col_55,col_56 from tbl_9);").Check(testkit.Rows("-5765442 ZdfkUJiHcOfi -597990898 384599625723370089"))
+}
+
 // issue https://github.com/pingcap/tidb/issues/26111
 func (s *testIntegrationSuite) TestRailsFKUsage(c *C) {
 	defer s.cleanEnv(c)
@@ -10155,4 +10227,45 @@ func (s *testIntegrationSuite) TestIssue25053(c *C) {
 	tk.MustExec("create table tbl_0 (col_2 int, col_3 varbinary(163));")
 	tk.MustExec("insert into tbl_0 values (1,'o'), (2,'\\x00');")
 	tk.MustQuery("select json_objectagg( col_2, col_3 ) from tbl_0;").Check(testkit.Rows(`{"1": "base64:type15:bw==", "2": "base64:type15:eDAw"}`))
+}
+
+func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a integer)")
+	tk.MustExec("insert into t1 values (0), (1), (2), (3)")
+	tk.MustExec("create table t2 (a integer, b integer)")
+	tk.MustExec("insert into t2 values (0,1), (1,1), (2,1), (3,1)")
+	tk.MustQuery("select t1.* from t1 left join t2 on t2.a = t1.a where t1.a = ifnull(t2.b, 0)").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (i1 integer, c1 char)")
+	tk.MustExec("insert into t1 values (2, 'a'), (1, 'b'), (3, 'c'), (0, null);")
+	tk.MustExec("create table t2 (i2 integer, c2 char, f2 float)")
+	tk.MustExec("insert into t2 values (0, 'c', null), (1, null, 0.1), (3, 'b', 0.01), (2, 'q', 0.12), (null, 'a', -0.1), (null, null, null)")
+	tk.MustQuery("select * from t2 where t2.i2=((select count(1) from t1 where t1.i1=t2.i2))").Check(testkit.Rows("1 <nil> 0.1"))
+}
+
+func (s *testIntegrationSuite) TestIssue27233(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (\n  `COL1` tinyint(45) NOT NULL,\n  `COL2` tinyint(45) NOT NULL,\n  PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into t values(122,100),(124,-22),(124,34),(127,103);")
+	tk.MustQuery("SELECT col2 FROM t AS T1 WHERE ( SELECT count(DISTINCT COL1, COL2) FROM t AS T2 WHERE T2.COL1 > T1.COL1  ) > 2 ;").
+		Check(testkit.Rows("100"))
+}
+
+func (s *testIntegrationSuite) TestIssue27236(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	row := tk.MustQuery(`select extract(hour_second from "-838:59:59.00");`)
+	row.Check(testkit.Rows("-8385959"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(c1 varchar(100));`)
+	tk.MustExec(`insert into t values('-838:59:59.00'), ('700:59:59.00');`)
+	row = tk.MustQuery(`select extract(hour_second from c1) from t order by c1;`)
+	row.Check(testkit.Rows("-8385959", "7005959"))
 }

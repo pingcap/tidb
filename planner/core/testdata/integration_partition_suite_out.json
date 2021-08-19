@@ -379,14 +379,14 @@
         "SQL": "explain format = 'brief' select * from tlist where a in (0, 1, 2) and mod(a, 2)=0",
         "DynamicPlan": [
           "Selection 24.00 root  eq(mod(list_partition_pruning.tlist.a, 2), 0)",
-          "└─TableReader 24.00 root partition:p0 data:Selection",
-          "  └─Selection 24.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 2)",
+          "└─TableReader 30.00 root partition:p0 data:Selection",
+          "  └─Selection 30.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 2)",
           "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "Selection 24.00 root  eq(mod(list_partition_pruning.tlist.a, 2), 0)",
-          "└─TableReader 24.00 root  data:Selection",
-          "  └─Selection 24.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 2)",
+          "└─TableReader 30.00 root  data:Selection",
+          "  └─Selection 30.00 cop[tikv]  in(list_partition_pruning.tlist.a, 0, 1, 2)",
           "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo"
         ]
       },
@@ -414,14 +414,14 @@
         "SQL": "explain format = 'brief' select * from tcollist where a in (0, 1, 2) and mod(a, 2)=0",
         "DynamicPlan": [
           "Selection 24.00 root  eq(mod(list_partition_pruning.tcollist.a, 2), 0)",
-          "└─TableReader 24.00 root partition:p0 data:Selection",
-          "  └─Selection 24.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 1, 2)",
+          "└─TableReader 30.00 root partition:p0 data:Selection",
+          "  └─Selection 30.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 1, 2)",
           "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
         ],
         "StaticPlan": [
           "Selection 24.00 root  eq(mod(list_partition_pruning.tcollist.a, 2), 0)",
-          "└─TableReader 24.00 root  data:Selection",
-          "  └─Selection 24.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 1, 2)",
+          "└─TableReader 30.00 root  data:Selection",
+          "  └─Selection 30.00 cop[tikv]  in(list_partition_pruning.tcollist.a, 0, 1, 2)",
           "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo"
         ]
       },
@@ -1021,11 +1021,11 @@
         ]
       },
       {
-        "SQL": "create table tto_seconds (a date, b datetime) partition by list (TO_SECONDS(a)) (partition p0 values in (0, 1, 2, 3, 63745012800), partition p1 values in (4, 5, 6, 7, 63744969600))",
+        "SQL": "create table tto_seconds (a date, b datetime) partition by list (TO_SECONDS(a)) (partition p0 values in (0, 1, 2, 3, 63740649600), partition p1 values in (4, 5, 6, 7, 63744969600))",
         "Results": null
       },
       {
-        "SQL": "insert into tto_seconds values ('2019-12-31 12:00:00', '2019-12-31 23:59:59'), ('2019-12-31 23:06:59', '2019-12-31 12:00:00')",
+        "SQL": "insert into tto_seconds values ('2019-12-31 12:00:00', '2019-12-31 23:59:59'), ('2019-11-11 23:06:59', '2019-12-31 12:00:00')",
         "Results": null
       },
       {
