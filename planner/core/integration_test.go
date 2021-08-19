@@ -4204,26 +4204,17 @@ func (s *testIntegrationSuite) TestOutputSkylinePruningInfo(c *C) {
 	}
 }
 
-func (s *testIntegrationSerialSuite) TestSelectTemporaryTableReopen(c *C) {
+func (s *testIntegrationSerialSuite) TestTemporaryTableForCte(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
 	tk.MustExec("set @@tidb_enable_noop_functions=1")
 	tk.MustExec("create temporary table tmp1(a int, b int, c int);")
-	_, err := tk.Exec("with cte1 as (with cte2 as (select * from tmp1) select * from cte2) select * from cte1 left join tmp1 on cte1.c=tmp1.c;")
-	c.Assert(err.Error(), Equals, "[planner:1815]Can't reopen table: 'tmp1'")
-	_, err = tk.Exec("with cte1 as (with cte2 as (select * from tmp1) select * from cte2) select * from cte1 t1 left join cte1 t2 on t1.c=t2.c;")
-	c.Assert(err.Error(), Equals, "[planner:1815]Can't reopen table: 'tmp1'")
-	_, err = tk.Exec("WITH RECURSIVE cte(a) AS (SELECT 1 UNION SELECT a+1 FROM tmp1 WHERE a < 5) SELECT * FROM cte;")
-	c.Assert(err.Error(), Equals, "[planner:1815]Can't reopen table: 'tmp1'")
-	_, err = tk.Exec("select * from tmp1 union select * from tmp1;")
-	c.Assert(err.Error(), Equals, "[planner:1815]Can't reopen table: 'tmp1'")
-	_, err = tk.Exec("select * from tmp1 union select * from tmp1;")
-	c.Assert(err.Error(), Equals, "[planner:1815]Can't reopen table: 'tmp1'")
-	_, err = tk.Exec("select * from tmp1 t1 left join (select * from tmp1) t2 on t1.c=t2.c;")
-	c.Assert(err.Error(), Equals, "[planner:1815]Can't reopen table: 'tmp1'")
-	tk.MustExec("create temporary table t1 (i int);")
-	tk.MustExec("insert into t1 values (5),(4),(1),(2),(3);")
-	_, err = tk.Exec("with c1 as (select i from t1), c2 as (select i from c1 where c1.i=2) select i from c1 where i > 3 union  select i from c2;")
-	c.Assert(err.Error(), Equals, "[planner:1815]Can't reopen table: 't1'")
+	tk.MustExec("insert into tmp1 values (1,1,1),(2,2,2),(3,3,3),(4,4,4);")
+	rows := tk.MustQuery("with cte1 as (with cte2 as (select * from tmp1) select * from cte2) select * from cte1 left join tmp1 on cte1.c=tmp1.c;")
+	rows.Check(testkit.Rows("1 1 1 1 1 1", "2 2 2 2 2 2", "3 3 3 3 3 3", "4 4 4 4 4 4"))
+	rows = tk.MustQuery("with cte1 as (with cte2 as (select * from tmp1) select * from cte2) select * from cte1 t1 left join cte1 t2 on t1.c=t2.c;")
+	rows.Check(testkit.Rows("1 1 1 1 1 1", "2 2 2 2 2 2", "3 3 3 3 3 3", "4 4 4 4 4 4"))
+	rows = tk.MustQuery("WITH RECURSIVE cte(a) AS (SELECT 1 UNION SELECT a+1 FROM tmp1 WHERE a < 5) SELECT * FROM cte;")
+	rows.Check(testkit.Rows("2", "3", "4", "5", "1"))
 }
