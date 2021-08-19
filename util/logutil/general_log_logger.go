@@ -156,50 +156,65 @@ func needDoubleQuotes(s string) bool {
 }
 
 type GeneralLog struct {
+	bufPool      buffer.Pool
 	logger       *zap.Logger
 	logEntryChan chan *GeneralLogEntry
+	logBufChan   chan *buffer.Buffer
 }
 
 func newGeneralLog(logger *zap.Logger) *GeneralLog {
 	gl := &GeneralLog{
+		bufPool:      buffer.NewPool(),
 		logger:       logger,
 		logEntryChan: make(chan *GeneralLogEntry, generalLogBatchSize),
+		logBufChan:   make(chan *buffer.Buffer),
 	}
-	go gl.startWorker()
+	go gl.startFormatWorker()
+	go gl.startLogWorker()
 	return gl
 }
 
 // TODO(dragonly): try zapcore.BufferedWriteSyncer
-// startWorker starts a log flushing worker that flushes log periodically or when batch is full
-func (gl *GeneralLog) startWorker() {
-	var buf buffer.Buffer
+// startFormatWorker starts a log flushing worker that flushes log periodically or when batch is full
+func (gl *GeneralLog) startFormatWorker() {
+	var buf *buffer.Buffer
 	var timeBuf [64]byte
+	for {
+		buf = gl.bufPool.Get()
+		logEntry := <-gl.logEntryChan
+		timeSlice := timeBuf[:0]
+		timeSlice = append(timeSlice, '[')
+		now := time.Now()
+		timeSlice = now.AppendFormat(timeSlice, "2006/01/02 15:04:05.000 -07:00")
+		timeSlice = append(timeSlice, "] "...)
+		buf.Write(timeSlice)
+		logEntry.writeToBuffer(buf)
+		gl.logBufChan <- buf
+	}
+}
+
+func (gl *GeneralLog) startLogWorker() {
+	var buf buffer.Buffer
 	logCount := 0
 	timeout := time.After(flushTimeout)
 	for {
 		select {
-		case logEntry := <-gl.logEntryChan:
+		case logBuf := <-gl.logBufChan:
+			// fmt.Printf("received logBuf: %s\n", logBuf.String())
 			if logCount > 0 {
 				buf.WriteByte('\n')
 			}
-			timeSlice := timeBuf[:0]
-			timeSlice = append(timeSlice, '[')
-			now := time.Now()
-			timeSlice = now.AppendFormat(timeSlice, "2006/01/02 15:04:05.000 -07:00")
-			timeSlice = append(timeSlice, "] "...)
-			buf.Write(timeSlice)
-			logEntry.writeToBuffer(&buf)
+			buf.WriteString(logBuf.String())
 			logCount += 1
+			logBuf.Free()
 			if logCount == generalLogBatchSize {
 				gl.logger.Info(buf.String())
-				//gl.logger.Info(fmt.Sprintf("buf size 1: %d", buf.Len()))
 				buf.Reset()
 				logCount = 0
 			}
 		case <-timeout:
 			if logCount > 0 {
 				gl.logger.Info(buf.String())
-				//gl.logger.Info(fmt.Sprintf("buf size 2: %d", buf.Len()))
 				buf.Reset()
 				logCount = 0
 			}
