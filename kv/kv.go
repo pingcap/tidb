@@ -180,6 +180,7 @@ type LockCtx = tikvstore.LockCtx
 // This is not thread safe.
 type Transaction interface {
 	RetrieverMutator
+	AssertionProto
 	// Size returns sum of keys and values length.
 	Size() int
 	// Len returns the number of entries in the DB.
@@ -231,6 +232,12 @@ type Transaction interface {
 	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 	// clear allowed flag
 	ClearDiskFullOpt()
+}
+
+// AssertionProto is an interface defined for the assertion protocol.
+type AssertionProto interface {
+	// SetAssertion sets an assertion for an operation on the key.
+	SetAssertion(key []byte, assertion ...FlagsOp) error
 }
 
 // Client is used to send request to KV layer.

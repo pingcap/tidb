@@ -35,6 +35,7 @@ type CreateIdxOpt struct {
 	Ctx             context.Context
 	SkipHandleCheck bool // If true, skip the handle constraint check.
 	Untouched       bool // If true, the index key/value is no need to commit.
+	IgnoreAssertion bool
 }
 
 // CreateIdxOptFunc is defined for the Create() method of Index interface.
@@ -50,6 +51,11 @@ var SkipHandleCheck CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 // IndexIsUntouched uses to indicate the index kv is untouched.
 var IndexIsUntouched CreateIdxOptFunc = func(opt *CreateIdxOpt) {
 	opt.Untouched = true
+}
+
+// WithIgnoreAssertion uses to indicate the process can ignore assertion.
+var WithIgnoreAssertion = func(opt *CreateIdxOpt) {
+	opt.IgnoreAssertion = true
 }
 
 // WithCtx returns a CreateIdxFunc.
