@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
@@ -74,16 +76,16 @@ func (ts *ConnTestSuite) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 }
 
-func (ts *ConnTestSuite) TestMalformHandshakeHeader(c *C) {
-	c.Parallel()
+func TestMalformHandshakeHeader(t *testing.T) {
+	t.Parallel()
 	data := []byte{0x00}
 	var p handshakeResponse41
 	_, err := parseHandshakeResponseHeader(context.Background(), &p, data)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
-func (ts *ConnTestSuite) TestParseHandshakeResponse(c *C) {
-	c.Parallel()
+func TestParseHandshakeResponse(t *testing.T) {
+	t.Parallel()
 	// test data from http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse41
 	data := []byte{
 		0x85, 0xa2, 0x1e, 0x00, 0x00, 0x00, 0x00, 0x40, 0x08, 0x00, 0x00, 0x00,
@@ -101,10 +103,10 @@ func (ts *ConnTestSuite) TestParseHandshakeResponse(c *C) {
 	}
 	var p handshakeResponse41
 	offset, err := parseHandshakeResponseHeader(context.Background(), &p, data)
-	c.Assert(err, IsNil)
-	c.Assert(p.Capability&mysql.ClientConnectAtts, Equals, mysql.ClientConnectAtts)
+	require.NoError(t, err)
+	require.Equal(t, mysql.ClientConnectAtts, p.Capability&mysql.ClientConnectAtts)
 	err = parseHandshakeResponseBody(context.Background(), &p, data, offset)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	eq := mapIdentical(p.Attrs, map[string]string{
 		"_client_version": "5.6.6-m9",
 		"_platform":       "x86_64",
@@ -112,7 +114,7 @@ func (ts *ConnTestSuite) TestParseHandshakeResponse(c *C) {
 		"_os":             "debian6.0",
 		"_client_name":    "libmysql",
 		"_pid":            "22344"})
-	c.Assert(eq, IsTrue)
+	require.True(t, eq)
 
 	data = []byte{
 		0x8d, 0xa6, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00, 0x00, 0x00,
@@ -124,16 +126,16 @@ func (ts *ConnTestSuite) TestParseHandshakeResponse(c *C) {
 	}
 	p = handshakeResponse41{}
 	offset, err = parseHandshakeResponseHeader(context.Background(), &p, data)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	capability := mysql.ClientProtocol41 |
 		mysql.ClientPluginAuth |
 		mysql.ClientSecureConnection |
 		mysql.ClientConnectWithDB
-	c.Assert(p.Capability&capability, Equals, capability)
+	require.Equal(t, capability, p.Capability&capability)
 	err = parseHandshakeResponseBody(context.Background(), &p, data, offset)
-	c.Assert(err, IsNil)
-	c.Assert(p.User, Equals, "pam")
-	c.Assert(p.DBName, Equals, "test")
+	require.NoError(t, err)
+	require.Equal(t, "pam", p.User)
+	require.Equal(t, "test", p.DBName)
 
 	// Test for compatibility of Protocol::HandshakeResponse320
 	data = []byte{
@@ -141,17 +143,17 @@ func (ts *ConnTestSuite) TestParseHandshakeResponse(c *C) {
 	}
 	p = handshakeResponse41{}
 	offset, err = parseOldHandshakeResponseHeader(context.Background(), &p, data)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	capability = mysql.ClientProtocol41 |
 		mysql.ClientSecureConnection
-	c.Assert(p.Capability&capability, Equals, capability)
+	require.Equal(t, capability, p.Capability&capability)
 	err = parseOldHandshakeResponseBody(context.Background(), &p, data, offset)
-	c.Assert(err, IsNil)
-	c.Assert(p.User, Equals, "root")
+	require.NoError(t, err)
+	require.Equal(t, "root", p.User)
 }
 
-func (ts *ConnTestSuite) TestIssue1768(c *C) {
-	c.Parallel()
+func TestIssue1768(t *testing.T) {
+	t.Parallel()
 	// this data is from captured handshake packet, using mysql client.
 	// TiDB should handle authorization correctly, even mysql client set
 	// the ClientPluginAuthLenencClientData capability.
@@ -170,15 +172,15 @@ func (ts *ConnTestSuite) TestIssue1768(c *C) {
 	}
 	p := handshakeResponse41{}
 	offset, err := parseHandshakeResponseHeader(context.Background(), &p, data)
-	c.Assert(err, IsNil)
-	c.Assert(p.Capability&mysql.ClientPluginAuthLenencClientData, Equals, mysql.ClientPluginAuthLenencClientData)
+	require.NoError(t, err)
+	require.Equal(t, mysql.ClientPluginAuthLenencClientData, p.Capability&mysql.ClientPluginAuthLenencClientData)
 	err = parseHandshakeResponseBody(context.Background(), &p, data, offset)
-	c.Assert(err, IsNil)
-	c.Assert(len(p.Auth) > 0, IsTrue)
+	require.NoError(t, err)
+	require.NotEmpty(t, p.Auth)
 }
 
-func (ts *ConnTestSuite) TestAuthSwitchRequest(c *C) {
-	c.Parallel()
+func TestAuthSwitchRequest(t *testing.T) {
+	t.Parallel()
 	// this data is from a MySQL 8.0 client
 	data := []byte{
 		0x85, 0xa6, 0xff, 0x1, 0x0, 0x0, 0x0, 0x1, 0x21, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
@@ -197,10 +199,10 @@ func (ts *ConnTestSuite) TestAuthSwitchRequest(c *C) {
 
 	var resp handshakeResponse41
 	pos, err := parseHandshakeResponseHeader(context.Background(), &resp, data)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = parseHandshakeResponseBody(context.Background(), &resp, data, pos)
-	c.Assert(err, IsNil)
-	c.Assert(resp.AuthPlugin == "caching_sha2_password", IsTrue)
+	require.NoError(t, err)
+	require.Equal(t, "caching_sha2_password", resp.AuthPlugin)
 }
 
 func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
