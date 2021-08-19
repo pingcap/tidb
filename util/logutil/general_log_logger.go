@@ -167,9 +167,11 @@ func newGeneralLog(logger *zap.Logger) *GeneralLog {
 		bufPool:      buffer.NewPool(),
 		logger:       logger,
 		logEntryChan: make(chan *GeneralLogEntry, generalLogBatchSize),
-		logBufChan:   make(chan *buffer.Buffer),
+		logBufChan:   make(chan *buffer.Buffer, generalLogBatchSize),
 	}
-	go gl.startFormatWorker()
+	for i := 0; i < 5; i++ {
+		go gl.startFormatWorker()
+	}
 	go gl.startLogWorker()
 	return gl
 }
@@ -200,7 +202,6 @@ func (gl *GeneralLog) startLogWorker() {
 	for {
 		select {
 		case logBuf := <-gl.logBufChan:
-			// fmt.Printf("received logBuf: %s\n", logBuf.String())
 			if logCount > 0 {
 				buf.WriteByte('\n')
 			}
@@ -228,9 +229,9 @@ func newGeneralLogLogger(cfg *LogConfig) (*zap.Logger, error) {
 	// if general log filename is empty, general log will behave the same as the global log
 	glConfig := &cfg.Config
 	glConfig.File = log.FileLogConfig{
-		MaxSize: 1000,
-		// Filename: "general_log",
-		Filename: "",
+		MaxSize:  1000,
+		Filename: "general_log",
+		// Filename: "",
 	}
 
 	// create the slow query logger
