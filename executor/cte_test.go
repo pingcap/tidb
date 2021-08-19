@@ -113,8 +113,7 @@ func TestCTEMaxRecursionDepth(t *testing.T) {
 
 	tk.MustExec("set @@cte_max_recursion_depth = -1;")
 	err := tk.QueryToErr("with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 100) select * from cte1;")
-	require.Error(t, err)
-	require.Equal(t, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value", err.Error())
+	require.EqualError(t, err, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
 	// If there is no recursive part, query runs ok.
 	rows := tk.MustQuery("with recursive cte1(c1) as (select 1 union select 2) select * from cte1 order by c1;")
 	rows.Check(testkit.Rows("1", "2"))
@@ -123,11 +122,9 @@ func TestCTEMaxRecursionDepth(t *testing.T) {
 
 	tk.MustExec("set @@cte_max_recursion_depth = 0;")
 	err = tk.QueryToErr("with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 0) select * from cte1;")
-	require.Error(t, err)
-	require.Equal(t, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value", err.Error())
+	require.EqualError(t, err, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
 	err = tk.QueryToErr("with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 1) select * from cte1;")
-	require.Error(t, err)
-	require.Equal(t, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value", err.Error())
+	require.EqualError(t, err, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
 	// If there is no recursive part, query runs ok.
 	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select 2) select * from cte1 order by c1;")
 	rows.Check(testkit.Rows("1", "2"))
@@ -140,8 +137,7 @@ func TestCTEMaxRecursionDepth(t *testing.T) {
 	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 1) select * from cte1;")
 	rows.Check(testkit.Rows("1"))
 	err = tk.QueryToErr("with recursive cte1(c1) as (select 1 union select c1 + 1 c1 from cte1 where c1 < 2) select * from cte1;")
-	require.Error(t, err)
-	require.Equal(t, "[executor:3636]Recursive query aborted after 2 iterations. Try increasing @@cte_max_recursion_depth to a larger value", err.Error())
+	require.EqualError(t, err, "[executor:3636]Recursive query aborted after 2 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
 	// If there is no recursive part, query runs ok.
 	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select 2) select * from cte1 order by c1;")
 	rows.Check(testkit.Rows("1", "2"))
@@ -180,16 +176,14 @@ func TestCTEWithLimit(t *testing.T) {
 	rows.Check(testkit.Rows("2"))
 
 	err := tk.QueryToErr("with recursive cte1(c1) as (select 0 union select c1 + 1 from cte1 limit 1 offset 3) select * from cte1;")
-	require.Error(t, err)
-	require.Equal(t, "[executor:3636]Recursive query aborted after 3 iterations. Try increasing @@cte_max_recursion_depth to a larger value", err.Error())
+	require.EqualError(t, err, "[executor:3636]Recursive query aborted after 3 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
 
 	tk.MustExec("set cte_max_recursion_depth=1000;")
 	rows = tk.MustQuery("with recursive cte1(c1) as (select 0 union select c1 + 1 from cte1 limit 5 offset 996) select * from cte1;")
 	rows.Check(testkit.Rows("996", "997", "998", "999", "1000"))
 
 	err = tk.QueryToErr("with recursive cte1(c1) as (select 0 union select c1 + 1 from cte1 limit 5 offset 997) select * from cte1;")
-	require.Error(t, err)
-	require.Equal(t, "[executor:3636]Recursive query aborted after 1001 iterations. Try increasing @@cte_max_recursion_depth to a larger value", err.Error())
+	require.EqualError(t, err, "[executor:3636]Recursive query aborted after 1001 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
 
 	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select c1 + 1 from cte1 limit 0 offset 1) select * from cte1")
 	rows.Check(testkit.Rows())
@@ -224,7 +218,7 @@ func TestCTEWithLimit(t *testing.T) {
 	// Error: ERROR 1221 (HY000): Incorrect usage of UNION and LIMIT.
 	// Limit can only be at the end of SQL stmt.
 	err = tk.ExecToErr("with recursive cte1(c1) as (select c1 from t1 limit 1 offset 1 union select c1 + 1 from cte1 limit 0 offset 1) select * from cte1")
-	require.Equal(t, "[planner:1221]Incorrect usage of UNION and LIMIT", err.Error())
+	require.EqualError(t, err, "[planner:1221]Incorrect usage of UNION and LIMIT")
 
 	// Basic non-recusive tests.
 	rows = tk.MustQuery("with recursive cte1(c1) as (select 1 union select 2 order by 1 limit 1 offset 1) select * from cte1")
@@ -287,8 +281,7 @@ func TestCTEWithLimit(t *testing.T) {
 	rows.Check(testkit.Rows())
 	// MySQL err: ERROR 1365 (22012): Division by 0. Because it gives error when computing 1/c1.
 	err = tk.QueryToErr("with recursive cte1 as (select 1/c1 c1 from t1 union select c1 + 1 c1 from cte1 where c1 < 2 limit 1) select * from cte1;")
-	require.Error(t, err)
-	require.Equal(t, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value", err.Error())
+	require.EqualError(t, err, "[executor:3636]Recursive query aborted after 1 iterations. Try increasing @@cte_max_recursion_depth to a larger value")
 
 	tk.MustExec("set cte_max_recursion_depth = 1000;")
 	tk.MustExec("drop table if exists t1;")
