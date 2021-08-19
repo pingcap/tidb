@@ -1516,6 +1516,7 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 		},
 	}
 	se, err := session.CreateSession4Test(s.store)
+	se.GetSessionVars().StmtCtx.TimeZone = time.Local
 	c.Assert(err, IsNil)
 	parser := parser.New()
 	for _, ca := range cases {

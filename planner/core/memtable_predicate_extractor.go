@@ -884,7 +884,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 		e.IndexIDs.Insert(int64(idx))
 	}
 
-	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "update_time", time.Local)
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "update_time",ctx.GetSessionVars().StmtCtx.TimeZone)
 	// The time unit for search hot regions is millisecond.
 	startTime = startTime / int64(time.Millisecond)
 	endTime = endTime / int64(time.Millisecond)
