@@ -1708,7 +1708,8 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			task := logger.Begin(zap.WarnLevel, "importing large engines for disk quota")
 			var importErr error
 			for _, engine := range largeEngines {
-				if err := rc.backend.UnsafeImportAndReset(ctx, engine); err != nil {
+				if err := rc.backend.UnsafeImportAndReset(ctx, engine,
+					int64(rc.cfg.TikvImporter.RegionSplitSize)); err != nil {
 					importErr = multierr.Append(importErr, err)
 				}
 			}

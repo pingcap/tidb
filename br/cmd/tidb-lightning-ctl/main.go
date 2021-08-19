@@ -438,7 +438,7 @@ func importEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engi
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(ce.Import(ctx))
+	return errors.Trace(ce.Import(ctx, int64(cfg.TikvImporter.RegionSplitSize)))
 }
 
 func cleanupEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engine string) error {

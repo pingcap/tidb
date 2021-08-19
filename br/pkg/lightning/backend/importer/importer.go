@@ -201,7 +201,7 @@ func (importer *importer) Flush(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
-func (importer *importer) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (importer *importer) ImportEngine(ctx context.Context, engineUUID uuid.UUID, _ int64) error {
 	importer.lock.Lock()
 	defer importer.lock.Unlock()
 	req := &import_kvpb.ImportEngineRequest{

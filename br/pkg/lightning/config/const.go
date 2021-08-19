@@ -20,10 +20,11 @@ import (
 
 const (
 	// mydumper
-	ReadBlockSize   ByteSize = 64 * units.KiB
-	MinRegionSize   ByteSize = 256 * units.MiB
-	MaxRegionSize   ByteSize = 256 * units.MiB
-	SplitRegionSize ByteSize = 96 * units.MiB
+	ReadBlockSize           ByteSize = 64 * units.KiB
+	MinRegionSize           ByteSize = 256 * units.MiB
+	MaxRegionSize           ByteSize = 256 * units.MiB
+	SplitRegionSize         ByteSize = 96 * units.MiB
+	MaxSplitRegionSizeRatio int      = 5
 
 	BufferSizeScale = 5
 

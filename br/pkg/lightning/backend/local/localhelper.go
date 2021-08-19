@@ -67,6 +67,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 	ranges []Range,
 	tableInfo *checkpoints.TidbTableInfo,
 	needSplit bool,
+	regionSplitSize int64,
 ) error {
 	if len(ranges) == 0 {
 		return nil
@@ -270,7 +271,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 			if !ok {
 				log.L().Warn("region stats not found", zap.Uint64("region", regionID))
 			}
-			if len(keys) == 1 && regionSize < local.regionSplitSize {
+			if len(keys) == 1 && regionSize < regionSplitSize {
 				skippedKeys++
 			}
 			select {
