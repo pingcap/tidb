@@ -566,8 +566,8 @@ github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7/go.mod h1:8AanEdAHATuR
 github.com/pingcap/log v0.0.0-20210818144256-6455d4a4c6f9 h1:6t7vOzOGF3/iz+wpcwu8N/+aoWTOMq2xc+Y0pYMJOhU=
 github.com/pingcap/log v0.0.0-20210818144256-6455d4a4c6f9/go.mod h1:DWQW5jICDR7UJh4HtxXSM20Churx4CQL0fwL/SoOSA4=
 github.com/pingcap/parser v0.0.0-20210525032559-c37778aff307/go.mod h1:xZC8I7bug4GJ5KtHhgAikjTfU4kBv1Sbo3Pf1MZ6lVw=
-github.com/pingcap/parser v0.0.0-20210819080605-746064313eac h1:Y5tQk+rJ2BM/FknDRLcWJKQRjO6RAgMa7REUG19M3t4=
-github.com/pingcap/parser v0.0.0-20210819080605-746064313eac/go.mod h1:Ek0mLKEqUGnQqBw1JnYrJQxsguU433DU68yUbsoeJ7s=
+github.com/pingcap/parser v0.0.0-20210819101755-48d84c1db428 h1:wMXAyDVAQtEm0xaLFoB7f8PoecZjRjTF78HMtU+/dqI=
+github.com/pingcap/parser v0.0.0-20210819101755-48d84c1db428/go.mod h1:Ek0mLKEqUGnQqBw1JnYrJQxsguU433DU68yUbsoeJ7s=
 github.com/pingcap/sysutil v0.0.0-20200206130906-2bfa6dc40bcd/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
 github.com/pingcap/sysutil v0.0.0-20210315073920-cc0985d983a3/go.mod h1:tckvA041UWP+NqYzrJ3fMgC/Hw9wnmQ/tUkp/JaHly8=
 github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5 h1:7rvAtZe/ZUzOKzgriNPQoBNvleJXBk4z7L3Z47+tS98=
