@@ -286,7 +286,12 @@ type dispatchInput struct {
 	out []byte
 }
 
-func (ts *ConnTestSuite) TestDispatch(c *C) {
+func TestDispatch(t *testing.T) {
+	t.Parallel()
+
+	th := setupConnTestHelper(t)
+	defer th.TearDown()
+
 	userData := append([]byte("root"), 0x0, 0x0)
 	userData = append(userData, []byte("test")...)
 	userData = append(userData, 0x0)
@@ -402,10 +407,15 @@ func (ts *ConnTestSuite) TestDispatch(c *C) {
 		},
 	}
 
-	ts.testDispatch(c, inputs, 0)
+	testDispatch(t, th, inputs, 0)
 }
 
-func (ts *ConnTestSuite) TestDispatchClientProtocol41(c *C) {
+func TestDispatchClientProtocol41(t *testing.T) {
+	t.Parallel()
+
+	th := setupConnTestHelper(t)
+	defer th.TearDown()
+
 	userData := append([]byte("root"), 0x0, 0x0)
 	userData = append(userData, []byte("test")...)
 	userData = append(userData, 0x0)
@@ -523,39 +533,38 @@ func (ts *ConnTestSuite) TestDispatchClientProtocol41(c *C) {
 		},
 	}
 
-	ts.testDispatch(c, inputs, mysql.ClientProtocol41)
+	testDispatch(t, th, inputs, mysql.ClientProtocol41)
 }
 
-func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability uint32) {
+func testDispatch(t *testing.T, th *connTestHelper, inputs []dispatchInput, capability uint32) {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 	dom, err := session.BootstrapSession(store)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer dom.Close()
 
 	se, err := session.CreateSession4Test(store)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tc := &TiDBContext{
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	_, err = se.Execute(context.Background(), "create table test.t(a int)")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "insert into test.t values (1)")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	var outBuffer bytes.Buffer
-	tidbdrv := NewTiDBDriver(ts.store)
+	tidbdrv := NewTiDBDriver(th.store)
 	cfg := newTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
-
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer server.Close()
 
 	cc := &clientConn{
@@ -574,11 +583,11 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 	for _, cs := range inputs {
 		inBytes := append([]byte{cs.com}, cs.in...)
 		err := cc.dispatch(context.Background(), inBytes)
-		c.Assert(err, Equals, cs.err)
+		require.Equal(t, cs.err, err)
 		if err == nil {
 			err = cc.flush(context.TODO())
-			c.Assert(err, IsNil)
-			c.Assert(outBuffer.Bytes(), DeepEquals, cs.out)
+			require.NoError(t, err)
+			require.Equal(t, cs.out, outBuffer.Bytes())
 		} else {
 			_ = cc.flush(context.TODO())
 		}
