@@ -21,17 +21,16 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/stretchr/testify/require"
-
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type CTETestSuite struct {
@@ -42,8 +41,6 @@ type CTETestSuite struct {
 	ctx        context.Context
 	close      func()
 }
-
-var cteTestSuite *CTETestSuite
 
 func SetUpSuite(t *testing.T) *CTETestSuite {
 	var err error
@@ -72,17 +69,19 @@ func SetUpSuite(t *testing.T) *CTETestSuite {
 }
 
 func TestCTESuite(t *testing.T) {
-	cteTestSuite = SetUpSuite(t)
+	t.Parallel()
+
+	cteTestSuite := SetUpSuite(t)
 	defer cteTestSuite.close()
 
-	t.Run("TestBasicCTE", BasicCTE)
-	t.Run("TestUnionDistinct", UnionDistinct)
-	t.Run("TestCTEMaxRecursionDepth", CTEMaxRecursionDepth)
-	t.Run("TestCTEWithLimit", CTEWithLimit)
+	BasicCTE(t, cteTestSuite)
+	UnionDistinct(t, cteTestSuite)
+	CTEMaxRecursionDepth(t, cteTestSuite)
+	CTEWithLimit(t, cteTestSuite)
 }
 
-func BasicCTE(t *testing.T) {
-	tk := testkit.NewTestKit(t, cteTestSuite.store)
+func BasicCTE(t *testing.T, suite *CTETestSuite) {
+	tk := testkit.NewTestKit(t, suite.store)
 	tk.MustExec("use test")
 
 	rows := tk.MustQuery("with recursive cte1 as (" +
@@ -185,8 +184,8 @@ func TestSpillToDisk(t *testing.T) {
 	rows.Check(testkit.Rows(resRows...))
 }
 
-func UnionDistinct(t *testing.T) {
-	tk := testkit.NewTestKit(t, cteTestSuite.store)
+func UnionDistinct(t *testing.T, suite *CTETestSuite) {
+	tk := testkit.NewTestKit(t, suite.store)
 	tk.MustExec("use test;")
 
 	// Basic test. UNION/UNION ALL intersects.
@@ -209,8 +208,8 @@ func UnionDistinct(t *testing.T) {
 	rows.Check(testkit.Rows("1", "2", "3", "4"))
 }
 
-func CTEMaxRecursionDepth(t *testing.T) {
-	tk := testkit.NewTestKit(t, cteTestSuite.store)
+func CTEMaxRecursionDepth(t *testing.T, suite *CTETestSuite) {
+	tk := testkit.NewTestKit(t, suite.store)
 	tk.MustExec("use test;")
 
 	tk.MustExec("set @@cte_max_recursion_depth = -1;")
@@ -251,8 +250,8 @@ func CTEMaxRecursionDepth(t *testing.T) {
 	rows.Check(testkit.Rows("1", "2"))
 }
 
-func CTEWithLimit(t *testing.T) {
-	tk := testkit.NewTestKit(t, cteTestSuite.store)
+func CTEWithLimit(t *testing.T, suite *CTETestSuite) {
+	tk := testkit.NewTestKit(t, suite.store)
 	tk.MustExec("use test;")
 
 	// Basic recursive tests.
