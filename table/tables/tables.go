@@ -456,7 +456,7 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, txn kv.Transaction,
 			continue
 		}
 		for _, ic := range idx.Meta().Columns {
-			// delete-only index column doesn't exist in the touched array.
+			// delete-only and delete-reorg index column doesn't exist in the touched array when `dropColumnWithIndex` is true.
 			if mysql.HasDropColumnWithIndexFlag(t.Columns[ic.Offset].Flag) &&
 				(t.Columns[ic.Offset].State == model.StateDeleteOnly || t.Columns[ic.Offset].State == model.StateDeleteReorganization) {
 				continue
