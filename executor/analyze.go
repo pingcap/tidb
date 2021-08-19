@@ -770,7 +770,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 // decodeSampleDataWithVirtualColumn constructs the virtual column by evaluating from the deocded normal columns.
 // If it failed, it would return false to trigger normal decoding way without the virtual column.
 func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
-	collector *statistics.RowSampleCollector,
+	collector *statistics.ReservoirRowSampleCollector,
 	fieldTps []*types.FieldType,
 	virtualColIdx []int,
 	schema *expression.Schema,
@@ -827,13 +827,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}()
 
 	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
-	rootRowCollector := &statistics.RowSampleCollector{
-		NullCount:     make([]int64, l),
-		FMSketches:    make([]*statistics.FMSketch, 0, l),
-		TotalSizes:    make([]int64, l),
-		Samples:       make(statistics.WeightedRowSampleHeap, 0, e.analyzePB.ColReq.SampleSize),
-		MaxSampleSize: int(e.analyzePB.ColReq.SampleSize),
-	}
+	rootRowCollector := statistics.NewReservoirRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), l)
 	for i := 0; i < l; i++ {
 		rootRowCollector.FMSketches = append(rootRowCollector.FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
@@ -1158,7 +1152,7 @@ func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(indexInfos []*model
 }
 
 type samplingMergeResult struct {
-	collector *statistics.RowSampleCollector
+	collector *statistics.ReservoirRowSampleCollector
 	err       error
 }
 
@@ -1188,13 +1182,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 	failpoint.Inject("mockAnalyzeSamplingMergeWorkerPanic", func() {
 		panic("failpoint triggered")
 	})
-	retCollector := &statistics.RowSampleCollector{
-		NullCount:     make([]int64, l),
-		FMSketches:    make([]*statistics.FMSketch, 0, l),
-		TotalSizes:    make([]int64, l),
-		Samples:       make(statistics.WeightedRowSampleHeap, 0, e.analyzePB.ColReq.SampleSize),
-		MaxSampleSize: int(e.analyzePB.ColReq.SampleSize),
-	}
+	retCollector := statistics.NewReservoirRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), l)
 	for i := 0; i < l; i++ {
 		retCollector.FMSketches = append(retCollector.FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
@@ -1209,7 +1197,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 			resultCh <- &samplingMergeResult{err: err}
 			return
 		}
-		subCollector := &statistics.RowSampleCollector{
+		subCollector := &statistics.ReservoirRowSampleCollector{
 			MaxSampleSize: int(e.analyzePB.ColReq.SampleSize),
 		}
 		subCollector.FromProto(colResp.RowCollector)
@@ -1221,7 +1209,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 
 type samplingBuildTask struct {
 	id               int64
-	rootRowCollector *statistics.RowSampleCollector
+	rootRowCollector *statistics.ReservoirRowSampleCollector
 	tp               *types.FieldType
 	isColumn         bool
 	slicePos         int
@@ -1270,7 +1258,7 @@ workLoop:
 				// When it's new collation data, we need to use its collate key instead of original value because only
 				// the collate key can ensure the correct ordering.
 				// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
-				if ft.EvalType() == types.ETString {
+				if ft.EvalType() == types.ETString && ft.Tp != mysql.TypeEnum && ft.Tp != mysql.TypeSet {
 					val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
 				}
 				sampleItems = append(sampleItems, &statistics.SampleItem{
