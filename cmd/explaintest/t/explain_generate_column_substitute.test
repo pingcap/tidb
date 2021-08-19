@@ -216,3 +216,14 @@ drop table if exists t;
 create table t(a int, b int as (a+1), key((a+1)), key(b));
 desc format = 'brief' select a+1 from t;
 desc format = 'brief' select b from t;
+
+create table t01(a varchar(20));
+insert into t01 values ("齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙");
+alter table t01 add index eidx ((concat_ws('expression_index', a, 'test')));
+select * from t01 use index (eidx)  where (concat_ws('expression_index', a, 'test')) not like (concat_ws('expression_index', "齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙", 'test'));
+insert into t01 values ("齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙");
+select * from t01 use index (eidx)  where (concat_ws('expression_index', a, 'test')) like (concat_ws('expression_index', "齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙", 'test'));
+
+drop table if exists t1;
+create table t1(a char, b varchar(20), c char, d varchar(20));
+alter table t1 add index eidx ((export_set(3, a, c, ',', 5)));
