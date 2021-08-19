@@ -216,3 +216,9 @@ drop table if exists t;
 create table t(a int, b int as (a+1), key((a+1)), key(b));
 desc format = 'brief' select a+1 from t;
 desc format = 'brief' select b from t;
+
+create table t02 (a varchar(20));
+insert into t02 values ('a'), ('b'), ('c');
+select * from t02 where lower(a) < 'c';
+create index eidx on t02 ((lower(a)));
+select * from t02 use index(eidx) where lower(a) < 'c';
