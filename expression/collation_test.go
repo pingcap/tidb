@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
+	"testing"
 )
 
 var _ = SerialSuites(&testCollationSuites{})
@@ -78,13 +80,128 @@ func (s *testCollationSuites) TestCompareString(c *C) {
 	}
 }
 
-func (s *testCollationSuites) TestDeriveCollationFromExprs(c *C) {
-	tInt := types.NewFieldType(mysql.TypeLonglong)
-	tInt.Charset = charset.CharsetBin
+func newExpr(coll string, coercibility Coercibility, repertoire Repertoire) Expression {
+	collation, _ := charset.GetCollationByName(coll)
+
+	fieldType := newStringFieldType()
+	fieldType.Collate = coll
+	fieldType.Charset = collation.CharsetName
+
+	c := &Constant{RetType: fieldType}
+	c.SetRepertoire(repertoire)
+	c.SetCoercibility(coercibility)
+
+	return c
+}
+
+func TestDeriveCollationFromExprs(t *testing.T) {
 	ctx := mock.NewContext()
 
-	// no string column
-	chs, coll := DeriveCollationFromExprs(ctx, newColumnWithType(0, tInt), newColumnWithType(0, tInt), newColumnWithType(0, tInt))
-	c.Assert(chs, Equals, charset.CharsetBin)
-	c.Assert(coll, Equals, charset.CollationBin)
+	tests := []struct {
+		id    int
+		exprs []Expression
+		coll  string
+	}{
+		{
+			1,
+			[]Expression{
+				newExpr(charset.CollationBin, CoercibilityExplicit, ASCII),
+				newExpr(charset.CollationBin, CoercibilityExplicit, ASCII),
+			},
+			charset.CollationBin,
+		},
+		{
+			2,
+			[]Expression{
+				newExpr(charset.CollationUTF8MB4, CoercibilityImplicit, UNICODE),
+				newExpr(charset.CollationASCII, CoercibilityImplicit, ASCII),
+			},
+			charset.CollationUTF8MB4,
+		},
+		{
+			3,
+			[]Expression{
+				newExpr(charset.CollationGBKBin, CoercibilityImplicit, UNICODE),
+				newExpr(charset.CollationASCII, CoercibilityImplicit, ASCII),
+			},
+			charset.CollationGBKBin,
+		},
+		{
+			4,
+			[]Expression{
+				newExpr(charset.CollationGBKBin, CoercibilityImplicit, UNICODE),
+				newExpr(charset.CollationUTF8MB4, CoercibilityExplicit, ASCII),
+			},
+			charset.CollationUTF8MB4,
+		},
+		{
+			5,
+			[]Expression{
+				newExpr("utf8mb4_unicode_ci", CoercibilityImplicit, UNICODE),
+				newExpr("utf8mb4_general_ci", CoercibilityImplicit, UNICODE),
+			},
+			charset.CollationUTF8MB4,
+		},
+		{
+			6,
+			[]Expression{
+				newExpr("utf8mb4_unicode_ci", CoercibilityImplicit, UNICODE),
+				newExpr(charset.CollationGBKBin, CoercibilityImplicit, UNICODE),
+				newExpr(charset.CollationBin, CoercibilityImplicit, UNICODE),
+			},
+			charset.CollationBin,
+		},
+		{
+			7,
+			[]Expression{
+				newExpr(charset.CollationBin, CoercibilityExplicit, UNICODE),
+				newExpr(charset.CollationUTF8MB4, CoercibilityNone, UNICODE),
+				newExpr(charset.CollationGBKBin, CoercibilityExplicit, ASCII),
+			},
+			charset.CollationBin,
+		},
+		{
+			8,
+			[]Expression{
+				newExpr(charset.CollationASCII, CoercibilityImplicit, ASCII),
+				newExpr(charset.CollationLatin1, CoercibilityImplicit, UNICODE),
+			},
+			charset.CollationLatin1,
+		},
+		{
+			9,
+			[]Expression{
+				newExpr(charset.CollationUTF8, CoercibilityExplicit, UNICODE),
+				newExpr(charset.CollationUTF8MB4, CoercibilityExplicit, UNICODE),
+			},
+			charset.CollationUTF8MB4,
+		},
+		{
+			10,
+			[]Expression{
+				newExpr(charset.CollationUTF8, CoercibilityExplicit, UNICODE),
+				newExpr(charset.CollationGBKBin, CoercibilityExplicit, UNICODE),
+				newExpr(charset.CollationBin, CoercibilityExplicit, UNICODE),
+			},
+			charset.CollationBin,
+		},
+		{
+			11,
+			[]Expression{
+				newExpr(charset.CollationUTF8, CoercibilityExplicit, UNICODE),
+				newExpr(charset.CollationGBKBin, CoercibilityExplicit, UNICODE),
+				newExpr(charset.CollationBin, CoercibilityExplicit, UNICODE),
+			},
+			charset.CollationBin,
+		},
+	}
+
+	for _, test := range tests {
+		chs, coll := DeriveCollationFromExprs(ctx, test.exprs...)
+		require.Equal(t, test.coll, coll, test.id)
+
+		collation, err := charset.GetCollationByName(coll)
+		require.NoError(t, err, test.id)
+		require.Equal(t, collation.CharsetName, chs, test.id)
+	}
 }

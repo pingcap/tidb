@@ -122,6 +122,7 @@ func CheckIllegalMixCollation(funcName string, args []Expression, evalType types
 	if !legal {
 		return illegalMixCollationErr(funcName, args)
 	}
+
 	if coercibility == CoercibilityNone && evalType != types.ETString {
 		return illegalMixCollationErr(funcName, args)
 	}

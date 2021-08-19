@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"github.com/pingcap/parser/charset"
 	"sort"
 	"strings"
 
@@ -658,6 +659,13 @@ func (col *Column) Coercibility() Coercibility {
 	}
 	col.SetCoercibility(deriveCoercibilityForColumn(col))
 	return col.collationInfo.Coercibility()
+}
+
+func (col *Column) Repertoire() Repertoire {
+	if col.RetType.Charset == charset.CharsetASCII {
+		return ASCII
+	}
+	return UNICODE
 }
 
 // SortColumns sort columns based on UniqueID.

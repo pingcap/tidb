@@ -561,3 +561,18 @@ func (sf *ScalarFunction) CharsetAndCollation(ctx sessionctx.Context) (string, s
 func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string) {
 	sf.Function.SetCharsetAndCollation(chs, coll)
 }
+
+func (sf *ScalarFunction) HasRepertoire() bool {
+	return sf.Function.HasCoercibility()
+}
+
+func (sf *ScalarFunction) Repertoire() Repertoire {
+	if !sf.Function.HasRepertoire() {
+		sf.SetRepertoire(deriveRepertoireForExprs(sf))
+	}
+	return sf.Function.Repertoire()
+}
+
+func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
+	sf.Function.SetRepertoire(r)
+}

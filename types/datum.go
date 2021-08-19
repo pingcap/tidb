@@ -102,6 +102,15 @@ func (d *Datum) Collation() string {
 	return d.collation
 }
 
+// Charset gets the charset of the datum.
+func (d *Datum) Charset() string {
+	chs, err := charset.GetCollationByName(d.collation)
+	if err != nil {
+		return mysql.DefaultCharset
+	}
+	return chs.CharsetName
+}
+
 // SetCollation sets the collation of the datum.
 func (d *Datum) SetCollation(collation string) {
 	d.collation = collation

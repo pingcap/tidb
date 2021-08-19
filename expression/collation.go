@@ -24,8 +24,10 @@ import (
 )
 
 type collationInfo struct {
-	coer     Coercibility
-	coerInit bool
+	coer       Coercibility
+	coerInit   bool
+	repertoire Repertoire
+	repeInit   bool
 
 	charset   string
 	collation string
@@ -44,6 +46,19 @@ func (c *collationInfo) Coercibility() Coercibility {
 func (c *collationInfo) SetCoercibility(val Coercibility) {
 	c.coer = val
 	c.coerInit = true
+}
+
+func (c *collationInfo) Repertoire() Repertoire {
+	return c.repertoire
+}
+
+func (c *collationInfo) HasRepertoire() bool {
+	return c.repeInit
+}
+
+func (c *collationInfo) SetRepertoire(r Repertoire) {
+	c.repertoire = r
+	c.repeInit = true
 }
 
 func (c *collationInfo) SetCharsetAndCollation(chs, coll string) {
@@ -76,6 +91,15 @@ type CollationInfo interface {
 	// SetCoercibility sets a specified coercibility for this expression.
 	SetCoercibility(val Coercibility)
 
+	// HasRepertoire returns if the Repertoire value is initialized.
+	HasRepertoire() bool
+
+	// Repertoire returns the repertoire value which is used to check collations.
+	Repertoire() Repertoire
+
+	// SetRepertoire sets a specified repertoire for this expression.
+	SetRepertoire(r Repertoire)
+
 	// CharsetAndCollation ...
 	CharsetAndCollation(ctx sessionctx.Context) (string, string)
 
@@ -104,6 +128,15 @@ const (
 	CoercibilityIgnorable Coercibility = 6
 )
 
+// The Repertoire of a character set is the collection of characters in the set.
+// See https://dev.mysql.com/doc/refman/8.0/en/charset-repertoire.html.
+type Repertoire int
+
+const (
+	ASCII   Repertoire = 0x01
+	UNICODE            = ASCII << 1
+)
+
 var (
 	sysConstFuncs = map[string]struct{}{
 		ast.User:        {},
@@ -111,6 +144,11 @@ var (
 		ast.Database:    {},
 		ast.CurrentRole: {},
 		ast.CurrentUser: {},
+	}
+
+	constFuncs = map[string]struct{}{
+		ast.Collation: {},
+		ast.Charset:   {},
 	}
 
 	// collationPriority is the priority when infer the result collation, the priority of collation a > b iff collationPriority[a] > collationPriority[b]
@@ -155,6 +193,11 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 	if _, ok := sysConstFuncs[sf.FuncName.L]; ok {
 		return CoercibilitySysconst
 	}
+
+	if _, ok := constFuncs[sf.FuncName.L]; ok {
+		return CoercibilityCoercible
+	}
+
 	if sf.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric
 	}
@@ -195,35 +238,109 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 	return
 }
 
-// inferCollation infers collation, charset, coercibility and check the legitimacy.
-func inferCollation(exprs ...Expression) (dstCollation, dstCharset string, coercibility Coercibility, legal bool) {
-	firstExplicitCollation := ""
-	coercibility = CoercibilityIgnorable
-	dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
-	for _, arg := range exprs {
-		if arg.Coercibility() == CoercibilityExplicit {
-			if firstExplicitCollation == "" {
-				firstExplicitCollation = arg.GetType().Collate
-				coercibility, dstCollation, dstCharset = CoercibilityExplicit, arg.GetType().Collate, arg.GetType().Charset
-			} else if firstExplicitCollation != arg.GetType().Collate {
-				return "", "", CoercibilityIgnorable, false
-			}
-		} else if arg.Coercibility() < coercibility {
-			coercibility, dstCollation, dstCharset = arg.Coercibility(), arg.GetType().Collate, arg.GetType().Charset
-		} else if arg.Coercibility() == coercibility && dstCollation != arg.GetType().Collate {
-			p1 := collationPriority[dstCollation]
-			p2 := collationPriority[arg.GetType().Collate]
+func deriveRepertoireForExprs(sf *ScalarFunction) Repertoire {
+	if sf.RetType.EvalType() != types.ETString {
+		return ASCII
+	}
 
-			// same priority means this two collation is incompatible, coercibility might derive to CoercibilityNone
-			if p1 == p2 {
-				coercibility, dstCollation, dstCharset = CoercibilityNone, getBinCollation(arg.GetType().Charset), arg.GetType().Charset
-			} else if p1 < p2 {
-				dstCollation, dstCharset = arg.GetType().Collate, arg.GetType().Charset
+	for _, arg := range sf.GetArgs() {
+		if arg.GetType().EvalType() == types.ETString {
+			if arg.Repertoire() != ASCII {
+				return UNICODE
 			}
 		}
 	}
+	return ASCII
+}
+
+// inferCollation infers collation, charset, coercibility and check the legitimacy.
+func inferCollation(exprs ...Expression) (dstCollation, dstCharset string, coercibility Coercibility, legal bool) {
+	if len(exprs) == 0 {
+		dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
+		return dstCollation, dstCharset, CoercibilityIgnorable, true
+	}
+
+	repertoire := exprs[0].Repertoire()
+	coercibility = exprs[0].Coercibility()
+	dstCharset, dstCollation = exprs[0].GetType().Charset, exprs[0].GetType().Collate
+	unknownCS := false
+
+	for _, arg := range exprs[1:] {
+		if dstCollation == charset.CollationBin || arg.GetType().Collate == charset.CollationBin {
+			if coercibility > arg.Coercibility() || (coercibility == arg.Coercibility() && arg.GetType().Collate == charset.CollationBin) {
+				coercibility, dstCharset, dstCollation = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate
+			}
+			repertoire |= arg.Repertoire()
+			continue
+		}
+
+		if dstCharset != arg.GetType().Charset {
+			switch {
+			case coercibility < arg.Coercibility():
+				if arg.Repertoire() == ASCII || arg.Coercibility() >= CoercibilitySysconst || isUnicodeCollation(dstCharset) {
+					repertoire |= arg.Repertoire()
+					continue
+				}
+			case coercibility == arg.Coercibility():
+				if (isUnicodeCollation(dstCharset) && !isUnicodeCollation(arg.GetType().Charset)) || (dstCharset == charset.CharsetUTF8MB4 && arg.GetType().Charset == charset.CharsetUTF8) {
+					repertoire |= arg.Repertoire()
+					continue
+				} else if (isUnicodeCollation(arg.GetType().Charset) && !isUnicodeCollation(dstCharset)) || (arg.GetType().Charset == charset.CharsetUTF8MB4 && dstCharset == charset.CharsetUTF8) {
+					coercibility, dstCharset, dstCollation = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate
+					repertoire |= arg.Repertoire()
+					continue
+				} else if repertoire == ASCII && arg.Repertoire() != ASCII {
+					coercibility, dstCharset, dstCollation = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate
+					repertoire |= arg.Repertoire()
+					continue
+				} else if repertoire != ASCII && arg.Repertoire() == ASCII {
+					repertoire |= arg.Repertoire()
+					continue
+				}
+			case coercibility > arg.Coercibility():
+				if repertoire == ASCII || coercibility >= CoercibilitySysconst || isUnicodeCollation(arg.GetType().Charset) {
+					coercibility, dstCharset, dstCollation = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate
+					repertoire |= arg.Repertoire()
+					continue
+				}
+			}
+
+			// Cannot apply conversion.
+			repertoire |= arg.Repertoire()
+			coercibility, dstCharset, dstCollation = CoercibilityNone, charset.CharsetBin, charset.CollationBin
+			unknownCS = true
+		} else {
+			switch {
+			case coercibility == arg.Coercibility():
+				if dstCollation == arg.GetType().Collate {
+				} else if coercibility == CoercibilityExplicit {
+					return "", "", CoercibilityIgnorable, false
+				} else if isBinaryCollation(dstCollation) {
+				} else if isBinaryCollation(arg.GetType().Collate) {
+					coercibility, dstCharset, dstCollation = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate
+				} else {
+					coercibility, dstCollation, dstCharset = CoercibilityNone, getBinCollation(arg.GetType().Charset), arg.GetType().Charset
+				}
+			case coercibility > arg.Coercibility():
+				coercibility, dstCharset, dstCollation = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate
+			}
+			repertoire |= arg.Repertoire()
+		}
+	}
+
+	if unknownCS && coercibility != CoercibilityExplicit {
+		return "", "", CoercibilityIgnorable, false
+	}
 
 	return dstCollation, dstCharset, coercibility, true
+}
+
+func isUnicodeCollation(ch string) bool {
+	return ch == charset.CharsetUTF8 || ch == charset.CharsetUTF8MB4
+}
+
+func isBinaryCollation(collation string) bool {
+	return collation[len(collation)-3:] == "bin"
 }
 
 // getBinCollation get binary collation by charset
@@ -233,6 +350,8 @@ func getBinCollation(cs string) string {
 		return charset.CollationUTF8
 	case charset.CharsetUTF8MB4:
 		return charset.CollationUTF8MB4
+	case charset.CharsetGBK:
+		return charset.CollationGBKBin
 	}
 
 	logutil.BgLogger().Error("unexpected charset " + cs)

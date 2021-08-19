@@ -16,7 +16,7 @@ package expression
 
 import (
 	"fmt"
-
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -431,4 +431,26 @@ func (c *Constant) Coercibility() Coercibility {
 
 	c.SetCoercibility(deriveCoercibilityForConstant(c))
 	return c.collationInfo.Coercibility()
+}
+
+func (c *Constant) Repertoire() Repertoire {
+	if !c.HasRepertoire() {
+		rep := ASCII
+		if c.GetType().EvalType() == types.ETString {
+			if c.GetType().Charset != charset.CharsetASCII {
+				evalString, isNull, err := c.EvalString(nil, chunk.Row{})
+				if !isNull && err == nil {
+					for _, ch := range evalString {
+						if ch >= 0x80 {
+							rep = UNICODE
+							break
+						}
+					}
+				}
+			}
+		}
+		c.SetRepertoire(rep)
+	}
+
+	return c.repertoire
 }

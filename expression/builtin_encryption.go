@@ -25,6 +25,7 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/parser/charset"
 	"hash"
 	"io"
 	"strings"
@@ -447,6 +448,8 @@ func (c *encodeFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	}
 
 	bf.tp.Flen = args[0].GetType().Flen
+	bf.tp.Charset = charset.CharsetBin
+	bf.tp.Collate = charset.CollationBin
 	sig := &builtinEncodeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Encode)
 	return sig, nil

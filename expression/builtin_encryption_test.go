@@ -75,7 +75,11 @@ func (s *testEvaluatorSuite) TestSQLEncode(c *C) {
 		str, err := evalBuiltinFunc(f, chunk.Row{})
 
 		c.Assert(err, IsNil)
-		c.Assert(str, DeepEquals, types.NewDatum(test.origin))
+		d := types.NewDatum(test.origin)
+		if test.origin != nil {
+			d.SetCollation(charset.CollationBin)
+		}
+		c.Assert(str, DeepEquals, d)
 	}
 	s.testNullInput(c, ast.Encode)
 }
@@ -209,7 +213,7 @@ func (s *testEvaluatorSuite) testAmbiguousInput(c *C, fnName string) {
 
 func toHex(d types.Datum) (h types.Datum) {
 	if d.IsNull() {
-		return
+		return d
 	}
 	x, _ := d.ToString()
 	h.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))), mysql.DefaultCollationName)
