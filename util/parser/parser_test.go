@@ -62,7 +62,7 @@ func TestSpace(t *testing.T) {
 	}
 }
 
-func  TestDigit(t *testing.T) {
+func TestDigit(t *testing.T) {
 	okTable := []struct {
 		Times          int
 		Input          string
@@ -101,7 +101,7 @@ func  TestDigit(t *testing.T) {
 	}
 }
 
-func  TestNumber(t *testing.T) {
+func TestNumber(t *testing.T) {
 	okTable := []struct {
 		Input        string
 		ExpectedNum  int
@@ -137,7 +137,7 @@ func  TestNumber(t *testing.T) {
 	}
 }
 
-func  TestCharAndAnyChar(t *testing.T) {
+func TestCharAndAnyChar(t *testing.T) {
 	okTable := []struct {
 		Char     byte
 		Input    string

@@ -23,7 +23,6 @@ import (
 	utilparser "github.com/pingcap/tidb/util/parser"
 )
 
-
 func TestSimpleCases(t *testing.T) {
 	tests := []struct {
 		sql string
