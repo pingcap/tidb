@@ -34,8 +34,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 var (
@@ -1042,7 +1044,12 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	}
 
 	if len(t.rootTaskConds) > 0 {
-		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.statsInfo(), newTask.p.SelectBlockOffset())
+		selectivity, _, err := t.tblColHists.Selectivity(ctx, t.rootTaskConds, nil)
+		if err != nil {
+			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+			selectivity = SelectionFactor
+		}
+		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.statsInfo().Scale(selectivity), newTask.p.SelectBlockOffset())
 		sel.SetChildren(newTask.p)
 		newTask.p = sel
 		sel.cost = newTask.cost()
@@ -1203,14 +1210,6 @@ func (p *PhysicalTopN) canPushDown(storeTp kv.StoreType) bool {
 	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeTp)
 }
 
-func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
-	cols := make([]*expression.Column, 0, len(p.ByItems))
-	for _, item := range p.ByItems {
-		cols = append(cols, expression.ExtractColumns(item.Expr)...)
-	}
-	return len(schema.ColumnsIndices(cols)) > 0
-}
-
 // GetCost computes the cost of in memory sort.
 func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64 {
 	if count < 2.0 {
@@ -1271,11 +1270,16 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputCount := t.count()
-	if copTask, ok := t.(*copTask); ok && p.canPushDown(copTask.getStoreType()) && len(copTask.rootTaskConds) == 0 {
+	cols := make([]*expression.Column, 0, len(p.ByItems))
+	for _, item := range p.ByItems {
+		cols = append(cols, expression.ExtractColumns(item.Expr)...)
+	}
+	needPushDown := len(cols) > 0
+	if copTask, ok := t.(*copTask); ok && needPushDown && p.canPushDown(copTask.getStoreType()) && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
-		if !copTask.indexPlanFinished && p.allColsFromSchema(copTask.indexPlan.Schema()) {
+		if !copTask.indexPlanFinished && len(copTask.indexPlan.Schema().ColumnsIndices(cols)) > 0 {
 			pushedDownTopN = p.getPushedDownTopN(copTask.indexPlan)
 			copTask.indexPlan = pushedDownTopN
 		} else {
@@ -1284,7 +1288,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 			copTask.tablePlan = pushedDownTopN
 		}
 		copTask.addCost(pushedDownTopN.GetCost(inputCount, false))
-	} else if mppTask, ok := t.(*mppTask); ok && p.canPushDown(kv.TiFlash) {
+	} else if mppTask, ok := t.(*mppTask); ok && needPushDown && p.canPushDown(kv.TiFlash) {
 		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
 		mppTask.p = pushedDownTopN
 	}
