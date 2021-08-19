@@ -76,7 +76,7 @@ func removeCharset() {
 
 // All the experimental supported charset should be in the following table, only used when charset feature is enable.
 var experimentalCharsetInfo = []*charset.Charset{
-	{Name: charset.CharsetGBK, DefaultCollation: charset.CollationGBKBin, Collations: make(map[string]*charset.Collation), Desc: "Chinese Internal Code Specification", Maxlen: 4},
+	{Name: charset.CharsetGBK, DefaultCollation: charset.CollationGBKBin, Collations: make(map[string]*charset.Collation), Desc: "Chinese Internal Code Specification", Maxlen: 2},
 }
 
 var experimentalCollation = map[string]Collator{
