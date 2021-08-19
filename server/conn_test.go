@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/table"
+	newtestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -613,13 +614,17 @@ func mapBelong(m1, m2 map[string]string) bool {
 	return true
 }
 
-func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
-	// There is no underlying netCon, use failpoint to avoid panic
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"), IsNil)
+func TestConnExecutionTimeout(t *testing.T) {
+	t.Parallel()
 
-	c.Parallel()
-	se, err := session.CreateSession4Test(ts.store)
-	c.Assert(err, IsNil)
+	th := setupConnTestHelper(t)
+	defer th.TearDown()
+
+	// There is no underlying netCon, use failpoint to avoid panic
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"))
+
+	se, err := session.CreateSession4Test(th.store)
+	require.NoError(t, err)
 
 	connID := uint64(1)
 	se.SetConnectionID(connID)
@@ -640,49 +645,49 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 			connID: cc,
 		},
 	}
-	handle := ts.dom.ExpensiveQueryHandle().SetSessionManager(srv)
+	handle := th.dom.ExpensiveQueryHandle().SetSessionManager(srv)
 	go handle.Run()
 
 	_, err = se.Execute(context.Background(), "use test;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "CREATE TABLE testTable2 (id bigint PRIMARY KEY,  age int)")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
 		str := fmt.Sprintf("insert into testTable2 values(%d, %d)", i, i%80)
 		_, err = se.Execute(context.Background(), str)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 
 	_, err = se.Execute(context.Background(), "select SLEEP(1);")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 500;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 1500;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, err = se.Execute(context.Background(), "set @@tidb_expensive_query_time_threshold = 1;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	records, err := se.Execute(context.Background(), "select SLEEP(2);")
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, ts.store)
-	tk.ResultSetToResult(records[0], Commentf("%v", records[0])).Check(testkit.Rows("1"))
+	require.NoError(t, err)
+	tk := newtestkit.NewTestKit(t, th.store)
+	tk.ResultSetToResult(records[0], fmt.Sprintf("%v", records[0])).Check(testkit.Rows("1"))
 
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"), IsNil)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeClientConn"))
 }
 
 func (ts *ConnTestSuite) TestShutDown(c *C) {
