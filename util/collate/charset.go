@@ -24,15 +24,15 @@ var (
 	enableCharsetFeat bool
 )
 
-// EnableCharsetFeat the charset feature
+// EnableCharsetFeat enables the charset feature.
 func EnableCharsetFeat() {
 	enableCharsetFeat = true
 	addCharset()
 }
 
-// SetCharsetFratEnabledForTest set charset feature enabled. Only used in test.
+// SetCharsetFeatEnabledForTest set charset feature enabled. Only used in test.
 // It will also enable or disable new collation.
-func SetCharsetFratEnabledForTest(flag bool) {
+func SetCharsetFeatEnabledForTest(flag bool) {
 	enableCharsetFeat = flag
 	SetNewCollationEnabledForTest(flag)
 	if flag {

@@ -217,8 +217,8 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &binCollator{}, GetCollatorByID(2048))
 	require.IsType(t, &binCollator{}, GetCollatorByID(9999))
 
-	SetCharsetFratEnabledForTest(true)
-	defer SetCharsetFratEnabledForTest(false)
+	SetCharsetFeatEnabledForTest(true)
+	defer SetCharsetFeatEnabledForTest(false)
 	require.IsType(t, &gbkBinCollator{}, GetCollator("gbk_bin"))
 	require.IsType(t, &gbkBinCollator{}, GetCollatorByID(87))
 }

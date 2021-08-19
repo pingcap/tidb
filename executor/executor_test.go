@@ -5629,15 +5629,15 @@ func (s *testSerialSuite2) TestUnsignedFeedback(c *C) {
 }
 
 func (s *testSerialSuite2) TestCharsetFeature(c *C) {
-	collate.SetCharsetFratEnabledForTest(true)
-	defer collate.SetCharsetFratEnabledForTest(false)
+	collate.SetCharsetFeatEnabledForTest(true)
+	defer collate.SetCharsetFeatEnabledForTest(false)
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustQuery("show charset").Check(testkit.Rows(
 		"ascii US ASCII ascii_bin 1",
 		"binary binary binary 1",
-		"gbk Chinese Internal Code Specification gbk_bin 4",
+		"gbk Chinese Internal Code Specification gbk_bin 2",
 		"latin1 Latin1 latin1_bin 1",
 		"utf8 UTF-8 Unicode utf8_bin 3",
 		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
