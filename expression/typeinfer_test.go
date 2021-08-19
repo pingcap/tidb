@@ -472,9 +472,9 @@ func (s *testInferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"insert(c_binary, c_int_d, c_int_d, c_varchar)", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
 		{"insert(c_binary, c_int_d, c_int_d, c_binary)", mysql.TypeLongBlob, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxBlobWidth, types.UnspecifiedLength},
 
-		{"export_set(c_double_d, c_text_d, c_text_d)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 508, types.UnspecifiedLength},
-		{"export_set(c_double_d, c_text_d, c_text_d, c_text_d)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 508, types.UnspecifiedLength},
-		{"export_set(c_double_d, c_text_d, c_text_d, c_text_d, c_int_d)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 508, types.UnspecifiedLength},
+		{"export_set(c_double_d, c_text_d, c_text_d)", mysql.TypeMediumBlob, charset.CharsetUTF8MB4, 0, 16777212, types.UnspecifiedLength},
+		{"export_set(c_double_d, c_text_d, c_text_d, c_text_d)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, 33291780, types.UnspecifiedLength},
+		{"export_set(c_double_d, c_text_d, c_text_d, c_text_d, c_int_d)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, 33291780, types.UnspecifiedLength},
 
 		{"format(c_double_d, c_double_d)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},
 		{"format(c_double_d, c_double_d, c_binary)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},

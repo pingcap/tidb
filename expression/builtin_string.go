@@ -3073,10 +3073,16 @@ func (c *exportSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	// Max length is (64 * 2 -1) * 4
-	// For example:
-	// "Y,Y,Y,Y,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N"
-	bf.tp.Flen = 508
+	// Calculate the flen as MySQL does.
+	l := args[1].GetType().Flen
+	if args[2].GetType().Flen > l {
+		l = args[2].GetType().Flen
+	}
+	sepL := 1
+	if len(args) > 3 {
+		sepL = args[3].GetType().Flen
+	}
+	bf.tp.Flen = (l*64 + sepL*63) * 4
 	switch len(args) {
 	case 3:
 		sig = &builtinExportSet3ArgSig{bf}
