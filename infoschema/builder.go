@@ -505,8 +505,10 @@ func (b *Builder) copyBundlesMap(oldIS *infoSchema) {
 
 func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
 	is := b.is
+	is.policyMutex.Lock()
+	defer is.policyMutex.Unlock()
 	for _, v := range oldIS.PlacementPolicies() {
-		is.SetPolicy(v)
+		is.policyMap[v.Name.L] = v
 	}
 }
 

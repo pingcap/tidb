@@ -79,7 +79,7 @@ var (
 )
 
 const (
-	// CurrentMagicByteVer is the current magic byte version.
+	// CurrentMagicByteVer is the current magic byte version, used for future meta compatibility.
 	CurrentMagicByteVer byte = 0x00
 	// PolicyMagicByte handler
 	// 0x00 - 0x3F: Json Handler

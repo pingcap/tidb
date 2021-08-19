@@ -361,13 +361,6 @@ func (is *infoSchema) PolicyByName(name string) (*placement.Policy, bool) {
 	return t, r
 }
 
-// SetPolicy is used to set the policy.
-func (is *infoSchema) SetPolicy(policy *placement.Policy) {
-	is.policyMutex.Lock()
-	defer is.policyMutex.Unlock()
-	is.policyMap[policy.Name.L] = policy
-}
-
 func (is *infoSchema) PlacementPolicies() []*placement.Policy {
 	is.policyMutex.RLock()
 	defer is.policyMutex.RUnlock()
