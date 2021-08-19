@@ -717,8 +717,8 @@ func (s *testBootstrapSuite) TestUpgradeVersion74(c *C) {
 	ctx := context.Background()
 
 	cases := []struct {
-		old_value int
-		new_value int
+		oldValue int
+		newValue int
 	}{
 		{200, 3000},
 		{3000, 3000},
@@ -740,7 +740,7 @@ func (s *testBootstrapSuite) TestUpgradeVersion74(c *C) {
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
 		mustExecSQL(c, seV73, "update mysql.tidb set variable_value='72' where variable_name='tidb_server_version'")
-		mustExecSQL(c, seV73, "set @@global.tidb_stmt_summary_max_stmt_count = "+strconv.Itoa(ca.old_value))
+		mustExecSQL(c, seV73, "set @@global.tidb_stmt_summary_max_stmt_count = "+strconv.Itoa(ca.oldValue))
 		mustExecSQL(c, seV73, "commit")
 		unsetStoreBootstrapped(store.UUID())
 		ver, err := getBootstrapVersion(seV73)
@@ -759,8 +759,8 @@ func (s *testBootstrapSuite) TestUpgradeVersion74(c *C) {
 		c.Assert(r.Next(ctx, req), IsNil)
 		c.Assert(req.NumRows(), Equals, 1)
 		row := req.GetRow(0)
-		c.Assert(row.GetString(0), Equals, strconv.Itoa(ca.new_value))
-		c.Assert(row.GetString(1), Equals, strconv.Itoa(ca.new_value))
+		c.Assert(row.GetString(0), Equals, strconv.Itoa(ca.newValue))
+		c.Assert(row.GetString(1), Equals, strconv.Itoa(ca.newValue))
 	}
 }
 
