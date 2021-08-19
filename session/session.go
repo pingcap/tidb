@@ -2955,43 +2955,49 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 	}
 }
 
+func genFnGetQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) func(buf *strings.Builder) string {
+	vars := s.GetSessionVars()
+	return func(buf *strings.Builder) string {
+		if isPrepared {
+			buf.WriteString(execStmt.OriginText())
+		} else {
+			buf.WriteString(execStmt.GetTextToLog())
+		}
+
+		bufString := buf.String()
+		queryMutable := *(*[]byte)(unsafe.Pointer(&bufString))
+		for i, b := range queryMutable {
+			if b == '\r' || b == '\n' || b == '\t' {
+				queryMutable[i] = ' '
+			}
+		}
+		// query = *(*string)(unsafe.Pointer(&queryMutable))
+		if !vars.EnableRedactLog {
+			buf.WriteString(vars.PreparedParams.String())
+		}
+		return buf.String()
+	}
+}
+
+func genGetUser(user *auth.UserIdentity) func() string {
+	return func() string {
+		if user == nil {
+			return ""
+		}
+		var buf strings.Builder
+		buf.Grow(64)
+		buf.WriteString(user.Username)
+		buf.WriteByte('@')
+		buf.WriteString(user.Hostname)
+		return buf.String()
+	}
+}
+
 func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 	vars := s.GetSessionVars()
 	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
-		fnGetQuery := func(buf *strings.Builder) string {
-			if isPrepared {
-				buf.WriteString(execStmt.OriginText())
-			} else {
-				buf.WriteString(execStmt.GetTextToLog())
-			}
-
-			bufString := buf.String()
-			queryMutable := *(*[]byte)(unsafe.Pointer(&bufString))
-			for i, b := range queryMutable {
-				if b == '\r' || b == '\n' || b == '\t' {
-					queryMutable[i] = ' '
-				}
-			}
-			// query = *(*string)(unsafe.Pointer(&queryMutable))
-			if !vars.EnableRedactLog {
-				buf.WriteString(vars.PreparedParams.String())
-			}
-			return buf.String()
-		}
-
-		fnGetUser := func() string {
-			user := vars.User
-			if user == nil {
-				return ""
-			}
-			var buf strings.Builder
-			buf.Grow(64)
-			buf.WriteString(user.Username)
-			buf.WriteByte('@')
-			buf.WriteString(user.Hostname)
-			return buf.String()
-		}
-
+		fnGetQuery := genFnGetQuery(execStmt, s, isPrepared)
+		fnGetUser := genGetUser(vars.User)
 		fnGetSMV := func() int64 {
 			return s.GetInfoSchema().SchemaMetaVersion()
 		}
