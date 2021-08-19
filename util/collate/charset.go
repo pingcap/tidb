@@ -24,8 +24,8 @@ var (
 	enableCharsetFeat bool
 )
 
-// EnableCharsetFeat enables the charset feature.
-func EnableCharsetFeat() {
+// EnableNewCharset enables the charset feature.
+func EnableNewCharset() {
 	enableCharsetFeat = true
 	addCharset()
 }

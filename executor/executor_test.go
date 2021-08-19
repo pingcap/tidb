@@ -5665,7 +5665,7 @@ func (s *testSerialSuite2) TestCharsetFeature(c *C) {
 	tk.MustQuery("select @@character_set_connection;").Check(testkit.Rows("gbk"))
 	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_bin"))
 
-	tk.MustExec("select _gbk 'a'")
+	tk.MustQuery("select _gbk 'a'").Check(testkit.Rows("a"))
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a char(10) charset gbk);")
@@ -5686,6 +5686,12 @@ func (s *testSerialSuite2) TestCharsetFeature(c *C) {
 	))
 
 	tk.MustExec("create database test_gbk charset gbk;")
+	tk.MustExec("use test_gbk")
+	tk.MustExec("create table t1(a char(10));")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `a` char(10) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin",
+	))
 }
 
 func (s *testSerialSuite2) TestIssue23567(c *C) {
