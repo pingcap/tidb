@@ -42,8 +42,8 @@ const (
 
 	defaultRestoreConcurrency = 128
 	maxRestoreBatchSizeLimit  = 10240
-	defaultPDConcurrency      = 4
-	defaultBatchFlushInterval = 4 * time.Second
+	defaultPDConcurrency      = 1
+	defaultBatchFlushInterval = 16 * time.Second
 	defaultDDLConcurrency     = 16
 )
 
