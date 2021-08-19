@@ -759,10 +759,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if greater == admin.IdxCntGreater {
 			err = e.checkTableIndexHandle(ctx, e.indexInfos[idxOffset])
 		} else if greater == admin.TblCntGreater {
-			err = e.checkTableRecord(idxOffset)
-		}
-		if err != nil && admin.ErrDataInConsistent.Equal(err) {
-			return ErrAdminCheckTable.GenWithStack("%v err:%v", e.table.Meta().Name, err)
+			err = e.checkTableRecord(ctx, idxOffset)
 		}
 		return errors.Trace(err)
 	}
@@ -797,7 +794,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
+func (e *CheckTableExec) checkTableRecord(ctx context.Context, idxOffset int) error {
 	idxInfo := e.indexInfos[idxOffset]
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
@@ -805,7 +802,7 @@ func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
 	}
 	if e.table.Meta().GetPartitionInfo() == nil {
 		idx := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
-		return admin.CheckRecordAndIndex(e.ctx, txn, e.table, idx)
+		return admin.CheckRecordAndIndex(ctx, e.ctx, txn, e.table, idx)
 	}
 
 	info := e.table.Meta().GetPartitionInfo()
@@ -813,7 +810,7 @@ func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
 		pid := def.ID
 		partition := e.table.(table.PartitionedTable).GetPartition(pid)
 		idx := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
-		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx); err != nil {
+		if err := admin.CheckRecordAndIndex(ctx, e.ctx, txn, partition, idx); err != nil {
 			return errors.Trace(err)
 		}
 	}

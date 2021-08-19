@@ -54,13 +54,11 @@ var (
 	ErrInvalidSplitRegionRanges      = dbterror.ClassExecutor.NewStd(mysql.ErrInvalidSplitRegionRanges)
 	ErrViewInvalid                   = dbterror.ClassExecutor.NewStd(mysql.ErrViewInvalid)
 
-	ErrBRIEBackupFailed              = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
-	ErrBRIERestoreFailed             = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)
-	ErrBRIEImportFailed              = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEImportFailed)
-	ErrBRIEExportFailed              = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEExportFailed)
-	ErrCTEMaxRecursionDepth          = dbterror.ClassExecutor.NewStd(mysql.ErrCTEMaxRecursionDepth)
-	ErrDataInConsistentExtraIndex    = dbterror.ClassExecutor.NewStd(mysql.ErrDataInConsistentExtraIndex)
-	ErrDataInConsistentMisMatchIndex = dbterror.ClassExecutor.NewStd(mysql.ErrDataInConsistentMisMatchIndex)
+	ErrBRIEBackupFailed     = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
+	ErrBRIERestoreFailed    = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)
+	ErrBRIEImportFailed     = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEImportFailed)
+	ErrBRIEExportFailed     = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEExportFailed)
+	ErrCTEMaxRecursionDepth = dbterror.ClassExecutor.NewStd(mysql.ErrCTEMaxRecursionDepth)
 
 	errUnsupportedFlashbackTmpTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Recover/flashback table is not supported on temporary tables", nil))
 	errTruncateWrongInsertValue     = dbterror.ClassTable.NewStdErr(mysql.ErrTruncatedWrongValue, parser_mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil))

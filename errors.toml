@@ -223,7 +223,7 @@ TiDB admin check table failed.
 
 ["admin:8223"]
 error = '''
-index:%#v != record:%#v
+data inconsistency in table: %s, index: %s, handle: %s, index-values:%#v != record-values:%#v
 '''
 
 ["admin:8224"]
@@ -873,12 +873,12 @@ Export failed: %s
 
 ["executor:8133"]
 error = '''
-handle %#v, index:%#v != record:%#v
+data inconsistency in table: %s, index: %s, index-count:%d != record-count:%d
 '''
 
 ["executor:8134"]
 error = '''
-col %s, handle %#v, index:%#v != record:%#v, compare err:%#v
+data inconsistency in table: %s, index: %s, col: %s, handle: %#v, index-values:%#v != record-values:%#v, compare err:%#v
 '''
 
 ["executor:8212"]

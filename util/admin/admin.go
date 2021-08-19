@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/inconsist"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -285,12 +287,6 @@ func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error
 	return IterHistoryDDLJobs(txn, finishFn)
 }
 
-// RecordData is the record data composed of a handle and values.
-type RecordData struct {
-	Handle kv.Handle
-	Values []types.Datum
-}
-
 func getCount(exec sqlexec.RestrictedSQLExecutor, stmt ast.StmtNode, snapshot uint64) (int64, error) {
 	rows, _, err := exec.ExecRestrictedStmt(context.Background(), stmt, sqlexec.ExecOptionWithSnapshot(snapshot))
 	if err != nil {
@@ -370,11 +366,39 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 }
 
 // CheckRecordAndIndex is exported for testing.
-func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
+func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
 	sc := sessCtx.GetSessionVars().StmtCtx
 	cols := make([]*table.Column, len(idx.Meta().Columns))
 	for i, col := range idx.Meta().Columns {
 		cols[i] = t.Cols()[col.Offset]
+	}
+
+	ir := func() *inconsist.Reporter {
+		return &inconsist.Reporter{
+			HandleEncode: func(handle kv.Handle) kv.Key {
+				return tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
+			},
+			IndexEncode: func(idxRow *inconsist.RecordData) kv.Key {
+				var idx table.Index
+				for _, v := range t.Indices() {
+					if strings.EqualFold(v.Meta().Name.String(), idx.Meta().Name.O) {
+						idx = v
+						break
+					}
+				}
+				if idx == nil {
+					return nil
+				}
+				k, _, err := idx.GenIndexKey(sessCtx.GetSessionVars().StmtCtx, idxRow.Values, idxRow.Handle, nil)
+				if err != nil {
+					return nil
+				}
+				return k
+			},
+			Tbl:  t.Meta(),
+			Idx:  idx.Meta(),
+			Sctx: sessCtx,
+		}
 	}
 
 	startKey := tablecodec.EncodeRecordKey(t.RecordPrefix(), kv.IntHandle(math.MinInt64))
@@ -395,16 +419,16 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		}
 		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
-			record1 := &RecordData{Handle: h1, Values: vals1}
-			record2 := &RecordData{Handle: h2, Values: vals1}
-			return false, ErrDataInConsistent.GenWithStackByArgs(record2, record1)
+			record1 := &inconsist.RecordData{Handle: h1, Values: vals1}
+			record2 := &inconsist.RecordData{Handle: h2, Values: vals1}
+			return false, ir().ReportAdminCheckInconsistent(ctx, h1, record2, record1)
 		}
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if !isExist {
-			record := &RecordData{Handle: h1, Values: vals1}
-			return false, ErrDataInConsistent.GenWithStackByArgs(nil, record)
+			record := &inconsist.RecordData{Handle: h1, Values: vals1}
+			return false, ir().ReportAdminCheckInconsistent(ctx, h1, nil, record)
 		}
 
 		return true, nil
@@ -484,8 +508,6 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 }
 
 var (
-	// ErrDataInConsistent indicate that meets inconsistent data.
-	ErrDataInConsistent = dbterror.ClassAdmin.NewStd(errno.ErrDataInConsistent)
 	// ErrDDLJobNotFound indicates the job id was not found.
 	ErrDDLJobNotFound = dbterror.ClassAdmin.NewStd(errno.ErrDDLJobNotFound)
 	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
