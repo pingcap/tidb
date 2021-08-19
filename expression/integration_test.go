@@ -9765,3 +9765,165 @@ func (s *testIntegrationSuite2) TestIssue25526(c *C) {
 	rows := tk.MustQuery("select tbl_6.col_31 from tbl_6 where col_31 in (select col_102 from tbl_17 where tbl_17.col_102 = 9999 and tbl_17.col_105 = 0);")
 	rows.Check(testkit.Rows())
 }
+<<<<<<< HEAD
+=======
+
+func (s *testIntegrationSuite) TestTimestampIssue25093(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(col decimal(45,8) default 13.654 not null);")
+	tk.MustExec("insert  into t set col = 0.4352;")
+	tk.MustQuery("select timestamp(0.123)").Check(testkit.Rows("0000-00-00 00:00:00.123"))
+	tk.MustQuery("select timestamp(col) from t;").Check(testkit.Rows("0000-00-00 00:00:00.435200"))
+	tk.MustQuery("select timestamp(1.234) from t;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select timestamp(0.12345678) from t;").Check(testkit.Rows("0000-00-00 00:00:00.123457"))
+	tk.MustQuery("select timestamp(0.9999999) from t;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select timestamp(101.234) from t;").Check(testkit.Rows("2000-01-01 00:00:00.000"))
+}
+
+func (s *testIntegrationSuite) TestIssue24953(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tbl_0,tbl_9;")
+	tk.MustExec("CREATE TABLE `tbl_9` (\n  `col_54` mediumint NOT NULL DEFAULT '2412996',\n  `col_55` int NOT NULL,\n  `col_56` bigint unsigned NOT NULL,\n  `col_57` varchar(108) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,\n  PRIMARY KEY (`col_57`(3),`col_55`,`col_56`,`col_54`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `tbl_0` (\n  `col_76` bigint(20) unsigned DEFAULT NULL,\n  `col_1` time NOT NULL DEFAULT '13:11:28',\n  `col_2` datetime DEFAULT '1990-07-29 00:00:00',\n  `col_3` date NOT NULL DEFAULT '1976-09-16',\n  `col_4` date DEFAULT NULL,\n  `col_143` varbinary(208) DEFAULT 'lXRTXUkTeWaJ',\n  KEY `idx_0` (`col_2`,`col_1`,`col_76`,`col_4`,`col_3`),\n  PRIMARY KEY (`col_1`,`col_3`) /*T![clustered_index] NONCLUSTERED */,\n  KEY `idx_2` (`col_1`,`col_4`,`col_76`,`col_3`),\n  KEY `idx_3` (`col_4`,`col_76`,`col_3`,`col_2`,`col_1`),\n  UNIQUE KEY `idx_4` (`col_76`,`col_3`,`col_1`,`col_4`),\n  KEY `idx_5` (`col_3`,`col_4`,`col_76`,`col_2`),\n  KEY `idx_6` (`col_2`),\n  KEY `idx_7` (`col_76`,`col_3`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into tbl_9 values (-5765442,-597990898,384599625723370089,\"ZdfkUJiHcOfi\");")
+	tk.MustQuery("(select col_76,col_1,col_143,col_2 from tbl_0) union (select   col_54,col_57,col_55,col_56 from tbl_9);").Check(testkit.Rows("-5765442 ZdfkUJiHcOfi -597990898 384599625723370089"))
+}
+
+// issue https://github.com/pingcap/tidb/issues/26111
+func (s *testIntegrationSuite) TestRailsFKUsage(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE author_addresses (
+		id bigint(20) NOT NULL AUTO_INCREMENT,
+		PRIMARY KEY (id)
+	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+	tk.MustExec(`CREATE TABLE authors (
+		id bigint(20) NOT NULL AUTO_INCREMENT,
+		name varchar(255) NOT NULL,
+		author_address_id bigint(20) DEFAULT NULL,
+		author_address_extra_id bigint(20) DEFAULT NULL,
+		organization_id varchar(255) DEFAULT NULL,
+		owned_essay_id varchar(255) DEFAULT NULL,
+		PRIMARY KEY (id),
+		KEY index_authors_on_author_address_id (author_address_id),
+		KEY index_authors_on_author_address_extra_id (author_address_extra_id),
+		CONSTRAINT fk_rails_94423a17a3 FOREIGN KEY (author_address_id) REFERENCES author_addresses (id) ON UPDATE CASCADE ON DELETE RESTRICT
+	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+	tk.MustQuery(`SELECT fk.referenced_table_name AS 'to_table',
+		fk.referenced_column_name AS 'primary_key',
+		fk.column_name AS 'column',
+		fk.constraint_name AS 'name',
+		rc.update_rule AS 'on_update',
+		rc.delete_rule AS 'on_delete'
+		FROM information_schema.referential_constraints rc
+		JOIN information_schema.key_column_usage fk
+		USING (constraint_schema, constraint_name)
+		WHERE fk.referenced_column_name IS NOT NULL
+		AND fk.table_schema = database()
+		AND fk.table_name = 'authors';`).Check(testkit.Rows("author_addresses id author_address_id fk_rails_94423a17a3 CASCADE RESTRICT"))
+}
+
+func (s *testIntegrationSuite) TestTranslate(c *C) {
+	cases := []string{"'ABC'", "'AABC'", "'A.B.C'", "'aaaaabbbbb'", "'abc'", "'aaa'", "NULL"}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	// Non-reserved keyword
+	tk.MustExec("create table if not exists `translate`(id int)")
+	tk.MustExec("create table t(str varchar(100), i int)")
+	for i, str := range cases {
+		stmt := fmt.Sprintf("insert into t set str=%s, i=%d", str, i)
+		tk.MustExec(stmt)
+	}
+	// Open vectorized expression
+	tk.MustExec("set @@tidb_enable_vectorized_expression=true")
+	tk.MustQuery("select translate(str, 'AAa', 'Zz') from t").Check(testkit.Rows("ZBC", "ZZBC", "Z.B.C", "bbbbb", "bc", "", "<nil>"))
+	// Null
+	tk.MustQuery("select translate(str, NULL, 'Zz') from t").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>"))
+	tk.MustQuery("select translate(str, 'AAa', NULL) from t").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>"))
+	// Empty string
+	tk.MustQuery("select translate(str, 'AAa', '') from t").Check(testkit.Rows("BC", "BC", ".B.C", "bbbbb", "bc", "", "<nil>"))
+	tk.MustQuery("select translate(str, '', 'Zzz') from t").Check(testkit.Rows("ABC", "AABC", "A.B.C", "aaaaabbbbb", "abc", "aaa", "<nil>"))
+	// Close vectorized expression
+	tk.MustExec("set @@tidb_enable_vectorized_expression=false")
+	tk.MustQuery("select translate(str, 'AAa', 'Zz') from t").Check(testkit.Rows("ZBC", "ZZBC", "Z.B.C", "bbbbb", "bc", "", "<nil>"))
+	// Null
+	tk.MustQuery("select translate(str, NULL, 'Zz') from t").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>"))
+	tk.MustQuery("select translate(str, 'AAa', NULL) from t").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>"))
+	// Empty string
+	tk.MustQuery("select translate(str, 'AAa', '') from t").Check(testkit.Rows("BC", "BC", ".B.C", "bbbbb", "bc", "", "<nil>"))
+	tk.MustQuery("select translate(str, '', 'Zzz') from t").Check(testkit.Rows("ABC", "AABC", "A.B.C", "aaaaabbbbb", "abc", "aaa", "<nil>"))
+	// Convert from int
+	tk.MustQuery("select translate(i, '0123456', 'abcdefg') from t").Check(testkit.Rows("a", "b", "c", "d", "e", "f", "g"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue26662(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a varchar(36) NOT NULL) ENGINE = InnoDB DEFAULT CHARSET = utf8 COLLATE = utf8_general_ci;")
+	tk.MustExec("set names utf8;")
+	tk.MustQuery("select t2.b from (select t1.a as b from t1 union all select t1.a as b from t1) t2 where case when (t2.b is not null) then t2.b else '' end > '1234567';").
+		Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestIssue26958(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c_int int not null);")
+	tk.MustExec("insert into t1 values (1), (2), (3),(1),(2),(3);")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (c_int int not null);")
+	tk.MustExec("insert into t2 values (1), (2), (3),(1),(2),(3);")
+	tk.MustQuery("select \n(select count(distinct c_int) from t2 where c_int >= t1.c_int) c1, \n(select count(distinct c_int) from t2 where c_int >= t1.c_int) c2\nfrom t1 group by c_int;\n").
+		Check(testkit.Rows("3 3", "2 2", "1 1"))
+}
+
+func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a integer)")
+	tk.MustExec("insert into t1 values (0), (1), (2), (3)")
+	tk.MustExec("create table t2 (a integer, b integer)")
+	tk.MustExec("insert into t2 values (0,1), (1,1), (2,1), (3,1)")
+	tk.MustQuery("select t1.* from t1 left join t2 on t2.a = t1.a where t1.a = ifnull(t2.b, 0)").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (i1 integer, c1 char)")
+	tk.MustExec("insert into t1 values (2, 'a'), (1, 'b'), (3, 'c'), (0, null);")
+	tk.MustExec("create table t2 (i2 integer, c2 char, f2 float)")
+	tk.MustExec("insert into t2 values (0, 'c', null), (1, null, 0.1), (3, 'b', 0.01), (2, 'q', 0.12), (null, 'a', -0.1), (null, null, null)")
+	tk.MustQuery("select * from t2 where t2.i2=((select count(1) from t1 where t1.i1=t2.i2))").Check(testkit.Rows("1 <nil> 0.1"))
+}
+
+func (s *testIntegrationSuite) TestIssue27233(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (\n  `COL1` tinyint(45) NOT NULL,\n  `COL2` tinyint(45) NOT NULL,\n  PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert into t values(122,100),(124,-22),(124,34),(127,103);")
+	tk.MustQuery("SELECT col2 FROM t AS T1 WHERE ( SELECT count(DISTINCT COL1, COL2) FROM t AS T2 WHERE T2.COL1 > T1.COL1  ) > 2 ;").
+		Check(testkit.Rows("100"))
+}
+
+func (s *testIntegrationSuite) TestIssue27236(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	row := tk.MustQuery(`select extract(hour_second from "-838:59:59.00");`)
+	row.Check(testkit.Rows("-8385959"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(c1 varchar(100));`)
+	tk.MustExec(`insert into t values('-838:59:59.00'), ('700:59:59.00');`)
+	row = tk.MustQuery(`select extract(hour_second from c1) from t order by c1;`)
+	row.Check(testkit.Rows("-8385959", "7005959"))
+}
+>>>>>>> a84ceb801... expression: fix extract bug when argument is a negative duration (#27318)
