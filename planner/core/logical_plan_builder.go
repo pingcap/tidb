@@ -5895,8 +5895,7 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 	case *ast.SubqueryExpr:
 		input = extractTableList(x.Query, input, asName)
 	case *ast.SelectStmt:
-		input = extractTableList(x.From.TableRefs.Left, input, asName)
-		input = extractTableList(x.From.TableRefs.Right, input, asName)
+		input = extractTableList(x.From.TableRefs, input, asName)
 		switch w := x.Where.(type) {
 		case *ast.PatternInExpr:
 			if s, ok := w.Sel.(*ast.SubqueryExpr); ok {
@@ -5904,6 +5903,11 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 			}
 		case *ast.ExistsSubqueryExpr:
 			if s, ok := w.Sel.(*ast.SubqueryExpr); ok {
+				input = extractTableList(s, input, asName)
+			}
+		}
+		for _, f := range x.Fields.Fields {
+			if s, ok := f.Expr.(*ast.SubqueryExpr); ok {
 				input = extractTableList(s, input, asName)
 			}
 		}
