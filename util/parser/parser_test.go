@@ -15,6 +15,7 @@
 package parser
 
 import (
+	"github.com/stretchr/testify/require"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -29,7 +30,7 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-func (s *testParserSuite) TestSpace(c *C) {
+func TestSpace(t *testing.T) {
 	okTable := []struct {
 		Times    int
 		Input    string
@@ -40,10 +41,10 @@ func (s *testParserSuite) TestSpace(c *C) {
 		{1, "     1", "1"},
 		{2, "  1", "1"},
 	}
-	for _, test := range okTable {
-		rest, err := Space(test.Input, test.Times)
-		c.Assert(rest, Equals, test.Expected)
-		c.Assert(err, IsNil)
+	for _, testCase := range okTable {
+		rest, err := Space(testCase.Input, testCase.Times)
+		require.Nil(t, err)
+		require.Equal(t, testCase.Expected, rest)
 	}
 
 	errTable := []struct {
@@ -54,14 +55,14 @@ func (s *testParserSuite) TestSpace(c *C) {
 		{2, " 1"},
 	}
 
-	for _, test := range errTable {
-		rest, err := Space(test.Input, test.Times)
-		c.Assert(rest, Equals, test.Input)
-		c.Assert(err, NotNil)
+	for _, testCase := range errTable {
+		rest, err := Space(testCase.Input, testCase.Times)
+		require.NotNil(t, err)
+		require.Equal(t, testCase.Input, rest)
 	}
 }
 
-func (s *testParserSuite) TestDigit(c *C) {
+func  TestDigit(t *testing.T) {
 	okTable := []struct {
 		Times          int
 		Input          string
@@ -74,11 +75,12 @@ func (s *testParserSuite) TestDigit(c *C) {
 		{3, "456 121", "456", " 121"},
 	}
 
-	for _, test := range okTable {
-		digits, rest, err := Digit(test.Input, test.Times)
-		c.Assert(digits, Equals, test.ExpectedDigits)
-		c.Assert(rest, Equals, test.ExpectedRest)
-		c.Assert(err, IsNil)
+	for _, testCase := range okTable {
+		digits, rest, err := Digit(testCase.Input, testCase.Times)
+
+		require.Nil(t, err)
+		require.Equal(t, testCase.ExpectedDigits, digits)
+		require.Equal(t, testCase.ExpectedRest, rest)
 	}
 
 	errTable := []struct {
@@ -90,15 +92,16 @@ func (s *testParserSuite) TestDigit(c *C) {
 		{3, "12 int"},
 	}
 
-	for _, test := range errTable {
-		digits, rest, err := Digit(test.Input, test.Times)
-		c.Assert(digits, Equals, "")
-		c.Assert(rest, Equals, test.Input)
-		c.Assert(err, NotNil)
+	for _, testCase := range errTable {
+		digits, rest, err := Digit(testCase.Input, testCase.Times)
+
+		require.NotNil(t, err)
+		require.Equal(t, "", digits)
+		require.Equal(t, testCase.Input, rest)
 	}
 }
 
-func (s *testParserSuite) TestNumber(c *C) {
+func  TestNumber(t *testing.T) {
 	okTable := []struct {
 		Input        string
 		ExpectedNum  int
@@ -109,11 +112,12 @@ func (s *testParserSuite) TestNumber(c *C) {
 		{"123 @)@)", 123, " @)@)"},
 		{"456 121", 456, " 121"},
 	}
-	for _, test := range okTable {
-		digits, rest, err := Number(test.Input)
-		c.Assert(digits, Equals, test.ExpectedNum)
-		c.Assert(rest, Equals, test.ExpectedRest)
-		c.Assert(err, IsNil)
+	for _, testCase := range okTable {
+		digits, rest, err := Number(testCase.Input)
+
+		require.Nil(t, err)
+		require.Equal(t, testCase.ExpectedNum, digits)
+		require.Equal(t, testCase.ExpectedRest, rest)
 	}
 
 	errTable := []struct {
@@ -124,15 +128,16 @@ func (s *testParserSuite) TestNumber(c *C) {
 		{"@)@)int"},
 	}
 
-	for _, test := range errTable {
-		digits, rest, err := Number(test.Input)
-		c.Assert(digits, Equals, 0)
-		c.Assert(rest, Equals, test.Input)
-		c.Assert(err, NotNil)
+	for _, testCase := range errTable {
+		digits, rest, err := Number(testCase.Input)
+
+		require.NotNil(t, err)
+		require.Equal(t, 0, digits)
+		require.Equal(t, testCase.Input, rest)
 	}
 }
 
-func (s *testParserSuite) TestCharAndAnyChar(c *C) {
+func  TestCharAndAnyChar(t *testing.T) {
 	okTable := []struct {
 		Char     byte
 		Input    string
@@ -143,14 +148,16 @@ func (s *testParserSuite) TestCharAndAnyChar(c *C) {
 		{'1', "12 int", "2 int"},
 	}
 
-	for _, test := range okTable {
-		rest, err := Char(test.Input, test.Char)
-		c.Assert(rest, Equals, test.Expected)
-		c.Assert(err, IsNil)
+	for _, testCase := range okTable {
+		rest, err := Char(testCase.Input, testCase.Char)
 
-		rest, err = AnyChar(test.Input)
-		c.Assert(rest, Equals, test.Expected)
-		c.Assert(err, IsNil)
+		require.Nil(t, err)
+		require.Equal(t, testCase.Expected, rest)
+
+		rest, err = AnyChar(testCase.Input)
+
+		require.Nil(t, err)
+		require.Equal(t, testCase.Expected, rest)
 	}
 
 	errTable := []struct {
@@ -162,9 +169,10 @@ func (s *testParserSuite) TestCharAndAnyChar(c *C) {
 		{'1', "x12 int"},
 	}
 
-	for _, test := range errTable {
-		rest, err := Char(test.Input, test.Char)
-		c.Assert(rest, Equals, test.Input)
-		c.Assert(err, NotNil)
+	for _, testCase := range errTable {
+		rest, err := Char(testCase.Input, testCase.Char)
+
+		require.NotNil(t, err)
+		require.Equal(t, testCase.Input, rest)
 	}
 }

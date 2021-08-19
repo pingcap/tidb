@@ -15,24 +15,16 @@
 package parser_test
 
 import (
+	"github.com/stretchr/testify/require"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	_ "github.com/pingcap/tidb/types/parser_driver"
 	utilparser "github.com/pingcap/tidb/util/parser"
 )
 
-var _ = Suite(&testASTSuite{})
 
-type testASTSuite struct {
-}
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-func (s *testASTSuite) TestSimpleCases(c *C) {
+func TestSimpleCases(t *testing.T) {
 	tests := []struct {
 		sql string
 		db  string
@@ -60,12 +52,14 @@ func (s *testASTSuite) TestSimpleCases(c *C) {
 		},
 	}
 
-	for _, t := range tests {
+	for _, testCase := range tests {
 		p := parser.New()
-		stmt, err := p.ParseOneStmt(t.sql, "", "")
-		c.Assert(err, IsNil)
-		ans, ok := utilparser.SimpleCases(stmt, t.db, t.sql)
-		c.Assert(ok, IsTrue)
-		c.Assert(t.ans, Equals, ans)
+
+		stmt, err := p.ParseOneStmt(testCase.sql, "", "")
+		require.Nil(t, err)
+
+		ans, ok := utilparser.SimpleCases(stmt, testCase.db, testCase.sql)
+		require.True(t, ok)
+		require.Equal(t, testCase.ans, ans)
 	}
 }
