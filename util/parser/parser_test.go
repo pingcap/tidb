@@ -58,6 +58,7 @@ func TestSpace(t *testing.T) {
 
 	for _, testCase := range errTable {
 		rest, err := Space(testCase.Input, testCase.Times)
+
 		require.NotNil(t, err)
 		require.Equal(t, testCase.Input, rest)
 	}
