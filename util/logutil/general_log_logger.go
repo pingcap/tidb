@@ -1,6 +1,8 @@
 package logutil
 
 import (
+	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -14,12 +16,13 @@ import (
 var _pool2 = buffer.NewPool()
 
 const (
-	logBatchSize = 102400
-	flushTimeout = 1000 * time.Millisecond
+	generalLogBatchSize = 102400
+	flushTimeout        = 1000 * time.Millisecond
 )
 
 type GeneralLogEntry struct {
-	buf                    *buffer.Buffer
+	buf *buffer.Buffer
+
 	ConnID                 uint64
 	FnGetUser              func() string
 	FnGetSchemaMetaVersion func() int64
@@ -28,20 +31,24 @@ type GeneralLogEntry struct {
 	IsReadConsistency      bool
 	CurrentDB              string
 	TxnMode                string
-	FnGetQuery             func() string
+	FnGetQuery             func(*strings.Builder) string
 }
 
 const _hex = "0123456789abcdef"
 
+var fnGetQueryPool = sync.Pool{New: func() interface{} {
+	ret := strings.Builder{}
+	ret.Grow(128)
+	return &ret
+}}
+
 func (e *GeneralLogEntry) writeToBuffer(buf *buffer.Buffer) {
 	e.buf = buf
-	query := e.FnGetQuery()
-	user := e.FnGetUser()
 
 	e.buf.AppendString("[GENERAL_LOG] [conn=")
 	e.buf.AppendUint(e.ConnID)
 	e.buf.AppendString("] [user=")
-	e.safeAddStringWithQuote(user)
+	e.safeAddStringWithQuote(e.FnGetUser())
 	e.buf.AppendString("] [schemaVersion=")
 	e.buf.AppendInt(e.FnGetSchemaMetaVersion())
 	e.buf.AppendString("] [txnStartTS=")
@@ -55,7 +62,10 @@ func (e *GeneralLogEntry) writeToBuffer(buf *buffer.Buffer) {
 	e.buf.AppendString("] [txn_mode=")
 	e.buf.AppendString(e.TxnMode)
 	e.buf.AppendString("] [sql=")
-	e.safeAddStringWithQuote(query)
+	fnGetQueryBuf := fnGetQueryPool.Get().(*strings.Builder)
+	e.safeAddStringWithQuote(e.FnGetQuery(fnGetQueryBuf))
+	fnGetQueryBuf.Reset()
+	fnGetQueryPool.Put(fnGetQueryBuf)
 	e.buf.AppendString("]")
 }
 
@@ -153,7 +163,7 @@ type GeneralLog struct {
 func newGeneralLog(logger *zap.Logger) *GeneralLog {
 	gl := &GeneralLog{
 		logger:       logger,
-		logEntryChan: make(chan *GeneralLogEntry, logBatchSize),
+		logEntryChan: make(chan *GeneralLogEntry, generalLogBatchSize),
 	}
 	go gl.startWorker()
 	return gl
@@ -180,7 +190,7 @@ func (gl *GeneralLog) startWorker() {
 			buf.Write(timeSlice)
 			logEntry.writeToBuffer(&buf)
 			logCount += 1
-			if logCount == logBatchSize {
+			if logCount == generalLogBatchSize {
 				gl.logger.Info(buf.String())
 				//gl.logger.Info(fmt.Sprintf("buf size 1: %d", buf.Len()))
 				buf.Reset()

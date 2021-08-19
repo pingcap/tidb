@@ -2958,45 +2958,48 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 	vars := s.GetSessionVars()
 	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
-		fnGetQuery := func() string {
-			var query string
+		fnGetQuery := func(buf *strings.Builder) string {
 			if isPrepared {
-				query = execStmt.OriginText()
+				buf.WriteString(execStmt.OriginText())
 			} else {
-				query = execStmt.GetTextToLog()
+				buf.WriteString(execStmt.GetTextToLog())
 			}
 
-			queryMutable := *(*[]byte)(unsafe.Pointer(&query))
+			bufString := buf.String()
+			queryMutable := *(*[]byte)(unsafe.Pointer(&bufString))
 			for i, b := range queryMutable {
 				if b == '\r' || b == '\n' || b == '\t' {
 					queryMutable[i] = ' '
 				}
 			}
-			query = *(*string)(unsafe.Pointer(&queryMutable))
+			// query = *(*string)(unsafe.Pointer(&queryMutable))
 			if !vars.EnableRedactLog {
-				query += vars.PreparedParams.String()
+				buf.WriteString(vars.PreparedParams.String())
 			}
-			return query
+			return buf.String()
 		}
 
 		fnGetUser := func() string {
-			var bufUserString [256]byte
 			user := vars.User
 			if user == nil {
 				return ""
 			}
-			length := len(user.Username) + 1 + len(user.Hostname)
-			buf := bufUserString[:length]
-			copy(buf, user.Username)
-			buf[len(user.Username)] = '@'
-			copy(buf[len(user.Username)+1:], user.Hostname)
-			return *(*string)(unsafe.Pointer(&buf))
+			var buf strings.Builder
+			buf.Grow(64)
+			buf.WriteString(user.Username)
+			buf.WriteByte('@')
+			buf.WriteString(user.Hostname)
+			return buf.String()
+		}
+
+		fnGetSMV := func() int64 {
+			return s.GetInfoSchema().SchemaMetaVersion()
 		}
 
 		logEntry := logutil.GeneralLogEntry{
 			ConnID:                 vars.ConnectionID,
 			FnGetUser:              fnGetUser,
-			FnGetSchemaMetaVersion: func() int64 { return s.GetInfoSchema().SchemaMetaVersion() },
+			FnGetSchemaMetaVersion: fnGetSMV,
 			TxnStartTS:             vars.TxnCtx.StartTS,
 			TxnForUpdateTS:         vars.TxnCtx.GetForUpdateTS(),
 			IsReadConsistency:      vars.IsIsolation(ast.ReadCommitted),
