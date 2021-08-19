@@ -446,6 +446,43 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 		return nil, false, nil
 	}
 
+	if tableCheckPoint.Status <= checkpoints.CheckpointStatusMaxInvalid {
+		failedStep := tableCheckPoint.Status * 10
+		var action strings.Builder
+		action.WriteString("./tidb-lightning-ctl --checkpoint-error-")
+		switch failedStep {
+		case checkpoints.CheckpointStatusAlteredAutoInc, checkpoints.CheckpointStatusAnalyzed:
+			action.WriteString("ignore")
+		default:
+			action.WriteString("destroy")
+		}
+		action.WriteString("='")
+		action.WriteString(uniqueName)
+		action.WriteString("' --config=...")
+
+		msgs = append(msgs, fmt.Sprintf("TiDB Lightning has failed last time. To prevent data loss, this run will stop now, "+
+			"%s failed in step(%s), please run command %s,"+
+			"You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch,"+
+			"For details of this failure, read the log file from the PREVIOUS run",
+			uniqueName, failedStep.MetricName(), action.String()))
+		return msgs, false, nil
+	}
+
+	dbInfo, ok := rc.dbInfos[tableInfo.DB]
+	if ok {
+		t, ok := dbInfo.Tables[tableInfo.Name]
+		if ok {
+			if tableCheckPoint.TableID > 0 && tableCheckPoint.TableID != t.ID {
+				msgs = append(msgs, fmt.Sprintf("TiDB Lightning has detected tables with illegal checkpoints. To prevent data loss, this run will stop now,"+
+					"please run command \"./tidb-lightning-ctl --checkpoint-remove='%s' --config=...\""+
+					"You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch,"+
+					"For details of this failure, read the log file from the PREVIOUS run",
+					uniqueName))
+				return msgs, false, nil
+			}
+		}
+	}
+
 	var permFromCheckpoint []int
 	var columns []string
 	for _, eng := range tableCheckPoint.Engines {
