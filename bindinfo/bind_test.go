@@ -2465,7 +2465,6 @@ func (s *testSerialSuite) TestIssue26377(c *C) {
 	tk.MustExec("create global temporary table tmp1(a int(11), key idx_a(a)) on commit delete rows;")
 	tk.MustExec("create temporary table tmp2(a int(11), key idx_a(a));")
 
-
 	queries := []string{
 		"create global binding for select * from t1 inner join tmp1 on t1.a=tmp1.a using select * from  t1 inner join tmp1 on t1.a=tmp1.a;",
 		"create global binding for select * from t1 where t1.a in (select a from tmp1) using select * from t1 where t1.a in (select a from tmp1 use index (idx_a));",
