@@ -456,6 +456,41 @@ func (s *testPlanSuite) TestAggEliminator(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestINMJHint(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int primary key, b int not null)")
+	tk.MustExec("create table t2(a int primary key, b int not null)")
+	tk.MustExec("insert into t1 values(1,1),(2,2)")
+	tk.MustExec("insert into t2 values(1,1),(2,1)")
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
+	}
+}
+
 func (s *testPlanSuite) TestEliminateMaxOneRow(c *C) {
 	var (
 		input  []string
@@ -1804,4 +1839,34 @@ func (s *testPlanSuite) TestPossibleProperties(c *C) {
 	tk.MustQuery("select /*+ stream_agg() */ a.id, avg(b.score) as afs from student a join sc b on a.id = b.student_id where b.score < 60 group by a.id having count(b.course_id) >= 2").Check(testkit.Rows(
 		"1 58.0000",
 	))
+}
+
+func (s *testPlanSuite) TestSelectionPartialPushDown(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL  string
+			Plan []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int as (a+1) virtual)")
+	tk.MustExec("create table t2(a int, b int as (a+1) virtual, c int, key idx_a(a))")
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
+		})
+		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
 }
