@@ -8947,9 +8947,13 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 
 	tk.MustExec("set @@tidb_snapshot=NOW(6)")
 	for _, query := range queries {
+		// forbidden historical read local temporary table
+		if strings.Contains(query.sql, "tmp2") {
+			tk.MustGetErrMsg(query.sql, "can not read local temporary table when 'tidb_snapshot' is set")
+			continue
+		}
 		// Will success here for compatibility with some tools like dumping
-		rs := tk.MustQuery(query.sql)
-		rs.Check(testkit.Rows())
+		tk.MustQuery(query.sql).Check(testkit.Rows())
 	}
 }
 
