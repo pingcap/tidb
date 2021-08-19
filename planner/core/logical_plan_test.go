@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1458,7 +1459,7 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		{"select * from t", ""},
 		{"select t.* from t", ""},
 		{"select t2.* from t", "[planner:1051]Unknown table 't2'"},
-		{"select b as a, c as a from t group by a", "[planner:1052]Column 'c' in field list is ambiguous"},
+		{"select b as a, c as a from t group by a", "[planner:1052]Column 'a' in group statement is ambiguous"},
 		{"select 1 as a, b as a, c as a from t group by a", ""},
 		{"select a, b as a from t group by a+1", ""},
 		{"select c, a as c from t order by c+1", ""},
