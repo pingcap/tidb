@@ -4255,3 +4255,14 @@ func (s *testIntegrationSuite) TestIssues27130(c *C) {
 		"  └─IndexRangeScan 10.00 cop[tikv] table:t3, index:a(a, b, c) range:[1,1], keep order:false, stats:pseudo",
 	))
 }
+
+func (s *testIntegrationSuite) TestIssue27242(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists UK_MU16407")
+	tk.MustExec("CREATE TABLE UK_MU16407 (COL3 timestamp NULL DEFAULT NULL, UNIQUE KEY U3(COL3));")
+	tk.MustExec(`insert into UK_MU16407 values("1985-08-31 18:03:27");`)
+	err := tk.ExecToErr(`SELECT COL3 FROM UK_MU16407 WHERE COL3>_utf8mb4'2039-1-19 3:14:40';`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*Incorrect timestamp value.*")
+}
