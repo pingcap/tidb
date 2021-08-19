@@ -237,6 +237,21 @@ func (txn *tikvTxn) extractKeyExistsErr(key kv.Key) error {
 	return extractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
 }
 
+// SetAssertion sets a assertion for the key operation.
+func (txn *tikvTxn) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
+	// Deep copy the key since it's memory is referenced from union store and overwrite change later.
+	key1 := append([]byte{}, key...)
+	f, err := txn.GetUnionStore().GetMemBuffer().GetFlags(key1)
+	if err != nil && !tikverr.IsErrNotFound(err) {
+		return err
+	}
+	if err == nil && f.HasAssertion() {
+		return nil
+	}
+	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key1, getTiKVFlagsOps(assertion)...)
+	return nil
+}
+
 // TiDBKVFilter is the filter specific to TiDB to filter out KV pairs that needn't be committed.
 type TiDBKVFilter struct{}
 

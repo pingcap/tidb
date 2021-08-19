@@ -393,7 +393,8 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 		for i := 0; i < len(deletedMutations.GetKeys()); i++ {
 			key := deletedMutations.GetKeys()[i]
 			if _, ok := a.insertedNewIndexKeys[string(key)]; !ok {
-				resAddMutations.Push(deletedMutations.GetOps()[i], key, deletedMutations.GetValues()[i], deletedMutations.GetPessimisticFlags()[i])
+				resAddMutations.Push(deletedMutations.GetOps()[i], key, deletedMutations.GetValues()[i], deletedMutations.GetPessimisticFlags()[i],
+					deletedMutations.GetAssertExistFlags()[i], deletedMutations.GetAssertNotExitFlags()[i])
 			}
 		}
 		for i := 0; i < len(insertedMutations.GetKeys()); i++ {
@@ -402,7 +403,8 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 			if _, ok := a.deletedOldIndexKeys[string(key)]; ok {
 				destKeyOp = kvrpcpb.Op_Put
 			}
-			resAddMutations.Push(destKeyOp, key, insertedMutations.GetValues()[i], insertedMutations.GetPessimisticFlags()[i])
+			resAddMutations.Push(destKeyOp, key, insertedMutations.GetValues()[i], insertedMutations.GetPessimisticFlags()[i],
+				insertedMutations.GetAssertExistFlags()[i], insertedMutations.GetAssertNotExitFlags()[i])
 		}
 	} else {
 		resAddMutations.MergeMutations(deletedMutations)
