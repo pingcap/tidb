@@ -44,6 +44,11 @@ func (s *testRuleReorderResultsSerial) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testRuleReorderResultsSerial) TearDownSuite(c *C) {
+	s.dom.Close()
+	c.Assert(s.store.Close(), IsNil)
+}
+
 func (s *testRuleReorderResultsSerial) TestPlanCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
@@ -124,6 +129,8 @@ func (s *testRuleReorderResults) SetUpSuite(c *C) {
 }
 
 func (s *testRuleReorderResults) TearDownSuite(c *C) {
+	s.dom.Close()
+	c.Assert(s.store.Close(), IsNil)
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
