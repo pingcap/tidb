@@ -18,20 +18,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	. "github.com/pingcap/check"
 )
 
-var _ = Suite(&testParserSuite{})
-
-type testParserSuite struct {
-}
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
 func TestSpace(t *testing.T) {
+	t.Parallel()
+
 	okTable := []struct {
 		Times    int
 		Input    string
@@ -42,10 +33,10 @@ func TestSpace(t *testing.T) {
 		{1, "     1", "1"},
 		{2, "  1", "1"},
 	}
-	for _, testCase := range okTable {
-		rest, err := Space(testCase.Input, testCase.Times)
+	for _, test := range okTable {
+		rest, err := Space(test.Input, test.Times)
 		require.Nil(t, err)
-		require.Equal(t, testCase.Expected, rest)
+		require.Equal(t, test.Expected, rest)
 	}
 
 	errTable := []struct {
@@ -56,15 +47,17 @@ func TestSpace(t *testing.T) {
 		{2, " 1"},
 	}
 
-	for _, testCase := range errTable {
-		rest, err := Space(testCase.Input, testCase.Times)
+	for _, test := range errTable {
+		rest, err := Space(test.Input, test.Times)
 
 		require.NotNil(t, err)
-		require.Equal(t, testCase.Input, rest)
+		require.Equal(t, test.Input, rest)
 	}
 }
 
 func TestDigit(t *testing.T) {
+	t.Parallel()
+
 	okTable := []struct {
 		Times          int
 		Input          string
@@ -77,12 +70,12 @@ func TestDigit(t *testing.T) {
 		{3, "456 121", "456", " 121"},
 	}
 
-	for _, testCase := range okTable {
-		digits, rest, err := Digit(testCase.Input, testCase.Times)
+	for _, test := range okTable {
+		digits, rest, err := Digit(test.Input, test.Times)
 
 		require.Nil(t, err)
-		require.Equal(t, testCase.ExpectedDigits, digits)
-		require.Equal(t, testCase.ExpectedRest, rest)
+		require.Equal(t, test.ExpectedDigits, digits)
+		require.Equal(t, test.ExpectedRest, rest)
 	}
 
 	errTable := []struct {
@@ -94,16 +87,18 @@ func TestDigit(t *testing.T) {
 		{3, "12 int"},
 	}
 
-	for _, testCase := range errTable {
-		digits, rest, err := Digit(testCase.Input, testCase.Times)
+	for _, test := range errTable {
+		digits, rest, err := Digit(test.Input, test.Times)
 
 		require.NotNil(t, err)
 		require.Equal(t, "", digits)
-		require.Equal(t, testCase.Input, rest)
+		require.Equal(t, test.Input, rest)
 	}
 }
 
 func TestNumber(t *testing.T) {
+	t.Parallel()
+
 	okTable := []struct {
 		Input        string
 		ExpectedNum  int
@@ -114,12 +109,12 @@ func TestNumber(t *testing.T) {
 		{"123 @)@)", 123, " @)@)"},
 		{"456 121", 456, " 121"},
 	}
-	for _, testCase := range okTable {
-		digits, rest, err := Number(testCase.Input)
+	for _, test := range okTable {
+		digits, rest, err := Number(test.Input)
 
 		require.Nil(t, err)
-		require.Equal(t, testCase.ExpectedNum, digits)
-		require.Equal(t, testCase.ExpectedRest, rest)
+		require.Equal(t, test.ExpectedNum, digits)
+		require.Equal(t, test.ExpectedRest, rest)
 	}
 
 	errTable := []struct {
@@ -130,16 +125,18 @@ func TestNumber(t *testing.T) {
 		{"@)@)int"},
 	}
 
-	for _, testCase := range errTable {
-		digits, rest, err := Number(testCase.Input)
+	for _, test := range errTable {
+		digits, rest, err := Number(test.Input)
 
 		require.NotNil(t, err)
 		require.Equal(t, 0, digits)
-		require.Equal(t, testCase.Input, rest)
+		require.Equal(t, test.Input, rest)
 	}
 }
 
 func TestCharAndAnyChar(t *testing.T) {
+	t.Parallel()
+
 	okTable := []struct {
 		Char     byte
 		Input    string
@@ -150,16 +147,16 @@ func TestCharAndAnyChar(t *testing.T) {
 		{'1', "12 int", "2 int"},
 	}
 
-	for _, testCase := range okTable {
-		rest, err := Char(testCase.Input, testCase.Char)
+	for _, test := range okTable {
+		rest, err := Char(test.Input, test.Char)
 
 		require.Nil(t, err)
-		require.Equal(t, testCase.Expected, rest)
+		require.Equal(t, test.Expected, rest)
 
-		rest, err = AnyChar(testCase.Input)
+		rest, err = AnyChar(test.Input)
 
 		require.Nil(t, err)
-		require.Equal(t, testCase.Expected, rest)
+		require.Equal(t, test.Expected, rest)
 	}
 
 	errTable := []struct {
@@ -171,10 +168,10 @@ func TestCharAndAnyChar(t *testing.T) {
 		{'1', "x12 int"},
 	}
 
-	for _, testCase := range errTable {
-		rest, err := Char(testCase.Input, testCase.Char)
+	for _, test := range errTable {
+		rest, err := Char(test.Input, test.Char)
 
 		require.NotNil(t, err)
-		require.Equal(t, testCase.Input, rest)
+		require.Equal(t, test.Input, rest)
 	}
 }
