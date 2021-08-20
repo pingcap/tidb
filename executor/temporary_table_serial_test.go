@@ -44,6 +44,7 @@ func TestTemporaryTableNoNetwork(t *testing.T) {
 
 func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestKit)) {
 	var done sync.WaitGroup
+	defer done.Wait()
 
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -135,6 +136,4 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 	tk.MustExec("select * from tmp_t where id in (1, 2, 3) for update")
 	tk.MustExec("select * from tmp_t where id > 1 for update")
 	tk.MustExec("rollback")
-
-	done.Wait()
 }
