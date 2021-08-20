@@ -1364,10 +1364,6 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			resultTp = unionJoinFieldType(resultTp, childTp)
 		}
 
-		if !types.IsTypeVarchar(resultTp.Tp) {
-			resultTp.Charset, resultTp.Collate = expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
-		}
-
 		if err := expression.CheckIllegalMixCollation("UNION", tmpExprs, types.ETInt); err != nil {
 			return err
 		}
@@ -1389,6 +1385,8 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			srcType := srcCol.RetType
 
 			if !srcType.Equal(dstType) {
+				dstType.Collate = srcType.Collate
+				dstType.Charset = srcType.Charset
 				exprs[i] = expression.BuildCastFunction4Union(b.ctx, srcCol, dstType)
 			} else {
 				exprs[i] = srcCol
@@ -1406,11 +1404,10 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 		}
 
 		dstType := unionCols[i].RetType
-		charset, collate := expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
-
-		if dstType.Charset != charset || dstType.Collate != collate {
-			dstType.Charset = charset
-			dstType.Collate = collate
+		if types.IsTypeVarchar(dstType.Tp) {
+			dstType.Charset, dstType.Collate = u.ctx.GetSessionVars().GetCharsetInfo()
+		} else {
+			dstType.Charset, dstType.Collate = expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
 		}
 	}
 
