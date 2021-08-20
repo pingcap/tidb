@@ -2649,16 +2649,17 @@ func (s *testIntegrationSuite3) TestAutoIncrementForce(c *C) {
 	}
 	// Rebase _tidb_row_id.
 	tk.MustExec("create table t (a int);")
+	tk.MustExec("alter table t force auto_increment = 2;")
 	tk.MustExec("insert into t values (1),(2);")
-	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("1 2", "2 3"))
 	// Cannot set next global ID to 0.
 	tk.MustGetErrCode("alter table t force auto_increment = 0;", errno.ErrAutoincReadFailed)
 	tk.MustExec("alter table t force auto_increment = 1;")
 	c.Assert(getNextGlobalID(), Equals, uint64(1))
 	// inserting new rows can overwrite the existing data.
 	tk.MustExec("insert into t values (3);")
-	tk.MustExec("insert into t values (3);")
-	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("3 1", "3 2"))
+	c.Assert(tk.ExecToErr("insert into t values (3);").Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'PRIMARY'")
+	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("3 1", "1 2", "2 3"))
 
 	// Rebase auto_increment.
 	tk.MustExec("drop table if exists t;")
