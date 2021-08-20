@@ -232,7 +232,7 @@ func (s *testPrepareSuite) TearDownSuite(c *C) {
 
 func (s *baseTestSuite) TearDownSuite(c *C) {
 	s.domain.Close()
-	s.store.Close()
+	c.Assert(s.store.Close(), IsNil)
 }
 
 func (s *globalIndexSuite) SetUpSuite(c *C) {
@@ -8577,7 +8577,7 @@ func (s testSerialSuite) assertTemporaryTableNoNetwork(c *C, temporaryTableType 
 	// With that failpoint, all requests to the TiKV is discard.
 	rs, err := tk1.Exec("select * from normal")
 	c.Assert(err, IsNil)
-	blocked := make(chan struct{})
+	blocked := make(chan struct{}, 1)
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	go func() {
 		_, err := session.ResultSetToStringSlice(ctx, tk1.Se, rs)
