@@ -113,12 +113,11 @@ SplitRegions:
 	for i := 0; i < SplitRetryTimes; i++ {
 		regions, errScan := PaginateScanRegion(ctx, rs.client, minKey, maxKey, ScanRegionPaginationLimit)
 		if errScan != nil {
-			if berrors.ErrPDBatchScanRegion.Equal(errScan) {
-				log.Warn("inconsistent region info get.", logutil.ShortError(errScan))
-				time.Sleep(time.Second)
-				continue SplitRegions
-			}
 			return errors.Trace(errScan)
+		}
+		if len(regions) == 0 {
+			log.Warn("split regions cannot scan any region")
+			return nil
 		}
 		splitKeyMap := getSplitKeys(rewriteRules, sortedRanges, regions)
 		regionMap := make(map[uint64]*RegionInfo)
