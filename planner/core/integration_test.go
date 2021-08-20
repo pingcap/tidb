@@ -178,6 +178,29 @@ func (s *testIntegrationSuite) TestPushLimitDownIndexLookUpReader(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestAggColumnPrune(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1),(2)")
+
+	var input []string
+	var output []struct {
+		SQL string
+		Res []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
+	}
+}
+
 func (s *testIntegrationSuite) TestIsFromUnixtimeNullRejective(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -356,6 +379,8 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+
 	var input []string
 	var output []struct {
 		SQL  string
@@ -393,6 +418,7 @@ func (s *testIntegrationSerialSuite) TestPushDownToTiFlashWithKeepOrder(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
 	var input []string
 	var output []struct {
 		SQL  string
@@ -1694,12 +1720,11 @@ func (s *testIntegrationSerialSuite) TestIssue16837(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int,b int,c int,d int,e int,unique key idx_ab(a,b),unique key(c),unique key(d))")
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows(
-		"Projection 10.00 root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.e",
-		"└─IndexMerge 0.01 root  ",
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_ab(a, b) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:c(c) range:[1,1], keep order:false, stats:pseudo",
-		"  └─Selection(Probe) 0.01 cop[tikv]  or(eq(test.t.a, 1), and(eq(test.t.e, 1), eq(test.t.c, 1)))",
-		"    └─TableRowIDScan 11.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		"IndexMerge 0.01 root  ",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx_ab(a, b) range:[1,1], keep order:false, stats:pseudo",
+		"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:c(c) range:[1,1], keep order:false, stats:pseudo",
+		"└─Selection(Probe) 0.01 cop[tikv]  or(eq(test.t.a, 1), and(eq(test.t.e, 1), eq(test.t.c, 1)))",
+		"  └─TableRowIDScan 11.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("insert into t values (2, 1, 1, 1, 2)")
 	tk.MustQuery("select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows())
@@ -1711,43 +1736,230 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, unique key(a), unique key(b))")
 	tk.MustQuery("desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and b+2>1)").Check(testkit.Rows(
-		"Projection 8000.00 root  test.t.a, test.t.b",
-		"└─IndexMerge 2.00 root  ",
-		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection(Build) 0.80 cop[tikv]  1",
-		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"IndexMerge 2.00 root  ",
+		"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+		"├─Selection(Build) 0.80 cop[tikv]  1",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and length(b)=1)").Check(testkit.Rows(
-		"Projection 1.80 root  test.t.a, test.t.b",
-		"└─IndexMerge 2.00 root  ",
-		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
-		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		"IndexMerge 2.00 root  ",
+		"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+		"├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(a)=1) or (b=1 and length(b)=1)").Check(testkit.Rows(
-		"Projection 1.60 root  test.t.a, test.t.b",
-		"└─IndexMerge 2.00 root  ",
-		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
-		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
-		"  │ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+		"IndexMerge 2.00 root  ",
+		"├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+		"├─Selection(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(b)=1) or (b=1 and length(a)=1)").Check(testkit.Rows(
-		"Projection 1.60 root  test.t.a, test.t.b",
-		"└─IndexMerge 0.00 root  ",
-		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-		"  └─Selection(Probe) 0.00 cop[tikv]  or(and(eq(test.t.a, 1), eq(length(cast(test.t.b)), 1)), and(eq(test.t.b, 1), eq(length(cast(test.t.a)), 1)))",
-		"    └─TableRowIDScan 2.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"IndexMerge 0.00 root  ",
+		"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+		"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+		"└─Selection(Probe) 0.00 cop[tikv]  or(and(eq(test.t.a, 1), eq(length(cast(test.t.b)), 1)), and(eq(test.t.b, 1), eq(length(cast(test.t.a)), 1)))",
+		"  └─TableRowIDScan 2.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSerialSuite) TestIndexMergePartialScansClusteredIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int, primary key (a, b) clustered, key idx_c(c));")
+	tk.MustExec("insert into t values (1, 1, 1), (10, 10, 10), (100, 100, 100);")
+	const queryTemplate = "select /*+ use_index_merge(t) */ %s from t where %s order by a, b;"
+	projections := [][]string{{"a"}, {"b"}, {"c"}, {"a", "b"}, {"b", "c"}, {"c", "a"}, {"b", "a", "c"}}
+	cases := []struct {
+		condition string
+		expected  []string
+	}{
+		{
+			// 3 table scans
+			"a < 2 or a < 10 or a > 11", []string{"1", "100"},
+		},
+		{
+			// 3 index scans
+			"c < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
+		},
+		{
+			// 1 table scan + 1 index scan
+			"a < 2 or c > 10000", []string{"1"},
+		},
+		{
+			// 2 table scans + 1 index scan
+			"a < 2 or a > 88 or c > 10000", []string{"1", "100"},
+		},
+		{
+			// 2 table scans + 2 index scans
+			"a < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1", []string{"1", "10", "100"},
+		},
+		{
+			// 3 table scans + 2 index scans
+			"a < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1", []string{"1", "10", "100"},
+		},
+	}
+	for _, p := range projections {
+		for _, ca := range cases {
+			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
+			tk.HasPlan(query, "IndexMerge")
+			expected := make([]string, 0, len(ca.expected))
+			for _, datum := range ca.expected {
+				row := strings.Repeat(datum+" ", len(p))
+				expected = append(expected, row[:len(row)-1])
+			}
+			tk.MustQuery(query).Check(testkit.Rows(expected...))
+		}
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestIndexMergePartialScansTiDBRowID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int, unique key (a, b), key idx_c(c));")
+	tk.MustExec("insert into t values (1, 1, 1), (10, 10, 10), (100, 100, 100);")
+	const queryTemplate = "select /*+ use_index_merge(t) */ %s from t where %s order by a;"
+	projections := [][]string{{"a"}, {"b"}, {"c"}, {"a", "b"}, {"b", "c"}, {"c", "a"}, {"b", "a", "c"}}
+	cases := []struct {
+		condition string
+		expected  []string
+	}{
+		{
+			// 3 index scans
+			"c < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
+		},
+		{
+			// 2 index scans
+			"c < 10 or a < 2", []string{"1"},
+		},
+		{
+			// 1 table scan + 1 index scan
+			"_tidb_rowid < 2 or c > 10000", []string{"1"},
+		},
+		{
+			// 2 table scans + 1 index scan
+			"_tidb_rowid < 2 or _tidb_rowid < 10 or c > 11", []string{"1", "10", "100"},
+		},
+		{
+			// 1 table scans + 3 index scans
+			"_tidb_rowid < 2 or (a >= 10 and b >= 10) or c > 100 or c < 1", []string{"1", "10", "100"},
+		},
+		{
+			// 1 table scans + 4 index scans
+			"_tidb_rowid < 2 or (a >= 10 and b >= 10) or (a >= 20 and b < 10) or c > 100 or c < 1", []string{"1", "10", "100"},
+		},
+	}
+	for _, p := range projections {
+		for _, ca := range cases {
+			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
+			tk.HasPlan(query, "IndexMerge")
+			expected := make([]string, 0, len(ca.expected))
+			for _, datum := range ca.expected {
+				row := strings.Repeat(datum+" ", len(p))
+				expected = append(expected, row[:len(row)-1])
+			}
+			tk.MustQuery(query).Check(testkit.Rows(expected...))
+		}
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestIndexMergePartialScansPKIsHandle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int, primary key (a), unique key (b), key idx_c(c));")
+	tk.MustExec("insert into t values (1, 1, 1), (10, 10, 10), (100, 100, 100);")
+	const queryTemplate = "select /*+ use_index_merge(t) */ %s from t where %s order by b;"
+	projections := [][]string{{"a"}, {"b"}, {"c"}, {"a", "b"}, {"b", "c"}, {"c", "a"}, {"b", "a", "c"}}
+	cases := []struct {
+		condition string
+		expected  []string
+	}{
+		{
+			// 3 index scans
+			"b < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
+		},
+		{
+			// 1 table scan + 1 index scan
+			"a < 2 or c > 10000", []string{"1"},
+		},
+		{
+			// 2 table scans + 1 index scan
+			"a < 2 or a < 10 or b > 11", []string{"1", "100"},
+		},
+		{
+			// 1 table scans + 3 index scans
+			"a < 2 or b >= 10 or c > 100 or c < 1", []string{"1", "10", "100"},
+		},
+		{
+			// 3 table scans + 2 index scans
+			"a < 2 or a >= 10 or a >= 20 or c > 100 or b < 1", []string{"1", "10", "100"},
+		},
+	}
+	for _, p := range projections {
+		for _, ca := range cases {
+			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
+			tk.HasPlan(query, "IndexMerge")
+			expected := make([]string, 0, len(ca.expected))
+			for _, datum := range ca.expected {
+				row := strings.Repeat(datum+" ", len(p))
+				expected = append(expected, row[:len(row)-1])
+			}
+			tk.MustQuery(query).Check(testkit.Rows(expected...))
+		}
+	}
+}
+
+func (s *testIntegrationSerialSuite) TestIssue23919(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	// Test for the minimal reproducible case.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, index(a), index(b)) partition by hash (a) partitions 2;")
+	tk.MustExec("insert into t values (1, 5);")
+	tk.MustQuery("select /*+ use_index_merge( t ) */ * from t where a in (3) or b in (5) order by a;").
+		Check(testkit.Rows("1 5"))
+
+	// Test for the original case.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`CREATE TABLE t (
+  col_5 text NOT NULL,
+  col_6 tinyint(3) unsigned DEFAULT NULL,
+  col_7 float DEFAULT '4779.165058537128',
+  col_8 smallint(6) NOT NULL DEFAULT '-24790',
+  col_9 date DEFAULT '2031-01-15',
+  col_37 int(11) DEFAULT '1350204687',
+  PRIMARY KEY (col_5(6),col_8) /*T![clustered_index] NONCLUSTERED */,
+  UNIQUE KEY idx_6 (col_9,col_7,col_8),
+  KEY idx_8 (col_8,col_6,col_5(6),col_9,col_7),
+  KEY idx_9 (col_9,col_7,col_8)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE ( col_8 ) (
+  PARTITION p0 VALUES LESS THAN (-17650),
+  PARTITION p1 VALUES LESS THAN (-13033),
+  PARTITION p2 VALUES LESS THAN (2521),
+  PARTITION p3 VALUES LESS THAN (7510)
+);`)
+	tk.MustExec("insert into t values ('', NULL, 6304.0146, -24790, '2031-01-15', 1350204687);")
+	tk.MustQuery("select  var_samp(col_7) aggCol from (select  /*+ use_index_merge( t ) */ * from t where " +
+		"t.col_9 in ( '2002-06-22' ) or t.col_5 in ( 'PkfzI'  ) or t.col_8 in ( -24874 ) and t.col_6 > null and " +
+		"t.col_5 > 'r' and t.col_9 in ( '1979-09-04' ) and t.col_7 < 8143.667552769195 or " +
+		"t.col_5 in ( 'iZhfEjRWci' , 'T' , ''  ) or t.col_9 <> '1976-09-11' and t.col_7 = 8796.436181615773 and " +
+		"t.col_8 = 7372 order by col_5,col_8  ) ordered_tbl group by col_6;").Check(testkit.Rows("<nil>"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue16407(c *C) {
@@ -1756,12 +1968,11 @@ func (s *testIntegrationSerialSuite) TestIssue16407(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int,b char(100),key(a),key(b(10)))")
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a=10 or b='x'").Check(testkit.Rows(
-		"Projection 19.99 root  test.t.a, test.t.b",
-		"└─IndexMerge 0.04 root  ",
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[10,10], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[\"x\",\"x\"], keep order:false, stats:pseudo",
-		"  └─Selection(Probe) 0.04 cop[tikv]  or(eq(test.t.a, 10), eq(test.t.b, \"x\"))",
-		"    └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo"))
+		"IndexMerge 0.04 root  ",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[10,10], keep order:false, stats:pseudo",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[\"x\",\"x\"], keep order:false, stats:pseudo",
+		"└─Selection(Probe) 0.04 cop[tikv]  or(eq(test.t.a, 10), eq(test.t.b, \"x\"))",
+		"  └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustExec("insert into t values (1, 'xx')")
 	tk.MustQuery("select /*+ use_index_merge(t) */ * from t where a=10 or b='x'").Check(testkit.Rows())
@@ -1991,10 +2202,10 @@ func (s *testIntegrationSuite) TestAccessPathOnClusterIndex(c *C) {
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + tt).Rows())
 			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
 		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format='brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 }
@@ -2886,7 +3097,7 @@ func (s *testIntegrationSerialSuite) TestPushDownProjectionForMPP(c *C) {
 		}
 	}
 
-	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0;")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_enforce_mpp=1;")
 
 	var input []string
 	var output []struct {
@@ -3026,6 +3237,45 @@ func (s *testIntegrationSerialSuite) TestPushDownAggForMPP(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestMppUnionAll(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t (a int not null, b int, c varchar(20))")
+	tk.MustExec("create table t1 (a int, b int not null, c double)")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" || tblInfo.Name.L == "t1" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+
+}
+
 func (s *testIntegrationSerialSuite) TestMppJoinDecimal(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3070,7 +3320,7 @@ func (s *testIntegrationSerialSuite) TestMppJoinDecimal(c *C) {
 	}
 }
 
-func (s *testIntegrationSerialSuite) TestMppAggWithJoin(c *C) {
+func (s *testIntegrationSerialSuite) TestMppAggTopNWithJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -3139,23 +3389,21 @@ func (s *testIntegrationSuite) TestIndexMergeTableFilter(c *C) {
 	tk.MustExec("insert into t values(10,1,1,10)")
 
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a=10 or (b=10 and c=10)").Check(testkit.Rows(
-		"Projection 10.01 root  test.t.a, test.t.b, test.t.c, test.t.d",
-		"└─IndexMerge 0.02 root  ",
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[10,10], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[10,10], keep order:false, stats:pseudo",
-		"  └─Selection(Probe) 0.02 cop[tikv]  or(eq(test.t.a, 10), and(eq(test.t.b, 10), eq(test.t.c, 10)))",
-		"    └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo",
+		"IndexMerge 0.02 root  ",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[10,10], keep order:false, stats:pseudo",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[10,10], keep order:false, stats:pseudo",
+		"└─Selection(Probe) 0.02 cop[tikv]  or(eq(test.t.a, 10), and(eq(test.t.b, 10), eq(test.t.c, 10)))",
+		"  └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ use_index_merge(t) */ * from t where a=10 or (b=10 and c=10)").Check(testkit.Rows(
 		"10 1 1 10",
 	))
 	tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t) */ * from t where (a=10 and d=10) or (b=10 and c=10)").Check(testkit.Rows(
-		"Projection 0.02 root  test.t.a, test.t.b, test.t.c, test.t.d",
-		"└─IndexMerge 0.00 root  ",
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[10,10], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[10,10], keep order:false, stats:pseudo",
-		"  └─Selection(Probe) 0.00 cop[tikv]  or(and(eq(test.t.a, 10), eq(test.t.d, 10)), and(eq(test.t.b, 10), eq(test.t.c, 10)))",
-		"    └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo",
+		"IndexMerge 0.00 root  ",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:a(a) range:[10,10], keep order:false, stats:pseudo",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[10,10], keep order:false, stats:pseudo",
+		"└─Selection(Probe) 0.00 cop[tikv]  or(and(eq(test.t.a, 10), eq(test.t.d, 10)), and(eq(test.t.b, 10), eq(test.t.c, 10)))",
+		"  └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("select /*+ use_index_merge(t) */ * from t where (a=10 and d=10) or (b=10 and c=10)").Check(testkit.Rows(
 		"10 1 1 10",
@@ -3226,6 +3474,27 @@ func (s *testIntegrationSuite) TestIssue24281(c *C) {
 		"UNION select 1 as v1, 2 as v2")
 }
 
+func (s *testIntegrationSuite) TestIssue25799(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`create table t1 (a float default null, b smallint(6) DEFAULT NULL)`)
+	tk.MustExec(`insert into t1 values (1, 1)`)
+	tk.MustExec(`create table t2 (a float default null, b tinyint(4) DEFAULT NULL, key b (b))`)
+	tk.MustExec(`insert into t2 values (null, 1)`)
+	tk.HasPlan(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`, `IndexJoin`)
+	tk.MustQuery(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestLimitWindowColPrune(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustQuery("select count(a) f1, row_number() over (order by count(a)) as f2 from t limit 1").Check(testkit.Rows("1 1"))
+}
+
 func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3262,4 +3531,31 @@ func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSuite) TestIssue23839(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists BB")
+	tk.MustExec("CREATE TABLE `BB` (\n" +
+		"	`col_int` int(11) DEFAULT NULL,\n" +
+		"	`col_varchar_10` varchar(10) DEFAULT NULL,\n" +
+		"	`pk` int(11) NOT NULL AUTO_INCREMENT,\n" +
+		"	`col_int_not_null` int(11) NOT NULL,\n" +
+		"	`col_decimal` decimal(10,0) DEFAULT NULL,\n" +
+		"	`col_datetime` datetime DEFAULT NULL,\n" +
+		"	`col_decimal_not_null` decimal(10,0) NOT NULL,\n" +
+		"	`col_datetime_not_null` datetime NOT NULL,\n" +
+		"	`col_varchar_10_not_null` varchar(10) NOT NULL,\n" +
+		"	PRIMARY KEY (`pk`) /*T![clustered_index] CLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2000001")
+	tk.Exec("explain SELECT OUTR . col2 AS X FROM (SELECT INNR . col1 as col1, SUM( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR2 INNER JOIN (SELECT INNR . col1 as col1, MAX( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR ON OUTR2.col1 = OUTR.col1 GROUP BY OUTR . col1, OUTR2 . col1 HAVING X <> 'b'")
+}
+
+func (s *testIntegrationSuite) TestIssue26559(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a timestamp, b datetime);")
+	tk.MustExec("insert into t values('2020-07-29 09:07:01', '2020-07-27 16:57:36');")
+	tk.MustQuery("select greatest(a, b) from t union select null;").Sort().Check(testkit.Rows("2020-07-29 09:07:01", "<nil>"))
 }
