@@ -2642,5 +2642,29 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestSelectionPartialPushDown",
+    "Cases": [
+      {
+        "SQL": "select * from t1 where a > 1 and b > 1",
+        "Plan": [
+          "Selection 1111.11 root  gt(test.t1.b, 1)",
+          "└─TableReader 3333.33 root  data:Selection",
+          "  └─Selection 3333.33 cop[tikv]  gt(test.t1.a, 1)",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 use index(idx_a) where a > 1 and b > 1 and c > 1",
+        "Plan": [
+          "Selection 370.37 root  gt(test.t2.b, 1)",
+          "└─IndexLookUp 1111.11 root  ",
+          "  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t2, index:idx_a(a) range:(1,+inf], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 1111.11 cop[tikv]  gt(test.t2.c, 1)",
+          "    └─TableRowIDScan 3333.33 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]

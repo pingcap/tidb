@@ -139,7 +139,6 @@ func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
 }
 
 func (s *testPrepareSerialSuite) TestPrepareCacheIndexScan(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210702")
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -454,7 +453,7 @@ func (s *testPrepareSuite) TestPrepareCacheForClusteredIndex(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	defer func() {
 		dom.Close()
-		store.Close()
+		c.Assert(store.Close(), IsNil)
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(k varchar(100) primary key clustered, v1 int, v2 int)")
@@ -999,7 +998,6 @@ func (s *testPrepareSuite) TestInvisibleIndex(c *C) {
 
 // Test for issue https://github.com/pingcap/tidb/issues/22167
 func (s *testPrepareSerialSuite) TestPrepareCacheWithJoinTable(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210702")
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -1087,7 +1085,7 @@ func (s *testPlanSerialSuite) TestPlanCachePointGetAndTableDual(c *C) {
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
-		store.Close()
+		c.Assert(store.Close(), IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
@@ -1181,7 +1179,7 @@ func (s *testPlanSerialSuite) TestIssue23671(c *C) {
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		dom.Close()
-		store.Close()
+		c.Assert(store.Close(), IsNil)
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
