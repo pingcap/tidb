@@ -1385,9 +1385,7 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			srcType := srcCol.RetType
 
 			if !srcType.Equal(dstType) {
-				dstType.Collate = srcType.Collate
-				dstType.Charset = srcType.Charset
-				exprs[i] = expression.BuildCastFunction4Union(b.ctx, srcCol, dstType)
+				exprs[i] = castToRes(dstType, u.ctx, srcCol)
 			} else {
 				exprs[i] = srcCol
 			}
@@ -1404,16 +1402,36 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 		}
 
 		dstType := unionCols[i].RetType
-		if types.IsTypeVarchar(dstType.Tp) {
-			dstType.Charset, dstType.Collate = u.ctx.GetSessionVars().GetCharsetInfo()
-		} else {
-			dstType.Charset, dstType.Collate = expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
-		}
+		dstType.Charset, dstType.Collate = expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
 	}
 
 	buildLogicalUnionAll(u, unionCols, b)
 
 	return nil
+}
+
+// castToRes cast to col to result type(ingore result charset collation and collation)
+func castToRes(resType *types.FieldType, ctx sessionctx.Context, col *expression.Column) expression.Expression {
+	switch resType.EvalType() {
+	case types.ETInt:
+		return expression.WrapWithCastAsInt(ctx, col)
+	case types.ETReal:
+		return expression.WrapWithCastAsReal(ctx, col)
+	case types.ETDecimal:
+		return expression.WrapWithCastAsDecimal(ctx, col)
+	case types.ETString:
+		return expression.WrapWithCastAsString(ctx, col)
+	case types.ETDatetime:
+		return expression.WrapWithCastAsTime(ctx, col, types.NewFieldType(mysql.TypeDatetime))
+	case types.ETTimestamp:
+		return expression.WrapWithCastAsTime(ctx, col, types.NewFieldType(mysql.TypeTimestamp))
+	case types.ETDuration:
+		return expression.WrapWithCastAsDuration(ctx, col)
+	case types.ETJson:
+		return expression.WrapWithCastAsJSON(ctx, col)
+	default:
+		return col
+	}
 }
 
 // buildLogicalUnionAll process each child and add a projection above original child.
