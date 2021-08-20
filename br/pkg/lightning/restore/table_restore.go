@@ -913,7 +913,7 @@ func (tr *TableRestore) genAnalyzeSQL(ctx context.Context, g glue.SQLExecutor) s
 		return sql
 	}
 	if count >= 600 {
-		sql += " WITH NUM 10000"
+		sql += " WITH 10000 SAMPLES"
 	}
 	return sql
 }
