@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package parser
+package parser_test
 
 import (
 	"testing"
 
+	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,7 +35,7 @@ func TestSpace(t *testing.T) {
 		{2, "  1", "1"},
 	}
 	for _, test := range okTable {
-		rest, err := Space(test.Input, test.Times)
+		rest, err := utilparser.Space(test.Input, test.Times)
 		require.Nil(t, err)
 		require.Equal(t, test.Expected, rest)
 	}
@@ -48,7 +49,7 @@ func TestSpace(t *testing.T) {
 	}
 
 	for _, test := range errTable {
-		rest, err := Space(test.Input, test.Times)
+		rest, err := utilparser.Space(test.Input, test.Times)
 
 		require.NotNil(t, err)
 		require.Equal(t, test.Input, rest)
@@ -71,7 +72,7 @@ func TestDigit(t *testing.T) {
 	}
 
 	for _, test := range okTable {
-		digits, rest, err := Digit(test.Input, test.Times)
+		digits, rest, err := utilparser.Digit(test.Input, test.Times)
 
 		require.Nil(t, err)
 		require.Equal(t, test.ExpectedDigits, digits)
@@ -88,7 +89,7 @@ func TestDigit(t *testing.T) {
 	}
 
 	for _, test := range errTable {
-		digits, rest, err := Digit(test.Input, test.Times)
+		digits, rest, err := utilparser.Digit(test.Input, test.Times)
 
 		require.NotNil(t, err)
 		require.Equal(t, "", digits)
@@ -110,7 +111,7 @@ func TestNumber(t *testing.T) {
 		{"456 121", 456, " 121"},
 	}
 	for _, test := range okTable {
-		digits, rest, err := Number(test.Input)
+		digits, rest, err := utilparser.Number(test.Input)
 
 		require.Nil(t, err)
 		require.Equal(t, test.ExpectedNum, digits)
@@ -126,7 +127,7 @@ func TestNumber(t *testing.T) {
 	}
 
 	for _, test := range errTable {
-		digits, rest, err := Number(test.Input)
+		digits, rest, err := utilparser.Number(test.Input)
 
 		require.NotNil(t, err)
 		require.Equal(t, 0, digits)
@@ -148,12 +149,12 @@ func TestCharAndAnyChar(t *testing.T) {
 	}
 
 	for _, test := range okTable {
-		rest, err := Char(test.Input, test.Char)
+		rest, err := utilparser.Char(test.Input, test.Char)
 
 		require.Nil(t, err)
 		require.Equal(t, test.Expected, rest)
 
-		rest, err = AnyChar(test.Input)
+		rest, err = utilparser.AnyChar(test.Input)
 
 		require.Nil(t, err)
 		require.Equal(t, test.Expected, rest)
@@ -169,7 +170,7 @@ func TestCharAndAnyChar(t *testing.T) {
 	}
 
 	for _, test := range errTable {
-		rest, err := Char(test.Input, test.Char)
+		rest, err := utilparser.Char(test.Input, test.Char)
 
 		require.NotNil(t, err)
 		require.Equal(t, test.Input, rest)
