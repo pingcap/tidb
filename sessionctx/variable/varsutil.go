@@ -228,6 +228,41 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	return vars.SetStmtVar(name, sVal)
 }
 
+func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, error) {
+	val, err := vars.GlobalVarsAccessor.GetTiDBTableValue(name)
+	if err != nil { // handle empty result or other errors
+		return defaultVal, nil
+	}
+	return trueFalseToOnOff(val), nil
+}
+
+func setTiDBTableValue(vars *SessionVars, name, value, comment string) error {
+	value = onOffToTrueFalse(value)
+	return vars.GlobalVarsAccessor.SetTiDBTableValue(name, value, comment)
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func trueFalseToOnOff(str string) string {
+	if strings.EqualFold("true", str) {
+		return On
+	} else if strings.EqualFold("false", str) {
+		return Off
+	}
+	return str
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func onOffToTrueFalse(str string) string {
+	if strings.EqualFold("ON", str) {
+		return "true"
+	} else if strings.EqualFold("OFF", str) {
+		return "false"
+	}
+	return str
+}
+
 const (
 	// initChunkSizeUpperBound indicates upper bound value of tidb_init_chunk_size.
 	initChunkSizeUpperBound = 32

@@ -475,8 +475,11 @@ func RemoveTableMetaByTableName(ctx context.Context, db *sql.DB, metaTable, tabl
 
 type taskMetaMgr interface {
 	InitTask(ctx context.Context, source int64) error
-	CheckClusterSource(ctx context.Context) (int64, error)
 	CheckTaskExist(ctx context.Context) (bool, error)
+	// CheckTasksExclusively check all tasks exclusively. action is the function to check all tasks and returns the tasks
+	// need to update or any new tasks. There is at most one lightning who can execute the action function at the same time.
+	// Note that action may be executed multiple times due to transaction retry, caller should make sure it's idempotent.
+	CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error
 	CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error)
 	// CheckAndFinishRestore check task meta and return whether to switch cluster to normal state and clean up the metadata
 	// Return values: first boolean indicates whether switch back tidb cluster to normal state (restore schedulers, switch tikv to normal)
@@ -541,6 +544,15 @@ func parseTaskMetaStatus(s string) (taskMetaStatus, error) {
 	}
 }
 
+type taskMeta struct {
+	taskID       int64
+	pdCfgs       string
+	status       taskMetaStatus
+	state        int
+	sourceBytes  uint64
+	clusterAvail uint64
+}
+
 type storedCfgs struct {
 	PauseCfg   pdutil.ClusterConfig `json:"paused"`
 	RestoreCfg pdutil.ClusterConfig `json:"restore"`
@@ -586,23 +598,57 @@ func (m *dbTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
 	return exist, errors.Trace(err)
 }
 
-func (m *dbTaskMetaMgr) CheckClusterSource(ctx context.Context) (int64, error) {
+func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
 	conn, err := m.session.Conn(ctx)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	defer conn.Close()
 	exec := &common.SQLWithRetry{
 		DB:     m.session,
 		Logger: log.L(),
 	}
-
-	source := int64(0)
-	query := fmt.Sprintf("SELECT SUM(source_bytes) from %s", m.tableName)
-	if err := exec.QueryRow(ctx, "query total source size", query, &source); err != nil {
-		return 0, errors.Annotate(err, "fetch task meta failed")
+	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
+	if err != nil {
+		return errors.Annotate(err, "enable pessimistic transaction failed")
 	}
-	return source, nil
+	return exec.Transact(ctx, "check tasks exclusively", func(ctx context.Context, tx *sql.Tx) error {
+		query := fmt.Sprintf("SELECT task_id, pd_cfgs, status, state, source_bytes, cluster_avail from %s FOR UPDATE", m.tableName)
+		rows, err := tx.QueryContext(ctx, query)
+		if err != nil {
+			return errors.Annotate(err, "fetch task metas failed")
+		}
+		defer rows.Close()
+
+		var tasks []taskMeta
+		for rows.Next() {
+			var task taskMeta
+			var statusValue string
+			if err = rows.Scan(&task.taskID, &task.pdCfgs, &statusValue, &task.state, &task.sourceBytes, &task.clusterAvail); err != nil {
+				return errors.Trace(err)
+			}
+			status, err := parseTaskMetaStatus(statusValue)
+			if err != nil {
+				return errors.Annotatef(err, "invalid task meta status '%s'", statusValue)
+			}
+			task.status = status
+			tasks = append(tasks, task)
+		}
+		if err = rows.Err(); err != nil {
+			return errors.Trace(err)
+		}
+		newTasks, err := action(tasks)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, task := range newTasks {
+			query := fmt.Sprintf("REPLACE INTO %s (task_id, pd_cfgs, status, state, source_bytes, cluster_avail) VALUES(?, ?, ?, ?, ?, ?)", m.tableName)
+			if _, err = tx.ExecContext(ctx, query, task.taskID, task.pdCfgs, task.status.String(), task.state, task.sourceBytes, task.clusterAvail); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	})
 }
 
 func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error) {
@@ -899,6 +945,10 @@ func (m noopTaskMetaMgr) InitTask(ctx context.Context, source int64) error {
 	return nil
 }
 
+func (m noopTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
+	return nil
+}
+
 func (m noopTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.UndoFunc, error) {
 	return func(ctx context.Context) error {
 		return nil
@@ -907,10 +957,6 @@ func (m noopTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.
 
 func (m noopTaskMetaMgr) CheckTaskExist(ctx context.Context) (bool, error) {
 	return false, nil
-}
-
-func (m noopTaskMetaMgr) CheckClusterSource(ctx context.Context) (int64, error) {
-	return 0, nil
 }
 
 func (m noopTaskMetaMgr) CheckAndFinishRestore(context.Context, bool) (bool, bool, error) {

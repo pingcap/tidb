@@ -5976,7 +5976,7 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 
 	// Test flash table with not_exist_table_name name.
 	_, err = tk.Exec("flashback table t_not_exists")
-	c.Assert(err.Error(), Equals, "Can't find dropped/truncated table: t_not_exists in DDL history jobs")
+	c.Assert(err.Error(), Equals, "Can't find localTemporary/dropped/truncated table: t_not_exists in DDL history jobs")
 
 	// Test flashback table failed by there is already a new table with the same name.
 	// If there is a new table with the same name, should return failed.
@@ -6075,6 +6075,11 @@ func (s *testRecoverTable) TestRecoverTempTable(c *C) {
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t_recover (a int) on commit delete rows;")
 
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists tmp2_recover")
+	tk.MustExec("create temporary table tmp2_recover (a int);")
+
 	timeBeforeDrop, _, safePointSQL, resetGC := s.mockGC(tk)
 	defer resetGC()
 	// Set GC safe point
@@ -6083,6 +6088,9 @@ func (s *testRecoverTable) TestRecoverTempTable(c *C) {
 	tk.MustExec("drop table t_recover")
 	tk.MustGetErrCode("recover table t_recover;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("flashback table t_recover;", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("drop table tmp2_recover")
+	tk.MustGetErrMsg("recover table tmp2_recover;", "Can't find localTemporary/dropped/truncated table: tmp2_recover in DDL history jobs")
+	tk.MustGetErrMsg("flashback table tmp2_recover;", "Can't find localTemporary/dropped/truncated table: tmp2_recover in DDL history jobs")
 }
 
 func (s *testSuiteP2) TestPointGetPreparedPlan(c *C) {
@@ -9014,9 +9022,13 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 
 	tk.MustExec("set @@tidb_snapshot=NOW(6)")
 	for _, query := range queries {
+		// forbidden historical read local temporary table
+		if strings.Contains(query.sql, "tmp2") {
+			tk.MustGetErrMsg(query.sql, "can not read local temporary table when 'tidb_snapshot' is set")
+			continue
+		}
 		// Will success here for compatibility with some tools like dumping
-		rs := tk.MustQuery(query.sql)
-		rs.Check(testkit.Rows())
+		tk.MustQuery(query.sql).Check(testkit.Rows())
 	}
 }
 
