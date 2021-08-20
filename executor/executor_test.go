@@ -4979,6 +4979,16 @@ func (s *testSuiteP2) TestAddDateBuiltinWithWarnings(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '2001-01-00'"))
 }
 
+func (s *testSuiteP2) TestIssue27232(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a timestamp)")
+	tk.MustExec("insert into t values (\"1970-07-23 10:04:59\"), (\"2038-01-19 03:14:07\")")
+	tk.MustQuery("select * from t where date_sub(a, interval 10 month) = date_sub(\"1970-07-23 10:04:59\", interval 10 month)").Check(testkit.Rows("1970-07-23 10:04:59"))
+	tk.MustQuery("select * from t where timestampadd(hour, 1, a ) = timestampadd(hour, 1, \"2038-01-19 03:14:07\")").Check(testkit.Rows("2038-01-19 03:14:07"))
+}
+
 func (s *testSuiteP2) TestStrToDateBuiltinWithWarnings(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@sql_mode='NO_ZERO_DATE'")
