@@ -2755,8 +2755,8 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 	l := len(w.writeBatch)
 	cnt := w.batchCount
 	var lastKey []byte
-	if len(w.writeBatch) > 0 {
-		lastKey = w.writeBatch[len(w.writeBatch)-1].Key
+	if cnt > 0 {
+		lastKey = w.writeBatch[cnt-1].Key
 	}
 	for _, pair := range kvs {
 		if w.isWriteBatchSorted && bytes.Compare(lastKey, pair.Key) > 0 {
