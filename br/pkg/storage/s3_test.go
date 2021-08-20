@@ -288,7 +288,7 @@ func (s *s3Suite) TestS3Storage(c *C) {
 		_, err := New(ctx, s3, &ExternalStorageOptions{
 			SendCredentials:  test.sendCredential,
 			CheckPermissions: test.hackPermission,
-			SkipCheckPath:    true,
+			SkipCheckPath:    false,
 		})
 		if test.errReturn {
 			c.Assert(err, NotNil)
