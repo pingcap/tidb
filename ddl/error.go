@@ -294,4 +294,6 @@ var (
 	errFunctionalIndexOnJSONOrGeometryFunction = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnJSONOrGeometryFunction)
 	// errDependentByFunctionalIndex returns when the dropped column depends by expression index.
 	errDependentByFunctionalIndex = dbterror.ClassDDL.NewStd(mysql.ErrDependentByFunctionalIndex)
+	// errFunctionalIndexOnBlob when the expression of expression index returns blob or text.
+	errFunctionalIndexOnBlob = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnBlob)
 )
