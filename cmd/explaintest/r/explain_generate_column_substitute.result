@@ -496,6 +496,19 @@ desc format = 'brief' select b from t;
 id	estRows	task	access object	operator info
 IndexReader	10000.00	root		index:IndexFullScan
 └─IndexFullScan	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
+create table t01(a varchar(20));
+insert into t01 values ("齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙");
+alter table t01 add index eidx ((concat_ws('expression_index', a, 'test')));
+select * from t01 use index (eidx)  where (concat_ws('expression_index', a, 'test')) not like (concat_ws('expression_index', "齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙", 'test'));
+a
+insert into t01 values ("齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙");
+select * from t01 use index (eidx)  where (concat_ws('expression_index', a, 'test')) like (concat_ws('expression_index', "齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙", 'test'));
+a
+齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙
+齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙
+drop table if exists t1;
+create table t1(a char, b varchar(20), c char, d varchar(20));
+alter table t1 add index eidx ((export_set(3, a, c, ',', 5)));
 create table t02 (a varchar(20));
 insert into t02 values ('a'), ('b'), ('c');
 select * from t02 where lower(a) < 'c';
