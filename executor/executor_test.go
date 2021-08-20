@@ -232,7 +232,7 @@ func (s *testPrepareSuite) TearDownSuite(c *C) {
 
 func (s *baseTestSuite) TearDownSuite(c *C) {
 	s.domain.Close()
-	s.store.Close()
+	c.Assert(s.store.Close(), IsNil)
 }
 
 func (s *globalIndexSuite) SetUpSuite(c *C) {
@@ -8577,7 +8577,7 @@ func (s testSerialSuite) assertTemporaryTableNoNetwork(c *C, temporaryTableType 
 	// With that failpoint, all requests to the TiKV is discard.
 	rs, err := tk1.Exec("select * from normal")
 	c.Assert(err, IsNil)
-	blocked := make(chan struct{})
+	blocked := make(chan struct{}, 1)
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	go func() {
 		_, err := session.ResultSetToStringSlice(ctx, tk1.Se, rs)
@@ -8955,9 +8955,13 @@ func (s *testStaleTxnSuite) TestInvalidReadTemporaryTable(c *C) {
 
 	tk.MustExec("set @@tidb_snapshot=NOW(6)")
 	for _, query := range queries {
+		// forbidden historical read local temporary table
+		if strings.Contains(query.sql, "tmp2") {
+			tk.MustGetErrMsg(query.sql, "can not read local temporary table when 'tidb_snapshot' is set")
+			continue
+		}
 		// Will success here for compatibility with some tools like dumping
-		rs := tk.MustQuery(query.sql)
-		rs.Check(testkit.Rows())
+		tk.MustQuery(query.sql).Check(testkit.Rows())
 	}
 }
 

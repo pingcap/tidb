@@ -10260,3 +10260,9 @@ func (s *testIntegrationSuite) TestIssue27236(c *C) {
 	row = tk.MustQuery(`select extract(hour_second from c1) from t order by c1;`)
 	row.Check(testkit.Rows("-8385959", "7005959"))
 }
+
+func (s *testIntegrationSuite) TestIssue26977(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	result := tk.MustQuery("select a + 1 as f from (select cast(0xfffffffffffffff0 as unsigned) as a union select cast(1 as unsigned)) t having f != 2;")
+	result.Check(testkit.Rows("18446744073709551601"))
+}
