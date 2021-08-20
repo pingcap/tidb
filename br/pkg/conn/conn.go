@@ -5,6 +5,7 @@ package conn
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -162,6 +163,27 @@ func GetAllTiKVStores(
 	return stores[:j], nil
 }
 
+func checkStoresAlive(ctx context.Context,
+	pdclient pd.Client,
+	storeBehavior StoreBehavior) error {
+	// Check live tikv.
+	stores, err := GetAllTiKVStores(ctx, pdclient, storeBehavior)
+	if err != nil {
+		log.Error("fail to get store", zap.Error(err))
+		return errors.Trace(err)
+	}
+
+	liveStoreCount := 0
+	for _, s := range stores {
+		if s.GetState() != metapb.StoreState_Up {
+			continue
+		}
+		liveStoreCount++
+	}
+	log.Info("it has ", zap.Int("aliveStore", liveStoreCount))
+	return nil
+}
+
 // NewMgr creates a new Mgr.
 //
 // Domain is optional for Backup, set `needDomain` to false to disable
@@ -170,7 +192,6 @@ func NewMgr(
 	ctx context.Context,
 	g glue.Glue,
 	pdAddrs string,
-	storage kv.Storage,
 	tlsConf *tls.Config,
 	securityOption pd.SecurityOption,
 	keepalive keepalive.ClientParameters,
@@ -184,10 +205,7 @@ func NewMgr(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	tikvStorage, ok := storage.(tikv.Storage)
-	if !ok {
-		return nil, berrors.ErrKVNotTiKV
-	}
+	log.Info("new mgr", zap.String("pdAddrs", pdAddrs))
 
 	controller, err := pdutil.NewPdController(ctx, pdAddrs, tlsConf, securityOption)
 	if err != nil {
@@ -201,20 +219,20 @@ func NewMgr(
 				"if you believe it's OK, use --check-requirements=false to skip.")
 		}
 	}
-	log.Info("new mgr", zap.String("pdAddrs", pdAddrs))
 
-	// Check live tikv.
-	stores, err := GetAllTiKVStores(ctx, controller.GetPDClient(), storeBehavior)
+	err = checkStoresAlive(ctx, controller.GetPDClient(), storeBehavior)
 	if err != nil {
-		log.Error("fail to get store", zap.Error(err))
 		return nil, errors.Trace(err)
 	}
-	liveStoreCount := 0
-	for _, s := range stores {
-		if s.GetState() != metapb.StoreState_Up {
-			continue
-		}
-		liveStoreCount++
+
+	storage, err := g.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddrs), securityOption)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tikvStorage, ok := storage.(tikv.Storage)
+	if !ok {
+		return nil, berrors.ErrKVNotTiKV
 	}
 
 	var dom *domain.Domain
@@ -232,9 +250,12 @@ func NewMgr(
 		dom:          dom,
 		tlsConf:      tlsConf,
 		ownsStorage:  g.OwnsStorage(),
+		grpcClis: struct {
+			mu   sync.Mutex
+			clis map[uint64]*grpc.ClientConn
+		}{clis: make(map[uint64]*grpc.ClientConn)},
+		keepalive: keepalive,
 	}
-	mgr.grpcClis.clis = make(map[uint64]*grpc.ClientConn)
-	mgr.keepalive = keepalive
 	return mgr, nil
 }
 
