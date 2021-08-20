@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package placement_policy
+package placementpolicy
 
 import (
 	"github.com/pingcap/parser/model"
 )
 
-// PolicyInfo is the struct to store the placement_policy policy.
+// PolicyInfo is the struct to store the placement policy.
 type PolicyInfo struct {
 	ID                  int64             `json:"id"`
 	Name                model.CIStr       `json:"name"`

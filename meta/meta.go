@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
-	placement "github.com/pingcap/tidb/util/placement_policy"
+	placement "github.com/pingcap/tidb/util/placementpolicy"
 	"go.uber.org/zap"
 )
 
