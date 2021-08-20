@@ -26,10 +26,12 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -652,10 +654,104 @@ func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	return nil
 }
 
+type captureFilter struct {
+	dbs       map[string]struct{}
+	frequency int64
+	tables    map[stmtctx.TableEntry]struct{}
+
+	fail      bool
+	currentDB string
+}
+
+func (cf *captureFilter) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch x := in.(type) {
+	case *ast.TableName:
+		tblEntry := stmtctx.TableEntry{
+			DB:    x.Schema.L,
+			Table: x.Name.L,
+		}
+		if x.Schema.L == "" {
+			tblEntry.DB = cf.currentDB
+		}
+		if _, ok := cf.dbs[tblEntry.DB]; ok {
+			cf.fail = true
+		} else if _, ok := cf.tables[tblEntry]; ok {
+			cf.fail = true
+		}
+	}
+	return in, cf.fail
+}
+
+func (cf *captureFilter) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
+func (cf *captureFilter) isEmpty() bool {
+	return len(cf.dbs) == 0 && len(cf.tables) == 0
+}
+
+func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
+	filter = &captureFilter{
+		dbs:       make(map[string]struct{}),
+		frequency: 1,
+		tables:    make(map[stmtctx.TableEntry]struct{}),
+	}
+	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
+	if err != nil {
+		logutil.BgLogger().Warn("[sql-bind] failed to parse query for mysql.capture_plan_baselines_blacklist load", zap.Error(err))
+		return
+	}
+	// No need to acquire the session context lock for ExecRestrictedStmt, it
+	// uses another background session.
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		logutil.BgLogger().Warn("[sql-bind] failed to load mysql.capture_plan_baselines_blacklist", zap.Error(err))
+		return
+	}
+	for _, row := range rows {
+		filterTp := strings.ToLower(row.GetString(0))
+		valStr := strings.ToLower(row.GetString(1))
+		switch filterTp {
+		case "db":
+			filter.dbs[valStr] = struct{}{}
+		case "table":
+			strs := strings.Split(valStr, ".")
+			if len(strs) != 2 {
+				logutil.BgLogger().Warn("[sql-bind] failed to parse table name, ignore it", zap.String("filter_value", valStr))
+				continue
+			}
+			tblEntry := stmtctx.TableEntry{
+				DB:    strs[0],
+				Table: strs[1],
+			}
+			filter.tables[tblEntry] = struct{}{}
+		case "frequency":
+			f, err := strconv.ParseInt(valStr, 10, 64)
+			if err != nil {
+				logutil.BgLogger().Warn("[sql-bind] failed to parse frequency type value, ignore it", zap.String("filter_value", valStr), zap.Error(err))
+				continue
+			}
+			if f < 1 {
+				logutil.BgLogger().Warn("[sql-bind] frequency threshold is less than 1, ignore it", zap.Int64("frequency", f))
+				continue
+			}
+			if f > filter.frequency {
+				filter.frequency = f
+			}
+		default:
+			logutil.BgLogger().Warn("[sql-bind] unknown capture filter type, ignore it", zap.String("filter_type", filterTp))
+		}
+	}
+	return
+}
+
 // CaptureBaselines is used to automatically capture plan baselines.
 func (h *BindHandle) CaptureBaselines() {
 	parser4Capture := parser.New()
-	bindableStmts := stmtsummary.StmtSummaryByDigestMap.GetMoreThanOnceBindableStmt()
+	captureFilter := h.extractCaptureFilterFromStorage()
+	emptyCaptureFilter := captureFilter.isEmpty()
+	bindableStmts := stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt(captureFilter.frequency)
 	for _, bindableStmt := range bindableStmts {
 		stmt, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 		if err != nil {
@@ -664,6 +760,14 @@ func (h *BindHandle) CaptureBaselines() {
 		}
 		if insertStmt, ok := stmt.(*ast.InsertStmt); ok && insertStmt.Select == nil {
 			continue
+		}
+		if !emptyCaptureFilter {
+			captureFilter.fail = false
+			captureFilter.currentDB = bindableStmt.Schema
+			stmt.Accept(captureFilter)
+			if captureFilter.fail {
+				continue
+			}
 		}
 		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
 		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName, bindableStmt.Query))
@@ -753,7 +857,22 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 		bindSQL = bindSQL[updateIdx:]
 		return strings.Replace(bindSQL, "UPDATE", fmt.Sprintf("UPDATE /*+ %s*/", planHint), 1)
 	case *ast.SelectStmt:
-		selectIdx := strings.Index(bindSQL, "SELECT")
+		var selectIdx int
+		if n.With != nil {
+			var withSb strings.Builder
+			withIdx := strings.Index(bindSQL, "WITH")
+			restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &withSb)
+			restoreCtx.DefaultDB = defaultDB
+			err := n.With.Restore(restoreCtx)
+			if err != nil {
+				logutil.BgLogger().Debug("[sql-bind] restore SQL failed", zap.Error(err))
+				return ""
+			}
+			withEnd := withIdx + len(withSb.String())
+			tmp := strings.Replace(bindSQL[withEnd:], "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
+			return strings.Join([]string{bindSQL[withIdx:withEnd], tmp}, "")
+		}
+		selectIdx = strings.Index(bindSQL, "SELECT")
 		// Remove possible `explain` prefix.
 		bindSQL = bindSQL[selectIdx:]
 		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)

@@ -55,8 +55,7 @@ type TestData struct {
 	funcMap        map[string]int
 }
 
-// LoadTestSuiteData loads test suite data from file.
-func LoadTestSuiteData(dir, suiteName string) (res TestData, err error) {
+func loadTestSuiteData(dir, suiteName string) (res TestData, err error) {
 	res.filePathPrefix = filepath.Join(dir, suiteName)
 	res.input, err = loadTestSuiteCases(fmt.Sprintf("%s_in.json", res.filePathPrefix))
 	if err != nil {
@@ -106,6 +105,24 @@ func loadTestSuiteCases(filePath string) (res []testCases, err error) {
 	return res, err
 }
 
+// OnRecord execute the function to update result.
+func OnRecord(updateFunc func()) {
+	if record {
+		updateFunc()
+	}
+}
+
+// ConvertRowsToStrings converts [][]interface{} to []string.
+func ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
+	for _, row := range rows {
+		s := fmt.Sprintf("%v", row)
+		// Trim the leftmost `[` and rightmost `]`.
+		s = s[1 : len(s)-1]
+		rs = append(rs, s)
+	}
+	return rs
+}
+
 // GetTestCases gets the test cases for a test function.
 func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) {
 	// Extract caller's name.
@@ -133,26 +150,7 @@ func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) 
 	td.output[casesIdx].decodedOut = out
 }
 
-// OnRecord execute the function to update result.
-func (td *TestData) OnRecord(updateFunc func()) {
-	if record {
-		updateFunc()
-	}
-}
-
-// ConvertRowsToStrings converts [][]interface{} to []string.
-func (td *TestData) ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
-	for _, row := range rows {
-		s := fmt.Sprintf("%v", row)
-		// Trim the leftmost `[` and rightmost `]`.
-		s = s[1 : len(s)-1]
-		rs = append(rs, s)
-	}
-	return rs
-}
-
-// GenerateOutputIfNeeded generate the output file.
-func (td *TestData) GenerateOutputIfNeeded() error {
+func (td *TestData) generateOutputIfNeeded() error {
 	if !record {
 		return nil
 	}
@@ -187,6 +185,30 @@ func (td *TestData) GenerateOutputIfNeeded() error {
 	}()
 	_, err = file.Write(buf.Bytes())
 	return err
+}
+
+// BookKeeper does TestData suite bookkeeping.
+type BookKeeper map[string]TestData
+
+// LoadTestSuiteData loads test suite data from file and bookkeeping in the map.
+func (m *BookKeeper) LoadTestSuiteData(dir, suiteName string) {
+	testData, err := loadTestSuiteData(dir, suiteName)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "testdata: Errors on loading test data from file: %v\n", err)
+		os.Exit(1)
+	}
+	(*m)[suiteName] = testData
+}
+
+// GenerateOutputIfNeeded generate the output file from data bookkeeping in the map.
+func (m *BookKeeper) GenerateOutputIfNeeded() {
+	for _, testData := range *m {
+		err := testData.generateOutputIfNeeded()
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "testdata: Errors on generating output: %v\n", err)
+			os.Exit(1)
+		}
+	}
 }
 
 // Record is a temporary method for testutil to avoid "flag redefined: record" error,
