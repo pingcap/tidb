@@ -2755,8 +2755,8 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 	l := len(w.writeBatch)
 	cnt := w.batchCount
 	var lastKey []byte
-	if len(w.writeBatch) > 0 {
-		lastKey = w.writeBatch[len(w.writeBatch)-1].Key
+	if cnt > 0 {
+		lastKey = w.writeBatch[cnt-1].Key
 	}
 	for _, pair := range kvs {
 		if w.isWriteBatchSorted && bytes.Compare(lastKey, pair.Key) > 0 {
@@ -3142,7 +3142,10 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 	for {
 		if bytes.Equal(lastKey, key) {
 			log.L().Warn("duplicated key found, skipped", zap.Binary("key", lastKey))
-			continue
+			newMeta.totalCount--
+			newMeta.totalSize -= int64(len(key) + len(val))
+
+			goto nextKey
 		}
 		internalKey.UserKey = key
 		err = writer.Add(internalKey, val)
@@ -3150,6 +3153,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 			return nil, err
 		}
 		lastKey = append(lastKey[:0], key...)
+	nextKey:
 		key, val, err = mergeIter.Next()
 		if err != nil {
 			return nil, err
