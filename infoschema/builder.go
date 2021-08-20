@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/util/placement_policy"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -599,7 +600,7 @@ func NewBuilder(store kv.Storage) *Builder {
 		store: store,
 		is: &infoSchema{
 			schemaMap:           map[string]*schemaTables{},
-			policyMap:           map[string]*placement.Policy{},
+			policyMap:           map[string]*placement_policy.PolicyInfo{},
 			ruleBundleMap:       map[string]*placement.Bundle{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},

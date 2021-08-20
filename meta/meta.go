@@ -29,13 +29,13 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	placement "github.com/pingcap/tidb/util/placement_policy"
 	"go.uber.org/zap"
 )
 
@@ -168,14 +168,6 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 // GetGlobalID gets current global id.
 func (m *Meta) GetGlobalID() (int64, error) {
 	return m.txn.GetInt64(mNextGlobalIDKey)
-}
-
-// GenPolicyID generates the next policy global id.
-func (m *Meta) GenPolicyID() (int64, error) {
-	policyIDMutex.Lock()
-	defer policyIDMutex.Unlock()
-
-	return m.txn.Inc(mPolicyGlobalID, 1)
 }
 
 // GetPolicyID gets current policy global id.
@@ -359,7 +351,16 @@ func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 }
 
 // CreatePolicy creates a policy.
-func (m *Meta) CreatePolicy(policy *placement.Policy) error {
+func (m *Meta) CreatePolicy(policy *placement.PolicyInfo) error {
+	// Autofill the policy ID.
+	policyIDMutex.Lock()
+	genID, err := m.txn.Inc(mPolicyGlobalID, 1)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	policyIDMutex.Unlock()
+
+	policy.ID = genID
 	policyKey := m.policyKey(policy.ID)
 
 	if err := m.checkPolicyNotExists(policyKey); err != nil {
@@ -373,7 +374,7 @@ func (m *Meta) CreatePolicy(policy *placement.Policy) error {
 }
 
 // UpdatePolicy updates a policy.
-func (m *Meta) UpdatePolicy(policy *placement.Policy) error {
+func (m *Meta) UpdatePolicy(policy *placement.PolicyInfo) error {
 	policyKey := m.policyKey(policy.ID)
 
 	if err := m.checkPolicyExists(policyKey); err != nil {
@@ -640,19 +641,19 @@ func (m *Meta) GetDatabase(dbID int64) (*model.DBInfo, error) {
 }
 
 // ListPolicies shows all policies.
-func (m *Meta) ListPolicies() ([]*placement.Policy, error) {
+func (m *Meta) ListPolicies() ([]*placement.PolicyInfo, error) {
 	res, err := m.txn.HGetAll(mPolicies)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	policies := make([]*placement.Policy, 0, len(res))
+	policies := make([]*placement.PolicyInfo, 0, len(res))
 	for _, r := range res {
 		value, err := detachMagicByte(r.Value)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		policy := &placement.Policy{}
+		policy := &placement.PolicyInfo{}
 		err = json.Unmarshal(value, policy)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -663,7 +664,7 @@ func (m *Meta) ListPolicies() ([]*placement.Policy, error) {
 }
 
 // GetPolicy gets the database value with ID.
-func (m *Meta) GetPolicy(policyID int64) (*placement.Policy, error) {
+func (m *Meta) GetPolicy(policyID int64) (*placement.PolicyInfo, error) {
 	policyKey := m.policyKey(policyID)
 	value, err := m.txn.HGet(mPolicies, policyKey)
 	if err != nil || value == nil {
@@ -674,7 +675,7 @@ func (m *Meta) GetPolicy(policyID int64) (*placement.Policy, error) {
 		return nil, errors.Trace(err)
 	}
 
-	policy := &placement.Policy{}
+	policy := &placement.PolicyInfo{}
 	err = json.Unmarshal(value, policy)
 	return policy, errors.Trace(err)
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/placement_policy"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -96,7 +97,7 @@ type infoSchema struct {
 
 	// policyMap stores all placement policies.
 	policyMutex sync.RWMutex
-	policyMap   map[string]*placement.Policy
+	policyMap   map[string]*placement_policy.PolicyInfo
 
 	schemaMap map[string]*schemaTables
 
@@ -111,7 +112,7 @@ type infoSchema struct {
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
-	result.policyMap = make(map[string]*placement.Policy)
+	result.policyMap = make(map[string]*placement_policy.PolicyInfo)
 	result.ruleBundleMap = make(map[string]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
@@ -136,7 +137,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
-	result.policyMap = make(map[string]*placement.Policy)
+	result.policyMap = make(map[string]*placement_policy.PolicyInfo)
 	result.ruleBundleMap = make(map[string]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
@@ -354,17 +355,17 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 }
 
 // PolicyByName is used to find the policy.
-func (is *infoSchema) PolicyByName(name string) (*placement.Policy, bool) {
+func (is *infoSchema) PolicyByName(name string) (*placement_policy.PolicyInfo, bool) {
 	is.policyMutex.RLock()
 	defer is.policyMutex.RUnlock()
 	t, r := is.policyMap[name]
 	return t, r
 }
 
-func (is *infoSchema) PlacementPolicies() []*placement.Policy {
+func (is *infoSchema) PlacementPolicies() []*placement_policy.PolicyInfo {
 	is.policyMutex.RLock()
 	defer is.policyMutex.RUnlock()
-	policies := make([]*placement.Policy, 0, len(is.policyMap))
+	policies := make([]*placement_policy.PolicyInfo, 0, len(is.policyMap))
 	for _, policy := range is.policyMap {
 		policies = append(policies, policy)
 	}
