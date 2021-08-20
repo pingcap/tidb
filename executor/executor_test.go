@@ -317,11 +317,12 @@ func (s *testSuiteP1) TestShow(c *C) {
 	c.Assert(len(tk.MustQuery("show index from t").Rows()), Equals, 1)
 
 	tk.MustQuery("show charset").Check(testkit.Rows(
+		"ascii US ASCII ascii_bin 1",
+		"binary binary binary 1",
+		"latin1 Latin1 latin1_bin 1",
 		"utf8 UTF-8 Unicode utf8_bin 3",
 		"utf8mb4 UTF-8 Unicode utf8mb4_bin 4",
-		"ascii US ASCII ascii_bin 1",
-		"latin1 Latin1 latin1_bin 1",
-		"binary binary binary 1"))
+	))
 	c.Assert(len(tk.MustQuery("show master status").Rows()), Equals, 1)
 	tk.MustQuery("show create database test_show").Check(testkit.Rows("test_show CREATE DATABASE `test_show` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show privileges").Check(testkit.Rows("Alter Tables To alter the table",
@@ -5908,7 +5909,7 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 
 	// Test flash table with not_exist_table_name name.
 	_, err = tk.Exec("flashback table t_not_exists")
-	c.Assert(err.Error(), Equals, "Can't find dropped/truncated table: t_not_exists in DDL history jobs")
+	c.Assert(err.Error(), Equals, "Can't find localTemporary/dropped/truncated table: t_not_exists in DDL history jobs")
 
 	// Test flashback table failed by there is already a new table with the same name.
 	// If there is a new table with the same name, should return failed.
@@ -6007,6 +6008,11 @@ func (s *testRecoverTable) TestRecoverTempTable(c *C) {
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("create global temporary table t_recover (a int) on commit delete rows;")
 
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists tmp2_recover")
+	tk.MustExec("create temporary table tmp2_recover (a int);")
+
 	timeBeforeDrop, _, safePointSQL, resetGC := s.mockGC(tk)
 	defer resetGC()
 	// Set GC safe point
@@ -6015,6 +6021,9 @@ func (s *testRecoverTable) TestRecoverTempTable(c *C) {
 	tk.MustExec("drop table t_recover")
 	tk.MustGetErrCode("recover table t_recover;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("flashback table t_recover;", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("drop table tmp2_recover")
+	tk.MustGetErrMsg("recover table tmp2_recover;", "Can't find localTemporary/dropped/truncated table: tmp2_recover in DDL history jobs")
+	tk.MustGetErrMsg("flashback table tmp2_recover;", "Can't find localTemporary/dropped/truncated table: tmp2_recover in DDL history jobs")
 }
 
 func (s *testSuiteP2) TestPointGetPreparedPlan(c *C) {
