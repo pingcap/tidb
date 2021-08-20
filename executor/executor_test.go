@@ -8556,6 +8556,9 @@ func (s testSerialSuite) TestTemporaryTableNoNetwork(c *C) {
 }
 
 func (s testSerialSuite) assertTemporaryTableNoNetwork(c *C, temporaryTableType model.TempTableType) {
+	var done sync.WaitGroup
+	defer done.Wait()
+
 	// Test that table reader/index reader/index lookup on the temporary table do not need to visit TiKV.
 	tk := testkit.NewTestKit(c, s.store)
 	tk1 := testkit.NewTestKit(c, s.store)
@@ -8589,10 +8592,11 @@ func (s testSerialSuite) assertTemporaryTableNoNetwork(c *C, temporaryTableType 
 	c.Assert(err, IsNil)
 	blocked := make(chan struct{}, 1)
 	ctx, cancelFunc := context.WithCancel(context.Background())
+	done.Add(1)
 	go func() {
-		_, err := session.ResultSetToStringSlice(ctx, tk1.Se, rs)
+		defer done.Done()
+		_, _ = session.ResultSetToStringSlice(ctx, tk1.Se, rs)
 		blocked <- struct{}{}
-		c.Assert(err, NotNil)
 	}()
 	select {
 	case <-blocked:
