@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -30,6 +31,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/golang/mock/gomock"
+	"github.com/google/uuid"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -759,4 +761,108 @@ func (s *localSuite) TestFilterOverlapRange(c *C) {
 
 		c.Assert(filterOverlapRange(input, finished), DeepEquals, output)
 	}
+}
+
+func (s *localSuite) testMergeSSTs(c *C, kvs [][]common.KvPair, meta *sstMeta) {
+	dir := c.MkDir()
+	opt := &pebble.Options{
+		MemTableSize:             1024 * 1024,
+		MaxConcurrentCompactions: 16,
+		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
+		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
+		DisableWAL:               true,
+		ReadOnly:                 false,
+	}
+	db, err := pebble.Open(filepath.Join(dir, "test"), opt)
+	c.Assert(err, IsNil)
+	defer db.Close()
+	tmpPath := filepath.Join(dir, "test.sst")
+	err = os.Mkdir(tmpPath, 0o755)
+	c.Assert(err, IsNil)
+	_, engineUUID := backend.MakeUUID("ww", 0)
+	engineCtx, cancel := context.WithCancel(context.Background())
+
+	f := &File{
+		db:           db,
+		UUID:         engineUUID,
+		sstDir:       tmpPath,
+		ctx:          engineCtx,
+		cancel:       cancel,
+		sstMetasChan: make(chan metaOrFlush, 64),
+		config: backend.LocalEngineConfig{
+			Compact:            true,
+			CompactThreshold:   100,
+			CompactConcurrency: 4,
+		},
+	}
+
+	createSSTWriter := func() (*sstWriter, error) {
+		path := filepath.Join(f.sstDir, uuid.New().String()+".sst")
+		writer, err := newSSTWriter(path)
+		if err != nil {
+			return nil, err
+		}
+		sw := &sstWriter{sstMeta: &sstMeta{path: path}, writer: writer}
+		return sw, nil
+	}
+
+	metas := make([]*sstMeta, 0, len(kvs))
+
+	for _, kv := range kvs {
+		w, err := createSSTWriter()
+		c.Assert(err, IsNil)
+
+		err = w.writeKVs(kv)
+		c.Assert(err, IsNil)
+
+		c.Assert(w.writer.Close(), IsNil)
+		metas = append(metas, w.sstMeta)
+	}
+
+	i := dbSSTIngester{e: f}
+	newMeta, err := i.mergeSSTs(metas, tmpPath)
+	c.Assert(err, IsNil)
+
+	c.Assert(newMeta.totalCount, Equals, meta.totalCount)
+	c.Assert(newMeta.totalSize, Equals, meta.totalSize)
+}
+
+func (s *localSuite) TestMergeSSTs(c *C) {
+	kvs := make([][]common.KvPair, 0, 5)
+	for i := 0; i < 5; i++ {
+
+		var pairs []common.KvPair
+		for j := 0; j < 10; j++ {
+			var kv common.KvPair
+			kv.Key = make([]byte, 16)
+			key := i*100 + j
+			binary.BigEndian.PutUint64(kv.Key, uint64(key))
+			pairs = append(pairs, kv)
+		}
+
+		kvs = append(kvs, pairs)
+	}
+
+	s.testMergeSSTs(c, kvs, &sstMeta{totalCount: 50, totalSize: 800})
+}
+
+func (s *localSuite) TestMergeSSTsDuplicated(c *C) {
+	kvs := make([][]common.KvPair, 0, 5)
+	for i := 0; i < 4; i++ {
+		var pairs []common.KvPair
+		for j := 0; j < 10; j++ {
+			var kv common.KvPair
+			kv.Key = make([]byte, 16)
+			key := i*100 + j
+			binary.BigEndian.PutUint64(kv.Key, uint64(key))
+			pairs = append(pairs, kv)
+		}
+
+		kvs = append(kvs, pairs)
+	}
+
+	// make a duplication
+	kvs = append(kvs, kvs[0])
+
+	s.testMergeSSTs(c, kvs, &sstMeta{totalCount: 40, totalSize: 640})
 }
