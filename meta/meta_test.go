@@ -25,11 +25,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/placementpolicy"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,33 +49,22 @@ func TestPlacementPolicy(t *testing.T) {
 
 	// test the independent policy ID allocation.
 	m := meta.NewMeta(txn)
-	id, err := m.GenPolicyID()
-	require.NoError(t, err)
-	require.Equal(t, int64(1), id)
-
-	id, err = m.GetPolicyID()
-	require.NoError(t, err)
-	require.Equal(t, int64(1), id)
-
-	id, err = m.GenPolicyID()
-	require.NoError(t, err)
-	require.Equal(t, int64(2), id)
 
 	// test the meta storage of placemnt policy.
-	policy := &placement.Policy{
-		ID:                1,
-		Name:              model.NewCIStr("aa"),
-		PrimaryRegion:     "my primary",
-		Regions:           "my regions",
-		Leaders:           1,
-		Followers:         2,
-		Voters:            3,
-		Schedule:          "even",
-		Constraints:       "+disk=ssd",
-		LeaderConstraints: "+zone=shanghai",
+	policy := &placementpolicy.PolicyInfo{
+		Name:               model.NewCIStr("aa"),
+		PrimaryRegion:      "my primary",
+		Regions:            "my regions",
+		Learners:           1,
+		Followers:          2,
+		Voters:             3,
+		Schedule:           "even",
+		Constraints:        "+disk=ssd",
+		LearnerConstraints: "+zone=shanghai",
 	}
 	err = m.CreatePolicy(policy)
 	require.NoError(t, err)
+	require.Equal(t, policy.ID, int64(1))
 
 	err = m.CreatePolicy(policy)
 	require.NotNil(t, err)
@@ -87,7 +76,7 @@ func TestPlacementPolicy(t *testing.T) {
 
 	// mock updating the placement policy.
 	policy.Name = model.NewCIStr("bb")
-	policy.LeaderConstraints = "+zone=nanjing"
+	policy.LearnerConstraints = "+zone=nanjing"
 	err = m.UpdatePolicy(policy)
 	require.NoError(t, err)
 
@@ -97,7 +86,7 @@ func TestPlacementPolicy(t *testing.T) {
 
 	ps, err := m.ListPolicies()
 	require.NoError(t, err)
-	require.Equal(t, []*placement.Policy{policy}, ps)
+	require.Equal(t, []*placementpolicy.PolicyInfo{policy}, ps)
 
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)

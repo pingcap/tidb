@@ -352,20 +352,22 @@ func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 
 // CreatePolicy creates a policy.
 func (m *Meta) CreatePolicy(policy *placement.PolicyInfo) error {
-	// Autofill the policy ID.
-	policyIDMutex.Lock()
-	genID, err := m.txn.Inc(mPolicyGlobalID, 1)
-	if err != nil {
-		return errors.Trace(err)
+	if policy.ID != 0 {
+		policyKey := m.policyKey(policy.ID)
+		if err := m.checkPolicyNotExists(policyKey); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		// Autofill the policy ID.
+		policyIDMutex.Lock()
+		genID, err := m.txn.Inc(mPolicyGlobalID, 1)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		policyIDMutex.Unlock()
+		policy.ID = genID
 	}
-	policyIDMutex.Unlock()
-
-	policy.ID = genID
 	policyKey := m.policyKey(policy.ID)
-
-	if err := m.checkPolicyNotExists(policyKey); err != nil {
-		return errors.Trace(err)
-	}
 	data, err := json.Marshal(policy)
 	if err != nil {
 		return errors.Trace(err)
