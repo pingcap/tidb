@@ -349,7 +349,7 @@ func testLocalWriter(c *C, needSort bool, partitialSort bool) {
 	f.wg.Add(1)
 	go f.ingestSSTLoop()
 	sorted := needSort && !partitialSort
-	w, err := openLocalWriter(context.Background(), &backend.LocalWriterConfig{IsKVSorted: sorted}, f, 1<<20)
+	w, err := openLocalWriter(context.Background(), &backend.LocalWriterConfig{IsKVSorted: sorted}, f, 1024)
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
