@@ -88,8 +88,8 @@ const (
 	// 0xC0 - 0xFF: Reserved
 
 	// type means how to handle the serialized data.
+	typeUnknown int = 0
 	typeJSON    int = 1
-	typeUnknown int = 2
 	// todo: customized handler.
 )
 
