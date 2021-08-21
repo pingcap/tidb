@@ -425,11 +425,14 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	var resNode ast.ResultSetNode
 	switch n := originNode.(type) {
 	case *ast.SelectStmt:
-		resNode = n.From.TableRefs
+		resNode = n
+	case *ast.SetOprStmt:
+		resNode = n
 	case *ast.DeleteStmt:
 		resNode = n.TableRefs.TableRefs
 	case *ast.UpdateStmt:
 		resNode = n.TableRefs.TableRefs
+	//TODO: What about insert into (select * from t)
 	case *ast.InsertStmt:
 		resNode = n.Table.TableRefs
 	}
