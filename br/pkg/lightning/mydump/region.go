@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -224,12 +225,21 @@ func MakeTableRegions(
 		prevRowIDMax = fileRegionsRes.regions[len(fileRegionsRes.regions)-1].Chunk.RowIDMax
 	}
 
-	log.L().Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
-		zap.Int64("maxRegionSize", int64(cfg.Mydumper.MaxRegionSize)),
-		zap.Int("RegionsCount", len(filesRegions)),
-		zap.Duration("cost", time.Since(start)))
+	batchSize := float64(cfg.Mydumper.BatchSize)
+	if cfg.Mydumper.BatchSize <= 0 {
+		if meta.IsRowOrdered {
+			batchSize = float64(config.DefaultBatchSize)
+		} else {
+			batchSize = math.Max(float64(config.DefaultBatchSize), float64(meta.TotalSize))
+		}
+	}
 
-	AllocateEngineIDs(filesRegions, dataFileSizes, float64(cfg.Mydumper.BatchSize), cfg.Mydumper.BatchImportRatio, float64(cfg.App.TableConcurrency))
+	log.L().Info("makeTableRegions", zap.Int("filesCount", len(meta.DataFiles)),
+		zap.Int64("MaxRegionSize", int64(cfg.Mydumper.MaxRegionSize)),
+		zap.Int("RegionsCount", len(filesRegions)),
+		zap.Float64("BatchSize", batchSize),
+		zap.Duration("cost", time.Since(start)))
+	AllocateEngineIDs(filesRegions, dataFileSizes, batchSize, cfg.Mydumper.BatchImportRatio, float64(cfg.App.TableConcurrency))
 	return filesRegions, nil
 }
 

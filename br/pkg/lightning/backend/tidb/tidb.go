@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	stderrors "errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -372,30 +374,89 @@ func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID) error {
 
 func (be *tidbBackend) WriteRows(ctx context.Context, _ uuid.UUID, tableName string, columnNames []string, rows kv.Rows) error {
 	var err error
-outside:
+rowLoop:
 	for _, r := range rows.SplitIntoChunks(be.MaxChunkSize()) {
 		for i := 0; i < writeRowsMaxRetryTimes; i++ {
-			err = be.WriteRowsToDB(ctx, tableName, columnNames, r)
+			// Write in the batch mode first.
+			err = be.WriteBatchRowsToDB(ctx, tableName, columnNames, r)
 			switch {
 			case err == nil:
-				continue outside
+				continue rowLoop
 			case common.IsRetryableError(err):
 				// retry next loop
 			default:
-				return err
+				// WriteBatchRowsToDB failed in the batch mode and can not be retried,
+				// we need to redo the writing row-by-row to find where the error locates (and skip it correctly in future).
+				if err = be.WriteRowsToDB(ctx, tableName, columnNames, r); err != nil {
+					// If the error is not nil, it means we reach the max error count in the non-batch mode.
+					// For now, we will treat like maxErrorCount is always 0. So we will just return if any error occurs.
+					// TODO: implement the max error count.
+					return errors.Annotatef(err, "[%s] write rows reach max error count %d", tableName, 0)
+				}
 			}
 		}
-		return errors.Annotatef(err, "[%s] write rows reach max retry %d and still failed", tableName, writeRowsMaxRetryTimes)
+		return errors.Annotatef(err, "[%s] batch write rows reach max retry %d and still failed", tableName, writeRowsMaxRetryTimes)
 	}
 	return nil
 }
 
-func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, columnNames []string, r kv.Rows) error {
+type stmtTask struct {
+	rows tidbRows
+	stmt string
+}
+
+// WriteBatchRowsToDB write rows in batch mode, which will insert multiple rows like this:
+//   insert into t1 values (111), (222), (333), (444);
+func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string, columnNames []string, r kv.Rows) error {
 	rows := r.(tidbRows)
+	insertStmt := be.checkAndBuildStmt(rows, tableName, columnNames)
+	if insertStmt == nil {
+		return nil
+	}
+	// Note: we are not going to do interpolation (prepared statements) to avoid
+	// complication arise from data length overflow of BIT and BINARY columns
+	stmtTasks := make([]stmtTask, 1)
+	for i, row := range rows {
+		if i != 0 {
+			insertStmt.WriteByte(',')
+		}
+		insertStmt.WriteString(string(row))
+	}
+	stmtTasks[0] = stmtTask{rows, insertStmt.String()}
+	return be.execStmts(ctx, stmtTasks, true)
+}
+
+func (be *tidbBackend) checkAndBuildStmt(rows tidbRows, tableName string, columnNames []string) *strings.Builder {
 	if len(rows) == 0 {
 		return nil
 	}
+	return be.buildStmt(tableName, columnNames)
+}
 
+// WriteRowsToDB write rows in row-by-row mode, which will insert multiple rows like this:
+//   insert into t1 values (111);
+//   insert into t1 values (222);
+//   insert into t1 values (333);
+//   insert into t1 values (444);
+// See more details in br#1366: https://github.com/pingcap/br/issues/1366
+func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, columnNames []string, r kv.Rows) error {
+	rows := r.(tidbRows)
+	insertStmt := be.checkAndBuildStmt(rows, tableName, columnNames)
+	if insertStmt == nil {
+		return nil
+	}
+	is := insertStmt.String()
+	stmtTasks := make([]stmtTask, 0, len(rows))
+	for _, row := range rows {
+		var finalInsertStmt strings.Builder
+		finalInsertStmt.WriteString(is)
+		finalInsertStmt.WriteString(string(row))
+		stmtTasks = append(stmtTasks, stmtTask{[]tidbRow{row}, finalInsertStmt.String()})
+	}
+	return be.execStmts(ctx, stmtTasks, false)
+}
+
+func (be *tidbBackend) buildStmt(tableName string, columnNames []string) *strings.Builder {
 	var insertStmt strings.Builder
 	switch be.onDuplicate {
 	case config.ReplaceOnDup:
@@ -405,7 +466,6 @@ func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, colu
 	case config.ErrorOnDup:
 		insertStmt.WriteString("INSERT INTO ")
 	}
-
 	insertStmt.WriteString(tableName)
 	if len(columnNames) > 0 {
 		insertStmt.WriteByte('(')
@@ -418,27 +478,45 @@ func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, colu
 		insertStmt.WriteByte(')')
 	}
 	insertStmt.WriteString(" VALUES")
+	return &insertStmt
+}
 
-	// Note: we are not going to do interpolation (prepared statements) to avoid
-	// complication arise from data length overflow of BIT and BINARY columns
+func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, batch bool) error {
+	for _, stmtTask := range stmtTasks {
+		for i := 0; i < writeRowsMaxRetryTimes; i++ {
+			stmt := stmtTask.stmt
+			_, err := be.db.ExecContext(ctx, stmt)
 
-	for i, row := range rows {
-		if i != 0 {
-			insertStmt.WriteByte(',')
+			failpoint.Inject("mockNonRetryableError", func() {
+				// To mock the non-retryable error for TestWriteRowsErrorDowngrading test
+				err = stderrors.New("mock non-retryable error")
+			})
+
+			if err != nil {
+				if !common.IsContextCanceledError(err) {
+					log.L().Error("execute statement failed",
+						zap.Array("rows", stmtTask.rows), zap.String("stmt", redact.String(stmt)), zap.Error(err))
+				}
+				// It's batch mode, just return the error.
+				if batch {
+					return errors.Trace(err)
+				}
+				// Retry the non-batch insert here if this is not the last retry.
+				if common.IsRetryableError(err) && i != writeRowsMaxRetryTimes-1 {
+					continue
+				}
+				// TODO: count, record and skip the error.
+				// Just return if any error occurs for now.
+				return errors.Trace(err)
+			}
+			// No error, contine the next stmtTask.
+			break
 		}
-		insertStmt.WriteString(string(row))
-	}
-
-	// Retry will be done externally, so we're not going to retry here.
-	_, err := be.db.ExecContext(ctx, insertStmt.String())
-	if err != nil && !common.IsContextCanceledError(err) {
-		log.L().Error("execute statement failed", zap.String("stmt", redact.String(insertStmt.String())),
-			zap.Array("rows", rows), zap.Error(err))
 	}
 	failpoint.Inject("FailIfImportedSomeRows", func() {
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
 	})
-	return errors.Trace(err)
+	return nil
 }
 
 //nolint:nakedret // TODO: refactor

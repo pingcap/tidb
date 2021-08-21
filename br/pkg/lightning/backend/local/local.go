@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -57,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	split "github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -67,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/tikv/client-go/v2/oracle"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -799,7 +800,7 @@ func (e *File) loadEngineMeta() error {
 type local struct {
 	engines sync.Map // sync version of map[uuid.UUID]*File
 
-	pdCli    pd.Client
+	pdCtl    *pdutil.PdController
 	conns    common.GRPCConns
 	splitCli split.SplitClient
 	tls      *common.TLS
@@ -906,11 +907,11 @@ func NewLocalBackend(
 	localFile := cfg.SortedKVDir
 	rangeConcurrency := cfg.RangeConcurrency
 
-	pdCli, err := pd.NewClientWithContext(ctx, []string{pdAddr}, tls.ToPDSecurityOption())
+	pdCtl, err := pdutil.NewPdController(ctx, pdAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
 	if err != nil {
 		return backend.MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
 	}
-	splitCli := split.NewSplitClient(pdCli, tls.TLSConfig())
+	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig())
 
 	shouldCreate := true
 	if enableCheckpoint {
@@ -946,7 +947,7 @@ func NewLocalBackend(
 
 	local := &local{
 		engines:  sync.Map{},
-		pdCli:    pdCli,
+		pdCtl:    pdCtl,
 		splitCli: splitCli,
 		tls:      tls,
 		pdAddr:   pdAddr,
@@ -969,15 +970,15 @@ func NewLocalBackend(
 		duplicateDB:             duplicateDB,
 	}
 	local.conns = common.NewGRPCConns()
-	if err = local.checkMultiIngestSupport(ctx, pdCli); err != nil {
+	if err = local.checkMultiIngestSupport(ctx, pdCtl); err != nil {
 		return backend.MakeBackend(nil), err
 	}
 
 	return backend.MakeBackend(local), nil
 }
 
-func (local *local) checkMultiIngestSupport(ctx context.Context, pdClient pd.Client) error {
-	stores, err := conn.GetAllTiKVStores(ctx, pdClient, conn.SkipTiFlash)
+func (local *local) checkMultiIngestSupport(ctx context.Context, pdCtl *pdutil.PdController) error {
+	stores, err := conn.GetAllTiKVStores(ctx, pdCtl.GetPDClient(), conn.SkipTiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1278,7 +1279,7 @@ func (local *local) allocateTSIfNotExists(ctx context.Context, engine *File) err
 	if engine.TS > 0 {
 		return nil
 	}
-	physical, logical, err := local.pdCli.GetTS(ctx)
+	physical, logical, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return err
 	}
@@ -1365,6 +1366,28 @@ func (local *local) WriteToTiKV(
 	region *split.RegionInfo,
 	start, end []byte,
 ) ([]*sst.SSTMeta, Range, rangeStats, error) {
+	for _, peer := range region.Region.GetPeers() {
+		var e error
+		for i := 0; i < maxRetryTimes; i++ {
+			store, err := local.pdCtl.GetStoreInfo(ctx, peer.StoreId)
+			if err != nil {
+				e = err
+				continue
+			}
+			if store.Status.Capacity > 0 {
+				// The available disk percent of TiKV
+				ratio := store.Status.Available * 100 / store.Status.Capacity
+				if ratio < 10 {
+					return nil, Range{}, rangeStats{}, errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d",
+						store.Store.Address, store.Status.Available, store.Status.Capacity)
+				}
+			}
+			break
+		}
+		if e != nil {
+			log.L().Error("failed to get StoreInfo from pd http api", zap.Error(e))
+		}
+	}
 	begin := time.Now()
 	regionRange := intersectRange(region.Region, Range{start: start, end: end})
 	opt := &pebble.IterOptions{LowerBound: regionRange.start, UpperBound: regionRange.end}
@@ -1698,7 +1721,7 @@ WriteAndIngest:
 		}
 		startKey := codec.EncodeBytes([]byte{}, pairStart)
 		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
-		regions, err = paginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
+		regions, err = split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
 		if err != nil || len(regions) == 0 {
 			log.L().Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)),
 				logutil.Key("startKey", startKey), logutil.Key("endKey", endKey), zap.Int("retry", retry))
@@ -1877,13 +1900,18 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *File
 	var allErrLock sync.Mutex
 	var allErr error
 	var wg sync.WaitGroup
-
-	wg.Add(len(ranges))
+	metErr := atomic.NewBool(false)
 
 	for _, r := range ranges {
 		startKey := r.start
 		endKey := r.end
 		w := local.rangeConcurrency.Apply()
+		// if meet error here, skip try more here to allow fail fast.
+		if metErr.Load() {
+			local.rangeConcurrency.Recycle(w)
+			break
+		}
+		wg.Add(1)
 		go func(w *worker.Worker) {
 			defer func() {
 				local.rangeConcurrency.Recycle(w)
@@ -1910,6 +1938,9 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *File
 			allErrLock.Lock()
 			allErr = multierr.Append(allErr, err)
 			allErrLock.Unlock()
+			if err != nil {
+				metErr.Store(true)
+			}
 		}(w)
 	}
 
@@ -2013,7 +2044,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 		return nil
 	}
 	log.L().Info("Begin collect duplicate local keys", zap.String("table", tbl.Meta().Name.String()))
-	physicalTS, logicalTS, err := local.pdCli.GetTS(ctx)
+	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return err
 	}
@@ -2032,7 +2063,7 @@ func (local *local) CollectLocalDuplicateRows(ctx context.Context, tbl table.Tab
 
 func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) error {
 	log.L().Info("Begin collect remote duplicate keys", zap.String("table", tbl.Meta().Name.String()))
-	physicalTS, logicalTS, err := local.pdCli.GetTS(ctx)
+	physicalTS, logicalTS, err := local.pdCtl.GetPDClient().GetTS(ctx)
 	if err != nil {
 		return err
 	}
@@ -2151,43 +2182,31 @@ func sortAndMergeRanges(ranges []Range) []Range {
 }
 
 func filterOverlapRange(ranges []Range, finishedRanges []Range) []Range {
-	if len(finishedRanges) == 0 {
+	if len(ranges) == 0 || len(finishedRanges) == 0 {
 		return ranges
 	}
 
-	result := make([]Range, 0, len(ranges))
-	rIdx := 0
-	fIdx := 0
-	for rIdx < len(ranges) && fIdx < len(finishedRanges) {
-		if bytes.Compare(ranges[rIdx].end, finishedRanges[fIdx].start) <= 0 {
-			result = append(result, ranges[rIdx])
-			rIdx++
-		} else if bytes.Compare(ranges[rIdx].start, finishedRanges[fIdx].end) >= 0 {
-			fIdx++
-		} else if bytes.Compare(ranges[rIdx].start, finishedRanges[fIdx].start) < 0 {
-			result = append(result, Range{start: ranges[rIdx].start, end: finishedRanges[fIdx].start})
-			switch bytes.Compare(ranges[rIdx].end, finishedRanges[fIdx].end) {
-			case -1:
-				rIdx++
-			case 0:
-				rIdx++
-				fIdx++
-			case 1:
-				ranges[rIdx].start = finishedRanges[fIdx].end
-				fIdx++
+	result := make([]Range, 0)
+	for _, r := range ranges {
+		start := r.start
+		end := r.end
+		for len(finishedRanges) > 0 && bytes.Compare(finishedRanges[0].start, end) < 0 {
+			fr := finishedRanges[0]
+			if bytes.Compare(fr.start, start) > 0 {
+				result = append(result, Range{start: start, end: fr.start})
 			}
-		} else if bytes.Compare(ranges[rIdx].end, finishedRanges[fIdx].end) > 0 {
-			ranges[rIdx].start = finishedRanges[fIdx].end
-			fIdx++
-		} else {
-			rIdx++
+			if bytes.Compare(fr.end, start) > 0 {
+				start = fr.end
+			}
+			if bytes.Compare(fr.end, end) > 0 {
+				break
+			}
+			finishedRanges = finishedRanges[1:]
+		}
+		if bytes.Compare(start, end) < 0 {
+			result = append(result, Range{start: start, end: end})
 		}
 	}
-
-	if rIdx < len(ranges) {
-		result = append(result, ranges[rIdx:]...)
-	}
-
 	return result
 }
 
@@ -2736,8 +2755,8 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 	l := len(w.writeBatch)
 	cnt := w.batchCount
 	var lastKey []byte
-	if len(w.writeBatch) > 0 {
-		lastKey = w.writeBatch[len(w.writeBatch)-1].Key
+	if cnt > 0 {
+		lastKey = w.writeBatch[cnt-1].Key
 	}
 	for _, pair := range kvs {
 		if w.isWriteBatchSorted && bytes.Compare(lastKey, pair.Key) > 0 {
@@ -3123,7 +3142,10 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 	for {
 		if bytes.Equal(lastKey, key) {
 			log.L().Warn("duplicated key found, skipped", zap.Binary("key", lastKey))
-			continue
+			newMeta.totalCount--
+			newMeta.totalSize -= int64(len(key) + len(val))
+
+			goto nextKey
 		}
 		internalKey.UserKey = key
 		err = writer.Add(internalKey, val)
@@ -3131,6 +3153,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 			return nil, err
 		}
 		lastKey = append(lastKey[:0], key...)
+	nextKey:
 		key, val, err = mergeIter.Next()
 		if err != nil {
 			return nil, err

@@ -10,6 +10,7 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -43,12 +44,21 @@ for BACKEND in 'local' 'tidb' 'importer'; do
 
     run_lightning --backend $BACKEND
 
+    run_sql 'ADMIN CHECK TABLE gencol.nested'
     run_sql 'SELECT * FROM gencol.nested WHERE a = 100'
     check_contains 'a: 100'
     check_contains 'b: 101'
     check_contains 'c: 102'
     check_contains 'd: 103'
     check_contains 'e: 104'
+    check_contains 'f: 105'
+    run_sql 'SELECT * FROM gencol.nested WHERE f = 1005'
+    check_contains 'a: 1000'
+    check_contains 'b: 1001'
+    check_contains 'c: 1002'
+    check_contains 'd: 1003'
+    check_contains 'e: 1004'
+    check_contains 'f: 1005'
 
     run_sql 'SELECT * FROM gencol.various_types' --binary-as-hex
     check_contains 'int64: 3'
@@ -68,4 +78,18 @@ for BACKEND in 'local' 'tidb' 'importer'; do
     # FIXME: test below disabled due to pingcap/tidb#21510
     # check_contains 'week: 6'
     check_contains 'tz: 1969-12-31 16:00:01'
+
+    run_sql 'ADMIN CHECK TABLE gencol.virtual_only'
+    run_sql 'SELECT * FROM gencol.virtual_only WHERE id = 30'
+    check_contains 'id_plus_1: 31'
+    check_contains 'id_plus_2: 32'
+    run_sql 'SELECT * FROM gencol.virtual_only WHERE id_plus_2 = 42'
+    check_contains 'id: 40'
+    check_contains 'id_plus_1: 41'
+
+    run_sql 'ADMIN CHECK TABLE gencol.expr_index'
+    run_sql 'SELECT /*+ use_index(gencol.expr_index, idx_lower_b) */ * FROM gencol.expr_index WHERE lower(b) = "cdsfds"'
+    check_contains 'id: 2'
+    check_contains 'a: ABC'
+    check_contains 'b: CDSFDS'
 done

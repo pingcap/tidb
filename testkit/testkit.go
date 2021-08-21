@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -74,6 +75,17 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	tk.require.NoError(err, comment)
 	tk.require.NotNil(rs, comment)
 	return tk.ResultSetToResult(rs, comment)
+}
+
+// QueryToErr executes a sql statement and discard results.
+func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
+	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
+	res, err := tk.Exec(sql, args...)
+	tk.require.NoError(err, comment)
+	tk.require.NotNil(res, comment)
+	_, resErr := session.GetRows4Test(context.Background(), tk.session, res)
+	tk.require.Nil(res.Close())
+	return resErr
 }
 
 // ResultSetToResult converts sqlexec.RecordSet to testkit.Result.

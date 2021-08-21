@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -243,7 +244,7 @@ func (s *lightningServerSuite) TestGetDeleteTask(c *C) {
 	go func() {
 		_ = s.lightning.RunServer()
 	}()
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Check `GET /tasks` without any active tasks
 
@@ -375,7 +376,7 @@ func (s *lightningServerSuite) TestHTTPAPIOutsideServerMode(c *C) {
 	go func() {
 		errCh <- s.lightning.RunOnce(s.lightning.ctx, cfg, nil)
 	}()
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(600 * time.Millisecond)
 
 	var curTask struct {
 		Current int64

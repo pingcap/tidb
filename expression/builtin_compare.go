@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -398,6 +399,11 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 				cmpTp = types.ETDatetime
 			}
 		}
+	}
+	if (args[0].GetType().EvalType() == types.ETInt || IsBinaryLiteral(args[0])) &&
+		(args[1].GetType().EvalType() == types.ETInt || IsBinaryLiteral(args[1])) &&
+		(args[2].GetType().EvalType() == types.ETInt || IsBinaryLiteral(args[2])) {
+		return types.ETInt
 	}
 
 	return cmpTp
