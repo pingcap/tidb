@@ -174,7 +174,13 @@ type MemBuffer interface {
 
 	// Size returns sum of keys and values length.
 	Size() int
+
+	Checkpoint() *MemCheckpoint
+
+	RevertToCheckpoint(cp *MemCheckpoint)
 }
+
+type MemCheckpoint = tikv.MemCheckpoint
 
 // LockCtx contains information for LockKeys method.
 type LockCtx = tikvstore.LockCtx

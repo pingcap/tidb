@@ -208,3 +208,5 @@ replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.
 
 // fix date race in the testify. it can be remove after merging https://github.com/stretchr/testify/pull/1165
 replace github.com/stretchr/testify => github.com/hawkingrei/testify v1.7.1-0.20220318075534-088488aa27f2
+
+replace github.com/tikv/client-go/v2 => /Users/cs/code/goread/src/github.com/pingcap/client-go

@@ -83,7 +83,7 @@ func TestSimple(t *testing.T) {
 	unreservedKws := []string{
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "file", "full",
-		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
+		"local", "names", "offset", "password", "prepare", "quick", "rollback", "savepoint", "session", "signed",
 		"start", "global", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "subpartition", "subpartitions", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
@@ -544,6 +544,8 @@ func TestDMLStmt(t *testing.T) {
 			INSERT INTO tmp SELECT * from bar;
 			SELECT * from tmp;
 		ROLLBACK;`, true, "START TRANSACTION; INSERT INTO `tmp` SELECT * FROM `bar`; SELECT * FROM `tmp`; ROLLBACK"},
+		{"SAVEPOINT x", true, "SAVEPOINT x"},
+		{"ROLLBACK TO x", true, "ROLLBACK TO x"},
 
 		// table statement
 		{"TABLE t", true, "TABLE `t`"},

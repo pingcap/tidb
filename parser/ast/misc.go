@@ -611,11 +611,17 @@ type RollbackStmt struct {
 	stmtNode
 	// CompletionType overwrites system variable `completion_type` within transaction
 	CompletionType CompletionType
+
+	SavepointName string
 }
 
 // Restore implements Node interface.
 func (n *RollbackStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ROLLBACK")
+	if n.SavepointName != "" {
+		ctx.WritePlain(" TO ")
+		ctx.WritePlain(n.SavepointName)
+	}
 	if err := n.CompletionType.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore RollbackStmt.CompletionType")
 	}
@@ -880,6 +886,27 @@ func (n *KillStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*KillStmt)
+	return v.Leave(n)
+}
+
+// SavepointStmt is the statement of SAVEPOINT.
+type SavepointStmt struct {
+	stmtNode
+
+	Name string
+}
+
+// Restore implements Node interface.
+func (n *SavepointStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SAVEPOINT ")
+	ctx.WritePlain(n.Name)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *SavepointStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*SavepointStmt)
 	return v.Leave(n)
 }
 

@@ -130,6 +130,14 @@ func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
 	return id, true
 }
 
+// SavepointRecord is a (savepoint-name, CP) pair.
+type SavepointRecord struct {
+	// name is the name of the savepoint
+	Name string
+	// cp is the checkpoint of memory buffer that related to the savepoint
+	Cp *kv.MemCheckpoint
+}
+
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
 	forUpdateTS uint64
@@ -173,6 +181,10 @@ type TransactionContext struct {
 	ForUpdate  uint32
 	// TxnScope indicates the value of txn_scope
 	TxnScope string
+
+	// Savepoints contains all definitions of the savepoint of a transaction at runtime, the order of the SavepointRecord is the same with the SAVEPOINT statements.
+	// It is used for a lookup when running ‘ROLLBACK TO' statement.
+	Savepoints []SavepointRecord
 
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
@@ -282,6 +294,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.IsStaleness = false
+	tc.Savepoints = nil
 }
 
 // ClearDelta clears the delta map.

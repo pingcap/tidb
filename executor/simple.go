@@ -133,6 +133,8 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeBegin(ctx, x)
 	case *ast.CommitStmt:
 		e.executeCommit(x)
+	case *ast.SavepointStmt:
+		err = e.executeSavepoint(ctx, x)
 	case *ast.RollbackStmt:
 		err = e.executeRollback(x)
 	case *ast.CreateUserStmt:
@@ -636,6 +638,24 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	if s.CausalConsistencyOnly {
 		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
+	return nil
+}
+
+func (e *SimpleExec) executeSavepoint(ctx context.Context, s *ast.SavepointStmt) error {
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	if !e.ctx.GetSessionVars().InTxn() {
+		logutil.BgLogger().Info("SAVEPOINT in auto-commit transaction, ignored.", zap.String("name", s.Name))
+		return nil
+	}
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+
+	memBuffer := txn.GetMemBuffer()
+	cp := memBuffer.Checkpoint()
+	txnCtx.Savepoints = append(txnCtx.Savepoints, variable.SavepointRecord{Name: s.Name, Cp: cp})
+
 	return nil
 }
 
