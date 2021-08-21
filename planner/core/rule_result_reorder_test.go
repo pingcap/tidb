@@ -44,7 +44,7 @@ func (s *testRuleReorderResultsSerial) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testRuleReorderResultsSerial) TearDownSuite(c *C) {
+func (s *testRuleReorderResultsSerial) TearDownTest(c *C) {
 	s.dom.Close()
 	c.Assert(s.store.Close(), IsNil)
 }
