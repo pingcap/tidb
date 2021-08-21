@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -366,6 +367,9 @@ type Security struct {
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
 	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
+	// Allow automatic TLS certificate generation
+	AutoTLS       bool   `toml:"auto-tls" json:"auto-tls"`
+	MinTLSVersion string `toml:"tls-version" json:"tls-version"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -544,6 +548,8 @@ type IsolationRead struct {
 type Experimental struct {
 	// Whether enable global kill.
 	EnableGlobalKill bool `toml:"enable-global-kill" json:"-"`
+	// Whether enable charset feature.
+	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -666,6 +672,7 @@ var defaultConf = Config{
 	},
 	Experimental: Experimental{
 		EnableGlobalKill: false,
+		EnableNewCharset: false,
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
@@ -674,6 +681,7 @@ var defaultConf = Config{
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
+		AutoTLS:                     true,
 	},
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,
@@ -706,20 +714,21 @@ func StoreGlobalConfig(config *Config) {
 }
 
 var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl":            {},
-	"pessimistic-txn.enable":         {},
-	"log.file.log-rotate":            {},
-	"log.log-slow-query":             {},
-	"txn-local-latches":              {},
-	"txn-local-latches.enabled":      {},
-	"txn-local-latches.capacity":     {},
-	"performance.max-memory":         {},
-	"max-txn-time-use":               {},
-	"experimental.allow-auto-random": {},
-	"enable-redact-log":              {}, // use variable tidb_redact_log instead
-	"tikv-client.copr-cache.enable":  {},
-	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
-	"enable-streaming":               {},
+	"pessimistic-txn.ttl":                 {},
+	"pessimistic-txn.enable":              {},
+	"log.file.log-rotate":                 {},
+	"log.log-slow-query":                  {},
+	"txn-local-latches":                   {},
+	"txn-local-latches.enabled":           {},
+	"txn-local-latches.capacity":          {},
+	"performance.max-memory":              {},
+	"max-txn-time-use":                    {},
+	"experimental.allow-auto-random":      {},
+	"enable-redact-log":                   {}, // use variable tidb_redact_log instead
+	"tikv-client.copr-cache.enable":       {},
+	"alter-primary-key":                   {}, // use NONCLUSTERED keyword instead
+	"enable-streaming":                    {},
+	"experimental.allow-expression-index": {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {

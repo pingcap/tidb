@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -39,7 +40,10 @@ var (
 
 func percentile(data sort.Interface, percent int) int {
 	// Ordinal rank k = Ceil(P / 100 * N)
-	k := int(math.Ceil(float64(data.Len()) / 100 * float64(percent)))
+	k := int(math.Ceil(float64(data.Len()) * (float64(percent) / 100)))
+	if k > data.Len() {
+		k = data.Len()
+	}
 	return selection.Select(data, k)
 }
 

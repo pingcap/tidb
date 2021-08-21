@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -242,8 +243,12 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 	}
 
 	hashCols := make([]expression.Expression, 0, len(e.HashCols))
+	types := make([]*tipb.FieldType, 0, len(e.HashCols))
 	for _, col := range e.HashCols {
-		hashCols = append(hashCols, col)
+		hashCols = append(hashCols, col.Col)
+		tp := expression.ToPBFieldType(col.Col.RetType)
+		tp.Collate = col.CollateID
+		types = append(types, tp)
 	}
 	hashColPb, err := expression.ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, hashCols, ctx.GetClient())
 	if err != nil {
@@ -254,6 +259,7 @@ func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.Store
 		EncodedTaskMeta: encodedTask,
 		PartitionKeys:   hashColPb,
 		Child:           child,
+		Types:           types,
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{

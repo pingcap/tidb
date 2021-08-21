@@ -8,14 +8,16 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package domain
+package domain_test
 
 import (
 	"testing"
 
+	. "github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
@@ -27,4 +29,14 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
+}
+
+// TestDomainSerial handles tests in serial
+func TestDomainSerial(t *testing.T) {
+	t.Parallel()
+
+	// these tests should run in serial for failpoint is global
+	t.Run("info", SubTestInfo)
+	t.Run("domain", SubTestDomain)
+	t.Run("domainSession", SubTestDomainSession)
 }
