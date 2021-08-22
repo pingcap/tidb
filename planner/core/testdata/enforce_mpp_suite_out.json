@@ -295,15 +295,10 @@
           "  └─TableRowIDScan_41(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
           "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
-          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
           "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
-          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
           "Aggregation can not be pushed to tikv because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
-          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
           "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
-          "MPP mode may be blocked because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now",
           "Aggregation can not be pushed to tiflash because expressions of AggFunc `count` contain virtual column or correlated column, which is not supported now"
         ]
       },
@@ -316,11 +311,8 @@
           "    └─TableFullScan_10 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because groupByItems contain virtual columns, which is not supported now",
           "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now",
-          "MPP mode may be blocked because groupByItems contain virtual columns, which is not supported now",
           "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now",
-          "MPP mode may be blocked because groupByItems contain virtual columns, which is not supported now",
           "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now"
         ]
       },
@@ -333,13 +325,9 @@
           "    └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "MPP mode may be blocked because AggFunc `group_concat` is not supported now",
           "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now",
-          "MPP mode may be blocked because AggFunc `group_concat` is not supported now",
           "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now",
-          "MPP mode may be blocked because AggFunc `group_concat` is not supported now",
           "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now",
-          "MPP mode may be blocked because AggFunc `group_concat` is not supported now",
           "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now"
         ]
       },
@@ -353,23 +341,20 @@
         ],
         "Warn": [
           "Scalar function 'md5'(signature: MD5) can not be pushed to tiflash",
-          "MPP mode may be blocked because groupByItems contain unsupported exprs",
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
           "Scalar function 'md5'(signature: MD5) can not be pushed to tiflash",
-          "MPP mode may be blocked because groupByItems contain unsupported exprs",
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
           "Scalar function 'md5'(signature: MD5) can not be pushed to tiflash",
-          "MPP mode may be blocked because groupByItems contain unsupported exprs",
           "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"
         ]
       },
       {
         "SQL": "EXPLAIN SELECT count(a) from t where c=1; -- 11. type not supported",
         "Plan": [
-          "HashAgg_7 1.00 root  funcs:count(test.t.a)->Column#5",
-          "└─Selection_17 10000.00 root  eq(test.t.c, 00:00:01.000000)",
-          "  └─TableReader_16 10000.00 root  data:TableFullScan_15",
-          "    └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg_11 1.00 root  funcs:count(test.t.a)->Column#5",
+          "└─Selection_29 10.00 root  eq(test.t.c, 00:00:01.000000)",
+          "  └─TableReader_28 10000.00 root  data:TableFullScan_27",
+          "    └─TableFullScan_27 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Expr 'test.t.c' can not be pushed to TiFlash because it contains Duration type",
@@ -418,7 +403,7 @@
     "Name": "TestEnforceMPPWarning3",
     "Cases": [
       {
-        "SQL": "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;",
+        "SQL": "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;set @@tidb_hash_exchange_with_new_collation=0;",
         "Plan": null,
         "Warn": null
       },

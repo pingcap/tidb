@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -886,7 +887,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrFunctionalIndexRefAutoIncrement:                       mysql.Message("Expression index '%s' cannot refer to an auto-increment column", nil),
 	ErrCannotDropColumnFunctionalIndex:                       mysql.Message("Cannot drop column '%s' because it is used by an expression index. In order to drop the column, you must remove the expression index", nil),
 	ErrFunctionalIndexPrimaryKey:                             mysql.Message("The primary key cannot be an expression index", nil),
-	ErrFunctionalIndexOnLob:                                  mysql.Message("Cannot create an expression index on an expression that returns a BLOB or TEXT. Please consider using CAST", nil),
+	ErrFunctionalIndexOnBlob:                                 mysql.Message("Cannot create an expression index on an expression that returns a BLOB or TEXT. Please consider using CAST", nil),
 	ErrFunctionalIndexFunctionIsNotAllowed:                   mysql.Message("Expression of expression index '%s' contains a disallowed function", nil),
 	ErrFulltextFunctionalIndex:                               mysql.Message("Fulltext expression index is not supported", nil),
 	ErrSpatialFunctionalIndex:                                mysql.Message("Spatial expression index is not supported", nil),

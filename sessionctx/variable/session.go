@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -186,7 +187,7 @@ func (tc *TransactionContext) GetShard(shardRowIDBits uint64, typeBitsLength uin
 		return 0
 	}
 	if tc.shardRand == nil {
-		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS)))
+		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
 	}
 	if tc.shardRemain <= 0 {
 		tc.updateShard()
@@ -356,6 +357,69 @@ func (r *RewritePhaseInfo) Reset() {
 	r.PreprocessSubQueries = 0
 }
 
+// TemporaryTableData is a interface to maintain temporary data in session
+type TemporaryTableData interface {
+	kv.Retriever
+	// Staging create a new staging buffer inside the MemBuffer.
+	// Subsequent writes will be temporarily stored in this new staging buffer.
+	// When you think all modifications looks good, you can call `Release` to public all of them to the upper level buffer.
+	Staging() kv.StagingHandle
+	// Release publish all modifications in the latest staging buffer to upper level.
+	Release(kv.StagingHandle)
+	// Cleanup cleanups the resources referenced by the StagingHandle.
+	// If the changes are not published by `Release`, they will be discarded.
+	Cleanup(kv.StagingHandle)
+	// GetTableSize get the size of a table
+	GetTableSize(tblID int64) int64
+	// DeleteTableKey removes the entry for key k from table
+	DeleteTableKey(tblID int64, k kv.Key) error
+	// SetTableKey sets the entry for k from table
+	SetTableKey(tblID int64, k kv.Key, val []byte) error
+}
+
+// temporaryTableData is used for store temporary table data in session
+type temporaryTableData struct {
+	kv.MemBuffer
+	tblSize map[int64]int64
+}
+
+// NewTemporaryTableData creates a new TemporaryTableData
+func NewTemporaryTableData(memBuffer kv.MemBuffer) TemporaryTableData {
+	return &temporaryTableData{
+		MemBuffer: memBuffer,
+		tblSize:   make(map[int64]int64),
+	}
+}
+
+// GetTableSize get the size of a table
+func (d *temporaryTableData) GetTableSize(tblID int64) int64 {
+	if tblSize, ok := d.tblSize[tblID]; ok {
+		return tblSize
+	}
+	return 0
+}
+
+// DeleteTableKey removes the entry for key k from table
+func (d *temporaryTableData) DeleteTableKey(tblID int64, k kv.Key) error {
+	bufferSize := d.MemBuffer.Size()
+	defer d.updateTblSize(tblID, bufferSize)
+
+	return d.MemBuffer.Delete(k)
+}
+
+// SetTableKey sets the entry for k from table
+func (d *temporaryTableData) SetTableKey(tblID int64, k kv.Key, val []byte) error {
+	bufferSize := d.MemBuffer.Size()
+	defer d.updateTblSize(tblID, bufferSize)
+
+	return d.MemBuffer.Set(k, val)
+}
+
+func (d *temporaryTableData) updateTblSize(tblID int64, beforeSize int) {
+	delta := int64(d.MemBuffer.Size() - beforeSize)
+	d.tblSize[tblID] = d.GetTableSize(tblID) + delta
+}
+
 const (
 	// oneShotDef means default, that is tx_isolation_one_shot not set.
 	oneShotDef txnIsolationLevelOneShotState = iota
@@ -514,6 +578,11 @@ type SessionVars struct {
 	// Default value is `true`, means to be determined by the optimizer.
 	// Value set to `false` means never use mpp.
 	allowMPPExecution bool
+
+	// HashExchangeWithNewCollation means if we support hash exchange when new collation is enabled.
+	// Default value is `true`, means support hash exchange when new collation is enabled.
+	// Value set to `false` means not use hash exchange when new collation is enabled.
+	HashExchangeWithNewCollation bool
 
 	// enforceMPPExecution means if we should enforce mpp way to execute query.
 	// Default value is `false`, means to be determined by variable `allowMPPExecution`.
@@ -870,7 +939,26 @@ type SessionVars struct {
 	LocalTemporaryTables interface{}
 
 	// TemporaryTableData stores committed kv values for temporary table for current session.
-	TemporaryTableData kv.MemBuffer
+	TemporaryTableData TemporaryTableData
+
+	// MPPStoreLastFailTime records the lastest fail time that a TiFlash store failed.
+	MPPStoreLastFailTime map[string]time.Time
+
+	// MPPStoreFailTTL indicates the duration that protect TiDB from sending task to a new recovered TiFlash.
+	MPPStoreFailTTL string
+
+	// cached is used to optimze the object allocation.
+	cached struct {
+		curr int8
+		data [2]stmtctx.StatementContext
+	}
+}
+
+// InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
+func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
+	s.cached.curr = (s.cached.curr + 1) % 2
+	s.cached.data[s.cached.curr] = stmtctx.StatementContext{}
+	return &s.cached.data[s.cached.curr]
 }
 
 // AllocMPPTaskID allocates task id for mpp tasks. It will reset the task id if the query's
@@ -917,6 +1005,11 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
+	if s.InTxn() {
+		// UnionScan cannot get partition table IDs in dynamic-mode, this is a quick-fix for issues/26719,
+		// please see it for more details.
+		return false
+	}
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
@@ -925,6 +1018,7 @@ func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	return parser.ParserConfig{
 		EnableWindowFunction:        s.EnableWindowFunction,
 		EnableStrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
+		SkipPositionRecording:       true,
 	}
 }
 
@@ -1087,6 +1181,8 @@ func NewSessionVars() *SessionVars {
 		CTEMaxRecursionDepth:        DefCTEMaxRecursionDepth,
 		TMPTableSize:                DefTMPTableSize,
 		EnableGlobalTemporaryTable:  DefTiDBEnableGlobalTemporaryTable,
+		MPPStoreLastFailTime:        make(map[string]time.Time),
+		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1134,7 +1230,9 @@ func NewSessionVars() *SessionVars {
 
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
+	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
 	vars.enforceMPPExecution = DefTiDBEnforceMPPExecution
+	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
@@ -1517,19 +1615,6 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 
 	return nil
 }
-
-// special session variables.
-const (
-	SQLModeVar           = "sql_mode"
-	CharacterSetResults  = "character_set_results"
-	MaxAllowedPacket     = "max_allowed_packet"
-	TimeZone             = "time_zone"
-	TxnIsolation         = "tx_isolation"
-	TransactionIsolation = "transaction_isolation"
-	TxnIsolationOneShot  = "tx_isolation_one_shot"
-	MaxExecutionTime     = "max_execution_time"
-	ReadOnly             = "read_only"
-)
 
 // TableDelta stands for the changed count for one table or partition.
 type TableDelta struct {
@@ -2214,14 +2299,18 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 	return s.seekFactor
 }
 
-// GetTemporaryTableSnapshotValue get temporary table value from session
-func (s *SessionVars) GetTemporaryTableSnapshotValue(ctx context.Context, key kv.Key) ([]byte, error) {
-	memData := s.TemporaryTableData
-	if memData == nil {
+// TemporaryTableSnapshotReader can read the temporary table snapshot data
+type TemporaryTableSnapshotReader struct {
+	temporaryTableData TemporaryTableData
+}
+
+// Get gets the value for key k from snapshot.
+func (s *TemporaryTableSnapshotReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	if s.temporaryTableData == nil {
 		return nil, kv.ErrNotExist
 	}
 
-	v, err := memData.Get(ctx, key)
+	v, err := s.temporaryTableData.Get(ctx, k)
 	if err != nil {
 		return v, err
 	}
@@ -2233,9 +2322,23 @@ func (s *SessionVars) GetTemporaryTableSnapshotValue(ctx context.Context, key kv
 	return v, nil
 }
 
-// GetTemporaryTableTxnValue returns a kv.Getter to fetch temporary table data in txn
-func (s *SessionVars) GetTemporaryTableTxnValue(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, error) {
-	v, err := txn.GetMemBuffer().Get(ctx, key)
+// TemporaryTableSnapshotReader can read the temporary table snapshot data
+func (s *SessionVars) TemporaryTableSnapshotReader(tblInfo *model.TableInfo) *TemporaryTableSnapshotReader {
+	if tblInfo.TempTableType == model.TempTableGlobal {
+		return &TemporaryTableSnapshotReader{nil}
+	}
+	return &TemporaryTableSnapshotReader{s.TemporaryTableData}
+}
+
+// TemporaryTableTxnReader can read the temporary table txn data
+type TemporaryTableTxnReader struct {
+	memBuffer kv.MemBuffer
+	snapshot  *TemporaryTableSnapshotReader
+}
+
+// Get gets the value for key k from txn.
+func (s *TemporaryTableTxnReader) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	v, err := s.memBuffer.Get(ctx, k)
 	if err == nil {
 		if len(v) == 0 {
 			return nil, kv.ErrNotExist
@@ -2248,5 +2351,13 @@ func (s *SessionVars) GetTemporaryTableTxnValue(ctx context.Context, txn kv.Tran
 		return v, err
 	}
 
-	return s.GetTemporaryTableSnapshotValue(ctx, key)
+	return s.snapshot.Get(ctx, k)
+}
+
+// TemporaryTableTxnReader can read the temporary table txn data
+func (s *SessionVars) TemporaryTableTxnReader(txn kv.Transaction, tblInfo *model.TableInfo) *TemporaryTableTxnReader {
+	return &TemporaryTableTxnReader{
+		memBuffer: txn.GetMemBuffer(),
+		snapshot:  s.TemporaryTableSnapshotReader(tblInfo),
+	}
 }

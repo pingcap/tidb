@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -35,6 +36,9 @@ var (
 	// TableIDFormat is the format of the label rule ID for a table.
 	// The format follows "schema/database_name/table_name".
 	TableIDFormat = "%s/%s/%s"
+	// PartitionIDFormat is the format of the label rule ID for a partition.
+	// The format follows "schema/database_name/table_name/partition_name".
+	PartitionIDFormat = "%s/%s/%s/%s"
 )
 
 // Rule is used to establish the relationship between labels and a key range.
@@ -79,18 +83,60 @@ func (r *Rule) Clone() *Rule {
 	return newRule
 }
 
-// ResetTable will reset the label rule for a table with a given ID and names.
-func (r *Rule) ResetTable(id int64, dbName, tableName string) *Rule {
-	r.ID = fmt.Sprintf(TableIDFormat, IDPrefix, dbName, tableName)
-	r.Labels = append(r.Labels, []Label{
-		{Key: dbKey, Value: dbName},
-		{Key: tableKey, Value: tableName},
-	}...)
+// Reset will reset the label rule for a table/partition with a given ID and names.
+func (r *Rule) Reset(id int64, dbName, tableName string, partName ...string) *Rule {
+	isPartition := len(partName) != 0
+	if isPartition {
+		r.ID = fmt.Sprintf(PartitionIDFormat, IDPrefix, dbName, tableName, partName[0])
+	} else {
+		r.ID = fmt.Sprintf(TableIDFormat, IDPrefix, dbName, tableName)
+	}
 
+	var hasDBKey, hasTableKey, hasPartitionKey bool
+	for _, label := range r.Labels {
+		if label.Key == dbKey {
+			label.Value = dbName
+			hasDBKey = true
+		}
+		if label.Key == tableKey {
+			label.Value = tableName
+			hasTableKey = true
+		}
+		if isPartition && label.Key == partitionKey {
+			label.Value = partName[0]
+			hasPartitionKey = true
+		}
+	}
+
+	if !hasDBKey {
+		r.Labels = append(r.Labels, Label{Key: dbKey, Value: dbName})
+	}
+
+	if !hasTableKey {
+		r.Labels = append(r.Labels, Label{Key: tableKey, Value: tableName})
+	}
+
+	if isPartition && !hasPartitionKey {
+		r.Labels = append(r.Labels, Label{Key: partitionKey, Value: partName[0]})
+	}
 	r.RuleType = ruleType
 	r.Rule = map[string]string{
 		"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id))),
 		"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id+1))),
 	}
 	return r
+}
+
+// RulePatch is the patch to update the label rules.
+type RulePatch struct {
+	SetRules    []*Rule  `json:"sets"`
+	DeleteRules []string `json:"deletes"`
+}
+
+// NewRulePatch returns a patch of rules which need to be set or deleted.
+func NewRulePatch(setRules []*Rule, deleteRules []string) *RulePatch {
+	return &RulePatch{
+		SetRules:    setRules,
+		DeleteRules: deleteRules,
+	}
 }

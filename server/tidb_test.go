@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // +build !race
@@ -25,7 +26,6 @@ import (
 	"database/sql"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
 	"math/big"
 	"net/http"
 	"os"
@@ -93,6 +93,10 @@ func (ts *tidbTestSuite) SetUpSuite(c *C) {
 	ts.tidbTestSuiteBase.SetUpSuite(c)
 }
 
+func (ts *tidbTestSuite) TearDownSuite(c *C) {
+	ts.tidbTestSuiteBase.TearDownSuite(c)
+}
+
 func (ts *tidbTestTopSQLSuite) SetUpSuite(c *C) {
 	ts.tidbTestSuiteBase.SetUpSuite(c)
 
@@ -110,6 +114,10 @@ func (ts *tidbTestTopSQLSuite) SetUpSuite(c *C) {
 	dbt.mustExec("set @@global.tidb_top_sql_max_statement_count=5;")
 
 	tracecpu.GlobalSQLCPUProfiler.Run()
+}
+
+func (ts *tidbTestTopSQLSuite) TearDownSuite(c *C) {
+	ts.tidbTestSuiteBase.TearDownSuite(c)
 }
 
 func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
@@ -257,13 +265,14 @@ func (ts *tidbTestSuite) TestStatusAPI(c *C) {
 }
 
 func (ts *tidbTestSuite) TestStatusPort(c *C) {
-	var err error
-	ts.store, err = mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
 	session.DisableStats4Test()
+	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
-	ts.domain, err = session.BootstrapSession(ts.store)
-	c.Assert(err, IsNil)
-	ts.tidbdrv = NewTiDBDriver(ts.store)
+	defer dom.Close()
+	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := newTestConfig()
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
@@ -356,6 +365,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 		err := server.Run()
 		c.Assert(err, IsNil)
 	}()
+	defer server.Close()
 	time.Sleep(time.Millisecond * 100)
 
 	hc := newTLSHttpClient(c, caPath,
@@ -453,7 +463,7 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 
 func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
 	osTempDir := os.TempDir()
-	tempDir, err := ioutil.TempDir(osTempDir, "tidb-test.*.socket")
+	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
 	c.Assert(err, IsNil)
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 	defer os.RemoveAll(tempDir)
@@ -611,7 +621,7 @@ func (ts *tidbTestSuite) TestSocketAndIp(c *C) {
 // TestOnlySocket for server configuration without network interface for mysql clients
 func (ts *tidbTestSuite) TestOnlySocket(c *C) {
 	osTempDir := os.TempDir()
-	tempDir, err := ioutil.TempDir(osTempDir, "tidb-test.*.socket")
+	tempDir, err := os.MkdirTemp(osTempDir, "tidb-test.*.socket")
 	c.Assert(err, IsNil)
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
 	defer os.RemoveAll(tempDir)
@@ -660,18 +670,20 @@ func (ts *tidbTestSuite) TestOnlySocket(c *C) {
 			dbt.mustQuery("GRANT SELECT ON test.* TO user1@'%'")
 		})
 	// Test with Network interface connection with all hosts, should fail since server not configured
-	_, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "root"
 		config.DBName = "test"
 		config.Addr = "127.0.0.1"
 	}))
 	c.Assert(err, IsNil, Commentf("Connect succeeded when not configured!?!"))
-	_, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+	defer db.Close()
+	db, err = sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "user1"
 		config.DBName = "test"
 		config.Addr = "127.0.0.1"
 	}))
 	c.Assert(err, IsNil, Commentf("Connect succeeded when not configured!?!"))
+	defer db.Close()
 	// Test with unix domain socket file connection with all hosts
 	cli.runTests(c, func(config *mysql.Config) {
 		config.Net = "unix"
@@ -863,7 +875,31 @@ func (ts *tidbTestSuite) TestSystemTimeZone(c *C) {
 	tk.MustQuery("select @@system_time_zone").Check(tz1)
 }
 
-func (ts *tidbTestSerialSuite) TestTLS(c *C) {
+func (ts *tidbTestSerialSuite) TestTLSAuto(c *C) {
+	// Start the server without TLS configure, letting the server create these as AutoTLS is enabled
+	connOverrider := func(config *mysql.Config) {
+		config.TLSConfig = "skip-verify"
+	}
+	cli := newTestServerClient()
+	cfg := newTestConfig()
+	cfg.Port = cli.port
+	cfg.Status.ReportStatus = false
+	cfg.Security.AutoTLS = true
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	go func() {
+		err := server.Run()
+		c.Assert(err, IsNil)
+	}()
+	time.Sleep(time.Millisecond * 100)
+	err = cli.runTestTLSConnection(c, connOverrider) // Relying on automatically created TLS certificates
+	c.Assert(err, IsNil)
+
+	server.Close()
+}
+
+func (ts *tidbTestSerialSuite) TestTLSBasic(c *C) {
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
 	c.Assert(err, IsNil)
@@ -889,7 +925,7 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	// Start the server without TLS.
+	// Start the server with TLS but without CA, in this case the server will not verify client's certificate.
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "skip-verify"
 	}
@@ -897,42 +933,11 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	cfg := newTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
-	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
-	cli.port = getPortFromTCPAddr(server.listener.Addr())
-	go func() {
-		err := server.Run()
-		c.Assert(err, IsNil)
-	}()
-	time.Sleep(time.Millisecond * 100)
-	err = cli.runTestTLSConnection(c, connOverrider) // We should get ErrNoTLS.
-	c.Assert(err, NotNil)
-	c.Assert(errors.Cause(err).Error(), Equals, mysql.ErrNoTLS.Error())
-
-	// Test SSL/TLS session vars
-	var v *variable.SessionVars
-	stats, err := server.Stats(v)
-	c.Assert(err, IsNil)
-	c.Assert(stats, HasKey, "Ssl_server_not_after")
-	c.Assert(stats, HasKey, "Ssl_server_not_before")
-	c.Assert(stats["Ssl_server_not_after"], Equals, "")
-	c.Assert(stats["Ssl_server_not_before"], Equals, "")
-
-	server.Close()
-
-	// Start the server with TLS but without CA, in this case the server will not verify client's certificate.
-	connOverrider = func(config *mysql.Config) {
-		config.TLSConfig = "skip-verify"
-	}
-	cli = newTestServerClient()
-	cfg = newTestConfig()
-	cfg.Port = cli.port
-	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
 		SSLCert: "/tmp/server-cert.pem",
 		SSLKey:  "/tmp/server-key.pem",
 	}
-	server, err = NewServer(cfg, ts.tidbdrv)
+	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
@@ -952,7 +957,8 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	cli.runTestRegression(c, connOverrider, "TLSRegression")
 
 	// Test SSL/TLS session vars
-	stats, err = server.Stats(v)
+	var v *variable.SessionVars
+	stats, err := server.Stats(v)
 	c.Assert(err, IsNil)
 	c.Assert(stats, HasKey, "Ssl_server_not_after")
 	c.Assert(stats, HasKey, "Ssl_server_not_before")
@@ -960,10 +966,37 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	c.Assert(stats["Ssl_server_not_before"], Equals, serverCert.NotBefore.Format("Jan _2 15:04:05 2006 MST"))
 
 	server.Close()
+}
+
+func (ts *tidbTestSerialSuite) TestTLSVerify(c *C) {
+	// Generate valid TLS certificates.
+	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
+	c.Assert(err, IsNil)
+	_, _, err = generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key.pem", "/tmp/server-cert.pem")
+	c.Assert(err, IsNil)
+	_, _, err = generateCert(2, "SQL Client Certificate", caCert, caKey, "/tmp/client-key.pem", "/tmp/client-cert.pem")
+	c.Assert(err, IsNil)
+	err = registerTLSConfig("client-certificate", "/tmp/ca-cert.pem", "/tmp/client-cert.pem", "/tmp/client-key.pem", "tidb-server", true)
+	c.Assert(err, IsNil)
+
+	defer func() {
+		err := os.Remove("/tmp/ca-key.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/ca-cert.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/server-key.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/server-cert.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/client-key.pem")
+		c.Assert(err, IsNil)
+		err = os.Remove("/tmp/client-cert.pem")
+		c.Assert(err, IsNil)
+	}()
 
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
-	cli = newTestServerClient()
-	cfg = newTestConfig()
+	cli := newTestServerClient()
+	cfg := newTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -971,7 +1004,7 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 		SSLCert: "/tmp/server-cert.pem",
 		SSLKey:  "/tmp/server-key.pem",
 	}
-	server, err = NewServer(cfg, ts.tidbdrv)
+	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go func() {
@@ -982,6 +1015,9 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	// The client does not provide a certificate, the connection should succeed.
 	err = cli.runTestTLSConnection(c, nil)
 	c.Assert(err, IsNil)
+	connOverrider := func(config *mysql.Config) {
+		config.TLSConfig = "client-certificate"
+	}
 	cli.runTestRegression(c, connOverrider, "TLSRegression")
 	// The client provides a valid certificate.
 	connOverrider = func(config *mysql.Config) {
@@ -996,9 +1032,9 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	c.Assert(util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}), IsFalse)
 	c.Assert(util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}), IsTrue)
 
-	_, err = util.LoadTLSCertificates("", "wrong key", "wrong cert")
+	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert", true)
 	c.Assert(err, NotNil)
-	_, err = util.LoadTLSCertificates("wrong ca", "/tmp/server-key.pem", "/tmp/server-cert.pem")
+	_, _, err = util.LoadTLSCertificates("wrong ca", "/tmp/server-key.pem", "/tmp/server-cert.pem", true)
 	c.Assert(err, NotNil)
 }
 
@@ -1151,6 +1187,7 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 		err := server.Run()
 		c.Assert(err, IsNil)
 	}()
+	defer server.Close()
 	time.Sleep(time.Millisecond * 100)
 	connOverrider := func(config *mysql.Config) {
 		config.TLSConfig = "client-cert-rollback-test"
@@ -1398,12 +1435,13 @@ func (ts *tidbTestSuite) TestNO_DEFAULT_VALUEFlag(c *C) {
 }
 
 func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
-	var err error
-	ts.store, err = mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
 	session.DisableStats4Test()
+	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
-	ts.domain, err = session.BootstrapSession(ts.store)
-	c.Assert(err, IsNil)
+	defer dom.Close()
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cli := newTestServerClient()
 	cfg := newTestConfig()
@@ -1464,6 +1502,7 @@ func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
 func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
+	defer qctx.Close()
 	ctx := context.Background()
 	_, err = Execute(ctx, qctx, "use test;")
 	c.Assert(err, IsNil)
