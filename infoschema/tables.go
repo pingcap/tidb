@@ -892,6 +892,7 @@ var TableTiDBHotRegionsHistoryCols = []columnInfo{
 	{name: "REGION_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "STORE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "PEER_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "IS_LEADER", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "HOT_DEGREE", tp: mysql.TypeLonglong, size: 21},
 	{name: "FLOW_BYTES", tp: mysql.TypeDouble, size: 22},
