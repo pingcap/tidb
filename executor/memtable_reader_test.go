@@ -953,7 +953,8 @@ var _ = SerialSuites(&testHotRegionsHistoryTableSuite{testInfoschemaTableSuiteBa
 
 type testHotRegionsHistoryTableSuite struct {
 	*testInfoschemaTableSuiteBase
-	startTime time.Time
+	httpServers []*httptest.Server
+	startTime   time.Time
 }
 
 type mockStoreWithMultiPD struct {
@@ -978,8 +979,9 @@ func (s *testHotRegionsHistoryTableSuite) SetUpSuite(c *C) {
 	// start 3 PD server with hotRegionsServer and store them in s.store
 	for i := 0; i < 3; i++ {
 		httpServer, mockAddr := s.setUpMockPDHTTPServer(c)
-		store.hosts[i] = mockAddr
 		c.Assert(httpServer, NotNil)
+		s.httpServers = append(s.httpServers, httpServer)
+		store.hosts[i] = mockAddr
 	}
 	s.store = store
 	s.startTime = time.Now()
@@ -989,9 +991,7 @@ func writeJSONError(w http.ResponseWriter, code int, prefix string, err error) {
 	type errorResponse struct {
 		Error string `json:"error"`
 	}
-
 	w.WriteHeader(code)
-
 	if err != nil {
 		prefix += ": " + err.Error()
 	}
@@ -1044,6 +1044,13 @@ func (s *testHotRegionsHistoryTableSuite) setUpMockPDHTTPServer(c *C) (*httptest
 	// mock hisory hot regions response
 	router.HandleFunc(pdapi.HotHistory, hisHotRegionsHandler)
 	return server, mockAddr
+}
+
+func (s *testHotRegionsHistoryTableSuite) TearDownSuite(c *C) {
+	for _, server := range s.httpServers {
+		server.Close()
+	}
+	s.testInfoschemaTableSuiteBase.TearDownSuite(c)
 }
 
 func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
