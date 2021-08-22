@@ -1054,26 +1054,26 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 	}
 	fullHotRegions := [][]string{
 		// mysql table_id = 11, record_id = 1, table_name = TABLES_PRIV
-		{"2019-10-10 10:10:11", "MYSQL", "TABLES_PRIV", "11", "<nil>", "<nil>", "1", "1", "11111", "READ", "99", "99", "99", "99"},
-		{"2019-10-10 10:10:12", "MYSQL", "TABLES_PRIV", "11", "<nil>", "<nil>", "2", "2", "22222", "WRITE", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:11", "MYSQL", "TABLES_PRIV", "11", "<nil>", "<nil>", "1", "1", "11111", "1", "READ", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:12", "MYSQL", "TABLES_PRIV", "11", "<nil>", "<nil>", "2", "2", "22222", "0", "WRITE", "99", "99", "99", "99"},
 		// mysql table_id = 21, record_id = 1, table_name = STATS_META
-		{"2019-10-10 10:10:13", "MYSQL", "STATS_META", "21", "<nil>", "<nil>", "3", "3", "33333", "READ", "99", "99", "99", "99"},
-		{"2019-10-10 10:10:14", "MYSQL", "STATS_META", "21", "<nil>", "<nil>", "4", "4", "44444", "WRITE", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:13", "MYSQL", "STATS_META", "21", "<nil>", "<nil>", "3", "3", "33333", "1", "READ", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:14", "MYSQL", "STATS_META", "21", "<nil>", "<nil>", "4", "4", "44444", "0", "WRITE", "99", "99", "99", "99"},
 		//      table_id = 131, record_id=1, deleted schema
-		{"2019-10-10 10:10:15", "UNKONW", "UNKONW", "131", "UNKONW", "<nil>", "5", "5", "55555", "READ", "99", "99", "99", "99"},
-		{"2019-10-10 10:10:16", "UNKONW", "UNKONW", "131", "UNKONW", "<nil>", "6", "6", "66666", "WRITE", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:15", "UNKONW", "UNKONW", "131", "UNKONW", "<nil>", "5", "5", "55555", "1", "READ", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:16", "UNKONW", "UNKONW", "131", "UNKONW", "<nil>", "6", "6", "66666", "0", "WRITE", "99", "99", "99", "99"},
 		// mysql table_id = 11, index_id = 1, index_value = 1, table_name = TABLES_PRIV, index_name = PRIMARY
-		{"2019-10-10 10:10:17", "MYSQL", "TABLES_PRIV", "11", "PRIMARY", "1", "1", "1", "11111", "READ", "99", "99", "99", "99"},
-		{"2019-10-10 10:10:18", "MYSQL", "TABLES_PRIV", "11", "PRIMARY", "1", "2", "2", "22222", "WRITE", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:17", "MYSQL", "TABLES_PRIV", "11", "PRIMARY", "1", "1", "1", "11111", "1", "READ", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:18", "MYSQL", "TABLES_PRIV", "11", "PRIMARY", "1", "2", "2", "22222", "0", "WRITE", "99", "99", "99", "99"},
 		// mysql table_id = 21 ,index_id = 1, index_value = 1, table_name = STATS_META, index_name = IDX_VER
-		{"2019-10-10 10:10:19", "MYSQL", "STATS_META", "21", "IDX_VER", "1", "3", "3", "33333", "READ", "99", "99", "99", "99"},
-		{"2019-10-10 10:10:20", "MYSQL", "STATS_META", "21", "IDX_VER", "1", "4", "4", "44444", "WRITE", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:19", "MYSQL", "STATS_META", "21", "IDX_VER", "1", "3", "3", "33333", "1", "READ", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:20", "MYSQL", "STATS_META", "21", "IDX_VER", "1", "4", "4", "44444", "0", "WRITE", "99", "99", "99", "99"},
 		// mysql table_id = 21 ,index_id = 2, index_value = 1, table_name = STATS_META, index_name = TBL
-		{"2019-10-10 10:10:21", "MYSQL", "STATS_META", "21", "TBL", "2", "5", "5", "55555", "READ", "99", "99", "99", "99"},
-		{"2019-10-10 10:10:22", "MYSQL", "STATS_META", "21", "TBL", "2", "6", "6", "66666", "WRITE", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:21", "MYSQL", "STATS_META", "21", "TBL", "2", "5", "5", "55555", "1", "READ", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:22", "MYSQL", "STATS_META", "21", "TBL", "2", "6", "6", "66666", "0", "WRITE", "99", "99", "99", "99"},
 		//      table_id = 131, index_id = 1, index_value = 1, deleted schema
-		{"2019-10-10 10:10:23", "UNKONW", "UNKONW", "131", "UNKONW", "1", "5", "5", "55555", "READ", "99", "99", "99", "99"},
-		{"2019-10-10 10:10:24", "UNKONW", "UNKONW", "131", "UNKONW", "1", "6", "6", "66666", "WRITE", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:23", "UNKONW", "UNKONW", "131", "UNKONW", "1", "5", "5", "55555", "1", "READ", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:24", "UNKONW", "UNKONW", "131", "UNKONW", "1", "6", "6", "66666", "0", "WRITE", "99", "99", "99", "99"},
 	}
 
 	c.Assert(fullHotRegions, NotNil)
@@ -1083,11 +1083,11 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 			executor.HotRegionTypeREAD: {
 				HistoryHotRegion: []*executor.HistoryHotRegion{
 					// mysql table_id = 11, record_id = 1, table_name = TABLES_PRIV
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:11"), RegionID: 1, StoreID: 1, PeerID: 11111, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					{UpdateTime: unixTimeMs("2019-10-10 10:10:11"), RegionID: 1, StoreID: 1, PeerID: 11111, IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
 						StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0xb, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa},
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0xb, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 					// mysql table_id = 21, record_id = 1, table_name = STATS_META
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:13"), RegionID: 3, StoreID: 3, PeerID: 33333, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					{UpdateTime: unixTimeMs("2019-10-10 10:10:13"), RegionID: 3, StoreID: 3, PeerID: 33333, IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
 						StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x15, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa},
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x15, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 				},
@@ -1095,11 +1095,11 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 			executor.HotRegionTypeWRITE: {
 				HistoryHotRegion: []*executor.HistoryHotRegion{
 					// mysql table_id = 11, record_id = 1, table_name = TABLES_PRIV
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:12"), RegionID: 2, StoreID: 2, PeerID: 22222, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					{UpdateTime: unixTimeMs("2019-10-10 10:10:12"), RegionID: 2, StoreID: 2, PeerID: 22222, IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
 						StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0xb, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa},
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0xb, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 					// mysql table_id = 21, record_id = 1, table_name = STATS_META
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:14"), RegionID: 4, StoreID: 4, PeerID: 44444, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					{UpdateTime: unixTimeMs("2019-10-10 10:10:14"), RegionID: 4, StoreID: 4, PeerID: 44444, IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
 						StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x15, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa},
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x15, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 				},
@@ -1109,11 +1109,11 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 			executor.HotRegionTypeREAD: {
 				HistoryHotRegion: []*executor.HistoryHotRegion{
 					//      table_id = 131, record_id=1, deleted schema
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:15"), RegionID: 5, StoreID: 5, PeerID: 55555, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					{UpdateTime: unixTimeMs("2019-10-10 10:10:15"), RegionID: 5, StoreID: 5, PeerID: 55555, IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
 						StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x83, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa},
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x83, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 					// mysql table_id = 11, index_id = 1, index_value = 1, table_name = TABLES_PRIV, index_name = PRIMARY
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:17"), RegionID: 1, StoreID: 1, PeerID: 11111, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					{UpdateTime: unixTimeMs("2019-10-10 10:10:17"), RegionID: 1, StoreID: 1, PeerID: 11111, IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
 						StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0xb, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa},
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0xb, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 				},
@@ -1121,11 +1121,11 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 			executor.HotRegionTypeWRITE: {
 				HistoryHotRegion: []*executor.HistoryHotRegion{
 					//      table_id = 131, record_id=1, deleted schema
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:16"), RegionID: 6, StoreID: 6, PeerID: 66666, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					{UpdateTime: unixTimeMs("2019-10-10 10:10:16"), RegionID: 6, StoreID: 6, PeerID: 66666, IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
 						StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x83, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa},
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x83, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 					// mysql table_id = 11, index_id = 1, index_value = 1, table_name = TABLES_PRIV, index_name = PRIMARY
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:18"), RegionID: 2, StoreID: 2, PeerID: 22222, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					{UpdateTime: unixTimeMs("2019-10-10 10:10:18"), RegionID: 2, StoreID: 2, PeerID: 22222, IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
 						StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0xb, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa},
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0xb, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 				},
@@ -1135,15 +1135,15 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 			executor.HotRegionTypeREAD: {
 				HistoryHotRegion: []*executor.HistoryHotRegion{
 					// mysql table_id = 21 ,index_id = 1, index_value = 1, table_name = STATS_META, index_name = IDX_VER
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:19"), RegionID: 3, StoreID: 3, PeerID: 33333, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					{UpdateTime: unixTimeMs("2019-10-10 10:10:19"), RegionID: 3, StoreID: 3, PeerID: 33333, IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
 						StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa},
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 					// mysql table_id = 21 ,index_id = 2, index_value = 1, table_name = STATS_META, index_name = TBL
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:21"), RegionID: 5, StoreID: 5, PeerID: 55555, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					{UpdateTime: unixTimeMs("2019-10-10 10:10:21"), RegionID: 5, StoreID: 5, PeerID: 55555, IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
 						StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa},
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 					//      table_id = 131, index_id = 1, index_value = 1, deleted schema
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:23"), RegionID: 5, StoreID: 5, PeerID: 55555, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					{UpdateTime: unixTimeMs("2019-10-10 10:10:23"), RegionID: 5, StoreID: 5, PeerID: 55555, IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
 						StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x83, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa},
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x83, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 				},
@@ -1151,15 +1151,15 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 			executor.HotRegionTypeWRITE: {
 				HistoryHotRegion: []*executor.HistoryHotRegion{
 					// mysql table_id = 21 ,index_id = 1, index_value = 1, table_name = STATS_META, index_name = IDX_VER
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:20"), RegionID: 4, StoreID: 4, PeerID: 44444, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					{UpdateTime: unixTimeMs("2019-10-10 10:10:20"), RegionID: 4, StoreID: 4, PeerID: 44444, IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
 						StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa},
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 					// mysql table_id = 21 ,index_id = 2, index_value = 1, table_name = STATS_META, index_name = TBL
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:22"), RegionID: 6, StoreID: 6, PeerID: 66666, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					{UpdateTime: unixTimeMs("2019-10-10 10:10:22"), RegionID: 6, StoreID: 6, PeerID: 66666, IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
 						StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa},
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x15, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 					//      table_id = 131, index_id = 1, index_value = 1, deleted schema
-					{UpdateTime: unixTimeMs("2019-10-10 10:10:24"), RegionID: 6, StoreID: 6, PeerID: 66666, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
+					{UpdateTime: unixTimeMs("2019-10-10 10:10:24"), RegionID: 6, StoreID: 6, PeerID: 66666, IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
 						StartKey: []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x83, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa},
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x83, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 				},
