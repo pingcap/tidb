@@ -123,10 +123,6 @@ func convertPoint(sc *stmtctx.StatementContext, point *point, tp *types.FieldTyp
 	if valCmpCasted == 0 {
 		return npoint, nil
 	}
-	isSameType := tp.Tp == point.value.Kind()
-	if isSameType {
-		return npoint, nil
-	}
 	if npoint.start {
 		if npoint.excl {
 			if valCmpCasted < 0 {
