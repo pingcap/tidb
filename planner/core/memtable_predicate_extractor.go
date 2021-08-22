@@ -806,7 +806,8 @@ type HotRegionsHistoryTableExtractor struct {
 	RegionIDs []uint64 // use uint64 to match PD server
 	StoreIDs  []uint64
 	PeerIDs   []uint64
-
+	// Roles represents all roles (leader or follower) we should filter in PD to reduce network IO.
+	Roles set.Int64Set
 	// HotRegionTypes represents all hot region types we should filter in PD to reduce network IO.
 	// e.g:
 	// 1. SELECT * FROM tidb_hot_regions_history WHERE type='read'
@@ -864,9 +865,10 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	remained, indexNameSkipRequest, indexNames := e.extractCol(schema, names, remained, "index_name", true)
 	remained, tableIDSkipRequest, tableIDs := e.extractCol(schema, names, remained, "table_id", false)
 	remained, indexIDSkipRequest, indexIDs := e.extractCol(schema, names, remained, "index_id", false)
+	remained, isLeaderSkipRequest, isLeaders := e.extractCol(schema, names, remained, "is_leader", false)
 
 	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest || peerIDSkipRequest ||
-		typeSkipRequest || dbNameSkipRequest || tableNameSkipRequest ||
+		typeSkipRequest || isLeaderSkipRequest || dbNameSkipRequest || tableNameSkipRequest ||
 		indexNameSkipRequest || tableIDSkipRequest || indexIDSkipRequest
 	if e.SkipRequest {
 		return nil
@@ -874,6 +876,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	e.RegionIDs, e.StoreIDs, e.PeerIDs = e.parseQuantilesUint64(regionIDs), e.parseQuantilesUint64(storeIDs), e.parseQuantilesUint64(peerIDs)
 	e.HotRegionTypes, e.DBNames, e.TableNames, e.IndexNames = types, dbNames, tableNames, indexNames
 	tableIDSlice, indexIDSlice := e.parseQuantilesUint64(tableIDs), e.parseQuantilesUint64(indexIDs)
+	roles := e.parseQuantilesUint64(isLeaders)
 	// Intset is convinient to check exist
 	e.TableIDs = set.NewInt64Set()
 	e.IndexIDs = set.NewInt64Set()
@@ -883,8 +886,16 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	for _, idx := range indexIDSlice {
 		e.IndexIDs.Insert(int64(idx))
 	}
+	e.Roles = set.NewInt64Set()
+	for _, role := range roles {
+		if role > 0 {
+			e.Roles.Insert(1)
+		} else {
+			e.Roles.Insert(0)
+		}
+	}
 
-	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "update_time",ctx.GetSessionVars().StmtCtx.TimeZone)
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "update_time", ctx.GetSessionVars().StmtCtx.TimeZone)
 	// The time unit for search hot regions is millisecond.
 	startTime = startTime / int64(time.Millisecond)
 	endTime = endTime / int64(time.Millisecond)
@@ -906,17 +917,10 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	e.LowKeyRate, e.HighKeyRate = lowKeyRate, highKeyRate
 	e.LowQueryRate, e.HighQueryRate = lowQueryRate, highQueryRate
 
-	// normal case
-	// low | high |  range
-	// 0   | 100  |  0<x<100
-	// 10  | 100  | 10<x<100
-
-	// skip case
-	// 100 | 10   | SkipRequest
 	if lowHotDegree != 0 && highHotDegree != 0 {
 		e.SkipRequest = lowHotDegree > highHotDegree
 	}
-	// no hign bound case
+	// set up boundy
 	// 0   | 0    |  0<x<math.MaxFloat64
 	// 10  | 0    | 10<x<math.MaxFloat64
 	if highHotDegree == 0 {
