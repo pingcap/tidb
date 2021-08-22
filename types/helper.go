@@ -46,15 +46,10 @@ func RoundInt(i int64, dec int) int64 {
 	if dec >= 0 {
 		return i
 	}
-	// The integer part of a fraction
-	shift := math.Pow10(dec)
-	intPart := math.Round(float64(i) * shift)
-	r := int64(intPart)
-	// the zero part
-	for i := 1; i <= -dec; i++ {
-		r *= 10
-	}
-	return r
+
+	shift := math.Pow10(-dec)
+	intPart := math.Round(float64(i) / shift)
+	return int64(intPart) * int64(shift)
 }
 
 // Truncate truncates the argument f to dec decimal places.
