@@ -1176,18 +1176,6 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 			conditions: []string{
 				"update_time>='2019-10-10 10:10:10'",
 				"update_time<='2019-10-11 10:10:10'",
-				"table_id=21",
-				"index_id=1",
-				"table_name='STATS_META'",
-			}, // table_id = table_name
-			expected: [][]string{
-				fullHotRegions[8], fullHotRegions[9],
-			},
-		},
-		{
-			conditions: []string{
-				"update_time>='2019-10-10 10:10:10'",
-				"update_time<='2019-10-11 10:10:10'",
 			}, // time filtered by PD, assume response suit time range, and ignore deleted schemas
 			expected: [][]string{
 				fullHotRegions[0], fullHotRegions[1], fullHotRegions[2],
