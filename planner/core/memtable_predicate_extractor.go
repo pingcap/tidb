@@ -859,23 +859,31 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false)
 	remained, peerIDSkipRequest, peerIDs := e.extractCol(schema, names, remained, "peer_id", false)
 	remained, typeSkipRequest, types := e.extractCol(schema, names, remained, "type", false)
+	remained, isLeaderSkipRequest, roles := e.extractCol(schema, names, remained, "is_leader", false)
 	remained, dbNameSkipRequest, dbNames := e.extractCol(schema, names, remained, "db_name", true)
 	remained, tableNameSkipRequest, tableNames := e.extractCol(schema, names, remained, "table_name", true)
 	remained, indexNameSkipRequest, indexNames := e.extractCol(schema, names, remained, "index_name", true)
 	remained, tableIDSkipRequest, tableIDs := e.extractCol(schema, names, remained, "table_id", false)
 	remained, indexIDSkipRequest, indexIDs := e.extractCol(schema, names, remained, "index_id", false)
-	remained, isLeaderSkipRequest, isLeaders := e.extractCol(schema, names, remained, "is_leader", false)
 
 	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest || peerIDSkipRequest ||
-		typeSkipRequest || isLeaderSkipRequest || dbNameSkipRequest || tableNameSkipRequest ||
+		isLeaderSkipRequest || typeSkipRequest || dbNameSkipRequest || tableNameSkipRequest ||
 		indexNameSkipRequest || tableIDSkipRequest || indexIDSkipRequest
 	if e.SkipRequest {
 		return nil
 	}
 	e.RegionIDs, e.StoreIDs, e.PeerIDs = e.parseQuantilesUint64(regionIDs), e.parseQuantilesUint64(storeIDs), e.parseQuantilesUint64(peerIDs)
+	roleSlice := e.parseQuantilesUint64(roles)
+	e.Roles = set.NewInt64Set()
+	for _, role := range roleSlice {
+		if role > 0 {
+			e.Roles.Insert(1)
+		} else {
+			e.Roles.Insert(0)
+		}
+	}
 	e.HotRegionTypes, e.DBNames, e.TableNames, e.IndexNames = types, dbNames, tableNames, indexNames
 	tableIDSlice, indexIDSlice := e.parseQuantilesUint64(tableIDs), e.parseQuantilesUint64(indexIDs)
-	roles := e.parseQuantilesUint64(isLeaders)
 	// Intset is convinient to check exist
 	e.TableIDs = set.NewInt64Set()
 	e.IndexIDs = set.NewInt64Set()
@@ -884,14 +892,6 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	}
 	for _, idx := range indexIDSlice {
 		e.IndexIDs.Insert(int64(idx))
-	}
-	e.Roles = set.NewInt64Set()
-	for _, role := range roles {
-		if role > 0 {
-			e.Roles.Insert(1)
-		} else {
-			e.Roles.Insert(0)
-		}
 	}
 
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "update_time", ctx.GetSessionVars().StmtCtx.TimeZone)
@@ -919,7 +919,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	if lowHotDegree != 0 && highHotDegree != 0 {
 		e.SkipRequest = lowHotDegree > highHotDegree
 	}
-	// set up boundy
+	// set upper boundary
 	// 0   | 0    |  0<x<math.MaxFloat64
 	// 10  | 0    | 10<x<math.MaxFloat64
 	if highHotDegree == 0 {
