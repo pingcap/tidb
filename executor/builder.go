@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -4531,6 +4532,10 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 	// So we do not check SnapshotTS here
 
 	sessionVars := b.ctx.GetSessionVars()
+
+	if tbl.TempTableType == model.TempTableLocal && sessionVars.SnapshotTS != 0 {
+		return errors.New("can not read local temporary table when 'tidb_snapshot' is set")
+	}
 
 	if sessionVars.TxnCtx.IsStaleness || b.isStaleness {
 		return errors.New("can not stale read temporary table")
