@@ -755,6 +755,7 @@ type HistoryHotRegionsRequest struct {
 	RegionIDs      []uint64 `json:"region_ids,omitempty"`
 	StoreIDs       []uint64 `json:"store_ids,omitempty"`
 	PeerIDs        []uint64 `json:"peer_ids,omitempty"`
+	IsLeader       bool     `json:"is_leader,omitempty"`
 	HotRegionTypes []string `json:"hot_region_types,omitempty"`
 	LowHotDegree   int64    `json:"low_hot_degree,omitempty"`
 	HighHotDegree  int64    `json:"high_hot_degree,omitempty"`
@@ -777,8 +778,9 @@ type HistoryHotRegions struct {
 type HistoryHotRegion struct {
 	UpdateTime    int64   `json:"update_time,omitempty"`
 	RegionID      uint64  `json:"region_id,omitempty"`
-	PeerID        uint64  `json:"peer_id,omitempty"`
 	StoreID       uint64  `json:"store_id,omitempty"`
+	PeerID        uint64  `json:"peer_id,omitempty"`
+	IsLeader      bool    `json:"is_leader,omitempty"`
 	HotRegionType string  `json:"hot_region_type,omitempty"`
 	HotDegree     int64   `json:"hot_degree,omitempty"`
 	FlowBytes     float64 `json:"flow_bytes,omitempty"`
@@ -837,6 +839,10 @@ func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx session
 		HighKeyRate:   e.extractor.HighKeyRate,
 		LowQueryRate:  e.extractor.LowQueryRate,
 		HighQueryRate: e.extractor.HighQueryRate,
+	}
+	// Not set isLeader when roles' length equal to 0(no condition), 2(leader or follower)
+	if e.extractor.Roles.Count() == 1 {
+		historyHotRegionsRequest.IsLeader = e.extractor.Roles.Exist(1)
 	}
 	return e.startRetrieving(ctx, sctx, pdServers, historyHotRegionsRequest)
 }
@@ -1006,26 +1012,31 @@ func (e *hotRegionsHistoryRetriver) parseAndFilterBySchemaInfo(sctx sessionctx.C
 	row[6].SetInt64(int64(headMessage.RegionID))
 	row[7].SetInt64(int64(headMessage.StoreID))
 	row[8].SetInt64(int64(headMessage.PeerID))
-	row[9].SetString(strings.ToUpper(headMessage.HotRegionType), mysql.DefaultCollationName)
-	if headMessage.HotDegree != 0 {
-		row[10].SetInt64(headMessage.HotDegree)
+	if headMessage.IsLeader {
+		row[9].SetInt64(1)
 	} else {
-		row[10].SetNull()
+		row[9].SetInt64(0)
 	}
-	if headMessage.FlowBytes != 0 {
-		row[11].SetFloat64(float64(headMessage.FlowBytes))
+	row[10].SetString(strings.ToUpper(headMessage.HotRegionType), mysql.DefaultCollationName)
+	if headMessage.HotDegree != 0 {
+		row[11].SetInt64(headMessage.HotDegree)
 	} else {
 		row[11].SetNull()
 	}
-	if headMessage.KeyRate != 0 {
-		row[12].SetFloat64(float64(headMessage.KeyRate))
+	if headMessage.FlowBytes != 0 {
+		row[12].SetFloat64(float64(headMessage.FlowBytes))
 	} else {
 		row[12].SetNull()
 	}
-	if headMessage.QueryRate != 0 {
-		row[13].SetFloat64(float64(headMessage.QueryRate))
+	if headMessage.KeyRate != 0 {
+		row[13].SetFloat64(float64(headMessage.KeyRate))
 	} else {
 		row[13].SetNull()
+	}
+	if headMessage.QueryRate != 0 {
+		row[14].SetFloat64(float64(headMessage.QueryRate))
+	} else {
+		row[14].SetNull()
 	}
 	return row, nil
 }
