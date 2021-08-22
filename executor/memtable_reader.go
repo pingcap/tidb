@@ -788,6 +788,13 @@ type HistoryHotRegion struct {
 	EndKey        []byte  `json:"end_key,omitempty"`
 }
 
+const (
+	// HotRegionTypeREAD hot read region.
+	HotRegionTypeREAD = "READ"
+	// HotRegionTypeWRITE hot write region.
+	HotRegionTypeWRITE = "WRITE"
+)
+
 func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan hotRegionsStreamResult, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
 		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
@@ -805,76 +812,82 @@ func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx session
 		return nil, errors.New("denied to scan hot regions, please specified the end time, such as `update_time < '2020-01-01 00:00:00'`")
 	}
 
+	// Divide read write into two request because of time range ovelap,
+	// because PD use [type,time] as key of hot regions.
+	if e.extractor.HotRegionTypes.Count() == 0 {
+		e.extractor.HotRegionTypes.Insert(HotRegionTypeREAD)
+		e.extractor.HotRegionTypes.Insert(HotRegionTypeWRITE)
+	}
 	hotRegionTypes := make([]string, 0, e.extractor.HotRegionTypes.Count())
 	for typ := range e.extractor.HotRegionTypes {
 		hotRegionTypes = append(hotRegionTypes, typ)
 	}
-
+	// set hotType before request
 	historyHotRegionsRequest := &HistoryHotRegionsRequest{
-		StartTime:      e.extractor.StartTime,
-		EndTime:        e.extractor.EndTime,
-		RegionIDs:      e.extractor.RegionIDs,
-		StoreIDs:       e.extractor.StoreIDs,
-		PeerIDs:        e.extractor.PeerIDs,
-		HotRegionTypes: hotRegionTypes,
-		LowHotDegree:   e.extractor.LowHotDegree,
-		HighHotDegree:  e.extractor.HighHotDegree,
-		LowFlowBytes:   e.extractor.LowFlowBytes,
-		HighFlowBytes:  e.extractor.HighFlowBytes,
-		LowKeyRate:     e.extractor.LowKeyRate,
-		HighKeyRate:    e.extractor.HighKeyRate,
-		LowQueryRate:   e.extractor.LowQueryRate,
-		HighQueryRate:  e.extractor.HighQueryRate,
+		StartTime:     e.extractor.StartTime,
+		EndTime:       e.extractor.EndTime,
+		RegionIDs:     e.extractor.RegionIDs,
+		StoreIDs:      e.extractor.StoreIDs,
+		PeerIDs:       e.extractor.PeerIDs,
+		LowHotDegree:  e.extractor.LowHotDegree,
+		HighHotDegree: e.extractor.HighHotDegree,
+		LowFlowBytes:  e.extractor.LowFlowBytes,
+		HighFlowBytes: e.extractor.HighFlowBytes,
+		LowKeyRate:    e.extractor.LowKeyRate,
+		HighKeyRate:   e.extractor.HighKeyRate,
+		LowQueryRate:  e.extractor.LowQueryRate,
+		HighQueryRate: e.extractor.HighQueryRate,
 	}
-	jsonBody, err := json.Marshal(historyHotRegionsRequest)
-	if err != nil {
-		return nil, err
-	}
-	body := bytes.NewBuffer(jsonBody)
-	return e.startRetrieving(ctx, sctx, pdServers, body)
+	return e.startRetrieving(ctx, sctx, pdServers, historyHotRegionsRequest)
 }
 
 func (e *hotRegionsHistoryRetriver) startRetrieving(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	serversInfo []infoschema.ServerInfo,
-	body *bytes.Buffer,
+	req *HistoryHotRegionsRequest,
 ) ([]chan hotRegionsStreamResult, error) {
-	wg := sync.WaitGroup{}
 	var results []chan hotRegionsStreamResult
 	for _, srv := range serversInfo {
-		ch := make(chan hotRegionsStreamResult)
-		results = append(results, ch)
-		go func(address string, body *bytes.Buffer) {
-			util.WithRecovery(func() {
-				defer wg.Done()
-				url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), address, pdapi.HotHistory)
-				req, err := http.NewRequest(http.MethodPost, url, body)
-				if err != nil {
-					ch <- hotRegionsStreamResult{err: errors.Trace(err)}
-					return
-				}
-				req.Header.Add("PD-Allow-follower-handle", "true")
-				resp, err := util.InternalHTTPClient().Do(req)
-				if err != nil {
-					ch <- hotRegionsStreamResult{err: errors.Trace(err)}
-					return
-				}
-				defer func() {
-					terror.Log(resp.Body.Close())
-				}()
-				if resp.StatusCode != http.StatusOK {
-					ch <- hotRegionsStreamResult{err: errors.Errorf("request %s failed: %s", url, resp.Status)}
-					return
-				}
-				var historyHotRegions HistoryHotRegions
-				if err = json.NewDecoder(resp.Body).Decode(&historyHotRegions); err != nil {
-					ch <- hotRegionsStreamResult{err: errors.Trace(err)}
-					return
-				}
-				ch <- hotRegionsStreamResult{addr: address, messages: &historyHotRegions}
-			}, nil)
-		}(srv.StatusAddr, body)
+		for typ := range e.extractor.HotRegionTypes {
+			req.HotRegionTypes = []string{typ}
+			jsonBody, err := json.Marshal(req)
+			if err != nil {
+				return nil, err
+			}
+			body := bytes.NewBuffer(jsonBody)
+			ch := make(chan hotRegionsStreamResult)
+			results = append(results, ch)
+			go func(address string, body *bytes.Buffer) {
+				util.WithRecovery(func() {
+					url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), address, pdapi.HotHistory)
+					req, err := http.NewRequest(http.MethodPost, url, body)
+					if err != nil {
+						ch <- hotRegionsStreamResult{err: errors.Trace(err)}
+						return
+					}
+					req.Header.Add("PD-Allow-follower-handle", "true")
+					resp, err := util.InternalHTTPClient().Do(req)
+					if err != nil {
+						ch <- hotRegionsStreamResult{err: errors.Trace(err)}
+						return
+					}
+					defer func() {
+						terror.Log(resp.Body.Close())
+					}()
+					if resp.StatusCode != http.StatusOK {
+						ch <- hotRegionsStreamResult{err: errors.Errorf("request %s failed: %s", url, resp.Status)}
+						return
+					}
+					var historyHotRegions HistoryHotRegions
+					if err = json.NewDecoder(resp.Body).Decode(&historyHotRegions); err != nil {
+						ch <- hotRegionsStreamResult{err: errors.Trace(err)}
+						return
+					}
+					ch <- hotRegionsStreamResult{addr: address, messages: &historyHotRegions}
+				}, nil)
+			}(srv.StatusAddr, body)
+		}
 	}
 	return results, nil
 }
