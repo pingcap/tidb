@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,28 +21,16 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/stretchr/testify/require"
 )
 
 const (
 	maxSQLNum = 5000
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = SerialSuites(&testTopSQLReporter{})
-
-type testTopSQLReporter struct{}
-
-func (s *testTopSQLReporter) SetUpSuite(c *C) {}
-
-func (s *testTopSQLReporter) SetUpTest(c *C) {}
 
 func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) {
 	// register normalized sql
@@ -90,9 +79,9 @@ func initializeCache(maxStatementsNum, interval int, addr string) *RemoteTopSQLR
 	return ts
 }
 
-func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
+func TestCollectAndSendBatch(t *testing.T) {
 	agentServer, err := mock.StartMockAgentServer()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer agentServer.Stop()
 
 	tsr := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
@@ -100,8 +89,7 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 	populateCache(tsr, 0, maxSQLNum, 1)
 
 	agentServer.WaitCollectCnt(1, time.Second*5)
-
-	c.Assert(agentServer.GetLatestRecords(), HasLen, maxSQLNum)
+	require.Len(t, agentServer.GetLatestRecords(), maxSQLNum)
 
 	// check for equality of server received batch and the original data
 	records := agentServer.GetLatestRecords()
@@ -110,29 +98,29 @@ func (s *testTopSQLReporter) TestCollectAndSendBatch(c *C) {
 		prefix := "sqlDigest"
 		if strings.HasPrefix(string(req.SqlDigest), prefix) {
 			n, err := strconv.Atoi(string(req.SqlDigest)[len(prefix):])
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			id = n
 		}
-		c.Assert(req.RecordListCpuTimeMs, HasLen, 1)
+		require.Len(t, req.RecordListCpuTimeMs, 1)
 		for i := range req.RecordListCpuTimeMs {
-			c.Assert(req.RecordListCpuTimeMs[i], Equals, uint32(id))
+			require.Equal(t, uint32(id), req.RecordListCpuTimeMs[i])
 		}
-		c.Assert(req.RecordListTimestampSec, HasLen, 1)
+		require.Len(t, req.RecordListTimestampSec, 1)
 		for i := range req.RecordListTimestampSec {
-			c.Assert(req.RecordListTimestampSec[i], Equals, uint64(1))
+			require.Equal(t, uint64(1), req.RecordListTimestampSec[i])
 		}
 		sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
-		c.Assert(exist, IsTrue)
-		c.Assert(sqlMeta.NormalizedSql, Equals, "sqlNormalized"+strconv.Itoa(id))
+		require.True(t, exist)
+		require.Equal(t, "sqlNormalized"+strconv.Itoa(id), sqlMeta.NormalizedSql)
 		normalizedPlan, exist := agentServer.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
-		c.Assert(exist, IsTrue)
-		c.Assert(normalizedPlan, Equals, "planNormalized"+strconv.Itoa(id))
+		require.True(t, exist)
+		require.Equal(t, "planNormalized"+strconv.Itoa(id), normalizedPlan)
 	}
 }
 
-func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
+func TestCollectAndEvicted(t *testing.T) {
 	agentServer, err := mock.StartMockAgentServer()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer agentServer.Stop()
 
 	tsr := setupRemoteTopSQLReporter(maxSQLNum, 1, agentServer.Address())
@@ -143,38 +131,38 @@ func (s *testTopSQLReporter) TestCollectAndEvicted(c *C) {
 
 	// check for equality of server received batch and the original data
 	records := agentServer.GetLatestRecords()
-	c.Assert(records, HasLen, maxSQLNum+1)
+	require.Len(t, records, maxSQLNum+1)
 	for _, req := range records {
 		id := 0
 		prefix := "sqlDigest"
 		if strings.HasPrefix(string(req.SqlDigest), prefix) {
 			n, err := strconv.Atoi(string(req.SqlDigest)[len(prefix):])
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			id = n
 		}
-		c.Assert(req.RecordListTimestampSec, HasLen, 1)
-		c.Assert(req.RecordListTimestampSec[0], Equals, uint64(2))
-		c.Assert(req.RecordListCpuTimeMs, HasLen, 1)
+		require.Len(t, req.RecordListTimestampSec, 1)
+		require.Equal(t, uint64(2), req.RecordListTimestampSec[0])
+		require.Len(t, req.RecordListCpuTimeMs, 1)
 		if id == 0 {
 			// test for others
-			c.Assert(req.SqlDigest, IsNil)
-			c.Assert(req.PlanDigest, IsNil)
+			require.Nil(t, req.SqlDigest)
+			require.Nil(t, req.PlanDigest)
 			// 12502500 is the sum of all evicted item's cpu time. 1 + 2 + 3 + ... + 5000 = (1 + 5000) * 2500 = 12502500
-			c.Assert(int(req.RecordListCpuTimeMs[0]), Equals, 12502500)
+			require.Equal(t, 12502500, int(req.RecordListCpuTimeMs[0]))
 			continue
 		}
-		c.Assert(id > maxSQLNum, IsTrue)
-		c.Assert(req.RecordListCpuTimeMs[0], Equals, uint32(id))
+		require.Greater(t, id, maxSQLNum)
+		require.Equal(t, uint32(id), req.RecordListCpuTimeMs[0])
 		sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
-		c.Assert(exist, IsTrue)
-		c.Assert(sqlMeta.NormalizedSql, Equals, "sqlNormalized"+strconv.Itoa(id))
+		require.True(t, exist)
+		require.Equal(t, "sqlNormalized"+strconv.Itoa(id), sqlMeta.NormalizedSql)
 		normalizedPlan, exist := agentServer.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
-		c.Assert(exist, IsTrue)
-		c.Assert(normalizedPlan, Equals, "planNormalized"+strconv.Itoa(id))
+		require.True(t, exist)
+		require.Equal(t, "planNormalized"+strconv.Itoa(id), normalizedPlan)
 	}
 }
 
-func (s *testTopSQLReporter) newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) tracecpu.SQLCPUTimeRecord {
+func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) tracecpu.SQLCPUTimeRecord {
 	key := []byte("sqlDigest" + strconv.Itoa(sqlID))
 	value := "sqlNormalized" + strconv.Itoa(sqlID)
 	tsr.RegisterSQL(key, value, sqlID%2 == 0)
@@ -190,56 +178,56 @@ func (s *testTopSQLReporter) newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlI
 	}
 }
 
-func (s *testTopSQLReporter) collectAndWait(tsr *RemoteTopSQLReporter, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
+func collectAndWait(tsr *RemoteTopSQLReporter, timestamp uint64, records []tracecpu.SQLCPUTimeRecord) {
 	tsr.Collect(timestamp, records)
 	time.Sleep(time.Millisecond * 100)
 }
 
-func (s *testTopSQLReporter) TestCollectAndTopN(c *C) {
+func TestCollectAndTopN(t *testing.T) {
 	agentServer, err := mock.StartMockAgentServer()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer agentServer.Stop()
 
 	tsr := setupRemoteTopSQLReporter(2, 1, agentServer.Address())
 	defer tsr.Close()
 
 	records := []tracecpu.SQLCPUTimeRecord{
-		s.newSQLCPUTimeRecord(tsr, 1, 1),
-		s.newSQLCPUTimeRecord(tsr, 2, 2),
+		newSQLCPUTimeRecord(tsr, 1, 1),
+		newSQLCPUTimeRecord(tsr, 2, 2),
 	}
-	s.collectAndWait(tsr, 1, records)
+	collectAndWait(tsr, 1, records)
 
 	records = []tracecpu.SQLCPUTimeRecord{
-		s.newSQLCPUTimeRecord(tsr, 3, 3),
-		s.newSQLCPUTimeRecord(tsr, 1, 1),
+		newSQLCPUTimeRecord(tsr, 3, 3),
+		newSQLCPUTimeRecord(tsr, 1, 1),
 	}
-	s.collectAndWait(tsr, 2, records)
+	collectAndWait(tsr, 2, records)
 
 	records = []tracecpu.SQLCPUTimeRecord{
-		s.newSQLCPUTimeRecord(tsr, 4, 1),
-		s.newSQLCPUTimeRecord(tsr, 1, 1),
+		newSQLCPUTimeRecord(tsr, 4, 1),
+		newSQLCPUTimeRecord(tsr, 1, 1),
 	}
-	s.collectAndWait(tsr, 3, records)
+	collectAndWait(tsr, 3, records)
 
 	records = []tracecpu.SQLCPUTimeRecord{
-		s.newSQLCPUTimeRecord(tsr, 5, 1),
-		s.newSQLCPUTimeRecord(tsr, 1, 1),
+		newSQLCPUTimeRecord(tsr, 5, 1),
+		newSQLCPUTimeRecord(tsr, 1, 1),
 	}
-	s.collectAndWait(tsr, 4, records)
+	collectAndWait(tsr, 4, records)
 
 	// Test for time jump back.
 	records = []tracecpu.SQLCPUTimeRecord{
-		s.newSQLCPUTimeRecord(tsr, 6, 1),
-		s.newSQLCPUTimeRecord(tsr, 1, 1),
+		newSQLCPUTimeRecord(tsr, 6, 1),
+		newSQLCPUTimeRecord(tsr, 1, 1),
 	}
-	s.collectAndWait(tsr, 0, records)
+	collectAndWait(tsr, 0, records)
 
 	// Wait agent server collect finish.
 	agentServer.WaitCollectCnt(1, time.Second*10)
 
 	// check for equality of server received batch and the original data
 	results := agentServer.GetLatestRecords()
-	c.Assert(results, HasLen, 3)
+	require.Len(t, results, 3)
 	sort.Slice(results, func(i, j int) bool {
 		return string(results[i].SqlDigest) < string(results[j].SqlDigest)
 	})
@@ -250,17 +238,17 @@ func (s *testTopSQLReporter) TestCollectAndTopN(c *C) {
 		}
 		return int(total)
 	}
-	c.Assert(results[0].SqlDigest, IsNil)
-	c.Assert(getTotalCPUTime(results[0]), Equals, 5)
-	c.Assert(results[0].RecordListTimestampSec, DeepEquals, []uint64{0, 1, 3, 4})
-	c.Assert(results[0].RecordListCpuTimeMs, DeepEquals, []uint32{1, 2, 1, 1})
-	c.Assert(results[1].SqlDigest, DeepEquals, []byte("sqlDigest1"))
-	c.Assert(getTotalCPUTime(results[1]), Equals, 5)
-	c.Assert(results[2].SqlDigest, DeepEquals, []byte("sqlDigest3"))
-	c.Assert(getTotalCPUTime(results[2]), Equals, 3)
+	require.Nil(t, results[0].SqlDigest)
+	require.Equal(t, 5, getTotalCPUTime(results[0]))
+	require.Equal(t, []uint64{0, 1, 3, 4}, results[0].RecordListTimestampSec)
+	require.Equal(t, []uint32{1, 2, 1, 1}, results[0].RecordListCpuTimeMs)
+	require.Equal(t, []byte("sqlDigest1"), results[1].SqlDigest)
+	require.Equal(t, 5, getTotalCPUTime(results[1]))
+	require.Equal(t, []byte("sqlDigest3"), results[2].SqlDigest)
+	require.Equal(t, 3, getTotalCPUTime(results[2]))
 }
 
-func (s *testTopSQLReporter) TestCollectCapacity(c *C) {
+func TestCollectCapacity(t *testing.T) {
 	tsr := setupRemoteTopSQLReporter(maxSQLNum, 60, "")
 	defer tsr.Close()
 
@@ -292,41 +280,41 @@ func (s *testTopSQLReporter) TestCollectCapacity(c *C) {
 
 	variable.TopSQLVariable.MaxCollect.Store(10000)
 	registerSQL(5000)
-	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(5000))
+	require.Equal(t, int64(5000), tsr.sqlMapLength.Load())
 	registerPlan(1000)
-	c.Assert(tsr.planMapLength.Load(), Equals, int64(1000))
+	require.Equal(t, int64(1000), tsr.planMapLength.Load())
 
 	registerSQL(20000)
-	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(10000))
+	require.Equal(t, int64(10000), tsr.sqlMapLength.Load())
 	registerPlan(20000)
-	c.Assert(tsr.planMapLength.Load(), Equals, int64(10000))
+	require.Equal(t, int64(10000), tsr.planMapLength.Load())
 
 	variable.TopSQLVariable.MaxCollect.Store(20000)
 	registerSQL(50000)
-	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(20000))
+	require.Equal(t, int64(20000), tsr.sqlMapLength.Load())
 	registerPlan(50000)
-	c.Assert(tsr.planMapLength.Load(), Equals, int64(20000))
+	require.Equal(t, int64(20000), tsr.planMapLength.Load())
 
 	variable.TopSQLVariable.MaxStatementCount.Store(5000)
 	collectedData := make(map[string]*dataPoints)
 	tsr.doCollect(collectedData, 1, genRecord(20000))
-	c.Assert(len(collectedData), Equals, 5001)
-	c.Assert(tsr.sqlMapLength.Load(), Equals, int64(5000))
-	c.Assert(tsr.planMapLength.Load(), Equals, int64(5000))
+	require.Equal(t, 5001, len(collectedData))
+	require.Equal(t, int64(5000), tsr.sqlMapLength.Load())
+	require.Equal(t, int64(5000), tsr.planMapLength.Load())
 }
 
-func (s *testTopSQLReporter) TestCollectOthers(c *C) {
+func TestCollectOthers(t *testing.T) {
 	collectTarget := make(map[string]*dataPoints)
 	addEvictedCPUTime(collectTarget, 1, 10)
 	addEvictedCPUTime(collectTarget, 2, 20)
 	addEvictedCPUTime(collectTarget, 3, 30)
 	others := collectTarget[keyOthers]
-	c.Assert(others.CPUTimeMsTotal, Equals, uint64(60))
-	c.Assert(others.TimestampList, DeepEquals, []uint64{1, 2, 3})
-	c.Assert(others.CPUTimeMsList, DeepEquals, []uint32{10, 20, 30})
+	require.Equal(t, uint64(60), others.CPUTimeMsTotal)
+	require.Equal(t, []uint64{1, 2, 3}, others.TimestampList)
+	require.Equal(t, []uint32{10, 20, 30}, others.CPUTimeMsList)
 
 	others = addEvictedIntoSortedDataPoints(nil, others)
-	c.Assert(others.CPUTimeMsTotal, Equals, uint64(60))
+	require.Equal(t, uint64(60), others.CPUTimeMsTotal)
 
 	// test for time jump backward.
 	evict := &dataPoints{}
@@ -334,25 +322,25 @@ func (s *testTopSQLReporter) TestCollectOthers(c *C) {
 	evict.CPUTimeMsList = []uint32{30, 20, 40}
 	evict.CPUTimeMsTotal = 90
 	others = addEvictedIntoSortedDataPoints(others, evict)
-	c.Assert(others.CPUTimeMsTotal, Equals, uint64(150))
-	c.Assert(others.TimestampList, DeepEquals, []uint64{1, 2, 3, 4})
-	c.Assert(others.CPUTimeMsList, DeepEquals, []uint32{10, 40, 60, 40})
+	require.Equal(t, uint64(150), others.CPUTimeMsTotal)
+	require.Equal(t, []uint64{1, 2, 3, 4}, others.TimestampList)
+	require.Equal(t, []uint32{10, 40, 60, 40}, others.CPUTimeMsList)
 }
 
-func (s *testTopSQLReporter) TestDataPoints(c *C) {
+func TestDataPoints(t *testing.T) {
 	// test for dataPoints invalid.
 	d := &dataPoints{}
 	d.TimestampList = []uint64{1}
 	d.CPUTimeMsList = []uint32{10, 30}
-	c.Assert(d.isInvalid(), Equals, true)
+	require.True(t, d.isInvalid())
 
 	// test for dataPoints sort.
 	d = &dataPoints{}
 	d.TimestampList = []uint64{1, 2, 5, 6, 3, 4}
 	d.CPUTimeMsList = []uint32{10, 20, 50, 60, 30, 40}
 	sort.Sort(d)
-	c.Assert(d.TimestampList, DeepEquals, []uint64{1, 2, 3, 4, 5, 6})
-	c.Assert(d.CPUTimeMsList, DeepEquals, []uint32{10, 20, 30, 40, 50, 60})
+	require.Equal(t, []uint64{1, 2, 3, 4, 5, 6}, d.TimestampList)
+	require.Equal(t, []uint32{10, 20, 30, 40, 50, 60}, d.CPUTimeMsList)
 
 	// test for dataPoints merge.
 	d = &dataPoints{}
@@ -362,17 +350,17 @@ func (s *testTopSQLReporter) TestDataPoints(c *C) {
 	evict.CPUTimeMsList = []uint32{10, 30}
 	evict.CPUTimeMsTotal = 40
 	addEvictedIntoSortedDataPoints(d, evict)
-	c.Assert(d.CPUTimeMsTotal, Equals, uint64(40))
-	c.Assert(d.TimestampList, DeepEquals, []uint64{1, 3})
-	c.Assert(d.CPUTimeMsList, DeepEquals, []uint32{10, 30})
+	require.Equal(t, uint64(40), d.CPUTimeMsTotal)
+	require.Equal(t, []uint64{1, 3}, d.TimestampList)
+	require.Equal(t, []uint32{10, 30}, d.CPUTimeMsList)
 
 	evict.TimestampList = []uint64{1, 2, 3, 4, 5}
 	evict.CPUTimeMsList = []uint32{10, 20, 30, 40, 50}
 	evict.CPUTimeMsTotal = 150
 	addEvictedIntoSortedDataPoints(d, evict)
-	c.Assert(d.CPUTimeMsTotal, Equals, uint64(190))
-	c.Assert(d.TimestampList, DeepEquals, []uint64{1, 2, 3, 4, 5})
-	c.Assert(d.CPUTimeMsList, DeepEquals, []uint32{20, 20, 60, 40, 50})
+	require.Equal(t, uint64(190), d.CPUTimeMsTotal)
+	require.Equal(t, []uint64{1, 2, 3, 4, 5}, d.TimestampList)
+	require.Equal(t, []uint32{20, 20, 60, 40, 50}, d.CPUTimeMsList)
 
 	// test for time jump backward.
 	d = &dataPoints{}
@@ -381,56 +369,54 @@ func (s *testTopSQLReporter) TestDataPoints(c *C) {
 	evict.CPUTimeMsList = []uint32{30, 20}
 	evict.CPUTimeMsTotal = 50
 	addEvictedIntoSortedDataPoints(d, evict)
-	c.Assert(d.CPUTimeMsTotal, Equals, uint64(50))
-	c.Assert(d.TimestampList, DeepEquals, []uint64{2, 3})
-	c.Assert(d.CPUTimeMsList, DeepEquals, []uint32{20, 30})
+	require.Equal(t, uint64(50), d.CPUTimeMsTotal)
+	require.Equal(t, []uint64{2, 3}, d.TimestampList)
+	require.Equal(t, []uint32{20, 30}, d.CPUTimeMsList)
 
 	// test for merge invalid dataPoints
 	d = &dataPoints{}
 	evict = &dataPoints{}
 	evict.TimestampList = []uint64{1}
 	evict.CPUTimeMsList = []uint32{10, 30}
-	c.Assert(evict.isInvalid(), Equals, true)
+	require.True(t, evict.isInvalid())
 	addEvictedIntoSortedDataPoints(d, evict)
-	c.Assert(d.isInvalid(), Equals, false)
-	c.Assert(d.CPUTimeMsList, IsNil)
-	c.Assert(d.TimestampList, IsNil)
+	require.False(t, d.isInvalid())
+	require.Nil(t, d.CPUTimeMsList)
+	require.Nil(t, d.TimestampList)
 }
 
-func (s *testTopSQLReporter) TestCollectInternal(c *C) {
+func TestCollectInternal(t *testing.T) {
 	agentServer, err := mock.StartMockAgentServer()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer agentServer.Stop()
 
 	tsr := setupRemoteTopSQLReporter(3000, 1, agentServer.Address())
 	defer tsr.Close()
 
 	records := []tracecpu.SQLCPUTimeRecord{
-		s.newSQLCPUTimeRecord(tsr, 1, 1),
-		s.newSQLCPUTimeRecord(tsr, 2, 2),
+		newSQLCPUTimeRecord(tsr, 1, 1),
+		newSQLCPUTimeRecord(tsr, 2, 2),
 	}
-	s.collectAndWait(tsr, 1, records)
+	collectAndWait(tsr, 1, records)
 
 	// Wait agent server collect finish.
 	agentServer.WaitCollectCnt(1, time.Second*10)
 
 	// check for equality of server received batch and the original data
 	results := agentServer.GetLatestRecords()
-	c.Assert(results, HasLen, 2)
+	require.Len(t, results, 2)
 	for _, req := range results {
 		id := 0
 		prefix := "sqlDigest"
 		if strings.HasPrefix(string(req.SqlDigest), prefix) {
 			n, err := strconv.Atoi(string(req.SqlDigest)[len(prefix):])
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			id = n
 		}
-		if id == 0 {
-			c.Fatalf("the id should not be 0")
-		}
+		require.NotEqualf(t, 0, id, "the id should not be 0")
 		sqlMeta, exist := agentServer.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
-		c.Assert(exist, IsTrue)
-		c.Assert(sqlMeta.IsInternalSql, Equals, id%2 == 0)
+		require.True(t, exist)
+		require.Equal(t, id%2 == 0, sqlMeta.IsInternalSql)
 	}
 }
 

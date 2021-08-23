@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -30,9 +31,9 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -96,9 +97,6 @@ func (s *testStateChangeSuiteBase) TearDownSuite(c *C) {
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
 func (s *serialTestStateChangeSuite) TestShowCreateTable(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
@@ -755,12 +753,6 @@ func (s *testStateChangeSuite) TestDeleteOnlyForDropColumnWithIndexes(c *C) {
 
 // TestDeleteOnlyForDropExpressionIndex tests for deleting data when the hidden column is delete-only state.
 func (s *serialTestStateChangeSuite) TestDeleteOnlyForDropExpressionIndex(c *C) {
-	originalVal := config.GetGlobalConfig().Experimental.AllowsExpressionIndex
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
-	defer func() {
-		config.GetGlobalConfig().Experimental.AllowsExpressionIndex = originalVal
-	}()
-
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), `create table tt (a int, b int)`)
@@ -1061,8 +1053,9 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, IsNil)
-		_, err := s.se.Execute(context.Background(), "select * from t")
+		rs, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
+		c.Assert(rs[0].Close(), IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
@@ -1073,8 +1066,9 @@ func (s *testStateChangeSuite) TestParallelAddGeneratedColumnAndAlterModifyColum
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
-		_, err := s.se.Execute(context.Background(), "select * from t")
+		rs, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
+		c.Assert(rs[0].Close(), IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -1085,8 +1079,9 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: this column has primary key flag")
-		_, err := s.se.Execute(context.Background(), "select * from t")
+		rs, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
+		c.Assert(rs[0].Close(), IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -1161,9 +1156,6 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 }
 
 func (s *serialTestStateChangeSuite) TestParallelAlterAddExpressionIndex(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
 	sql1 := "ALTER TABLE t add index expr_index_b((b+1));"
 	sql2 := "CREATE INDEX expr_index_b ON t ((c+1));"
 	f := func(c *C, err1, err2 error) {
@@ -1373,12 +1365,24 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, err1 = se.Execute(context.Background(), sql1)
+		var rss []sqlexec.RecordSet
+		rss, err1 = se.Execute(context.Background(), sql1)
+		if err1 == nil && len(rss) > 0 {
+			for _, rs := range rss {
+				c.Assert(rs.Close(), IsNil)
+			}
+		}
 	}()
 	go func() {
 		defer wg.Done()
 		<-ch
-		_, err2 = se1.Execute(context.Background(), sql2)
+		var rss []sqlexec.RecordSet
+		rss, err2 = se1.Execute(context.Background(), sql2)
+		if err2 == nil && len(rss) > 0 {
+			for _, rs := range rss {
+				c.Assert(rs.Close(), IsNil)
+			}
+		}
 	}()
 
 	wg.Wait()
@@ -1799,12 +1803,6 @@ func (s *testStateChangeSuite) TestWriteReorgForColumnTypeChange(c *C) {
 }
 
 func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
-	originalVal := config.GetGlobalConfig().Experimental.AllowsExpressionIndex
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
-	defer func() {
-		config.GetGlobalConfig().Experimental.AllowsExpressionIndex = originalVal
-	}()
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db_state")
 	tk.MustExec("drop table if exists t")
@@ -1816,6 +1814,10 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test_db_state")
+
+	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
+	stateWriteOnlySQLs := []string{"insert into t values (8, 8)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 9", "update t set b = 7 where a = 2", "delete from t where b = 3"}
+	stateWriteReorganizationSQLs := []string{"insert into t values (10, 10)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 11", "update t set b = 7 where a = 5", "delete from t where b = 6"}
 
 	var checkErr error
 	d := s.dom.DDL()
@@ -1829,25 +1831,88 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 		c.Assert(err, IsNil)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
-			_, checkErr = tk1.Exec("insert into t values (5, 5)")
-			if checkErr != nil {
-				return
+			for _, sql := range stateDeleteOnlySQLs {
+				_, checkErr = tk1.Exec(sql)
+				if checkErr != nil {
+					return
+				}
 			}
-			_, checkErr = tk1.Exec("insert into t set b = 6")
-			if checkErr != nil {
-				return
+			// (1, 7), (2, 2), (3, 3), (5, 5), (0, 6)
+		case model.StateWriteOnly:
+			for _, sql := range stateWriteOnlySQLs {
+				_, checkErr = tk1.Exec(sql)
+				if checkErr != nil {
+					return
+				}
 			}
-			_, checkErr = tk1.Exec("update t set b = 7 where a = 1")
-			if checkErr != nil {
-				return
+			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
+		case model.StateWriteReorganization:
+			for _, sql := range stateWriteReorganizationSQLs {
+				_, checkErr = tk1.Exec(sql)
+				if checkErr != nil {
+					return
+				}
 			}
-			_, checkErr = tk1.Exec("delete from t where b = 4")
-			if checkErr != nil {
-				return
+			// (1, 7), (2, 7), (5, 7), (8, 8), (0, 9), (10, 10), (10, 10), (0, 11), (0, 11)
+		}
+	}
+
+	d.(ddl.DDLForTest).SetHook(callback)
+	tk.MustExec("alter table t add index idx((b+1))")
+	c.Assert(checkErr, IsNil)
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10", "10 10"))
+}
+
+func (s *serialTestStateChangeSuite) TestCreateUniqueExpressionIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int default 0, b int default 0)")
+	defer func() {
+		tk.MustExec("drop table t")
+	}()
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test_db_state")
+
+	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
+
+	var checkErr error
+	d := s.dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &ddl.TestDDLCallback{}
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		err := originalCallback.OnChanged(nil)
+		c.Assert(err, IsNil)
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			for _, sql := range stateDeleteOnlySQLs {
+				_, checkErr = tk1.Exec(sql)
+				if checkErr != nil {
+					return
+				}
 			}
 			// (1, 7), (2, 2), (3, 3), (5, 5), (0, 6)
 		case model.StateWriteOnly:
 			_, checkErr = tk1.Exec("insert into t values (8, 8)")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("begin pessimistic;")
+			if checkErr != nil {
+				return
+			}
+			_, tmpErr := tk1.Exec("insert into t select * from t")
+			if tmpErr == nil {
+				checkErr = errors.New("should not be nil")
+				return
+			}
+			_, checkErr = tk1.Exec("rollback")
 			if checkErr != nil {
 				return
 			}
@@ -1865,11 +1930,24 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 			}
 			// (1, 7), (2, 7), (5, 5), (0, 6), (8, 8), (0, 9)
 		case model.StateWriteReorganization:
-			_, checkErr = tk1.Exec("insert into t values (10, 10)")
+			_, checkErr = tk1.Exec("insert into t values (10, 10) on duplicate key update a = 11")
 			if checkErr != nil {
 				return
 			}
-			_, checkErr = tk1.Exec("insert into t set b = 11")
+			_, checkErr = tk1.Exec("begin pessimistic;")
+			if checkErr != nil {
+				return
+			}
+			_, tmpErr := tk1.Exec("insert into t select * from t")
+			if tmpErr == nil {
+				checkErr = errors.New("should not be nil")
+				return
+			}
+			_, checkErr = tk1.Exec("rollback")
+			if checkErr != nil {
+				return
+			}
+			_, checkErr = tk1.Exec("insert into t set b = 11 on duplicate key update a = 13")
 			if checkErr != nil {
 				return
 			}
@@ -1881,12 +1959,84 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 			if checkErr != nil {
 				return
 			}
-			// (1, 7), (2, 7), (5, 7), (8, 8), (0, 9), (10, 10), (10, 10), (0, 11), (0, 11)
+			// (1, 7), (2, 7), (5, 7), (8, 8), (13, 9), (11, 10), (0, 11)
 		}
 	}
 
 	d.(ddl.DDLForTest).SetHook(callback)
-	tk.MustExec("alter table t add index idx((b+1))")
+	tk.MustExec("alter table t add unique index idx((a*b+1))")
+	c.Assert(checkErr, IsNil)
 	tk.MustExec("admin check table t")
-	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10", "10 10"))
+	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 11", "1 7", "2 7", "5 7", "8 8", "11 10", "13 9"))
+}
+
+func (s *serialTestStateChangeSuite) TestDropExpressionIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int default 0, b int default 0, key idx((b+1)))")
+	defer func() {
+		tk.MustExec("drop table t")
+	}()
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test_db_state")
+	stateDeleteOnlySQLs := []string{"insert into t values (5, 5)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 6", "update t set b = 7 where a = 1", "delete from t where b = 4"}
+	stateWriteOnlySQLs := []string{"insert into t values (8, 8)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 9", "update t set b = 7 where a = 2", "delete from t where b = 3"}
+	stateWriteReorganizationSQLs := []string{"insert into t values (10, 10)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 11", "update t set b = 7 where a = 5", "delete from t where b = 6"}
+
+	var checkErr error
+	d := s.dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &ddl.TestDDLCallback{}
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		err := originalCallback.OnChanged(nil)
+		c.Assert(err, IsNil)
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			for _, sql := range stateDeleteOnlySQLs {
+				_, checkErr = tk1.Exec(sql)
+				if checkErr != nil {
+					return
+				}
+			}
+			// (1, 7), (2, 7), (5, 5), (8, 8), (0, 9), (0, 6)
+		case model.StateWriteOnly:
+			for _, sql := range stateWriteOnlySQLs {
+				_, checkErr = tk1.Exec(sql)
+				if checkErr != nil {
+					return
+				}
+			}
+			// (1, 1), (2, 7), (4, 4), (8, 8), (0, 9)
+		case model.StateDeleteReorganization:
+			for _, sql := range stateWriteReorganizationSQLs {
+				_, checkErr = tk1.Exec(sql)
+				if checkErr != nil {
+					return
+				}
+			}
+			// (1, 7), (2, 7), (5, 7), (8, 8), (0, 9), (10, 10), (0, 11)
+		}
+	}
+
+	d.(ddl.DDLForTest).SetHook(callback)
+	tk.MustExec("alter table t drop index idx")
+	c.Assert(checkErr, IsNil)
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10"))
+}
+
+func (s *testStateChangeSuite) TestExpressionIndexDDLError(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx((a+b)))")
+	tk.MustGetErrCode("alter table t rename column b to b2", errno.ErrDependentByFunctionalIndex)
+	tk.MustGetErrCode("alter table t drop column b", errno.ErrDependentByFunctionalIndex)
+	tk.MustExec("drop table t")
 }

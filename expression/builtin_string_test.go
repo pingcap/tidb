@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -2446,4 +2447,50 @@ func (s *testEvaluatorSerialSuites) TestCIWeightString(c *C) {
 
 	checkResult("utf8mb4_general_ci", generalTests)
 	checkResult("utf8mb4_unicode_ci", unicodeTests)
+}
+
+func (s *testEvaluatorSuite) TestTranslate(c *C) {
+	cases := []struct {
+		args  []interface{}
+		isNil bool
+		isErr bool
+		res   string
+	}{
+		{[]interface{}{"ABC", "A", "B"}, false, false, "BBC"},
+		{[]interface{}{"ABC", "Z", "ABC"}, false, false, "ABC"},
+		{[]interface{}{"A.B.C", ".A", "|"}, false, false, "|B|C"},
+		{[]interface{}{"中文", "文", "国"}, false, false, "中国"},
+		{[]interface{}{"UPPERCASE", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"}, false, false, "uppercase"},
+		{[]interface{}{"lowercase", "abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"}, false, false, "LOWERCASE"},
+		{[]interface{}{"aaaaabbbbb", "aaabbb", "xyzXYZ"}, false, false, "xxxxxXXXXX"},
+		{[]interface{}{"Ti*DB User's Guide", " */'", "___"}, false, false, "Ti_DB_Users_Guide"},
+		{[]interface{}{"abc", "ab", ""}, false, false, "c"},
+		{[]interface{}{"aaa", "a", ""}, false, false, ""},
+		{[]interface{}{"", "null", "null"}, false, false, ""},
+		{[]interface{}{"null", "", "null"}, false, false, "null"},
+		{[]interface{}{"null", "null", ""}, false, false, ""},
+		{[]interface{}{nil, "error", "error"}, true, false, ""},
+		{[]interface{}{"error", nil, "error"}, true, false, ""},
+		{[]interface{}{"error", "error", nil}, true, false, ""},
+		{[]interface{}{nil, nil, nil}, true, false, ""},
+		{[]interface{}{[]byte{255}, []byte{255}, []byte{255}}, false, false, string([]byte{255})},
+		{[]interface{}{[]byte{255, 255}, []byte{255}, []byte{254}}, false, false, string([]byte{254, 254})},
+		{[]interface{}{[]byte{255, 255}, []byte{255, 255}, []byte{254, 253}}, false, false, string([]byte{254, 254})},
+		{[]interface{}{[]byte{255, 254, 253, 252, 251}, []byte{253, 252, 251}, []byte{254, 253}}, false, false, string([]byte{255, 254, 254, 253})},
+	}
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Translate, s.primitiveValsToConstants(t.args)...)
+		c.Assert(err, IsNil)
+		d, err := f.Eval(chunk.Row{})
+		if t.isErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			if t.isNil {
+				c.Assert(d.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(d.GetString(), Equals, t.res)
+			}
+		}
+	}
 }

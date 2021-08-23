@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -87,6 +88,11 @@ type PrepareExec struct {
 	ID         uint32
 	ParamCount int
 	Fields     []*ast.ResultField
+
+	// If it's generated from executing "prepare stmt from '...'", the process is parse -> plan -> executor
+	// If it's generated from the prepare protocol, the process is session.PrepareStmt -> NewPrepareExec
+	// They both generate a PrepareExec struct, but the second case needs to reset the statement context while the first already do that.
+	needReset bool
 }
 
 // NewPrepareExec creates a new PrepareExec.
@@ -96,6 +102,7 @@ func NewPrepareExec(ctx sessionctx.Context, sqlTxt string) *PrepareExec {
 	return &PrepareExec{
 		baseExecutor: base,
 		sqlText:      sqlTxt,
+		needReset:    true,
 	}
 }
 
@@ -135,9 +142,11 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	stmt := stmts[0]
 
-	err = ResetContextOfStmt(e.ctx, stmt)
-	if err != nil {
-		return err
+	if e.needReset {
+		err = ResetContextOfStmt(e.ctx, stmt)
+		if err != nil {
+			return err
+		}
 	}
 
 	var extractor paramMarkerExtractor

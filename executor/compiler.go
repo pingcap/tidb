@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -55,7 +56,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	ret := &plannercore.PreprocessorReturn{}
-	if err := plannercore.Preprocess(c.Ctx, stmtNode, plannercore.WithPreprocessorReturn(ret)); err != nil {
+	pe := &plannercore.PreprocessExecuteISUpdate{ExecuteInfoSchemaUpdate: planner.GetExecuteForUpdateReadIS, Node: stmtNode}
+	err := plannercore.Preprocess(c.Ctx, stmtNode, plannercore.WithPreprocessorReturn(ret), plannercore.WithExecuteInfoSchemaUpdate(pe))
+	if err != nil {
 		return nil, err
 	}
 	stmtNode = plannercore.TryAddExtraLimit(c.Ctx, stmtNode)
@@ -335,6 +338,9 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 	case *ast.DropIndexStmt:
 		return "DropIndex"
 	case *ast.DropTableStmt:
+		if x.IsView {
+			return "DropView"
+		}
 		return "DropTable"
 	case *ast.ExplainStmt:
 		return "Explain"
@@ -373,6 +379,12 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "CreateBinding"
 	case *ast.IndexAdviseStmt:
 		return "IndexAdvise"
+	case *ast.DropBindingStmt:
+		return "DropBinding"
+	case *ast.TraceStmt:
+		return "Trace"
+	case *ast.ShutdownStmt:
+		return "Shutdown"
 	}
 	return "other"
 }

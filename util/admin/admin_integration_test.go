@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,19 +18,14 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/testutils"
 )
 
 func TestAdminCheckTable(t *testing.T) {
 	t.Parallel()
 
-	store, clean := newIntegrationMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	// test NULL value.
@@ -82,7 +78,7 @@ func TestAdminCheckTable(t *testing.T) {
 func TestAdminCheckTableClusterIndex(t *testing.T) {
 	t.Parallel()
 
-	store, clean := newIntegrationMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -115,28 +111,4 @@ func TestAdminCheckTableClusterIndex(t *testing.T) {
 
 	tk.MustExec("insert into t values (1000, '1000', 1000, '1000', '1000');")
 	tk.MustExec("admin check table t;")
-}
-
-func newIntegrationMockStore(t *testing.T) (store kv.Storage, clean func()) {
-	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithSingleStore(c)
-		}),
-	)
-	require.NoError(t, err)
-
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
-	d, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-
-	d.SetStatsUpdating(true)
-
-	clean = func() {
-		d.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	}
-
-	return
 }

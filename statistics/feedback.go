@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -175,6 +176,7 @@ func CollectFeedback(sc *stmtctx.StatementContext, q *QueryFeedback, numOfRanges
 	if q.Hist == nil || q.Hist.Len() == 0 {
 		return false
 	}
+	// #nosec G404
 	if numOfRanges > MaxNumberOfRanges || rand.Float64() > FeedbackProbability.Load() {
 		return false
 	}
