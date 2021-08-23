@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,8 +16,10 @@ package executor
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -53,7 +56,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	ret := &plannercore.PreprocessorReturn{}
-	if err := plannercore.Preprocess(c.Ctx, stmtNode, plannercore.WithPreprocessorReturn(ret)); err != nil {
+	pe := &plannercore.PreprocessExecuteISUpdate{ExecuteInfoSchemaUpdate: planner.GetExecuteForUpdateReadIS, Node: stmtNode}
+	err := plannercore.Preprocess(c.Ctx, stmtNode, plannercore.WithPreprocessorReturn(ret), plannercore.WithExecuteInfoSchemaUpdate(pe))
+	if err != nil {
 		return nil, err
 	}
 	stmtNode = plannercore.TryAddExtraLimit(c.Ctx, stmtNode)
@@ -63,24 +68,32 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		return nil, err
 	}
 
+	failpoint.Inject("assertStmtCtxIsStaleness", func(val failpoint.Value) {
+		expected := val.(bool)
+		got := c.Ctx.GetSessionVars().StmtCtx.IsStaleness
+		if got != expected {
+			panic(fmt.Sprintf("stmtctx isStaleness wrong, expected:%v, got:%v", expected, got))
+		}
+	})
+
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	return &ExecStmt{
-		GoCtx:             ctx,
-		SnapshotTS:        ret.LastSnapshotTS,
-		ExplicitStaleness: ret.ExplicitStaleness,
-		TxnScope:          ret.TxnScope,
-		InfoSchema:        ret.InfoSchema,
-		Plan:              finalPlan,
-		LowerPriority:     lowerPriority,
-		Text:              stmtNode.Text(),
-		StmtNode:          stmtNode,
-		Ctx:               c.Ctx,
-		OutputNames:       names,
-		Ti:                &TelemetryInfo{},
+		GoCtx:         ctx,
+		SnapshotTS:    ret.LastSnapshotTS,
+		IsStaleness:   ret.IsStaleness,
+		TxnScope:      ret.TxnScope,
+		InfoSchema:    ret.InfoSchema,
+		Plan:          finalPlan,
+		LowerPriority: lowerPriority,
+		Text:          stmtNode.Text(),
+		StmtNode:      stmtNode,
+		Ctx:           c.Ctx,
+		OutputNames:   names,
+		Ti:            &TelemetryInfo{},
 	}, nil
 }
 
@@ -325,6 +338,9 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 	case *ast.DropIndexStmt:
 		return "DropIndex"
 	case *ast.DropTableStmt:
+		if x.IsView {
+			return "DropView"
+		}
 		return "DropTable"
 	case *ast.ExplainStmt:
 		return "Explain"
@@ -363,6 +379,12 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		return "CreateBinding"
 	case *ast.IndexAdviseStmt:
 		return "IndexAdvise"
+	case *ast.DropBindingStmt:
+		return "DropBinding"
+	case *ast.TraceStmt:
+		return "Trace"
+	case *ast.ShutdownStmt:
+		return "Shutdown"
 	}
 	return "other"
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/config"
@@ -158,6 +160,9 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		rows [][]types.Datum
 		err  error
 	}
+	if !hasPriv(sctx, mysql.ConfigPriv) {
+		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
 		if s := val.(string); len(s) > 0 {
@@ -195,7 +200,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 					// TODO: support show tiflash config once tiflash supports it
 					return
 				default:
-					ch <- result{err: errors.Errorf("unknown node type: %s(%s)", typ, address)}
+					ch <- result{err: errors.Errorf("currently we do not support get config from node type: %s(%s)", typ, address)}
 					return
 				}
 
@@ -289,6 +294,17 @@ type clusterServerInfoRetriever struct {
 
 // retrieve implements the memTableRetriever interface
 func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	switch e.serverInfoType {
+	case diagnosticspb.ServerInfoType_LoadInfo,
+		diagnosticspb.ServerInfoType_SystemInfo:
+		if !hasPriv(sctx, mysql.ProcessPriv) {
+			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		}
+	case diagnosticspb.ServerInfoType_HardwareInfo:
+		if !hasPriv(sctx, mysql.ConfigPriv) {
+			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+		}
+	}
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
@@ -481,6 +497,9 @@ func (h *logResponseHeap) Pop() interface{} {
 }
 
 func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
+	if !hasPriv(sctx, mysql.ProcessPriv) {
+		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
 		// erase the error

@@ -8,12 +8,14 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package executor_test
 
 import (
+	"bytes"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -36,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/tikv/client-go/v2/mockstore/cluster"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 type tiflashTestSuite struct {
@@ -48,7 +50,7 @@ type tiflashTestSuite struct {
 func (s *tiflashTestSuite) SetUpSuite(c *C) {
 	var err error
 	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
 			tiflashIdx := 0
@@ -72,6 +74,11 @@ func (s *tiflashTestSuite) SetUpSuite(c *C) {
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
+}
+
+func (s *tiflashTestSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	c.Assert(s.store.Close(), IsNil)
 }
 
 func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
@@ -260,9 +267,7 @@ func (s *tiflashTestSuite) TestInjectExtraProj(c *C) {
 }
 
 func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashJoin(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("exhaustive types test, skip race test")
-	}
+	c.Skip("too slow")
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`create database tiflash_partition_SHJ`)
@@ -336,9 +341,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashJoin(c *C) {
 }
 
 func (s *tiflashTestSuite) TestTiFlashPartitionTableReader(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("exhaustive types test, skip race test")
-	}
+	c.Skip("too slow")
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`create database tiflash_partition_tablereader`)
@@ -380,7 +383,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableReader(c *C) {
 
 	tk.MustExec("SET tidb_enforce_mpp=1")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10; i++ {
 		l, r := rand.Intn(400), rand.Intn(400)
 		if l > r {
 			l, r = r, l
@@ -510,6 +513,25 @@ func (s *tiflashTestSuite) TestMppEnum(c *C) {
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 	tk.MustQuery("select t1.b from t t1 join t t2 on t1.a = t2.a order by t1.b").Check(testkit.Rows("aca", "bca", "zca"))
+}
+
+func (s *tiflashTestSuite) TestDispatchTaskRetry(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("insert into t values(1,0)")
+	tk.MustExec("insert into t values(2,0)")
+	tk.MustExec("insert into t values(3,0)")
+	tk.MustExec("insert into t values(4,0)")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "3*return(true)"), IsNil)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout"), IsNil)
 }
 
 func (s *tiflashTestSuite) TestCancelMppTasks(c *C) {
@@ -713,9 +735,7 @@ func (s *tiflashTestSuite) TestTiFlashVirtualColumn(c *C) {
 }
 
 func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashAggregation(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("exhaustive types test, skip race test")
-	}
+	c.Skip("too slow")
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database tiflash_partition_AGG")
@@ -785,9 +805,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashAggregation(c *C
 }
 
 func (s *tiflashTestSuite) TestTiFlashPartitionTableBroadcastJoin(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("exhaustive types test, skip race test")
-	}
+	c.Skip("too slow")
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database tiflash_partition_BCJ")
@@ -855,4 +873,39 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableBroadcastJoin(c *C) {
 			}
 		}
 	}
+}
+
+func (s *tiflashTestSuite) TestForbidTiflashDuringStaleRead(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint(20))")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	time.Sleep(2 * time.Second)
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	tk.MustExec("insert into t values (9223372036854775807)")
+	rows := tk.MustQuery("explain select avg(a) from t").Rows()
+	resBuff := bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res := resBuff.String()
+	c.Assert(strings.Contains(res, "tiflash"), IsTrue)
+	c.Assert(strings.Contains(res, "tikv"), IsFalse)
+	tk.MustExec("set transaction read only as of timestamp now(1)")
+	rows = tk.MustQuery("explain select avg(a) from t").Rows()
+	resBuff = bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res = resBuff.String()
+	c.Assert(strings.Contains(res, "tiflash"), IsFalse)
+	c.Assert(strings.Contains(res, "tikv"), IsTrue)
 }

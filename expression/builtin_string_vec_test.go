@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -251,6 +252,13 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETInt},
 			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), nil},
 			constants:     []*Constant{nil, nil, {Value: types.NewDatum(ast.TrimTrailing), RetType: types.NewFieldType(mysql.TypeLonglong)}},
+		},
+	},
+	ast.Translate: {
+		{
+			retEvalType:   types.ETString,
+			childrenTypes: []types.EvalType{types.ETString, types.ETString, types.ETString},
+			geners:        []dataGenerator{newRandLenStrGener(10, 20), newRandLenStrGener(5, 25), newRandLenStrGener(5, 25)},
 		},
 	},
 	ast.LTrim: {

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -62,7 +63,7 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 		assertScope := val.(string)
 		if len(assertScope) > 0 {
 			if builder.IsStaleness && assertScope != builder.TxnScope {
-				panic("batch point get staleness option fail")
+				panic("request builder get staleness option fail")
 			}
 		}
 	})
@@ -634,7 +635,7 @@ func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSc
 	if !ok {
 		return true
 	}
-	leaderDC, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+	leaderDC, ok := bundle.GetLeaderDC(placement.DCLabelKey)
 	if !ok {
 		return true
 	}

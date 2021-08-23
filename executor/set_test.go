@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,6 +24,7 @@ import (
 	"strconv"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -370,8 +372,8 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec("set @@tidb_store_limit = 0")
 
 	tk.MustExec("set global tidb_store_limit = 100")
-	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_store_limit;").Check(testkit.Rows("100"))
+	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("100"))
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
 
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
@@ -508,6 +510,36 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 	tk.MustExec("set @@tidb_enable_clustered_index = 'int_only'")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1287 'INT_ONLY' is deprecated and will be removed in a future release. Please use 'ON' or 'OFF' instead"))
+
+	// test for tidb_enable_ordered_result_mode
+	tk.MustQuery(`select @@tidb_enable_ordered_result_mode`).Check(testkit.Rows("0"))
+	tk.MustExec(`set global tidb_enable_ordered_result_mode = 1`)
+	tk.MustQuery(`select @@global.tidb_enable_ordered_result_mode`).Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_enable_ordered_result_mode = 0`)
+	tk.MustQuery(`select @@global.tidb_enable_ordered_result_mode`).Check(testkit.Rows("0"))
+	tk.MustExec(`set tidb_enable_ordered_result_mode=1`)
+	tk.MustQuery(`select @@global.tidb_enable_ordered_result_mode`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_enable_ordered_result_mode`).Check(testkit.Rows("1"))
+
+	// test for tidb_opt_enable_correlation_adjustment
+	tk.MustQuery(`select @@tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_opt_enable_correlation_adjustment = 0`)
+	tk.MustQuery(`select @@global.tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("0"))
+	tk.MustExec(`set global tidb_opt_enable_correlation_adjustment = 1`)
+	tk.MustQuery(`select @@global.tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("1"))
+	tk.MustExec(`set tidb_opt_enable_correlation_adjustment=0`)
+	tk.MustQuery(`select @@global.tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("0"))
+
+	// test for tidb_opt_limit_push_down_threshold
+	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
+	tk.MustExec(`set global tidb_opt_limit_push_down_threshold = 20`)
+	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
+	tk.MustExec(`set global tidb_opt_limit_push_down_threshold = 100`)
+	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
+	tk.MustExec(`set tidb_opt_limit_push_down_threshold = 20`)
+	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
+	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
@@ -1042,7 +1074,6 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 }
 
 func (s *testSuite5) TestSelectGlobalVar(c *C) {
-	c.Skip("unstable, skip it and fix it before 20210624")
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("151"))
@@ -1302,7 +1333,8 @@ func (s *testSuite5) TestSetClusterConfig(c *C) {
 	c.Assert(tk.ExecToErr("set config xxx log.level='info'"), ErrorMatches, "unknown type xxx")
 	c.Assert(tk.ExecToErr("set config tidb log.level='info'"), ErrorMatches, "TiDB doesn't support to change configs online, please use SQL variables")
 	c.Assert(tk.ExecToErr("set config '127.0.0.1:1111' log.level='info'"), ErrorMatches, "TiDB doesn't support to change configs online, please use SQL variables")
-	c.Assert(tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), ErrorMatches, "invalid instance 127.a.b.c:1234")
+	c.Assert(tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), ErrorMatches, "invalid instance 127.a.b.c:1234")                          // name doesn't resolve.
+	c.Assert(tk.ExecToErr("set config 'example.com:1111' log.level='info'"), ErrorMatches, "instance example.com:1111 is not found in this cluster") // name resolves.
 	c.Assert(tk.ExecToErr("set config tikv log.level=null"), ErrorMatches, "can't set config to null")
 	c.Assert(tk.ExecToErr("set config '1.1.1.1:1111' log.level='info'"), ErrorMatches, "instance 1.1.1.1:1111 is not found in this cluster")
 
@@ -1367,6 +1399,12 @@ func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
 }
 
 func (s *testSerialSuite) TestSetTopSQLVariables(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`), IsNil)
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
+		c.Assert(err, IsNil)
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@global.tidb_enable_top_sql='On';")
 	tk.MustQuery("select @@global.tidb_enable_top_sql;").Check(testkit.Rows("1"))

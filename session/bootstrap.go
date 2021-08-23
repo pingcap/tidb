@@ -12,6 +12,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -177,6 +178,7 @@ const (
 		table_id 		BIGINT(64) NOT NULL,
 		modify_count	BIGINT(64) NOT NULL DEFAULT 0,
 		count 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		snapshot        BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		INDEX idx_ver(version),
 		UNIQUE INDEX tbl(table_id)
 	);`
@@ -253,7 +255,7 @@ const (
 		charset TEXT NOT NULL,
 		collation TEXT NOT NULL,
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
-		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
+		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
@@ -337,7 +339,15 @@ const (
 		PRIV char(32) NOT NULL DEFAULT '',
 		WITH_GRANT_OPTION enum('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (USER,HOST,PRIV)
-	  );`
+	);`
+	// CreateCapturePlanBaselinesBlacklist stores the baseline capture filter rules.
+	CreateCapturePlanBaselinesBlacklist = `CREATE TABLE IF NOT EXISTS mysql.capture_plan_baselines_blacklist (
+		id bigint(64) auto_increment,
+		filter_type varchar(32) NOT NULL COMMENT "type of the filter, only db, table and frequency supported now",
+		filter_value varchar(32) NOT NULL,
+		key idx(filter_type),
+		primary key(id)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -492,11 +502,18 @@ const (
 	version69 = 69
 	// version70 adds mysql.user.plugin to allow multiple authentication plugins
 	version70 = 70
+	// version71 forces tidb_multi_statement_mode=OFF when tidb_multi_statement_mode=WARN
+	// This affects upgrades from v4.0 where the default was WARN.
+	version71 = 71
+	// version72 adds snapshot column for mysql.stats_meta
+	version72 = 72
+	// version73 adds mysql.capture_plan_baselines_blacklist table
+	version73 = 73
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version70
+var currentBootstrapVersion int64 = version73
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -570,6 +587,9 @@ var (
 		upgradeToVer68,
 		upgradeToVer69,
 		upgradeToVer70,
+		upgradeToVer71,
+		upgradeToVer72,
+		upgradeToVer73,
 	}
 )
 
@@ -1370,9 +1390,6 @@ func upgradeToVer67(s Session, ver int64) {
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
 	}
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
 	req := rs.NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	p := parser.New()
@@ -1387,6 +1404,7 @@ func upgradeToVer67(s Session, ver int64) {
 		}
 		updateBindInfo(iter, p, bindMap)
 	}
+	terror.Call(rs.Close)
 
 	mustExecute(s, "DELETE FROM mysql.bind_info where source != 'builtin'")
 	for original, bind := range bindMap {
@@ -1507,6 +1525,27 @@ func upgradeToVer70(s Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET plugin='mysql_native_password'")
 }
 
+func upgradeToVer71(s Session, ver int64) {
+	if ver >= version71 {
+		return
+	}
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='OFF' WHERE VARIABLE_NAME = 'tidb_multi_statement_mode' AND VARIABLE_VALUE = 'WARN'")
+}
+
+func upgradeToVer72(s Session, ver int64) {
+	if ver >= version72 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN snapshot BIGINT(64) UNSIGNED NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer73(s Session, ver int64) {
+	if ver >= version73 {
+		return
+	}
+	doReentrantDDL(s, CreateCapturePlanBaselinesBlacklist)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1585,6 +1624,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsFMSketchTable)
 	// Create global_grants
 	mustExecute(s, CreateGlobalGrantsTable)
+	// Create capture_plan_baselines_blacklist
+	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

@@ -205,6 +205,12 @@ spilled-file-encryption-method = "plaintext"
 # Security Enhanced Mode (SEM) restricts the "SUPER" privilege and requires fine-grained privileges instead.
 enable-sem = false
 
+# Automatic creation of TLS certificates
+auto-tls = true
+
+# Minium TLS version to use, e.g. "TLSv1.2"
+tls-version = ""
+
 [status]
 # If enable status report HTTP service.
 report-status = true
@@ -446,6 +452,9 @@ max-retry-count = 256
 # The max count of deadlock events that will be recorded in the information_schema.deadlocks table.
 deadlock-history-capacity = 10
 
+# Whether retryable deadlocks (in-statement deadlocks) are collected to the information_schema.deadlocks table.
+deadlock-history-collect-retryable = false
+
 [stmt-summary]
 # enable statement summary.
 enable = true
@@ -454,7 +463,7 @@ enable = true
 enable-internal-query = false
 
 # max number of statements kept in memory.
-max-stmt-count = 200
+max-stmt-count = 3000
 
 # max length of displayed normalized sql and sample sql.
 max-sql-length = 4096
@@ -468,8 +477,6 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
-# enable creating expression index.
-allow-expression-index = false
 
 # server level isolation read by engines and labels
 [isolation-read]

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -252,6 +253,12 @@ func (s *testSuite) TestMaxSlidingWindow(c *C) {
 	testCases := []maxSlidingWindowTestCase{
 		{
 			rowType:       "bigint",
+			insertValue:   "(1), (3), (2)",
+			expect:        []string{"3", "3", "3"},
+			orderByExpect: []string{"1", "2", "3"},
+		},
+		{
+			rowType:       "int unsigned",
 			insertValue:   "(1), (3), (2)",
 			expect:        []string{"3", "3", "3"},
 			orderByExpect: []string{"1", "2", "3"},

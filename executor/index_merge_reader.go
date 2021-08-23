@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -243,7 +244,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					SetKeepOrder(false).
 					SetStreaming(e.partialStreamings[workID]).
 					SetTxnScope(e.txnScope).
-					SetIsStaleness(e.explicitStaleness).
+					SetIsStaleness(e.isStaleness).
 					SetFromSessionVars(e.ctx.GetSessionVars()).
 					SetMemTracker(e.memTracker).
 					SetFromInfoSchema(e.ctx.GetInfoSchema())
@@ -329,7 +330,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					dagPB:        e.dagPBs[workID],
 					startTS:      e.startTS,
 					txnScope:     e.txnScope,
-					isStaleness:  e.explicitStaleness,
+					isStaleness:  e.isStaleness,
 					streaming:    e.partialStreamings[workID],
 					feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
 					plans:        e.partialPlans[workID],
@@ -542,7 +543,7 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tb
 		dagPB:        e.tableRequest,
 		startTS:      e.startTS,
 		txnScope:     e.txnScope,
-		isStaleness:  e.explicitStaleness,
+		isStaleness:  e.isStaleness,
 		streaming:    e.tableStreaming,
 		columns:      e.columns,
 		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
