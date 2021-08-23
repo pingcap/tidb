@@ -893,12 +893,23 @@ func (tr *TableRestore) genAnalyzeSQL(ctx context.Context, g glue.SQLExecutor) s
 	// TODO: because tidb v5.2 analyze full table OOM easily, we fallback to add `WITH NUM 10000` parameter
 	// if there are more than 600 regions in this table
 	sql := "ANALYZE TABLE "+tr.tableName
-	ver, err := g.ObtainStringWithLog(ctx, "SHOW VARIABLES LIKE 'tidb_analyze_version'", "fetch tidb analyze version", tr.logger)
+	result, err := g.QueryStringsWithLog(ctx, "SHOW VARIABLES LIKE 'tidb_analyze_version'", "fetch tidb analyze version", tr.logger)
 	if err != nil {
 		tr.logger.Warn("fetch tidb analyze version failed, will fallback to naive analyze", logutil.ShortError(err))
 		return sql
 	}
-	if ver != "2" {
+	analyzeVer := ""
+	for _, params := range result {
+		if len(params) != 2 {
+			tr.logger.Warn("ignore invalid show variables result", zap.Strings("row", params))
+			continue
+		}
+		if params[0] == "tidb_analyze_version" {
+			analyzeVer = params[1]
+			break
+		}
+	}
+	if analyzeVer != "2" {
 		return sql
 	}
 	query := fmt.Sprintf("SELECT COUNT(*) FROM information_schema.TIKV_REGION_STATUS WHERE TABLE_ID = %d", tr.tableInfo.ID)
