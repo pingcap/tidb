@@ -783,6 +783,21 @@ func (s *testSuite4) TestInsertIgnoreOnDup(c *C) {
 	tk.MustQuery("select * from t6").Check(testkit.Rows("100 10 20"))
 	tk.MustExec("insert ignore into t6 set a = 200, b= 10 on duplicate key update c = 1000")
 	tk.MustQuery("select * from t6").Check(testkit.Rows("100 10 1000"))
+<<<<<<< HEAD
+=======
+
+	tk.MustExec("drop table if exists t7")
+	tk.MustExec("CREATE TABLE t7 (`col_334` mediumint(9) NOT NULL DEFAULT '-3217641',  `col_335` mediumint(8) unsigned NOT NULL DEFAULT '2002468',  `col_336` enum('alice','bob','charlie','david') COLLATE utf8_general_ci NOT NULL DEFAULT 'alice',  PRIMARY KEY (`col_334`,`col_336`,`col_335`) CLUSTERED,  UNIQUE KEY `idx_116` (`col_334`,`col_335`),  UNIQUE KEY `idx_117` (`col_336`,`col_334`),  KEY `idx_118` (`col_336`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci PARTITION BY HASH( `col_334` ) PARTITIONS 6;")
+	tk.MustExec("insert into t7(col_335, col_336) values(7685969, 'alice'),(2002468, 'bob')")
+	tk.MustExec("insert ignore into t7(col_335, col_336) values(2002468, 'david') on duplicate key update col_335 = 7685969")
+	tk.MustQuery("select * from t7").Check(testkit.Rows("-3217641 7685969 alice", "-3217641 2002468 bob"))
+
+	tk.MustExec("drop table if exists t8")
+	tk.MustExec("CREATE TABLE `t8` (`col_70` varbinary(444) NOT NULL DEFAULT 'bezhs', PRIMARY KEY (`col_70`) clustered, UNIQUE KEY `idx_22` (`col_70`(1)))")
+	tk.MustExec("insert into t8 values('lldcxiyfjrqzgj')")
+	tk.MustExec("insert ignore into t8 values ( 'lalozlkdosasfklmflo' ) on duplicate key update col_70 = 'lyhohxtby'")
+	tk.MustQuery("select * from t8").Check(testkit.Rows("lyhohxtby"))
+>>>>>>> 0e278a1af... tables: fix insert ignore on duplicate with dup prefix 2nd index (#25905)
 }
 
 func (s *testSuite4) TestInsertSetWithDefault(c *C) {

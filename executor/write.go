@@ -177,8 +177,13 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 	if handleChanged {
 		if sc.DupKeyAsWarning {
 			// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
+<<<<<<< HEAD
 			// If the new handle exists, this will avoid to remove the record.
 			err = tables.CheckHandleExists(ctx, sctx, t, newHandle, newData)
+=======
+			// If the new handle or unique index exists, this will avoid to remove the record.
+			err = tables.CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx, sctx, t, newHandle, newData, oldData, modified)
+>>>>>>> 0e278a1af... tables: fix insert ignore on duplicate with dup prefix 2nd index (#25905)
 			if err != nil {
 				if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
 					//return false, nil
