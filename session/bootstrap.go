@@ -12,6 +12,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -338,22 +339,14 @@ const (
 		PRIV char(32) NOT NULL DEFAULT '',
 		WITH_GRANT_OPTION enum('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (USER,HOST,PRIV)
-	  );`
-
-	// CreatePlacementPolicyTable store the placement policys.
-	CreatePlacementPolicyTable = `CREATE TABLE IF NOT EXISTS mysql.placement_policy (
-		NAME varchar(64) NOT NULL,
-		PRIMARY_REGION varchar(255) DEFAULT NULL,
-		REGIONS varchar(255) DEFAULT NULL,
-		LEADERS BIGINT UNSIGNED DEFAULT NULL,
-		FOLLOWERS BIGINT UNSIGNED DEFAULT NULL,
-		VOTERS BIGINT UNSIGNED DEFAULT NULL,
-		SCHEDULE varchar(255) DEFAULT NULL,
-		CONSTRAINTS varchar(255) DEFAULT NULL,
-		LEADER_CONSTRAINTS varchar(255) DEFAULT NULL,
-		FOLLOWER_CONSTRAINTS varchar(255) DEFAULT NULL,
-		VOTER_CONSTRAINTS varchar(255) DEFAULT NULL,
-		PRIMARY KEY (NAME)
+	);`
+	// CreateCapturePlanBaselinesBlacklist stores the baseline capture filter rules.
+	CreateCapturePlanBaselinesBlacklist = `CREATE TABLE IF NOT EXISTS mysql.capture_plan_baselines_blacklist (
+		id bigint(64) auto_increment,
+		filter_type varchar(32) NOT NULL COMMENT "type of the filter, only db, table and frequency supported now",
+		filter_value varchar(32) NOT NULL,
+		key idx(filter_type),
+		primary key(id)
 	);`
 )
 
@@ -514,7 +507,7 @@ const (
 	version71 = 71
 	// version72 adds snapshot column for mysql.stats_meta
 	version72 = 72
-	// version73 adds the placement policy for mysql.placement_meta
+	// version73 adds mysql.capture_plan_baselines_blacklist table
 	version73 = 73
 )
 
@@ -1550,7 +1543,7 @@ func upgradeToVer73(s Session, ver int64) {
 	if ver >= version73 {
 		return
 	}
-	doReentrantDDL(s, CreatePlacementPolicyTable)
+	doReentrantDDL(s, CreateCapturePlanBaselinesBlacklist)
 }
 
 func writeOOMAction(s Session) {
@@ -1631,8 +1624,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsFMSketchTable)
 	// Create global_grants
 	mustExecute(s, CreateGlobalGrantsTable)
-	// Create placement_policy
-	mustExecute(s, CreatePlacementPolicyTable)
+	// Create capture_plan_baselines_blacklist
+	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

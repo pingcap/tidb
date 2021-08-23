@@ -12,6 +12,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -2534,6 +2535,10 @@ func evalNowWithFsp(ctx sessionctx.Context, fsp int8) (types.Time, bool, error) 
 		return types.ZeroTime, true, err
 	}
 
+	failpoint.Inject("injectNow", func(val failpoint.Value) {
+		nowTs = time.Unix(int64(val.(int)), 0)
+	})
+
 	// In MySQL's implementation, now() will truncate the result instead of rounding it.
 	// Results below are from MySQL 5.7, which can prove it.
 	// mysql> select now(6), now(3), now();
@@ -3351,6 +3356,16 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		if err != nil {
 			return nil, err
 		}
+		if dateEvalTp == types.ETDatetime && args[0].GetType().Tp == mysql.TypeTimestamp {
+			tp := types.NewFieldType(mysql.TypeDatetime)
+			tp.Decimal = args[0].GetType().Decimal
+			tp.Flen = mysql.MaxDatetimeWidthNoFsp
+			if tp.Decimal > 0 {
+				tp.Flen = tp.Flen + 1 + tp.Decimal
+			}
+			types.SetBinChsClnFlag(tp)
+			args[0] = BuildCastFunction(ctx, args[0], tp)
+		}
 		bf.tp.Flen, bf.tp.Decimal = mysql.MaxDatetimeFullWidth, types.UnspecifiedLength
 	}
 
@@ -4024,6 +4039,16 @@ func (c *subDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, argTps...)
 		if err != nil {
 			return nil, err
+		}
+		if dateEvalTp == types.ETDatetime && args[0].GetType().Tp == mysql.TypeTimestamp {
+			tp := types.NewFieldType(mysql.TypeDatetime)
+			tp.Decimal = args[0].GetType().Decimal
+			tp.Flen = mysql.MaxDatetimeWidthNoFsp
+			if tp.Decimal > 0 {
+				tp.Flen = tp.Flen + 1 + tp.Decimal
+			}
+			types.SetBinChsClnFlag(tp)
+			args[0] = BuildCastFunction(ctx, args[0], tp)
 		}
 		bf.tp.Flen, bf.tp.Decimal = mysql.MaxDatetimeFullWidth, types.UnspecifiedLength
 	}

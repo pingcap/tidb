@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -340,16 +341,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if n, ok := val.(int); ok {
 			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
 			if n != int(startTS) {
-				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
-			}
-			failpoint.Return()
-		}
-	})
-	failpoint.Inject("assertStaleTSOWithTolerance", func(val failpoint.Value) {
-		if n, ok := val.(int); ok {
-			// Convert to seconds
-			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
-			if int(startTS) <= n-1 || n+1 <= int(startTS) {
 				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
 			}
 			failpoint.Return()
@@ -835,7 +826,7 @@ func (a *ExecStmt) logAudit() {
 		if audit.OnGeneralEvent != nil {
 			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
 			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StartTime)
-			audit.OnGeneralEvent(ctx, sessVars, plugin.Log, cmd)
+			audit.OnGeneralEvent(ctx, sessVars, plugin.Completed, cmd)
 		}
 		return nil
 	})
@@ -1095,9 +1086,6 @@ func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool, n
 	}
 	if genHint {
 		hints := plannercore.GenHintsFromPhysicalPlan(p)
-		if n != nil {
-			hints = append(hints, hint.ExtractTableHintsFromStmtNode(n, nil)...)
-		}
 		hintStr = hint.RestoreOptimizerHints(hints)
 		sctx.GetSessionVars().StmtCtx.SetPlanHint(hintStr)
 	}
