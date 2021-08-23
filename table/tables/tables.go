@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -1076,7 +1077,13 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 
 // CheckHandleExists check whether recordID key exists. if not exists, return nil,
 // otherwise return kv.ErrKeyExists error.
+<<<<<<< HEAD
 func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64, data []types.Datum) error {
+=======
+func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, newRow []types.Datum, oldRow []types.Datum, modified []bool) error {
+	physicalTableID := t.Meta().ID
+	idxs := t.Indices()
+>>>>>>> 0e278a1af... tables: fix insert ignore on duplicate with dup prefix 2nd index (#25905)
 	if pt, ok := t.(*partitionedTable); ok {
 		info := t.Meta().GetPartitionInfo()
 		pid, err := pt.locatePartition(ctx, info, data)
@@ -1089,6 +1096,7 @@ func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64, da
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	// Check key exists.
 	recordKey := t.RecordKey(recordID)
 	e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
@@ -1100,6 +1108,80 @@ func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64, da
 		return e
 	} else if !kv.ErrNotExist.Equal(err) {
 		return err
+=======
+
+	// Check primary key exists.
+	{
+		prefix := tablecodec.GenTableRecordPrefix(physicalTableID)
+		recordKey := tablecodec.EncodeRecordKey(prefix, recordID)
+		_, err = txn.Get(ctx, recordKey)
+		if err == nil {
+			handleStr := getDuplicateErrorHandleString(t, recordID, newRow)
+			return kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
+		} else if !kv.ErrNotExist.Equal(err) {
+			return err
+		}
+	}
+
+	// Check unique key exists.
+	{
+		shouldSkipIgnoreCheck := func(idx table.Index) (bool, error) {
+			if !IsIndexWritable(idx) || !idx.Meta().Unique || (t.Meta().IsCommonHandle && idx.Meta().Primary) {
+				return true, nil
+			}
+			for _, c := range idx.Meta().Columns {
+				if modified[c.Offset] {
+					if c.Length != types.UnspecifiedLength && (newRow[c.Offset].Kind() == types.KindString || newRow[c.Offset].Kind() == types.KindBytes) {
+						newCol := newRow[c.Offset].Clone()
+						tablecodec.TruncateIndexValue(newCol, c, t.Meta().Columns[c.Offset])
+						oldCol := oldRow[c.Offset].Clone()
+						tablecodec.TruncateIndexValue(oldCol, c, t.Meta().Columns[c.Offset])
+						// We should use binary collation to compare datum, otherwise the result will be incorrect.
+						newCol.SetCollation(charset.CollationBin)
+						cmp, err := newCol.CompareDatum(sctx.GetSessionVars().StmtCtx, oldCol)
+						if err != nil {
+							return false, errors.Trace(err)
+						}
+						if cmp == 0 {
+							continue
+						}
+					}
+					return false, nil
+				}
+			}
+			return true, nil
+		}
+
+		for _, idx := range idxs {
+			skip, err := shouldSkipIgnoreCheck(idx)
+			if err != nil {
+				return err
+			}
+			if skip {
+				continue
+			}
+			newVals, err := idx.FetchValues(newRow, nil)
+			if err != nil {
+				return err
+			}
+			key, _, err := idx.GenIndexKey(sctx.GetSessionVars().StmtCtx, newVals, recordID, nil)
+			if err != nil {
+				return err
+			}
+			_, err = txn.Get(ctx, key)
+			if kv.IsErrNotFound(err) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			entryKey, err := genIndexKeyStr(newVals)
+			if err != nil {
+				return err
+			}
+			return kv.ErrKeyExists.FastGenByArgs(entryKey, idx.Meta().Name.String())
+		}
+>>>>>>> 0e278a1af... tables: fix insert ignore on duplicate with dup prefix 2nd index (#25905)
 	}
 	return nil
 }
