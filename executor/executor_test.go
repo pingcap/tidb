@@ -115,6 +115,7 @@ var _ = Suite(&testSuiteP1{&baseTestSuite{}})
 var _ = Suite(&testSuiteP2{&baseTestSuite{}})
 var _ = Suite(&testSuite1{})
 var _ = SerialSuites(&testSerialSuite2{})
+var _ = SerialSuites(&testSuiteWithCliBaseCharset{})
 var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = Suite(&testSuite4{&baseTestSuite{}})
@@ -3350,6 +3351,20 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 	return resp, err
 }
 
+type testSuiteWithCliBaseCharset struct {
+	testSuiteWithCliBase
+}
+
+func (s *testSuiteWithCliBaseCharset) SetUpSuite(c *C) {
+	collate.SetCharsetFeatEnabledForTest(true)
+	s.testSuiteWithCliBase.SetUpSuite(c)
+}
+
+func (s *testSuiteWithCliBaseCharset) TearDownSuite(c *C) {
+	s.testSuiteWithCliBase.TearDownSuite(c)
+	collate.SetCharsetFeatEnabledForTest(false)
+}
+
 type testSuiteWithCliBase struct {
 	store kv.Storage
 	dom   *domain.Domain
@@ -5638,10 +5653,7 @@ func (s *testSerialSuite2) TestUnsignedFeedback(c *C) {
 	c.Assert(result.Rows()[2][6], Equals, "range:[0,+inf], keep order:false")
 }
 
-func (s *testSerialSuite2) TestCharsetFeature(c *C) {
-	collate.SetCharsetFeatEnabledForTest(true)
-	defer collate.SetCharsetFeatEnabledForTest(false)
-
+func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustQuery("show charset").Check(testkit.Rows(
