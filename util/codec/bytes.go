@@ -161,7 +161,7 @@ func DecodeCompactBytes(b []byte) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	if int64(len(b)) < n {
+	if n < 0 || int64(len(b)) < n {
 		return nil, nil, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
 	}
 	return b[n:], b[:n], nil
