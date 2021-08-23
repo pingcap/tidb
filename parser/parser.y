@@ -837,6 +837,7 @@ import (
 	AlterUserStmt              "Alter user statement"
 	AlterImportStmt            "ALTER IMPORT statement"
 	AlterInstanceStmt          "Alter instance statement"
+	AlterPolicyStmt            "Alter Placement Policy statement"
 	AlterSequenceStmt          "Alter sequence statement"
 	AnalyzeTableStmt           "Analyze table statement"
 	BeginTransactionStmt       "BEGIN TRANSACTION statement"
@@ -851,6 +852,7 @@ import (
 	CreateIndexStmt            "CREATE INDEX statement"
 	CreateImportStmt           "CREATE IMPORT statement"
 	CreateBindingStmt          "CREATE BINDING  statement"
+	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
 	CreateSequenceStmt         "CREATE SEQUENCE statement"
 	CreateStatisticsStmt       "CREATE STATISTICS statement"
 	DoStmt                     "Do statement"
@@ -1300,6 +1302,8 @@ import (
 	PlacementRole                          "Placement rules role option"
 	OldPlacementOptions                    "Placement rules options"
 	PlacementOption                        "Anonymous or direct placement option"
+	DirectPlacementOption                  "Subset of anonymous or direct placement option"
+	PlacementOptionList                    "Anomymous or direct placement option list"
 	PlacementSpec                          "Placement rules specification"
 	PlacementSpecList                      "Placement rules specifications"
 	AttributesOpt                          "Attributes options"
@@ -1523,7 +1527,21 @@ PlacementLabelConstraints:
 		$$ = $3
 	}
 
-PlacementOption:
+PlacementOptionList:
+	DirectPlacementOption
+	{
+		$$ = []*ast.PlacementOption{$1.(*ast.PlacementOption)}
+	}
+|	PlacementOptionList DirectPlacementOption
+	{
+		$$ = append($1.([]*ast.PlacementOption), $2.(*ast.PlacementOption))
+	}
+|	PlacementOptionList ',' DirectPlacementOption
+	{
+		$$ = append($1.([]*ast.PlacementOption), $3.(*ast.PlacementOption))
+	}
+
+DirectPlacementOption:
 	"PRIMARY_REGION" EqOpt stringLit
 	{
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPrimaryRegion, StrValue: $3}
@@ -1568,6 +1586,9 @@ PlacementOption:
 	{
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionLearnerConstraints, StrValue: $3}
 	}
+
+PlacementOption:
+	DirectPlacementOption
 |	"PLACEMENT" "POLICY" EqOpt stringLit
 	{
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionPolicy, StrValue: $4}
@@ -10806,6 +10827,7 @@ Statement:
 |	AlterImportStmt
 |	AlterInstanceStmt
 |	AlterSequenceStmt
+|	AlterPolicyStmt
 |	AnalyzeTableStmt
 |	BeginTransactionStmt
 |	BinlogStmt
@@ -10824,6 +10846,7 @@ Statement:
 |	CreateUserStmt
 |	CreateRoleStmt
 |	CreateBindingStmt
+|	CreatePolicyStmt
 |	CreateSequenceStmt
 |	CreateStatisticsStmt
 |	DoStmt
@@ -13216,6 +13239,26 @@ DropPolicyStmt:
 		$$ = &ast.DropPlacementPolicyStmt{
 			IfExists:   $4.(bool),
 			PolicyName: model.NewCIStr($5),
+		}
+	}
+
+CreatePolicyStmt:
+	"CREATE" "PLACEMENT" "POLICY" IfNotExists PolicyName PlacementOptionList
+	{
+		$$ = &ast.CreatePlacementPolicyStmt{
+			IfNotExists:      $4.(bool),
+			PolicyName:       model.NewCIStr($5),
+			PlacementOptions: $6.([]*ast.PlacementOption),
+		}
+	}
+
+AlterPolicyStmt:
+	"ALTER" "PLACEMENT" "POLICY" IfExists PolicyName PlacementOptionList
+	{
+		$$ = &ast.AlterPlacementPolicyStmt{
+			IfExists:         $4.(bool),
+			PolicyName:       model.NewCIStr($5),
+			PlacementOptions: $6.([]*ast.PlacementOption),
 		}
 	}
 
