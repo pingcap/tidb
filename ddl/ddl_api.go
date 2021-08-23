@@ -3385,12 +3385,13 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		Type:       model.ActionDropColumn,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{colName, ctx.GetSessionVars().EnableChangeMultiSchema},
+		SchemaID:        schema.ID,
+		TableID:         t.Meta().ID,
+		SchemaName:      schema.Name.L,
+		Type:            model.ActionDropColumn,
+		BinlogInfo:      &model.HistoryInfo{},
+		MultiSchemaInfo: &model.MultiSchemaInfo{Enable: ctx.GetSessionVars().EnableChangeMultiSchema},
+		Args:            []interface{}{colName},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -3457,12 +3458,13 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	}
 
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		Type:       model.ActionDropColumns,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{colNames, ifExists, ctx.GetSessionVars().EnableChangeMultiSchema},
+		SchemaID:        schema.ID,
+		TableID:         t.Meta().ID,
+		SchemaName:      schema.Name.L,
+		Type:            model.ActionDropColumns,
+		BinlogInfo:      &model.HistoryInfo{},
+		MultiSchemaInfo: &model.MultiSchemaInfo{Enable: ctx.GetSessionVars().EnableChangeMultiSchema},
+		Args:            []interface{}{colNames, ifExists},
 	}
 
 	err = d.doDDLJob(ctx, job)

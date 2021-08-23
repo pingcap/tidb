@@ -507,8 +507,7 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 
 	var colNames []model.CIStr
 	var ifExists []bool
-	var allowDropColumnWithIndex bool
-	err = job.DecodeArgs(&colNames, &ifExists, &allowDropColumnWithIndex)
+	err = job.DecodeArgs(&colNames, &ifExists)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, 0, nil, errors.Trace(err)
@@ -529,7 +528,7 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 			job.State = model.JobStateCancelled
 			return nil, nil, 0, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 		}
-		if err = isDroppableColumn(allowDropColumnWithIndex, tblInfo, colName); err != nil {
+		if err = isDroppableColumn(job.MultiSchemaInfo.Enable, tblInfo, colName); err != nil {
 			job.State = model.JobStateCancelled
 			return nil, nil, 0, nil, errors.Trace(err)
 		}
@@ -539,7 +538,7 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 		idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
 		indexInfos = append(indexInfos, idxInfos...)
 	}
-	job.Args = []interface{}{newColNames, newIfExists, allowDropColumnWithIndex}
+	job.Args = []interface{}{newColNames, newIfExists}
 	return tblInfo, colInfos, len(colInfos), indexInfos, nil
 }
 
@@ -647,8 +646,7 @@ func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Col
 	}
 
 	var colName model.CIStr
-	var allowDropColumnWithIndex bool
-	err = job.DecodeArgs(&colName, &allowDropColumnWithIndex)
+	err = job.DecodeArgs(&colName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, errors.Trace(err)
@@ -659,7 +657,7 @@ func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Col
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
-	if err = isDroppableColumn(allowDropColumnWithIndex, tblInfo, colName); err != nil {
+	if err = isDroppableColumn(job.MultiSchemaInfo.Enable, tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, errors.Trace(err)
 	}
