@@ -337,7 +337,8 @@ spilled-file-encryption-method = "aes128-ctr"
 	configFile = filepath.Join(filepath.Dir(localFile), "config.toml.example")
 	c.Assert(conf.Load(configFile), IsNil)
 
-	// Make sure the example config is the same as default config.
+	// Make sure the example config is the same as default config except `auto_tls`.
+	conf.Security.AutoTLS = false
 	c.Assert(conf, DeepEquals, GetGlobalConfig())
 
 	// Test for log config.
