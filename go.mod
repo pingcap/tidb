@@ -85,4 +85,4 @@ go 1.16
 // Fix panic in unit test with go >= 1.14, ref: etcd-io/bbolt#201 https://github.com/etcd-io/bbolt/pull/201
 replace go.etcd.io/bbolt => go.etcd.io/bbolt v1.3.5
 
-replace github.com/pingcap/parser => github.com/jackysp/parser v0.0.0-20210821102433-e6f59c64abb3
+replace github.com/pingcap/parser => github.com/jackysp/parser v0.0.0-20210823134959-4a029634cfe3
