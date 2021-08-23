@@ -137,7 +137,7 @@ func buildDropColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName 
 		TableID:    tblInfo.ID,
 		Type:       model.ActionDropColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{model.NewCIStr(colName)},
+		Args:       []interface{}{model.NewCIStr(colName), true},
 	}
 }
 
@@ -165,7 +165,7 @@ func buildDropColumnsJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName
 		TableID:    tblInfo.ID,
 		Type:       model.ActionDropColumns,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{columnNames, ifExists},
+		Args:       []interface{}{columnNames, ifExists, true},
 	}
 	return job
 }

@@ -164,7 +164,7 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	columnInfo.State = model.StateDeleteOnly
 	job.SchemaState = model.StateDeleteOnly
 
-	job.Args = []interface{}{col.Name}
+	job.Args = []interface{}{col.Name, true}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -193,7 +193,7 @@ func rollingbackAddColumns(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	ifExists := make([]bool, len(columnInfos))
 
 	job.SchemaState = model.StateDeleteOnly
-	job.Args = []interface{}{colNames, ifExists}
+	job.Args = []interface{}{colNames, ifExists, true}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfos[0].State)
 	if err != nil {
 		return ver, errors.Trace(err)
