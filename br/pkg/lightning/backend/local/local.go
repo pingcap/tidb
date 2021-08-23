@@ -807,9 +807,7 @@ type local struct {
 	pdAddr   string
 	g        glue.Glue
 
-	localStoreDir   string
-	regionSplitSize int64
-	regionSplitKeys int64
+	localStoreDir string
 
 	rangeConcurrency  *worker.Pool
 	ingestConcurrency *worker.Pool
@@ -1352,6 +1350,7 @@ func (local *local) WriteToTiKV(
 	region *split.RegionInfo,
 	start, end []byte,
 	regionSplitSize int64,
+	regionSplitKeys int64,
 ) ([]*sst.SSTMeta, Range, rangeStats, error) {
 	for _, peer := range region.Region.GetPeers() {
 		var e error
@@ -1479,7 +1478,7 @@ func (local *local) WriteToTiKV(
 			bytesBuf.Reset()
 			firstLoop = false
 		}
-		if size >= regionMaxSize {
+		if size >= regionMaxSize || totalCount >= regionSplitKeys {
 			break
 		}
 	}
@@ -1666,6 +1665,7 @@ func (local *local) writeAndIngestByRange(
 	engineFile *File,
 	start, end []byte,
 	regionSplitSize int64,
+	regionSplitKeys int64,
 ) error {
 	ito := &pebble.IterOptions{
 		LowerBound: start,
@@ -1724,7 +1724,7 @@ WriteAndIngest:
 				zap.Binary("end", region.Region.GetEndKey()), zap.Reflect("peers", region.Region.GetPeers()))
 
 			w := local.ingestConcurrency.Apply()
-			err = local.writeAndIngestPairs(ctx, engineFile, region, pairStart, end, regionSplitSize)
+			err = local.writeAndIngestPairs(ctx, engineFile, region, pairStart, end, regionSplitSize, regionSplitKeys)
 			local.ingestConcurrency.Recycle(w)
 			if err != nil {
 				if common.IsContextCanceledError(err) {
@@ -1763,6 +1763,7 @@ func (local *local) writeAndIngestPairs(
 	region *split.RegionInfo,
 	start, end []byte,
 	regionSplitSize int64,
+	regionSplitKeys int64,
 ) error {
 	var err error
 
@@ -1771,7 +1772,7 @@ loopWrite:
 		var metas []*sst.SSTMeta
 		var finishedRange Range
 		var rangeStats rangeStats
-		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engineFile, region, start, end, regionSplitSize)
+		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engineFile, region, start, end, regionSplitSize, regionSplitKeys)
 		if err != nil {
 			if common.IsContextCanceledError(err) {
 				return err
@@ -1878,7 +1879,7 @@ loopWrite:
 	return errors.Trace(err)
 }
 
-func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *File, ranges []Range, regionSplitKeys int64) error {
+func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *File, ranges []Range, regionSplitSize int64, regionSplitKeys int64) error {
 	if engineFile.Length.Load() == 0 {
 		// engine is empty, this is likes because it's a index engine but the table contains no index
 		log.L().Info("engine contains no data", zap.Stringer("uuid", engineFile.UUID))
@@ -1910,7 +1911,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *File
 			// max retry backoff time: 2+4+8+16=30s
 			backOffTime := time.Second
 			for i := 0; i < maxRetryTimes; i++ {
-				err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey, regionSplitKeys)
+				err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey, regionSplitSize, regionSplitKeys)
 				if err == nil || common.IsContextCanceledError(err) {
 					return
 				}
@@ -2009,7 +2010,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		}
 
 		// start to write to kv and ingest
-		err = local.writeAndIngestByRanges(ctx, lf, unfinishedRanges, regionSplitKeys)
+		err = local.writeAndIngestByRanges(ctx, lf, unfinishedRanges, regionSplitSize, regionSplitKeys)
 		if err != nil {
 			log.L().Error("write and ingest engine failed", log.ShortError(err))
 			return err

@@ -119,12 +119,6 @@ type LocalEngineConfig struct {
 	CompactConcurrency int
 }
 
-// LocalSplitConfig is the configuration used for local backend in Import.
-type LocalSplitConfig struct {
-	RegionSplitSize int64
-	RegionSplitKeys int64
-}
-
 // CheckCtx contains all parameters used in CheckRequirements
 type CheckCtx struct {
 	DBMetas []*mydump.MDDatabaseMeta
