@@ -2,23 +2,19 @@ package mydump
 
 import (
 	"context"
-	"io"
-	"path/filepath"
-	"strconv"
-	"time"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/types"
 	"github.com/xitongsys/parquet-go-source/local"
 	writer2 "github.com/xitongsys/parquet-go/writer"
+	"io"
+	"path/filepath"
+	"strconv"
 )
 
 type testParquetParserSuite struct{}
-type testParquetParserSerialSuite struct{}
 
 var _ = Suite(testParquetParserSuite{})
-var _ = SerialSuites(testParquetParserSerialSuite{})
 
 func (s testParquetParserSuite) TestParquetParser(c *C) {
 	type Test struct {
@@ -83,14 +79,7 @@ func (s testParquetParserSuite) TestParquetParser(c *C) {
 	c.Assert(reader.ReadRow(), Equals, io.EOF)
 }
 
-func (s testParquetParserSerialSuite) TestParquetVariousTypes(c *C) {
-	// those deprecated TIME/TIMESTAMP types depend on the local timezone!
-	prevTZ := time.Local
-	time.Local = time.FixedZone("UTC+8", 8*60*60)
-	defer func() {
-		time.Local = prevTZ
-	}()
-
+func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
 	type Test struct {
 		Date            int32 `parquet:"name=date, type=DATE"`
 		TimeMillis      int32 `parquet:"name=timemillis, type=TIME_MILLIS"`
@@ -116,7 +105,7 @@ func (s testParquetParserSerialSuite) TestParquetVariousTypes(c *C) {
 
 	v := &Test{
 		Date:            18564,              // 2020-10-29
-		TimeMillis:      62775123,           // 17:26:15.123 (note all time are in UTC+8!)
+		TimeMillis:      62775123,           // 17:26:15.123
 		TimeMicros:      62775123456,        // 17:26:15.123
 		TimestampMillis: 1603963672356,      // 2020-10-29T09:27:52.356Z
 		TimestampMicros: 1603963672356956,   // 2020-10-29T09:27:52.356956Z
