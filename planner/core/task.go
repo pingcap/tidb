@@ -1540,7 +1540,9 @@ func BuildFinalModeAggregation(
 					[root] group by: c, funcs:count(distinct a), funcs:sum(b)
 						[cop]: group by: c, a
 			*/
-			getDistinctExpr := func(distinctArg expression.Expression) (ret expression.Expression) {
+			// onlyAddFirstRow means if the distinctArg does not occur in group by items,
+			// it should be replaced with a firstrow() agg function, needed for the order by items of group_concat()
+			getDistinctExpr := func(distinctArg expression.Expression, onlyAddFirstRow bool) (ret expression.Expression) {
 				// 1. add all args to partial.GroupByItems
 				foundInGroupBy := false
 				for j, gbyExpr := range partial.GroupByItems {
@@ -1551,7 +1553,6 @@ func BuildFinalModeAggregation(
 					}
 				}
 				if !foundInGroupBy {
-					partial.GroupByItems = append(partial.GroupByItems, distinctArg)
 					var gbyCol *expression.Column
 					if col, ok := distinctArg.(*expression.Column); ok {
 						gbyCol = col
@@ -1561,13 +1562,20 @@ func BuildFinalModeAggregation(
 							RetType:  distinctArg.GetType(),
 						}
 					}
-					partialGbySchema.Append(gbyCol)
-					if !partialIsCop {
+					// 2. add group by items if needed
+					if !onlyAddFirstRow {
+						partial.GroupByItems = append(partial.GroupByItems, distinctArg)
+						partialGbySchema.Append(gbyCol)
+						ret = gbyCol
+					}
+					// 3. add firstrow() if needed
+					if !partialIsCop || onlyAddFirstRow {
 						// if partial is a cop task, firstrow function is redundant since group by items are outputted
 						// by group by schema, and final functions use group by schema as their arguments.
 						// if partial agg is not cop, we must append firstrow function & schema, to output the group by
 						// items.
 						// maybe we can unify them sometime.
+						// only add firstrow for order by items of group_concat()
 						firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{distinctArg}, false)
 						if err != nil {
 							panic("NewAggFuncDesc FirstRow meets error: " + err.Error())
@@ -1576,9 +1584,11 @@ func BuildFinalModeAggregation(
 						newCol, _ := gbyCol.Clone().(*expression.Column)
 						newCol.RetType = firstRow.RetTp
 						partial.Schema.Append(newCol)
+						if onlyAddFirstRow {
+							ret = newCol
+						}
 						partialCursor++
 					}
-					ret = gbyCol
 				}
 				return ret
 			}
@@ -1589,11 +1599,11 @@ func BuildFinalModeAggregation(
 					args = append(args, distinctArg)
 					continue
 				}
-				args = append(args, getDistinctExpr(distinctArg))
+				args = append(args, getDistinctExpr(distinctArg, false))
 			}
 
 			for _, byItem := range aggFunc.OrderByItems {
-				byItems = append(byItems, &util.ByItems{Expr: getDistinctExpr(byItem.Expr), Desc: byItem.Desc})
+				byItems = append(byItems, &util.ByItems{Expr: getDistinctExpr(byItem.Expr, true), Desc: byItem.Desc})
 			}
 
 			finalAggFunc.OrderByItems = byItems
