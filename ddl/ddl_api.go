@@ -2587,6 +2587,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 					needsOverwriteCols := needToOverwriteColCharset(spec.Options)
 					err = d.AlterTableCharsetAndCollate(sctx, ident, toCharset, toCollate, needsOverwriteCols)
 					handledCharsetOrCollate = true
+				case ast.TableOptionEngine:
 				default:
 					err = errUnsupportedAlterTableOption
 				}
