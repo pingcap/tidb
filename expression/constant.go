@@ -82,9 +82,6 @@ func (d *ParamMarker) GetUserVar() types.Datum {
 	return sessionVars.PreparedParams[d.order]
 }
 
-// PropagateType implements TypePropagater interface.
-func (c *Constant) PropagateType() {}
-
 // String implements fmt.Stringer interface.
 func (c *Constant) String() string {
 	if c.ParamMarker != nil {

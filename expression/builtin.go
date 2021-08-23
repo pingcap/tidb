@@ -61,8 +61,6 @@ type baseBuiltinFunc struct {
 	collationInfo
 }
 
-func (b *baseBuiltinFunc) PropagateType() {}
-
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
 	return b.pbCode
 }
@@ -503,7 +501,6 @@ type reverseBuiltinFunc interface {
 type builtinFunc interface {
 	vecBuiltinFunc
 	reverseBuiltinFunc
-	TypePropagater
 
 	// evalInt evaluates int result of builtinFunc by given row.
 	evalInt(row chunk.Row) (val int64, isNull bool, err error)

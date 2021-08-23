@@ -193,6 +193,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
 	case types.ETDecimal:
 		sig = &builtinCastDecimalAsRealSig{bf}
+		PropagateType(types.ETReal, sig.getArgs()...)
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsReal)
 	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCastTimeAsRealSig{bf}
@@ -1009,24 +1010,6 @@ func (b *builtinCastDecimalAsStringSig) evalString(row chunk.Row) (res string, i
 
 type builtinCastDecimalAsRealSig struct {
 	baseBuiltinCastFunc
-}
-
-func (b *builtinCastDecimalAsRealSig) PropagateType() {
-	expr := b.args[0]
-	oldFlen, oldDecimal := expr.GetType().Flen, expr.GetType().Decimal
-	newFlen, newDecimal := setDataTypeDouble(expr.GetType().Decimal)
-	// For float(M,D), double(M,D) or decimal(M,D), M must be >= D.
-	if newFlen < newDecimal {
-		newFlen = oldFlen - oldDecimal + newDecimal
-	}
-	if oldFlen != newFlen || oldDecimal != newDecimal {
-		if col, ok := b.args[0].(*Column); ok {
-			newCol := col.Clone()
-			newCol.(*Column).RetType = col.RetType.Clone()
-			b.args[0] = newCol
-		}
-		b.args[0].GetType().Flen, b.args[0].GetType().Decimal = newFlen, newDecimal
-	}
 }
 
 func setDataTypeDouble(srcDecimal int) (flen, decimal int) {
@@ -1861,7 +1844,6 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 		RetType:  tp,
 		Function: f,
 	}
-	res.PropagateType()
 	// We do not fold CAST if the eval type of this scalar function is ETJson
 	// since we may reset the flag of the field type of CastAsJson later which
 	// would affect the evaluation of it.
