@@ -1393,7 +1393,8 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			dstType := unionCols[i].RetType
 			srcType := srcCol.RetType
 
-			if !srcType.Equal(dstType) {
+			//if !srcType.Equal(dstType) {
+			if srcType.Tp != dstType.Tp {
 				exprs[i] = castToRes(dstType, u.ctx, srcCol)
 			} else {
 				exprs[i] = srcCol
