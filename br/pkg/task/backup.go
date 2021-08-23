@@ -468,6 +468,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	g.Record(summary.BackupDataSize, metawriter.ArchiveSize())
+	//backup from tidb will fetch a general Size
+	g.Record("Size", metawriter.ArchiveSize())
 	failpoint.Inject("s3-outage-during-writing-file", func(v failpoint.Value) {
 		log.Info("failpoint s3-outage-during-writing-file injected, " +
 			"process will sleep for 3s and notify the shell to kill s3 service.")
