@@ -37,9 +37,8 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/table"
-	newtestkit "github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/arena"
-	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -48,32 +47,6 @@ import (
 type ConnTestSuite struct {
 	dom   *domain.Domain
 	store kv.Storage
-}
-
-type connTestHelper ConnTestSuite
-
-func (th *connTestHelper) TearDown() {
-	th.dom.Close()
-	th.store.Close()
-}
-
-func setupConnTestHelper(t *testing.T) *connTestHelper {
-	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockCluster := c.(*unistore.Cluster)
-			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
-			store := c.AllocID()
-			peer := c.AllocID()
-			mockCluster.AddStore(store, "tiflash0", &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
-			mockCluster.AddPeer(region1, store, peer)
-		}),
-		mockstore.WithStoreType(mockstore.EmbedUnistore),
-	)
-	require.NoError(t, err)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-
-	return &connTestHelper{store: store, dom: dom}
 }
 
 var _ = SerialSuites(&ConnTestSuite{})
@@ -235,14 +208,14 @@ func TestAuthSwitchRequest(t *testing.T) {
 func TestInitialHandshake(t *testing.T) {
 	t.Parallel()
 
-	th := setupConnTestHelper(t)
-	defer th.TearDown()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	var outBuffer bytes.Buffer
 	cfg := newTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
-	drv := NewTiDBDriver(th.store)
+	drv := NewTiDBDriver(store)
 	srv, err := NewServer(cfg, drv)
 	require.NoError(t, err)
 	cc := &clientConn{
@@ -288,9 +261,6 @@ type dispatchInput struct {
 
 func TestDispatch(t *testing.T) {
 	t.Parallel()
-
-	th := setupConnTestHelper(t)
-	defer th.TearDown()
 
 	userData := append([]byte("root"), 0x0, 0x0)
 	userData = append(userData, []byte("test")...)
@@ -407,14 +377,11 @@ func TestDispatch(t *testing.T) {
 		},
 	}
 
-	testDispatch(t, th, inputs, 0)
+	testDispatch(t, inputs, 0)
 }
 
 func TestDispatchClientProtocol41(t *testing.T) {
 	t.Parallel()
-
-	th := setupConnTestHelper(t)
-	defer th.TearDown()
 
 	userData := append([]byte("root"), 0x0, 0x0)
 	userData = append(userData, []byte("test")...)
@@ -533,19 +500,12 @@ func TestDispatchClientProtocol41(t *testing.T) {
 		},
 	}
 
-	testDispatch(t, th, inputs, mysql.ClientProtocol41)
+	testDispatch(t, inputs, mysql.ClientProtocol41)
 }
 
-func testDispatch(t *testing.T, th *connTestHelper, inputs []dispatchInput, capability uint32) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
-	}()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	defer dom.Close()
+func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
@@ -559,7 +519,7 @@ func testDispatch(t *testing.T, th *connTestHelper, inputs []dispatchInput, capa
 	require.NoError(t, err)
 
 	var outBuffer bytes.Buffer
-	tidbdrv := NewTiDBDriver(th.store)
+	tidbdrv := NewTiDBDriver(store)
 	cfg := newTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
@@ -598,10 +558,10 @@ func testDispatch(t *testing.T, th *connTestHelper, inputs []dispatchInput, capa
 func TestGetSessionVarsWaitTimeout(t *testing.T) {
 	t.Parallel()
 
-	th := setupConnTestHelper(t)
-	defer th.TearDown()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-	se, err := session.CreateSession4Test(th.store)
+	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	tc := &TiDBContext{
 		Session: se,
@@ -634,13 +594,13 @@ func mapBelong(m1, m2 map[string]string) bool {
 func TestConnExecutionTimeout(t *testing.T) {
 	t.Parallel()
 
-	th := setupConnTestHelper(t)
-	defer th.TearDown()
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 
 	// There is no underlying netCon, use failpoint to avoid panic
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeClientConn", "return(1)"))
 
-	se, err := session.CreateSession4Test(th.store)
+	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 
 	connID := uint64(1)
@@ -662,7 +622,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 			connID: cc,
 		},
 	}
-	handle := th.dom.ExpensiveQueryHandle().SetSessionManager(srv)
+	handle := dom.ExpensiveQueryHandle().SetSessionManager(srv)
 	go handle.Run()
 
 	_, err = se.Execute(context.Background(), "use test;")
@@ -692,7 +652,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 
 	records, err := se.Execute(context.Background(), "select SLEEP(2);")
 	require.NoError(t, err)
-	tk := newtestkit.NewTestKit(t, th.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.ResultSetToResult(records[0], fmt.Sprintf("%v", records[0])).Check(testkit.Rows("1"))
 
 	_, err = se.Execute(context.Background(), "set @@max_execution_time = 0;")
@@ -710,11 +670,11 @@ func TestConnExecutionTimeout(t *testing.T) {
 func TestShutDown(t *testing.T) {
 	t.Parallel()
 
-	th := setupConnTestHelper(t)
-	defer th.TearDown()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	cc := &clientConn{}
-	se, err := session.CreateSession4Test(th.store)
+	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	cc.ctx = &TiDBContext{Session: se}
 	// set killed flag
@@ -727,9 +687,9 @@ func TestShutDown(t *testing.T) {
 func TestShutdownOrNotify(t *testing.T) {
 	t.Parallel()
 
-	th := setupConnTestHelper(t)
-	defer th.TearDown()
-	se, err := session.CreateSession4Test(th.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	tc := &TiDBContext{
 		Session: se,
@@ -759,8 +719,8 @@ type snapshotCache interface {
 func TestPrefetchPointKeys(t *testing.T) {
 	t.Parallel()
 
-	th := setupConnTestHelper(t)
-	defer th.TearDown()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	cc := &clientConn{
 		alloc: arena.NewAllocator(1024),
@@ -768,7 +728,7 @@ func TestPrefetchPointKeys(t *testing.T) {
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 	}
-	tk := newtestkit.NewTestKit(t, th.store)
+	tk := testkit.NewTestKit(t, store)
 	cc.ctx = &TiDBContext{Session: tk.Session()}
 	ctx := context.Background()
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
@@ -821,8 +781,18 @@ func testGetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) 
 func TestTiFlashFallback(t *testing.T) {
 	t.Parallel()
 
-	th := setupConnTestHelper(t)
-	defer th.TearDown()
+	store, clean := testkit.CreateMockStore(t,
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
+			store := c.AllocID()
+			peer := c.AllocID()
+			mockCluster.AddStore(store, "tiflash0", &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+			mockCluster.AddPeer(region1, store, peer)
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
+	defer clean()
 
 	cc := &clientConn{
 		alloc: arena.NewAllocator(1024),
@@ -831,7 +801,7 @@ func TestTiFlashFallback(t *testing.T) {
 		},
 	}
 
-	tk := newtestkit.NewTestKit(t, th.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	cc.ctx = &TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)}
 
@@ -918,7 +888,7 @@ func TestTiFlashFallback(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/establishMppConnectionErr"))
 }
 
-func testFallbackWork(t *testing.T, tk *newtestkit.TestKit, cc *clientConn, sql string) {
+func testFallbackWork(t *testing.T, tk *testkit.TestKit, cc *clientConn, sql string) {
 	ctx := context.Background()
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv=''")
 	require.Error(t, tk.QueryToErr(sql))
@@ -932,9 +902,8 @@ func testFallbackWork(t *testing.T, tk *newtestkit.TestKit, cc *clientConn, sql 
 func TestShowErrors(t *testing.T) {
 	t.Parallel()
 
-	th := setupConnTestHelper(t)
-	defer th.TearDown()
-
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	cc := &clientConn{
 		alloc: arena.NewAllocator(1024),
 		pkt: &packetIO{
@@ -942,7 +911,7 @@ func TestShowErrors(t *testing.T) {
 		},
 	}
 	ctx := context.Background()
-	tk := newtestkit.NewTestKit(t, th.store)
+	tk := testkit.NewTestKit(t, store)
 	cc.ctx = &TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)}
 
 	err := cc.handleQuery(ctx, "create database if not exists test;")
