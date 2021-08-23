@@ -70,6 +70,7 @@ type AnalyzeExec struct {
 	tasks []*analyzeTask
 	wg    *sync.WaitGroup
 	opts  map[ast.AnalyzeOptionType]uint64
+	core.AnalyzeInfo
 }
 
 var (
@@ -85,6 +86,11 @@ const (
 
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	err0 := saveOptsForAutoAnalyze(e)
+	if err0 != nil {
+		logutil.Logger(ctx).Warn("Fail to save options for auto analyze")
+	}
+
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return err
@@ -204,6 +210,45 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 	return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
+}
+
+// TODO move to parser const.go
+const TABLE_ANALYZE_OPT = "analyze_opt"
+
+// save analyze options for auto analyze
+func saveOptsForAutoAnalyze(e *AnalyzeExec) error {
+	// return if running auto analyze
+	if e.ctx.GetSessionVars().InRestrictedSQL {
+		return nil
+	}
+	internalSession, err0 := e.getSysSession()
+	if err0 != nil {
+		return err0
+	}
+	for optType, optName := range ast.AnalyzeOptionString {
+		var optVal = e.opts[optType]
+		err1 := checkAndInitOpt(internalSession, e.TableID.TableID, optName)
+		if err1 != nil {
+			return err1
+		}
+		_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), `REPLACE INTO %n.%n (tid,opt_key,opt_val) VALUES (%?, %?, %?)`, mysql.SystemDB, TABLE_ANALYZE_OPT, e.TableID.TableID, optName, optVal)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkAndInitOpt(ctx sessionctx.Context, tid int64, optKey string) error {
+	ok, err0 := recordExists(ctx, `SELECT * FROM %n.%n WHERE tid=%? AND opt_key=%?;`, mysql.SystemDB, TABLE_ANALYZE_OPT, tid, optKey)
+	if err0 != nil {
+		return err0
+	}
+	if ok {
+		return nil
+	}
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), `INSERT INTO %n.%n (tid, opt_key, opt_val) VALUES (%?, %?, %?)`, mysql.SystemDB, TABLE_ANALYZE_OPT, tid, optKey, "")
+	return err
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {

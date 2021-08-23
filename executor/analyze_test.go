@@ -1119,3 +1119,38 @@ func (s *testSuite10) TestSnapshotAnalyze(c *C) {
 	c.Assert(s3Str, Equals, s2Str)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/injectAnalyzeSnapshot"), IsNil)
 }
+
+func (s *testSuite1) TestAutoAnalyzeWithSavedOpts(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+	handle.AutoAnalyzeMinCnt = 0
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
+	tk.MustExec("analyze table t")
+	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	tbl := s.dom.StatsHandle().GetTableStats(tableInfo)
+	col := tbl.Columns[1]
+	c.Assert(len(col.TopN.TopN), Equals, 20)
+
+	tk.MustExec("analyze table t with 10 topn")
+	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
+	col = tbl.Columns[1]
+	c.Assert(len(col.TopN.TopN), Equals, 10)
+
+	s.dom.StatsHandle().HandleAutoAnalyze(is)
+	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
+	col = tbl.Columns[1]
+	c.Assert(len(col.TopN.TopN), Equals, 10)
+
+	tk.MustExec("analyze table t with 20 topn")
+	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
+	col = tbl.Columns[1]
+	c.Assert(len(col.TopN.TopN), Equals, 20)
+}

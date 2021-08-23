@@ -2466,6 +2466,12 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		wg:           &sync.WaitGroup{},
 		opts:         v.Opts,
 	}
+	// set analyze info
+	if len(v.ColTasks) > 0 {
+		e.AnalyzeInfo = v.ColTasks[0].AnalyzeInfo
+	} else if len(v.IdxTasks) > 0 {
+		e.AnalyzeInfo = v.IdxTasks[0].AnalyzeInfo
+	}
 	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
 	autoAnalyze := ""
 	if b.ctx.GetSessionVars().InRestrictedSQL {

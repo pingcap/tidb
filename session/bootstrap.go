@@ -348,6 +348,14 @@ const (
 		key idx(filter_type),
 		primary key(id)
 	);`
+
+	// CreateAnalyzeOptTable stores analyze options for the usage of auto analyze
+	CreateAnalyzeOptTable = `CREATE TABLE IF NOT EXISTS mysql.analyze_opt(
+		tid bigint(64),
+		opt_key char(255) NOT NULL DEFAULT '',
+		opt_val char(32) NOT NULL DEFAULT '',
+		PRIMARY KEY (tid,opt_key)
+    );`
 )
 
 // bootstrap initiates system DB for a store.
@@ -1626,6 +1634,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGlobalGrantsTable)
 	// Create capture_plan_baselines_blacklist
 	mustExecute(s, CreateCapturePlanBaselinesBlacklist)
+	// Create analyze_opt
+	mustExecute(s, CreateAnalyzeOptTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

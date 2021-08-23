@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -904,6 +905,31 @@ func (h *Handle) getAutoAnalyzeParameters() map[string]string {
 	return parameters
 }
 
+func (h *Handle) getAutoAnalyzeOpts(tid int64) (string, error) {
+	ctx := context.Background()
+	var optBuilder strings.Builder
+	for _, optName := range ast.AnalyzeOptionString {
+		rows, _, err := h.execRestrictedSQL(ctx, "select opt_val from mysql.analyze_opt where tid=%? and opt_key=%?", tid, optName)
+		if err != nil {
+			return "", err
+		}
+		if len(rows) > 0 {
+			optVal := rows[0].GetString(0)
+			if len(optVal) > 0 {
+				if optBuilder.Len() == 0 {
+					optBuilder.WriteString(" WITH ")
+				} else {
+					optBuilder.WriteString(", ")
+				}
+				optBuilder.WriteString(optVal)
+				optBuilder.WriteString(" ")
+				optBuilder.WriteString(optName)
+			}
+		}
+	}
+	return optBuilder.String(), nil
+}
+
 func parseAutoAnalyzeRatio(ratio string) float64 {
 	autoAnalyzeRatio, err := strconv.ParseFloat(ratio, 64)
 	if err != nil {
@@ -946,11 +972,15 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
+			analyzeOpts, err := h.getAutoAnalyzeOpts(tbl.Meta().ID)
+			if err != nil {
+				logutil.BgLogger().Error("Fail to load analyze options and fallback to global variables.", zap.Error(err))
+			}
 			tblInfo := tbl.Meta()
 			pi := tblInfo.GetPartitionInfo()
 			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
-				sql := "analyze table %n.%n"
+				sql := "analyze table %n.%n" + analyzeOpts
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
 					// analyze one table at a time to let it get the freshest parameters.
@@ -967,7 +997,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 				continue
 			}
 			for _, def := range pi.Definitions {
-				sql := "analyze table %n.%n partition %n"
+				sql := "analyze table %n.%n partition %n" + analyzeOpts
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
