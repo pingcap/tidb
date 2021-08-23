@@ -61,7 +61,7 @@ func (s *testUpdateSuite) SetUpSuite(c *C) {
 
 func (s *testUpdateSuite) TearDownSuite(c *C) {
 	s.domain.Close()
-	s.store.Close()
+	c.Assert(s.store.Close(), IsNil)
 }
 
 func (s *testUpdateSuite) TearDownTest(c *C) {
