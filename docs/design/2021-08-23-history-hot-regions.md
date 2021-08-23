@@ -6,20 +6,20 @@
 
 ## Table of Contents
 
-* [Introduction](#introduction)
-* [Motivation or Background](#motivation-or-background)
-* [Detailed Design](#detailed-design)
-    * [Existing TIDB_HOT_REGIONS](#Existing TIDB_HOT_REGIONS)
-    * [Table Header Design](#Table Header Design)
-    * [PD](#PD)
-    * [TiDB](#TiDB)
-* [Test Design](#test-design)
-    * [Functional Tests](#functional-tests)
-    * [Scenario Tests](#scenario-tests)
-    * [Compatibility Tests](#compatibility-tests)
-    * [Benchmark Tests](#benchmark-tests)
-* [Impacts & Risks](#impacts--risks)
-* [Investigation & Alternatives](#investigation--alternatives)
+  * [Introduction](#introduction)
+  * [Motivation or Background](#motivation-or-background)
+  * [Detailed Design](#detailed-design)
+    + [Existing TIDB HOT REGIONS](#existing-tidb-hot-regions)
+    + [Table Header Design](#table-header-design)
+    + [PD](#pd)
+    + [TiDB](#tidb)
+  * [Test Design](#test-design)
+    + [Functional Tests](#functional-tests)
+    + [Scenario Tests](#scenario-tests)
+    + [Compatibility Tests](#compatibility-tests)
+    + [Benchmark Tests](#benchmark-tests)
+  * [Impacts & Risks](#impacts---risks)
+  * [Investigation & Alternatives](#investigation---alternatives)
 
 ## Introduction
 
@@ -47,7 +47,7 @@ The result is shown below:
 
 ## Detailed Design
 
-### Existing TIDB_HOT_REGIONS
+### Existing TIDB HOT REGIONS
 
 Before we introduce `TIDB_HOT_REGIONS_HISTORY`, let's see how `TIDB_HOT_REGIONS` works.
 
