@@ -84,7 +84,7 @@ func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
 	tk.require.NoError(err, comment)
 	tk.require.NotNil(res, comment)
 	_, resErr := session.GetRows4Test(context.Background(), tk.session, res)
-	tk.require.Nil(res.Close())
+	tk.require.NoError(res.Close())
 	return resErr
 }
 
@@ -147,6 +147,15 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 		return nil, errors.Trace(err)
 	}
 	return rs, nil
+}
+
+// ExecToErr executes a sql statement and discard results.
+func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
+	res, err := tk.Exec(sql, args...)
+	if res != nil {
+		tk.require.NoError(res.Close())
+	}
+	return err
 }
 
 func newSession(t *testing.T, store kv.Storage) session.Session {
