@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -837,6 +838,17 @@ func (lp *ForListColumnPruning) LocateRanges(sc *stmtctx.StatementContext, r *ra
 	highKey, err := lp.genKey(sc, highVal)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if lp.ExprCol.GetType().EvalType() == types.ETString {
+		// for string type, values returned by GetMinValue and GetMaxValue are already encoded,
+		// so it's unnecessary to invoke genKey to encode them.
+		if r.LowVal[0].Kind() == types.KindMinNotNull {
+			lowKey = (&lowVal).GetBytes()
+		}
+		if r.HighVal[0].Kind() == types.KindMaxValue {
+			highKey = (&highVal).GetBytes()
+		}
 	}
 
 	if r.LowExclude {

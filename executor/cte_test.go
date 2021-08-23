@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -326,7 +327,7 @@ func (test *CTETestSuite) TestCTEWithLimit(c *check.C) {
 	// Test with table.
 	tk.MustExec("drop table if exists t1;")
 	insertStr := "insert into t1 values(0)"
-	for i := 1; i < 5000; i++ {
+	for i := 1; i < 300; i++ {
 		insertStr += fmt.Sprintf(", (%d)", i)
 	}
 
