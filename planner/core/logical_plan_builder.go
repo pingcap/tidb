@@ -1393,7 +1393,6 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			dstType := unionCols[i].RetType
 			srcType := srcCol.RetType
 
-			//if !srcType.Equal(dstType) {
 			if srcType.Tp != dstType.Tp {
 				exprs[i] = castToRes(dstType, u.ctx, srcCol)
 			} else {
@@ -1420,7 +1419,7 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 	return nil
 }
 
-// castToRes cast to col to result type(ingore result charset collation and collation)
+// castToRes cast to col to result type(ignore result charset collation and collation)
 func castToRes(resType *types.FieldType, ctx sessionctx.Context, col *expression.Column) expression.Expression {
 	switch resType.EvalType() {
 	case types.ETInt:
