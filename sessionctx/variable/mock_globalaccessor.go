@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -75,4 +76,14 @@ func (m *MockGlobalAccessor) SetGlobalSysVarOnly(name string, value string) erro
 	}
 	m.vals[name] = value
 	return nil
+}
+
+// GetTiDBTableValue implements GlobalVarAccessor.GetTiDBTableValue interface.
+func (m *MockGlobalAccessor) GetTiDBTableValue(name string) (string, error) {
+	panic("not supported")
+}
+
+// SetTiDBTableValue implements GlobalVarAccessor.SetTiDBTableValue interface.
+func (m *MockGlobalAccessor) SetTiDBTableValue(name, value, comment string) error {
+	panic("not supported")
 }
