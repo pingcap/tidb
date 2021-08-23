@@ -807,7 +807,7 @@ type HotRegionsHistoryTableExtractor struct {
 	StoreIDs  []uint64
 	PeerIDs   []uint64
 	// Roles represents all roles (leader or follower) we should filter in PD to reduce network IO.
-	Roles set.Int64Set
+	Roles []uint64
 	// HotRegionTypes represents all hot region types we should filter in PD to reduce network IO.
 	// e.g:
 	// 1. SELECT * FROM tidb_hot_regions_history WHERE type='read'
@@ -873,16 +873,8 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	if e.SkipRequest {
 		return nil
 	}
-	e.RegionIDs, e.StoreIDs, e.PeerIDs = e.parseQuantilesUint64(regionIDs), e.parseQuantilesUint64(storeIDs), e.parseQuantilesUint64(peerIDs)
-	roleSlice := e.parseQuantilesUint64(roles)
-	e.Roles = set.NewInt64Set()
-	for _, role := range roleSlice {
-		if role > 0 {
-			e.Roles.Insert(1)
-		} else {
-			e.Roles.Insert(0)
-		}
-	}
+	e.RegionIDs, e.StoreIDs = e.parseQuantilesUint64(regionIDs), e.parseQuantilesUint64(storeIDs)
+	e.PeerIDs, e.Roles = e.parseQuantilesUint64(peerIDs), e.parseQuantilesUint64(roles)
 	e.HotRegionTypes, e.DBNames, e.TableNames, e.IndexNames = types, dbNames, tableNames, indexNames
 	tableIDSlice, indexIDSlice := e.parseQuantilesUint64(tableIDs), e.parseQuantilesUint64(indexIDs)
 	// Intset is convinient to check exist
@@ -976,6 +968,9 @@ func (e *HotRegionsHistoryTableExtractor) explainInfo(p *PhysicalMemTable) strin
 	}
 	if len(e.PeerIDs) > 0 {
 		r.WriteString(fmt.Sprintf("peer_ids:[%s], ", extractStringFromUint64Slice(e.PeerIDs)))
+	}
+	if len(e.Roles) > 0 {
+		r.WriteString(fmt.Sprintf("roles:[%s], ", extractStringFromUint64Slice(e.Roles)))
 	}
 	if len(e.HotRegionTypes) > 0 {
 		r.WriteString(fmt.Sprintf("hot_region_types:[%s], ", extractStringFromStringSet(e.HotRegionTypes)))

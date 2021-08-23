@@ -1046,18 +1046,17 @@ func (s *extractorSuite) TestInspectionRuleTableExtractor(c *C) {
 
 func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 	var cases = []struct {
-		sql                             string
-		skipRequest                     bool
-		startTime, endTime              int64
-		roles                           set.Int64Set
-		hotRegionTypes                  set.StringSet
-		regionIDs, storeIDs, peerIDs    []uint64
-		tableIDs, indexIDs              set.Int64Set
-		dbNames, tableNames, indexNames set.StringSet
-		lowHotDegree, highHotDegree     int64
-		lowFlowBytes, highFlowBytes     float64
-		lowKeyRate, highKeyRate         float64
-		lowQueryRate, highQueryRate     float64
+		sql                                 string
+		skipRequest                         bool
+		startTime, endTime                  int64
+		hotRegionTypes                      set.StringSet
+		regionIDs, storeIDs, peerIDs, roles []uint64
+		tableIDs, indexIDs                  set.Int64Set
+		dbNames, tableNames, indexNames     set.StringSet
+		lowHotDegree, highHotDegree         int64
+		lowFlowBytes, highFlowBytes         float64
+		lowKeyRate, highKeyRate             float64
+		lowQueryRate, highQueryRate         float64
 	}{
 		// Test full data, will not call Extract(),and executor(retriver) will panic and remind user to add conditions to save network IO.
 		{
@@ -1172,7 +1171,7 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 			highFlowBytes: math.MaxFloat64,
 			highKeyRate:   math.MaxFloat64,
 			highQueryRate: math.MaxFloat64,
-			roles:         set.NewInt64Set(1),
+			roles:         []uint64{1},
 		},
 		{
 			sql:           "select * from information_schema.tidb_hot_regions_history where is_leader=true",
@@ -1180,15 +1179,15 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 			highFlowBytes: math.MaxFloat64,
 			highKeyRate:   math.MaxFloat64,
 			highQueryRate: math.MaxFloat64,
-			roles:         set.NewInt64Set(1),
+			roles:         []uint64{1},
 		},
 		{
-			sql:           "select * from information_schema.tidb_hot_regions_history where is_leader in(1,0)",
+			sql:           "select * from information_schema.tidb_hot_regions_history where is_leader in(0,1)",
 			highHotDegree: math.MaxInt64,
 			highFlowBytes: math.MaxFloat64,
 			highKeyRate:   math.MaxFloat64,
 			highQueryRate: math.MaxFloat64,
-			roles:         set.NewInt64Set(1, 0),
+			roles:         []uint64{0, 1},
 		},
 		{
 			sql:           "select * from information_schema.tidb_hot_regions_history where is_leader in(true,false)",
@@ -1196,7 +1195,7 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 			highFlowBytes: math.MaxFloat64,
 			highKeyRate:   math.MaxFloat64,
 			highQueryRate: math.MaxFloat64,
-			roles:         set.NewInt64Set(1, 0),
+			roles:         []uint64{0, 1},
 		},
 		{
 			sql:           "select * from information_schema.tidb_hot_regions_history where is_leader in(3,4)",
@@ -1204,7 +1203,7 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 			highFlowBytes: math.MaxFloat64,
 			highKeyRate:   math.MaxFloat64,
 			highQueryRate: math.MaxFloat64,
-			roles:         set.NewInt64Set(1),
+			roles:         []uint64{3, 4},
 		},
 		{
 			sql:         "select * from information_schema.tidb_hot_regions_history where is_leader=1 and is_leader=0",
@@ -1719,7 +1718,7 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 			c.Assert(hotRegionsHistoryExtractor.EndTime, Equals, ca.endTime, Commentf("SQL: %v", ca.sql))
 		}
 		c.Assert(hotRegionsHistoryExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
-		if ca.roles.Count() > 0 {
+		if len(ca.roles) > 0 {
 			c.Assert(hotRegionsHistoryExtractor.Roles, DeepEquals, ca.roles, Commentf("SQL: %v", ca.sql))
 		}
 		if ca.hotRegionTypes.Count() > 0 {
