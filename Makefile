@@ -238,6 +238,8 @@ bench-daily:
 	cd ./session && \
 	go test -run TestBenchDaily --date `git log -n1 --date=unix --pretty=format:%cd` --commit `git log -n1 --pretty=format:%h` --outfile $(TO)
 
+.PHONY: build_br build_lightning build_lightning-ctl
+
 build_tools: build_br build_lightning build_lightning-ctl
 
 br_web:
