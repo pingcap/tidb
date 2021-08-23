@@ -1,7 +1,7 @@
 # Record history hotspot information in TiDB_HOT_REGIONS_HISTORY
 
 - Author(s): [@qidi1](https://github.com/qidi1), [@icepigzdb](http://github.com/icepigzdb)
-- Discussion PR: https://github.com/pingcap/tidb/pull/
+- Discussion PR: https://github.com/pingcap/tidb/pull/27487
 - Tracking Issue: https://github.com/pingcap/tidb/issues/25281
 
 ## Table of Contents
@@ -9,6 +9,10 @@
 * [Introduction](#introduction)
 * [Motivation or Background](#motivation-or-background)
 * [Detailed Design](#detailed-design)
+    * [Existing TIDB_HOT_REGIONS](#Existing TIDB_HOT_REGIONS)
+    * [Table Header Design](#Table Header Design)
+    * [PD](#PD)
+    * [TiDB](#TiDB)
 * [Test Design](#test-design)
     * [Functional Tests](#functional-tests)
     * [Scenario Tests](#scenario-tests)
@@ -16,7 +20,6 @@
     * [Benchmark Tests](#benchmark-tests)
 * [Impacts & Risks](#impacts--risks)
 * [Investigation & Alternatives](#investigation--alternatives)
-* [Unresolved Questions](#unresolved-questions)
 
 ## Introduction
 
@@ -115,7 +118,7 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
   | KEY_RATE    | double      | YES  |      | NULL    |       | // new
   | QUERY_RATE  | double      | YES  |      | NULL    |       | // new
   +-------------+-------------+------+------+---------+-------+
-  | REGION_COUNT| bigint(21)  | YES  |      | NULL    |       | // Deleted fields
+  | REGION_COUNT| bigint(21)  | YES  |      | NULL    |       | // deleted fields
   ```
   * Add `UPDATE_TIME` to support history.
   * Add `STORE_ID` ,  `PEER_ID`,  `IS_LAEDER`to track the machine of region.
@@ -218,84 +221,49 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
 
 ### Functional Tests
 
-> remove me :
->
-> It's used to ensure the basic feature function works as expected. Both the integration test and the unit test should be considered.
-
-* /tidb/HotRegionsHistoryTableExtractor:  test with some sql staments.
-* /tidb/hotRegionsHistoryRetriver: test with three mock PD servers.
-
-
+* /tidb/HotRegionsHistoryTableExtractor:  test with some sql statements.
+* /tidb/hotRegionsHistoryRetriver: test with three mock PD http servers.
+* /pd/HotRegionStorage: test read and write function.
+* /pd/GetHistoryHotRegions: test PD's http server function. 
 
 ### Scenario Tests
 
-> remove me :
->
-> It's used to ensure this feature works as expected in some common scenarios.
-
-Run a query workload in a cluster and compare the results of `TIDB_HOT_REGIONS_HISTORY` with PD dashboard. 
+Run a workload in a cluster and compare the results of `TIDB_HOT_REGIONS_HISTORY` with PD dashboard and grafana. 
 
 ### Compatibility Tests
-
-> remove me:
->
-> A checklist to test compatibility:
->
-> - Compatibility with other features, like partition table, security & privilege, charset & collation, clustered index, async commit, etc.
-> - Compatibility with other internal components, like parser, DDL, planner, statistics, executor, etc.
-> - Compatibility with other external components, like PD, TiKV, TiFlash, BR, TiCDC, Dumpling, TiUP, K8s, etc.
-> - Upgrade compatibility
-> - Downgrade compatibility
 
 `TiDB_HOT_REGIONS_HISTORY` is compatible with `TiDB_HOT_REGIONS`.
 
 ### Benchmark Tests
 
-> remove me:
->
-> The following two parts need to be measured:
->
-> - The performance of this feature under different parameters
-> - The performance influence on the online workload
+* Test the time and space overhead to record history hot regions in PD's LevelDB under different parameters.
+* Test the time overhead to retrive hot regions from PDs.
 
 ## Impacts & Risks
-
-> remove me:
->
-> Describe the potential impacts & risks of the design on overall performance, security, k8s, and other aspects. List all the risks or unknowns by far.
->
-> Please describe impacts and risks in two sections: Impacts could be positive or negative, and intentional. Risks are usually negative, unintentional, and may or may not happen. E.g., for performance, we might expect a new feature to improve latency by 10% (expected impact), there is a risk that latency in scenarios X and Y could degrade by 50%.
 
 * TiDB can not add fields for deleted Table or Schema.
 
 ## Investigation & Alternatives
 
-1. Write to TiDB like a normal table.
-   * advantage:
-     * Reuse complete push-down function.
-     * Data is written into TiKV to provide disaster tolerance.
-     * The `Owner` election solves the problem of who pulls data from PD.
-     * Can not support scenarios using TiKV independently.
+Write to TiDB like a normal table.
+* advantage:
+  * Reuse complete push-down function.
+  * Data is written into TiKV to provide disaster tolerance.
+  * The `Owner` election solves the problem of who pulls data from PD.
+  * Can not support scenarios using TiKV independently.
+* There may be two place to put this normal table:
 
-* There are plcae to put this normal table:
+     1. Create a table in the `mysql`  :
+        * advantage:
+          * Reuse complete push-down function.
+          * Insert, query and delete can reuse the existing functions of Tidb.
+        * disadvantage
+          * The content in `INFORMATION_SCHEMA` is stored in the mysql library, which feels strange.
+     2. Create a table in `INFORMATION_SCHEMA`: 
 
-    1. Create a table in the mysql library:
-       * advantage:
-         * Reuse complete push-down function.
-         * Insert, query and delete can reuse the existing functions of Tidb.
-       * disadvantage
-         * The content in `INFORMATION_SCHEMA` is stored in the mysql library, which feels strange.
-    2. Create a table in `INFORMATION_SCHEMA`: 
-
-       * advantage:
-         * No need to change the query entry.
-         * It is more unified in design in this library.
-       * disadvantage:
-         * The creation of the `init()` function itself involves a lot and is difficult to transform.
-
-2. Creating a new tool to periodically pull data from pd and insert them into TiDB or other log services.
-   * advantage:
-     * Less invasive to PD.
-   * disadvantage:
-     * It can not support scenario only with PD and tikv.
+        * advantage:
+          * No need to change the query entry.
+          * It is more unified in design in this library.
+        * disadvantage:
+          * The creation of the `init()` function itself involves a lot and is difficult to transform.
 
