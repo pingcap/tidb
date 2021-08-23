@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 )
 
@@ -37,6 +38,7 @@ type stmtSummaryReader struct {
 	instanceAddr         string
 	ssMap                *stmtSummaryByDigestMap
 	columnValueFactories []columnValueFactory
+	checker              *stmtSummaryChecker
 }
 
 // NewStmtSummaryReader return a new statement summaries reader.
@@ -77,7 +79,11 @@ func (ssr *stmtSummaryReader) GetStmtSummaryCurrentRows() [][]types.Datum {
 
 	rows := make([][]types.Datum, 0, len(values))
 	for _, value := range values {
-		record := ssr.getStmtByDigestRow(value.(*stmtSummaryByDigest), beginTime)
+		ssbd := value.(*stmtSummaryByDigest)
+		record := ssr.getStmtByDigestRow(ssbd, beginTime)
+		if ssr.checker != nil && !ssr.checker.isDigestValid(ssbd.digest) {
+			continue
+		}
 		if record != nil {
 			rows = append(rows, record)
 		}
@@ -99,13 +105,21 @@ func (ssr *stmtSummaryReader) GetStmtSummaryHistoryRows() [][]types.Datum {
 	historySize := ssMap.historySize()
 	rows := make([][]types.Datum, 0, len(values)*historySize)
 	for _, value := range values {
-		records := ssr.getStmtByDigestHistoryRow(value.(*stmtSummaryByDigest), historySize)
+		ssbd := value.(*stmtSummaryByDigest)
+		if ssr.checker != nil && !ssr.checker.isDigestValid(ssbd.digest) {
+			continue
+		}
+		records := ssr.getStmtByDigestHistoryRow(ssbd, historySize)
 		rows = append(rows, records...)
 	}
 
 	otherDatum := ssr.getStmtEvictedOtherHistoryRow(other, historySize)
 	rows = append(rows, otherDatum...)
 	return rows
+}
+
+func (ssr *stmtSummaryReader) SetChecker(checker *stmtSummaryChecker) {
+	ssr.checker = checker
 }
 
 func (ssr *stmtSummaryReader) getStmtByDigestRow(ssbd *stmtSummaryByDigest, beginTimeForCurInterval int64) []types.Datum {
@@ -184,6 +198,21 @@ func (ssr *stmtSummaryReader) getStmtEvictedOtherHistoryRow(ssbde *stmtSummaryBy
 		rows = append(rows, ssr.getStmtByDigestElementRow(seElement.otherSummary, ssbd))
 	}
 	return rows
+}
+
+type stmtSummaryChecker struct {
+	digests set.StringSet
+}
+
+// NewStmtSummaryChecker return a new statement summaries checker.
+func NewStmtSummaryChecker(digests set.StringSet) *stmtSummaryChecker {
+	return &stmtSummaryChecker{
+		digests: digests,
+	}
+}
+
+func (ssc *stmtSummaryChecker) isDigestValid(digest string) bool {
+	return ssc.digests.Exist(digest)
 }
 
 // Statements summary table column name.

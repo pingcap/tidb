@@ -2094,11 +2094,12 @@ type stmtSummaryTableRetriever struct {
 	table     *model.TableInfo
 	columns   []*model.ColumnInfo
 	retrieved bool
+	extractor *plannercore.StatementsSummaryExtractor
 }
 
 // retrieve implements the infoschemaRetriever interface
 func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if e.retrieved {
+	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
 	e.retrieved = true
@@ -2119,6 +2120,10 @@ func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionct
 		}
 	}
 	reader := stmtsummary.NewStmtSummaryReader(user, isSuper, e.columns, instanceAddr)
+	if e.extractor.Enable {
+		checker := stmtsummary.NewStmtSummaryChecker(e.extractor.Digests)
+		reader.SetChecker(checker)
+	}
 	var rows [][]types.Datum
 	switch e.table.Name.O {
 	case infoschema.TableStatementsSummary,
