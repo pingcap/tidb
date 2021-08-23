@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/hnes/client_golang/api"
 	promv1 "github.com/hnes/client_golang/api/prometheus/v1"
+	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/util/logutil"
 	pmodel "github.com/prometheus/common/model"
 	"go.uber.org/atomic"
 )
