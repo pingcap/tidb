@@ -205,7 +205,9 @@ spilled-file-encryption-method = "plaintext"
 # Security Enhanced Mode (SEM) restricts the "SUPER" privilege and requires fine-grained privileges instead.
 enable-sem = false
 
-# Automatic creation of TLS certificates
+# Automatic creation of TLS certificates.
+# Setting it to 'true' is recommended because it is safer and tie with the default configuration of MySQL.
+# If this config is commented/missed, the value would be 'false' for the compatibility with TiDB versions that does not support it.
 auto-tls = true
 
 [status]
