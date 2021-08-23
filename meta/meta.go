@@ -693,9 +693,11 @@ func detachMagicByte(value []byte) ([]byte, error) {
 	magic, data := value[:1], value[1:]
 	switch whichMagicType(magic[0]) {
 	case typeJSON:
+		if magic[0] != CurrentMagicByteVer {
+			return nil, errors.New("incompatible magic type handling module")
+		}
 		return data, nil
 	default:
-		//
 		return nil, errors.New("unknown magic type handling module")
 	}
 }
