@@ -178,10 +178,7 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 		}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
-	return nil
+	return e.baseExecutor.Open(ctx)
 }
 
 // fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine
