@@ -64,6 +64,7 @@ var Priv2SetStr = map[PrivilegeType]string{
 	DropPriv:       "Drop",
 	GrantPriv:      "Grant",
 	ReferencesPriv: "References",
+	LockTablesPriv: "Lock Tables",
 	AlterPriv:      "Alter",
 	ExecutePriv:    "Execute",
 	IndexPriv:      "Index",
@@ -84,6 +85,7 @@ var SetStr2Priv = map[string]PrivilegeType{
 	"Drop":        DropPriv,
 	"Grant":       GrantPriv,
 	"References":  ReferencesPriv,
+	"Lock Tables": LockTablesPriv,
 	"Alter":       AlterPriv,
 	"Execute":     ExecutePriv,
 	"Index":       IndexPriv,
@@ -299,7 +301,7 @@ func (privs Privileges) Has(p PrivilegeType) bool {
 var AllGlobalPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, ReferencesPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv, CreateTablespacePriv, TriggerPriv, CreateViewPriv, ShowViewPriv, CreateRolePriv, DropRolePriv, CreateTMPTablePriv, LockTablesPriv, CreateRoutinePriv, AlterRoutinePriv, EventPriv, ShutdownPriv, ReloadPriv, FilePriv, ConfigPriv, ReplicationClientPriv, ReplicationSlavePriv}
 
 // AllDBPrivs is all the privileges in database scope.
-var AllDBPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ReferencesPriv, AlterPriv, ExecutePriv, IndexPriv, CreateViewPriv, ShowViewPriv}
+var AllDBPrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ReferencesPriv, LockTablesPriv, AlterPriv, ExecutePriv, IndexPriv, CreateViewPriv, ShowViewPriv}
 
 // AllTablePrivs is all the privileges in table scope.
 var AllTablePrivs = Privileges{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, IndexPriv, ReferencesPriv, AlterPriv, CreateViewPriv, ShowViewPriv}
