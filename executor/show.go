@@ -776,13 +776,12 @@ func (e *ShowExec) fetchShowStatus() error {
 }
 
 func getDefaultCollate(charsetName string) string {
-	for _, c := range charset.GetSupportedCharsets() {
-		if strings.EqualFold(c.Name, charsetName) {
-			return c.DefaultCollation
-		}
+	ch, err := charset.GetCharsetInfo(charsetName)
+	if err != nil {
+		// The charset is invalid, return server default.
+		return mysql.DefaultCollationName
 	}
-	// The charset is invalid, return server default.
-	return mysql.DefaultCollationName
+	return ch.DefaultCollation
 }
 
 // ConstructResultOfShowCreateTable constructs the result for show create table.

@@ -32,7 +32,7 @@ func (t *testRuleSuite) TestApplyAttributesSpec(c *C) {
 	c.Assert(rule.Labels[1].Key, Equals, "attr2")
 }
 
-func (t *testRuleSuite) TestResetID(c *C) {
+func (t *testRuleSuite) TestReset(c *C) {
 	rule := NewRule()
 	rule.Reset(1, "db1", "t1")
 	c.Assert(rule.ID, Equals, "schema/db1/t1")
@@ -46,4 +46,14 @@ func (t *testRuleSuite) TestResetID(c *C) {
 
 	r1 := rule.Clone()
 	c.Assert(rule, DeepEquals, r1)
+
+	r2 := rule.Reset(2, "db2", "t2", "p2")
+	c.Assert(r2.ID, Equals, "schema/db2/t2/p2")
+	c.Assert(r2.Labels, HasLen, 3)
+	c.Assert(rule.Labels[0].Value, Equals, "db2")
+	c.Assert(rule.Labels[1].Value, Equals, "t2")
+	c.Assert(rule.Labels[2].Value, Equals, "p2")
+	r = r2.Rule.(map[string]string)
+	c.Assert(r["start_key"], Equals, "7480000000000000ff025f720000000000fa")
+	c.Assert(r["end_key"], Equals, "7480000000000000ff035f720000000000fa")
 }

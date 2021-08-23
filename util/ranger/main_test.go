@@ -25,29 +25,22 @@ import (
 	"go.uber.org/goleak"
 )
 
-var testData testdata.TestData
+var testDataMap = make(testdata.BookKeeper, 1)
+var rangerSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
 
 	flag.Parse()
 
-	var err error
-	testData, err = testdata.LoadTestSuiteData("testdata", "ranger_suite")
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "testdata: Errors on loading test data from file: %v\n", err)
-		os.Exit(1)
-	}
+	testDataMap.LoadTestSuiteData("testdata", "ranger_suite")
+	rangerSuiteData = testDataMap["ranger_suite"]
 
 	if exitCode := m.Run(); exitCode != 0 {
 		os.Exit(exitCode)
 	}
 
-	err = testData.GenerateOutputIfNeeded()
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "testdata: Errors on generating output: %v\n", err)
-		os.Exit(1)
-	}
+	testDataMap.GenerateOutputIfNeeded()
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),

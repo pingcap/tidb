@@ -4516,6 +4516,10 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 
 	sessionVars := b.ctx.GetSessionVars()
 
+	if tbl.TempTableType == model.TempTableLocal && sessionVars.SnapshotTS != 0 {
+		return errors.New("can not read local temporary table when 'tidb_snapshot' is set")
+	}
+
 	if sessionVars.TxnCtx.IsStaleness || b.isStaleness {
 		return errors.New("can not stale read temporary table")
 	}
