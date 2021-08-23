@@ -12,21 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package collate
 
-import (
-	"testing"
-
-	"github.com/pingcap/tidb/util/testbridge"
-	"go.uber.org/goleak"
-)
-
-func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
-	}
-	goleak.VerifyTestMain(m, opts...)
+// gbkBinCollator is collator for gbk_bin, use binCollator instead temporary.
+type gbkBinCollator struct {
+	binCollator
 }
