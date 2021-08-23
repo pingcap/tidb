@@ -12,21 +12,51 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package cascades
 
 import (
+	"flag"
+	"fmt"
+	"os"
 	"testing"
 
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
 
+var testDataMap = make(testdata.BookKeeper, 3)
+var stringerSuiteData testdata.TestData
+var transformationRulesSuiteData testdata.TestData
+
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
+
+	flag.Parse()
+
+	testDataMap.LoadTestSuiteData("testdata", "stringer_suite")
+	testDataMap.LoadTestSuiteData("testdata", "transformation_rules_suite")
+	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
+	stringerSuiteData = testDataMap["stringer_suite"]
+	transformationRulesSuiteData = testDataMap["transformation_rules_suite"]
+
+	if exitCode := m.Run(); exitCode != 0 {
+		os.Exit(exitCode)
+	}
+
+	testDataMap.GenerateOutputIfNeeded()
+
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 	}
-	goleak.VerifyTestMain(m, opts...)
+
+	if err := goleak.Find(opts...); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "goleak: Errors on successful test run: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func GetIntegrationSuiteData() testdata.TestData {
+	return testDataMap["integration_suite"]
 }
