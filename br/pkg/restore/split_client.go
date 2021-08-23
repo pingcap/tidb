@@ -24,10 +24,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/server/config"
 	"github.com/tikv/pd/server/schedule/placement"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -80,15 +82,29 @@ type pdClient struct {
 	client     pd.Client
 	tlsConf    *tls.Config
 	storeCache map[uint64]*metapb.Store
+
+	// FIXME when config changed during the lifetime of pdClient,
+	// 	this may mislead the scatter.
+	needScatter bool
 }
 
 // NewSplitClient returns a client used by RegionSplitter.
 func NewSplitClient(client pd.Client, tlsConf *tls.Config) SplitClient {
-	return &pdClient{
+	cli := &pdClient{
 		client:     client,
 		tlsConf:    tlsConf,
 		storeCache: make(map[uint64]*metapb.Store),
 	}
+	var err error
+	cli.needScatter, err = cli.checkNeedScatter(context.TODO())
+	if err != nil {
+		log.Warn("failed to check whether need to scatter, use permissive strategy: always scatter", logutil.ShortError(err))
+		cli.needScatter = true
+	}
+	if !cli.needScatter {
+		log.Info("skipping scatter because the replica number isn't less than store count.")
+	}
+	return cli
 }
 
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
@@ -374,7 +390,49 @@ func (c *pdClient) BatchSplitRegions(
 	return newRegions, err
 }
 
+func (c *pdClient) getStoreCount(ctx context.Context) (int, error) {
+	stores, err := conn.GetAllTiKVStores(ctx, c.client, conn.SkipTiFlash)
+	if err != nil {
+		return 0, err
+	}
+	return len(stores), err
+}
+
+func (c *pdClient) getMaxReplica(ctx context.Context) (int, error) {
+	api := c.getPDAPIAddr()
+	configAPI := api + "/pd/api/v1/config"
+	req, err := http.NewRequestWithContext(ctx, "GET", configAPI, nil)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	res, err := httputil.NewClient(c.tlsConf).Do(req)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	var conf config.Config
+	if err := json.NewDecoder(res.Body).Decode(&conf); err != nil {
+		return 0, errors.Trace(err)
+	}
+	return int(conf.Replication.MaxReplicas), nil
+}
+
+func (c *pdClient) checkNeedScatter(ctx context.Context) (bool, error) {
+	storeCount, err := c.getStoreCount(ctx)
+	if err != nil {
+		return false, err
+	}
+	maxReplica, err := c.getMaxReplica(ctx)
+	if err != nil {
+		return false, err
+	}
+	log.Info("checking whether need to scatter", zap.Int("store", storeCount), zap.Int("max-replica", maxReplica))
+	return maxReplica < storeCount, nil
+}
+
 func (c *pdClient) ScatterRegion(ctx context.Context, regionInfo *RegionInfo) error {
+	if !c.needScatter {
+		return nil
+	}
 	return c.client.ScatterRegion(ctx, regionInfo.Region.GetId())
 }
 
