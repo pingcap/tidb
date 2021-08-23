@@ -2312,7 +2312,7 @@ func (s *testDBSuite5) TestCreateIndexType(c *C) {
 	tk.MustExec(sql)
 }
 
-func (s *testDBSuite6) TestColumnAAA(c *C) {
+func (s *testDBSuite6) TestColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
 	tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
