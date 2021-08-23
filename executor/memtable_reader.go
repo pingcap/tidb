@@ -781,7 +781,7 @@ type HistoryHotRegion struct {
 	RegionID      uint64  `json:"region_id,omitempty"`
 	StoreID       uint64  `json:"store_id,omitempty"`
 	PeerID        uint64  `json:"peer_id,omitempty"`
-	IsLeader      int64   `json:"is_leader,omitempty"`
+	IsLeader      bool    `json:"is_leader,omitempty"`
 	HotRegionType string  `json:"hot_region_type,omitempty"`
 	HotDegree     int64   `json:"hot_degree,omitempty"`
 	FlowBytes     float64 `json:"flow_bytes,omitempty"`
@@ -1011,7 +1011,12 @@ func (e *hotRegionsHistoryRetriver) parseAndFilterBySchemaInfo(sctx sessionctx.C
 	row[6].SetInt64(int64(headMessage.RegionID))
 	row[7].SetInt64(int64(headMessage.StoreID))
 	row[8].SetInt64(int64(headMessage.PeerID))
-	row[9].SetInt64(headMessage.IsLeader)
+	if headMessage.IsLeader {
+		row[9].SetInt64(1)
+	} else {
+		row[9].SetInt64(0)
+	}
+
 	row[10].SetString(strings.ToUpper(headMessage.HotRegionType), mysql.DefaultCollationName)
 	if headMessage.HotDegree != 0 {
 		row[11].SetInt64(headMessage.HotDegree)
