@@ -756,7 +756,7 @@ type HistoryHotRegionsRequest struct {
 	RegionIDs      []uint64 `json:"region_ids,omitempty"`
 	StoreIDs       []uint64 `json:"store_ids,omitempty"`
 	PeerIDs        []uint64 `json:"peer_ids,omitempty"`
-	IsLeader       bool     `json:"is_leader,omitempty"`
+	Roles          []uint64 `json:"roles,omitempty"`
 	HotRegionTypes []string `json:"hot_region_types,omitempty"`
 	LowHotDegree   int64    `json:"low_hot_degree,omitempty"`
 	HighHotDegree  int64    `json:"high_hot_degree,omitempty"`
@@ -781,7 +781,7 @@ type HistoryHotRegion struct {
 	RegionID      uint64  `json:"region_id,omitempty"`
 	StoreID       uint64  `json:"store_id,omitempty"`
 	PeerID        uint64  `json:"peer_id,omitempty"`
-	IsLeader      bool    `json:"is_leader,omitempty"`
+	IsLeader      int64   `json:"is_leader,omitempty"`
 	HotRegionType string  `json:"hot_region_type,omitempty"`
 	HotDegree     int64   `json:"hot_degree,omitempty"`
 	FlowBytes     float64 `json:"flow_bytes,omitempty"`
@@ -832,6 +832,7 @@ func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx session
 		RegionIDs:     e.extractor.RegionIDs,
 		StoreIDs:      e.extractor.StoreIDs,
 		PeerIDs:       e.extractor.PeerIDs,
+		Roles:         e.extractor.Roles,
 		LowHotDegree:  e.extractor.LowHotDegree,
 		HighHotDegree: e.extractor.HighHotDegree,
 		LowFlowBytes:  e.extractor.LowFlowBytes,
@@ -841,10 +842,7 @@ func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx session
 		LowQueryRate:  e.extractor.LowQueryRate,
 		HighQueryRate: e.extractor.HighQueryRate,
 	}
-	// Not set isLeader when roles' length equal to 0(no condition), 2(leader or follower)
-	if e.extractor.Roles.Count() == 1 {
-		historyHotRegionsRequest.IsLeader = e.extractor.Roles.Exist(1)
-	}
+
 	return e.startRetrieving(ctx, sctx, pdServers, historyHotRegionsRequest)
 }
 
@@ -1013,11 +1011,7 @@ func (e *hotRegionsHistoryRetriver) parseAndFilterBySchemaInfo(sctx sessionctx.C
 	row[6].SetInt64(int64(headMessage.RegionID))
 	row[7].SetInt64(int64(headMessage.StoreID))
 	row[8].SetInt64(int64(headMessage.PeerID))
-	if headMessage.IsLeader {
-		row[9].SetInt64(1)
-	} else {
-		row[9].SetInt64(0)
-	}
+	row[9].SetInt64(headMessage.IsLeader)
 	row[10].SetString(strings.ToUpper(headMessage.HotRegionType), mysql.DefaultCollationName)
 	if headMessage.HotDegree != 0 {
 		row[11].SetInt64(headMessage.HotDegree)
