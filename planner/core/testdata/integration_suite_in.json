@@ -20,6 +20,22 @@
     ]
   },
   {
+    "name": "TestAggColumnPrune",
+    "cases": [
+      "select count(1) from t join (select count(1) from t where false) as tmp",
+      "select count(1) from t join (select max(a) from t where false) as tmp",
+      "select count(1) from t join (select min(a) from t where false) as tmp",
+      "select count(1) from t join (select sum(a) from t where false) as tmp",
+      "select count(1) from t join (select avg(a) from t where false) as tmp",
+      "select count(1) from t join (select count(1) from t where false group by a) as tmp",
+      "select count(1) from t join (select max(a) from t where false group by a) as tmp",
+      "select count(1) from t join (select min(a) from t where false group by a) as tmp",
+      "select count(1) from t join (select sum(a) from t where false group by a) as tmp",
+      "select count(1) from t join (select avg(a) from t where false group by a) as tmp",
+      "SELECT avg(2) FROM(SELECT min(c) FROM t JOIN(SELECT 1 c) d ORDER BY a) e"
+    ]
+  },
+  {
     "name": "TestIndexJoinInnerIndexNDV",
     "cases": [
       // t2 should use idx2 instead of idx1, since idx2 has larger NDV.

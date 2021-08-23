@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
@@ -101,46 +102,103 @@ func (rs *batchCopResponse) RespTime() time.Duration {
 // 2. for the remaining regions:
 //    if there is only 1 available store, then put the region to the related store
 //    otherwise, use a greedy algorithm to put it into the store with highest weight
-func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
+func balanceBatchCopTask(ctx context.Context, kvStore *tikv.KVStore, originalTasks []*batchCopTask, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) []*batchCopTask {
 	if len(originalTasks) <= 1 {
 		return originalTasks
 	}
+	isMPP := mppStoreLastFailTime != nil
+	cache := kvStore.GetRegionCache()
 	storeTaskMap := make(map[uint64]*batchCopTask)
+	// storeCandidateRegionMap stores all the possible store->region map. Its content is
+	// store id -> region signature -> region info. We can see it as store id -> region lists.
 	storeCandidateRegionMap := make(map[uint64]map[string]tikv.RegionInfo)
 	totalRegionCandidateNum := 0
 	totalRemainingRegionNum := 0
 
-	for _, task := range originalTasks {
-		taskStoreID := task.regionInfos[0].AllStores[0]
-		batchTask := &batchCopTask{
-			storeAddr:   task.storeAddr,
-			cmdType:     task.cmdType,
-			ctx:         task.ctx,
-			regionInfos: []tikv.RegionInfo{task.regionInfos[0]},
+	if !isMPP {
+		for _, task := range originalTasks {
+			taskStoreID := task.regionInfos[0].AllStores[0]
+			batchTask := &batchCopTask{
+				storeAddr:   task.storeAddr,
+				cmdType:     task.cmdType,
+				ctx:         task.ctx,
+				regionInfos: []tikv.RegionInfo{task.regionInfos[0]},
+			}
+			storeTaskMap[taskStoreID] = batchTask
 		}
-		storeTaskMap[taskStoreID] = batchTask
+	} else {
+		logutil.BgLogger().Info("detecting available mpp stores")
+		// decide the available stores
+		stores := cache.GetTiFlashStores()
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		wg.Add(len(stores))
+		cur := time.Now()
+		for i := range stores {
+			go func(idx int) {
+				defer wg.Done()
+				s := stores[idx]
+				var last time.Time
+				var ok bool
+				mu.Lock()
+				if last, ok = mppStoreLastFailTime[s.GetAddr()]; ok && cur.Sub(last) < 100*time.Millisecond {
+					mu.Unlock()
+					return
+				}
+				mu.Unlock()
+				resp, err := kvStore.GetTiKVClient().SendRequest(ctx, s.GetAddr(), &tikvrpc.Request{
+					Type:    tikvrpc.CmdMPPAlive,
+					StoreTp: kv.TiFlash,
+					Req:     &mpp.IsAliveRequest{},
+					Context: kvrpcpb.Context{},
+				}, 2*time.Second)
+
+				if err != nil || !resp.Resp.(*mpp.IsAliveResponse).Available {
+					logutil.BgLogger().Warn("Cannot detect store's availability", zap.String("store address", s.GetAddr()), zap.String("err message", err.Error()))
+					mu.Lock()
+					mppStoreLastFailTime[s.GetAddr()] = time.Now()
+					mu.Unlock()
+					return
+				}
+
+				if cur.Sub(last) < ttl {
+					logutil.BgLogger().Warn("Cannot detect store's availability because the current time has not reached MPPStoreLastFailTime + MPPStoreFailTTL", zap.String("store address", s.GetAddr()), zap.Time("last fail time", last))
+					return
+				}
+
+				mu.Lock()
+				defer mu.Unlock()
+				storeTaskMap[s.StoreID()] = &batchCopTask{
+					storeAddr: s.GetAddr(),
+					cmdType:   originalTasks[0].cmdType,
+					ctx:       &tikv.RPCContext{Addr: s.GetAddr(), Store: s},
+				}
+			}(i)
+		}
+		wg.Wait()
 	}
 
 	for _, task := range originalTasks {
-		taskStoreID := task.regionInfos[0].AllStores[0]
 		for index, ri := range task.regionInfos {
 			// for each region, figure out the valid store num
 			validStoreNum := 0
-			if index == 0 {
+			if index == 0 && !isMPP {
 				continue
 			}
-			if len(ri.AllStores) <= 1 {
-				validStoreNum = 1
-			} else {
-				for _, storeID := range ri.AllStores {
-					if _, ok := storeTaskMap[storeID]; ok {
-						validStoreNum++
-					}
+			var validStoreID uint64
+			for _, storeID := range ri.AllStores {
+				if _, ok := storeTaskMap[storeID]; ok {
+					validStoreNum++
+					// original store id might be invalid, so we have to set it again.
+					validStoreID = storeID
 				}
 			}
-			if validStoreNum == 1 {
+			if validStoreNum == 0 {
+				logutil.BgLogger().Warn("Meet regions that don't have an available store. Give up balancing")
+				return originalTasks
+			} else if validStoreNum == 1 {
 				// if only one store is valid, just put it to storeTaskMap
-				storeTaskMap[taskStoreID].regionInfos = append(storeTaskMap[taskStoreID].regionInfos, ri)
+				storeTaskMap[validStoreID].regionInfos = append(storeTaskMap[validStoreID].regionInfos, ri)
 			} else {
 				// if more than one store is valid, put the region
 				// to store candidate map
@@ -238,12 +296,15 @@ func balanceBatchCopTask(originalTasks []*batchCopTask) []*batchCopTask {
 
 	var ret []*batchCopTask
 	for _, task := range storeTaskMap {
-		ret = append(ret, task)
+		if len(task.regionInfos) > 0 {
+			ret = append(ret, task)
+		}
 	}
 	return ret
 }
 
-func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tikv.KeyRanges, storeType kv.StoreType) ([]*batchCopTask, error) {
+func buildBatchCopTasks(bo *tikv.Backoffer, store *tikv.KVStore, ranges *tikv.KeyRanges, storeType kv.StoreType, blockAddrs map[string]time.Time, ttl time.Duration) ([]*batchCopTask, error) {
+	cache := store.GetRegionCache()
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
 	rangesLen := ranges.Len()
@@ -272,8 +333,10 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			// If the region is not found in cache, it must be out
-			// of date and already be cleaned up. We should retry and generate new tasks.
+			// When rpcCtx is nil, it's not only attributed to the miss region, but also
+			// some TiFlash stores crash and can't be recovered.
+			// That is not an error that can be easily recovered, so we regard this error
+			// same as rpc error.
 			if rpcCtx == nil {
 				needRetry = true
 				logutil.BgLogger().Info("retry for TiFlash peer with region missing", zap.Uint64("region id", task.region.GetID()))
@@ -295,8 +358,10 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 			}
 		}
 		if needRetry {
-			// Backoff once for each retry.
-			err = bo.Backoff(tikv.BoRegionMiss, errors.New("Cannot find region with TiFlash peer"))
+			// As mentioned above, nil rpcCtx is always attributed to failed stores.
+			// It's equal to long poll the store but get no response. Here we'd better use
+			// TiFlash error to trigger the TiKV fallback mechanism.
+			err = bo.Backoff(tikv.BoTiFlashRPC, errors.New("Cannot find region with TiFlash peer"))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -313,7 +378,7 @@ func buildBatchCopTasks(bo *tikv.Backoffer, cache *tikv.RegionCache, ranges *tik
 			}
 			logutil.BgLogger().Debug(msg)
 		}
-		batchTasks = balanceBatchCopTask(batchTasks)
+		batchTasks = balanceBatchCopTask(bo.GetCtx(), store, batchTasks, blockAddrs, ttl)
 		if log.GetLevel() <= zap.DebugLevel {
 			msg := "After region balance:"
 			for _, task := range batchTasks {
@@ -339,7 +404,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey, req.StartTs)
 	bo := tikv.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	tasks, err := buildBatchCopTasks(bo, c.store.GetRegionCache(), tikv.NewKeyRanges(req.KeyRanges), req.StoreType)
+	tasks, err := buildBatchCopTasks(bo, c.store.KVStore, tikv.NewKeyRanges(req.KeyRanges), req.StoreType, nil, 0)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -480,7 +545,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *tikv.Backo
 			ranges = append(ranges, *ran)
 		})
 	}
-	return buildBatchCopTasks(bo, b.store.GetRegionCache(), tikv.NewKeyRanges(ranges), b.req.StoreType)
+	return buildBatchCopTasks(bo, b.store, tikv.NewKeyRanges(ranges), b.req.StoreType, nil, 0)
 }
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *tikv.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {

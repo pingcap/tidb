@@ -732,6 +732,11 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	// Replace
+	function, err = NewFunction(mock.NewContext(), ast.Replace, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn, stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	// Substring2ArgsUTF8
 	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), stringColumn, intColumn)
 	c.Assert(err, IsNil)
@@ -748,12 +753,83 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_StrToDateDatetime)
 	exprs = append(exprs, function)
 
+	// ScalarFuncSig_RoundReal
 	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeDouble), realColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
-	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	// Year
+	function, err = NewFunction(mock.NewContext(), ast.Year, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
 	c.Assert(err, IsNil)
+	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_Year)
+	exprs = append(exprs, function)
+
+	// Day
+	function, err = NewFunction(mock.NewContext(), ast.Day, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
+	c.Assert(err, IsNil)
+	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_DayOfMonth)
+	exprs = append(exprs, function)
+
+	// Datediff
+	function, err = NewFunction(mock.NewContext(), ast.DateDiff, types.NewFieldType(mysql.TypeLonglong), datetimeColumn, datetimeColumn)
+	c.Assert(err, IsNil)
+	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_DateDiff)
+	exprs = append(exprs, function)
+
+	// Datesub
+	function, err = NewFunction(mock.NewContext(), ast.DateSub, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, stringColumn)
+	c.Assert(err, IsNil)
+	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_SubDateDatetimeInt)
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.DateSub, types.NewFieldType(mysql.TypeDatetime), stringColumn, intColumn, stringColumn)
+	c.Assert(err, IsNil)
+	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_SubDateStringInt)
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.SubDate, types.NewFieldType(mysql.TypeDatetime), datetimeColumn, intColumn, stringColumn)
+	c.Assert(err, IsNil)
+	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_SubDateDatetimeInt)
+	exprs = append(exprs, function)
+
+	// castTimeAsString:
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), datetimeColumn)
+	c.Assert(err, IsNil)
+	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_CastTimeAsString)
+	exprs = append(exprs, function)
+
+	// concat_ws
+	function, err = NewFunction(mock.NewContext(), ast.ConcatWS, types.NewFieldType(mysql.TypeString), stringColumn, stringColumn, stringColumn)
+	c.Assert(err, IsNil)
+	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_ConcatWS)
+	exprs = append(exprs, function)
+
+	// StrToDateDateTime
+	function, err = NewFunction(mock.NewContext(), ast.StrToDate, types.NewFieldType(mysql.TypeDatetime), stringColumn, stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// concat
+	function, err = NewFunction(mock.NewContext(), ast.Concat, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// UnixTimestampCurrent
+	function, err = NewFunction(mock.NewContext(), ast.UnixTimestamp, types.NewFieldType(mysql.TypeLonglong))
+	c.Assert(err, IsNil)
+	_, ok := function.(*Constant)
+	c.Assert(ok, IsTrue)
+
+	// UnixTimestampInt
+	datetimeColumn.RetType.Decimal = 0
+	function, err = NewFunction(mock.NewContext(), ast.UnixTimestamp, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
+	c.Assert(err, IsNil)
+	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_UnixTimestampInt)
+	exprs = append(exprs, function)
+
+	// UnixTimestampDecimal
+	datetimeColumn.RetType.Decimal = types.UnspecifiedLength
+	function, err = NewFunction(mock.NewContext(), ast.UnixTimestamp, types.NewFieldType(mysql.TypeNewDecimal), datetimeColumn)
+	c.Assert(err, IsNil)
+	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_UnixTimestampDec)
 	exprs = append(exprs, function)
 
 	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
