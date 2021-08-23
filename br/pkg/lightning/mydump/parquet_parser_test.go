@@ -2,14 +2,15 @@ package mydump
 
 import (
 	"context"
+	"io"
+	"path/filepath"
+	"strconv"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/types"
 	"github.com/xitongsys/parquet-go-source/local"
 	writer2 "github.com/xitongsys/parquet-go/writer"
-	"io"
-	"path/filepath"
-	"strconv"
 )
 
 type testParquetParserSuite struct{}
