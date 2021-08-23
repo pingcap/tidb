@@ -93,18 +93,20 @@ func (r *Rule) Reset(id int64, dbName, tableName string, partName ...string) *Ru
 	}
 
 	var hasDBKey, hasTableKey, hasPartitionKey bool
-	for _, label := range r.Labels {
-		if label.Key == dbKey {
-			label.Value = dbName
+	for i := range r.Labels {
+		switch r.Labels[i].Key {
+		case dbKey:
+			r.Labels[i].Value = dbName
 			hasDBKey = true
-		}
-		if label.Key == tableKey {
-			label.Value = tableName
+		case tableKey:
+			r.Labels[i].Value = tableName
 			hasTableKey = true
-		}
-		if isPartition && label.Key == partitionKey {
-			label.Value = partName[0]
-			hasPartitionKey = true
+		case partitionKey:
+			if isPartition {
+				r.Labels[i].Value = partName[0]
+				hasPartitionKey = true
+			}
+		default:
 		}
 	}
 
