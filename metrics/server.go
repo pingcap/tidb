@@ -14,9 +14,9 @@
 package metrics
 
 import (
+	"github.com/hnes/client_golang/prometheus"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
