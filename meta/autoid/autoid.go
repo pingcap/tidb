@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -134,6 +135,9 @@ type Allocator interface {
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
 	Rebase(tableID, newBase int64, allocIDs bool) error
+
+	// ForceRebase set the next global auto ID to newBase.
+	ForceRebase(tableID, newBase int64) error
 
 	// RebaseSeq rebases the sequence value in number axis with tableID and the new base value.
 	RebaseSeq(table, newBase int64) (int64, bool, error)
@@ -370,14 +374,47 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 	if tableID == 0 {
 		return errInvalidTableID.GenWithStack("Invalid tableID")
 	}
-
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
-
 	if alloc.isUnsigned {
 		return alloc.rebase4Unsigned(tableID, uint64(requiredBase), allocIDs)
 	}
 	return alloc.rebase4Signed(tableID, requiredBase, allocIDs)
+}
+
+// ForceRebase implements autoid.Allocator ForceRebase interface.
+func (alloc *allocator) ForceRebase(tableID, requiredBase int64) error {
+	if tableID <= 0 {
+		return errInvalidTableID.GenWithStack("Invalid tableID")
+	}
+	if requiredBase == -1 {
+		return ErrAutoincReadFailed.GenWithStack("Cannot force rebase the next global ID to '0'")
+	}
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
+	startTime := time.Now()
+	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		currentEnd, err1 := GetAutoID(m, alloc.dbID, tableID, alloc.allocType)
+		if err1 != nil {
+			return err1
+		}
+		var step int64
+		if !alloc.isUnsigned {
+			step = requiredBase - currentEnd
+		} else {
+			uRequiredBase, uCurrentEnd := uint64(requiredBase), uint64(currentEnd)
+			step = int64(uRequiredBase - uCurrentEnd)
+		}
+		_, err1 = GenerateAutoID(m, alloc.dbID, tableID, step, alloc.allocType)
+		return err1
+	})
+	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	if err != nil {
+		return err
+	}
+	alloc.base, alloc.end = requiredBase, requiredBase
+	return nil
 }
 
 // Rebase implements autoid.Allocator RebaseSeq interface.

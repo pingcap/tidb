@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -890,7 +891,7 @@ const (
 	ErrFunctionalIndexRefAutoIncrement                       = 3754
 	ErrCannotDropColumnFunctionalIndex                       = 3755
 	ErrFunctionalIndexPrimaryKey                             = 3756
-	ErrFunctionalIndexOnLob                                  = 3757
+	ErrFunctionalIndexOnBlob                                 = 3757
 	ErrFunctionalIndexFunctionIsNotAllowed                   = 3758
 	ErrFulltextFunctionalIndex                               = 3759
 	ErrSpatialFunctionalIndex                                = 3760
@@ -923,6 +924,7 @@ const (
 	ErrTxnTooLarge                         = 8004
 	ErrWriteConflictInTiDB                 = 8005
 	ErrOptOnTemporaryTable                 = 8006
+	ErrDropTableOnTemporaryTable           = 8007
 	ErrUnsupportedReloadPlugin             = 8018
 	ErrUnsupportedReloadPluginVar          = 8019
 	ErrTableLocked                         = 8020
@@ -1045,6 +1047,7 @@ const (
 	ErrInvalidPlacementSpec               = 8234
 	ErrDDLReorgElementNotExist            = 8235
 	ErrPlacementPolicyCheck               = 8236
+	ErrInvalidAttributesSpec              = 8237
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

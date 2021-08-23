@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,15 +17,19 @@ package sessionctx
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // InfoschemaMetaVersion is a workaround. Due to circular dependency,
@@ -124,6 +129,9 @@ type Context interface {
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
 	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
+	// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
+	// Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
+	GetBuiltinFunctionUsage() map[string]uint32
 }
 
 type basicCtxType int
@@ -149,3 +157,41 @@ const (
 	// LastExecuteDDL is the key for whether the session execute a ddl command last time.
 	LastExecuteDDL basicCtxType = 3
 )
+
+// ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp
+func ValidateSnapshotReadTS(ctx context.Context, sctx Context, readTS uint64) error {
+	latestTS, err := sctx.GetStore().GetOracle().GetLowResolutionTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	// If we fail to get latestTS or the readTS exceeds it, get a timestamp from PD to double check
+	if err != nil || readTS > latestTS {
+		metrics.ValidateReadTSFromPDCount.Inc()
+		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
+		if err != nil {
+			return errors.Errorf("fail to validate read timestamp: %v", err)
+		}
+		if readTS > currentVer.Ver {
+			return errors.Errorf("cannot set read timestamp to a future time")
+		}
+	}
+	return nil
+}
+
+// How far future from now ValidateStaleReadTS allows at most
+const allowedTimeFromNow = 100 * time.Millisecond
+
+// ValidateStaleReadTS validates that readTS does not exceed the current time not strictly.
+func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error {
+	currentTS, err := sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
+	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD
+	if err != nil {
+		metrics.ValidateReadTSFromPDCount.Inc()
+		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
+		if err != nil {
+			return errors.Errorf("fail to validate read timestamp: %v", err)
+		}
+		currentTS = currentVer.Ver
+	}
+	if oracle.GetTimeFromTS(readTS).After(oracle.GetTimeFromTS(currentTS).Add(allowedTimeFromNow)) {
+		return errors.Errorf("cannot set read timestamp to a future time")
+	}
+	return nil
+}

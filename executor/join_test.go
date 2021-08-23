@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -2591,4 +2592,21 @@ func (s *testSuiteJoinSerial) TestIssue20219(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select /*+ inl_join(s)*/ t.a from t left join s on t.a = s.a;").Check(testkit.Rows("i", "j"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func (s *testSuiteJoinSerial) TestIssue25902(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists tt1,tt2,tt3; ")
+	tk.MustExec("create table tt1 (ts timestamp);")
+	tk.MustExec("create table tt2 (ts varchar(32));")
+	tk.MustExec("create table tt3 (ts datetime);")
+	tk.MustExec("insert into tt1 values (\"2001-01-01 00:00:00\");")
+	tk.MustExec("insert into tt2 values (\"2001-01-01 00:00:00\");")
+	tk.MustExec("insert into tt3 values (\"2001-01-01 00:00:00\");")
+	tk.MustQuery("select * from tt1 where ts in (select ts from tt2);").Check(testkit.Rows("2001-01-01 00:00:00"))
+	tk.MustQuery("select * from tt1 where ts in (select ts from tt3);").Check(testkit.Rows("2001-01-01 00:00:00"))
+	tk.MustExec("set @tmp=(select @@session.time_zone);")
+	tk.MustExec("set @@session.time_zone = '+10:00';")
+	tk.MustQuery("select * from tt1 where ts in (select ts from tt2);").Check(testkit.Rows())
+	tk.MustExec("set @@session.time_zone = @tmp;")
 }

@@ -8,27 +8,20 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package slice
 
 import (
+	"fmt"
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-func Test(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testSliceSuite{})
-
-type testSliceSuite struct {
-}
-
-func (s *testSliceSuite) Test(c *C) {
+func TestSlice(t *testing.T) {
 	tests := []struct {
 		a      []int
 		anyOf  bool
@@ -41,10 +34,13 @@ func (s *testSliceSuite) Test(c *C) {
 		{[]int{2, 2, 4}, true, false, true},
 	}
 
-	for _, t := range tests {
-		even := func(i int) bool { return t.a[i]%2 == 0 }
-		c.Assert(AnyOf(t.a, even), Equals, t.anyOf)
-		c.Assert(NoneOf(t.a, even), Equals, t.noneOf)
-		c.Assert(AllOf(t.a, even), Equals, t.allOf)
+	for _, test := range tests {
+		t.Run(fmt.Sprint(test.a), func(t *testing.T) {
+			t.Parallel()
+			even := func(i int) bool { return test.a[i]%2 == 0 }
+			require.Equal(t, test.anyOf, AnyOf(test.a, even))
+			require.Equal(t, test.noneOf, NoneOf(test.a, even))
+			require.Equal(t, test.allOf, AllOf(test.a, even))
+		})
 	}
 }

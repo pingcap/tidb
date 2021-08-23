@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -100,7 +101,10 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 	getFirstNotificationAfterStartDDL(d)
 	// Ensure that the notification is not handled in workers `start` function.
 	d.cancel()
@@ -141,7 +145,10 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d1.Stop()
+	defer func() {
+		err := d1.Stop()
+		c.Assert(err, IsNil)
+	}()
 	getFirstNotificationAfterStartDDL(d1)
 	// Ensure that the notification is not handled by worker's "start".
 	d1.cancel()

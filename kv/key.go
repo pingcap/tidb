@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -412,7 +413,7 @@ func (m *HandleMap) Range(fn func(h Handle, val interface{}) bool) {
 	}
 }
 
-// PartitionHandle combines a handle and a PartitionID, used to location a row in partioned table.
+// PartitionHandle combines a handle and a PartitionID, used to location a row in partitioned table.
 // Now only used in global index.
 // TODO: support PartitionHandle in HandleMap.
 type PartitionHandle struct {

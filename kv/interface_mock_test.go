@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,6 +18,7 @@ import (
 	"context"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -134,6 +136,14 @@ func (t *mockTxn) CacheTableInfo(id int64, info *model.TableInfo) {
 
 func (t *mockTxn) GetTableInfo(id int64) *model.TableInfo {
 	return nil
+}
+
+func (t *mockTxn) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	//TODO nothing
+}
+
+func (t *mockTxn) ClearDiskFullOpt() {
+	//TODO nothing
 }
 
 // newMockTxn new a mockTxn.

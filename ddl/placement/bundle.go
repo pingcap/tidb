@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
@@ -200,4 +202,41 @@ func (b *Bundle) Clone() *Bundle {
 // IsEmpty is used to check if a bundle is empty.
 func (b *Bundle) IsEmpty() bool {
 	return len(b.Rules) == 0 && b.Index == 0 && !b.Override
+}
+
+// ObjectID extracts the db/table/partition ID from the group ID
+func (b *Bundle) ObjectID() (int64, error) {
+	// If the rule doesn't come from TiDB, skip it.
+	if !strings.HasPrefix(b.ID, BundleIDPrefix) {
+		return 0, ErrInvalidBundleIDFormat
+	}
+	id, err := strconv.ParseInt(b.ID[len(BundleIDPrefix):], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %s", ErrInvalidBundleID, err)
+	}
+	if id <= 0 {
+		return 0, fmt.Errorf("%w: %s doesn't include an id", ErrInvalidBundleID, b.ID)
+	}
+	return id, nil
+}
+
+func isValidLeaderRule(rule *Rule, dcLabelKey string) bool {
+	if rule.Role == Leader && rule.Count == 1 {
+		for _, con := range rule.Constraints {
+			if con.Op == In && con.Key == dcLabelKey && len(con.Values) == 1 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// GetLeaderDC returns the leader's DC by Bundle if found.
+func (b *Bundle) GetLeaderDC(dcLabelKey string) (string, bool) {
+	for _, rule := range b.Rules {
+		if isValidLeaderRule(rule, dcLabelKey) {
+			return rule.Constraints[0].Values[0], true
+		}
+	}
+	return "", false
 }

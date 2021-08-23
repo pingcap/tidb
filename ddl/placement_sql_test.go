@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -509,6 +510,7 @@ PARTITION BY RANGE (c) (
 		c.Check(err, IsNil)
 		tk.Se = se
 		tk.MustExec("use test")
+		tk.MustExec("set global tidb_enable_local_txn = on;")
 		tk.MustExec(fmt.Sprintf("set @@txn_scope = %v", testcase.txnScope))
 		if testcase.disableAutoCommit {
 			tk.MustExec("set @@autocommit = 0")
@@ -524,6 +526,7 @@ PARTITION BY RANGE (c) (
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Matches, testcase.err.Error())
 		}
+		tk.MustExec("set global tidb_enable_local_txn = off;")
 		failpoint.Disable("tikvclient/injectTxnScope")
 	}
 }
@@ -656,8 +659,10 @@ PARTITION BY RANGE (c) (
 						s.dom.InfoSchema().SetBundle(bundle)
 						done = true
 						tk2.MustExec("use test")
+						tk.MustExec("set global tidb_enable_local_txn = on;")
 						tk2.MustExec("set @@txn_scope=local")
 						_, chkErr = tk2.Exec("insert into t1 (c) values (1);")
+						tk.MustExec("set global tidb_enable_local_txn = off;")
 					}
 				}
 				return hook
