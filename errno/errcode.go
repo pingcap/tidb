@@ -891,7 +891,7 @@ const (
 	ErrFunctionalIndexRefAutoIncrement                       = 3754
 	ErrCannotDropColumnFunctionalIndex                       = 3755
 	ErrFunctionalIndexPrimaryKey                             = 3756
-	ErrFunctionalIndexOnLob                                  = 3757
+	ErrFunctionalIndexOnBlob                                 = 3757
 	ErrFunctionalIndexFunctionIsNotAllowed                   = 3758
 	ErrFulltextFunctionalIndex                               = 3759
 	ErrSpatialFunctionalIndex                                = 3760
