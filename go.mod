@@ -26,7 +26,7 @@ require (
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.4
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0
-	github.com/hnes/client_golang v1.5.2-0.20210810075443-8d7a940b05e5
+	github.com/hnes/client_golang v1.5.2-0.20210823085705-cfac03d94dfd
 	github.com/iancoleman/strcase v0.0.0-20191112232945-16388991a334
 	github.com/joho/sqltocsv v0.0.0-20210208114054-cb2c3a95fb99 // indirect
 	github.com/kr/text v0.2.0 // indirect

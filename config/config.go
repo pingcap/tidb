@@ -183,6 +183,8 @@ type Config struct {
 	// 1. there is a network partition problem between TiDB and PD leader.
 	// 2. there is a network partition problem between TiDB and TiKV leader.
 	EnableForwarding bool `toml:"enable-forwarding" json:"enable-forwarding"`
+	// disable all prometheus metrics
+	DisableAllPromMetrics bool `toml:"disable-all-prom-metrics" json:"disable-all-prom-metrics"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed

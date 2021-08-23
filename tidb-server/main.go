@@ -25,6 +25,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hnes/client_golang/prometheus"
+	"github.com/hnes/client_golang/prometheus/push"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -66,8 +68,6 @@ import (
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/util/topsql"
-	"github.com/hnes/client_golang/prometheus"
-	"github.com/hnes/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/automaxprocs/maxprocs"
@@ -164,8 +164,11 @@ func main() {
 		os.Exit(0)
 	}
 	registerStores()
-	registerMetrics()
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig)
+	if config.GetGlobalConfig().DisableAllPromMetrics {
+		prometheus.Disable()
+	}
+	registerMetrics()
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		err := disk.InitializeTempDir()
