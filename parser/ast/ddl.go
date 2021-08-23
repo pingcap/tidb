@@ -27,11 +27,13 @@ import (
 var (
 	_ DDLNode = &AlterTableStmt{}
 	_ DDLNode = &AlterSequenceStmt{}
+	_ DDLNode = &AlterPlacementPolicyStmt{}
 	_ DDLNode = &CreateDatabaseStmt{}
 	_ DDLNode = &CreateIndexStmt{}
 	_ DDLNode = &CreateTableStmt{}
 	_ DDLNode = &CreateViewStmt{}
 	_ DDLNode = &CreateSequenceStmt{}
+	_ DDLNode = &CreatePlacementPolicyStmt{}
 	_ DDLNode = &DropDatabaseStmt{}
 	_ DDLNode = &DropIndexStmt{}
 	_ DDLNode = &DropTableStmt{}
@@ -1426,6 +1428,41 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Select = selnode.(StmtNode)
+	return v.Leave(n)
+}
+
+// CreatePlacementPolicyStmt is a statement to create a policy.
+type CreatePlacementPolicyStmt struct {
+	ddlNode
+
+	IfNotExists      bool
+	PolicyName       model.CIStr
+	PlacementOptions []*PlacementOption
+}
+
+// Restore implements Node interface.
+func (n *CreatePlacementPolicyStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE PLACEMENT POLICY ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	ctx.WriteName(n.PolicyName.O)
+	for i, option := range n.PlacementOptions {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing CreatePlacementPolicy TableOption: [%v]", i)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreatePlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreatePlacementPolicyStmt)
 	return v.Leave(n)
 }
 
@@ -3894,6 +3931,39 @@ func (n *AttributesSpec) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*AttributesSpec)
+	return v.Leave(n)
+}
+
+// AlterPlacementPolicyStmt is a statement to alter placement policy option.
+type AlterPlacementPolicyStmt struct {
+	ddlNode
+
+	PolicyName       model.CIStr
+	IfExists         bool
+	PlacementOptions []*PlacementOption
+}
+
+func (n *AlterPlacementPolicyStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER PLACEMENT POLICY ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	ctx.WriteName(n.PolicyName.O)
+	for i, option := range n.PlacementOptions {
+		ctx.WritePlain(" ")
+		if err := option.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing AlterPlacementPolicyStmt TableOption: [%v]", i)
+		}
+	}
+	return nil
+}
+
+func (n *AlterPlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterPlacementPolicyStmt)
 	return v.Leave(n)
 }
 
