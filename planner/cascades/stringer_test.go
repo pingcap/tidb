@@ -16,43 +16,22 @@ package cascades
 
 import (
 	"context"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testStringerSuite{})
+func TestGroupStringer(t *testing.T) {
+	t.Parallel()
 
-type testStringerSuite struct {
-	*parser.Parser
-	is        infoschema.InfoSchema
-	sctx      sessionctx.Context
-	testData  testutil.TestData
-	optimizer *Optimizer
-}
-
-func (s *testStringerSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
-	s.sctx = plannercore.MockContext()
-	s.Parser = parser.New()
-	s.optimizer = NewOptimizer()
-	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "stringer_suite")
-	c.Assert(err, IsNil)
-}
-
-func (s *testStringerSuite) TearDownSuite(c *C) {
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
-}
-
-func (s *testStringerSuite) TestGroupStringer(c *C) {
-	s.optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
+	optimizer := NewOptimizer()
+	optimizer.ResetTransformationRules(map[memo.Operand][]Transformation{
 		memo.OperandSelection: {
 			NewRulePushSelDownTiKVSingleGather(),
 			NewRulePushSelDownTableScan(),
@@ -62,31 +41,40 @@ func (s *testStringerSuite) TestGroupStringer(c *C) {
 		},
 	})
 	defer func() {
-		s.optimizer.ResetTransformationRules(DefaultRuleBatches...)
+		optimizer.ResetTransformationRules(DefaultRuleBatches...)
 	}()
+
 	var input []string
 	var output []struct {
 		SQL    string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	stringerSuiteData.GetTestCases(t, &input, &output)
+
+	p := parser.New()
+	ctx := plannercore.MockContext()
+	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
 	for i, sql := range input {
-		stmt, err := s.ParseOneStmt(sql, "", "")
-		c.Assert(err, IsNil)
-		p, _, err := plannercore.BuildLogicalPlan(context.Background(), s.sctx, stmt, s.is)
-		c.Assert(err, IsNil)
-		logic, ok := p.(plannercore.LogicalPlan)
-		c.Assert(ok, IsTrue)
-		logic, err = s.optimizer.onPhasePreprocessing(s.sctx, logic)
-		c.Assert(err, IsNil)
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+
+		plan, _, err := plannercore.BuildLogicalPlan(context.Background(), ctx, stmt, is)
+		require.NoError(t, err)
+
+		logic, ok := plan.(plannercore.LogicalPlan)
+		require.True(t, ok)
+
+		logic, err = optimizer.onPhasePreprocessing(ctx, logic)
+		require.NoError(t, err)
+
 		group := memo.Convert2Group(logic)
-		err = s.optimizer.onPhaseExploration(s.sctx, group)
-		c.Assert(err, IsNil)
+		require.NoError(t, optimizer.onPhaseExploration(ctx, group))
+
 		group.BuildKeyInfo()
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = sql
 			output[i].Result = ToString(group)
 		})
-		c.Assert(ToString(group), DeepEquals, output[i].Result, Commentf("case:%v, sql:%s", i, sql))
+		require.Equalf(t, output[i].Result, ToString(group), "case:%v, sql:%s", i, sql)
 	}
 }
