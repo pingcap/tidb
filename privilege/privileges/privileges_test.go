@@ -2085,3 +2085,27 @@ func TestGrantReferences(t *testing.T) {
 	tk.MustExec("DROP USER referencesUser")
 	tk.MustExec("DROP SCHEMA reftestdb")
 }
+
+func TestGrantLockTables(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE t")
+	tk.MustExec("USE t")
+	tk.MustExec("CREATE TABLE t1 (a int)")
+	tk.MustExec("CREATE USER r")
+	tk.MustExec("GRANT LOCK TABLES ON *.* TO r")
+	tk.MustExec("GRANT LOCK TABLES ON t.* TO r")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR r").Check(testkit.Rows(
+		`GRANT LOCK TABLES ON *.* TO 'r'@'%'`,
+		`GRANT LOCK TABLES ON t.* TO 'r'@'%'`))
+	tk.MustExec("DROP USER r")
+	tk.MustExec("DROP DATABASE t")
+}
