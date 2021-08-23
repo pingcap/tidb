@@ -4266,3 +4266,18 @@ func (s *testIntegrationSuite) TestIssue27242(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, ".*Incorrect timestamp value.*")
 }
+
+func (s *testIntegrationSerialSuite) TestTemporaryTableForCte(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("set @@tidb_enable_noop_functions=1")
+	tk.MustExec("create temporary table tmp1(a int, b int, c int);")
+	tk.MustExec("insert into tmp1 values (1,1,1),(2,2,2),(3,3,3),(4,4,4);")
+	rows := tk.MustQuery("with cte1 as (with cte2 as (select * from tmp1) select * from cte2) select * from cte1 left join tmp1 on cte1.c=tmp1.c;")
+	rows.Check(testkit.Rows("1 1 1 1 1 1", "2 2 2 2 2 2", "3 3 3 3 3 3", "4 4 4 4 4 4"))
+	rows = tk.MustQuery("with cte1 as (with cte2 as (select * from tmp1) select * from cte2) select * from cte1 t1 left join cte1 t2 on t1.c=t2.c;")
+	rows.Check(testkit.Rows("1 1 1 1 1 1", "2 2 2 2 2 2", "3 3 3 3 3 3", "4 4 4 4 4 4"))
+	rows = tk.MustQuery("WITH RECURSIVE cte(a) AS (SELECT 1 UNION SELECT a+1 FROM tmp1 WHERE a < 5) SELECT * FROM cte order by a;")
+	rows.Check(testkit.Rows("1", "2", "3", "4", "5"))
+}
