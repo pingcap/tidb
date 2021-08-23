@@ -15,8 +15,10 @@ import (
 )
 
 type testParquetParserSuite struct{}
+type testParquetParserSerialSuite struct{}
 
 var _ = Suite(testParquetParserSuite{})
+var _ = SerialSuites(testParquetParserSerialSuite{})
 
 func (s testParquetParserSuite) TestParquetParser(c *C) {
 	type Test struct {
@@ -81,7 +83,7 @@ func (s testParquetParserSuite) TestParquetParser(c *C) {
 	c.Assert(reader.ReadRow(), Equals, io.EOF)
 }
 
-func (s testParquetParserSuite) TestParquetVariousTypes(c *C) {
+func (s testParquetParserSerialSuite) TestParquetVariousTypes(c *C) {
 	// those deprecated TIME/TIMESTAMP types depend on the local timezone!
 	prevTZ := time.Local
 	time.Local = time.FixedZone("UTC+8", 8*60*60)
