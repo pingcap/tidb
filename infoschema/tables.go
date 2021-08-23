@@ -177,6 +177,8 @@ const (
 	TableDataLockWaits = "DATA_LOCK_WAITS"
 	// TableRegionLabel is the string constant of region label table.
 	TableRegionLabel = "REGION_LABEL"
+	// TablePlacementRules is the string constant of placement rules table.
+	TablePlacementRules = "PLACEMENT_RULES"
 )
 
 const (
@@ -272,6 +274,7 @@ var tableIDMap = map[string]int64{
 	TableStatementsSummaryEvicted:           autoid.InformationSchemaDBID + 75,
 	ClusterTableStatementsSummaryEvicted:    autoid.InformationSchemaDBID + 76,
 	TableRegionLabel:                        autoid.InformationSchemaDBID + 77,
+	TablePlacementRules:                     autoid.InformationSchemaDBID + 78,
 }
 
 type columnInfo struct {
@@ -1429,6 +1432,18 @@ var tableRegionLabelCols = []columnInfo{
 	{name: "END_KEY", tp: mysql.TypeBlob, size: types.UnspecifiedLength},
 }
 
+var tablePlacementRulesCols = []columnInfo{
+	{name: "PLACEMENT_RULE_CATALOG", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "PLACEMENT_RULE_SCHEMA", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},    // System policy does not have a schema
+	{name: "PLACEMENT_RULE_TABLE", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},     // Schema level rules does not have a table
+	{name: "PLACEMENT_RULE_PARTITION", tp: mysql.TypeVarchar, size: types.UnspecifiedLength}, // Table level rules does not have a partition
+	{name: "PLACEMENT_RULE_DEFINITION", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "FOLLOWERS", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "LEARNERS", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "VOTERS", tp: mysql.TypeLonglong, size: 64, flag: mysql.NotNullFlag},
+	{name: "SCHEDULING_STATE", tp: mysql.TypeVarchar, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1812,6 +1827,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableDeadlocks:                          tableDeadlocksCols,
 	TableDataLockWaits:                      tableDataLockWaitsCols,
 	TableRegionLabel:                        tableRegionLabelCols,
+	TablePlacementRules:                     tablePlacementRulesCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
