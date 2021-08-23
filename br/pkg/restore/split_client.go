@@ -85,7 +85,8 @@ type pdClient struct {
 
 	// FIXME when config changed during the lifetime of pdClient,
 	// 	this may mislead the scatter.
-	needScatter bool
+	needScatterVal  bool
+	needScatterInit sync.Once
 }
 
 // NewSplitClient returns a client used by RegionSplitter.
@@ -95,16 +96,22 @@ func NewSplitClient(client pd.Client, tlsConf *tls.Config) SplitClient {
 		tlsConf:    tlsConf,
 		storeCache: make(map[uint64]*metapb.Store),
 	}
-	var err error
-	cli.needScatter, err = cli.checkNeedScatter(context.TODO())
-	if err != nil {
-		log.Warn("failed to check whether need to scatter, use permissive strategy: always scatter", logutil.ShortError(err))
-		cli.needScatter = true
-	}
-	if !cli.needScatter {
-		log.Info("skipping scatter because the replica number isn't less than store count.")
-	}
 	return cli
+}
+
+func (c *pdClient) needScatter(ctx context.Context) bool {
+	c.needScatterInit.Do(func() {
+		var err error
+		c.needScatterVal, err = c.checkNeedScatter(ctx)
+		if err != nil {
+			log.Warn("failed to check whether need to scatter, use permissive strategy: always scatter", logutil.ShortError(err))
+			c.needScatterVal = true
+		}
+		if !c.needScatterVal {
+			log.Info("skipping scatter because the replica number isn't less than store count.")
+		}
+	})
+	return c.needScatterVal
 }
 
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
@@ -430,7 +437,7 @@ func (c *pdClient) checkNeedScatter(ctx context.Context) (bool, error) {
 }
 
 func (c *pdClient) ScatterRegion(ctx context.Context, regionInfo *RegionInfo) error {
-	if !c.needScatter {
+	if !c.needScatter(ctx) {
 		return nil
 	}
 	return c.client.ScatterRegion(ctx, regionInfo.Region.GetId())
