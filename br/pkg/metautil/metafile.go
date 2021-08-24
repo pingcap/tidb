@@ -546,13 +546,15 @@ func (writer *MetaWriter) FinishWriteMetas(ctx context.Context, op AppendOp) err
 }
 
 // FlushBackupMeta flush the `backupMeta` to `ExternalStorage`
-func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
+func (writer *MetaWriter) FlushBackupMeta(ctx context.Context, cmdName string) error {
 	// Set schema version
 	if writer.useV2Meta {
 		writer.backupMeta.Version = MetaV2
 	} else {
 		writer.backupMeta.Version = MetaV1
 	}
+
+	writer.backupMeta.BackupResult = summary.SummaryToStr(cmdName)
 
 	// Flush the writer.backupMeta to storage
 	backupMetaData, err := proto.Marshal(writer.backupMeta)

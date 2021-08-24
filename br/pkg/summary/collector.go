@@ -3,6 +3,8 @@
 package summary
 
 import (
+	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -43,6 +46,8 @@ type LogCollector interface {
 	CollectUInt(name string, t uint64)
 
 	SetSuccessStatus(success bool)
+
+	CollectToStr(name string) string
 
 	Summary(name string)
 }
@@ -159,18 +164,21 @@ func logKeyFor(key string) string {
 	return strings.ReplaceAll(key, " ", "-")
 }
 
-func (tc *logCollector) Summary(name string) {
+func (tc *logCollector) summaryDetail(needClean bool) []zap.Field {
 	tc.mu.Lock()
 	defer func() {
-		tc.durations = make(map[string]time.Duration)
-		tc.ints = make(map[string]int)
-		tc.successCosts = make(map[string]time.Duration)
-		tc.failureReasons = make(map[string]error)
+		if needClean {
+			tc.durations = make(map[string]time.Duration)
+			tc.ints = make(map[string]int)
+			tc.successCosts = make(map[string]time.Duration)
+			tc.failureReasons = make(map[string]error)
+			tc.ints = make(map[string]int)
+			tc.uints = make(map[string]uint64)
+		}
 		tc.mu.Unlock()
 	}()
 
 	logFields := make([]zap.Field, 0, len(tc.durations)+len(tc.ints)+3)
-
 	logFields = append(logFields,
 		zap.Int("total-ranges", tc.failureUnitCount+tc.successUnitCount),
 		zap.Int("ranges-succeed", tc.successUnitCount),
@@ -191,8 +199,7 @@ func (tc *logCollector) Summary(name string) {
 		for unitName, reason := range tc.failureReasons {
 			logFields = append(logFields, zap.String("unit-name", unitName), zap.Error(reason))
 		}
-		tc.log(name+" failed summary", logFields...)
-		return
+		return logFields
 	}
 
 	totalDureTime := time.Since(tc.startTime)
@@ -225,7 +232,47 @@ func (tc *logCollector) Summary(name string) {
 		logFields = append(logFields, zap.Uint64(logKeyFor(name), data))
 	}
 
+	return logFields
+}
+
+func (tc *logCollector) Summary(name string) {
+	logFields := tc.summaryDetail(true)
 	tc.log(name+" success summary", logFields...)
+}
+
+func field2String(field zapcore.Field) string {
+	switch field.Type {
+	case zapcore.StringType:
+		return field.String
+	case zapcore.Int64Type, zapcore.Int32Type, zapcore.Uint32Type, zapcore.Uint64Type:
+		return fmt.Sprintf("%v", field.Integer)
+	case zapcore.Float64Type:
+		return fmt.Sprintf("%v", math.Float64frombits(uint64(field.Integer)))
+	case zapcore.StringerType:
+		return field.Interface.(fmt.Stringer).String()
+	case zapcore.DurationType:
+		return ((time.Duration)(field.Integer)).String()
+	default:
+		return ""
+	}
+}
+
+func (tc *logCollector) CollectToStr(cmdName string) string {
+	var logFields []zap.Field
+
+	logFields = append(logFields, zap.String(cmdName, "success"))
+	summaryDetail := tc.summaryDetail(false)
+	logFields = append(logFields, summaryDetail...)
+
+	var outstr string
+	for _, f := range logFields {
+		k := f.Key
+		v := field2String(f)
+		if len(k) > 0 && len(v) > 0 {
+			outstr = outstr + "[\"" + k + "\"=" + v + "]"
+		}
+	}
+	return outstr
 }
 
 // SetLogCollector allow pass LogCollector outside.
