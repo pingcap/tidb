@@ -221,6 +221,10 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 
 // GetAuthPlugin gets the authentication plugin for the account identified by the user and host
 func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
+	if SkipWithGrant {
+		return mysql.AuthNativePassword, nil
+	}
+
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
