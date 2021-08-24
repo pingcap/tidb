@@ -212,8 +212,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
 }
 
-// TODO move to parser const.go
-const TABLE_ANALYZE_OPT = "analyze_opt"
+// TableAnalyzeOpt TODO move to parser const.go
+const TableAnalyzeOpt = "analyze_opt"
 
 // save analyze options for auto analyze
 func saveOptsForAutoAnalyze(e *AnalyzeExec) error {
@@ -231,7 +231,7 @@ func saveOptsForAutoAnalyze(e *AnalyzeExec) error {
 		if err1 != nil {
 			return err1
 		}
-		_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), `REPLACE INTO %n.%n (tid,opt_key,opt_val) VALUES (%?, %?, %?)`, mysql.SystemDB, TABLE_ANALYZE_OPT, e.TableID.TableID, optName, optVal)
+		_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), `REPLACE INTO %n.%n (tid,opt_key,opt_val) VALUES (%?, %?, %?)`, mysql.SystemDB, TableAnalyzeOpt, e.TableID.TableID, optName, optVal)
 		if err != nil {
 			return err
 		}
@@ -240,14 +240,14 @@ func saveOptsForAutoAnalyze(e *AnalyzeExec) error {
 }
 
 func checkAndInitOpt(ctx sessionctx.Context, tid int64, optKey string) error {
-	ok, err0 := recordExists(ctx, `SELECT * FROM %n.%n WHERE tid=%? AND opt_key=%?;`, mysql.SystemDB, TABLE_ANALYZE_OPT, tid, optKey)
+	ok, err0 := recordExists(ctx, `SELECT * FROM %n.%n WHERE tid=%? AND opt_key=%?;`, mysql.SystemDB, TableAnalyzeOpt, tid, optKey)
 	if err0 != nil {
 		return err0
 	}
 	if ok {
 		return nil
 	}
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), `INSERT INTO %n.%n (tid, opt_key, opt_val) VALUES (%?, %?, %?)`, mysql.SystemDB, TABLE_ANALYZE_OPT, tid, optKey, "")
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), `INSERT INTO %n.%n (tid, opt_key, opt_val) VALUES (%?, %?, %?)`, mysql.SystemDB, TableAnalyzeOpt, tid, optKey, "")
 	return err
 }
 
