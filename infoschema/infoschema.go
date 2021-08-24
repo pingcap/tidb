@@ -57,6 +57,8 @@ type InfoSchema interface {
 	SetBundle(*placement.Bundle)
 	// RuleBundles will return a copy of all rule bundles.
 	RuleBundles() []*placement.Bundle
+	// AllPlacementPolicies returns all placement policies
+	AllPlacementPolicies() []*placementpolicy.PolicyInfo
 }
 
 type sortedTables []table.Table
@@ -393,6 +395,13 @@ func (is *infoSchema) SetBundle(bundle *placement.Bundle) {
 	is.ruleBundleMutex.Lock()
 	defer is.ruleBundleMutex.Unlock()
 	is.ruleBundleMap[bundle.ID] = bundle
+}
+
+func (is *infoSchema) AllPlacementPolicies() (policies []*placementpolicy.PolicyInfo) {
+	for _, p := range is.policyMap {
+		policies = append(policies, p)
+	}
+	return
 }
 
 func (is *infoSchema) deleteBundle(id string) {

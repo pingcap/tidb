@@ -127,3 +127,24 @@ func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
 
 	return nil
 }
+
+func (e *ShowExec) fetchShowPlacement(_ context.Context) error {
+	err := e.fetchAllPlacementPolicies()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (e *ShowExec) fetchAllPlacementPolicies() error {
+	policies := e.is.AllPlacementPolicies()
+	sort.Slice(policies, func(i, j int) bool { return policies[i].Name.O < policies[j].Name.O })
+	for _, policy := range policies {
+		name := policy.Name
+		settings := policy.PlacementSettings
+		e.appendRow([]interface{}{name.String(), settings.String(), "SCHEDULED"})
+	}
+
+	return nil
+}
