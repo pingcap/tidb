@@ -26,6 +26,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -1120,11 +1122,9 @@ func TestSystemSchema(t *testing.T) {
 	store, clean := newStore(t)
 	defer clean()
 
-	seRoot := newSession(t, store, dbName)
-	mustExec(t, seRoot, `CREATE USER 'u1'@'localhost';`)
-
 	// This test tests no privilege check for INFORMATION_SCHEMA database.
 	se := newSession(t, store, dbName)
+	mustExec(t, se, `CREATE USER 'u1'@'localhost';`)
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, `select * from information_schema.tables`)
 	mustExec(t, se, `select * from information_schema.key_column_usage`)
@@ -1154,9 +1154,7 @@ func TestSystemSchema(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 
 	// Test metric_schema.
-	_, err = se.ExecuteInternal(context.Background(), "select * from metrics_schema.tidb_query_duration")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrSpecificAccessDenied))
+	mustExec(t, se, `select * from metrics_schema.tidb_query_duration`)
 	_, err = se.ExecuteInternal(context.Background(), "drop table metrics_schema.tidb_query_duration")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
@@ -1169,13 +1167,56 @@ func TestSystemSchema(t *testing.T) {
 	_, err = se.ExecuteInternal(context.Background(), "create table metric_schema.t(a int)")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+}
 
-	// Grant PROCESS privilege and test.
-	mustExec(t, seRoot, `GRANT PROCESS ON *.* TO 'u1'@'localhost'`)
-	mustExec(t, se, `select * from metrics_schema.tidb_query_duration`)
-	_, err = se.ExecuteInternal(context.Background(), "drop table metrics_schema.tidb_query_duration")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+func TestMetricsSchema(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER nobody, process")
+	tk.MustExec("GRANT Process ON *.* TO process")
+
+	stmts := []string{
+		"SELECT * FROM metrics_schema.up",
+		"SELECT * FROM information_schema.metrics_summary",
+		"SELECT * FROM information_schema.metrics_summary_by_label",
+	}
+
+	// Users without `process` privilege cannot visit those tables.
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "nobody",
+		Hostname: "localhost",
+	}, nil, nil)
+	for _, stmt := range stmts {
+		err := tk.QueryToErr(stmt)
+		require.Error(t, err)
+		require.True(t, terror.ErrorEqual(err, core.ErrSpecificAccessDenied))
+	}
+
+	// Mock data for metrics tables. Otherwise `pd unavailable` is thrown.
+	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
+	require.NoError(t, failpoint.Enable(fpName, `return`))
+	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
+	mockData := map[string][][]types.Datum{}
+	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
+	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
+		return fpName == fpname
+	})
+
+	// Users with `process` privilege can visit those tables.
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "process",
+		Hostname: "localhost",
+	}, nil, nil)
+	for _, stmt := range stmts {
+		rss, err := tk.Session().Execute(ctx, stmt)
+		require.NoError(t, err)
+		for _, rs := range rss {
+			require.NoError(t, rs.Close())
+		}
+	}
 }
 
 func TestAdminCommand(t *testing.T) {
