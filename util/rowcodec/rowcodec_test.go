@@ -466,9 +466,9 @@ func TestTypesNewRowCodec(t *testing.T) {
 	var encoder rowcodec.Encoder
 
 	tests := []struct {
-		name string
+		name     string
 		testData []testData
-	} {
+	}{
 		{
 			"small",
 			smallTestDataList,
