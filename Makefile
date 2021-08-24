@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest
+.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl
 
 default: server buildsucc
 
@@ -238,7 +238,6 @@ bench-daily:
 	cd ./session && \
 	go test -run TestBenchDaily --date `git log -n1 --date=unix --pretty=format:%cd` --commit `git log -n1 --pretty=format:%h` --outfile $(TO)
 
-.PHONY: build_br build_lightning build_lightning-ctl
 
 build_tools: build_br build_lightning build_lightning-ctl
 
