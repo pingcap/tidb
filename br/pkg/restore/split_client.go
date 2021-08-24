@@ -439,8 +439,7 @@ func (c *pdClient) checkNeedScatter(ctx context.Context) (bool, error) {
 	//   2. store-count == 1 (No meaning for scattering.)
 	// We can still omit scatter when `max-replica == store-count`, if we create a BalanceLeader operator here,
 	//   however, there isn't evidence for transform leader is much faster than scattering empty regions.
-	doNotNeedScatter := maxReplica > storeCount || storeCount == 1
-	return !doNotNeedScatter, nil
+	return storeCount >= maxReplica && storeCount > 1, nil
 }
 
 func (c *pdClient) ScatterRegion(ctx context.Context, regionInfo *RegionInfo) error {
