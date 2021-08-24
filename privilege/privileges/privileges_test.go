@@ -2092,20 +2092,20 @@ func TestGrantLockTables(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("CREATE DATABASE t")
-	tk.MustExec("USE t")
-	tk.MustExec("CREATE TABLE t1 (a int)")
-	tk.MustExec("CREATE USER r")
-	tk.MustExec("GRANT LOCK TABLES ON *.* TO r")
-	tk.MustExec("GRANT LOCK TABLES ON t.* TO r")
+	tk.MustExec("CREATE DATABASE lock_tables_db")
+	tk.MustExec("USE lock_tables_db")
+	tk.MustExec("CREATE TABLE lock_tables_table (a int)")
+	tk.MustExec("CREATE USER lock_tables_user")
+	tk.MustExec("GRANT LOCK TABLES ON *.* TO lock_tables_user")
+	tk.MustExec("GRANT LOCK TABLES ON lock_tables_db.* TO lock_tables_user")
 	// Must set a session user to avoid null pointer dereferencing
 	tk.Session().Auth(&auth.UserIdentity{
 		Username: "root",
 		Hostname: "localhost",
 	}, nil, nil)
-	tk.MustQuery("SHOW GRANTS FOR r").Check(testkit.Rows(
-		`GRANT LOCK TABLES ON *.* TO 'r'@'%'`,
-		`GRANT LOCK TABLES ON t.* TO 'r'@'%'`))
-	tk.MustExec("DROP USER r")
-	tk.MustExec("DROP DATABASE t")
+	tk.MustQuery("SHOW GRANTS FOR lock_tables_user").Check(testkit.Rows(
+		`GRANT LOCK TABLES ON *.* TO 'lock_tables_user'@'%'`,
+		`GRANT LOCK TABLES ON lock_tables_db.* TO 'lock_tables_user'@'%'`))
+	tk.MustExec("DROP USER lock_tables_user")
+	tk.MustExec("DROP DATABASE lock_tables_db")
 }
