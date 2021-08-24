@@ -59,6 +59,13 @@ func (s *testValidatorSuite) SetUpTest(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
 }
 
+func (s *testValidatorSuite) TearDownTest(c *C) {
+	s.dom.Close()
+	err := s.store.Close()
+	c.Assert(err, IsNil)
+	testleak.AfterTest(c)()
+}
+
 func (s *testValidatorSuite) runSQL(c *C, sql string, inPrepare bool, terr error) {
 	stmts, err1 := session.Parse(s.ctx, sql)
 	c.Assert(err1, IsNil, Commentf("sql: %s", sql))
@@ -73,11 +80,6 @@ func (s *testValidatorSuite) runSQL(c *C, sql string, inPrepare bool, terr error
 }
 
 func (s *testValidatorSuite) TestValidator(c *C) {
-	defer testleak.AfterTest(c)()
-	defer func() {
-		s.dom.Close()
-		s.store.Close()
-	}()
 	tests := []struct {
 		sql       string
 		inPrepare bool
@@ -315,12 +317,6 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 }
 
 func (s *testValidatorSuite) TestForeignKey(c *C) {
-	defer testleak.AfterTest(c)()
-	defer func() {
-		s.dom.Close()
-		s.store.Close()
-	}()
-
 	_, err := s.se.Execute(context.Background(), "create table test.t1(a int, b int, c int)")
 	c.Assert(err, IsNil)
 
@@ -346,12 +342,6 @@ func (s *testValidatorSuite) TestForeignKey(c *C) {
 }
 
 func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
-	defer testleak.AfterTest(c)()
-	defer func() {
-		s.dom.Close()
-		s.store.Close()
-	}()
-
 	ctx := context.Background()
 	execSQLList := []string{
 		"use test",
