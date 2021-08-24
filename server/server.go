@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
+	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 )
 
@@ -97,6 +98,7 @@ var (
 	errInvalidType             = dbterror.ClassServer.NewStd(errno.ErrInvalidType)
 	errNotAllowedCommand       = dbterror.ClassServer.NewStd(errno.ErrNotAllowedCommand)
 	errAccessDenied            = dbterror.ClassServer.NewStd(errno.ErrAccessDenied)
+	errAccessDeniedNoPassword  = dbterror.ClassServer.NewStd(errno.ErrAccessDeniedNoPassword)
 	errConCount                = dbterror.ClassServer.NewStd(errno.ErrConCount)
 	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
 	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
@@ -405,7 +407,36 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 
 		clientConn := s.newConn(conn)
 		if isUnixSocket {
+
+			var cred *unix.Ucred
+			uc, ok := conn.(*net.UnixConn)
+			if !ok {
+				logutil.BgLogger().Error("Expected UNIX socket, but got something else")
+				return
+			}
+
+			raw, err := uc.SyscallConn()
+			if err != nil {
+				logutil.BgLogger().Error("Failed to open raw connection", zap.Error(err))
+				return
+			}
+
+			err2 := raw.Control(func(fd uintptr) {
+				cred, err = unix.GetsockoptUcred(int(fd),
+					unix.SOL_SOCKET,
+					unix.SO_PEERCRED)
+			})
+			if err != nil {
+				logutil.BgLogger().Error("Failed to get UNIX socket credentials", zap.Error(err))
+				return
+			}
+			if err2 != nil {
+				logutil.BgLogger().Error("Failed to get UNIX socket credentials", zap.Error(err2))
+				return
+			}
+
 			clientConn.isUnixSocket = true
+			clientConn.socketCredUID = cred.Uid
 		}
 
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {

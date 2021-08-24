@@ -455,6 +455,18 @@ func (s *testSuite5) TestShowCreateUser(c *C) {
 	rows = tk.MustQuery("SHOW CREATE USER 'sha_test'@'%'")
 	c.Assert(rows.Rows()[0][0].(string)[:78], check.Equals, "CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$")
 
+	// Creating users with `IDENTIFIED WITH 'auth-socket'`
+	tk.MustExec("CREATE USER 'sock'@'%' IDENTIFIED WITH 'auth_socket'")
+
+	// Compare only the start of the output as the salt changes every time.
+	rows = tk.MustQuery("SHOW CREATE USER 'sock'@'%'")
+	c.Assert(rows.Rows()[0][0].(string), check.Equals, "CREATE USER 'sock'@'%' IDENTIFIED WITH 'auth_socket' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK")
+
+	tk.MustExec("CREATE USER 'sock2'@'%' IDENTIFIED WITH 'auth_socket' AS 'sock3'")
+
+	// Compare only the start of the output as the salt changes every time.
+	rows = tk.MustQuery("SHOW CREATE USER 'sock2'@'%'")
+	c.Assert(rows.Rows()[0][0].(string), check.Equals, "CREATE USER 'sock2'@'%' IDENTIFIED WITH 'auth_socket' AS 'sock3' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK")
 }
 
 func (s *testSuite5) TestUnprivilegedShow(c *C) {
