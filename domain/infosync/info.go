@@ -87,16 +87,17 @@ var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusA
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
-	etcdCli         *clientv3.Client
-	info            *ServerInfo
-	serverInfoPath  string
-	minStartTS      uint64
-	minStartTSPath  string
-	manager         util2.SessionManager
-	session         *concurrency.Session
-	topologySession *concurrency.Session
-	prometheusAddr  string
-	modifyTime      time.Time
+	etcdCli          *clientv3.Client
+	info             *ServerInfo
+	serverInfoPath   string
+	minStartTS       uint64
+	minStartTSPath   string
+	manager          util2.SessionManager
+	session          *concurrency.Session
+	topologySession  *concurrency.Session
+	prometheusAddr   string
+	modifyTime       time.Time
+	labelRuleManager LabelRuleManager
 }
 
 // ServerInfo is server static information.
@@ -175,6 +176,7 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	if err != nil {
 		return nil, err
 	}
+	is.labelRuleManager = initLabelRuleManager(etcdCli.Endpoints())
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -199,6 +201,13 @@ func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
 // GetSessionManager get the session manager.
 func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
 	return is.manager
+}
+
+func initLabelRuleManager(addrs []string) LabelRuleManager {
+	if len(addrs) == 0 {
+		return &mockLabelManager{labels: map[string]*label.Rule{}}
+	}
+	return &PDLabelManager{addrs: addrs}
 }
 
 // GetServerInfo gets self server static information.
@@ -817,24 +826,7 @@ func PutLabelRule(ctx context.Context, rule *label.Rule) error {
 	if err != nil {
 		return err
 	}
-
-	if is.etcdCli == nil {
-		return nil
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return errors.Errorf("pd unavailable")
-	}
-
-	r, err := json.Marshal(rule)
-	if err != nil {
-		return err
-	}
-
-	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "region-label", "rule"), "POST", bytes.NewReader(r))
-	return err
+	return is.labelRuleManager.PutLabelRule(ctx, rule)
 }
 
 // UpdateLabelRules synchronizes the label rule to PD.
@@ -847,24 +839,7 @@ func UpdateLabelRules(ctx context.Context, patch *label.RulePatch) error {
 	if err != nil {
 		return err
 	}
-
-	if is.etcdCli == nil {
-		return nil
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return errors.Errorf("pd unavailable")
-	}
-
-	r, err := json.Marshal(patch)
-	if err != nil {
-		return err
-	}
-
-	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "region-label", "rules"), "PATCH", bytes.NewReader(r))
-	return err
+	return is.labelRuleManager.UpdateLabelRules(ctx, patch)
 }
 
 // GetAllLabelRules gets all label rules from PD.
@@ -873,24 +848,7 @@ func GetAllLabelRules(ctx context.Context) ([]*label.Rule, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	if is.etcdCli == nil {
-		return nil, err
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return nil, errors.Errorf("pd unavailable")
-	}
-
-	rules := []*label.Rule{}
-	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "region-label", "rules"), "GET", nil)
-
-	if err == nil && res != nil {
-		err = json.Unmarshal(res, &rules)
-	}
-	return rules, err
+	return is.labelRuleManager.GetAllLabelRules(ctx)
 }
 
 // GetLabelRules gets the label rules according to the given IDs from PD.
@@ -903,27 +861,5 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) ([]*label.Rule, error)
 	if err != nil {
 		return nil, err
 	}
-
-	if is.etcdCli == nil {
-		return nil, nil
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return nil, errors.Errorf("pd unavailable")
-	}
-
-	ids, err := json.Marshal(ruleIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	rules := []*label.Rule{}
-	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "region-label", "rules", "ids"), "GET", bytes.NewReader(ids))
-
-	if err == nil && res != nil {
-		err = json.Unmarshal(res, &rules)
-	}
-	return rules, err
+	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
 }
