@@ -29,8 +29,79 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/placementpolicy"
 	"github.com/stretchr/testify/require"
 )
+
+func TestPlacementPolicy(t *testing.T) {
+	t.Parallel()
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	// test the independent policy ID allocation.
+	m := meta.NewMeta(txn)
+
+	// test the meta storage of placemnt policy.
+	policy := &placementpolicy.PolicyInfo{
+		Name:               model.NewCIStr("aa"),
+		PrimaryRegion:      "my primary",
+		Regions:            "my regions",
+		Learners:           1,
+		Followers:          2,
+		Voters:             3,
+		Schedule:           "even",
+		Constraints:        "+disk=ssd",
+		LearnerConstraints: "+zone=shanghai",
+	}
+	err = m.CreatePolicy(policy)
+	require.NoError(t, err)
+	require.Equal(t, policy.ID, int64(1))
+
+	err = m.CreatePolicy(policy)
+	require.NotNil(t, err)
+	require.True(t, meta.ErrPolicyExists.Equal(err))
+
+	val, err := m.GetPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+
+	// mock updating the placement policy.
+	policy.Name = model.NewCIStr("bb")
+	policy.LearnerConstraints = "+zone=nanjing"
+	err = m.UpdatePolicy(policy)
+	require.NoError(t, err)
+
+	val, err = m.GetPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+
+	ps, err := m.ListPolicies()
+	require.NoError(t, err)
+	require.Equal(t, []*placementpolicy.PolicyInfo{policy}, ps)
+
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	// fetch the stored value after committing.
+	txn, err = store.Begin()
+	require.NoError(t, err)
+
+	m = meta.NewMeta(txn)
+	val, err = m.GetPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+}
 
 func TestMeta(t *testing.T) {
 	t.Parallel()

@@ -366,8 +366,8 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 				bf.tp.Flen = mysql.MaxBlobWidth
 				logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
 			}
-			bf.tp.Flen += argType.Flen
 		}
+		bf.tp.Flen += argType.Flen
 	}
 
 	// add separator
@@ -1588,8 +1588,8 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 			return nil, err
 		}
 		bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
-		// Use UTF-8 as default
-		bf.tp.Flen = args[0].GetType().Flen * 3 * 2
+		// Use UTF8MB4 as default.
+		bf.tp.Flen = args[0].GetType().Flen * 4 * 2
 		sig := &builtinHexStrArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_HexStrArg)
 		return sig, nil
@@ -1665,10 +1665,10 @@ func (c *unhexFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	argEvalTp := argType.EvalType()
 	switch argEvalTp {
 	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
-		// Use UTF-8 as default charset, so there're (Flen * 3 + 1) / 2 byte-pairs
-		retFlen = (argType.Flen*3 + 1) / 2
+		// Use UTF8MB4 as default charset, so there're (Flen * 4 + 1) / 2 byte-pairs.
+		retFlen = (argType.Flen*4 + 1) / 2
 	case types.ETInt, types.ETReal, types.ETDecimal:
-		// For number value, there're (Flen + 1) / 2 byte-pairs
+		// For number value, there're (Flen + 1) / 2 byte-pairs.
 		retFlen = (argType.Flen + 1) / 2
 	default:
 		return nil, errors.Errorf("Unhex invalid args, need int or string but get %s", argType)
@@ -3073,7 +3073,16 @@ func (c *exportSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = mysql.MaxBlobWidth
+	// Calculate the flen as MySQL does.
+	l := args[1].GetType().Flen
+	if args[2].GetType().Flen > l {
+		l = args[2].GetType().Flen
+	}
+	sepL := 1
+	if len(args) > 3 {
+		sepL = args[3].GetType().Flen
+	}
+	bf.tp.Flen = (l*64 + sepL*63) * 4
 	switch len(args) {
 	case 3:
 		sig = &builtinExportSet3ArgSig{bf}
@@ -3407,7 +3416,15 @@ func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = mysql.MaxBlobWidth
+	// The calculation of Flen is the same as MySQL.
+	if args[0].GetType().Flen == types.UnspecifiedLength {
+		bf.tp.Flen = types.UnspecifiedLength
+	} else {
+		bf.tp.Flen = args[0].GetType().Flen * 3
+		if bf.tp.Flen > mysql.MaxBlobWidth {
+			bf.tp.Flen = mysql.MaxBlobWidth
+		}
+	}
 
 	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
