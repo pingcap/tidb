@@ -11,6 +11,7 @@ import (
 var MaxThrNum int
 var ForceUseHashPart bool
 var ForceParallelHashAgg bool
+var ForceParallelTopN bool
 
 var (
 	_ PhysicalPlan = &PhysicalXchg{}
@@ -372,6 +373,10 @@ func (p *PhysicalTopN) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty)
 		updateChildrenProp(newNode, newXchgProperty())
 		newNode.SetChildren(xchgReceiver)
 		res[xchgIdx] = newNode
+		if ForceParallelTopN {
+			res = res[:0]
+			res = append(res, newNode)
+		}
 	}
 	return res, nil
 }

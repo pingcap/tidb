@@ -1670,6 +1670,11 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	} else {
 		plannercore.ForceParallelHashAgg = false
 	}
+	if strings.Contains(sql, "force_parallel_topn") {
+		plannercore.ForceParallelTopN = true
+	} else {
+		plannercore.ForceParallelTopN = false
+	}
 	if strings.Contains(sql, "new_parallel") {
 		cc.ctx.GetSessionVars().UseParallel = true
 		defer func() {
