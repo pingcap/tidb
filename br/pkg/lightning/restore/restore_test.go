@@ -852,7 +852,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 	importer := backend.MakeBackend(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
-	rc := &Controller{saveCpCh: chptCh}
+	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
 	go func() {
 		for range chptCh {
 		}
@@ -884,7 +884,7 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 	importer := backend.MakeBackend(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
-	rc := &Controller{saveCpCh: chptCh}
+	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
 	go func() {
 		for range chptCh {
 		}
