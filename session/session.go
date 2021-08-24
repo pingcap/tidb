@@ -1718,10 +1718,10 @@ type execStmtResult struct {
 
 func (rs *execStmtResult) Close() error {
 	se := rs.se
-	if err := resetCTEStorageMap(se); err != nil {
+	if err := rs.RecordSet.Close(); err != nil {
 		return finishStmt(context.Background(), se, err, rs.sql)
 	}
-	if err := rs.RecordSet.Close(); err != nil {
+	if err := resetCTEStorageMap(se); err != nil {
 		return finishStmt(context.Background(), se, err, rs.sql)
 	}
 	return finishStmt(context.Background(), se, nil, rs.sql)
