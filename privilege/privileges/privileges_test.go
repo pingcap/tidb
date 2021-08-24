@@ -1120,9 +1120,11 @@ func TestSystemSchema(t *testing.T) {
 	store, clean := newStore(t)
 	defer clean()
 
+	seRoot := newSession(t, store, dbName)
+	mustExec(t, seRoot, `CREATE USER 'u1'@'localhost';`)
+
 	// This test tests no privilege check for INFORMATION_SCHEMA database.
 	se := newSession(t, store, dbName)
-	mustExec(t, se, `CREATE USER 'u1'@'localhost';`)
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, `select * from information_schema.tables`)
 	mustExec(t, se, `select * from information_schema.key_column_usage`)
@@ -1152,7 +1154,9 @@ func TestSystemSchema(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 
 	// Test metric_schema.
-	mustExec(t, se, `select * from metrics_schema.tidb_query_duration`)
+	_, err = se.ExecuteInternal(context.Background(), "select * from metrics_schema.tidb_query_duration")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrSpecificAccessDenied))
 	_, err = se.ExecuteInternal(context.Background(), "drop table metrics_schema.tidb_query_duration")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
@@ -1163,6 +1167,13 @@ func TestSystemSchema(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 	_, err = se.ExecuteInternal(context.Background(), "create table metric_schema.t(a int)")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
+	// Grant PROCESS privilege and test.
+	mustExec(t, seRoot, `GRANT PROCESS ON *.* TO 'u1'@'localhost'`)
+	mustExec(t, se, `select * from metrics_schema.tidb_query_duration`)
+	_, err = se.ExecuteInternal(context.Background(), "drop table metrics_schema.tidb_query_duration")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 }

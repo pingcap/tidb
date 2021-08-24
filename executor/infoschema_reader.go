@@ -128,7 +128,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableKeyColumn:
 			e.setDataFromKeyColumnUsage(sctx, dbs)
 		case infoschema.TableMetricTables:
-			e.setDataForMetricTables(sctx)
+			err = e.setDataForMetricTables(sctx)
 		case infoschema.TableProfiling:
 			e.setDataForPseudoProfiling(sctx)
 		case infoschema.TableCollationCharacterSetApplicability:
@@ -1289,7 +1289,10 @@ func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
 	e.rows = pm.UserPrivilegesTable(ctx.GetSessionVars().ActiveRoles, ctx.GetSessionVars().User.Username, ctx.GetSessionVars().User.Hostname)
 }
 
-func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) {
+func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) error {
+	if !hasPriv(ctx, mysql.ProcessPriv) {
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
 	tables := make([]string, 0, len(infoschema.MetricTableMap))
 	for name := range infoschema.MetricTableMap {
 		tables = append(tables, name)
@@ -1308,6 +1311,7 @@ func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) {
 		rows = append(rows, record)
 	}
 	e.rows = rows
+	return nil
 }
 
 func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]types.Datum {
