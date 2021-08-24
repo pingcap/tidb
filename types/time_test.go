@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1560,35 +1561,67 @@ func (s *testTimeSuite) TestExtractDatetimeNum(c *C) {
 }
 
 func (s *testTimeSuite) TestExtractDurationNum(c *C) {
-	in := types.Duration{Duration: time.Duration(3600 * 24 * 365), Fsp: types.DefaultFsp}
-	tbl := []struct {
+	type resultTbl struct {
 		unit   string
 		expect int64
-	}{
-		{"MICROSECOND", 31536},
-		{"SECOND", 0},
-		{"MINUTE", 0},
-		{"HOUR", 0},
-		{"SECOND_MICROSECOND", 31536},
-		{"MINUTE_MICROSECOND", 31536},
-		{"MINUTE_SECOND", 0},
-		{"HOUR_MICROSECOND", 31536},
-		{"HOUR_SECOND", 0},
-		{"HOUR_MINUTE", 0},
-		{"DAY_MICROSECOND", 31536},
-		{"DAY_SECOND", 0},
-		{"DAY_MINUTE", 0},
-		{"DAY_HOUR", 0},
+	}
+	type testCase struct {
+		in      types.Duration
+		resTbls []resultTbl
+	}
+	cases := []testCase{
+		{
+			in: types.Duration{Duration: time.Duration(3600 * 24 * 365), Fsp: types.DefaultFsp},
+			resTbls: []resultTbl{
+				{"MICROSECOND", 31536},
+				{"SECOND", 0},
+				{"MINUTE", 0},
+				{"HOUR", 0},
+				{"SECOND_MICROSECOND", 31536},
+				{"MINUTE_MICROSECOND", 31536},
+				{"MINUTE_SECOND", 0},
+				{"HOUR_MICROSECOND", 31536},
+				{"HOUR_SECOND", 0},
+				{"HOUR_MINUTE", 0},
+				{"DAY_MICROSECOND", 31536},
+				{"DAY_SECOND", 0},
+				{"DAY_MINUTE", 0},
+				{"DAY_HOUR", 0},
+			},
+		},
+		{
+			// "-10:59:1" = -10^9 * (10 * 3600 + 59 * 60 + 1)
+			in: types.Duration{Duration: time.Duration(-39541000000000), Fsp: types.DefaultFsp},
+			resTbls: []resultTbl{
+				{"MICROSECOND", 0},
+				{"SECOND", -1},
+				{"MINUTE", -59},
+				{"HOUR", -10},
+				{"SECOND_MICROSECOND", -1000000},
+				{"MINUTE_MICROSECOND", -5901000000},
+				{"MINUTE_SECOND", -5901},
+				{"HOUR_MICROSECOND", -105901000000},
+				{"HOUR_SECOND", -105901},
+				{"HOUR_MINUTE", -1059},
+				{"DAY_MICROSECOND", -105901000000},
+				{"DAY_SECOND", -105901},
+				{"DAY_MINUTE", -1059},
+				{"DAY_HOUR", -10},
+			},
+		},
 	}
 
-	for _, col := range tbl {
-		res, err := types.ExtractDurationNum(&in, col.unit)
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, col.expect)
+	for _, testcase := range cases {
+		in := testcase.in
+		for _, col := range testcase.resTbls {
+			res, err := types.ExtractDurationNum(&in, col.unit)
+			c.Assert(err, IsNil)
+			c.Assert(res, Equals, col.expect)
+		}
+		res, err := types.ExtractDurationNum(&in, "TEST_ERROR")
+		c.Assert(res, Equals, int64(0))
+		c.Assert(err, ErrorMatches, "invalid unit.*")
 	}
-	res, err := types.ExtractDurationNum(&in, "TEST_ERROR")
-	c.Assert(res, Equals, int64(0))
-	c.Assert(err, ErrorMatches, "invalid unit.*")
 }
 
 func (s *testTimeSuite) TestParseDurationValue(c *C) {
@@ -2115,4 +2148,20 @@ func BenchmarkParseDatetimeFormat(b *testing.B) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	benchmarkDatetimeFormat(b, "datetime without timezone", sc, "2020-10-10T10:10:10")
 	benchmarkDatetimeFormat(b, "datetime with timezone", sc, "2020-10-10T10:10:10Z+08:00")
+}
+
+func benchmarkStrToDate(b *testing.B, name string, sc *stmtctx.StatementContext, str, format string) {
+	b.Run(name, func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			var t types.Time
+			t.StrToDate(sc, str, format)
+		}
+	})
+}
+
+func BenchmarkStrToDate(b *testing.B) {
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	benchmarkStrToDate(b, "strToDate yyyyMMdd hhmmss ffff", sc, "31/05/2016 12:34:56.1234", "%d/%m/%Y %H:%i:%S.%f")
+	benchmarkStrToDate(b, "strToDate %r ddMMyyyy", sc, "04:13:56 AM 13/05/2019", "%r %d/%c/%Y")
+	benchmarkStrToDate(b, "strToDate %T ddMMyyyy", sc, " 4:13:56 13/05/2019", "%T %d/%c/%Y")
 }

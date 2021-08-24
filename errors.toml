@@ -121,6 +121,11 @@ error = '''
 storage is not tikv
 '''
 
+["BR:PD:ErrPDBatchScanRegion"]
+error = '''
+batch scan region
+'''
+
 ["BR:PD:ErrPDInvalidResponse"]
 error = '''
 PD invalid response
@@ -1054,6 +1059,16 @@ Table '%-.192s.%-.192s' doesn't exist
 ["meta:8235"]
 error = '''
 DDL reorg element does not exist
+'''
+
+["meta:8238"]
+error = '''
+Can't create placement policy '%-.192s'; policy exists
+'''
+
+["meta:8239"]
+error = '''
+Unknown placement policy '%-.192s'
 '''
 
 ["planner:1044"]

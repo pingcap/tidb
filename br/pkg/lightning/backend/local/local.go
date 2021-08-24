@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1720,7 +1721,7 @@ WriteAndIngest:
 		}
 		startKey := codec.EncodeBytes([]byte{}, pairStart)
 		endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
-		regions, err = paginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
+		regions, err = split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
 		if err != nil || len(regions) == 0 {
 			log.L().Warn("scan region failed", log.ShortError(err), zap.Int("region_len", len(regions)),
 				logutil.Key("startKey", startKey), logutil.Key("endKey", endKey), zap.Int("retry", retry))
@@ -2754,8 +2755,8 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 	l := len(w.writeBatch)
 	cnt := w.batchCount
 	var lastKey []byte
-	if len(w.writeBatch) > 0 {
-		lastKey = w.writeBatch[len(w.writeBatch)-1].Key
+	if cnt > 0 {
+		lastKey = w.writeBatch[cnt-1].Key
 	}
 	for _, pair := range kvs {
 		if w.isWriteBatchSorted && bytes.Compare(lastKey, pair.Key) > 0 {
@@ -3141,7 +3142,10 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 	for {
 		if bytes.Equal(lastKey, key) {
 			log.L().Warn("duplicated key found, skipped", zap.Binary("key", lastKey))
-			continue
+			newMeta.totalCount--
+			newMeta.totalSize -= int64(len(key) + len(val))
+
+			goto nextKey
 		}
 		internalKey.UserKey = key
 		err = writer.Add(internalKey, val)
@@ -3149,6 +3153,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 			return nil, err
 		}
 		lastKey = append(lastKey[:0], key...)
+	nextKey:
 		key, val, err = mergeIter.Next()
 		if err != nil {
 			return nil, err
