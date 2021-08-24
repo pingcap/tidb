@@ -15,53 +15,18 @@
 package tables_test
 
 import (
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore"
-	"log"
-	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
 
-var s = testIndexSuite{}
-
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
-
-	setUpIndexSuite()
-	exitCode := m.Run()
-	tearDownIndexSuite()
-	if exitCode != 0 {
-		os.Exit(exitCode)
-	}
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
-}
-
-func setUpIndexSuite() {
-	println("setUpIndexSuite")
-	store, err := mockstore.NewMockStore()
-	if err != nil {
-		log.Fatal(err)
-	}
-	s.s = store
-	s.dom, err = session.BootstrapSession(store)
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-func tearDownIndexSuite() {
-	println("tearDownIndexSuite")
-	s.dom.Close()
-	err := s.s.Close()
-	if err != nil {
-		log.Fatal(err)
-	}
 }

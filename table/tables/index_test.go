@@ -28,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -43,6 +45,16 @@ import (
 type testIndexSuite struct {
 	s   kv.Storage
 	dom *domain.Domain
+}
+
+var s = testIndexSuite{}
+
+func TestSetUpSuite(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.Nil(t, err)
+	s.s = store
+	s.dom, err = session.BootstrapSession(store)
+	require.Nil(t, err)
 }
 
 func TestIndex(t *testing.T) {
@@ -387,3 +399,8 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 	return tblInfo
 }
 
+func TestTearDownSuite(t *testing.T) {
+	s.dom.Close()
+	err := s.s.Close()
+	require.Nil(t, err)
+}
