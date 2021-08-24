@@ -57,12 +57,6 @@ func TestSetUpSuite(t *testing.T) {
 	require.Nil(t, err)
 }
 
-func TestTearDownSuite(t *testing.T) {
-	s.dom.Close()
-	err := s.s.Close()
-	require.Nil(t, err)
-}
-
 func TestIndex(t *testing.T) {
 	tblInfo := &model.TableInfo{
 		ID: 1,
@@ -403,4 +397,10 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 	tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
 	require.Nil(t, err)
 	return tblInfo
+}
+
+func TestTearDownSuite(t *testing.T) {
+	s.dom.Close()
+	err := s.s.Close()
+	require.Nil(t, err)
 }
