@@ -17,9 +17,9 @@ package tables_test
 import (
 	"context"
 	"io"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -39,33 +39,31 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testIndexSuite{})
 
 type testIndexSuite struct {
 	s   kv.Storage
 	dom *domain.Domain
 }
 
-func (s *testIndexSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
+var s = testIndexSuite{}
+
+func TestSetUpSuite(t *testing.T) {
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	s.s = store
 	s.dom, err = session.BootstrapSession(store)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 }
 
-func (s *testIndexSuite) TearDownSuite(c *C) {
+func TestTearDownSuite(t *testing.T) {
 	s.dom.Close()
 	err := s.s.Close()
-	c.Assert(err, IsNil)
-	testleak.AfterTest(c)()
+	require.Nil(t, err)
 }
 
-func (s *testIndexSuite) TestIndex(c *C) {
+func TestIndex(t *testing.T) {
 	tblInfo := &model.TableInfo{
 		ID: 1,
 		Indices: []*model.IndexInfo{
@@ -87,72 +85,72 @@ func (s *testIndexSuite) TestIndex(c *C) {
 
 	// Test ununiq index.
 	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	values := types.MakeDatums(1, 2)
 	mockCtx := mock.NewContext()
 	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(1), nil)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	it, err := index.SeekFirst(txn)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	getValues, h, err := it.Next()
-	c.Assert(err, IsNil)
-	c.Assert(getValues, HasLen, 2)
-	c.Assert(getValues[0].GetInt64(), Equals, int64(1))
-	c.Assert(getValues[1].GetInt64(), Equals, int64(2))
-	c.Assert(h.IntValue(), Equals, int64(1))
+	require.Nil(t, err)
+	require.Len(t, getValues, 2)
+	require.Equal(t, int64(1), getValues[0].GetInt64())
+	require.Equal(t, int64(2), getValues[1].GetInt64())
+	require.Equal(t, int64(1), h.IntValue())
 	it.Close()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	exist, _, err := index.Exist(sc, txn, values, kv.IntHandle(100))
-	c.Assert(err, IsNil)
-	c.Assert(exist, IsFalse)
+	require.Nil(t, err)
+	require.False(t, exist)
 
 	exist, _, err = index.Exist(sc, txn, values, kv.IntHandle(1))
-	c.Assert(err, IsNil)
-	c.Assert(exist, IsTrue)
+	require.Nil(t, err)
+	require.True(t, exist)
 
 	err = index.Delete(sc, txn, values, kv.IntHandle(1))
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	it, err = index.SeekFirst(txn)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	_, _, err = it.Next()
-	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue, Commentf("err %v", err))
+	require.Truef(t, terror.ErrorEqual(err, io.EOF), "err %v", err)
 	it.Close()
 
 	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(0), nil)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	_, err = index.SeekFirst(txn)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	_, hit, err := index.Seek(sc, txn, values)
-	c.Assert(err, IsNil)
-	c.Assert(hit, IsFalse)
+	require.Nil(t, err)
+	require.False(t, hit)
 
 	err = index.Drop(txn)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	it, hit, err = index.Seek(sc, txn, values)
-	c.Assert(err, IsNil)
-	c.Assert(hit, IsFalse)
+	require.Nil(t, err)
+	require.False(t, hit)
 
 	_, _, err = it.Next()
-	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue, Commentf("err %v", err))
+	require.Truef(t, terror.ErrorEqual(err, io.EOF), "err %v", err)
 	it.Close()
 
 	it, err = index.SeekFirst(txn)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	_, _, err = it.Next()
-	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue, Commentf("err %v", err))
+	require.Truef(t, terror.ErrorEqual(err, io.EOF), "err %v", err)
 	it.Close()
 
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	tblInfo = &model.TableInfo{
 		ID: 2,
@@ -176,63 +174,63 @@ func (s *testIndexSuite) TestIndex(c *C) {
 
 	// Test uniq index.
 	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(1), nil)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(2), nil)
-	c.Assert(err, NotNil)
+	require.NotNil(t, err)
 
 	it, err = index.SeekFirst(txn)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	getValues, h, err = it.Next()
-	c.Assert(err, IsNil)
-	c.Assert(getValues, HasLen, 2)
-	c.Assert(getValues[0].GetInt64(), Equals, int64(1))
-	c.Assert(getValues[1].GetInt64(), Equals, int64(2))
-	c.Assert(h.IntValue(), Equals, int64(1))
+	require.Nil(t, err)
+	require.Len(t, getValues, 2)
+	require.Equal(t, int64(1), getValues[0].GetInt64())
+	require.Equal(t, int64(2), getValues[1].GetInt64())
+	require.Equal(t, int64(1), h.IntValue())
 	it.Close()
 
 	exist, h, err = index.Exist(sc, txn, values, kv.IntHandle(1))
-	c.Assert(err, IsNil)
-	c.Assert(h.IntValue(), Equals, int64(1))
-	c.Assert(exist, IsTrue)
+	require.Nil(t, err)
+	require.Equal(t, int64(1), h.IntValue())
+	require.True(t, exist)
 
 	exist, h, err = index.Exist(sc, txn, values, kv.IntHandle(2))
-	c.Assert(err, NotNil)
-	c.Assert(h.IntValue(), Equals, int64(1))
-	c.Assert(exist, IsTrue)
+	require.NotNil(t, err)
+	require.Equal(t, int64(1), h.IntValue())
+	require.True(t, exist)
 
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	_, err = index.FetchValues(make([]types.Datum, 0), nil)
-	c.Assert(err, NotNil)
+	require.NotNil(t, err)
 
 	txn, err = s.s.Begin()
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	// Test the function of Next when the value of unique key is nil.
 	values2 := types.MakeDatums(nil, nil)
 	_, err = index.Create(mockCtx, txn, values2, kv.IntHandle(2), nil)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	it, err = index.SeekFirst(txn)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	getValues, h, err = it.Next()
-	c.Assert(err, IsNil)
-	c.Assert(getValues, HasLen, 2)
-	c.Assert(getValues[0].GetInterface(), Equals, nil)
-	c.Assert(getValues[1].GetInterface(), Equals, nil)
-	c.Assert(h.IntValue(), Equals, int64(2))
+	require.Nil(t, err)
+	require.Len(t, getValues, 2)
+	require.Equal(t, nil, getValues[0].GetInterface())
+	require.Equal(t, nil, getValues[1].GetInterface())
+	require.Equal(t, int64(2), h.IntValue())
 	it.Close()
 
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 }
 
-func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
+func TestCombineIndexSeek(t *testing.T) {
 	tblInfo := &model.TableInfo{
 		ID: 1,
 		Indices: []*model.IndexInfo{
@@ -254,26 +252,26 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	mockCtx := mock.NewContext()
 	values := types.MakeDatums("abc", "def")
 	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(1), nil)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	index2 := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	iter, hit, err := index2.Seek(sc, txn, types.MakeDatums("abc", nil))
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	defer iter.Close()
-	c.Assert(hit, IsFalse)
+	require.False(t, hit)
 	_, h, err := iter.Next()
-	c.Assert(err, IsNil)
-	c.Assert(h.IntValue(), Equals, int64(1))
+	require.Nil(t, err)
+	require.Equal(t, int64(1), h.IntValue())
 }
 
-func (s *testIndexSuite) TestSingleColumnCommonHandle(c *C) {
-	tblInfo := buildTableInfo(c, "create table t (a varchar(255) primary key, u int unique, nu int, index nu (nu))")
+func TestSingleColumnCommonHandle(t *testing.T) {
+	tblInfo := buildTableInfo(t, "create table t (a varchar(255) primary key, u int unique, nu int, index nu (nu))")
 	var idxUnique, idxNonUnique table.Index
 	for _, idxInfo := range tblInfo.Indices {
 		idx := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
@@ -284,7 +282,7 @@ func (s *testIndexSuite) TestSingleColumnCommonHandle(c *C) {
 		}
 	}
 	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	mockCtx := mock.NewContext()
 	sc := mockCtx.GetSessionVars().StmtCtx
@@ -292,44 +290,44 @@ func (s *testIndexSuite) TestSingleColumnCommonHandle(c *C) {
 	idxColVals := types.MakeDatums(1)
 	handleColVals := types.MakeDatums("abc")
 	encodedHandle, err := codec.EncodeKey(sc, nil, handleColVals...)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	commonHandle, err := kv.NewCommonHandle(encodedHandle)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
 		key, _, err := idx.GenIndexKey(sc, idxColVals, commonHandle, nil)
-		c.Assert(err, IsNil)
+		require.Nil(t, err)
 		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle, nil)
-		c.Assert(err, IsNil)
+		require.Nil(t, err)
 		val, err := txn.Get(context.Background(), key)
-		c.Assert(err, IsNil)
+		require.Nil(t, err)
 		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault,
 			tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo))
-		c.Assert(err, IsNil)
-		c.Assert(colVals, HasLen, 2)
+		require.Nil(t, err)
+		require.Len(t, colVals, 2)
 		_, d, err := codec.DecodeOne(colVals[0])
-		c.Assert(err, IsNil)
-		c.Assert(d.GetInt64(), Equals, int64(1))
+		require.Nil(t, err)
+		require.Equal(t, int64(1), d.GetInt64())
 		_, d, err = codec.DecodeOne(colVals[1])
-		c.Assert(err, IsNil)
-		c.Assert(d.GetString(), Equals, "abc")
+		require.Nil(t, err)
+		require.Equal(t, "abc", d.GetString())
 		handle, err := tablecodec.DecodeIndexHandle(key, val, 1)
-		c.Assert(err, IsNil)
-		c.Assert(handle.IsInt(), IsFalse)
-		c.Assert(handle.Encoded(), BytesEquals, commonHandle.Encoded())
+		require.Nil(t, err)
+		require.False(t, handle.IsInt())
+		require.Equal(t, commonHandle.Encoded(), handle.Encoded())
 
 		unTouchedVal := append([]byte{1}, val[1:]...)
 		unTouchedVal = append(unTouchedVal, kv.UnCommitIndexKVFlag)
 		_, err = tablecodec.DecodeIndexKV(key, unTouchedVal, 1, tablecodec.HandleDefault,
 			tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo))
-		c.Assert(err, IsNil)
+		require.Nil(t, err)
 	}
 }
 
-func (s *testIndexSuite) TestMultiColumnCommonHandle(c *C) {
+func TestMultiColumnCommonHandle(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
-	tblInfo := buildTableInfo(c, "create table t (a int, b int, u varchar(64) unique, nu varchar(64), primary key (a, b), index nu (nu))")
+	tblInfo := buildTableInfo(t, "create table t (a int, b int, u varchar(64) unique, nu varchar(64), primary key (a, b), index nu (nu))")
 	var idxUnique, idxNonUnique table.Index
 	for _, idxInfo := range tblInfo.Indices {
 		idx := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
@@ -347,28 +345,28 @@ func (s *testIndexSuite) TestMultiColumnCommonHandle(c *C) {
 			b = col
 		}
 	}
-	c.Assert(a, NotNil)
-	c.Assert(b, NotNil)
+	require.NotNil(t, a)
+	require.NotNil(t, b)
 
 	txn, err := s.s.Begin()
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	mockCtx := mock.NewContext()
 	sc := mockCtx.GetSessionVars().StmtCtx
 	// create index for "insert t values (3, 2, "abc", "abc")
 	idxColVals := types.MakeDatums("abc")
 	handleColVals := types.MakeDatums(3, 2)
 	encodedHandle, err := codec.EncodeKey(sc, nil, handleColVals...)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	commonHandle, err := kv.NewCommonHandle(encodedHandle)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	_ = idxNonUnique
 	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
 		key, _, err := idx.GenIndexKey(sc, idxColVals, commonHandle, nil)
-		c.Assert(err, IsNil)
+		require.Nil(t, err)
 		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle, nil)
-		c.Assert(err, IsNil)
+		require.Nil(t, err)
 		val, err := txn.Get(context.Background(), key)
-		c.Assert(err, IsNil)
+		require.Nil(t, err)
 		colInfo := tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo)
 		colInfo = append(colInfo, rowcodec.ColInfo{
 			ID:         a.ID,
@@ -381,28 +379,28 @@ func (s *testIndexSuite) TestMultiColumnCommonHandle(c *C) {
 			Ft:         rowcodec.FieldTypeFromModelColumn(b),
 		})
 		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault, colInfo)
-		c.Assert(err, IsNil)
-		c.Assert(colVals, HasLen, 3)
+		require.Nil(t, err)
+		require.Len(t, colVals, 3)
 		_, d, err := codec.DecodeOne(colVals[0])
-		c.Assert(err, IsNil)
-		c.Assert(d.GetString(), Equals, "abc")
+		require.Nil(t, err)
+		require.Equal(t, "abc", d.GetString())
 		_, d, err = codec.DecodeOne(colVals[1])
-		c.Assert(err, IsNil)
-		c.Assert(d.GetInt64(), Equals, int64(3))
+		require.Nil(t, err)
+		require.Equal(t, int64(3), d.GetInt64())
 		_, d, err = codec.DecodeOne(colVals[2])
-		c.Assert(err, IsNil)
-		c.Assert(d.GetInt64(), Equals, int64(2))
+		require.Nil(t, err)
+		require.Equal(t, int64(2), d.GetInt64())
 		handle, err := tablecodec.DecodeIndexHandle(key, val, 1)
-		c.Assert(err, IsNil)
-		c.Assert(handle.IsInt(), IsFalse)
-		c.Assert(handle.Encoded(), BytesEquals, commonHandle.Encoded())
+		require.Nil(t, err)
+		require.False(t, handle.IsInt())
+		require.Equal(t, commonHandle.Encoded(), handle.Encoded())
 	}
 }
 
-func buildTableInfo(c *C, sql string) *model.TableInfo {
+func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	return tblInfo
 }
