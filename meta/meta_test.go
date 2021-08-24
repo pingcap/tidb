@@ -52,15 +52,17 @@ func TestPlacementPolicy(t *testing.T) {
 
 	// test the meta storage of placemnt policy.
 	policy := &placementpolicy.PolicyInfo{
-		Name:               model.NewCIStr("aa"),
-		PrimaryRegion:      "my primary",
-		Regions:            "my regions",
-		Learners:           1,
-		Followers:          2,
-		Voters:             3,
-		Schedule:           "even",
-		Constraints:        "+disk=ssd",
-		LearnerConstraints: "+zone=shanghai",
+		Name: model.NewCIStr("aa"),
+		PlacementSettings: placementpolicy.PlacementSettings{
+			PrimaryRegion:      "my primary",
+			Regions:            "my regions",
+			Learners:           1,
+			Followers:          2,
+			Voters:             3,
+			Schedule:           "even",
+			Constraints:        "+disk=ssd",
+			LearnerConstraints: "+zone=shanghai",
+		},
 	}
 	err = m.CreatePolicy(policy)
 	require.NoError(t, err)
