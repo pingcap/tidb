@@ -286,6 +286,7 @@ deadlock-history-collect-retryable = true
 	require.Equal(t, uint64(30), conf.StoresRefreshInterval)
 	require.Equal(t, uint(123), conf.PessimisticTxn.DeadlockHistoryCapacity)
 	require.True(t, conf.PessimisticTxn.DeadlockHistoryCollectRetryable)
+	require.False(t, conf.Experimental.EnableNewCharset)
 
 	_, err = f.WriteString(`
 [log.file]
