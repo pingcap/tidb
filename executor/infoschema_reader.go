@@ -1290,9 +1290,6 @@ func (e *memtableRetriever) setDataFromUserPrivileges(ctx sessionctx.Context) {
 }
 
 func (e *memtableRetriever) setDataForMetricTables(ctx sessionctx.Context) error {
-	if !hasPriv(ctx, mysql.ProcessPriv) {
-		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
-	}
 	tables := make([]string, 0, len(infoschema.MetricTableMap))
 	for name := range infoschema.MetricTableMap {
 		tables = append(tables, name)
