@@ -2039,10 +2039,13 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 	case MppScalar:
 		proj := p.convertAvgForMPP()
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
-		if partialAgg == nil || finalAgg == nil {
+		if finalAgg == nil {
 			return invalidTask
 		}
-		attachPlan2Task(partialAgg, mpp)
+		// partial agg would be null if one scalar agg cannot run in two-phase mode
+		if partialAgg != nil {
+			attachPlan2Task(partialAgg, mpp)
+		}
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType}
 		newMpp := mpp.enforceExchangerImpl(prop)
 		attachPlan2Task(finalAgg, newMpp)
