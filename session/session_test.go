@@ -4486,17 +4486,17 @@ func (s *testTxnStateSerialSuite) TestRunning(c *C) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1);")
 	tk.MustExec("begin pessimistic;")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/beforeLockKeys", "pause"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockStmtSlow", "return(200)"), IsNil)
 	ch := make(chan struct{})
 	go func() {
-		tk.MustExec("select * from t for update;")
+		tk.MustExec("select * from t for update /* sleep */;")
 		tk.MustExec("commit;")
 		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
 	info := tk.Se.TxnInfo()
 	c.Assert(info.State, Equals, txninfo.TxnRunning)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/beforeLockKeys"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockStmtSlow"), IsNil)
 	<-ch
 }
 

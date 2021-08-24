@@ -1535,7 +1535,11 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	s.txn.onStmtStart(digest.String())
 	defer s.txn.onStmtEnd()
 
-	failpoint.Inject("mockStmtSlow", nil)
+	failpoint.Inject("mockStmtSlow", func(val failpoint.Value) {
+		if strings.Contains(stmtNode.Text(), "/* sleep */") {
+			time.Sleep(time.Duration(val.(int)) * time.Millisecond)
+		}
+	})
 
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
