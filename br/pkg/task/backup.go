@@ -345,7 +345,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		pdAddress := strings.Join(cfg.PD, ",")
 		log.Warn("Nothing to backup, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
-		return metawriter.FlushBackupMeta(ctx)
+
+		err = metawriter.FlushBackupMeta(ctx)
+		if err == nil {
+			summary.SetSuccessStatus(true)
+		}
+		return err
 	}
 
 	if isIncrementalBackup {
