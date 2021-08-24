@@ -205,7 +205,7 @@ func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
 
 func initLabelRuleManager(addrs []string) LabelRuleManager {
 	if len(addrs) == 0 {
-		return &mockLabelManager{labels: map[string]*label.Rule{}}
+		return &mockLabelManager{labelRules: map[string]*label.Rule{}}
 	}
 	return &PDLabelManager{addrs: addrs}
 }
