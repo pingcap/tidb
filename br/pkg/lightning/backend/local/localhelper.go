@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -102,19 +103,13 @@ func (local *local) SplitAndScatterRegionByRanges(
 			}
 		}
 		var regions []*split.RegionInfo
-		regions, err = paginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
+		regions, err = split.PaginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
 		log.L().Info("paginate scan regions", zap.Int("count", len(regions)),
 			logutil.Key("start", minKey), logutil.Key("end", maxKey))
 		if err != nil {
 			log.L().Warn("paginate scan region failed", logutil.Key("minKey", minKey), logutil.Key("maxKey", maxKey),
 				log.ShortError(err), zap.Int("retry", i))
 			continue
-		}
-
-		if len(regions) == 0 {
-			log.L().Warn("paginate scan region returns empty result", logutil.Key("minKey", minKey), logutil.Key("maxKey", maxKey),
-				zap.Int("retry", i))
-			return errors.New("paginate scan region returns empty result")
 		}
 
 		log.L().Info("paginate scan region finished", logutil.Key("minKey", minKey), logutil.Key("maxKey", maxKey),
@@ -360,40 +355,6 @@ func fetchTableRegionSizeStats(ctx context.Context, db *sql.DB, tableID int64) (
 		return rows.Err()
 	})
 	return stats, errors.Trace(err)
-}
-
-func paginateScanRegion(
-	ctx context.Context, client split.SplitClient, startKey, endKey []byte, limit int,
-) ([]*split.RegionInfo, error) {
-	if len(endKey) != 0 && bytes.Compare(startKey, endKey) >= 0 {
-		log.L().Error("startKey >= endKey when paginating scan region",
-			logutil.Key("startKey", startKey),
-			logutil.Key("endKey", endKey))
-		return nil, errors.Errorf("startKey >= endKey when paginating scan region")
-	}
-
-	var regions []*split.RegionInfo
-	for {
-		batch, err := client.ScanRegions(ctx, startKey, endKey, limit)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		regions = append(regions, batch...)
-		if len(batch) < limit {
-			// No more region
-			break
-		}
-		startKey = batch[len(batch)-1].Region.GetEndKey()
-		if len(startKey) == 0 ||
-			(len(endKey) > 0 && bytes.Compare(startKey, endKey) >= 0) {
-			// All key space have scanned
-			break
-		}
-	}
-	sort.Slice(regions, func(i, j int) bool {
-		return bytes.Compare(regions[i].Region.StartKey, regions[j].Region.StartKey) < 0
-	})
-	return regions, nil
 }
 
 func (local *local) BatchSplitRegions(ctx context.Context, region *split.RegionInfo, keys [][]byte) (*split.RegionInfo, []*split.RegionInfo, error) {

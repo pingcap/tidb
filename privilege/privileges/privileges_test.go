@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -2057,4 +2058,30 @@ func tearDownTest(t *testing.T, store kv.Storage, dbName string) {
 	se := newSession(t, store, dbName)
 	dropDBSQL := fmt.Sprintf("drop database if exists %s;", dbName)
 	mustExec(t, se, dropDBSQL)
+}
+
+func TestGrantReferences(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE SCHEMA reftestdb")
+	tk.MustExec("USE reftestdb")
+	tk.MustExec("CREATE TABLE reftest (a int)")
+	tk.MustExec("CREATE USER referencesUser")
+	tk.MustExec("GRANT REFERENCES ON *.* TO referencesUser")
+	tk.MustExec("GRANT REFERENCES ON reftestdb.* TO referencesUser")
+	tk.MustExec("GRANT REFERENCES ON reftestdb.reftest TO referencesUser")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR referencesUser").Check(testkit.Rows(
+		`GRANT REFERENCES ON *.* TO 'referencesUser'@'%'`,
+		`GRANT REFERENCES ON reftestdb.* TO 'referencesUser'@'%'`,
+		`GRANT REFERENCES ON reftestdb.reftest TO 'referencesUser'@'%'`))
+	tk.MustExec("DROP USER referencesUser")
+	tk.MustExec("DROP SCHEMA reftestdb")
 }

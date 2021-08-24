@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -99,6 +100,9 @@ func (e *PipelinedWindowExec) Open(ctx context.Context) (err error) {
 }
 
 func (e *PipelinedWindowExec) firstResultChunkNotReady() bool {
+	if !e.done && len(e.data) == 0 {
+		return true
+	}
 	// chunk can't be ready unless, 1. all of the rows in the chunk is filled, 2. e.rows doesn't contain rows in the chunk
 	return len(e.data) > 0 && (e.data[0].remaining != 0 || e.data[0].accumulated > e.dropped)
 }
@@ -107,7 +111,7 @@ func (e *PipelinedWindowExec) firstResultChunkNotReady() bool {
 func (e *PipelinedWindowExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	chk.Reset()
 
-	for !e.done || e.firstResultChunkNotReady() {
+	for e.firstResultChunkNotReady() {
 		// we firstly gathering enough rows and consume them, until we are able to produce.
 		// for unbounded frame, it needs consume the whole partition before being able to produce, in this case
 		// e.p.enoughToProduce will be false until so.

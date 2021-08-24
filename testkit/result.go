@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -83,4 +84,17 @@ func RowsWithSep(sep string, args ...string) [][]interface{} {
 		rows[i] = row
 	}
 	return rows
+}
+
+// Rows returns the result data.
+func (res *Result) Rows() [][]interface{} {
+	ifacesSlice := make([][]interface{}, len(res.rows))
+	for i := range res.rows {
+		ifaces := make([]interface{}, len(res.rows[i]))
+		for j := range res.rows[i] {
+			ifaces[j] = res.rows[i][j]
+		}
+		ifacesSlice[i] = ifaces
+	}
+	return ifacesSlice
 }

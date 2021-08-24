@@ -8,18 +8,21 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
+	"bytes"
 	"context"
 	"math"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -357,6 +360,29 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 		}
 	}
 	return expr, nil
+}
+
+func locateStringWithCollation(str, substr, coll string) int64 {
+	collator := collate.GetCollator(coll)
+	strKey := collator.Key(str)
+	subStrKey := collator.Key(substr)
+
+	index := bytes.Index(strKey, subStrKey)
+	if index == -1 || index == 0 {
+		return int64(index + 1)
+	}
+
+	// todo: we can use binary search to make it faster.
+	count := int64(0)
+	for {
+		r, size := utf8.DecodeRuneInString(str)
+		count += 1
+		index -= len(collator.Key(string(r)))
+		if index == 0 {
+			return count + 1
+		}
+		str = str[size:]
+	}
 }
 
 // timeZone2Duration converts timezone whose format should satisfy the regular condition
