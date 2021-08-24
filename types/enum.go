@@ -46,7 +46,7 @@ func (e Enum) ToNumber() float64 {
 
 // ParseEnum creates a Enum with item name or value.
 func ParseEnum(elems []string, name string, collation string) (Enum, error) {
-	if enumName, err := ParseEnumName(elems, name, collation); err != nil {
+	if enumName, err := ParseEnumName(elems, name, collation); err == nil {
 		return enumName, nil
 	}
 	// If the string name is not in the enum collection, an empty enum will be returned.
