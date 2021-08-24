@@ -348,33 +348,31 @@ func (p *PhysicalTopN) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty)
 	if res, err = tryAddXchgForBasicPlan(ctx, p, reqProp); err != nil {
 		return nil, err
 	}
-	if len(res) != 2 {
-		return nil, errors.New("only expect two possible plans for TopN")
-	}
-	xchgIdx := 1
-	node := res[xchgIdx]
-	xchgReceiver, isXchg := node.(*PhysicalXchg)
-	if !isXchg {
-		xchgIdx = 0
-		node = res[xchgIdx]
-		xchgReceiver, isXchg = node.(*PhysicalXchg)
-		if !isXchg {
-			return nil, errors.Errorf("one of possible plans must be xchg: %v", node.TP())
+	var xchgIdx int
+	var xchgReceiver *PhysicalXchg
+	// TODO: check res, only one xchg exists.
+	for ; xchgIdx < len(res); xchgIdx++ {
+		var ok bool
+		if xchgReceiver, ok = res[xchgIdx].(*PhysicalXchg); ok {
+			break
 		}
 	}
-	newNode, err := p.Clone()
-	if err != nil {
-		return nil, err
+
+	if xchgReceiver != nil {
+		newNode, err := p.Clone()
+		if err != nil {
+			return nil, err
+		}
+		tmpNode, ok := newNode.(*PhysicalTopN)
+		if !ok {
+			return nil, errors.Errorf("cloned node must be topn: %v", tmpNode.TP())
+		}
+		ctx.GetSessionVars().PlanID++
+		tmpNode.id = ctx.GetSessionVars().PlanID
+		updateChildrenProp(newNode, newXchgProperty())
+		newNode.SetChildren(xchgReceiver)
+		res[xchgIdx] = newNode
 	}
-	tmpNode, ok := newNode.(*PhysicalTopN)
-	if !ok {
-		return nil, errors.Errorf("cloned node must be topn: %v", tmpNode.TP())
-	}
-	ctx.GetSessionVars().PlanID++
-	tmpNode.id = ctx.GetSessionVars().PlanID
-	updateChildrenProp(newNode, newXchgProperty())
-	newNode.SetChildren(xchgReceiver)
-	res[xchgIdx] = newNode
 	return res, nil
 }
 
@@ -717,7 +715,7 @@ func tryAddXchgForBasicPlan(ctx sessionctx.Context, node PhysicalPlan, reqProp *
 		res = append(res, receiver)
 		return res, nil
 	}
-	return nil, errors.Errorf("invalid reqProp: %v", reqProp)
+	return res, nil
 }
 
 func tryAddXchgPreWork(node PhysicalPlan, reqProp *XchgProperty, res []PhysicalPlan) ([]PhysicalPlan, error) {
