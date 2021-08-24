@@ -10,6 +10,8 @@ import (
 	"text/template"
 
 	"github.com/pingcap/errors"
+
+	tcontext "github.com/pingcap/dumpling/v4/context"
 )
 
 const (
@@ -75,10 +77,14 @@ func ParseOutputFileTemplate(text string) (*template.Template, error) {
 	return template.Must(DefaultOutputFileTemplate.Clone()).Parse(text)
 }
 
-func prepareDumpingDatabases(conf *Config, db *sql.Conn) ([]string, error) {
+func prepareDumpingDatabases(tctx *tcontext.Context, conf *Config, db *sql.Conn) ([]string, error) {
 	databases, err := ShowDatabases(db)
+	if err != nil {
+		return nil, err
+	}
+	databases = filterDatabases(tctx, conf, databases)
 	if len(conf.Databases) == 0 {
-		return databases, err
+		return databases, nil
 	}
 	dbMap := make(map[string]interface{}, len(databases))
 	for _, database := range databases {
