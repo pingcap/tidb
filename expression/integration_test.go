@@ -698,8 +698,8 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("0 0 0"))
 	result = tk.MustQuery("SELECT round(49.99999, -2), round(50, -2), round(50.00001, -2)")
 	result.Check(testkit.Rows("0 100 100"))
-	result = tk.MustQuery("SELECT round(123456789, -5), round(2146213728964879326, -15) ")
-	result.Check(testkit.Rows("123500000 2146000000000000000"))
+	result = tk.MustQuery("SELECT round(123456789, -5), round(2146213728964879326, -15), round(24999999999999999,-16)")
+	result.Check(testkit.Rows("123500000 2146000000000000000 20000000000000000"))
 
 	// for truncate
 	result = tk.MustQuery("SELECT truncate(123, -2), truncate(123, 2), truncate(123, 1), truncate(123, -1);")
