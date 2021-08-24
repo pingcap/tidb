@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -2295,6 +2296,20 @@ func (s *testSuite) TestTemporaryTable(c *C) {
 	tk.MustGetErrCode("create binding for delete from t where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
 }
 
+func (s *testSuite) TestLocalTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tmp2")
+	tk.MustExec("create temporary table tmp2 (a int, b int, key(a), key(b));")
+	tk.MustGetErrCode("create session binding for select * from tmp2 where b = 123 using select * from t ignore index(b) where b = 123;", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create binding for insert into tmp2 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create binding for replace into tmp2 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create binding for update tmp2 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t, c) */ t set a = 1 where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create binding for delete from tmp2 where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
+}
+
 func (s *testSuite) TestIssue25505(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -2437,4 +2452,189 @@ func (s *testSerialSuite) TestOptimizeOnlyOnce(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/planner/checkOptimizeCountOne", "return"), IsNil)
 	tk.MustQuery("select * from t").Check(testkit.Rows())
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/checkOptimizeCountOne"), IsNil)
+}
+
+func (s *testSerialSuite) TestIssue26377(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_temporary_table = true")
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
+	tk.MustExec("drop table if exists t1,tmp1")
+	tk.MustExec("create table t1(a int(11))")
+	tk.MustExec("create global temporary table tmp1(a int(11), key idx_a(a)) on commit delete rows;")
+	tk.MustExec("create temporary table tmp2(a int(11), key idx_a(a));")
+
+	queries := []string{
+		"create global binding for select * from t1 inner join tmp1 on t1.a=tmp1.a using select * from  t1 inner join tmp1 on t1.a=tmp1.a;",
+		"create global binding for select * from t1 where t1.a in (select a from tmp1) using select * from t1 where t1.a in (select a from tmp1 use index (idx_a));",
+		"create global binding for select a from t1 union select a from tmp1 using select a from t1 union select a from tmp1 use index (idx_a);",
+		"create global binding for select t1.a, (select a from tmp1 where tmp1.a=1) as t2 from t1 using select t1.a, (select a from tmp1 where tmp1.a=1) as t2 from t1;",
+		"create global binding for select * from (select * from tmp1) using select * from (select * from tmp1);",
+	}
+	genLocalTemporarySQL := func(sql string) string {
+		return strings.Replace(sql, "tmp1", "tmp2", -1)
+	}
+	for _, query := range queries {
+		localSQL := genLocalTemporarySQL(query)
+		queries = append(queries, localSQL)
+	}
+
+	for _, q := range queries {
+		tk.MustGetErrCode(q, errno.ErrOptOnTemporaryTable)
+	}
+}
+
+func (s *testSuite) TestCaptureFilter(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
+
+	// Valid table filter.
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'test.t')")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `mysql` . `capture_plan_baselines_blacklist`")
+
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][0], Equals, "select * from `mysql` . `capture_plan_baselines_blacklist`")
+	c.Assert(rows[1][0], Equals, "select * from `test` . `t` where `a` > ?")
+
+	// Invalid table filter.
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 't')")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
+
+	// Valid database filter.
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('db', 'mysql')")
+	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
+
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][0], Equals, "select * from `mysql` . `capture_plan_baselines_blacklist`")
+	c.Assert(rows[1][0], Equals, "select * from `test` . `t` where `a` > ?")
+
+	// Valid frequency filter.
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('frequency', '2')")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+
+	// Invalid frequency filter.
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('frequency', '0')")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+
+	// Invalid filter type.
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('unknown', 'xx')")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+
+	// Case sensitivity.
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('tABle', 'tESt.T')")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Sort().Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
+
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('Db', 'mySQl')")
+	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Sort().Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `mysql` . `capture_plan_baselines_blacklist`")
 }
