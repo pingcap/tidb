@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -33,12 +34,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
-	"github.com/pingcap/tidb/br/pkg/utils"
 )
 
 type TableRestore struct {
@@ -131,7 +132,7 @@ func (tr *TableRestore) populateChunks(ctx context.Context, rc *Controller, cp *
 	return err
 }
 
-func (t *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
+func (tr *TableRestore) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
 	if rowIDBase == 0 {
 		return
 	}

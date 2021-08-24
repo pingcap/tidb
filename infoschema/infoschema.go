@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/placementpolicy"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -93,6 +95,10 @@ type infoSchema struct {
 	ruleBundleMutex sync.RWMutex
 	ruleBundleMap   map[string]*placement.Bundle
 
+	// policyMap stores all placement policies.
+	policyMutex sync.RWMutex
+	policyMap   map[string]*placementpolicy.PolicyInfo
+
 	schemaMap map[string]*schemaTables
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
@@ -106,6 +112,7 @@ type infoSchema struct {
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
+	result.policyMap = make(map[string]*placementpolicy.PolicyInfo)
 	result.ruleBundleMap = make(map[string]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
@@ -130,6 +137,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
+	result.policyMap = make(map[string]*placementpolicy.PolicyInfo)
 	result.ruleBundleMap = make(map[string]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
@@ -344,6 +352,24 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 		}
 	}
 	return false, ""
+}
+
+// PolicyByName is used to find the policy.
+func (is *infoSchema) PolicyByName(name string) (*placementpolicy.PolicyInfo, bool) {
+	is.policyMutex.RLock()
+	defer is.policyMutex.RUnlock()
+	t, r := is.policyMap[name]
+	return t, r
+}
+
+func (is *infoSchema) PlacementPolicies() []*placementpolicy.PolicyInfo {
+	is.policyMutex.RLock()
+	defer is.policyMutex.RUnlock()
+	policies := make([]*placementpolicy.PolicyInfo, 0, len(is.policyMap))
+	for _, policy := range is.policyMap {
+		policies = append(policies, policy)
+	}
+	return policies
 }
 
 func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
