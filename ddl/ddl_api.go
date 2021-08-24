@@ -3390,7 +3390,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		SchemaName:      schema.Name.L,
 		Type:            model.ActionDropColumn,
 		BinlogInfo:      &model.HistoryInfo{},
-		MultiSchemaInfo: &model.MultiSchemaInfo{Enable: ctx.GetSessionVars().EnableChangeMultiSchema},
+		MultiSchemaInfo: &model.MultiSchemaInfo{},
 		Args:            []interface{}{colName},
 	}
 
@@ -3463,7 +3463,7 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		SchemaName:      schema.Name.L,
 		Type:            model.ActionDropColumns,
 		BinlogInfo:      &model.HistoryInfo{},
-		MultiSchemaInfo: &model.MultiSchemaInfo{Enable: ctx.GetSessionVars().EnableChangeMultiSchema},
+		MultiSchemaInfo: &model.MultiSchemaInfo{},
 		Args:            []interface{}{colNames, ifExists},
 	}
 
