@@ -4756,7 +4756,8 @@ func (b *executorBuilder) buildXchgReceiver(v *plannercore.PhysicalXchg) Executo
 			ExchangeReceiver: ExchangeReceiver{
 				baseExecutor: newBaseExecutor(b.ctx, sender.base().schema, v.ID(), sender),
 			},
-			input: v.ChkChs[v.CurStreamID],
+			chkCh: v.ChkChs[v.CurStreamID],
+			resCh: v.ResChs[v.CurStreamID],
 		}
 	case plannercore.TypeXchgReceiverPassThroughHT:
 		if sender = b.getOrBuildSenderForReceiver(v.Children()[0]); b.err != nil {
@@ -4807,7 +4808,7 @@ func (b *executorBuilder) buildXchgSender(v *plannercore.PhysicalXchg) Executor 
 		sender = &ExchangeSenderBroadcastHT{
 			ExchangeSender: ExchangeSender{
 				// TODO: v.ID maybe duplicated.
-				baseExecutor: newBaseExecutor(b.ctx, child.base().schema, v.ID(), child),
+				baseExecutor: newBaseExecutor(b.ctx, child.base().schema, execID, child),
 			},
 			// TODO: chkChs
 			outputs: v.ChkChs,
@@ -4832,7 +4833,8 @@ func (b *executorBuilder) buildXchgSender(v *plannercore.PhysicalXchg) Executor 
 			ExchangeSender: ExchangeSender{
 				baseExecutor: newBaseExecutor(b.ctx, child.base().schema, execID, child),
 			},
-			outputs:     v.ChkChs,
+			chkChs:      v.ChkChs,
+			resChs:      v.ResChs,
 			hashColumns: v.HashPartition,
 		}
 	default:

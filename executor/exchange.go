@@ -192,7 +192,9 @@ func (e *ExchangeSenderPassThrough) Close() error {
 type ExchangeReceiverPassThrough struct {
 	ExchangeReceiver
 
-	input chan *chunk.Chunk
+	chkCh   chan *chunk.Chunk
+	resCh   chan *chunk.Chunk
+	cleaned bool
 }
 
 func (e *ExchangeReceiverPassThrough) Open(ctx context.Context) error {
@@ -200,14 +202,26 @@ func (e *ExchangeReceiverPassThrough) Open(ctx context.Context) error {
 		return nil
 	}
 	e.opened = true
-	return e.baseExecutor.Open(ctx)
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
+	chk := newFirstChunk(e)
+	e.chkCh <- chk
+	return nil
 }
 
 func (e *ExchangeReceiverPassThrough) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	chk, ok := <-e.input
+	chk, ok := <-e.resCh
 	if ok {
 		req.SwapColumns(chk)
+		e.chkCh <- chk
+	} else {
+		if !e.cleaned {
+			clearChan(e.chkCh)
+			close(e.chkCh)
+			e.cleaned = true
+		}
 	}
 	return nil
 }
@@ -366,8 +380,11 @@ func (e *ExchangeReceiverPassThroughHT) Close() error {
 
 type ExchangeSenderHash struct {
 	ExchangeSender
-	outputs []chan *chunk.Chunk
+	chkChs      []chan *chunk.Chunk
+	resChs      []chan *chunk.Chunk
+	handleFlags []bool
 
+	childResult        *chunk.Chunk
 	hashPartitionChunk []*chunk.Chunk
 	hashColumns        []*expression.Column
 	hashContext
@@ -378,53 +395,65 @@ func (e *ExchangeSenderHash) Open(ctx context.Context) error {
 		return nil
 	}
 	e.opened = true
-	e.hashPartitionChunk = make([]*chunk.Chunk, len(e.outputs))
-	for i := range e.outputs {
-		e.hashPartitionChunk[i] = newFirstChunk(e)
+	e.hashPartitionChunk = make([]*chunk.Chunk, len(e.chkChs))
+	e.handleFlags = make([]bool, len(e.chkChs))
+	for i := 0; i < len(e.handleFlags); i++ {
+		e.handleFlags[i] = true
 	}
 	e.hashContext.allTypes = e.retFieldTypes
 	for _, col := range e.hashColumns {
 		e.hashContext.keyColIdx = append(e.hashContext.keyColIdx, col.Index)
 	}
+	e.childResult = newFirstChunk(e)
 	return e.baseExecutor.Open(ctx)
 }
 
 func (e *ExchangeSenderHash) sendAndCloseOutputs() {
-	for i, ch := range e.outputs {
-		if e.hashPartitionChunk[i].NumRows() > 0 {
-			ch <- e.hashPartitionChunk[i]
-		}
+	for _, ch := range e.resChs {
 		close(ch)
 	}
 }
 
-func (e *ExchangeSenderHash) Next(ctx context.Context, req *chunk.Chunk) error {
-	// req.Reset()
-	chk := newFirstChunk(e)
-	if err := Next(ctx, e.children[0], chk); err != nil {
+func (e *ExchangeSenderHash) Next(ctx context.Context, _ *chunk.Chunk) error {
+	if err := Next(ctx, e.children[0], e.childResult); err != nil {
 		e.sendAndCloseOutputs()
 		return err
 	}
-	if chk.NumRows() == 0 {
+	if e.childResult.NumRows() == 0 {
 		e.sendAndCloseOutputs()
 		return errors.New("sender hashPartition done")
 	}
-	e.initHash(chk.NumRows())
+	e.initHash(e.childResult.NumRows())
 	// Hash
 	for _, i := range e.hashContext.keyColIdx {
-		err := codec.HashChunkColumns(e.ctx.GetSessionVars().StmtCtx, e.hashVals, chk, e.allTypes[i], i, e.buf, e.hasNull)
+		err := codec.HashChunkColumns(e.ctx.GetSessionVars().StmtCtx, e.hashVals, e.childResult, e.allTypes[i], i, e.buf, e.hasNull)
 		if err != nil {
 			return err
 		}
 	}
-	// Partition
-	for i := 0; i < chk.NumRows(); i++ {
-		outputIndex := e.hashVals[i].Sum64() % uint64(len(e.outputs))
-		e.hashPartitionChunk[outputIndex].AppendRow(chk.GetRow(i))
-		if e.hashPartitionChunk[outputIndex].IsFull() {
-			e.outputs[outputIndex] <- e.hashPartitionChunk[outputIndex]
-			e.hashPartitionChunk[outputIndex] = newFirstChunk(e)
+
+	for i := 0; i < len(e.chkChs); i++ {
+		if e.handleFlags[i] {
+			e.hashPartitionChunk[i] = <-e.chkChs[i]
 		}
 	}
+
+	for i := 0; i < len(e.handleFlags); i++ {
+		e.handleFlags[i] = false
+	}
+	tmp := chunk.NewChunkWithOld(e.hashPartitionChunk[0])
+
+	// Partition
+	for i := 0; i < e.childResult.NumRows(); i++ {
+		outputIndex := e.hashVals[i].Sum64() % uint64(len(e.resChs))
+		e.hashPartitionChunk[outputIndex].AppendRow(e.childResult.GetRow(i))
+		e.handleFlags[outputIndex] = true
+	}
+	for i := 0; i < len(e.resChs); i++ {
+		if e.handleFlags[i] {
+			e.resChs[i] <- e.hashPartitionChunk[i]
+		}
+	}
+	e.childResult = tmp
 	return nil
 }
