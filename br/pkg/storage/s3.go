@@ -26,6 +26,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 )
@@ -43,6 +44,7 @@ const (
 	maxRetries = 7
 	// max number of retries when meets error
 	maxErrorRetries = 3
+	ec2MetaAddress  = "169.254.169.254"
 
 	// the maximum number of byte to read for seek.
 	maxSkipOffsetByRead = 1 << 16 // 64KB
@@ -723,6 +725,29 @@ func (rs *S3Storage) Create(ctx context.Context, name string) (ExternalFileWrite
 // retryerWithLog wrappes the client.DefaultRetryer, and logging when retry triggered.
 type retryerWithLog struct {
 	client.DefaultRetryer
+}
+
+func isDeadlineExceedError(err error) bool {
+	// TODO find a better way.
+	// Known challenges:
+	//
+	// If we want to unwrap the r.Error:
+	// 1. the err should be an awserr.Error (let it be awsErr)
+	// 2. awsErr.OrigErr() should be an *url.Error (let it be urlErr).
+	// 3. urlErr.Err should be a http.httpError (which is private).
+	//
+	// If we want to reterive the error from the request context:
+	// The error of context in the HTTPRequest (i.e. r.HTTPRequest.Context().Err() ) is nil.
+	return strings.Contains(err.Error(), "context deadline exceeded")
+}
+
+func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
+	if isDeadlineExceedError(r.Error) && r.HTTPRequest.URL.Host == ec2MetaAddress {
+		// fast fail for unreachable linklocal address in EC2 containers.
+		log.Warn("failed to get EC2 metadata. skipping.", logutil.ShortError(r.Error))
+		return false
+	}
+	return rl.DefaultRetryer.ShouldRetry(r)
 }
 
 func (rl retryerWithLog) RetryRules(r *request.Request) time.Duration {
