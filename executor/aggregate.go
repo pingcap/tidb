@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
+	"github.com/dgryski/go-farm"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
@@ -66,7 +67,8 @@ const (
 	// ref https://github.com/golang/go/blob/go1.15.6/src/reflect/type.go#L2162.
 	// defBucketMemoryUsage = bucketSize*(1+unsafe.Sizeof(string) + unsafe.Sizeof(slice))+2*ptrSize
 	// The bucket size may be changed by golang implement in the future.
-	defBucketMemoryUsage = 8*(1+16+24) + 16
+	defBucketMemoryUsage     = 8*(1+16+24) + 16
+	defPartitionsToBeSpilled = 4
 )
 
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
@@ -200,9 +202,9 @@ type HashAggExec struct {
 
 	stats *HashAggRuntimeStats
 
-	// listInDisk is the chunks to store row values for spilled data.
+	// listInDisks is the chunks to store row values for spilled data.
 	// The HashAggExec may be set to `spill mode` multiple times, and all spilled data will be appended to ListInDisk.
-	listInDisk *chunk.ListInDisk
+	listInDisks []*chunk.ListInDisk
 	// numOfSpilledChks indicates the number of all the spilled chunks.
 	numOfSpilledChks int
 	// offsetOfSpilledChks indicates the offset of the chunk be read from the disk.
@@ -212,12 +214,15 @@ type HashAggExec struct {
 	// When HashAgg is in `spill mode`, the size of `partialResultMap` is no longer growing and all the data fetched
 	// from the child executor is spilled to the disk.
 	inSpillMode uint32
-	// tmpChkForSpill is the temp chunk for spilling.
-	tmpChkForSpill *chunk.Chunk
+	// tmpChkForSpills is the temp chunk for spilling.
+	tmpChkForSpills []*chunk.Chunk
 	// spillAction save the Action for spilling.
 	spillAction *AggSpillDiskAction
 	// isChildDrained indicates whether the all data from child has been taken out.
 	isChildDrained bool
+	// offsetOfSpilledPartitions indicates the offset of the partition be read from the disk.
+	// In each round of processing, we need to re-fetch all the partitions spilled in the last one.
+	offsetOfSpilledPartitions int
 }
 
 // HashAggInput indicates the input of hash agg exec.
@@ -258,10 +263,12 @@ func (e *HashAggExec) Close() error {
 		if e.memTracker != nil {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
-		if e.listInDisk != nil {
-			firstErr = e.listInDisk.Close()
+		if e.listInDisks != nil {
+			for _, listInDisk := range e.listInDisks {
+				firstErr = listInDisk.Close()
+			}
 		}
-		e.spillAction, e.tmpChkForSpill = nil, nil
+		e.spillAction, e.tmpChkForSpills = nil, nil
 		if err := e.baseExecutor.Close(); firstErr == nil {
 			firstErr = err
 		}
@@ -338,13 +345,22 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.memTracker.Consume(e.childResult.MemoryUsage())
 
 	e.offsetOfSpilledChks, e.numOfSpilledChks = 0, 0
+	e.offsetOfSpilledPartitions = 0
 	e.executed, e.isChildDrained = false, false
-	e.listInDisk = chunk.NewListInDisk(retTypes(e.children[0]))
-	e.tmpChkForSpill = newFirstChunk(e.children[0])
+	e.listInDisks = make([]*chunk.ListInDisk, 0, defPartitionsToBeSpilled)
+	e.tmpChkForSpills = make([]*chunk.Chunk, 0, defPartitionsToBeSpilled)
+	for i := 0; i < defPartitionsToBeSpilled; i++ {
+		listInDisk := chunk.NewListInDisk(retTypes(e.children[0]))
+		e.listInDisks = append(e.listInDisks, listInDisk)
+		tmpChkForSpill := newFirstChunk(e.children[0])
+		e.tmpChkForSpills = append(e.tmpChkForSpills, tmpChkForSpill)
+	}
 	if e.ctx.GetSessionVars().TrackAggregateMemoryUsage && config.GetGlobalConfig().OOMUseTmpStorage {
 		e.diskTracker = disk.NewTracker(e.id, -1)
 		e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
-		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
+		for i := 0; i < defPartitionsToBeSpilled; i++ {
+			e.listInDisks[i].GetDiskTracker().AttachTo(e.diskTracker)
+		}
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
 	}
 }
@@ -955,8 +971,17 @@ func (e *HashAggExec) resetSpillMode() {
 	e.partialResultMap = make(aggPartialResultMapper)
 	e.bInMap = 0
 	e.prepared = false
-	e.executed = e.numOfSpilledChks == e.listInDisk.NumChunks() // No data is spilling again, all data have been processed.
-	e.numOfSpilledChks = e.listInDisk.NumChunks()
+	if e.offsetOfSpilledChks == e.listInDisks[e.offsetOfSpilledPartitions].NumChunks() {
+		e.offsetOfSpilledPartitions++
+		e.offsetOfSpilledChks = 0
+		for e.offsetOfSpilledPartitions < defPartitionsToBeSpilled && e.listInDisks[e.offsetOfSpilledPartitions].NumChunks() == 0 {
+			e.offsetOfSpilledPartitions++
+		}
+		e.executed = e.offsetOfSpilledPartitions == defPartitionsToBeSpilled // No data is spilling again, all data have been processed.
+	}
+	if !e.executed {
+		e.numOfSpilledChks = e.listInDisks[e.offsetOfSpilledPartitions].NumChunks()
+	}
 	e.memTracker.ReplaceBytesUsed(setSize)
 	atomic.StoreUint32(&e.inSpillMode, 0)
 }
@@ -964,9 +989,11 @@ func (e *HashAggExec) resetSpillMode() {
 // execute fetches Chunks from src and update each aggregate function for each row in Chunk.
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	defer func() {
-		if e.tmpChkForSpill.NumRows() > 0 && err == nil {
-			err = e.listInDisk.Add(e.tmpChkForSpill)
-			e.tmpChkForSpill.Reset()
+		for i, tmpChkForSpill := range e.tmpChkForSpills {
+			if tmpChkForSpill.NumRows() > 0 && err == nil {
+				err = e.listInDisks[i].Add(tmpChkForSpill)
+				tmpChkForSpill.Reset()
+			}
 		}
 	}()
 	for {
@@ -1020,7 +1047,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		// spill unprocessed data when exceeded.
 		if len(sel) > 0 {
 			e.childResult.SetSel(sel)
-			err = e.spillUnprocessedData(len(sel) == cap(sel))
+			err = e.spillUnprocessedData()
 			if err != nil {
 				return err
 			}
@@ -1031,18 +1058,18 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	}
 }
 
-func (e *HashAggExec) spillUnprocessedData(isFullChk bool) (err error) {
-	if isFullChk {
-		return e.listInDisk.Add(e.childResult)
-	}
+func (e *HashAggExec) spillUnprocessedData() (err error) {
 	for i := 0; i < e.childResult.NumRows(); i++ {
-		e.tmpChkForSpill.AppendRow(e.childResult.GetRow(i))
-		if e.tmpChkForSpill.IsFull() {
-			err = e.listInDisk.Add(e.tmpChkForSpill)
+		groupKey := e.groupKeyBuffer[e.childResult.GetRow(i).Idx()]
+		partitionIdx := farm.Hash32(groupKey) % defPartitionsToBeSpilled
+		tmpChkForSpill := e.tmpChkForSpills[partitionIdx]
+		tmpChkForSpill.AppendRow(e.childResult.GetRow(i))
+		if tmpChkForSpill.IsFull() {
+			err = e.listInDisks[partitionIdx].Add(tmpChkForSpill)
 			if err != nil {
 				return err
 			}
-			e.tmpChkForSpill.Reset()
+			tmpChkForSpill.Reset()
 		}
 	}
 	return nil
@@ -1061,7 +1088,7 @@ func (e *HashAggExec) getNextChunk(ctx context.Context) (err error) {
 		}
 	}
 	if e.offsetOfSpilledChks < e.numOfSpilledChks {
-		e.childResult, err = e.listInDisk.GetChunk(e.offsetOfSpilledChks)
+		e.childResult, err = e.listInDisks[e.offsetOfSpilledPartitions].GetChunk(e.offsetOfSpilledChks)
 		if err != nil {
 			return err
 		}
