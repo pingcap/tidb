@@ -5892,64 +5892,57 @@ func unfoldSelectList(list *ast.SetOprSelectList, unfoldList *ast.SetOprSelectLi
 // TODO: extracting all tables by vistor model maybe a better way
 func extractTableList(node ast.Node, input []*ast.TableName, asName bool) []*ast.TableName {
 	switch x := node.(type) {
-	case *ast.DeleteStmt:
-		input = extractTableList(x.TableRefs.TableRefs, input, asName)
-		if x.IsMultiTable {
-			for _, t := range x.Tables.Tables {
-				extractTableList(t, input, asName)
-			}
-		}
-		switch w := x.Where.(type) {
-		case *ast.PatternInExpr:
-			if s, ok := w.Sel.(*ast.SubqueryExpr); ok {
-				input = extractTableList(s, input, asName)
-			}
-		case *ast.ExistsSubqueryExpr:
-			if s, ok := w.Sel.(*ast.SubqueryExpr); ok {
-				input = extractTableList(s, input, asName)
-			}
-		case *ast.BinaryOperationExpr:
-			if s, ok := w.R.(*ast.SubqueryExpr); ok {
-				input = extractTableList(s, input, asName)
-			}
-		}
-	case *ast.UpdateStmt:
-		input = extractTableList(x.TableRefs.TableRefs, input, asName)
-		for _, e := range x.List {
-			input = extractTableList(e.Expr, input, asName)
-		}
-	case *ast.InsertStmt:
-		input = extractTableList(x.Table.TableRefs, input, asName)
-		input = extractTableList(x.Select, input, asName)
-	case *ast.SubqueryExpr:
-		input = extractTableList(x.Query, input, asName)
 	case *ast.SelectStmt:
 		input = extractTableList(x.From.TableRefs, input, asName)
-		switch w := x.Where.(type) {
-		case *ast.PatternInExpr:
-			if s, ok := w.Sel.(*ast.SubqueryExpr); ok {
-				input = extractTableList(s, input, asName)
-			}
-		case *ast.ExistsSubqueryExpr:
-			if s, ok := w.Sel.(*ast.SubqueryExpr); ok {
-				input = extractTableList(s, input, asName)
-			}
-		case *ast.BinaryOperationExpr:
-			if s, ok := w.R.(*ast.SubqueryExpr); ok {
-				input = extractTableList(s, input, asName)
-			}
+		if x.Where != nil {
+			input = extractTableList(x.Where, input, asName)
 		}
 		for _, f := range x.Fields.Fields {
 			if s, ok := f.Expr.(*ast.SubqueryExpr); ok {
 				input = extractTableList(s, input, asName)
 			}
 		}
+	case *ast.DeleteStmt:
+		input = extractTableList(x.TableRefs.TableRefs, input, asName)
+		if x.IsMultiTable {
+			for _, t := range x.Tables.Tables {
+				input = extractTableList(t, input, asName)
+			}
+		}
+		if x.Where != nil {
+			input = extractTableList(x.Where, input, asName)
+		}
+	case *ast.UpdateStmt:
+		input = extractTableList(x.TableRefs.TableRefs, input, asName)
+		for _, e := range x.List {
+			input = extractTableList(e.Expr, input, asName)
+		}
+		if x.Where != nil {
+			input = extractTableList(x.Where, input, asName)
+		}
+	case *ast.InsertStmt:
+		input = extractTableList(x.Table.TableRefs, input, asName)
+		input = extractTableList(x.Select, input, asName)
 	case *ast.SetOprStmt:
 		l := &ast.SetOprSelectList{}
 		unfoldSelectList(x.SelectList, l)
 		for _, s := range l.Selects {
 			input = extractTableList(s.(ast.ResultSetNode), input, asName)
 		}
+	case *ast.PatternInExpr:
+		if s, ok := x.Sel.(*ast.SubqueryExpr); ok {
+			input = extractTableList(s, input, asName)
+		}
+	case *ast.ExistsSubqueryExpr:
+		if s, ok := x.Sel.(*ast.SubqueryExpr); ok {
+			input = extractTableList(s, input, asName)
+		}
+	case *ast.BinaryOperationExpr:
+		if s, ok := x.R.(*ast.SubqueryExpr); ok {
+			input = extractTableList(s, input, asName)
+		}
+	case *ast.SubqueryExpr:
+		input = extractTableList(x.Query, input, asName)
 	case *ast.Join:
 		input = extractTableList(x.Left, input, asName)
 		input = extractTableList(x.Right, input, asName)

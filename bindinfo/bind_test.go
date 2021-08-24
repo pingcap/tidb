@@ -2501,6 +2501,7 @@ func (s *testSerialSuite) TestIssue27422(c *C) {
 		"create global binding for insert into t1 (select * from tmp1) using insert into t1 (select * from tmp1);",
 		"create global binding for update t1 inner join tmp1 on t1.a=tmp1.a set t1.a=1 using update t1 inner join tmp1 on t1.a=tmp1.a set t1.a=1",
 		"create global binding for update t1 set t1.a=(select a from tmp1) using update t1 set t1.a=(select a from tmp1)",
+		"create global binding for update t1 set t1.a=1 where t1.a = (select a from tmp1) using update t1 set t1.a=1 where t1.a = (select a from tmp1)",
 		"create global binding for delete from t1 where t1.a in (select a from tmp1) using delete from t1 where t1.a in (select a from tmp1)",
 		"create global binding for delete from t1 where t1.a = (select a from tmp1) using delete from t1 where t1.a = (select a from tmp1)",
 		"create global binding for delete t1 from t1,tmp1 using delete t1 from t1,tmp1",
