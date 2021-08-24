@@ -17,6 +17,7 @@ package core
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -415,12 +416,112 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 	return nil, nil
 }
 
+type columnWithLen struct {
+	column *expression.Column
+	length int
+}
+
 // candidatePath is used to maintain required info for skyline pruning.
 type candidatePath struct {
-	path               *util.AccessPath
-	accessCondsColSet  *intsets.Sparse // accessCondsColSet is the set of columns that occurred in the access conditions.
-	indexFiltersColSet *intsets.Sparse // indexFiltersColSet is the set of columns that occurred in the index filters.
-	isMatchProp        bool
+	path            *util.AccessPath
+	accessCondsCols []*columnWithLen // accessCondsCols is the sorted array of the columns that occurred in AccessConds.
+	indexCondsCols  []*columnWithLen // indexCondsCols is the sorted array of the columns that occurred in AccessConds or indexFilters.
+	isMatchProp     bool
+}
+
+func extractColumnsWithLens(exprs []expression.Expression, idxCols []*expression.Column, idxColLens []int) []*columnWithLen {
+	colsWithLens := make([]*columnWithLen, 0, len(idxCols))
+	for _, expr := range exprs {
+		colsWithLens = addColumnsWithLens(expr, idxCols, idxColLens, colsWithLens)
+	}
+	sort.Slice(colsWithLens, func(i, j int) bool {
+		return colsWithLens[i].column.UniqueID < colsWithLens[j].column.UniqueID
+	})
+	return colsWithLens
+}
+
+func addColumnsWithLens(expr expression.Expression, idxCols []*expression.Column, idxColLens []int, colsWithLens []*columnWithLen) []*columnWithLen {
+	switch v := expr.(type) {
+	case *expression.Column:
+		if idxCols == nil {
+			return append(colsWithLens, &columnWithLen{v, types.UnspecifiedLength})
+		}
+		for i, col := range idxCols {
+			if v.UniqueID == col.UniqueID {
+				return append(colsWithLens, &columnWithLen{v, idxColLens[i]})
+			}
+		}
+	case *expression.ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			colsWithLens = addColumnsWithLens(arg, idxCols, idxColLens, colsWithLens)
+		}
+	}
+	return colsWithLens
+}
+
+func compareLength(l, r int) int {
+	if l == types.UnspecifiedLength && r == types.UnspecifiedLength {
+		return 0
+	}
+	if l == types.UnspecifiedLength {
+		return 1
+	}
+	if r == types.UnspecifiedLength {
+		return -1
+	}
+	if l < r {
+		return -1
+	}
+	if l == r {
+		return 0
+	}
+	return 1
+}
+
+func firstDominateSecond(cols1, cols2 []*columnWithLen) bool {
+	if len(cols2) >= len(cols1) {
+		return false
+	}
+	i := 0
+	for _, col := range cols2 {
+		var found bool
+		for ; i < len(cols1); i++ {
+			if col.column.UniqueID == cols1[i].column.UniqueID {
+				res := compareLength(col.length, cols1[i].length)
+				if res == 1 {
+					return false
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func compareColumnsWithLens(lhs, rhs []*columnWithLen) (int, bool) {
+	lLen, rLen := len(lhs), len(rhs)
+	if lLen < rLen {
+		if firstDominateSecond(rhs, lhs) {
+			return -1, true
+		}
+		return 0, false
+	}
+	if lLen == rLen {
+		for i, lCol := range lhs {
+			if lCol.column.UniqueID != rhs[i].column.UniqueID || lCol.length != rhs[i].length {
+				return 0, false
+			}
+		}
+		return 0, true
+	}
+	if firstDominateSecond(lhs, rhs) {
+		return 1, true
+	}
+	return 0, false
 }
 
 // compareColumnSet will compares the two set. The last return value is used to indicate
@@ -458,7 +559,7 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 	if result == 0 && !lhs.path.IsSingleScan {
 		// if both lhs and rhs need to access table after IndexScan, we use the set of columns that occurred in IndexFilters
 		// to compare how many table rows will be accessed.
-		return compareColumnSet(lhs.indexFiltersColSet, rhs.indexFiltersColSet)
+		return compareColumnsWithLens(lhs.indexCondsCols, rhs.indexCondsCols)
 	}
 	return result, true
 }
@@ -470,7 +571,7 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 // If `x` is not worse than `y` at all factors,
 // and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 func compareCandidates(lhs, rhs *candidatePath) int {
-	setsResult, comparable := compareColumnSet(lhs.accessCondsColSet, rhs.accessCondsColSet)
+	setsResult, comparable := compareColumnsWithLens(lhs.accessCondsCols, rhs.accessCondsCols)
 	if !comparable {
 		return 0
 	}
@@ -543,15 +644,15 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
-	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
+	candidate.accessCondsCols = extractColumnsWithLens(path.AccessConds, nil, nil)
 	return candidate
 }
 
 func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchProp(path, prop)
-	candidate.accessCondsColSet = expression.ExtractColumnSet(path.AccessConds)
-	candidate.indexFiltersColSet = expression.ExtractColumnSet(path.IndexFilters)
+	candidate.accessCondsCols = extractColumnsWithLens(path.AccessConds, path.IdxCols, path.IdxColLens)
+	candidate.indexCondsCols = extractColumnsWithLens(append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
 	return candidate
 }
 

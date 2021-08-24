@@ -4281,3 +4281,13 @@ func (s *testIntegrationSerialSuite) TestTemporaryTableForCte(c *C) {
 	rows = tk.MustQuery("WITH RECURSIVE cte(a) AS (SELECT 1 UNION SELECT a+1 FROM tmp1 WHERE a < 5) SELECT * FROM cte order by a;")
 	rows.Check(testkit.Rows("1", "2", "3", "4", "5"))
 }
+
+func (s *testIntegrationSuite) TestIssue27313(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(100), b int, c int, index idx1(a(2), b), index idx2(a))")
+	tk.MustExec("explain format = 'verbose' select * from t where a = 'abcdefghijk' and b > 4")
+	// no warning indicates that idx2 is not pruned by idx1.
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
