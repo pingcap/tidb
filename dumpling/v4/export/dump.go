@@ -865,7 +865,7 @@ func getListTableTypeByConf(conf *Config) listTableType {
 }
 
 func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) error {
-	databases, err := prepareDumpingDatabases(conf, db)
+	databases, err := prepareDumpingDatabases(tctx, conf, db)
 	if err != nil {
 		return err
 	}

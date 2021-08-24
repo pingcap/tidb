@@ -17,6 +17,7 @@ var _ = Suite(&testBWListSuite{})
 type testBWListSuite struct{}
 
 func (s *testBWListSuite) TestFilterTables(c *C) {
+	tctx := tcontext.Background().WithLogger(appLogger)
 	dbTables := DatabaseTables{}
 	expectedDBTables := DatabaseTables{}
 
@@ -36,7 +37,11 @@ func (s *testBWListSuite) TestFilterTables(c *C) {
 		TableFilter: tableFilter,
 	}
 
+	databases := []string{filter.InformationSchemaName, filter.PerformanceSchemaName, "xxx", "yyy"}
+	c.Assert(filterDatabases(tctx, conf, databases), DeepEquals, databases)
+
 	conf.TableFilter = tf.NewSchemasFilter("xxx")
+	c.Assert(filterDatabases(tctx, conf, databases), DeepEquals, []string{"xxx"})
 	filterTables(tcontext.Background(), conf)
 	c.Assert(conf.Tables, HasLen, 1)
 	c.Assert(conf.Tables, DeepEquals, expectedDBTables)
