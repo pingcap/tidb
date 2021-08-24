@@ -3162,6 +3162,36 @@
           "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0, col_1, id),count(distinct col_2),group_concat(col_1, id),max(col_1),avg(id) from ts",
+        "Plan": [
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5, Column#6, Column#7, Column#8, div(Column#9, cast(case(eq(Column#19, 0), 1, Column#19), decimal(20,0) BINARY))->Column#9",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(distinct Column#33, Column#34, Column#35 separator \",\")->Column#5, funcs:count(distinct Column#36)->Column#6, funcs:group_concat(Column#37 separator \",\")->Column#7, funcs:max(Column#38)->Column#8, funcs:sum(Column#39)->Column#19, funcs:sum(Column#40)->Column#9",
+          "      └─Projection 1.00 batchCop[tiflash]  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#35, test.ts.col_2, Column#20, Column#21, Column#22, Column#23",
+          "        └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "            └─HashAgg 1.00 batchCop[tiflash]  group by:Column#29, Column#30, Column#31, Column#32, funcs:group_concat(Column#24, Column#25 separator \",\")->Column#20, funcs:max(Column#26)->Column#21, funcs:count(Column#27)->Column#22, funcs:sum(Column#28)->Column#23",
+          "              └─Projection 10000.00 batchCop[tiflash]  test.ts.col_1, cast(test.ts.id, var_string(20))->Column#25, test.ts.col_1, test.ts.id, cast(test.ts.id, decimal(15,4) BINARY)->Column#28, test.ts.col_0, test.ts.col_1, test.ts.id, test.ts.col_2",
+          "                └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0, col_1, id),count(distinct col_2),group_concat(col_1, id),max(col_1),avg(id) from ts group by col_0",
+        "Plan": [
+          "TableReader 8000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 batchCop[tiflash]  Column#5, Column#6, Column#7, Column#8, div(Column#9, cast(case(eq(Column#25, 0), 1, Column#25), decimal(20,0) BINARY))->Column#9",
+          "    └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#47, funcs:group_concat(distinct Column#39, Column#40, Column#41 separator \",\")->Column#5, funcs:count(distinct Column#42)->Column#6, funcs:group_concat(Column#43 separator \",\")->Column#7, funcs:max(Column#44)->Column#8, funcs:sum(Column#45)->Column#25, funcs:sum(Column#46)->Column#9",
+          "      └─Projection 8000.00 batchCop[tiflash]  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#41, test.ts.col_2, Column#26, Column#27, Column#28, Column#29, test.ts.col_0",
+          "        └─ExchangeReceiver 8000.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.ts.col_0, collate: N/A]",
+          "            └─HashAgg 8000.00 batchCop[tiflash]  group by:Column#35, Column#36, Column#37, Column#38, funcs:group_concat(Column#30, Column#31 separator \",\")->Column#26, funcs:max(Column#32)->Column#27, funcs:count(Column#33)->Column#28, funcs:sum(Column#34)->Column#29",
+          "              └─Projection 10000.00 batchCop[tiflash]  test.ts.col_1, cast(test.ts.id, var_string(20))->Column#31, test.ts.col_1, test.ts.id, cast(test.ts.id, decimal(15,4) BINARY)->Column#34, test.ts.col_0, test.ts.col_1, test.ts.id, test.ts.col_2",
+          "                └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
+        ]
       }
     ]
   }
