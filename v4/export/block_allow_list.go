@@ -8,6 +8,23 @@ import (
 	tcontext "github.com/pingcap/dumpling/v4/context"
 )
 
+func filterDatabases(tctx *tcontext.Context, conf *Config, databases []string) []string {
+	tctx.L().Debug("start to filter databases")
+	newDatabases := make([]string, 0, len(databases))
+	ignoreDatabases := make([]string, 0, len(databases))
+	for _, database := range databases {
+		if conf.TableFilter.MatchSchema(database) {
+			newDatabases = append(newDatabases, database)
+		} else {
+			ignoreDatabases = append(ignoreDatabases, database)
+		}
+	}
+	if len(ignoreDatabases) > 0 {
+		tctx.L().Debug("ignore database", zap.Strings("databases", ignoreDatabases))
+	}
+	return newDatabases
+}
+
 func filterTables(tctx *tcontext.Context, conf *Config) {
 	filterTablesFunc(tctx, conf, conf.TableFilter.MatchTable)
 }

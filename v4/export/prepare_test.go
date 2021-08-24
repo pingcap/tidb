@@ -21,7 +21,8 @@ func (s *testPrepareSuite) TestPrepareDumpingDatabases(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 	defer db.Close()
-	conn, err := db.Conn(context.Background())
+	tctx := tcontext.Background().WithLogger(appLogger)
+	conn, err := db.Conn(tctx)
 	c.Assert(err, IsNil)
 
 	rows := sqlmock.NewRows([]string{"Database"}).
@@ -32,7 +33,7 @@ func (s *testPrepareSuite) TestPrepareDumpingDatabases(c *C) {
 	mock.ExpectQuery("SHOW DATABASES").WillReturnRows(rows)
 	conf := defaultConfigForTest(c)
 	conf.Databases = []string{"db1", "db2", "db3"}
-	result, err := prepareDumpingDatabases(conf, conn)
+	result, err := prepareDumpingDatabases(tctx, conf, conn)
 	c.Assert(err, IsNil)
 	c.Assert(result, DeepEquals, []string{"db1", "db2", "db3"})
 
@@ -41,12 +42,12 @@ func (s *testPrepareSuite) TestPrepareDumpingDatabases(c *C) {
 		AddRow("db1").
 		AddRow("db2")
 	mock.ExpectQuery("SHOW DATABASES").WillReturnRows(rows)
-	result, err = prepareDumpingDatabases(conf, conn)
+	result, err = prepareDumpingDatabases(tctx, conf, conn)
 	c.Assert(err, IsNil)
 	c.Assert(result, DeepEquals, []string{"db1", "db2"})
 
 	mock.ExpectQuery("SHOW DATABASES").WillReturnError(fmt.Errorf("err"))
-	_, err = prepareDumpingDatabases(conf, conn)
+	_, err = prepareDumpingDatabases(tctx, conf, conn)
 	c.Assert(err, NotNil)
 
 	rows = sqlmock.NewRows([]string{"Database"}).
@@ -56,7 +57,7 @@ func (s *testPrepareSuite) TestPrepareDumpingDatabases(c *C) {
 		AddRow("db5")
 	mock.ExpectQuery("SHOW DATABASES").WillReturnRows(rows)
 	conf.Databases = []string{"db1", "db2", "db4", "db6"}
-	_, err = prepareDumpingDatabases(conf, conn)
+	_, err = prepareDumpingDatabases(tctx, conf, conn)
 	c.Assert(err, ErrorMatches, `Unknown databases \[db4,db6\]`)
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
