@@ -58,7 +58,7 @@ func (s *backendSuite) TestOpenCloseImportCleanUpEngine(c *C) {
 		Return(nil).
 		After(openCall)
 	importCall := s.mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID).
+		ImportEngine(ctx, engineUUID, gomock.Any()).
 		Return(nil).
 		After(closeCall)
 	s.mockBackend.EXPECT().
@@ -70,7 +70,7 @@ func (s *backendSuite) TestOpenCloseImportCleanUpEngine(c *C) {
 	c.Assert(err, IsNil)
 	closedEngine, err := engine.Close(ctx, nil)
 	c.Assert(err, IsNil)
-	err = closedEngine.Import(ctx)
+	err = closedEngine.Import(ctx, 1)
 	c.Assert(err, IsNil)
 	err = closedEngine.Cleanup(ctx)
 	c.Assert(err, IsNil)
@@ -252,12 +252,12 @@ func (s *backendSuite) TestImportFailedNoRetry(c *C) {
 
 	s.mockBackend.EXPECT().CloseEngine(ctx, nil, gomock.Any()).Return(nil)
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any()).
+		ImportEngine(ctx, gomock.Any(), gomock.Any()).
 		Return(errors.Annotate(context.Canceled, "fake unrecoverable import error"))
 
 	closedEngine, err := s.backend.UnsafeCloseEngine(ctx, nil, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
-	err = closedEngine.Import(ctx)
+	err = closedEngine.Import(ctx, 1)
 	c.Assert(err, ErrorMatches, "fake unrecoverable import error.*")
 }
 
@@ -269,14 +269,14 @@ func (s *backendSuite) TestImportFailedWithRetry(c *C) {
 
 	s.mockBackend.EXPECT().CloseEngine(ctx, nil, gomock.Any()).Return(nil)
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any()).
+		ImportEngine(ctx, gomock.Any(), gomock.Any()).
 		Return(errors.New("fake recoverable import error")).
 		MinTimes(2)
 	s.mockBackend.EXPECT().RetryImportDelay().Return(time.Duration(0)).AnyTimes()
 
 	closedEngine, err := s.backend.UnsafeCloseEngine(ctx, nil, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
-	err = closedEngine.Import(ctx)
+	err = closedEngine.Import(ctx, 1)
 	c.Assert(err, ErrorMatches, ".*fake recoverable import error")
 }
 
@@ -288,16 +288,16 @@ func (s *backendSuite) TestImportFailedRecovered(c *C) {
 
 	s.mockBackend.EXPECT().CloseEngine(ctx, nil, gomock.Any()).Return(nil)
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any()).
+		ImportEngine(ctx, gomock.Any(), gomock.Any()).
 		Return(errors.New("fake recoverable import error"))
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any()).
+		ImportEngine(ctx, gomock.Any(), gomock.Any()).
 		Return(nil)
 	s.mockBackend.EXPECT().RetryImportDelay().Return(time.Duration(0)).AnyTimes()
 
 	closedEngine, err := s.backend.UnsafeCloseEngine(ctx, nil, "`db`.`table`", 1)
 	c.Assert(err, IsNil)
-	err = closedEngine.Import(ctx)
+	err = closedEngine.Import(ctx, 1)
 	c.Assert(err, IsNil)
 }
 

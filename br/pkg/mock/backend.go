@@ -182,17 +182,17 @@ func (mr *MockBackendMockRecorder) FlushEngine(arg0, arg1 interface{}) *gomock.C
 }
 
 // ImportEngine mocks base method
-func (m *MockBackend) ImportEngine(arg0 context.Context, arg1 uuid.UUID) error {
+func (m *MockBackend) ImportEngine(arg0 context.Context, arg1 uuid.UUID, arg2 int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ImportEngine", arg0, arg1)
+	ret := m.ctrl.Call(m, "ImportEngine", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ImportEngine indicates an expected call of ImportEngine
-func (mr *MockBackendMockRecorder) ImportEngine(arg0, arg1 interface{}) *gomock.Call {
+func (mr *MockBackendMockRecorder) ImportEngine(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportEngine", reflect.TypeOf((*MockBackend)(nil).ImportEngine), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ImportEngine", reflect.TypeOf((*MockBackend)(nil).ImportEngine), arg0, arg1, arg2)
 }
 
 // LocalWriter mocks base method
