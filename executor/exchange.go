@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/codec"
 	"reflect"
 	"unsafe"
 
@@ -9,7 +10,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 var _ Executor = &ExchangeSender{}

@@ -451,11 +451,6 @@ func (a *ExecStmt) cutTreeByExchange(ctx context.Context, e Executor) error {
 }
 
 func (a *ExecStmt) cutTreeByExchangeHelper(ctx context.Context, e Executor) error {
-	if exec, ok := e.(*ExplainExec); ok {
-		if err := a.cutTreeByExchangeHelper(ctx, exec.analyzeExec); err != nil {
-			return err
-		}
-	}
 	for _, exec := range e.base().children {
 		if err := a.cutTreeByExchangeHelper(ctx, exec); err != nil {
 			return err
@@ -466,7 +461,6 @@ func (a *ExecStmt) cutTreeByExchangeHelper(ctx context.Context, e Executor) erro
 			}
 			a.startedSender[e.base().id] = true
 			go func(ctx context.Context, e Executor, startedSender map[int]bool) {
-				// req := newFirstChunk(e)
 				for {
 					if err := Next(ctx, e, nil); err != nil {
 						// TODO: another way to indicates done
