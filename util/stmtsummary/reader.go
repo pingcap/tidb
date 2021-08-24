@@ -31,8 +31,9 @@ import (
 
 // stmtSummaryReader uses to read the statement summaries data and convert to []datum row.
 type stmtSummaryReader struct {
-	user                 *auth.UserIdentity
-	isSuper              bool
+	user *auth.UserIdentity
+	// If the user has the 'PROCESS' privilege, he can read all the statements.
+	hasProcessPriv       bool
 	columns              []*model.ColumnInfo
 	instanceAddr         string
 	ssMap                *stmtSummaryByDigestMap
@@ -40,13 +41,13 @@ type stmtSummaryReader struct {
 }
 
 // NewStmtSummaryReader return a new statement summaries reader.
-func NewStmtSummaryReader(user *auth.UserIdentity, isSuper bool, cols []*model.ColumnInfo, instanceAddr string) *stmtSummaryReader {
+func NewStmtSummaryReader(user *auth.UserIdentity, hasProcessPriv bool, cols []*model.ColumnInfo, instanceAddr string) *stmtSummaryReader {
 	reader := &stmtSummaryReader{
-		user:         user,
-		isSuper:      isSuper,
-		columns:      cols,
-		instanceAddr: instanceAddr,
-		ssMap:        StmtSummaryByDigestMap,
+		user:           user,
+		hasProcessPriv: hasProcessPriv,
+		columns:        cols,
+		instanceAddr:   instanceAddr,
+		ssMap:          StmtSummaryByDigestMap,
 	}
 	// initialize column value factories.
 	reader.columnValueFactories = make([]columnValueFactory, len(reader.columns))
@@ -120,7 +121,7 @@ func (ssr *stmtSummaryReader) getStmtByDigestRow(ssbd *stmtSummaryByDigest, begi
 	// `ssElement` is lazy expired, so expired elements could also be read.
 	// `beginTime` won't change since `ssElement` is created, so locking is not needed here.
 	isAuthed := true
-	if ssr.user != nil && !ssr.isSuper {
+	if ssr.user != nil && !ssr.hasProcessPriv && ssElement != nil {
 		_, isAuthed = ssElement.authUsers[ssr.user.Username]
 	}
 	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval || !isAuthed {
@@ -146,7 +147,7 @@ func (ssr *stmtSummaryReader) getStmtByDigestHistoryRow(ssbd *stmtSummaryByDiges
 	rows := make([][]types.Datum, 0, len(ssElements))
 	for _, ssElement := range ssElements {
 		isAuthed := true
-		if ssr.user != nil && !ssr.isSuper {
+		if ssr.user != nil && !ssr.hasProcessPriv {
 			_, isAuthed = ssElement.authUsers[ssr.user.Username]
 		}
 		if isAuthed {
