@@ -470,7 +470,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *sql.Conn, met
 			return err
 		}
 		tctx.L().Warn("fallback to concurrent dump tables using rows due to tidb error",
-			zap.String("database", db), zap.String("table", tbl), zap.Error(err))
+			zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
 	}
 
 	orderByClause, err := buildOrderByClause(conf, conn, db, tbl, meta.HasImplicitRowID())
@@ -482,7 +482,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *sql.Conn, met
 	if err != nil || field == "" {
 		// skip split chunk logic if not found proper field
 		tctx.L().Warn("fallback to sequential dump due to no proper field",
-			zap.String("database", db), zap.String("table", tbl), zap.Error(err))
+			zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 	}
 
@@ -1023,7 +1023,7 @@ func startHTTPService(d *Dumper) error {
 		go func() {
 			err := startDumplingService(d.tctx, conf.StatusAddr)
 			if err != nil {
-				d.L().Warn("meet error when stopping dumpling http service", zap.Error(err))
+				d.L().Warn("meet error when stopping dumpling http service", log.ShortError(err))
 			}
 		}()
 	}
@@ -1080,16 +1080,17 @@ func tidbSetPDClientForGC(d *Dumper) error {
 	}
 	pdAddrs, err := GetPdAddrs(tctx, pool)
 	if err != nil {
-		return err
+		tctx.L().Warn("meet error while fetching pd addrs", log.ShortError(err))
+		return nil
 	}
 	if len(pdAddrs) > 0 {
 		doPdGC, err := checkSameCluster(tctx, pool, pdAddrs)
 		if err != nil {
-			tctx.L().Warn("meet error while check whether fetched pd addr and TiDB belong to one cluster", zap.Error(err), zap.Strings("pdAddrs", pdAddrs))
+			tctx.L().Warn("meet error while check whether fetched pd addr and TiDB belong to one cluster", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
 		} else if doPdGC {
 			pdClient, err := pd.NewClientWithContext(tctx, pdAddrs, pd.SecurityOption{})
 			if err != nil {
-				tctx.L().Warn("create pd client to control GC failed", zap.Error(err), zap.Strings("pdAddrs", pdAddrs))
+				tctx.L().Warn("create pd client to control GC failed", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
 			}
 			d.tidbPDClientForGC = pdClient
 		}
@@ -1105,13 +1106,13 @@ func tidbGetSnapshot(d *Dumper) error {
 	if conf.Snapshot == "" && (doPdGC || consistency == "snapshot") {
 		conn, err := pool.Conn(tctx)
 		if err != nil {
-			tctx.L().Warn("cannot get snapshot from TiDB", zap.Error(err))
+			tctx.L().Warn("cannot get snapshot from TiDB", log.ShortError(err))
 			return nil
 		}
 		snapshot, err := getSnapshot(conn)
 		_ = conn.Close()
 		if err != nil {
-			tctx.L().Warn("cannot get snapshot from TiDB", zap.Error(err))
+			tctx.L().Warn("cannot get snapshot from TiDB", log.ShortError(err))
 			return nil
 		}
 		conf.Snapshot = snapshot
@@ -1186,7 +1187,7 @@ func setSessionParam(d *Dumper) error {
 		if consistency == consistencyTypeSnapshot {
 			conf.ServerInfo.HasTiKV, err = CheckTiDBWithTiKV(pool)
 			if err != nil {
-				return err
+				d.L().Warn("fail to check whether TiDB has TiKV", log.ShortError(err))
 			}
 			if conf.ServerInfo.HasTiKV {
 				sessionParam["tidb_snapshot"] = snapshot

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tcontext "github.com/pingcap/dumpling/v4/context"
+	"github.com/pingcap/dumpling/v4/log"
 
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/br/pkg/summary"
@@ -177,12 +178,12 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 
 	defer func() {
 		if err != nil {
-			pCtx.L().Warn("fail to dumping table(chunk), will revert some metrics now",
-				zap.Error(err),
+			pCtx.L().Warn("fail to dumping table(chunk), will revert some metrics and start a retry if possible",
 				zap.String("database", meta.DatabaseName()),
 				zap.String("table", meta.TableName()),
 				zap.Uint64("finished rows", lastCounter),
-				zap.Uint64("finished size", wp.finishedFileSize))
+				zap.Uint64("finished size", wp.finishedFileSize),
+				log.ShortError(err))
 			SubGauge(finishedRowsGauge, cfg.Labels, float64(lastCounter))
 			SubGauge(finishedSizeGauge, cfg.Labels, float64(wp.finishedFileSize))
 		} else {
@@ -315,12 +316,12 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 
 	defer func() {
 		if err != nil {
-			pCtx.L().Warn("fail to dumping table(chunk), will revert some metrics now",
-				zap.Error(err),
+			pCtx.L().Warn("fail to dumping table(chunk), will revert some metrics and start a retry if possible",
 				zap.String("database", meta.DatabaseName()),
 				zap.String("table", meta.TableName()),
 				zap.Uint64("finished rows", lastCounter),
-				zap.Uint64("finished size", wp.finishedFileSize))
+				zap.Uint64("finished size", wp.finishedFileSize),
+				log.ShortError(err))
 			SubGauge(finishedRowsGauge, cfg.Labels, float64(lastCounter))
 			SubGauge(finishedSizeGauge, cfg.Labels, float64(wp.finishedFileSize))
 		} else {

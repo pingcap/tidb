@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/dumpling/v4/log"
+
 	"github.com/go-sql-driver/mysql"
 
 	tcontext "github.com/pingcap/dumpling/v4/context"
@@ -586,11 +588,10 @@ func GetPdAddrs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
 	query := "SELECT * FROM information_schema.cluster_info where type = 'pd';"
 	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
-		tctx.L().Warn("can't execute query from db",
-			zap.String("query", query), zap.Error(err))
 		return []string{}, errors.Annotatef(err, "sql: %s", query)
 	}
-	return GetSpecifiedColumnValueAndClose(rows, "STATUS_ADDRESS")
+	pdAddrs, err := GetSpecifiedColumnValueAndClose(rows, "STATUS_ADDRESS")
+	return pdAddrs, errors.Annotatef(err, "sql: %s", query)
 }
 
 // GetTiDBDDLIDs gets DDL IDs from TiDB
@@ -598,11 +599,10 @@ func GetTiDBDDLIDs(tctx *tcontext.Context, db *sql.DB) ([]string, error) {
 	query := "SELECT * FROM information_schema.tidb_servers_info;"
 	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
-		tctx.L().Warn("can't execute query from db",
-			zap.String("query", query), zap.Error(err))
 		return []string{}, errors.Annotatef(err, "sql: %s", query)
 	}
-	return GetSpecifiedColumnValueAndClose(rows, "DDL_ID")
+	ddlIDs, err := GetSpecifiedColumnValueAndClose(rows, "DDL_ID")
+	return ddlIDs, errors.Annotatef(err, "sql: %s", query)
 }
 
 // CheckTiDBWithTiKV use sql to check whether current TiDB has TiKV
@@ -612,7 +612,9 @@ func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	row := db.QueryRow(query)
 	err := row.Scan(&count)
 	if err != nil {
-		return false, errors.Annotatef(err, "sql: %s", query)
+		// still return true here. Because sometimes users may not have privileges for MySQL.TiDB database
+		// In most production cases TiDB has TiKV
+		return true, errors.Annotatef(err, "sql: %s", query)
 	}
 	return count > 0, nil
 }
@@ -995,8 +997,8 @@ func estimateCount(tctx *tcontext.Context, dbName, tableName string, db *sql.Con
 func detectEstimateRows(tctx *tcontext.Context, db *sql.Conn, query string, fieldNames []string) uint64 {
 	rows, err := db.QueryContext(tctx, query)
 	if err != nil {
-		tctx.L().Warn("can't execute query from db",
-			zap.String("query", query), zap.Error(err))
+		tctx.L().Warn("can't detect estimate rows from db",
+			zap.String("query", query), log.ShortError(err))
 		return 0
 	}
 	defer rows.Close()
@@ -1004,13 +1006,13 @@ func detectEstimateRows(tctx *tcontext.Context, db *sql.Conn, query string, fiel
 	columns, err := rows.Columns()
 	if err != nil {
 		tctx.L().Warn("can't get columns from db",
-			zap.String("query", query), zap.Error(err))
+			zap.String("query", query), log.ShortError(err))
 		return 0
 	}
 	err = rows.Err()
 	if err != nil {
 		tctx.L().Warn("rows meet some error during the query",
-			zap.String("query", query), zap.Error(err))
+			zap.String("query", query), log.ShortError(err))
 		return 0
 	}
 	addr := make([]interface{}, len(columns))
@@ -1031,14 +1033,14 @@ found:
 	err = rows.Scan(addr...)
 	if err != nil || fieldIndex < 0 {
 		tctx.L().Warn("can't get estimate count from db",
-			zap.String("query", query), zap.Error(err))
+			zap.String("query", query), log.ShortError(err))
 		return 0
 	}
 
 	estRows, err := strconv.ParseFloat(oneRow[fieldIndex].String, 64)
 	if err != nil {
 		tctx.L().Warn("can't get parse rows from db",
-			zap.String("query", query), zap.Error(err))
+			zap.String("query", query), log.ShortError(err))
 		return 0
 	}
 	return uint64(estRows)
