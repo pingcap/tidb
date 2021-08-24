@@ -866,7 +866,7 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 			go func(address string, body *bytes.Buffer) {
 				util.WithRecovery(func() {
 					url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), address, pdapi.HotHistory)
-					req, err := http.NewRequest(http.MethodPost, url, body)
+					req, err := http.NewRequest(http.MethodGet, url, body)
 					if err != nil {
 						ch <- hotRegionsStreamResult{err: errors.Trace(err)}
 						return
