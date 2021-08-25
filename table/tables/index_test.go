@@ -51,10 +51,10 @@ var s = testIndexSuite{}
 
 func TestSetUpSuite(t *testing.T) {
 	store, err := mockstore.NewMockStore()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	s.s = store
 	s.dom, err = session.BootstrapSession(store)
-	require.Nil(t, err)
+	require.NoError(t, err)
 }
 
 func TestIndex(t *testing.T) {
@@ -79,18 +79,18 @@ func TestIndex(t *testing.T) {
 
 	// Test ununiq index.
 	txn, err := s.s.Begin()
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	values := types.MakeDatums(1, 2)
 	mockCtx := mock.NewContext()
 	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(1), nil)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	it, err := index.SeekFirst(txn)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	getValues, h, err := it.Next()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Len(t, getValues, 2)
 	require.Equal(t, int64(1), getValues[0].GetInt64())
 	require.Equal(t, int64(2), getValues[1].GetInt64())
@@ -98,38 +98,38 @@ func TestIndex(t *testing.T) {
 	it.Close()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	exist, _, err := index.Exist(sc, txn, values, kv.IntHandle(100))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.False(t, exist)
 
 	exist, _, err = index.Exist(sc, txn, values, kv.IntHandle(1))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.True(t, exist)
 
 	err = index.Delete(sc, txn, values, kv.IntHandle(1))
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	it, err = index.SeekFirst(txn)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	_, _, err = it.Next()
 	require.Truef(t, terror.ErrorEqual(err, io.EOF), "err %v", err)
 	it.Close()
 
 	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(0), nil)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	_, err = index.SeekFirst(txn)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	_, hit, err := index.Seek(sc, txn, values)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.False(t, hit)
 
 	err = index.Drop(txn)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	it, hit, err = index.Seek(sc, txn, values)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.False(t, hit)
 
 	_, _, err = it.Next()
@@ -137,14 +137,14 @@ func TestIndex(t *testing.T) {
 	it.Close()
 
 	it, err = index.SeekFirst(txn)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	_, _, err = it.Next()
 	require.Truef(t, terror.ErrorEqual(err, io.EOF), "err %v", err)
 	it.Close()
 
 	err = txn.Commit(context.Background())
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	tblInfo = &model.TableInfo{
 		ID: 2,
@@ -168,19 +168,19 @@ func TestIndex(t *testing.T) {
 
 	// Test uniq index.
 	txn, err = s.s.Begin()
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(1), nil)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(2), nil)
 	require.NotNil(t, err)
 
 	it, err = index.SeekFirst(txn)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	getValues, h, err = it.Next()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Len(t, getValues, 2)
 	require.Equal(t, int64(1), getValues[0].GetInt64())
 	require.Equal(t, int64(2), getValues[1].GetInt64())
@@ -188,7 +188,7 @@ func TestIndex(t *testing.T) {
 	it.Close()
 
 	exist, h, err = index.Exist(sc, txn, values, kv.IntHandle(1))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, int64(1), h.IntValue())
 	require.True(t, exist)
 
@@ -198,22 +198,22 @@ func TestIndex(t *testing.T) {
 	require.True(t, exist)
 
 	err = txn.Commit(context.Background())
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	_, err = index.FetchValues(make([]types.Datum, 0), nil)
 	require.NotNil(t, err)
 
 	txn, err = s.s.Begin()
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	// Test the function of Next when the value of unique key is nil.
 	values2 := types.MakeDatums(nil, nil)
 	_, err = index.Create(mockCtx, txn, values2, kv.IntHandle(2), nil)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	it, err = index.SeekFirst(txn)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	getValues, h, err = it.Next()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Len(t, getValues, 2)
 	require.Equal(t, nil, getValues[0].GetInterface())
 	require.Equal(t, nil, getValues[1].GetInterface())
@@ -221,7 +221,7 @@ func TestIndex(t *testing.T) {
 	it.Close()
 
 	err = txn.Commit(context.Background())
-	require.Nil(t, err)
+	require.NoError(t, err)
 }
 
 func TestCombineIndexSeek(t *testing.T) {
@@ -246,21 +246,21 @@ func TestCombineIndexSeek(t *testing.T) {
 	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	txn, err := s.s.Begin()
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	mockCtx := mock.NewContext()
 	values := types.MakeDatums("abc", "def")
 	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(1), nil)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	index2 := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	iter, hit, err := index2.Seek(sc, txn, types.MakeDatums("abc", nil))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	defer iter.Close()
 	require.False(t, hit)
 	_, h, err := iter.Next()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, int64(1), h.IntValue())
 }
 
@@ -276,7 +276,7 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 		}
 	}
 	txn, err := s.s.Begin()
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	mockCtx := mock.NewContext()
 	sc := mockCtx.GetSessionVars().StmtCtx
@@ -284,29 +284,29 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 	idxColVals := types.MakeDatums(1)
 	handleColVals := types.MakeDatums("abc")
 	encodedHandle, err := codec.EncodeKey(sc, nil, handleColVals...)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	commonHandle, err := kv.NewCommonHandle(encodedHandle)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
 		key, _, err := idx.GenIndexKey(sc, idxColVals, commonHandle, nil)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle, nil)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		val, err := txn.Get(context.Background(), key)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault,
 			tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo))
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Len(t, colVals, 2)
 		_, d, err := codec.DecodeOne(colVals[0])
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, int64(1), d.GetInt64())
 		_, d, err = codec.DecodeOne(colVals[1])
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, "abc", d.GetString())
 		handle, err := tablecodec.DecodeIndexHandle(key, val, 1)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.False(t, handle.IsInt())
 		require.Equal(t, commonHandle.Encoded(), handle.Encoded())
 
@@ -314,7 +314,7 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 		unTouchedVal = append(unTouchedVal, kv.UnCommitIndexKVFlag)
 		_, err = tablecodec.DecodeIndexKV(key, unTouchedVal, 1, tablecodec.HandleDefault,
 			tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo))
-		require.Nil(t, err)
+		require.NoError(t, err)
 	}
 }
 
@@ -343,24 +343,24 @@ func TestMultiColumnCommonHandle(t *testing.T) {
 	require.NotNil(t, b)
 
 	txn, err := s.s.Begin()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	mockCtx := mock.NewContext()
 	sc := mockCtx.GetSessionVars().StmtCtx
 	// create index for "insert t values (3, 2, "abc", "abc")
 	idxColVals := types.MakeDatums("abc")
 	handleColVals := types.MakeDatums(3, 2)
 	encodedHandle, err := codec.EncodeKey(sc, nil, handleColVals...)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	commonHandle, err := kv.NewCommonHandle(encodedHandle)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	_ = idxNonUnique
 	for _, idx := range []table.Index{idxUnique, idxNonUnique} {
 		key, _, err := idx.GenIndexKey(sc, idxColVals, commonHandle, nil)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		_, err = idx.Create(mockCtx, txn, idxColVals, commonHandle, nil)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		val, err := txn.Get(context.Background(), key)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		colInfo := tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo)
 		colInfo = append(colInfo, rowcodec.ColInfo{
 			ID:         a.ID,
@@ -373,19 +373,19 @@ func TestMultiColumnCommonHandle(t *testing.T) {
 			Ft:         rowcodec.FieldTypeFromModelColumn(b),
 		})
 		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault, colInfo)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Len(t, colVals, 3)
 		_, d, err := codec.DecodeOne(colVals[0])
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, "abc", d.GetString())
 		_, d, err = codec.DecodeOne(colVals[1])
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, int64(3), d.GetInt64())
 		_, d, err = codec.DecodeOne(colVals[2])
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, int64(2), d.GetInt64())
 		handle, err := tablecodec.DecodeIndexHandle(key, val, 1)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.False(t, handle.IsInt())
 		require.Equal(t, commonHandle.Encoded(), handle.Encoded())
 	}
@@ -393,14 +393,14 @@ func TestMultiColumnCommonHandle(t *testing.T) {
 
 func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	return tblInfo
 }
 
 func TestTearDownSuite(t *testing.T) {
 	s.dom.Close()
 	err := s.s.Close()
-	require.Nil(t, err)
+	require.NoError(t, err)
 }
