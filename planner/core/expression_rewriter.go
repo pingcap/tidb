@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -893,11 +894,13 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	} else {
 		args := make([]expression.Expression, 0, np.Schema().Len())
 		for i, col := range np.Schema().Columns {
-			larg := expression.GetFuncArg(lexpr, i)
-			if !expression.ExprNotNull(larg) || !expression.ExprNotNull(col) {
-				rarg := *col
-				rarg.InOperand = true
-				col = &rarg
+			if v.Not || asScalar {
+				larg := expression.GetFuncArg(lexpr, i)
+				if !expression.ExprNotNull(larg) || !expression.ExprNotNull(col) {
+					rarg := *col
+					rarg.InOperand = true
+					col = &rarg
+				}
 			}
 			args = append(args, col)
 		}
@@ -1633,17 +1636,25 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 
 	expr, lexp, rexp := er.wrapExpWithCast()
 
-	var op string
-	var l, r expression.Expression
-	l, er.err = er.newFunction(ast.GE, &v.Type, expr, lexp)
-	if er.err == nil {
-		r, er.err = er.newFunction(ast.LE, &v.Type, expr, rexp)
-	}
-	op = ast.LogicAnd
+	er.err = expression.CheckIllegalMixCollation("between", []expression.Expression{expr, lexp, rexp}, types.ETInt)
 	if er.err != nil {
 		return
 	}
-	function, err := er.newFunction(op, &v.Type, l, r)
+
+	dstCharset, dstCollation := expression.DeriveCollationFromExprs(er.sctx, expr, lexp, rexp)
+
+	var l, r expression.Expression
+	l, er.err = expression.NewFunctionBase(er.sctx, ast.GE, &v.Type, expr, lexp)
+	if er.err != nil {
+		return
+	}
+	r, er.err = expression.NewFunctionBase(er.sctx, ast.LE, &v.Type, expr, rexp)
+	if er.err != nil {
+		return
+	}
+	l.SetCharsetAndCollation(dstCharset, dstCollation)
+	r.SetCharsetAndCollation(dstCharset, dstCollation)
+	function, err := er.newFunction(ast.LogicAnd, &v.Type, l, r)
 	if err != nil {
 		er.err = err
 		return

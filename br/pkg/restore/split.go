@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/tikv/pd/pkg/codec"
@@ -90,14 +91,6 @@ func (rs *RegionSplitter) Split(
 	}
 	minKey := codec.EncodeBytes(sortedRanges[0].StartKey)
 	maxKey := codec.EncodeBytes(sortedRanges[len(sortedRanges)-1].EndKey)
-	for _, rule := range rewriteRules.Data {
-		if bytes.Compare(minKey, rule.GetNewKeyPrefix()) > 0 {
-			minKey = rule.GetNewKeyPrefix()
-		}
-		if bytes.Compare(maxKey, rule.GetNewKeyPrefix()) < 0 {
-			maxKey = rule.GetNewKeyPrefix()
-		}
-	}
 	for _, rule := range rewriteRules.Data {
 		if bytes.Compare(minKey, rule.GetNewKeyPrefix()) > 0 {
 			minKey = rule.GetNewKeyPrefix()
@@ -294,6 +287,33 @@ func (rs *RegionSplitter) ScatterRegions(ctx context.Context, newRegions []*Regi
 	}
 }
 
+func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
+	// current pd can't guarantee the consistency of returned regions
+	if len(regions) == 0 {
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan region return empty result, startKey: %s, endkey: %s",
+			redact.Key(startKey), redact.Key(endKey))
+	}
+
+	if bytes.Compare(regions[0].Region.StartKey, startKey) > 0 {
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "first region's startKey > startKey, startKey: %s, regionStartKey: %s",
+			redact.Key(startKey), redact.Key(regions[0].Region.StartKey))
+	} else if len(regions[len(regions)-1].Region.EndKey) != 0 && bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
+		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "last region's endKey < startKey, startKey: %s, regionStartKey: %s",
+			redact.Key(endKey), redact.Key(regions[len(regions)-1].Region.EndKey))
+	}
+
+	cur := regions[0]
+	for _, r := range regions[1:] {
+		if !bytes.Equal(cur.Region.EndKey, r.Region.StartKey) {
+			return errors.Annotatef(berrors.ErrPDBatchScanRegion, "region endKey not equal to next region startKey, endKey: %s, startKey: %s",
+				redact.Key(cur.Region.EndKey), redact.Key(r.Region.StartKey))
+		}
+		cur = r
+	}
+
+	return nil
+}
+
 // PaginateScanRegion scan regions with a limit pagination and
 // return all regions at once.
 // It reduces max gRPC message size.
@@ -301,29 +321,65 @@ func PaginateScanRegion(
 	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
 ) ([]*RegionInfo, error) {
 	if len(endKey) != 0 && bytes.Compare(startKey, endKey) >= 0 {
-		return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "startKey >= endKey, startKey %s, endkey %s",
+		return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "startKey >= endKey, startKey: %s, endkey: %s",
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 	}
 
-	regions := []*RegionInfo{}
-	for {
-		batch, err := client.ScanRegions(ctx, startKey, endKey, limit)
-		if err != nil {
-			return nil, errors.Trace(err)
+	var regions []*RegionInfo
+	err := utils.WithRetry(ctx, func() error {
+		regions = []*RegionInfo{}
+		scanStartKey := startKey
+		for {
+			batch, err := client.ScanRegions(ctx, scanStartKey, endKey, limit)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			regions = append(regions, batch...)
+			if len(batch) < limit {
+				// No more region
+				break
+			}
+			scanStartKey = batch[len(batch)-1].Region.GetEndKey()
+			if len(scanStartKey) == 0 ||
+				(len(endKey) > 0 && bytes.Compare(scanStartKey, endKey) >= 0) {
+				// All key space have scanned
+				break
+			}
 		}
-		regions = append(regions, batch...)
-		if len(batch) < limit {
-			// No more region
-			break
+		if err := checkRegionConsistency(startKey, endKey, regions); err != nil {
+			log.Warn("failed to scan region, retrying", logutil.ShortError(err))
+			return err
 		}
-		startKey = batch[len(batch)-1].Region.GetEndKey()
-		if len(startKey) == 0 ||
-			(len(endKey) > 0 && bytes.Compare(startKey, endKey) >= 0) {
-			// All key space have scanned
-			break
-		}
+		return nil
+	}, newScanRegionBackoffer())
+
+	return regions, err
+}
+
+type scanRegionBackoffer struct {
+	attempt int
+}
+
+func newScanRegionBackoffer() utils.Backoffer {
+	return &scanRegionBackoffer{
+		attempt: 3,
 	}
-	return regions, nil
+}
+
+// NextBackoff returns a duration to wait before retrying again
+func (b *scanRegionBackoffer) NextBackoff(err error) time.Duration {
+	if berrors.ErrPDBatchScanRegion.Equal(err) {
+		// 500ms * 3 could be enough for splitting remain regions in the hole.
+		b.attempt--
+		return 500 * time.Millisecond
+	}
+	b.attempt = 0
+	return 0
+}
+
+// Attempt returns the remain attempt times
+func (b *scanRegionBackoffer) Attempt() int {
+	return b.attempt
 }
 
 // getSplitKeys checks if the regions should be split by the new prefix of the rewrites rule and the end key of

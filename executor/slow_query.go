@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -432,7 +433,11 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		if err != nil {
 			t := slowLogTask{}
 			t.resultCh = make(chan parsedSlowLog, 1)
-			e.taskList <- t
+			select {
+			case <-ctx.Done():
+				return
+			case e.taskList <- t:
+			}
 			e.sendParsedSlowLogCh(ctx, t, parsedSlowLog{nil, err})
 		}
 		if len(logs) == 0 || len(logs[0]) == 0 {

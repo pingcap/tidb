@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,21 +24,12 @@ import (
 	"unsafe"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/stretchr/testify/require"
 )
-
-func TestT(t *testing.T) {
-	check.TestingT(t)
-}
-
-var _ = check.Suite(&testChunkSuite{})
-
-type testChunkSuite struct{}
 
 func TestAppendRow(t *testing.T) {
 	t.Parallel()
@@ -1020,7 +1012,9 @@ func benchmarkChunkGrow(t benchChunkGrowCase) func(b *testing.B) {
 	}
 }
 
-func (s *testChunkSuite) TestAppendRows(c *check.C) {
+func TestAppendRows(t *testing.T) {
+	t.Parallel()
+
 	numCols := 6
 	numRows := 10
 	chk := newChunk(8, 8, 0, 0, 40, 0)
@@ -1034,11 +1028,11 @@ func (s *testChunkSuite) TestAppendRows(c *check.C) {
 		chk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
 		chk.AppendJSON(5, json.CreateBinary(str))
 	}
-	c.Assert(chk.NumCols(), check.Equals, numCols)
-	c.Assert(chk.NumRows(), check.Equals, numRows)
+	require.Equal(t, numCols, chk.NumCols())
+	require.Equal(t, numRows, chk.NumRows())
 
 	chk2 := newChunk(8, 8, 0, 0, 40, 0)
-	c.Assert(chk.NumCols(), check.Equals, numCols)
+	require.Equal(t, numCols, chk.NumCols())
 	rows := make([]Row, numRows)
 	for i := 0; i < numRows; i++ {
 		rows[i] = chk.GetRow(i)
@@ -1046,18 +1040,18 @@ func (s *testChunkSuite) TestAppendRows(c *check.C) {
 	chk2.AppendRows(rows)
 	for i := 0; i < numRows; i++ {
 		row := chk2.GetRow(i)
-		c.Assert(row.GetInt64(0), check.Equals, int64(0))
-		c.Assert(row.IsNull(0), check.IsTrue)
-		c.Assert(row.GetInt64(1), check.Equals, int64(i))
+		require.Equal(t, int64(0), row.GetInt64(0))
+		require.True(t, row.IsNull(0))
+		require.Equal(t, int64(i), row.GetInt64(1))
 		str := fmt.Sprintf(strFmt, i)
-		c.Assert(row.IsNull(2), check.IsFalse)
-		c.Assert(row.GetString(2), check.Equals, str)
-		c.Assert(row.IsNull(3), check.IsFalse)
-		c.Assert(row.GetBytes(3), check.BytesEquals, []byte(str))
-		c.Assert(row.IsNull(4), check.IsFalse)
-		c.Assert(row.GetMyDecimal(4).String(), check.Equals, str)
-		c.Assert(row.IsNull(5), check.IsFalse)
-		c.Assert(string(row.GetJSON(5).GetString()), check.Equals, str)
+		require.False(t, row.IsNull(2))
+		require.Equal(t, str, row.GetString(2))
+		require.False(t, row.IsNull(3))
+		require.Equal(t, []byte(str), row.GetBytes(3))
+		require.False(t, row.IsNull(4))
+		require.Equal(t, str, row.GetMyDecimal(4).String())
+		require.False(t, row.IsNull(5))
+		require.Equal(t, str, string(row.GetJSON(5).GetString()))
 	}
 }
 

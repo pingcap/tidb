@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -397,7 +398,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		// * utf8mb4, the multiple is 4
 		// We used to check non-string types to avoid the truncation problem in some MySQL
 		// client such as Navicat. Now we only allow string type enter this branch.
-		charsetDesc, err := charset.GetCharsetDesc(fld.Column.Charset)
+		charsetDesc, err := charset.GetCharsetInfo(fld.Column.Charset)
 		if err != nil {
 			ci.ColumnLength *= 4
 		} else {
