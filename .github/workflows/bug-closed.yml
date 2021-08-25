@@ -1,0 +1,26 @@
+name: Bug Closed
+
+on:
+  issues:
+    types:
+      - closed
+
+jobs:
+  label_issues:
+    if: contains(github.event.issue.labels.*.name, 'type/bug')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Label issues
+        uses: andymckay/labeler@1.0.3
+        with:
+          add-labels: "need-more-info"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Add comment
+        uses: peter-evans/create-or-update-comment@v1.4.5
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            Please check whether the issue should be labeled with 'affects-x.y.z' or 'backport-x.y.z', 
+            and then remove 'need-more-info' label.
