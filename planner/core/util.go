@@ -295,19 +295,6 @@ func extractStringFromStringSet(set set.StringSet) string {
 	return strings.Join(l, ",")
 }
 
-// extractStringFromIntSet helps extract string info from set.Int64Set.
-func extractStringFromIntSet(set set.Int64Set) string {
-	if len(set) < 1 {
-		return ""
-	}
-	l := make([]string, 0, len(set))
-	for k := range set {
-		l = append(l, fmt.Sprintf(`%d`, k))
-	}
-	sort.Strings(l)
-	return strings.Join(l, ",")
-}
-
 // extractStringFromUint64Slice helps extract string info from uint64 slice.
 func extractStringFromUint64Slice(slice []uint64) string {
 	if len(slice) < 1 {
