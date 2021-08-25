@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
