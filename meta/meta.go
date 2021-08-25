@@ -490,6 +490,18 @@ func (m *Meta) RestartSequenceValue(dbID int64, tableInfo *model.TableInfo, seqV
 	return errors.Trace(m.txn.HSet(m.dbKey(dbID), m.sequenceKey(tableInfo.ID), []byte(strconv.FormatInt(seqValue, 10))))
 }
 
+func (m *Meta) DropPolicy(policyID int64) error {
+	// Check if policy exists.
+	policyKey := m.policyKey(policyID)
+	if err := m.txn.HClear(policyKey); err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.txn.HDel(mPolicies, policyKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // DropDatabase drops whole database.
 func (m *Meta) DropDatabase(dbID int64) error {
 	// Check if db exists.
@@ -669,9 +681,13 @@ func (m *Meta) ListPolicies() ([]*placement.PolicyInfo, error) {
 func (m *Meta) GetPolicy(policyID int64) (*placement.PolicyInfo, error) {
 	policyKey := m.policyKey(policyID)
 	value, err := m.txn.HGet(mPolicies, policyKey)
-	if err != nil || value == nil {
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if value == nil {
+		return nil, ErrPolicyNotExists.GenWithStack("policy id : %d doesn't exist", policyID)
+	}
+
 	value, err = detachMagicByte(value)
 	if err != nil {
 		return nil, errors.Trace(err)
