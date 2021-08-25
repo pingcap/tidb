@@ -458,23 +458,6 @@ func (helper extractHelper) extractTimeRange(
 	return
 }
 
-// getQuantilesFunctionName is used to get the Quantiles(Int, Real, Decimal) range function name: GT, GE, LT, LE.
-// For these expression, then getQuantilesFunctionName will do a sample function name convert.
-func (helper extractHelper) getQuantilesFunctionName(fn *expression.ScalarFunction) string {
-	switch fn.Function.PbCode() {
-	case tipb.ScalarFuncSig_GTInt, tipb.ScalarFuncSig_GTReal, tipb.ScalarFuncSig_GTDecimal:
-		return ast.GT
-	case tipb.ScalarFuncSig_GEInt, tipb.ScalarFuncSig_GEReal, tipb.ScalarFuncSig_GEDecimal:
-		return ast.GE
-	case tipb.ScalarFuncSig_LTInt, tipb.ScalarFuncSig_LTReal, tipb.ScalarFuncSig_LTDecimal:
-		return ast.LT
-	case tipb.ScalarFuncSig_LEInt, tipb.ScalarFuncSig_LEReal, tipb.ScalarFuncSig_LEDecimal:
-		return ast.LE
-	default:
-		return fn.FuncName.L
-	}
-}
-
 func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 {
 	quantiles := make([]float64, 0, len(quantileSet))
 	for k := range quantileSet {
