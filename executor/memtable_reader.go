@@ -857,7 +857,7 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 						ch <- hotRegionsResult{err: errors.Trace(err)}
 						return
 					}
-					req.Header.Add("PD-Allow-follower-handle", "true")
+					req.Header.Add("PD-Allow-follower-handle", "false")
 					resp, err := util.InternalHTTPClient().Do(req)
 					if err != nil {
 						ch <- hotRegionsResult{err: errors.Trace(err)}
