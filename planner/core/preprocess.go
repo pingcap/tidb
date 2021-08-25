@@ -163,6 +163,7 @@ type preprocessor struct {
 	ctx    sessionctx.Context
 	flag   preprocessorFlag
 	stmtTp byte
+	showTp ast.ShowStmtType
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
@@ -226,6 +227,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.stmtTp = TypeShow
+		p.showTp = node.Tp
 		p.resolveShowStmt(node)
 	case *ast.SetOprSelectList:
 		p.checkSetOprSelectList(node)
@@ -369,7 +371,16 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 		return nil, errors.Trace(ErrNoDB)
 	}
 	sName := model.NewCIStr(currentDB)
-	tbl, err := p.ensureInfoSchema().TableByName(sName, tn.Name)
+	is := p.ensureInfoSchema()
+
+	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
+	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence) {
+		if tempAttachedIs, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
+			is = tempAttachedIs.InfoSchema
+		}
+	}
+
+	tbl, err := is.TableByName(sName, tn.Name)
 	if err != nil {
 		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
@@ -414,11 +425,14 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	var resNode ast.ResultSetNode
 	switch n := originNode.(type) {
 	case *ast.SelectStmt:
-		resNode = n.From.TableRefs
+		resNode = n
+	case *ast.SetOprStmt:
+		resNode = n
 	case *ast.DeleteStmt:
 		resNode = n.TableRefs.TableRefs
 	case *ast.UpdateStmt:
 		resNode = n.TableRefs.TableRefs
+	//TODO: What about insert into (select * from t)
 	case *ast.InsertStmt:
 		resNode = n.Table.TableRefs
 	}
@@ -871,7 +885,6 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 	}
 
 	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
-	nonExistsTables := make([]string, 0)
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
@@ -885,7 +898,7 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 
 		tbl, err := p.ensureInfoSchema().TableByName(schema, t.Name)
 		if infoschema.ErrTableNotExists.Equal(err) {
-			nonExistsTables = append(nonExistsTables, ast.Ident{Schema: schema, Name: t.Name}.String())
+			// Non-exist table will be checked in ddl executor
 			continue
 		}
 
@@ -899,14 +912,6 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 			p.err = ErrDropTableOnTemporaryTable
 			return
 		}
-
-		if stmt.TemporaryKeyword == ast.TemporaryLocal && tblInfo.TempTableType != model.TempTableLocal {
-			nonExistsTables = append(nonExistsTables, ast.Ident{Schema: schema, Name: t.Name}.String())
-		}
-	}
-
-	if len(nonExistsTables) > 0 {
-		p.err = infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(nonExistsTables, ","))
 	}
 }
 
@@ -1594,10 +1599,27 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	}
 	if p.LastSnapshotTS != 0 {
 		dom := domain.GetDomain(p.ctx)
-		p.InfoSchema, p.err = dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
-		if p.err != nil {
+		is, err := dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
+		// if infoschema is empty, LastSnapshotTS init failed
+		if err != nil {
+			p.err = err
 			return
 		}
+		if is == nil {
+			p.err = fmt.Errorf("can not get any information schema based on snapshotTS: %d", p.LastSnapshotTS)
+			return
+		}
+		// the same as session.wrapWithTemporaryTable
+		if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); !ok {
+			localTmp := p.ctx.GetSessionVars().LocalTemporaryTables
+			if localTmp != nil {
+				is = &infoschema.TemporaryTableAttachedInfoSchema{
+					InfoSchema:           is,
+					LocalTemporaryTables: localTmp.(*infoschema.LocalTemporaryTables),
+				}
+			}
+		}
+		p.InfoSchema = is
 	}
 	if p.flag&inPrepare == 0 {
 		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness

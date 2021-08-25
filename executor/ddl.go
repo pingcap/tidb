@@ -158,6 +158,21 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 				s.Tables = append(s.Tables[:tbIdx], s.Tables[tbIdx+1:]...)
 			}
 		}
+
+		// Statement `DROP TEMPORARY TABLE ...` should not have non-local temporary tables
+		if s.TemporaryKeyword == ast.TemporaryLocal && len(s.Tables) > 0 {
+			nonExistsTables := make([]string, 0, len(s.Tables))
+			for _, tn := range s.Tables {
+				nonExistsTables = append(nonExistsTables, ast.Ident{Schema: tn.Schema, Name: tn.Name}.String())
+			}
+			err = infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(nonExistsTables, ","))
+			if s.IfExists {
+				e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
+				return nil
+			}
+			return err
+		}
+
 		// if all tables are local temporary, directly drop those tables.
 		if len(s.Tables) == 0 {
 			return e.dropLocalTemporaryTables(localTempTablesToDrop)
@@ -806,7 +821,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 		return nil, nil, err
 	}
 	if tableInfo == nil || jobInfo == nil {
-		return nil, nil, errors.Errorf("Can't find dropped/truncated table: %v in DDL history jobs", tableName.Name)
+		return nil, nil, errors.Errorf("Can't find localTemporary/dropped/truncated table: %v in DDL history jobs", tableName.Name)
 	}
 	// Dropping local temporary tables won't appear in DDL jobs.
 	if tableInfo.TempTableType == model.TempTableGlobal {

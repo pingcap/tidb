@@ -204,7 +204,6 @@ CREATE TABLE t (
   KEY `expression_index2` ((timediff(`b`, '2021-03-30 08:10:00.000001'))),
   KEY `expression_index3` ((`d`+ timestamp'0000-00-00 00:00:00.00001'))
 );
-
 insert into t values ('2021-01-02', '2021-03-30 08:10:00', '12:01:03', '2021-08-13 04:10:44', 2021);
 select * from t use index(expression_index) where ADDDATE(a, interval 10 MICROSECOND) = ADDDATE('2021-01-02', interval 10 MICROSECOND);
 select * from t ignore index(expression_index) where ADDDATE(a, interval 10 MICROSECOND) = ADDDATE('2021-01-02', interval 10 MICROSECOND);
@@ -212,3 +211,24 @@ select * from t use index(expression_index2) where timediff(`b`, '2021-03-30 08:
 select * from t ignore index(expression_index2) where timediff(`b`, '2021-03-30 08:10:00.000001') = timediff('2021-03-30 08:10:00', '2021-03-30 08:10:00.000001');
 select * from t use index(expression_index3) where d+ timestamp'0000-00-00 00:00:00.00001' = timestamp'2021-08-13 04:10:44'+ timestamp'0000-00-00 00:00:00.00001';
 select * from t ignore index(expression_index3) where d+ timestamp'0000-00-00 00:00:00.00001' = timestamp'2021-08-13 04:10:44'+ timestamp'0000-00-00 00:00:00.00001';
+
+drop table if exists t;
+create table t(a int, b int as (a+1), key((a+1)), key(b));
+desc format = 'brief' select a+1 from t;
+desc format = 'brief' select b from t;
+
+create table t01(a varchar(20));
+insert into t01 values ("齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙");
+alter table t01 add index eidx ((concat_ws('expression_index', a, 'test')));
+select * from t01 use index (eidx)  where (concat_ws('expression_index', a, 'test')) not like (concat_ws('expression_index', "齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙", 'test'));
+insert into t01 values ("齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙");
+select * from t01 use index (eidx)  where (concat_ws('expression_index', a, 'test')) like (concat_ws('expression_index', "齆斮聒蚆髙锐潊贩哨啅捸爖斥圱犳飁綴纜牖蚙", 'test'));
+
+drop table if exists t1;
+create table t1(a char, b varchar(20), c char, d varchar(20));
+alter table t1 add index eidx ((export_set(3, a, c, ',', 5)));
+create table t02 (a varchar(20));
+insert into t02 values ('a'), ('b'), ('c');
+select * from t02 where lower(a) < 'c';
+create index eidx on t02 ((lower(a)));
+select * from t02 use index(eidx) where lower(a) < 'c';
