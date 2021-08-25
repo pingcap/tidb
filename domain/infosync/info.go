@@ -830,6 +830,9 @@ func PutLabelRule(ctx context.Context, rule *label.Rule) error {
 	if err != nil {
 		return err
 	}
+	if is.labelRuleManager == nil {
+		return nil
+	}
 	return is.labelRuleManager.PutLabelRule(ctx, rule)
 }
 
@@ -843,6 +846,9 @@ func UpdateLabelRules(ctx context.Context, patch *label.RulePatch) error {
 	if err != nil {
 		return err
 	}
+	if is.labelRuleManager == nil {
+		return nil
+	}
 	return is.labelRuleManager.UpdateLabelRules(ctx, patch)
 }
 
@@ -851,6 +857,9 @@ func GetAllLabelRules(ctx context.Context) ([]*label.Rule, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, err
+	}
+	if is.labelRuleManager == nil {
+		return nil, nil
 	}
 	return is.labelRuleManager.GetAllLabelRules(ctx)
 }
@@ -864,6 +873,9 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) ([]*label.Rule, error)
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, err
+	}
+	if is.labelRuleManager == nil {
+		return nil, nil
 	}
 	return is.labelRuleManager.GetLabelRules(ctx, ruleIDs)
 }
