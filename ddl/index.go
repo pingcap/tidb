@@ -863,6 +863,7 @@ func checkDropIndexes(tblInfo *model.TableInfo, job *model.Job, indexNames []mod
 		// Check for dropping duplicate indexes.
 		if UniqueIndexNames[indexName] {
 			if !ifExists[i] {
+				job.State = model.JobStateCancelled
 				return nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 			}
 			warnings = append(warnings, toTError(ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)))

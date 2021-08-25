@@ -7479,7 +7479,7 @@ func testDropIndexesIfExists(c *C, store kv.Storage) {
 	if _, err := tk.Exec("alter table test_drop_indexes_if_exists drop index i1, drop index if exists i3;"); true {
 		c.Assert(err, IsNil)
 	}
-	tk.MustQuery("show warnings").Check(
+	tk.MustQuery("show warnings;").Check(
 		testutil.RowsWithSep("|", "Warning|1091|index i3 doesn't exist"),
 	)
 
@@ -7495,7 +7495,7 @@ func testDropIndexesIfExists(c *C, store kv.Storage) {
 	if _, err := tk.Exec("alter table test_drop_indexes_if_exists drop index i2, drop index if exists i2;"); true {
 		c.Assert(err, IsNil)
 	}
-	tk.MustQuery("show warnings").Check(
+	tk.MustQuery("show warnings;").Check(
 		testutil.RowsWithSep("|", "Warning|1091|index i2 doesn't exist"),
 	)
 }
