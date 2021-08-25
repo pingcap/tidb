@@ -24,7 +24,7 @@ while read -r file testSuite; do
   dir=$(dirname "$file")
   if ! find "$dir" -name "*_test.go" -print0 | xargs -0 grep -E "_ = (check\.)?(Suite|SerialSuites)\((&?${testSuite}{|new\(${testSuite}\))" > /dev/null
   then
-    if find "$dir" -name "*_test.go" -print0 | xargs -0 grep -E "func \((.* )?\*?${testSuite}\) Test" > /dev/null
+    if find "$dir" -name "*_test.go" -print0 | xargs -0 grep -E "func \((.* )?\*?${testSuite}\) Test(.*)\(c \*C\)" > /dev/null
     then
       echo "${testSuite} in ${dir} is not enabled" && exitCode=1
     fi
