@@ -154,8 +154,8 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
 
    There are two config options need to be add in PD’s `config.go`:
 
-   * `HisHotRegionSaveInterval`:  time interval for pd to record hotspot region information, default: 15 minutes.
-   * `HisHotRegionTTL`: maximum hold day for his hot region, default: 30 days. 0 means close.
+   * `HisHotRegionSaveInterval`:  time interval for pd to record hotspot region information, default: 10 minutes.
+   * `HisHotRegionTTL`: maximum hold day for his hot region, default: 7 days. 0 means close.
    
 5. GC
 
