@@ -26,6 +26,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // MemTablePredicateExtractor is used to extract some predicates from `WHERE` clause
@@ -464,6 +466,7 @@ func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 
 		v, err := strconv.ParseFloat(k, 64)
 		if err != nil {
 			// ignore the parse error won't affect result.
+			log.Info("faild to parse float64 from string", zap.String("string:", k))
 			continue
 		}
 		quantiles = append(quantiles, v)
@@ -478,6 +481,7 @@ func (helper extractHelper) parseQuantilesUint64(quantileSet set.StringSet) []ui
 		v, err := strconv.ParseUint(k, 10, 64)
 		if err != nil {
 			// ignore the parse error won't affect result.
+			log.Info("faild to parse uint64 from string", zap.String("string:", k))
 			continue
 		}
 		quantiles = append(quantiles, v)
@@ -716,20 +720,26 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
-	// Extract the `region_id/store_id/peer_id/type/roles` columns
+	// Extract the `region_id/store_id/peer_id/is_leader` columns.
 	remained, regionIDSkipRequest, regionIDs := e.extractCol(schema, names, predicates, "region_id", false)
 	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false)
 	remained, peerIDSkipRequest, peerIDs := e.extractCol(schema, names, remained, "peer_id", false)
 	remained, isLeaderSkipRequest, roles := e.extractCol(schema, names, remained, "is_leader", false)
-	remained, typeSkipRequest, types := e.extractCol(schema, names, remained, "type", false)
 
-	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest || peerIDSkipRequest || typeSkipRequest || isLeaderSkipRequest
+	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest || peerIDSkipRequest || isLeaderSkipRequest
+	e.RegionIDs, e.StoreIDs = e.parseQuantilesUint64(regionIDs), e.parseQuantilesUint64(storeIDs)
+	e.PeerIDs, e.Roles = e.parseQuantilesUint64(peerIDs), e.parseQuantilesUint64(roles)
 	if e.SkipRequest {
 		return nil
 	}
-	e.RegionIDs, e.StoreIDs = e.parseQuantilesUint64(regionIDs), e.parseQuantilesUint64(storeIDs)
-	e.PeerIDs, e.Roles = e.parseQuantilesUint64(peerIDs), e.parseQuantilesUint64(roles)
+
+	// Extract the `type` columns.
+	remained, typeSkipRequest, types := e.extractCol(schema, names, remained, "type", false)
 	e.HotRegionTypes = types
+	e.SkipRequest = typeSkipRequest
+	if e.SkipRequest {
+		return nil
+	}
 
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "update_time", ctx.GetSessionVars().StmtCtx.TimeZone)
 	// The time unit for search hot regions is millisecond.
@@ -743,6 +753,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	if e.SkipRequest {
 		return nil
 	}
+
 	return remained
 }
 
