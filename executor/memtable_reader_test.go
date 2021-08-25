@@ -1087,7 +1087,7 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 
 	pdResps := []map[string]*executor.HistoryHotRegions{
 		{
-			executor.HotRegionTypeREAD: {
+			executor.HotRegionTypeRead: {
 				HistoryHotRegion: []*executor.HistoryHotRegion{
 					// mysql table_id = 11, record_id = 1, table_name = TABLES_PRIV
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:11"), RegionID: 1, StoreID: 1, PeerID: 11111, IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
@@ -1099,7 +1099,7 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x15, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 				},
 			},
-			executor.HotRegionTypeWRITE: {
+			executor.HotRegionTypeWrite: {
 				HistoryHotRegion: []*executor.HistoryHotRegion{
 					// mysql table_id = 11, record_id = 1, table_name = TABLES_PRIV
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:12"), RegionID: 2, StoreID: 2, PeerID: 22222, IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
@@ -1113,7 +1113,7 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 			},
 		},
 		{
-			executor.HotRegionTypeREAD: {
+			executor.HotRegionTypeRead: {
 				HistoryHotRegion: []*executor.HistoryHotRegion{
 					//      table_id = 131, record_id=1, deleted schema
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:15"), RegionID: 5, StoreID: 5, PeerID: 55555, IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
@@ -1125,7 +1125,7 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0xb, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 				},
 			},
-			executor.HotRegionTypeWRITE: {
+			executor.HotRegionTypeWrite: {
 				HistoryHotRegion: []*executor.HistoryHotRegion{
 					//      table_id = 131, record_id=1, deleted schema
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:16"), RegionID: 6, StoreID: 6, PeerID: 66666, IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
@@ -1139,7 +1139,7 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 			},
 		},
 		{
-			executor.HotRegionTypeREAD: {
+			executor.HotRegionTypeRead: {
 				HistoryHotRegion: []*executor.HistoryHotRegion{
 					// mysql table_id = 21 ,index_id = 1, index_value = 1, table_name = STATS_META, index_name = IDX_VER
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:19"), RegionID: 3, StoreID: 3, PeerID: 33333, IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
@@ -1155,7 +1155,7 @@ func (s *testHotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory(c *C) {
 						EndKey:   []byte{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0x83, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0xff, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0xfa}},
 				},
 			},
-			executor.HotRegionTypeWRITE: {
+			executor.HotRegionTypeWrite: {
 				HistoryHotRegion: []*executor.HistoryHotRegion{
 					// mysql table_id = 21 ,index_id = 1, index_value = 1, table_name = STATS_META, index_name = IDX_VER
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:20"), RegionID: 4, StoreID: 4, PeerID: 44444, IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
