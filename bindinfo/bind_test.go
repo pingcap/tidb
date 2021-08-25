@@ -2466,6 +2466,7 @@ func (s *testSerialSuite) TestIssue26377(c *C) {
 	tk.MustExec("create temporary table tmp2(a int(11), key idx_a(a));")
 
 	queries := []string{
+		"create global binding for with cte1 as (select a from tmp1) select * from cte1 using with cte1 as (select a from tmp1) select * from cte1",
 		"create global binding for select * from t1 inner join tmp1 on t1.a=tmp1.a using select * from  t1 inner join tmp1 on t1.a=tmp1.a;",
 		"create global binding for select * from t1 where t1.a in (select a from tmp1) using select * from t1 where t1.a in (select a from tmp1 use index (idx_a));",
 		"create global binding for select a from t1 union select a from tmp1 using select a from t1 union select a from tmp1 use index (idx_a);",
@@ -2502,6 +2503,7 @@ func (s *testSerialSuite) TestIssue27422(c *C) {
 		"create global binding for update t1 inner join tmp1 on t1.a=tmp1.a set t1.a=1 using update t1 inner join tmp1 on t1.a=tmp1.a set t1.a=1",
 		"create global binding for update t1 set t1.a=(select a from tmp1) using update t1 set t1.a=(select a from tmp1)",
 		"create global binding for update t1 set t1.a=1 where t1.a = (select a from tmp1) using update t1 set t1.a=1 where t1.a = (select a from tmp1)",
+		"create global binding for with cte1 as (select a from tmp1) update t1 set t1.a=1 where t1.a in (select a from cte1) using with cte1 as (select a from tmp1) update t1 set t1.a=1 where t1.a in (select a from cte1)",
 		"create global binding for delete from t1 where t1.a in (select a from tmp1) using delete from t1 where t1.a in (select a from tmp1)",
 		"create global binding for delete from t1 where t1.a = (select a from tmp1) using delete from t1 where t1.a = (select a from tmp1)",
 		"create global binding for delete t1 from t1,tmp1 using delete t1 from t1,tmp1",

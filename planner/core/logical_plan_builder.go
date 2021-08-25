@@ -5897,6 +5897,11 @@ func extractTableList(node ast.Node, input []*ast.TableName, asName bool) []*ast
 		if x.Where != nil {
 			input = extractTableList(x.Where, input, asName)
 		}
+		if x.With != nil {
+			for _, cte := range x.With.CTEs {
+				input = extractTableList(cte.Query, input, asName)
+			}
+		}
 		for _, f := range x.Fields.Fields {
 			if s, ok := f.Expr.(*ast.SubqueryExpr); ok {
 				input = extractTableList(s, input, asName)
@@ -5912,6 +5917,11 @@ func extractTableList(node ast.Node, input []*ast.TableName, asName bool) []*ast
 		if x.Where != nil {
 			input = extractTableList(x.Where, input, asName)
 		}
+		if x.With != nil {
+			for _, cte := range x.With.CTEs {
+				input = extractTableList(cte.Query, input, asName)
+			}
+		}
 	case *ast.UpdateStmt:
 		input = extractTableList(x.TableRefs.TableRefs, input, asName)
 		for _, e := range x.List {
@@ -5919,6 +5929,11 @@ func extractTableList(node ast.Node, input []*ast.TableName, asName bool) []*ast
 		}
 		if x.Where != nil {
 			input = extractTableList(x.Where, input, asName)
+		}
+		if x.With != nil {
+			for _, cte := range x.With.CTEs {
+				input = extractTableList(cte.Query, input, asName)
+			}
 		}
 	case *ast.InsertStmt:
 		input = extractTableList(x.Table.TableRefs, input, asName)
