@@ -29,11 +29,13 @@ func NextUntil(it Iterator, fn FnKeyCmp) error {
 	return nil
 }
 
+// SliceIter is used to iterate slice
 type SliceIter struct {
 	data []*Entry
 	cur  int
 }
 
+// NewSliceIter creates a new SliceIter
 func NewSliceIter(data []*Entry) *SliceIter {
 	return &SliceIter{
 		data,
