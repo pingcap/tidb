@@ -711,20 +711,20 @@ func StoreGlobalConfig(config *Config) {
 }
 
 var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl":                 {},
-	"pessimistic-txn.enable":              {},
-	"log.file.log-rotate":                 {},
-	"log.log-slow-query":                  {},
-	"txn-local-latches":                   {},
-	"txn-local-latches.enabled":           {},
-	"txn-local-latches.capacity":          {},
-	"performance.max-memory":              {},
-	"max-txn-time-use":                    {},
-	"experimental.allow-auto-random":      {},
-	"enable-redact-log":                   {}, // use variable tidb_redact_log instead
-	"tikv-client.copr-cache.enable":       {},
-	"alter-primary-key":                   {}, // use NONCLUSTERED keyword instead
-	"enable-streaming":                    {},
+	"pessimistic-txn.ttl":            {},
+	"pessimistic-txn.enable":         {},
+	"log.file.log-rotate":            {},
+	"log.log-slow-query":             {},
+	"txn-local-latches":              {},
+	"txn-local-latches.enabled":      {},
+	"txn-local-latches.capacity":     {},
+	"performance.max-memory":         {},
+	"max-txn-time-use":               {},
+	"experimental.allow-auto-random": {},
+	"enable-redact-log":              {}, // use variable tidb_redact_log instead
+	"tikv-client.copr-cache.enable":  {},
+	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
+	"enable-streaming":               {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
