@@ -4482,7 +4482,7 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	mb := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
 	c.Assert(mb.FieldType.Flen, Equals, 10)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00", "10000\x00\x00\x00\x00\x00"))
-	tk.MustGetErrMsg("alter table tt change a a binary(4);", "[types:1265]Data truncated for column 'a', value is '111\x00\x00\x00\x00\x00\x00\x00")
+	tk.MustGetErrMsg("alter table tt change a a binary(4);", "[types:1265]Data truncated for column 'a', value is '111\x00\x00\x00\x00\x00\x00\x00'")
 	tk.MustExec("alter table tt change a a binary(12);")
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00\x00\x00", "10000\x00\x00\x00\x00\x00\x00\x00"))
 	tk.MustQuery("select length(a) from tt").Check(testkit.Rows("12", "12"))
