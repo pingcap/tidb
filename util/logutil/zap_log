@@ -1,0 +1,1 @@
+[2021/10/28 16:11:21.984 +08:00] [INFO] [log.go:165] ["replaced global logger with config: {\"level\":\"info\",\"format\":\"text\",\"disable-timestamp\":false,\"file\":{\"filename\":\"zap_log\",\"max-size\":4096,\"max-days\":14,\"max-backups\":0},\"development\":false,\"disable-caller\":false,\"disable-stacktrace\":false,\"disable-error-verbose\":false,\"sampling\":null}"]
