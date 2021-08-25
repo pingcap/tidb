@@ -95,6 +95,9 @@ type mockLabelManager struct {
 func (mm *mockLabelManager) PutLabelRule(ctx context.Context, rule *label.Rule) error {
 	mm.Lock()
 	defer mm.Unlock()
+	if rule == nil {
+		return nil
+	}
 	mm.labelRules[rule.ID] = rule
 	return nil
 }
@@ -103,6 +106,9 @@ func (mm *mockLabelManager) PutLabelRule(ctx context.Context, rule *label.Rule) 
 func (mm *mockLabelManager) UpdateLabelRules(ctx context.Context, patch *label.RulePatch) error {
 	mm.Lock()
 	defer mm.Unlock()
+	if patch == nil {
+		return nil
+	}
 	for _, p := range patch.DeleteRules {
 		delete(mm.labelRules, p)
 	}
@@ -127,7 +133,7 @@ func (mm *mockLabelManager) GetAllLabelRules(ctx context.Context) ([]*label.Rule
 func (mm *mockLabelManager) GetLabelRules(ctx context.Context, ruleIDs []string) ([]*label.Rule, error) {
 	mm.RLock()
 	defer mm.RUnlock()
-	r := make([]*label.Rule, len(mm.labelRules))
+	r := make([]*label.Rule, len(ruleIDs))
 	for _, ruleID := range ruleIDs {
 		for _, labelRule := range mm.labelRules {
 			if labelRule.ID == ruleID {
