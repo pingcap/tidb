@@ -68,7 +68,7 @@ func (a *AggFuncDesc) String() string {
 	}
 	for i, arg := range a.OrderByItems {
 		buffer.WriteString(arg.String())
-		if i+1 != len(a.Args) {
+		if i+1 != len(a.OrderByItems) {
 			buffer.WriteString(", ")
 		}
 	}

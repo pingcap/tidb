@@ -15,7 +15,6 @@
 package aggregation
 
 import (
-	"fmt"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -31,12 +30,6 @@ import (
 
 // AggFuncToPBExpr converts aggregate function to pb.
 func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFuncDesc) *tipb.Expr {
-	// if aggFunc.HasDistinct {
-	// do nothing and ignore aggFunc.HasDistinct
-	// }
-	if len(aggFunc.OrderByItems) > 0 && aggFunc.Name != ast.AggFuncGroupConcat {
-		return nil
-	}
 	pc := expression.NewPBConverter(client, sctx.GetSessionVars().StmtCtx)
 	var tp tipb.ExprType
 	switch aggFunc.Name {
@@ -99,12 +92,14 @@ func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFunc
 		// encode GroupConcatMaxLen
 		GCMaxLen, err := variable.GetSessionOrGlobalSystemVar(sctx.GetSessionVars(), variable.GroupConcatMaxLen)
 		if err != nil {
-			panic(fmt.Sprintf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen))
+			return nil
 		}
 		maxLen, err := strconv.ParseUint(GCMaxLen, 10, 64)
 		// Should never happen
 		if err != nil {
-			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", err.Error()))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Error happened when buildGroupConcat: %s", err.Error()))
+			return nil
 		}
 		return &tipb.Expr{Tp: tp, Val: codec.EncodeUint(nil, maxLen), Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct, OrderBy: orderBy}
 	}
