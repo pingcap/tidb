@@ -1,5 +1,6 @@
 run:
   timeout: 7m
+
 linters:
   disable-all: true
   enable:
@@ -16,6 +17,7 @@ linters:
     - staticcheck
     - stylecheck
     - gosec
+
 linters-settings:
   staticcheck:
     checks: ["S1002","S1004","S1007","S1009","S1010","S1012","S1019","S1020","S1021","S1024","S1030","SA2*","SA3*","SA4009","SA5*","SA6000","SA6001","SA6005", "-SA2002"]
@@ -24,9 +26,14 @@ linters-settings:
   gosec:
     excludes:
       - G601
+
 issues:
   exclude-rules:
     - path: _test\.go
+      linters:
+        - errcheck
+        - gosec
+    - path: br
       linters:
         - errcheck
         - gosec
