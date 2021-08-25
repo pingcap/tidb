@@ -52,7 +52,7 @@ func (s *RangedKVRetriever) Intersect(startKey, endKey kv.Key) *RangedKVRetrieve
 	}
 
 	minEndKey := endKey
-	if len(minEndKey) == 0 || (len(minEndKey) > 0 && len(s.EndKey) > 0 && bytes.Compare(s.EndKey, minEndKey) < 0) {
+	if len(minEndKey) == 0 || (len(s.EndKey) > 0 && bytes.Compare(s.EndKey, minEndKey) < 0) {
 		minEndKey = s.EndKey
 	}
 
