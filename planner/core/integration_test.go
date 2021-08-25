@@ -3952,6 +3952,7 @@ func (s *testIntegrationSerialSuite) TestIssue27167(c *C) {
 	tk.MustExec(`insert into all_types values(0, 0, 1, 2, 3, 1.5, 2.2, 10.23, 12, 'xy', '2021-12-12', '2021-12-12 12:00:00', '2021-12-12 12:00:00', '123');`)
 
 	tk.MustQuery("select * from (select d_date c from all_types union select d_int c from all_types) t order by c;").Check(testkit.Rows("2", "2021-12-12"))
+	tk.MustQuery("select * from (select d_date c from all_types union select d_int collate binary c from all_types) t order by c;").Check(testkit.Rows("2", "2021-12-12"))
 	tk.MustQuery("select * from (select d_date c from all_types union select d_float c from all_types) t order by c;").Check(testkit.Rows("1.5", "2021-12-12"))
 	// timestamp also OK
 	tk.MustQuery("select * from (select d_timestamp c from all_types union select d_float c from all_types) t order by c;").Check(testkit.Rows("1.5", "2021-12-12 12:00:00"))

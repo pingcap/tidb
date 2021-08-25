@@ -153,24 +153,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	}
 
 	for i := range args {
-		switch argTps[i] {
-		case types.ETInt:
-			args[i] = WrapWithCastAsInt(ctx, args[i])
-		case types.ETReal:
-			args[i] = WrapWithCastAsReal(ctx, args[i])
-		case types.ETDecimal:
-			args[i] = WrapWithCastAsDecimal(ctx, args[i])
-		case types.ETString:
-			args[i] = WrapWithCastAsString(ctx, args[i])
-		case types.ETDatetime:
-			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeDatetime))
-		case types.ETTimestamp:
-			args[i] = WrapWithCastAsTime(ctx, args[i], types.NewFieldType(mysql.TypeTimestamp))
-		case types.ETDuration:
-			args[i] = WrapWithCastAsDuration(ctx, args[i])
-		case types.ETJson:
-			args[i] = WrapWithCastAsJSON(ctx, args[i])
-		}
+		args[i] = WrapWithCast(ctx, argTps[i], args[i])
 	}
 
 	if err = CheckIllegalMixCollation(funcName, args, retType); err != nil {
@@ -260,6 +243,30 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	bf.SetCharsetAndCollation(derivedCharset, derivedCollate)
 	bf.setCollator(collate.GetCollator(derivedCollate))
 	return bf, nil
+}
+
+// WrapWithCast cast expression to result type(ignore result charset collation and collation)
+func WrapWithCast(ctx sessionctx.Context, Tps types.EvalType, expr Expression) Expression {
+	switch Tps {
+	case types.ETInt:
+		return WrapWithCastAsInt(ctx, expr)
+	case types.ETReal:
+		return WrapWithCastAsReal(ctx, expr)
+	case types.ETDecimal:
+		return WrapWithCastAsDecimal(ctx, expr)
+	case types.ETString:
+		return WrapWithCastAsString(ctx, expr)
+	case types.ETDatetime:
+		return WrapWithCastAsTime(ctx, expr, types.NewFieldType(mysql.TypeDatetime))
+	case types.ETTimestamp:
+		return WrapWithCastAsTime(ctx, expr, types.NewFieldType(mysql.TypeTimestamp))
+	case types.ETDuration:
+		return WrapWithCastAsDuration(ctx, expr)
+	case types.ETJson:
+		return WrapWithCastAsJSON(ctx, expr)
+	default:
+		return expr
+	}
 }
 
 // newBaseBuiltinFuncWithFieldType create BaseBuiltinFunc with FieldType charset and collation.

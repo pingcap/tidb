@@ -1373,9 +1373,15 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			resultTp = unionJoinFieldType(resultTp, childTp)
 		}
 
+		for i := range tmpExprs {
+			tmpExprs[i] = expression.WrapWithCast(u.ctx, resultTp.EvalType(), tmpExprs[i])
+		}
+
 		if err := expression.CheckIllegalMixCollation("UNION", tmpExprs, types.ETInt); err != nil {
 			return err
 		}
+
+		resultTp.Charset, resultTp.Collate = expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
 
 		names = append(names, &types.FieldName{ColName: u.children[0].OutputNames()[i].ColName})
 		unionCols = append(unionCols, &expression.Column{
@@ -1386,61 +1392,31 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 	u.schema = expression.NewSchema(unionCols...)
 	u.names = names
 
-	allExprs := make([][]expression.Expression, 0)
-	for _, child := range u.children {
+	// Process each child and add a projection above original child.
+	// So the schema of `UnionAll` can be the same with its children's.
+	for childID, child := range u.children {
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
 		for i, srcCol := range child.Schema().Columns {
 			dstType := unionCols[i].RetType
 			srcType := srcCol.RetType
-
-			if srcType.Tp != dstType.Tp {
-				exprs[i] = castToRes(dstType, u.ctx, srcCol)
+			if !srcType.Equal(dstType) {
+				exprs[i] = expression.BuildCastFunction4Union(b.ctx, srcCol, dstType)
 			} else {
 				exprs[i] = srcCol
 			}
 		}
-
-		allExprs = append(allExprs, exprs)
-	}
-
-	// use cast type to modify result charset and collation
-	for i := 0; i < len(u.children[0].Schema().Columns); i++ {
-		tmpExprs := make([]expression.Expression, 0, len(u.Children()))
-		for j := 0; j < len(u.children); j++ {
-			tmpExprs = append(tmpExprs, allExprs[j][i])
+		b.optFlag |= flagEliminateProjection
+		proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
+		proj.SetSchema(u.schema.Clone())
+		// reset the schema type to make the "not null" flag right.
+		for i, expr := range exprs {
+			proj.schema.Columns[i].RetType = expr.GetType()
 		}
-
-		dstType := unionCols[i].RetType
-		dstType.Charset, dstType.Collate = expression.DeriveCollationFromExprs(b.ctx, tmpExprs...)
+		proj.SetChildren(child)
+		u.children[childID] = proj
 	}
-
-	buildLogicalUnionAll(u, unionCols, b)
 
 	return nil
-}
-
-// castToRes cast to col to result type(ignore result charset collation and collation)
-func castToRes(resType *types.FieldType, ctx sessionctx.Context, col *expression.Column) expression.Expression {
-	switch resType.EvalType() {
-	case types.ETInt:
-		return expression.WrapWithCastAsInt(ctx, col)
-	case types.ETReal:
-		return expression.WrapWithCastAsReal(ctx, col)
-	case types.ETDecimal:
-		return expression.WrapWithCastAsDecimal(ctx, col)
-	case types.ETString:
-		return expression.WrapWithCastAsString(ctx, col)
-	case types.ETDatetime:
-		return expression.WrapWithCastAsTime(ctx, col, types.NewFieldType(mysql.TypeDatetime))
-	case types.ETTimestamp:
-		return expression.WrapWithCastAsTime(ctx, col, types.NewFieldType(mysql.TypeTimestamp))
-	case types.ETDuration:
-		return expression.WrapWithCastAsDuration(ctx, col)
-	case types.ETJson:
-		return expression.WrapWithCastAsJSON(ctx, col)
-	default:
-		return col
-	}
 }
 
 // buildLogicalUnionAll process each child and add a projection above original child.
