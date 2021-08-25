@@ -44,10 +44,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 	"google.golang.org/grpc"
 )
 
@@ -76,7 +74,6 @@ func (p *mockBinlogPump) PullBinlogs(req *binlog.PullBinlogReq, srv binlog.Pump_
 }
 
 type testBinlogSuite struct {
-	suite.Suite
 	store    kv.Storage
 	domain   *domain.Domain
 	unixFile string
@@ -88,8 +85,8 @@ type testBinlogSuite struct {
 
 const maxRecvMsgSize = 64 * 1024
 
-func (s *testBinlogSuite) SetupSuite() {
-	t := s.T()
+func SetUpTest(t *testing.T) *testBinlogSuite {
+	s := new(testBinlogSuite)
 	store, err := mockstore.NewMockStore()
 	require.Nil(t, err)
 	s.store = store
@@ -119,10 +116,11 @@ func (s *testBinlogSuite) SetupSuite() {
 
 	s.client = binloginfo.MockPumpsClient(binlog.NewPumpClient(clientCon))
 	s.ddl.SetBinlogClient(s.client)
+
+	return s
 }
 
-func (s *testBinlogSuite) TearDownSuite() {
-	t := s.T()
+func TearDownTest(t *testing.T, s *testBinlogSuite) {
 	err := s.ddl.Stop()
 	require.Nil(t, err)
 	s.serv.Stop()
@@ -135,17 +133,10 @@ func (s *testBinlogSuite) TearDownSuite() {
 	require.Nil(t, err)
 }
 
-func TestBinlogSuite(t *testing.T) {
-	logLevel := os.Getenv("log_level")
-	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	suite.Run(t, new(testBinlogSuite))
-}
+func TestBinlog(t *testing.T) {
+	s := SetUpTest(t)
+	defer TearDownTest(t, s)
 
-func (s *testBinlogSuite) TestBinlog() {
-	t := s.T()
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().BinlogClient = s.client
@@ -285,8 +276,10 @@ func (s *testBinlogSuite) TestBinlog() {
 	require.Equal(t, originBinlogLen, newBinlogLen)
 }
 
-func (s *testBinlogSuite) TestMaxRecvSize() {
-	t := s.T()
+func TestMaxRecvSize(t *testing.T) {
+	s := SetUpTest(t)
+	defer TearDownTest(t, s)
+
 	info := &binloginfo.BinlogInfo{
 		Data: &binlog.Binlog{
 			Tp:            binlog.BinlogType_Prewrite,
@@ -400,8 +393,10 @@ func mutationRowsToRows(t *testing.T, mutationRows [][]byte, columnValueOffsets 
 	return rows
 }
 
-func (s *testBinlogSuite) TestBinlogForSequence() {
-	t := s.T()
+func TestBinlogForSequence(t *testing.T) {
+	s := SetUpTest(t)
+	defer TearDownTest(t, s)
+
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit", `return(true)`))
 	defer func() {
 		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit"))
@@ -480,8 +475,10 @@ func (s *testBinlogSuite) TestBinlogForSequence() {
 
 // Sometimes this test doesn't clean up fail, let the function name begin with 'Z'
 // so it runs last and would not disrupt other tests.
-func (s *testBinlogSuite) TestZIgnoreError() {
-	t := s.T()
+func TestZIgnoreError(t *testing.T) {
+	s := SetUpTest(t)
+	defer TearDownTest(t, s)
+
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().BinlogClient = s.client
@@ -504,8 +501,10 @@ func (s *testBinlogSuite) TestZIgnoreError() {
 	binloginfo.SetIgnoreError(false)
 }
 
-func (s *testBinlogSuite) TestPartitionedTable() {
-	t := s.T()
+func TestPartitionedTable(t *testing.T) {
+	s := SetUpTest(t)
+	defer TearDownTest(t, s)
+
 	// This test checks partitioned table write binlog with table ID, rather than partition ID.
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
@@ -528,8 +527,10 @@ func (s *testBinlogSuite) TestPartitionedTable() {
 	}
 }
 
-func (s *testBinlogSuite) TestPessimisticLockThenCommit() {
-	t := s.T()
+func TestPessimisticLockThenCommit(t *testing.T) {
+	s := SetUpTest(t)
+	defer TearDownTest(t, s)
+
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().BinlogClient = s.client
@@ -542,8 +543,10 @@ func (s *testBinlogSuite) TestPessimisticLockThenCommit() {
 	require.Equal(t, 1, len(prewriteVal.Mutations))
 }
 
-func (s *testBinlogSuite) TestDeleteSchema() {
-	t := s.T()
+func TestDeleteSchema(t *testing.T) {
+	s := SetUpTest(t)
+	defer TearDownTest(t, s)
+
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE `b1` (`id` int(11) NOT NULL AUTO_INCREMENT, `job_id` varchar(50) NOT NULL, `split_job_id` varchar(30) DEFAULT NULL, PRIMARY KEY (`id`), KEY `b1` (`job_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
@@ -557,8 +560,10 @@ func (s *testBinlogSuite) TestDeleteSchema() {
 	tk.MustExec("delete b1 from b2 right join b1 on b1.job_id = b2.job_id and batch_class = 'TEST';")
 }
 
-func (s *testBinlogSuite) TestAddSpecialComment() {
-	t := s.T()
+func TestAddSpecialComment(t *testing.T) {
+	s := SetUpTest(t)
+	defer TearDownTest(t, s)
+
 	testCase := []struct {
 		input  string
 		result string
@@ -717,8 +722,10 @@ func testGetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) 
 	return tbl
 }
 
-func (s *testBinlogSuite) TestTempTableBinlog() {
-	t := s.T()
+func TestTempTableBinlog(t *testing.T) {
+	s := SetUpTest(t)
+	defer TearDownTest(t, s)
+
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.Session().GetSessionVars().BinlogClient = s.client
