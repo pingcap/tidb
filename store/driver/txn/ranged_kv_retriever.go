@@ -46,10 +46,6 @@ func (s *RangedKVRetriever) Contains(k kv.Key) bool {
 
 // Intersect returns a new RangedKVRetriever with an intersected range
 func (s *RangedKVRetriever) Intersect(startKey, endKey kv.Key) *RangedKVRetriever {
-	if !s.Valid() {
-		return nil
-	}
-
 	maxStartKey := startKey
 	if bytes.Compare(s.StartKey, maxStartKey) > 0 {
 		maxStartKey = s.StartKey

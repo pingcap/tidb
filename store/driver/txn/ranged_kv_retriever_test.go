@@ -136,6 +136,7 @@ func TestRangedKVRetrieverIntersect(t *testing.T) {
 				{{"abcde", "abcdg"}, {"abcde", "abcdg"}},
 				{{nil, "abcdg"}, {nil, "abcdg"}},
 				{{"abcde", nil}, {"abcde", nil}},
+				{{"abcde", "abcdd"}, nil},
 			},
 		},
 		{
@@ -154,6 +155,7 @@ func TestRangedKVRetrieverIntersect(t *testing.T) {
 				{{"abcdd", "abcdf"}, {"abcdd", "abcde"}},
 				{{"abcdc", "abcdd"}, {"abcdc", "abcdd"}},
 				{{"abcdef", "abcdf"}, nil},
+				{{"abcdb", "abcda"}, nil},
 			},
 		},
 		{
@@ -172,6 +174,7 @@ func TestRangedKVRetrieverIntersect(t *testing.T) {
 				{{"abcdd", "abcdf"}, {"abcde", "abcdf"}},
 				{{"abcdc", "abcdd"}, nil},
 				{{"abcdef", "abcdf"}, {"abcdef", "abcdf"}},
+				{{"abcde", "abcdd"}, nil},
 			},
 		},
 		{
@@ -199,6 +202,23 @@ func TestRangedKVRetrieverIntersect(t *testing.T) {
 				{{"abcdef", "abcdg"}, {"abcdef", "abcdg"}},
 				{{"abcdef", "abcdh"}, {"abcdef", "abcdg"}},
 				{{"abcdg", "abcdh"}, nil},
+				{{"abcde", "abcdd"}, nil},
+			},
+		},
+		{
+			startKey: "abcde",
+			endKey:   "abcdd",
+			cases: [][][]interface{}{
+				{{nil, nil}, nil},
+				{{nil, "abcde"}, nil},
+				{{nil, "abcdef"}, nil},
+				{{nil, "abcdd"}, nil},
+				{{"abcde", nil}, nil},
+				{{"abcdd", nil}, nil},
+				{{"abcdef", nil}, nil},
+				{{"abcde", "abcdd"}, nil},
+				{{"abcde", "abcdf"}, nil},
+				{{"abcde", "abcdef"}, nil},
 			},
 		},
 	}
