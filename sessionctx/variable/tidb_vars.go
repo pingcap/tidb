@@ -121,6 +121,10 @@ const (
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
+	// tidb_general_log is used to log every query in the server in info level.
+	TiDBGeneralLogMaxAge = "tidb_general_log_max_age"
+
+
 	// tidb_pprof_sql_cpu is used to add label sql label to pprof result.
 	TiDBPProfSQLCPU = "tidb_pprof_sql_cpu"
 
@@ -745,11 +749,13 @@ const (
 	DefTMPTableSize                       = 16777216
 	DefTiDBEnableLocalTxn                 = false
 	DefTiDBEnableOrderedResultMode        = false
+	DefTiDBGeneralLogMaxAge               = 0
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog            = atomic.NewBool(false)
+	GeneralLogMaxAge       int32 = DefTiDBGeneralLogMaxAge
 	EnablePProfSQLCPU            = atomic.NewBool(false)
 	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
 	maxDDLReorgWorkerCount int32 = 128
