@@ -705,13 +705,13 @@ func (e *clusterLogRetriever) getRuntimeStats() execdetails.RuntimeStats {
 	return nil
 }
 
-type hotRegionsStreamResult struct {
+type hotRegionsResult struct {
 	addr     string
 	messages *HistoryHotRegions
 	err      error
 }
 
-type hotRegionsResponseHeap []hotRegionsStreamResult
+type hotRegionsResponseHeap []hotRegionsResult
 
 func (h hotRegionsResponseHeap) Len() int {
 	return len(h)
@@ -730,7 +730,7 @@ func (h hotRegionsResponseHeap) Swap(i, j int) {
 }
 
 func (h *hotRegionsResponseHeap) Push(x interface{}) {
-	*h = append(*h, x.(hotRegionsStreamResult))
+	*h = append(*h, x.(hotRegionsResult))
 }
 
 func (h *hotRegionsResponseHeap) Pop() interface{} {
@@ -784,13 +784,13 @@ type HistoryHotRegion struct {
 }
 
 const (
-	// HotRegionTypeREAD hot read region.
-	HotRegionTypeREAD = "READ"
-	// HotRegionTypeWRITE hot write region.
-	HotRegionTypeWRITE = "WRITE"
+	// HotRegionTypeRead hot read region.
+	HotRegionTypeRead = "READ"
+	// HotRegionTypeWrite hot write region.
+	HotRegionTypeWrite = "WRITE"
 )
 
-func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan hotRegionsStreamResult, error) {
+func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan hotRegionsResult, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
 		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
@@ -810,8 +810,8 @@ func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx session
 	// Divide read write into two request because of time range ovelap,
 	// because PD use [type,time] as key of hot regions.
 	if e.extractor.HotRegionTypes.Count() == 0 {
-		e.extractor.HotRegionTypes.Insert(HotRegionTypeREAD)
-		e.extractor.HotRegionTypes.Insert(HotRegionTypeWRITE)
+		e.extractor.HotRegionTypes.Insert(HotRegionTypeRead)
+		e.extractor.HotRegionTypes.Insert(HotRegionTypeWrite)
 	}
 	hotRegionTypes := make([]string, 0, e.extractor.HotRegionTypes.Count())
 	for typ := range e.extractor.HotRegionTypes {
@@ -835,8 +835,8 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 	sctx sessionctx.Context,
 	serversInfo []infoschema.ServerInfo,
 	req *HistoryHotRegionsRequest,
-) ([]chan hotRegionsStreamResult, error) {
-	var results []chan hotRegionsStreamResult
+) ([]chan hotRegionsResult, error) {
+	var results []chan hotRegionsResult
 	for _, srv := range serversInfo {
 		for typ := range e.extractor.HotRegionTypes {
 			req.HotRegionTypes = []string{typ}
@@ -845,37 +845,39 @@ func (e *hotRegionsHistoryRetriver) startRetrieving(
 				return nil, err
 			}
 			body := bytes.NewBuffer(jsonBody)
-			ch := make(chan hotRegionsStreamResult)
+			ch := make(chan hotRegionsResult)
 			results = append(results, ch)
-			go func(address string, body *bytes.Buffer) {
+			go func(ch chan hotRegionsResult, address string, body *bytes.Buffer) {
 				util.WithRecovery(func() {
+					defer close(ch)
+
 					url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), address, pdapi.HotHistory)
 					req, err := http.NewRequest(http.MethodGet, url, body)
 					if err != nil {
-						ch <- hotRegionsStreamResult{err: errors.Trace(err)}
+						ch <- hotRegionsResult{err: errors.Trace(err)}
 						return
 					}
 					req.Header.Add("PD-Allow-follower-handle", "true")
 					resp, err := util.InternalHTTPClient().Do(req)
 					if err != nil {
-						ch <- hotRegionsStreamResult{err: errors.Trace(err)}
+						ch <- hotRegionsResult{err: errors.Trace(err)}
 						return
 					}
 					defer func() {
 						terror.Log(resp.Body.Close())
 					}()
 					if resp.StatusCode != http.StatusOK {
-						ch <- hotRegionsStreamResult{err: errors.Errorf("request %s failed: %s", url, resp.Status)}
+						ch <- hotRegionsResult{err: errors.Errorf("request %s failed: %s", url, resp.Status)}
 						return
 					}
 					var historyHotRegions HistoryHotRegions
 					if err = json.NewDecoder(resp.Body).Decode(&historyHotRegions); err != nil {
-						ch <- hotRegionsStreamResult{err: errors.Trace(err)}
+						ch <- hotRegionsResult{err: errors.Trace(err)}
 						return
 					}
-					ch <- hotRegionsStreamResult{addr: address, messages: &historyHotRegions}
+					ch <- hotRegionsResult{addr: address, messages: &historyHotRegions}
 				}, nil)
-			}(srv.StatusAddr, body)
+			}(ch, srv.StatusAddr, body)
 		}
 	}
 	return results, nil
@@ -920,7 +922,7 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		RegionCache: tikvStore.GetRegionCache(),
 	}
 	for e.heap.Len() > 0 && len(finalRows) < hotRegionsHistoryBatchSize {
-		minTimeItem := heap.Pop(e.heap).(hotRegionsStreamResult)
+		minTimeItem := heap.Pop(e.heap).(hotRegionsResult)
 		row, err := e.getHotRegionRowWithSchemaInfo(minTimeItem.messages.HistoryHotRegion[0], tikvHelper, allSchemas, tz)
 		if err != nil {
 			return nil, err
@@ -954,7 +956,7 @@ func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 	}
 
 	f := tikvHelper.FindTableIndexOfRegion(allSchemas, hotRange)
-	// Ignore row without coresponding schema f.
+	// Ignore row without corresponding schema f.
 	if f == nil {
 		return nil, nil
 	}
