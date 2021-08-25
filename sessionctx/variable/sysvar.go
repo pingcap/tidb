@@ -25,6 +25,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
@@ -1786,6 +1787,26 @@ var defaultSysVars = []*SysVar{
 		s.EnableStableResultMode = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeNone, Name: TiDBAllowFunctionForExpressionIndex, ReadOnly: true, Value: collectAllowFuncName4ExpressionIndex()},
+}
+
+func collectAllowFuncName4ExpressionIndex() string {
+	str := ""
+	for funcName := range GAFunction4ExpressionIndex {
+		str += funcName
+		str += ", "
+	}
+	str = str[0 : len(str)-2]
+	return str
+}
+
+// GAFunction4ExpressionIndex stores functions GA for expression index.
+var GAFunction4ExpressionIndex = map[string]struct{}{
+	ast.Lower:      {},
+	ast.Upper:      {},
+	ast.MD5:        {},
+	ast.Reverse:    {},
+	ast.VitessHash: {},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
@@ -2066,6 +2087,8 @@ const (
 	CTEMaxRecursionDepth = "cte_max_recursion_depth"
 	// DefaultAuthPlugin is the name of 'default_authentication_plugin' system variable.
 	DefaultAuthPlugin = "default_authentication_plugin"
+	// TiDBAllowFunctionForExpressionIndex is the name of `TiDBAllowFunctionForExpressionIndex` system variable.
+	TiDBAllowFunctionForExpressionIndex = "tidb_allow_function_for_expression_index"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

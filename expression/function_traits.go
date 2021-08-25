@@ -257,12 +257,3 @@ var booleanFunctions = map[string]struct{}{
 	ast.IsIPv4Mapped:       {},
 	ast.IsIPv6:             {},
 }
-
-// GAFunction4ExpressionIndex stores functions GA for expression index.
-var GAFunction4ExpressionIndex = map[string]struct{}{
-	ast.Lower:      {},
-	ast.Upper:      {},
-	ast.MD5:        {},
-	ast.Reverse:    {},
-	ast.VitessHash: {},
-}

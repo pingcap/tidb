@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 )
 
@@ -287,7 +288,7 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 			c.otherErr = err
 			return inNode, true
 		}
-		_, isFuncGA := expression.GAFunction4ExpressionIndex[node.FnName.L]
+		_, isFuncGA := variable.GAFunction4ExpressionIndex[node.FnName.L]
 		if !isFuncGA {
 			c.hasNotGAFunc4ExprIdx = true
 		}

@@ -229,3 +229,5 @@ insert into t02 values ('a'), ('b'), ('c');
 select * from t02 where lower(a) < 'c';
 create index eidx on t02 ((lower(a)));
 select * from t02 use index(eidx) where lower(a) < 'c';
+
+select @@tidb_allow_function_for_expression_index;
