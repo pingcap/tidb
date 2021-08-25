@@ -674,6 +674,18 @@ func (s *testPrepareSerialSuite) TestConstPropAndPPDWithCache(c *C) {
 	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows(
 		"0",
 	))
+
+	// Need to check if contain mutable before RefineCompareConstant() in inToExpression().
+	// Otherwise may hit wrong plan.
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 tinyint unsigned);")
+	tk.MustExec("insert into t1 values(111);")
+	tk.MustExec("prepare stmt from 'select 1 from t1 where c1 in (?)';")
+	tk.MustExec("set @a = '1.1';")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows())
+	tk.MustExec("set @a = '111';")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1"))
 }
 
 func (s *testPlanSerialSuite) TestPlanCacheUnionScan(c *C) {
