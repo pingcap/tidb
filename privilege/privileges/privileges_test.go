@@ -2089,6 +2089,7 @@ func TestGrantReferences(t *testing.T) {
 // https://github.com/pingcap/tidb/issues/27213
 func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 	t.Parallel()
+
 	store, clean := newStore(t)
 	defer clean()
 
