@@ -2536,7 +2536,7 @@ func IsDateFormat(format string) bool {
 	length := len(format)
 	switch len(seps) {
 	case 1:
-		if (length == 8) || (length == 6) {
+		if (length == 8) || (length == 6) || (length == 5) {
 			return true
 		}
 	case 3:

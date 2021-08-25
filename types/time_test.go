@@ -1684,6 +1684,10 @@ func (s *testTimeSuite) TestIsDateFormat(c *C) {
 	input = "2019-4-1"
 	output = types.IsDateFormat(input)
 	c.Assert(output, Equals, true)
+
+	input = "20129"
+	output = types.IsDateFormat(input)
+	c.Assert(output, Equals, true)
 }
 
 func (s *testTimeSuite) TestParseTimeFromInt64(c *C) {
