@@ -113,6 +113,9 @@ func (mm *mockLabelManager) UpdateLabelRules(ctx context.Context, patch *label.R
 		delete(mm.labelRules, p)
 	}
 	for _, p := range patch.SetRules {
+		if p == nil {
+			continue
+		}
 		mm.labelRules[p.ID] = p
 	}
 	return nil
@@ -122,8 +125,11 @@ func (mm *mockLabelManager) UpdateLabelRules(ctx context.Context, patch *label.R
 func (mm *mockLabelManager) GetAllLabelRules(ctx context.Context) ([]*label.Rule, error) {
 	mm.RLock()
 	defer mm.RUnlock()
-	r := make([]*label.Rule, len(mm.labelRules))
+	r := make([]*label.Rule, 0, len(mm.labelRules))
 	for _, labelRule := range mm.labelRules {
+		if labelRule == nil {
+			continue
+		}
 		r = append(r, labelRule)
 	}
 	return r, nil
@@ -133,10 +139,13 @@ func (mm *mockLabelManager) GetAllLabelRules(ctx context.Context) ([]*label.Rule
 func (mm *mockLabelManager) GetLabelRules(ctx context.Context, ruleIDs []string) ([]*label.Rule, error) {
 	mm.RLock()
 	defer mm.RUnlock()
-	r := make([]*label.Rule, len(ruleIDs))
+	r := make([]*label.Rule, 0, len(ruleIDs))
 	for _, ruleID := range ruleIDs {
 		for _, labelRule := range mm.labelRules {
 			if labelRule.ID == ruleID {
+				if labelRule == nil {
+					continue
+				}
 				r = append(r, labelRule)
 				break
 			}
