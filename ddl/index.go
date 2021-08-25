@@ -727,31 +727,15 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 	return tblInfo, indexInfo, nil
 }
 
-type dropIndexesWarns struct {
-	IndexNames []model.CIStr
-}
-
-func (warns *dropIndexesWarns) Error() string {
-	return ""
-}
-
 func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, indexNames, ifExists, err := getSchemaInfos(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	indexInfos, nonExsitentIndexNames, err := checkDropIndexes(tblInfo, job, indexNames, ifExists)
+	indexInfos, err := checkDropIndexes(tblInfo, job, indexNames, ifExists)
 	if err != nil {
 		return ver, errors.Trace(err)
-	}
-
-	if len(nonExsitentIndexNames) != 0 {
-		var warnings []*errors.Error
-		for _, indexName := range nonExsitentIndexNames {
-			warnings = append(warnings, toTError(ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)))
-		}
-		job.MultiSchemaInfo = &model.MultiSchemaInfo{Warnings: warnings}
 	}
 
 	if len(indexInfos) == 0 {
@@ -854,36 +838,48 @@ func getSchemaInfos(t *meta.Meta, job *model.Job) (*model.TableInfo, []model.CIS
 	return tblInfo, indexNames, ifExists, nil
 }
 
-func checkDropIndexes(tblInfo *model.TableInfo, job *model.Job, indexNames []model.CIStr, ifExists []bool) ([]*model.IndexInfo, []model.CIStr, error) {
-	nonExistentIndexeNames := make([]model.CIStr, 0, len(indexNames))
+func checkDropIndexes(tblInfo *model.TableInfo, job *model.Job, indexNames []model.CIStr, ifExists []bool) ([]*model.IndexInfo, error) {
+	var warnings []*errors.Error
 	indexInfos := make([]*model.IndexInfo, 0, len(indexNames))
+	UniqueIndexNames := make(map[model.CIStr]bool, len(indexNames))
 	for i, indexName := range indexNames {
 		// Double check the index is exists.
 		indexInfo := tblInfo.FindIndexByName(indexName.L)
 		if indexInfo == nil {
 			if ifExists[i] {
-				nonExistentIndexeNames = append(nonExistentIndexeNames, indexName)
+				warnings = append(warnings, toTError(ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)))
 				continue
 			}
 			job.State = model.JobStateCancelled
-			return nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+			return nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 		}
 
 		// Double check for drop index on auto_increment column.
-		err := checkDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
-		if err != nil {
+		if err := checkDropIndexOnAutoIncrementColumn(tblInfo, indexInfo); err != nil {
 			job.State = model.JobStateCancelled
-			return nil, nil, autoid.ErrWrongAutoKey
+			return nil, autoid.ErrWrongAutoKey
 		}
+
+		// Check for dropping duplicate indexes.
+		if UniqueIndexNames[indexName] {
+			if !ifExists[i] {
+				return nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+			}
+			warnings = append(warnings, toTError(ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)))
+		}
+		UniqueIndexNames[indexName] = true
+
 		indexInfos = append(indexInfos, indexInfo)
 	}
 
 	// Check that drop primary index will not cause invisible implicit primary index.
 	if err := checkInvisibleIndexesOnPK(tblInfo, indexInfos, job); err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
-	return indexInfos, nonExistentIndexeNames, nil
+	job.MultiSchemaInfo = &model.MultiSchemaInfo{Warnings: warnings}
+
+	return indexInfos, nil
 }
 
 func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.IndexInfo, job *model.Job) error {

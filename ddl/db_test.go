@@ -7480,7 +7480,7 @@ func testDropIndexesIfExists(c *C, store kv.Storage) {
 		c.Assert(err, IsNil)
 	}
 	tk.MustQuery("show warnings").Check(
-		testutil.RowsWithSep("|", "Note|1091|index i3 doesn't exist"),
+		testutil.RowsWithSep("|", "Warning|1091|index i3 doesn't exist"),
 	)
 
 	// Verify the impact of deletion order when dropping duplicate indexes.
@@ -7496,7 +7496,7 @@ func testDropIndexesIfExists(c *C, store kv.Storage) {
 		c.Assert(err, IsNil)
 	}
 	tk.MustQuery("show warnings").Check(
-		testutil.RowsWithSep("|", "Note|1091|index i2 doesn't exist"),
+		testutil.RowsWithSep("|", "Warning|1091|index i2 doesn't exist"),
 	)
 }
 

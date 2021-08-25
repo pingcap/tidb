@@ -292,7 +292,7 @@ func rollingbackDropIndexes(t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, errors.Trace(err)
 	}
 
-	indexInfos, _, err := checkDropIndexes(tblInfo, job, indexNames, ifExists)
+	indexInfos, err := checkDropIndexes(tblInfo, job, indexNames, ifExists)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
