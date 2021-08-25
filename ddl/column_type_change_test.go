@@ -801,7 +801,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	// binary
 	reset(tk)
 	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
-	tk.MustGetErrCode("alter table t modify d binary(10)", mysql.ErrDataTooLong)
+	tk.MustGetErrCode("alter table t modify d binary(10)", mysql.WarnDataTruncated)
 	tk.MustExec("alter table t modify n binary(10)")
 	tk.MustGetErrCode("alter table t modify r binary(10)", mysql.ErrDataTooLong)
 	tk.MustGetErrCode("alter table t modify db binary(10)", mysql.ErrDataTooLong)
