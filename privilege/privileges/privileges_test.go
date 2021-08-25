@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
@@ -2175,4 +2176,59 @@ func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
 		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
 	))
+}
+
+// https://github.com/pingcap/tidb/issues/27560
+
+func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
+	t.Parallel()
+
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("DROP USER IF EXISTS joe, engineering, notgranted, otherrole, delete_stuff_privilege")
+	tk.MustExec("CREATE USER joe;")
+	tk.MustExec("CREATE ROLE engineering;")
+	tk.MustExec("CREATE ROLE admins;")
+	tk.MustExec("CREATE ROLE notgranted;")
+	tk.MustExec("CREATE ROLE otherrole;")
+	tk.MustExec("GRANT INSERT ON test.* TO engineering;")
+	tk.MustExec("GRANT DELETE ON test.* TO admins;")
+	tk.MustExec("GRANT SELECT on test.* to joe;")
+	tk.MustExec("GRANT engineering TO joe;")
+	tk.MustExec("GRANT admins TO joe;")
+	tk.MustExec("SET DEFAULT ROLE admins TO joe;")
+	tk.MustExec("GRANT otherrole TO joe;")
+	tk.MustExec("GRANT UPDATE ON role.* TO otherrole;")
+	tk.MustExec("GRANT SELECT ON mysql.user TO otherrole;")
+	tk.MustExec("CREATE ROLE delete_stuff_privilege;")
+	tk.MustExec("GRANT DELETE ON mysql.user TO delete_stuff_privilege;")
+	tk.MustExec("GRANT delete_stuff_privilege TO otherrole;")
+
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "joe",
+		Hostname: "%",
+	}, nil, nil)
+
+	err := tk.QueryToErr("SHOW GRANTS FOR CURRENT_USER() USING notgranted")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, executor.ErrRoleNotGranted))
+
+	tk.MustQuery("SHOW GRANTS FOR current_user() USING otherrole;").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'joe'@'%'",
+		"GRANT UPDATE ON role.* TO 'joe'@'%'",
+		"GRANT SELECT ON test.* TO 'joe'@'%'",
+		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
+	))
+	tk.MustQuery("SHOW GRANTS FOR joe USING otherrole;").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'joe'@'%'",
+		"GRANT UPDATE ON role.* TO 'joe'@'%'",
+		"GRANT SELECT ON test.* TO 'joe'@'%'",
+		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
+	))
+
 }
