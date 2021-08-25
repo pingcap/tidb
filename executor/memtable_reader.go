@@ -758,14 +758,6 @@ type HistoryHotRegionsRequest struct {
 	PeerIDs        []uint64 `json:"peer_ids,omitempty"`
 	Roles          []uint64 `json:"roles,omitempty"`
 	HotRegionTypes []string `json:"hot_region_types,omitempty"`
-	LowHotDegree   int64    `json:"low_hot_degree,omitempty"`
-	HighHotDegree  int64    `json:"high_hot_degree,omitempty"`
-	LowFlowBytes   float64  `json:"low_flow_bytes,omitempty"`
-	HighFlowBytes  float64  `json:"high_flow_bytes,omitempty"`
-	LowKeyRate     float64  `json:"low_key_rate,omitempty"`
-	HighKeyRate    float64  `json:"high_key_rate,omitempty"`
-	LowQueryRate   float64  `json:"low_query_rate,omitempty"`
-	HighQueryRate  float64  `json:"high_query_rate,omitempty"`
 }
 
 // HistoryHotRegions records filtered hot regions stored in each PD.
@@ -827,20 +819,12 @@ func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx session
 	}
 	// set hotType before request
 	historyHotRegionsRequest := &HistoryHotRegionsRequest{
-		StartTime:     e.extractor.StartTime,
-		EndTime:       e.extractor.EndTime,
-		RegionIDs:     e.extractor.RegionIDs,
-		StoreIDs:      e.extractor.StoreIDs,
-		PeerIDs:       e.extractor.PeerIDs,
-		Roles:         e.extractor.Roles,
-		LowHotDegree:  e.extractor.LowHotDegree,
-		HighHotDegree: e.extractor.HighHotDegree,
-		LowFlowBytes:  e.extractor.LowFlowBytes,
-		HighFlowBytes: e.extractor.HighFlowBytes,
-		LowKeyRate:    e.extractor.LowKeyRate,
-		HighKeyRate:   e.extractor.HighKeyRate,
-		LowQueryRate:  e.extractor.LowQueryRate,
-		HighQueryRate: e.extractor.HighQueryRate,
+		StartTime: e.extractor.StartTime,
+		EndTime:   e.extractor.EndTime,
+		RegionIDs: e.extractor.RegionIDs,
+		StoreIDs:  e.extractor.StoreIDs,
+		PeerIDs:   e.extractor.PeerIDs,
+		Roles:     e.extractor.Roles,
 	}
 
 	return e.startRetrieving(ctx, sctx, pdServers, historyHotRegionsRequest)
@@ -923,11 +907,21 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		}
 		heap.Init(e.heap)
 	}
-	// Filter results by db_name, table_name, index_name, table_id, index_id and merge the results.
+	// Merge the results
 	var finalRows [][]types.Datum
+	allSchemas := sctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
+	tz := sctx.GetSessionVars().Location()
+	if !ok {
+		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
+	}
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
+	}
 	for e.heap.Len() > 0 && len(finalRows) < hotRegionsHistoryBatchSize {
 		minTimeItem := heap.Pop(e.heap).(hotRegionsStreamResult)
-		row, err := e.parseAndFilterBySchemaInfo(sctx, minTimeItem.messages.HistoryHotRegion[0])
+		row, err := e.getHotRegionRowWithSchemaInfo(minTimeItem.messages.HistoryHotRegion[0], tikvHelper, allSchemas, tz)
 		if err != nil {
 			return nil, err
 		}
@@ -945,54 +939,28 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 	return finalRows, nil
 }
 
-func (e *hotRegionsHistoryRetriver) filterBySchemaInfo(f *helper.FrameItem) bool {
-	// Ignore this row  can't find responding schema f.
-	if f == nil {
-		return false
-	}
-	if e.extractor.DBNames.Count() != 0 && !e.extractor.DBNames.Exist(f.DBName) {
-		return false
-	}
-	if e.extractor.TableNames.Count() != 0 && !e.extractor.TableNames.Exist(f.TableName) {
-		return false
-	}
-	if e.extractor.IndexNames.Count() != 0 && !e.extractor.IndexNames.Exist(f.IndexName) {
-		return false
-	}
-	if e.extractor.TableIDs.Count() != 0 && !e.extractor.TableIDs.Exist(f.TableID) {
-		return false
-	}
-	if e.extractor.IndexIDs.Count() != 0 && !e.extractor.IndexIDs.Exist(f.IndexID) {
-		return false
-	}
-	return true
-}
-
-func (e *hotRegionsHistoryRetriver) parseAndFilterBySchemaInfo(sctx sessionctx.Context, headMessage *HistoryHotRegion) ([]types.Datum, error) {
-	_, startKey, _ := codec.DecodeBytes(headMessage.StartKey, []byte{})
-	_, endKey, _ := codec.DecodeBytes(headMessage.EndKey, []byte{})
+func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
+	hisHotRegion *HistoryHotRegion,
+	tikvHelper *helper.Helper,
+	allSchemas []*model.DBInfo,
+	tz *time.Location,
+) ([]types.Datum, error) {
+	_, startKey, _ := codec.DecodeBytes(hisHotRegion.StartKey, []byte{})
+	_, endKey, _ := codec.DecodeBytes(hisHotRegion.EndKey, []byte{})
 	region := &tikv.KeyLocation{StartKey: startKey, EndKey: endKey}
 	hotRange, err := helper.NewRegionFrameRange(region)
 	if err != nil {
 		return nil, err
 	}
-	allSchemas := sctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
-	tikvStore, ok := sctx.GetStore().(helper.Storage)
-	if !ok {
-		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
-	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
+
 	f := tikvHelper.FindTableIndexOfRegion(allSchemas, hotRange)
-	// Keep this row or not
-	if !e.filterBySchemaInfo(f) {
+	// Ignore row without coresponding schema f.
+	if f == nil {
 		return nil, nil
 	}
 	row := make([]types.Datum, len(infoschema.TableTiDBHotRegionsHistoryCols))
-	updateTimestamp := time.Unix(headMessage.UpdateTime/1000, (headMessage.UpdateTime%1000)*int64(time.Millisecond))
-	tz := sctx.GetSessionVars().Location()
+	updateTimestamp := time.Unix(hisHotRegion.UpdateTime/1000, (hisHotRegion.UpdateTime%1000)*int64(time.Millisecond))
+
 	if updateTimestamp.Location() != tz {
 		updateTimestamp.In(tz)
 	}
@@ -1008,33 +976,33 @@ func (e *hotRegionsHistoryRetriver) parseAndFilterBySchemaInfo(sctx sessionctx.C
 		row[4].SetNull()
 		row[5].SetNull()
 	}
-	row[6].SetInt64(int64(headMessage.RegionID))
-	row[7].SetInt64(int64(headMessage.StoreID))
-	row[8].SetInt64(int64(headMessage.PeerID))
-	if headMessage.IsLeader {
+	row[6].SetInt64(int64(hisHotRegion.RegionID))
+	row[7].SetInt64(int64(hisHotRegion.StoreID))
+	row[8].SetInt64(int64(hisHotRegion.PeerID))
+	if hisHotRegion.IsLeader {
 		row[9].SetInt64(1)
 	} else {
 		row[9].SetInt64(0)
 	}
 
-	row[10].SetString(strings.ToUpper(headMessage.HotRegionType), mysql.DefaultCollationName)
-	if headMessage.HotDegree != 0 {
-		row[11].SetInt64(headMessage.HotDegree)
+	row[10].SetString(strings.ToUpper(hisHotRegion.HotRegionType), mysql.DefaultCollationName)
+	if hisHotRegion.HotDegree != 0 {
+		row[11].SetInt64(hisHotRegion.HotDegree)
 	} else {
 		row[11].SetNull()
 	}
-	if headMessage.FlowBytes != 0 {
-		row[12].SetFloat64(float64(headMessage.FlowBytes))
+	if hisHotRegion.FlowBytes != 0 {
+		row[12].SetFloat64(float64(hisHotRegion.FlowBytes))
 	} else {
 		row[12].SetNull()
 	}
-	if headMessage.KeyRate != 0 {
-		row[13].SetFloat64(float64(headMessage.KeyRate))
+	if hisHotRegion.KeyRate != 0 {
+		row[13].SetFloat64(float64(hisHotRegion.KeyRate))
 	} else {
 		row[13].SetNull()
 	}
-	if headMessage.QueryRate != 0 {
-		row[14].SetFloat64(float64(headMessage.QueryRate))
+	if hisHotRegion.QueryRate != 0 {
+		row[14].SetFloat64(float64(hisHotRegion.QueryRate))
 	} else {
 		row[14].SetNull()
 	}
