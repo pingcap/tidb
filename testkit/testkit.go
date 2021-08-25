@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,6 +19,7 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -30,7 +32,7 @@ import (
 	"go.uber.org/atomic"
 )
 
-var idGenerator atomic.Uint64
+var testKitIDGenerator atomic.Uint64
 
 // TestKit is a utility to run sql test.
 type TestKit struct {
@@ -59,11 +61,56 @@ func (tk *TestKit) Session() session.Session {
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	res, err := tk.Exec(sql, args...)
 	comment := fmt.Sprintf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err))
-	tk.require.Nil(err, comment)
+	tk.require.NoError(err, comment)
 
 	if res != nil {
-		tk.require.Nil(res.Close())
+		tk.require.NoError(res.Close())
 	}
+}
+
+// MustQuery query the statements and returns result rows.
+// If expected result is set it asserts the query result equals expected result.
+func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
+	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
+	rs, err := tk.Exec(sql, args...)
+	tk.require.NoError(err, comment)
+	tk.require.NotNil(rs, comment)
+	return tk.ResultSetToResult(rs, comment)
+}
+
+// QueryToErr executes a sql statement and discard results.
+func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
+	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
+	res, err := tk.Exec(sql, args...)
+	tk.require.NoError(err, comment)
+	tk.require.NotNil(res, comment)
+	_, resErr := session.GetRows4Test(context.Background(), tk.session, res)
+	tk.require.NoError(res.Close())
+	return resErr
+}
+
+// ResultSetToResult converts sqlexec.RecordSet to testkit.Result.
+// It is used to check results of execute statement in binary mode.
+func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment string) *Result {
+	return tk.ResultSetToResultWithCtx(context.Background(), rs, comment)
+}
+
+// ResultSetToResultWithCtx converts sqlexec.RecordSet to testkit.Result.
+func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.RecordSet, comment string) *Result {
+	rows, err := session.ResultSetToStringSlice(ctx, tk.session, rs)
+	tk.require.NoError(err, comment)
+	return &Result{rows: rows, comment: comment, assert: tk.assert, require: tk.require}
+}
+
+// HasPlan checks if the result execution plan contains specific plan.
+func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][0], plan) {
+			return true
+		}
+	}
+	return false
 }
 
 // Exec executes a sql statement using the prepared stmt API
@@ -114,9 +161,18 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	return rs, nil
 }
 
+// ExecToErr executes a sql statement and discard results.
+func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
+	res, err := tk.Exec(sql, args...)
+	if res != nil {
+		tk.require.NoError(res.Close())
+	}
+	return err
+}
+
 func newSession(t *testing.T, store kv.Storage) session.Session {
 	se, err := session.CreateSession4Test(store)
-	require.Nil(t, err)
-	se.SetConnectionID(idGenerator.Inc())
+	require.NoError(t, err)
+	se.SetConnectionID(testKitIDGenerator.Inc())
 	return se
 }

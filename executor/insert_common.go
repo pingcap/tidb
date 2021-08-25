@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -39,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
 )
 
@@ -120,7 +121,7 @@ func (e *InsertValues) exec(_ context.Context, _ [][]types.Datum) error {
 // See https://dev.mysql.com/doc/refman/5.7/en/insert.html
 func (e *InsertValues) initInsertColumns() error {
 	var cols []*table.Column
-	var missingColName string
+	var missingColIdx int
 	var err error
 
 	tableCols := e.Table.Cols()
@@ -129,11 +130,12 @@ func (e *InsertValues) initInsertColumns() error {
 		// Process `set` type column.
 		columns := make([]string, 0, len(e.SetList))
 		for _, v := range e.SetList {
-			columns = append(columns, v.ColName.O)
+			columns = append(columns, v.ColName.L)
 		}
-		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if missingColName != "" {
-			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
+		cols, missingColIdx = table.FindColumns(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if missingColIdx >= 0 {
+			return errors.Errorf("INSERT INTO %s: unknown column %s",
+				e.Table.Meta().Name.O, e.SetList[missingColIdx].ColName.O)
 		}
 		if len(cols) == 0 {
 			return errors.Errorf("INSERT INTO %s: empty column", e.Table.Meta().Name.O)
@@ -142,11 +144,12 @@ func (e *InsertValues) initInsertColumns() error {
 		// Process `name` type column.
 		columns := make([]string, 0, len(e.Columns))
 		for _, v := range e.Columns {
-			columns = append(columns, v.Name.O)
+			columns = append(columns, v.Name.L)
 		}
-		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
-		if missingColName != "" {
-			return errors.Errorf("INSERT INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
+		cols, missingColIdx = table.FindColumns(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if missingColIdx >= 0 {
+			return errors.Errorf("INSERT INTO %s: unknown column %s",
+				e.Table.Meta().Name.O, e.Columns[missingColIdx].Name.O)
 		}
 	} else {
 		// If e.Columns are empty, use all columns instead.
@@ -313,6 +316,8 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 			logutil.BgLogger().Debug("truncated/wrong value error", zap.Error(err1))
 		}
 		err = table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
+	} else if types.ErrWarnDataOutOfRange.Equal(err) {
+		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
 	}
 
 	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
@@ -1006,7 +1011,7 @@ func (e *InsertValues) handleWarning(err error) {
 func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
-			snapshotStats := &tikv.SnapshotRuntimeStats{}
+			snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 			e.stats = &InsertRuntimeStat{
 				BasicRuntimeStats:    e.runtimeStats,
 				SnapshotRuntimeStats: snapshotStats,
@@ -1049,13 +1054,18 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	}
 	prefetchStart := time.Now()
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
-	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
-		return err
+	// Temporary table need not to do prefetch because its all data are stored in the memory.
+	if e.Table.Meta().TempTableType == model.TempTableNone {
+		if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
+			return err
+		}
 	}
+
 	if e.stats != nil {
 		e.stats.Prefetch += time.Since(prefetchStart)
 	}
 
+	txnValueGetter := e.txnValueGetter(txn)
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
 		if r.ignored {
@@ -1063,7 +1073,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		}
 		skip := false
 		if r.handleKey != nil {
-			_, err := txn.Get(ctx, r.handleKey.newKey)
+			_, err := txnValueGetter.Get(ctx, r.handleKey.newKey)
 			if err == nil {
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 				continue
@@ -1073,7 +1083,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 		for _, uk := range r.uniqueKeys {
-			_, err := txn.Get(ctx, uk.newKey)
+			_, err := txnValueGetter.Get(ctx, uk.newKey)
 			if err == nil {
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
@@ -1100,6 +1110,15 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		e.stats.CheckInsertTime += time.Since(start)
 	}
 	return nil
+}
+
+func (e *InsertValues) txnValueGetter(txn kv.Transaction) kv.Getter {
+	tblInfo := e.Table.Meta()
+	if tblInfo.TempTableType == model.TempTableNone {
+		return txn
+	}
+
+	return e.ctx.GetSessionVars().TemporaryTableTxnReader(txn, tblInfo)
 }
 
 func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) error {
@@ -1130,7 +1149,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 // InsertRuntimeStat record the stat about insert and check
 type InsertRuntimeStat struct {
 	*execdetails.BasicRuntimeStats
-	*tikv.SnapshotRuntimeStats
+	*txnsnapshot.SnapshotRuntimeStats
 	CheckInsertTime time.Duration
 	Prefetch        time.Duration
 }

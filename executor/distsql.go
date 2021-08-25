@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -403,7 +404,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	}
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
-	if e.table.Meta().TempTableType == model.TempTableGlobal {
+	if e.table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
@@ -694,7 +695,7 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.table.Meta().TempTableType == model.TempTableGlobal {
+	if e.table.Meta().TempTableType != model.TempTableNone {
 		req.Reset()
 		return nil
 	}

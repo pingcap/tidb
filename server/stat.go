@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -52,7 +53,7 @@ func (s *Server) Stats(vars *variable.SessionVars) (map[string]interface{}, erro
 				logutil.BgLogger().Error("Failed to parse TLS certficates to get server status", zap.Error(err))
 			} else {
 				m[serverNotAfter] = pc.NotAfter.Format("Jan _2 15:04:05 2006 MST")
-				m[serverNotBefore] = pc.NotBefore.Format("Jan 2 15:04:05 2006 MST")
+				m[serverNotBefore] = pc.NotBefore.Format("Jan _2 15:04:05 2006 MST")
 			}
 		}
 	}

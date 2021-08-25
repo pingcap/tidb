@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,32 +16,25 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"sync/atomic"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/stretchr/testify/require"
 )
 
-type testConnIPExampleSuite struct{}
-
-var _ = SerialSuites(&testConnIPExampleSuite{})
-
-func (s *testConnIPExampleSuite) TestLoadPlugin(c *C) {
+func TestLoadPlugin(t *testing.T) {
 	ctx := context.Background()
 	pluginName := "conn_ip_example"
 	pluginVersion := uint16(1)
 	pluginSign := pluginName + "-" + strconv.Itoa(int(pluginVersion))
 
 	cfg := plugin.Config{
-		Plugins:        []string{pluginSign},
-		PluginDir:      "",
-		PluginVarNames: &variable.PluginVarNames,
-		EnvVersion:     map[string]uint16{"go": 1112},
+		Plugins:    []string{pluginSign},
+		PluginDir:  "",
+		EnvVersion: map[string]uint16{"go": 1112},
 	}
 
 	// setup load test hook.
@@ -51,7 +45,6 @@ func (s *testConnIPExampleSuite) TestLoadPlugin(c *C) {
 					Kind:       plugin.Audit,
 					Name:       pluginName,
 					Version:    pluginVersion,
-					SysVars:    map[string]*variable.SysVar{pluginName + "_key": {Scope: variable.ScopeGlobal, Name: pluginName + "_key", Value: "v1"}},
 					OnInit:     OnInit,
 					OnShutdown: OnShutdown,
 					Validate:   Validate,
@@ -66,37 +59,29 @@ func (s *testConnIPExampleSuite) TestLoadPlugin(c *C) {
 
 	// trigger load.
 	err := plugin.Load(ctx, cfg)
-	if err != nil {
-		log.Fatal(fmt.Sprintf("load plugin [%s] fail, error [%s]\n", pluginSign, err))
-	}
+	require.NoErrorf(t, err, "load plugin [%s] fail, error [%s]\n", pluginSign, err)
 
 	err = plugin.Init(ctx, cfg)
-	if err != nil {
-		log.Fatal(fmt.Sprintf("init plugin [%s] fail, error [%s]\n", pluginSign, err))
-	}
+	require.NoErrorf(t, err, "init plugin [%s] fail, error [%s]\n", pluginSign, err)
 
 	err = plugin.ForeachPlugin(plugin.Audit, func(auditPlugin *plugin.Plugin) error {
-		plugin.DeclareAuditManifest(auditPlugin.Manifest).OnGeneralEvent(context.Background(), nil, plugin.Log, "QUERY")
+		plugin.DeclareAuditManifest(auditPlugin.Manifest).OnGeneralEvent(context.Background(), nil, plugin.Completed, "QUERY")
 		return nil
 	})
-	if err != nil {
-		log.Fatal(fmt.Sprintf("query event fail, error [%s]\n", err))
-	}
+	require.NoErrorf(t, err, "query event fail, error [%s]\n", err)
 
 	connectionNum := 5
 	for i := 0; i < connectionNum; i++ {
 		err = plugin.ForeachPlugin(plugin.Audit, func(auditPlugin *plugin.Plugin) error {
 			return plugin.DeclareAuditManifest(auditPlugin.Manifest).OnConnectionEvent(context.Background(), plugin.Connected, &variable.ConnectionInfo{Host: "localhost"})
 		})
-		if err != nil {
-			log.Fatal(fmt.Sprintf("OnConnectionEvent error [%s]\n", err))
-		}
+		require.NoErrorf(t, err, "OnConnectionEvent error [%s]\n", err)
 	}
 	// accumulator of connection must be connectionNum(5).
-	c.Assert(atomic.LoadInt32(&connection), Equals, int32(connectionNum))
+	require.Equal(t, int32(connectionNum), atomic.LoadInt32(&connection))
 	plugin.Shutdown(context.Background())
 	// after shutdown, accumulator of connection must be clear.
-	c.Assert(atomic.LoadInt32(&connection), Equals, int32(0))
+	require.Equal(t, int32(0), atomic.LoadInt32(&connection))
 
 	// Output:
 	//## conn_ip_example Validate called ##
@@ -127,8 +112,4 @@ func (s *testConnIPExampleSuite) TestLoadPlugin(c *C) {
 	//## conn_ip_examples OnShutdown called ##
 	//---- context: context.Background
 	//---- read cfg in shutdown [key: conn_ip_example_key, value: v1]
-}
-
-func TestT(t *testing.T) {
-	TestingT(t)
 }
