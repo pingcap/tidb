@@ -86,6 +86,5 @@ func (*bufferSuite) TestBufferIsolation(c *C) {
 	_, err := rand.Read(b2)
 	c.Assert(err, IsNil)
 	b3 := append([]byte(nil), b2...)
-	b1 = append(b1, 0, 1, 2, 3)
 	c.Assert(b2, DeepEquals, b3)
 }

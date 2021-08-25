@@ -223,12 +223,11 @@ func (s *testRestoreUtilSuite) TestPaginateScanRegion(c *C) {
 
 	ctx := context.Background()
 	regionMap := make(map[uint64]*restore.RegionInfo)
-	regions := []*restore.RegionInfo{}
-	batch, err := restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
+	_, err := restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
 	c.Assert(err, ErrorMatches, ".*scan region return empty result.*")
 
-	regionMap, regions = makeRegions(1)
-	batch, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
+	regionMap, regions := makeRegions(1)
+	batch, err := restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
 	c.Assert(err, IsNil)
 	c.Assert(batch, DeepEquals, regions)
 

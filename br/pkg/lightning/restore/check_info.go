@@ -693,6 +693,9 @@ func (rc *Controller) SampleDataFromTable(ctx context.Context, dbName string, ta
 	}
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	kvEncoder, err := rc.backend.NewEncoder(tbl, &kv.SessionOptions{
 		SQLMode:        rc.cfg.TiDB.SQLMode,
@@ -700,6 +703,9 @@ func (rc *Controller) SampleDataFromTable(ctx context.Context, dbName string, ta
 		SysVars:        rc.sysVars,
 		AutoRandomSeed: 0,
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	blockBufSize := int64(rc.cfg.Mydumper.ReadBlockSize)
 
 	var parser mydump.Parser
@@ -752,7 +758,6 @@ outloop:
 				initializedColumns = true
 			}
 		case io.EOF:
-			reachEOF = true
 			break outloop
 		default:
 			err = errors.Annotatef(err, "in file offset %d", offset)

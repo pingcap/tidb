@@ -150,7 +150,7 @@ func (s *kvSuite) TestDecode(c *C) {
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
 	tbl, err := tables.TableFromMeta(NewPanickingAllocators(0), tblInfo)
 	c.Assert(err, IsNil)
-	decoder, err := NewTableKVDecoder(tbl, &SessionOptions{
+	decoder, _ := NewTableKVDecoder(tbl, &SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
 		Timestamp: 1234567890,
 	})
@@ -162,7 +162,7 @@ func (s *kvSuite) TestDecode(c *C) {
 	h, err := decoder.DecodeHandleFromTable(p.Key)
 	c.Assert(err, IsNil)
 	c.Assert(p.Val, NotNil)
-	rows, _, err := decoder.DecodeRawRowData(h, p.Val)
+	rows, _, _ := decoder.DecodeRawRowData(h, p.Val)
 	c.Assert(rows, DeepEquals, []types.Datum{
 		types.NewIntDatum(1),
 	})

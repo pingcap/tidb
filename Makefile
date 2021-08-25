@@ -43,7 +43,8 @@ goword:tools/bin/goword
 	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
 check-static: tools/bin/golangci-lint
-	tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES_WITHOUT_BR))
+	tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES_WITHOUT_BR)) --config .golangci.yml
+	tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci_br.yml
 
 unconvert:tools/bin/unconvert
 	@echo "unconvert check(skip check the genenrated or copied code in lightning)"

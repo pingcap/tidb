@@ -1668,7 +1668,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
 		rc := &Controller{cfg: cfg, tls: tls, store: mockStore, checkTemplate: template}
 		var sourceSize int64
-		err = rc.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+		rc.store.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
 			sourceSize += size
 			return nil
 		})

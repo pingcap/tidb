@@ -83,7 +83,6 @@ import (
 
 const (
 	dialTimeout             = 5 * time.Minute
-	bigValueSize            = 1 << 16 // 64K
 	maxRetryTimes           = 5
 	defaultRetryBackoffTime = 3 * time.Second
 
@@ -825,64 +824,6 @@ type local struct {
 
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
-}
-
-// connPool is a lazy pool of gRPC channels.
-// When `Get` called, it lazily allocates new connection if connection not full.
-// If it's full, then it will return allocated channels round-robin.
-type connPool struct {
-	mu sync.Mutex
-
-	conns   []*grpc.ClientConn
-	next    int
-	cap     int
-	newConn func(ctx context.Context) (*grpc.ClientConn, error)
-}
-
-func (p *connPool) takeConns() (conns []*grpc.ClientConn) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.conns, conns = nil, p.conns
-	p.next = 0
-	return conns
-}
-
-// Close closes the conn pool.
-func (p *connPool) Close() {
-	for _, c := range p.takeConns() {
-		if err := c.Close(); err != nil {
-			log.L().Warn("failed to close clientConn", zap.String("target", c.Target()), log.ShortError(err))
-		}
-	}
-}
-
-// get tries to get an existing connection from the pool, or make a new one if the pool not full.
-func (p *connPool) get(ctx context.Context) (*grpc.ClientConn, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.conns) < p.cap {
-		c, err := p.newConn(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		p.conns = append(p.conns, c)
-		return c, nil
-	}
-
-	conn := p.conns[p.next]
-	p.next = (p.next + 1) % p.cap
-	return conn, nil
-}
-
-// newConnPool creates a new connPool by the specified conn factory function and capacity.
-func newConnPool(cap int, newConn func(ctx context.Context) (*grpc.ClientConn, error)) *connPool {
-	return &connPool{
-		cap:     cap,
-		conns:   make([]*grpc.ClientConn, 0, cap),
-		newConn: newConn,
-
-		mu: sync.Mutex{},
-	}
 }
 
 var bufferPool = membuf.NewPool(1024, manual.Allocator{})

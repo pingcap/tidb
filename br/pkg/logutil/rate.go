@@ -20,7 +20,7 @@ var MetricTableCreatedCounter = prometheus.NewCounter(prometheus.CounterOpts{
 	Help:      "The count of tables have been created.",
 })
 
-// RateTracer is a trivial rate tracer based on a promethues counter.
+// RateTracer is a trivial rate tracer based on a prometheus counter.
 // It traces the average speed from it was created.
 type RateTracer struct {
 	start time.Time

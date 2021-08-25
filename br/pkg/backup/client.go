@@ -392,7 +392,10 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 			if err != nil {
 				return errors.Trace(err)
 			}
-			metaWriter.Send(jobBytes, metautil.AppendDDL)
+			err = metaWriter.Send(jobBytes, metautil.AppendDDL)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			count++
 		}
 	}

@@ -79,16 +79,8 @@ const (
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName = "lightning_metadata"
 
-	// autoDiskQuotaLocalReservedSpeed is the estimated size increase per
-	// millisecond per write thread the local backend may gain on all engines.
-	// This is used to compute the maximum size overshoot between two disk quota
-	// checks, if the first one has barely passed.
-	//
-	// With cron.check-disk-quota = 1m, region-concurrency = 40, this should
-	// contribute 2.3 GiB to the reserved size.
-	autoDiskQuotaLocalReservedSpeed uint64 = 1 * units.KiB
-	defaultEngineMemCacheSize              = 512 * units.MiB
-	defaultLocalWriterMemCacheSize         = 128 * units.MiB
+	defaultEngineMemCacheSize      = 512 * units.MiB
+	defaultLocalWriterMemCacheSize = 128 * units.MiB
 
 	maxRetryTimes           = 4
 	defaultRetryBackoffTime = 100 * time.Millisecond
@@ -673,7 +665,6 @@ func (cfg *Config) CheckAndAdjustForLocalBackend() error {
 	case os.IsNotExist(err):
 		// the sorted-kv-dir does not exist, meaning we will create it automatically.
 		// so we extract the storage size from its parent directory.
-		storageSizeDir = filepath.Dir(storageSizeDir)
 	case err == nil:
 		if !sortedKVDirInfo.IsDir() {
 			return errors.Errorf("tikv-importer.sorted-kv-dir ('%s') is not a directory", storageSizeDir)

@@ -140,7 +140,7 @@ func (rc *Client) afterSystemTablesReplaced(ctx context.Context, tables []string
 		case table == "user":
 			// We cannot execute `rc.dom.NotifyUpdatePrivilege` here, because there isn't
 			// sessionctx.Context provided by the glue.
-			// TODO: update the glue type and allow we retrive a session context from it.
+			// TODO: update the glue type and allow we retrieve a session context from it.
 			err = multierr.Append(err, errors.Annotatef(berrors.ErrUnsupportedSystemTable,
 				"restored user info may not take effect, until you should execute `FLUSH PRIVILEGES` manually"))
 		}

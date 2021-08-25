@@ -710,7 +710,6 @@ func (tr *TableRestore) postProcess(
 				if rc.cfg.TikvImporter.DuplicateDetection {
 					if err := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable); err != nil {
 						tr.logger.Error("collect remote duplicate keys failed", log.ShortError(err))
-						err = nil
 					}
 				}
 				if cp.Checksum.SumKVS() > 0 || baseTotalChecksum.SumKVS() > 0 {
@@ -719,7 +718,7 @@ func (tr *TableRestore) postProcess(
 					tr.logger.Info("merged local checksum", zap.Object("checksum", &localChecksum))
 				}
 
-				remoteChecksum, err := DoChecksum(ctx, tr.tableInfo)
+				remoteChecksum, _ := DoChecksum(ctx, tr.tableInfo)
 				// TODO: If there are duplicate keys, do not set the `ChecksumMismatch` error
 				err = tr.compareChecksum(remoteChecksum, localChecksum)
 				// with post restore level 'optional', we will skip checksum error
