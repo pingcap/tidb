@@ -518,6 +518,45 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
+	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L)
+	ids := []string{tableRuleID}
+	if tblInfo.GetPartitionInfo() != nil {
+		for _, def := range tblInfo.GetPartitionInfo().Definitions {
+			ids = append(ids, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, def.Name.L))
+		}
+	}
+
+	oldRules, err := infosync.GetLabelRules(context.TODO(), ids)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Wrapf(err, "failed to get PD the label rule")
+	}
+
+	var newRules []*label.Rule
+	for _, r := range oldRules {
+		if r.ID == tableRuleID {
+			newRules = append(newRules, r.Clone().Reset(newTableID, job.SchemaName, tblInfo.Name.L))
+		}
+	}
+
+	if tblInfo.GetPartitionInfo() != nil {
+		for _, r := range oldRules {
+			for _, def := range tblInfo.GetPartitionInfo().Definitions {
+				if r.ID == fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, def.Name.L) {
+					newRules = append(newRules, r.Clone().Reset(def.ID, job.SchemaName, tblInfo.Name.L, def.Name.L))
+				}
+			}
+		}
+	}
+
+	// update the key range with same rule id.
+	patch := label.NewRulePatch(newRules, nil)
+	err = infosync.UpdateLabelRules(context.TODO(), patch)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Wrapf(err, "failed to notify PD the label rules")
+	}
+
 	// Clear the tiflash replica available status.
 	if tblInfo.TiFlashReplica != nil {
 		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
