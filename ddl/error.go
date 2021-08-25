@@ -253,10 +253,10 @@ var (
 	// ErrTableOptionInsertMethodUnsupported is returned when create/alter table with insert method option.
 	ErrTableOptionInsertMethodUnsupported = dbterror.ClassDDL.NewStd(mysql.ErrTableOptionInsertMethodUnsupported)
 
-	// ErrInvalidPlacementSpec is returned when add/alter an invalid placement_policy rule
+	// ErrInvalidPlacementSpec is returned when add/alter an invalid placement rule
 	ErrInvalidPlacementSpec = dbterror.ClassDDL.NewStd(mysql.ErrInvalidPlacementSpec)
 
-	// ErrInvalidPlacementPolicyCheck is returned when txn_scope and commit data changing do not meet the placement_policy policy
+	// ErrInvalidPlacementPolicyCheck is returned when txn_scope and commit data changing do not meet the placement policy
 	ErrInvalidPlacementPolicyCheck = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyCheck)
 
 	// ErrMultipleDefConstInListPart returns multiple definition of same constant in list partitioning.

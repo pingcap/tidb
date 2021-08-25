@@ -6235,6 +6235,3 @@ func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacemen
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
-
-type policyRelatedIDs struct {
-}

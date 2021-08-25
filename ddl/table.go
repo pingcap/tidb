@@ -515,7 +515,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	err = infosync.PutRuleBundles(context.TODO(), bundles)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD the placement_policy rules")
+		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
 	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L)

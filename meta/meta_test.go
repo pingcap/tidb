@@ -74,7 +74,7 @@ func TestPlacementPolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, policy, val)
 
-	// mock updating the placement_policy policy.
+	// mock updating the placement policy.
 	policy.Name = model.NewCIStr("bb")
 	policy.LearnerConstraints = "+zone=nanjing"
 	err = m.UpdatePolicy(policy)

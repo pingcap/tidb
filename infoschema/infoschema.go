@@ -96,7 +96,7 @@ type infoSchema struct {
 	ruleBundleMutex sync.RWMutex
 	ruleBundleMap   map[string]*placement.Bundle
 
-	// policyMap stores all placement_policy policies.
+	// policyMap stores all placement policies.
 	policyMutex sync.RWMutex
 	policyMap   map[string]*placementpolicy.PolicyInfo
 

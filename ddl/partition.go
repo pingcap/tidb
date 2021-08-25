@@ -942,7 +942,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		err = dropRuleBundles(d, physicalTableIDs)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement_policy rules")
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
@@ -972,7 +972,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		err = dropRuleBundles(d, physicalTableIDs)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement_policy rules")
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 		job.SchemaState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != job.SchemaState)
@@ -1108,7 +1108,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 	err = infosync.PutRuleBundles(context.TODO(), bundles)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Wrapf(err, "failed to notify PD the placement_policy rules")
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
 	newIDs := make([]int64, len(oldIDs))
@@ -1315,7 +1315,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	err = infosync.PutRuleBundles(context.TODO(), bundles)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Wrapf(err, "failed to notify PD the placement_policy rules")
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
 	ver, err = updateSchemaVersion(t, job)
@@ -1746,7 +1746,7 @@ func onAlterTableAlterPartition(t *meta.Meta, job *model.Job) (ver int64, err er
 		err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return 0, errors.Wrapf(err, "failed to notify PD the placement_policy rules")
+			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 		ptInfo.SetStateByID(partitionID, model.StatePublic)
 		// used by ApplyDiff in updateSchemaVersion
