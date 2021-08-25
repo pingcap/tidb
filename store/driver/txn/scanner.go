@@ -110,7 +110,7 @@ func newLowerBoundReverseIter(iter kv.Iterator, lowerBound kv.Key) kv.Iterator {
 	i := &lowerBoundReverseIter{
 		iter:       iter,
 		lowerBound: lowerBound,
-		valid:      true,
+		valid:      iter.Valid(),
 	}
 	i.update()
 	return i
@@ -150,6 +150,7 @@ func (i *lowerBoundReverseIter) Next() error {
 	}
 
 	if err := i.iter.Next(); err != nil {
+		i.Close()
 		return err
 	}
 	i.update()
@@ -158,9 +159,7 @@ func (i *lowerBoundReverseIter) Next() error {
 
 func (i *lowerBoundReverseIter) Close() {
 	i.valid = false
-	if i.iter.Valid() {
-		i.iter.Close()
-	}
+	i.iter.Close()
 }
 
 type filterEmptyValueIter struct {
