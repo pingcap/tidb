@@ -127,6 +127,12 @@ func (r *KeyRange) IsPoint() bool {
 		bytes.Equal(r.StartKey[:diffOneIdx], r.EndKey[:diffOneIdx])
 }
 
+// Entry is the entry for key and value
+type Entry struct {
+	Key   Key
+	Value []byte
+}
+
 // Handle is the ID of a row.
 type Handle interface {
 	// IsInt returns if the handle type is int64.
