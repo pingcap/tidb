@@ -91,40 +91,40 @@ type mockLabelManager struct {
 
 // PutLabelRule implements PutLabelRule
 func (mm *mockLabelManager) PutLabelRule(ctx context.Context, rule *label.Rule) error {
-	mm.labelRules[rule.ID] = rule
+	//mm.labelRules[rule.ID] = rule
 	return nil
 }
 
 // UpdateLabelRules implements UpdateLabelRules
 func (mm *mockLabelManager) UpdateLabelRules(ctx context.Context, patch *label.RulePatch) error {
-	for _, p := range patch.DeleteRules {
-		delete(mm.labelRules, p)
-	}
-	for _, p := range patch.SetRules {
-		mm.labelRules[p.ID] = p
-	}
+	//for _, p := range patch.DeleteRules {
+	//	delete(mm.labelRules, p)
+	//}
+	//for _, p := range patch.SetRules {
+	//	mm.labelRules[p.ID] = p
+	//}
 	return nil
 }
 
 // mockLabelManager implements GetAllLabelRules
 func (mm *mockLabelManager) GetAllLabelRules(ctx context.Context) ([]*label.Rule, error) {
-	r := make([]*label.Rule, len(mm.labelRules))
-	for _, labelRule := range mm.labelRules {
-		r = append(r, labelRule)
-	}
-	return r, nil
+	//r := make([]*label.Rule, len(mm.labelRules))
+	//for _, labelRule := range mm.labelRules {
+	//	r = append(r, labelRule)
+	//}
+	return nil, nil
 }
 
 // mockLabelManager implements GetLabelRules
 func (mm *mockLabelManager) GetLabelRules(ctx context.Context, ruleIDs []string) ([]*label.Rule, error) {
-	r := make([]*label.Rule, len(mm.labelRules))
-	for _, ruleID := range ruleIDs {
-		for _, labelRule := range mm.labelRules {
-			if labelRule.ID == ruleID {
-				r = append(r, labelRule)
-				break
-			}
-		}
-	}
-	return r, nil
+	//r := make([]*label.Rule, len(mm.labelRules))
+	//for _, ruleID := range ruleIDs {
+	//	for _, labelRule := range mm.labelRules {
+	//		if labelRule.ID == ruleID {
+	//			r = append(r, labelRule)
+	//			break
+	//		}
+	//	}
+	//}
+	return nil, nil
 }
