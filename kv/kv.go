@@ -84,7 +84,7 @@ func (i *EmptyIterator) Key() Key { return nil }
 func (i *EmptyIterator) Value() []byte { return nil }
 
 // Next goes the next position. Always return error for this iterator
-func (i *EmptyIterator) Next() error { return errors.New("scanner iterator is invalid") }
+func (i *EmptyIterator) Next() error { return errors.New("iterator is invalid") }
 
 // Close closes the iterator.
 func (i *EmptyIterator) Close() {}
