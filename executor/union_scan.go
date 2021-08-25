@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"runtime/trace"
 
+	"go.uber.org/zap"
+
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.
@@ -171,6 +174,16 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	}
 	addedRow := us.getAddedRow()
 
+	if us.ctx.GetSessionVars().ConnectionID > 0 {
+		logutil.Logger(ctx).Info("MYLOG get one row",
+			zap.Int("sr", us.cursor4SnapshotRows),
+			zap.Int("sr all", len(us.snapshotRows)),
+			zap.Int("ar", us.cursor4AddRows),
+			zap.Int("ad all", len(us.addedRows)),
+			zap.String("snapshot row", fmt.Sprintf("%v", snapshotRow)),
+			zap.String("added row", fmt.Sprintf("%v", addedRow)))
+	}
+
 	var row []types.Datum
 	var isSnapshotRow bool
 	if addedRow == nil {
@@ -209,11 +222,13 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
+		logutil.Logger(ctx).Info("MYLOG srows len", zap.Int("len", len(us.snapshotRows)))
 		err = Next(ctx, us.children[0], us.snapshotChunkBuffer)
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
 			return nil, err
 		}
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
+	OUTER:
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			var snapshotHandle kv.Handle
 			snapshotHandle, err = us.belowHandleCols.BuildHandle(row)
@@ -221,10 +236,33 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 				return nil, err
 			}
 			checkKey := tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
-			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
-				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
-				// commit, but for simplicity, we don't handle it here.
+			_, err := us.memBufSnap.Get(context.TODO(), checkKey)
+			//logutil.
+			if err == nil {
 				continue
+			}
+			// Though the handle does not appear in added rows, there may be still some conflicts on unique indexes,
+			// UnionScan with two records which have same unique index is weird. This should be handled here.
+			// The newly added rows will overwrite the snapshot rows.
+			// FIXME: it's better to handle the conflict on unique indexes when execute the DMLs instead of handling here.
+			if !us.table.Meta().IsCommonHandle {
+				cols := us.table.Meta().Columns
+				for _, uniqueIndex := range us.table.Meta().Indices {
+					if !uniqueIndex.Unique {
+						continue
+					}
+					indexDatums := make([]types.Datum, len(uniqueIndex.Columns))
+					for i, uniqueCol := range uniqueIndex.Columns {
+						indexDatums[i] = row.GetDatum(uniqueCol.Offset, &cols[uniqueCol.Offset].FieldType)
+					}
+					checkKey, err := EncodeUniqueIndexKey(us.ctx, us.table.Meta(), uniqueIndex, indexDatums, us.table.Meta().ID)
+					if err != nil {
+						return nil, err
+					}
+					if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
+						continue OUTER
+					}
+				}
 			}
 			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.children[0])))
 		}
