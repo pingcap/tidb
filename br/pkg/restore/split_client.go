@@ -282,7 +282,7 @@ func (c *pdClient) sendSplitRegionRequest(
 			return nil, multierr.Append(splitErrors, err)
 		}
 		if resp.RegionError != nil {
-			log.Error("fail to split region",
+			log.Warn("fail to split region",
 				logutil.Region(regionInfo.Region),
 				zap.Stringer("regionErr", resp.RegionError))
 			splitErrors = multierr.Append(splitErrors,

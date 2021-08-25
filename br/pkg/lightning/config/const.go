@@ -24,7 +24,7 @@ const (
 	MinRegionSize           ByteSize = 256 * units.MiB
 	MaxRegionSize           ByteSize = 256 * units.MiB
 	SplitRegionSize         ByteSize = 96 * units.MiB
-	MaxSplitRegionSizeRatio int      = 5
+	MaxSplitRegionSizeRatio int      = 10
 
 	BufferSizeScale = 5
 
