@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1791,13 +1792,12 @@ var defaultSysVars = []*SysVar{
 }
 
 func collectAllowFuncName4ExpressionIndex() string {
-	str := ""
+	var str []string
 	for funcName := range GAFunction4ExpressionIndex {
-		str += funcName
-		str += ", "
+		str = append(str, funcName)
 	}
-	str = str[0 : len(str)-2]
-	return str
+	sort.Strings(str)
+	return strings.Join(str, ", ")
 }
 
 // GAFunction4ExpressionIndex stores functions GA for expression index.

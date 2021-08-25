@@ -512,4 +512,4 @@ a
 b
 select @@tidb_allow_function_for_expression_index;
 @@tidb_allow_function_for_expression_index
-lower, upper, md5, reverse, vitess_hash
+lower, md5, reverse, upper, vitess_hash
