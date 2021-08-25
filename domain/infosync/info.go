@@ -176,7 +176,11 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	if err != nil {
 		return nil, err
 	}
-	is.labelRuleManager = initLabelRuleManager(etcdCli.Endpoints())
+	if etcdCli != nil {
+		is.labelRuleManager = initLabelRuleManager(etcdCli.Endpoints())
+	} else {
+		is.labelRuleManager = initLabelRuleManager([]string{})
+	}
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
