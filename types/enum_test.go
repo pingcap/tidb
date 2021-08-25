@@ -54,7 +54,7 @@ func (s *testEnumSuite) TestEnum(c *C) {
 	for _, t := range tbl {
 		e, err := ParseEnum(t.Elems, t.Name, mysql.DefaultCollationName)
 		if t.Expected == 0 {
-			c.Assert(err, NotNil)
+			c.Assert(e, DeepEquals, Enum{})
 			c.Assert(e.ToNumber(), Equals, float64(0))
 			c.Assert(e.String(), Equals, "")
 			continue
@@ -68,7 +68,7 @@ func (s *testEnumSuite) TestEnum(c *C) {
 	for _, t := range tbl {
 		e, err := ParseEnum(t.Elems, t.Name, "utf8_unicode_ci")
 		if t.Expected == 0 {
-			c.Assert(err, NotNil)
+			c.Assert(e, DeepEquals, Enum{})
 			c.Assert(e.ToNumber(), Equals, float64(0))
 			c.Assert(e.String(), Equals, "")
 			continue
@@ -82,7 +82,7 @@ func (s *testEnumSuite) TestEnum(c *C) {
 	for _, t := range citbl {
 		e, err := ParseEnum(t.Elems, t.Name, "utf8_general_ci")
 		if t.Expected == 0 {
-			c.Assert(err, NotNil)
+			c.Assert(e, DeepEquals, Enum{})
 			c.Assert(e.ToNumber(), Equals, float64(0))
 			c.Assert(e.String(), Equals, "")
 			continue
@@ -105,7 +105,7 @@ func (s *testEnumSuite) TestEnum(c *C) {
 	for _, t := range tblNumber {
 		e, err := ParseEnumValue(t.Elems, t.Number)
 		if t.Expected == 0 {
-			c.Assert(err, NotNil)
+			c.Assert(e, DeepEquals, Enum{})
 			continue
 		}
 

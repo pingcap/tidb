@@ -311,7 +311,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, Enum{Name: "b", Value: 2})
 	_, err = Convert("d", ft)
-	c.Assert(err, NotNil)
+	c.Assert(v, DeepEquals, Enum{})
 	v, err = Convert(4, ft)
 	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue, Commentf("err %v", err))
 	c.Assert(v, DeepEquals, Enum{})
