@@ -142,7 +142,7 @@ Projection	170.34	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd
   └─IndexJoin	170.34	root		inner join, inner:IndexLookUp, outer key:test.st.aid, inner key:test.dd.aid, equal cond:eq(test.st.aid, test.dd.aid), eq(test.st.dic, test.dd.mac), other cond:lt(test.st.t, test.dd.t)
     ├─TableReader(Build)	170.34	root		data:Selection
     │ └─Selection	170.34	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), gt(test.st.t, 1477971479), not(isnull(test.st.dic))
-    │   └─TableRangeScan	1999.00	cop[tikv]	table:gad	range:[0,+inf], keep order:false
+    │   └─TableFullScan	1999.00	cop[tikv]	table:gad	keep order:false
     └─IndexLookUp(Probe)	1.00	root		
       ├─IndexRangeScan(Build)	3.93	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:false
       └─Selection(Probe)	1.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "ios"), gt(test.dd.t, 1477971479), not(isnull(test.dd.mac)), not(isnull(test.dd.t))
@@ -162,7 +162,7 @@ Projection	428.32	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.d
   └─IndexJoin	428.32	root		inner join, inner:IndexLookUp, outer key:test.dt.aid, test.dt.dic, inner key:test.rr.aid, test.rr.dic, equal cond:eq(test.dt.aid, test.rr.aid), eq(test.dt.dic, test.rr.dic)
     ├─TableReader(Build)	428.32	root		data:Selection
     │ └─Selection	428.32	cop[tikv]		eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
-    │   └─TableRangeScan	2000.00	cop[tikv]	table:dt	range:[0,+inf], keep order:false
+    │   └─TableFullScan	2000.00	cop[tikv]	table:dt	keep order:false
     └─IndexLookUp(Probe)	1.00	root		
       ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:rr, index:PRIMARY(aid, dic)	range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:false
       └─Selection(Probe)	1.00	cop[tikv]		eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
