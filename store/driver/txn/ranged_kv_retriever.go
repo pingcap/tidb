@@ -50,60 +50,19 @@ func (s *RangedKVRetriever) Intersect(startKey, endKey kv.Key) *RangedKVRetrieve
 		return nil
 	}
 
-	//                      startKey     endKey
-	// ---------------------|============|---
-	// ---|============|---------------------
-	//    s.StartKey   s.EndKey
-	if len(s.EndKey) != 0 && bytes.Compare(s.EndKey, startKey) <= 0 {
-		return nil
+	maxStartKey := startKey
+	if bytes.Compare(s.StartKey, maxStartKey) > 0 {
+		maxStartKey = s.StartKey
 	}
 
-	//    startKey     endKey
-	// ---|============|---------------------
-	// ---------------------|============|---
-	//                      s.StartKey   s.EndKey
-	if len(endKey) != 0 && bytes.Compare(endKey, s.StartKey) <= 0 {
-		return nil
+	minEndKey := endKey
+	if len(minEndKey) == 0 || (len(minEndKey) > 0 && len(s.EndKey) > 0 && bytes.Compare(s.EndKey, minEndKey) < 0) {
+		minEndKey = s.EndKey
 	}
 
-	cmpStart := bytes.Compare(startKey, s.StartKey)
-	cmpEnd := 0
-	switch {
-	case len(endKey) == 0 && len(s.EndKey) != 0:
-		cmpEnd = 1
-	case len(endKey) != 0 && len(s.EndKey) == 0:
-		cmpEnd = -1
-	default:
-		cmpEnd = bytes.Compare(endKey, s.EndKey)
+	if len(minEndKey) == 0 || bytes.Compare(maxStartKey, minEndKey) < 0 {
+		return NewRangeRetriever(s.Retriever, maxStartKey, minEndKey)
 	}
 
-	if cmpStart >= 0 && cmpEnd <= 0 {
-		//         startKey   endKey
-		// --------|==========|------
-		// -----|================|---
-		//      s.StartKey       s.EndKey
-		return NewRangeRetriever(s.Retriever, startKey, endKey)
-	}
-
-	if cmpStart <= 0 && cmpEnd >= 0 {
-		//      startKey           endKey
-		// -----|==================|---
-		// --------|============|------
-		//         s.StartKey   s.EndKey
-		return s
-	}
-
-	if cmpStart >= 0 && cmpEnd >= 0 {
-		//        startKey     endKey
-		// -------|============|---
-		// ---|============|-------
-		//    s.StartKey   s.EndKey
-		return NewRangeRetriever(s.Retriever, startKey, s.EndKey)
-	}
-
-	//    startKey     endKey
-	// ---|============|-------
-	// -------|============|---
-	//        s.StartKey   s.EndKey
-	return NewRangeRetriever(s.Retriever, s.StartKey, endKey)
+	return nil
 }
