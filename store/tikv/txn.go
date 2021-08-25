@@ -606,8 +606,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *tikv.LockCtx, keysInput
 				wg := txn.asyncPessimisticRollback(ctx, keys)
 				if isDeadlock {
 					logutil.Logger(ctx).Debug("deadlock error received", zap.Uint64("startTS", txn.startTS), zap.Stringer("deadlockInfo", dl))
-					if hashInKeys(dl.DeadlockKeyHash, keys) {
-						dl.IsRetryable = true
+					if dl.IsRetryable {
 						// Wait for the pessimistic rollback to finish before we retry the statement.
 						wg.Wait()
 						// Sleep a little, wait for the other transaction that blocked by this transaction to acquire the lock.
