@@ -349,5 +349,11 @@
       "select * from t where g = 5 order by f",
       "select * from t where d = 3 order by c, e"
     ]
+  },
+  {
+    "name": "TestIssue27083",
+    "cases": [
+      "select * from t use index (idx_b) where b = 2 limit 1"
+    ]
   }
 ]
