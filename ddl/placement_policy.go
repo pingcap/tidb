@@ -63,11 +63,11 @@ func getPolicyInfo(t *meta.Meta, policyID int64) (*placementpolicy.PolicyInfo, e
 	policy, err := t.GetPolicy(policyID)
 	if err != nil {
 		if meta.ErrPolicyNotExists.Equal(err) {
-			return nil, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(
+			return nil, infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(
 				fmt.Sprintf("(Policy ID %d)", policyID),
-			))
+			)
 		}
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return policy, nil
 }
