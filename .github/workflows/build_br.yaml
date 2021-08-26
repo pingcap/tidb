@@ -1,4 +1,4 @@
-name: br
+name: Tools build
 on:
   push:
     branches:
