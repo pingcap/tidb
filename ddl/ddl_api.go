@@ -6079,11 +6079,11 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 		return ErrInvalidAttributesSpec.GenWithStackByArgs(err)
 	}
 
-	var toDelete bool
-	if len(rule.Labels) == 0 || spec.AttributesSpec.Default {
-		toDelete = true
-	}
+	isEmpty := len(rule.Labels) == 0
 	rule.Reset(meta.ID, schema.Name.L, meta.Name.L)
+	if isEmpty || spec.AttributesSpec.Default {
+		rule.Labels = nil
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -6091,7 +6091,7 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAlterTableAttributes,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{rule, toDelete},
+		Args:       []interface{}{rule},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -6131,11 +6131,11 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 		return ErrInvalidAttributesSpec.GenWithStackByArgs(sb.String(), err)
 	}
 
-	var toDelete bool
-	if len(rule.Labels) == 0 || spec.AttributesSpec.Default {
-		toDelete = true
-	}
+	isEmpty := len(rule.Labels) == 0
 	rule.Reset(partitionID, schema.Name.L, meta.Name.L, spec.PartitionNames[0].L)
+	if isEmpty || spec.AttributesSpec.Default {
+		rule.Labels = nil
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -6143,7 +6143,7 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAlterTablePartitionAttributes,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partitionID, rule, toDelete},
+		Args:       []interface{}{partitionID, rule},
 	}
 
 	err = d.doDDLJob(ctx, job)
