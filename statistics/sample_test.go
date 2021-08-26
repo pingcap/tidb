@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -177,7 +178,7 @@ func (s *testSampleSuite) TestWeightedSampling(c *C) {
 	// for x := 0; x < 800; x++ {
 	itemCnt := make([]int, rowNum)
 	for loopI := 0; loopI < loopCnt; loopI++ {
-		builder := &RowSampleBuilder{
+		builder := &ReservoirRowSampleBuilder{
 			Sc:              sc,
 			RecordSet:       rs,
 			ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
@@ -217,16 +218,10 @@ func (s *testSampleSuite) TestDistributedWeightedSampling(c *C) {
 	// for x := 0; x < 800; x++ {
 	itemCnt := make([]int, rowNum)
 	for loopI := 1; loopI < loopCnt; loopI++ {
-		rootRowCollector := &RowSampleCollector{
-			NullCount:     make([]int64, 1),
-			FMSketches:    make([]*FMSketch, 0, 1),
-			TotalSizes:    make([]int64, 1),
-			Samples:       make(WeightedRowSampleHeap, 0, sampleNum),
-			MaxSampleSize: int(sampleNum),
-		}
+		rootRowCollector := NewReservoirRowSampleCollector(int(sampleNum), 1)
 		rootRowCollector.FMSketches = append(rootRowCollector.FMSketches, NewFMSketch(1000))
 		for i := 0; i < batch; i++ {
-			builder := &RowSampleBuilder{
+			builder := &ReservoirRowSampleBuilder{
 				Sc:              sc,
 				RecordSet:       sets[i],
 				ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},

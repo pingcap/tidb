@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -2294,6 +2296,87 @@ func (s *testSuite) TestTemporaryTable(c *C) {
 	tk.MustGetErrCode("create binding for delete from t where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
 }
 
+func (s *testSuite) TestLocalTemporaryTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tmp2")
+	tk.MustExec("create temporary table tmp2 (a int, b int, key(a), key(b));")
+	tk.MustGetErrCode("create session binding for select * from tmp2 where b = 123 using select * from t ignore index(b) where b = 123;", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create binding for insert into tmp2 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create binding for replace into tmp2 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create binding for update tmp2 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t, c) */ t set a = 1 where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
+	tk.MustGetErrCode("create binding for delete from tmp2 where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
+}
+
+func (s *testSuite) TestIssue25505(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer func() {
+		tk.MustExec("set tidb_slow_log_threshold = 300")
+	}()
+	tk.MustExec("set tidb_slow_log_threshold = 0")
+	tk.MustExec("create table t (a int(11) default null,b int(11) default null,key b (b),key ba (b))")
+	tk.MustExec("create table t1 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
+	tk.MustExec("create table t2 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+
+	spmMap := map[string]string{}
+	spmMap["with recursive `cte` ( `a` ) as ( select ? union select `a` + ? from `test` . `t1` where `a` < ? ) select * from `cte`"] =
+		"WITH RECURSIVE `cte` (`a`) AS (SELECT 2 UNION SELECT `a` + 1 FROM `test`.`t1` WHERE `a` < 5) SELECT /*+ use_index(@`sel_3` `test`.`t1` `idx_ab`), hash_agg(@`sel_1`)*/ * FROM `cte`"
+	spmMap["with recursive `cte1` ( `a` , `b` ) as ( select * from `test` . `t` where `b` = ? union select `a` + ? , `b` + ? from `cte1` where `a` < ? ) select * from `test` . `t`"] =
+		"WITH RECURSIVE `cte1` (`a`, `b`) AS (SELECT * FROM `test`.`t` WHERE `b` = 1 UNION SELECT `a` + 1,`b` + 1 FROM `cte1` WHERE `a` < 2) SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t`"
+	spmMap["with `cte1` as ( select * from `test` . `t` ) , `cte2` as ( select ? ) select * from `test` . `t`"] =
+		"WITH `cte1` AS (SELECT * FROM `test`.`t`), `cte2` AS (SELECT 4) SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t`"
+	spmMap["with `cte` as ( select * from `test` . `t` where `b` = ? ) select * from `test` . `t`"] =
+		"WITH `cte` AS (SELECT * FROM `test`.`t` WHERE `b` = 6) SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t`"
+	spmMap["with recursive `cte` ( `a` ) as ( select ? union select `a` + ? from `test` . `t1` where `a` > ? ) select * from `cte`"] =
+		"WITH RECURSIVE `cte` (`a`) AS (SELECT 2 UNION SELECT `a` + 1 FROM `test`.`t1` WHERE `a` > 5) SELECT /*+ use_index(@`sel_3` `test`.`t1` `idx_b`), hash_agg(@`sel_1`)*/ * FROM `cte`"
+	spmMap["with `cte` as ( with `cte1` as ( select * from `test` . `t2` where `a` > ? and `b` > ? ) select * from `cte1` ) select * from `cte` join `test` . `t1` on `t1` . `a` = `cte` . `a`"] =
+		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` > 1 AND `b` > 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_ab`), use_index(@`sel_1` `test`.`t1` `idx_ab`), inl_join(@`sel_1` `test`.`t1`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
+	spmMap["with `cte` as ( with `cte1` as ( select * from `test` . `t2` where `a` = ? and `b` = ? ) select * from `cte1` ) select * from `cte` join `test` . `t1` on `t1` . `a` = `cte` . `a`"] =
+		"WITH `cte` AS (WITH `cte1` AS (SELECT * FROM `test`.`t2` WHERE `a` = 1 AND `b` = 1) SELECT * FROM `cte1`) SELECT /*+ use_index(@`sel_3` `test`.`t2` `idx_a`), use_index(@`sel_1` `test`.`t1` `idx_a`), inl_join(@`sel_1` `test`.`t1`)*/ * FROM `cte` JOIN `test`.`t1` ON `t1`.`a` = `cte`.`a`"
+
+	tk.MustExec("with cte as (with cte1 as (select /*+use_index(t2 idx_a)*/ * from t2 where a = 1 and b = 1) select * from cte1) select /*+use_index(t1 idx_a)*/ * from cte join t1 on t1.a=cte.a;")
+	tk.MustExec("with cte as (with cte1 as (select /*+use_index(t2 idx_a)*/ * from t2 where a = 1 and b = 1) select * from cte1) select /*+use_index(t1 idx_a)*/ * from cte join t1 on t1.a=cte.a;")
+	tk.MustExec("with cte as (with cte1 as (select /*+use_index(t2 idx_a)*/ * from t2 where a = 1 and b = 1) select * from cte1) select /*+use_index(t1 idx_a)*/ * from cte join t1 on t1.a=cte.a;")
+
+	tk.MustExec("with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;")
+	tk.MustExec("with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;")
+	tk.MustExec("with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;")
+
+	tk.MustExec("WITH RECURSIVE cte(a) AS (SELECT 2 UNION SELECT a+1 FROM t1 use index(idx_ab) WHERE a < 5) SELECT * FROM cte;")
+	tk.MustExec("WITH RECURSIVE cte(a) AS (SELECT 2 UNION SELECT a+1 FROM t1 use index(idx_ab) WHERE a < 5) SELECT * FROM cte;")
+	tk.MustExec("WITH RECURSIVE cte(a) AS (SELECT 2 UNION SELECT a+1 FROM t1 use index(idx_ab) WHERE a < 5) SELECT * FROM cte;")
+
+	tk.MustExec("WITH RECURSIVE cte(a) AS (SELECT 2 UNION SELECT /*+use_index(t1 idx_b)*/  a+1 FROM t1  WHERE a > 5) SELECT * FROM cte;")
+	tk.MustExec("WITH RECURSIVE cte(a) AS (SELECT 2 UNION SELECT /*+use_index(t1 idx_b)*/  a+1 FROM t1  WHERE a > 5) SELECT * FROM cte;")
+	tk.MustExec("WITH RECURSIVE cte(a) AS (SELECT 2 UNION SELECT /*+use_index(t1 idx_b)*/  a+1 FROM t1  WHERE a > 5) SELECT * FROM cte;")
+
+	tk.MustExec("with cte as (select * from t where b=6) select * from t")
+	tk.MustExec("with cte as (select * from t where b=6) select * from t")
+	tk.MustExec("with cte as (select * from t where b=6) select * from t")
+
+	tk.MustExec("with cte1 as (select * from t), cte2 as (select 4) select * from t")
+	tk.MustExec("with cte1 as (select * from t), cte2 as (select 5) select * from t")
+	tk.MustExec("with cte1 as (select * from t), cte2 as (select 6) select * from t")
+
+	tk.MustExec("with recursive cte1(a,b) as (select * from t where b = 1 union select a+1,b+1 from cte1 where a < 2) select * from t")
+	tk.MustExec("with recursive cte1(a,b) as (select * from t where b = 1 union select a+1,b+1 from cte1 where a < 2) select * from t")
+	tk.MustExec("with recursive cte1(a,b) as (select * from t where b = 1 union select a+1,b+1 from cte1 where a < 2) select * from t")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 7)
+	for _, row := range rows {
+		str := fmt.Sprintf("%s", row[0])
+		c.Assert(row[1], Equals, spmMap[str])
+	}
+}
+
 func (s *testSuite) TestBindingLastUpdateTime(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -2369,4 +2452,225 @@ func (s *testSerialSuite) TestOptimizeOnlyOnce(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/planner/checkOptimizeCountOne", "return"), IsNil)
 	tk.MustQuery("select * from t").Check(testkit.Rows())
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/checkOptimizeCountOne"), IsNil)
+}
+
+func (s *testSerialSuite) TestIssue26377(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_temporary_table = true")
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
+	tk.MustExec("drop table if exists t1,tmp1")
+	tk.MustExec("create table t1(a int(11))")
+	tk.MustExec("create global temporary table tmp1(a int(11), key idx_a(a)) on commit delete rows;")
+	tk.MustExec("create temporary table tmp2(a int(11), key idx_a(a));")
+
+	queries := []string{
+		"create global binding for with cte1 as (select a from tmp1) select * from cte1 using with cte1 as (select a from tmp1) select * from cte1",
+		"create global binding for select * from t1 inner join tmp1 on t1.a=tmp1.a using select * from  t1 inner join tmp1 on t1.a=tmp1.a;",
+		"create global binding for select * from t1 where t1.a in (select a from tmp1) using select * from t1 where t1.a in (select a from tmp1 use index (idx_a));",
+		"create global binding for select a from t1 union select a from tmp1 using select a from t1 union select a from tmp1 use index (idx_a);",
+		"create global binding for select t1.a, (select a from tmp1 where tmp1.a=1) as t2 from t1 using select t1.a, (select a from tmp1 where tmp1.a=1) as t2 from t1;",
+		"create global binding for select * from (select * from tmp1) using select * from (select * from tmp1);",
+		"create global binding for select * from t1 where t1.a = (select a from tmp1) using select * from t1 where t1.a = (select a from tmp1)",
+	}
+	genLocalTemporarySQL := func(sql string) string {
+		return strings.Replace(sql, "tmp1", "tmp2", -1)
+	}
+	for _, query := range queries {
+		localSQL := genLocalTemporarySQL(query)
+		queries = append(queries, localSQL)
+	}
+
+	for _, q := range queries {
+		tk.MustGetErrCode(q, errno.ErrOptOnTemporaryTable)
+	}
+}
+
+func (s *testSerialSuite) TestIssue27422(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_temporary_table = true")
+	tk.MustExec("set @@tidb_enable_noop_functions=1;")
+	tk.MustExec("drop table if exists t1,tmp1,tmp2")
+	tk.MustExec("create table t1(a int(11))")
+	tk.MustExec("create global temporary table tmp1(a int(11), key idx_a(a)) on commit delete rows;")
+	tk.MustExec("create temporary table tmp2(a int(11), key idx_a(a));")
+
+	queries := []string{
+		"create global binding for insert into t1 (select * from tmp1) using insert into t1 (select * from tmp1);",
+		"create global binding for update t1 inner join tmp1 on t1.a=tmp1.a set t1.a=1 using update t1 inner join tmp1 on t1.a=tmp1.a set t1.a=1",
+		"create global binding for update t1 set t1.a=(select a from tmp1) using update t1 set t1.a=(select a from tmp1)",
+		"create global binding for update t1 set t1.a=1 where t1.a = (select a from tmp1) using update t1 set t1.a=1 where t1.a = (select a from tmp1)",
+		"create global binding for with cte1 as (select a from tmp1) update t1 set t1.a=1 where t1.a in (select a from cte1) using with cte1 as (select a from tmp1) update t1 set t1.a=1 where t1.a in (select a from cte1)",
+		"create global binding for delete from t1 where t1.a in (select a from tmp1) using delete from t1 where t1.a in (select a from tmp1)",
+		"create global binding for delete from t1 where t1.a = (select a from tmp1) using delete from t1 where t1.a = (select a from tmp1)",
+		"create global binding for delete t1 from t1,tmp1 using delete t1 from t1,tmp1",
+	}
+	genLocalTemporarySQL := func(sql string) string {
+		return strings.Replace(sql, "tmp1", "tmp2", -1)
+	}
+	for _, query := range queries {
+		localSQL := genLocalTemporarySQL(query)
+		queries = append(queries, localSQL)
+	}
+
+	for _, q := range queries {
+		tk.MustGetErrCode(q, errno.ErrOptOnTemporaryTable)
+	}
+}
+
+func (s *testSuite) TestCaptureFilter(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
+
+	// Valid table filter.
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 'test.t')")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `mysql` . `capture_plan_baselines_blacklist`")
+
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][0], Equals, "select * from `mysql` . `capture_plan_baselines_blacklist`")
+	c.Assert(rows[1][0], Equals, "select * from `test` . `t` where `a` > ?")
+
+	// Invalid table filter.
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('table', 't')")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
+
+	// Valid database filter.
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('db', 'mysql')")
+	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
+
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[0][0], Equals, "select * from `mysql` . `capture_plan_baselines_blacklist`")
+	c.Assert(rows[1][0], Equals, "select * from `test` . `t` where `a` > ?")
+
+	// Valid frequency filter.
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('frequency', '2')")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+
+	// Invalid frequency filter.
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('frequency', '0')")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+
+	// Invalid filter type.
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('unknown', 'xx')")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+
+	// Case sensitivity.
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('tABle', 'tESt.T')")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Sort().Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `test` . `t` where `a` > ?")
+
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("insert into mysql.capture_plan_baselines_blacklist(filter_type, filter_value) values('Db', 'mySQl')")
+	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("select * from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+
+	tk.MustExec("delete from mysql.capture_plan_baselines_blacklist")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Sort().Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from `mysql` . `capture_plan_baselines_blacklist`")
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,6 +19,7 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -59,10 +61,10 @@ func (tk *TestKit) Session() session.Session {
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	res, err := tk.Exec(sql, args...)
 	comment := fmt.Sprintf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err))
-	tk.require.Nil(err, comment)
+	tk.require.NoError(err, comment)
 
 	if res != nil {
-		tk.require.Nil(res.Close())
+		tk.require.NoError(res.Close())
 	}
 }
 
@@ -83,7 +85,7 @@ func (tk *TestKit) QueryToErr(sql string, args ...interface{}) error {
 	tk.require.NoError(err, comment)
 	tk.require.NotNil(res, comment)
 	_, resErr := session.GetRows4Test(context.Background(), tk.session, res)
-	tk.require.Nil(res.Close())
+	tk.require.NoError(res.Close())
 	return resErr
 }
 
@@ -98,6 +100,17 @@ func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.Reco
 	rows, err := session.ResultSetToStringSlice(ctx, tk.session, rs)
 	tk.require.NoError(err, comment)
 	return &Result{rows: rows, comment: comment, assert: tk.assert, require: tk.require}
+}
+
+// HasPlan checks if the result execution plan contains specific plan.
+func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][0], plan) {
+			return true
+		}
+	}
+	return false
 }
 
 // Exec executes a sql statement using the prepared stmt API
@@ -148,9 +161,18 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	return rs, nil
 }
 
+// ExecToErr executes a sql statement and discard results.
+func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
+	res, err := tk.Exec(sql, args...)
+	if res != nil {
+		tk.require.NoError(res.Close())
+	}
+	return err
+}
+
 func newSession(t *testing.T, store kv.Storage) session.Session {
 	se, err := session.CreateSession4Test(store)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	se.SetConnectionID(testKitIDGenerator.Inc())
 	return se
 }
