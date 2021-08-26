@@ -32,7 +32,7 @@ TEST_DIR=/tmp/backup_restore_compatibility_test
 mkdir -p "$TEST_DIR"
 rm -f "$TEST_DIR"/*.log &> /dev/null
 
-for script in tests/docker_compatible_*/${1}.sh; do
+for script in br/tests/docker_compatible_*/${1}.sh; do
     echo "*===== Running test $script... =====*"
     TEST_DIR="$TEST_DIR" \
     PD_ADDR="$PD_ADDR" \
