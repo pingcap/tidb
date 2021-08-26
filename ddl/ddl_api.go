@@ -6166,7 +6166,7 @@ func buildPolicyInfo(stmt *ast.CreatePlacementPolicyStmt) (*placementpolicy.Poli
 		case ast.PlacementOptionSchedule:
 			policyInfo.Schedule = opt.StrValue
 		case ast.PlacementOptionConstraints:
-			policyInfo.Schedule = opt.StrValue
+			policyInfo.Constraints = opt.StrValue
 		case ast.PlacementOptionLearnerConstraints:
 			policyInfo.LearnerConstraints = opt.StrValue
 		case ast.PlacementOptionFollowerConstraints:
