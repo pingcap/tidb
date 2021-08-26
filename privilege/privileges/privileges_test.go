@@ -1175,25 +1175,9 @@ func TestMetricsSchema(t *testing.T) {
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("CREATE USER nobody, process")
-	tk.MustExec("GRANT Process ON *.* TO process")
-
-	stmts := []string{
-		"SELECT * FROM metrics_schema.up",
-		"SELECT * FROM information_schema.metrics_summary",
-		"SELECT * FROM information_schema.metrics_summary_by_label",
-	}
-
-	// Users without `process` privilege cannot visit those tables.
-	tk.Session().Auth(&auth.UserIdentity{
-		Username: "nobody",
-		Hostname: "localhost",
-	}, nil, nil)
-	for _, stmt := range stmts {
-		err := tk.QueryToErr(stmt)
-		require.Error(t, err)
-		require.True(t, terror.ErrorEqual(err, core.ErrSpecificAccessDenied))
-	}
+	tk.MustExec("CREATE USER nobody, msprocess, msselect")
+	tk.MustExec("GRANT Process ON *.* TO msprocess")
+	tk.MustExec("GRANT SELECT ON metrics_schema.* TO msselect")
 
 	// Mock data for metrics tables. Otherwise `pd unavailable` is thrown.
 	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
@@ -1205,16 +1189,83 @@ func TestMetricsSchema(t *testing.T) {
 		return fpName == fpname
 	})
 
-	// Users with `process` privilege can visit those tables.
-	tk.Session().Auth(&auth.UserIdentity{
-		Username: "process",
-		Hostname: "localhost",
-	}, nil, nil)
-	for _, stmt := range stmts {
-		rss, err := tk.Session().Execute(ctx, stmt)
-		require.NoError(t, err)
-		for _, rs := range rss {
-			require.NoError(t, rs.Close())
+	tests := []struct {
+		stmt        string
+		priv        mysql.PrivilegeType
+		expectedErr error
+	}{
+		{
+			"SHOW CREATE DATABASE metrics_schema",
+			mysql.UsagePriv,
+			core.ErrPrivilegeCheckFail,
+		},
+		{
+			"SHOW CREATE DATABASE metrics_schema",
+			mysql.ProcessPriv,
+			nil,
+		},
+		{
+			"SHOW CREATE DATABASE metrics_schema",
+			mysql.SelectPriv,
+			nil,
+		},
+		{
+			"SELECT * FROM metrics_schema.up",
+			mysql.UsagePriv,
+			core.ErrPrivilegeCheckFail,
+		},
+		{
+			"SELECT * FROM metrics_schema.up",
+			mysql.ProcessPriv,
+			nil,
+		},
+		{
+			"SELECT * FROM metrics_schema.up",
+			mysql.SelectPriv,
+			nil,
+		},
+		{
+			"SELECT * FROM information_schema.metrics_summary",
+			mysql.UsagePriv,
+			core.ErrSpecificAccessDenied,
+		},
+		{
+			"SELECT * FROM information_schema.metrics_summary",
+			mysql.ProcessPriv,
+			nil,
+		},
+		{
+			"SELECT * FROM information_schema.metrics_summary_by_label",
+			mysql.UsagePriv,
+			core.ErrSpecificAccessDenied,
+		},
+		{
+			"SELECT * FROM information_schema.metrics_summary_by_label",
+			mysql.ProcessPriv,
+			nil,
+		},
+	}
+
+	for _, test := range tests {
+		var userName string
+		switch test.priv {
+		case mysql.UsagePriv:
+			userName = "nobody"
+		case mysql.ProcessPriv:
+			userName = "msprocess"
+		case mysql.SelectPriv:
+			userName = "msselect"
+		}
+		tk.Session().Auth(&auth.UserIdentity{
+			Username: userName,
+			Hostname: "localhost",
+		}, nil, nil)
+		err := tk.QueryToErr(test.stmt)
+		if test.expectedErr == nil {
+			require.NoError(t, err)
+		} else {
+			require.Error(t, err)
+			require.True(t, terror.ErrorEqual(err, test.expectedErr))
 		}
 	}
 }
