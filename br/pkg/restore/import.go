@@ -420,7 +420,7 @@ func (importer *FileImporter) Import(
 				return errors.Trace(errIngest)
 			}
 		}
-		log.Debug("ingtest file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)))
+		log.Debug("ingest file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)))
 		for _, f := range files {
 			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
 			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
@@ -454,7 +454,7 @@ func (importer *FileImporter) downloadSST(
 	}
 	regionRule := matchNewPrefix(key, rewriteRules)
 	if regionRule == nil {
-		return nil, errors.Annotatef(berrors.ErrKVRewriteRuleNotFound, "failed to find rewrite rule.")
+		return nil, errors.Annotate(berrors.ErrKVRewriteRuleNotFound, "failed to find rewrite rule.")
 	}
 	rule := import_sstpb.RewriteRule{
 		OldKeyPrefix: encodeKeyPrefix(regionRule.GetOldKeyPrefix()),
