@@ -133,8 +133,10 @@ const (
 type Repertoire int
 
 const (
-	ASCII   Repertoire = 0x01
-	UNICODE            = ASCII << 1
+	// ASCII is ascii repertoire.
+	ASCII Repertoire = 0x01
+	// UNICODE is unicode repertoire.
+	UNICODE = ASCII << 1
 )
 
 var (
@@ -149,20 +151,6 @@ var (
 	constFuncs = map[string]struct{}{
 		ast.Collation: {},
 		ast.Charset:   {},
-	}
-
-	// collationPriority is the priority when infer the result collation, the priority of collation a > b iff collationPriority[a] > collationPriority[b]
-	// collation a and b are incompatible if collationPriority[a] = collationPriority[b]
-	collationPriority = map[string]int{
-		charset.CollationASCII:   1,
-		charset.CollationLatin1:  2,
-		"utf8_general_ci":        3,
-		"utf8_unicode_ci":        3,
-		charset.CollationUTF8:    4,
-		"utf8mb4_general_ci":     5,
-		"utf8mb4_unicode_ci":     5,
-		charset.CollationUTF8MB4: 6,
-		charset.CollationBin:     7,
 	}
 
 	// CollationStrictnessGroup group collation by strictness

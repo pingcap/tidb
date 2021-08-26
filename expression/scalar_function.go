@@ -562,10 +562,12 @@ func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string) {
 	sf.Function.SetCharsetAndCollation(chs, coll)
 }
 
+// HasRepertoire returns if the Repertoire value is initialized.
 func (sf *ScalarFunction) HasRepertoire() bool {
 	return sf.Function.HasCoercibility()
 }
 
+// Repertoire returns the repertoire value which is used to check collations.
 func (sf *ScalarFunction) Repertoire() Repertoire {
 	if !sf.Function.HasRepertoire() {
 		sf.SetRepertoire(deriveRepertoireForExprs(sf))
@@ -573,6 +575,7 @@ func (sf *ScalarFunction) Repertoire() Repertoire {
 	return sf.Function.Repertoire()
 }
 
+// SetRepertoire sets a specified repertoire for this expression.
 func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
 	sf.Function.SetRepertoire(r)
 }

@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -433,6 +434,7 @@ func (c *Constant) Coercibility() Coercibility {
 	return c.collationInfo.Coercibility()
 }
 
+// Repertoire returns the repertoire value which is used to check collations.
 func (c *Constant) Repertoire() Repertoire {
 	if !c.HasRepertoire() {
 		rep := ASCII

@@ -15,6 +15,8 @@
 package expression
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -23,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 var _ = SerialSuites(&testCollationSuites{})
