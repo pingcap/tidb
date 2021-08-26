@@ -4322,8 +4322,8 @@ func (s *testIntegrationSuite) TestGroupBySetVar(c *C) {
 
 	var input []string
 	var output []struct {
-		SQL      string
-		Plan     []string
+		SQL  string
+		Plan []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
