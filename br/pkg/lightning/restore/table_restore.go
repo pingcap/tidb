@@ -851,10 +851,11 @@ func (tr *TableRestore) importKV(
 ) error {
 	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
 	regionSplitSize := int64(rc.cfg.TikvImporter.RegionSplitSize)
-	if rc.cfg.TikvImporter.RegionSplitSize == config.SplitRegionSize && rc.taskMgr != nil {
+	if regionSplitSize == 0 && rc.taskMgr != nil {
+		regionSplitSize = int64(config.SplitRegionSize)
 		rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 			if len(tasks) > 0 {
-				regionSplitSize = regionSplitSize * int64(utils.MinInt(len(tasks), config.MaxSplitRegionSizeRatio))
+				regionSplitSize = int64(config.SplitRegionSize) * int64(utils.MinInt(len(tasks), config.MaxSplitRegionSizeRatio))
 			}
 			return nil, nil
 		})
