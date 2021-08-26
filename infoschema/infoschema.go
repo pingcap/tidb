@@ -57,6 +57,8 @@ type InfoSchema interface {
 	SetBundle(*placement.Bundle)
 	// RuleBundles will return a copy of all rule bundles.
 	RuleBundles() []*placement.Bundle
+	// PlacementPolicies will return a copy of all Placement Policies
+	PlacementPolicies() []*placementpolicy.PolicyInfo
 }
 
 type sortedTables []table.Table
