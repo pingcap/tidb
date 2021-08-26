@@ -180,7 +180,7 @@ func checkStoresAlive(ctx context.Context,
 		}
 		liveStoreCount++
 	}
-	log.Info("it has ", zap.Int("aliveStore", liveStoreCount))
+	log.Info("checked alive KV stores", zap.Int("aliveStores", liveStoreCount), zap.Int("totalStores", len(stores)))
 	return nil
 }
 
