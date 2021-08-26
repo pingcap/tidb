@@ -1900,10 +1900,11 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 		ignoreColumns []*config.IgnoreColumns
 		expectMsg     string
 		// MsgNum == 0 means the check passed.
-		MsgNum    int
-		hasHeader bool
-		dbInfos   map[string]*checkpoints.TidbDBInfo
-		tableMeta *mydump.MDTableMeta
+		MsgNum          int
+		hasHeader       bool
+		dbInfos         map[string]*checkpoints.TidbDBInfo
+		tableMeta       *mydump.MDTableMeta
+		checkFilesCount int
 	}{
 		// Case 1:
 		// csv has one column without header.
@@ -1956,6 +1957,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 					},
 				},
 			},
+			1,
 		},
 		// Case 2.1:
 		// csv has two columns(colA, colB) with the header.
@@ -2000,6 +2002,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 					},
 				},
 			},
+			1,
 		},
 		// Case 2.2:
 		// csv has two columns(colA, colB) with the header.
@@ -2051,6 +2054,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 					},
 				},
 			},
+			1,
 		},
 		// Case 2.3:
 		// csv has two columns(colA, colB) with the header.
@@ -2110,6 +2114,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 					},
 				},
 			},
+			1,
 		},
 		// Case 2.4:
 		// csv has two columns(colA, colB) with the header.
@@ -2168,6 +2173,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 					},
 				},
 			},
+			1,
 		},
 		// Case 3:
 		// table3's schema file not found.
@@ -2204,6 +2210,64 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 					},
 				},
 			},
+			0,
+		},
+		// Case 4:
+		// table4 has two datafiles for table. we only check one random file.
+		// we expect the check success.
+		{
+			[]*config.IgnoreColumns{
+				{
+					DB:      "db1",
+					Table:   "table2",
+					Columns: []string{"cola"},
+				},
+			},
+			"",
+			0,
+			true,
+			map[string]*checkpoints.TidbDBInfo{
+				"db1": {
+					Name: "db1",
+					Tables: map[string]*checkpoints.TidbTableInfo{
+						"table2": {
+							ID:   1,
+							DB:   "db1",
+							Name: "table2",
+							Core: &model.TableInfo{
+								Columns: []*model.ColumnInfo{
+									{
+										// colB has the default value
+										Name:          model.NewCIStr("colB"),
+										DefaultIsExpr: true,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			&mydump.MDTableMeta{
+				DB:   "db1",
+				Name: "table2",
+				DataFiles: []mydump.FileInfo{
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							Type:     mydump.SourceTypeCSV,
+						},
+					},
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							Type:     mydump.SourceTypeCSV,
+						},
+					},
+				},
+			},
+			1,
 		},
 	}
 
@@ -2231,7 +2295,8 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 			dbInfos:       ca.dbInfos,
 			ioWorkers:     worker.NewPool(context.Background(), 1, "io"),
 		}
-		msgs, err := rc.SchemaIsValid(ctx, ca.tableMeta)
+		msgs, checkedFilesCount, err := rc.SchemaIsValid(ctx, ca.tableMeta)
+		c.Assert(checkedFilesCount, Equals, ca.checkFilesCount)
 		c.Assert(err, IsNil)
 		c.Assert(msgs, HasLen, ca.MsgNum)
 		if len(msgs) > 0 {

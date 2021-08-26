@@ -19,11 +19,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -559,19 +561,19 @@ func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydu
 }
 
 // SchemaIsValid checks the import file and cluster schema is match.
-func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, error) {
+func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, int, error) {
 	msgs := make([]string, 0)
 	info, ok := rc.dbInfos[tableInfo.DB].Tables[tableInfo.Name]
 	if !ok {
 		msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't exists,"+
 			"please give a schema file in source dir or create table manually", tableInfo.DB, tableInfo.Name))
-		return msgs, nil
+		return msgs, 0, nil
 	}
 
 	igCols := make(map[string]struct{})
 	igCol, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(tableInfo.DB, tableInfo.Name, rc.cfg.Mydumper.CaseSensitive)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	for _, col := range igCol.Columns {
 		igCols[col] = struct{}{}
@@ -579,7 +581,7 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 
 	if len(tableInfo.DataFiles) == 0 {
 		log.L().Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
-		return nil, nil
+		return nil, 0, nil
 	}
 
 	colCountFromTiDB := len(info.Core.Columns)
@@ -594,17 +596,26 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 	// tidb_rowid have a default value.
 	defaultCols[model.ExtraHandleName.String()] = struct{}{}
 
-	for _, dataFile := range tableInfo.DataFiles {
+	// only check the one random file of this table.
+	dataFiles := make([]mydump.FileInfo, 0, 1)
+	if len(tableInfo.DataFiles) > 0 {
+		rand.Seed(time.Now().Unix())
+		index := rand.Intn(len(tableInfo.DataFiles))
+		dataFiles = append(dataFiles, tableInfo.DataFiles[index])
+		log.L().Info("pick random files to check", zap.String("db", tableInfo.DB),
+			zap.String("table", tableInfo.Name), zap.String("path", tableInfo.DataFiles[index].FileMeta.Path))
+	}
+	for _, dataFile := range dataFiles {
 		// get columns name from data file.
 		dataFileMeta := dataFile.FileMeta
 
 		if tp := dataFileMeta.Type; tp != mydump.SourceTypeCSV && tp != mydump.SourceTypeSQL && tp != mydump.SourceTypeParquet {
 			msgs = append(msgs, fmt.Sprintf("file '%s' with unknown source type '%s'", dataFileMeta.Path, dataFileMeta.Type.String()))
-			return msgs, nil
+			return msgs, len(dataFiles), nil
 		}
 		colsFromDataFile, colCountFromDataFile, err := rc.readColumnsAndCount(ctx, dataFileMeta)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, len(dataFiles), errors.Trace(err)
 		}
 		if colsFromDataFile == nil && colCountFromDataFile == 0 {
 			log.L().Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
@@ -670,10 +681,10 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 			}
 		}
 		if len(msgs) > 0 {
-			return msgs, nil
+			return msgs, len(dataFiles), nil
 		}
 	}
-	return msgs, nil
+	return msgs, len(dataFiles), nil
 }
 
 func (rc *Controller) SampleDataFromTable(ctx context.Context, dbName string, tableMeta *mydump.MDTableMeta, tableInfo *model.TableInfo) error {
