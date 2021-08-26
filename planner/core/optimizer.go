@@ -88,11 +88,11 @@ type logicalOptRule interface {
 	name() string
 }
 
-// BuildLogicalPlan used to build logical plan from ast.Node.
-func BuildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, types.NameSlice, error) {
+// BuildTestLogicalPlan builds a logical plan for testing purpose from ast.Node.
+func BuildTestLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, types.NameSlice, error) {
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
-	builder, _ := NewPlanBuilder().Init(sctx, is, &utilhint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, &utilhint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, nil, err

@@ -96,7 +96,7 @@ func (s *testBRIESuite) TestFetchShowBRIE(c *C) {
 	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 	stmt, err := p.ParseOneStmt("show backups", "", "")
 	c.Assert(err, IsNil)
-	plan, _, err := core.BuildLogicalPlan(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
+	plan, _, err := core.BuildTestLogicalPlan(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
 	c.Assert(err, IsNil)
 	schema := plan.Schema()
 

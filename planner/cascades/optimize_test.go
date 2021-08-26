@@ -39,7 +39,7 @@ func TestImplGroupZeroCost(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0", "", "")
 	require.NoError(t, err)
 
-	plan, _, err := plannercore.BuildLogicalPlan(context.Background(), ctx, stmt, is)
+	plan, _, err := plannercore.BuildTestLogicalPlan(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
 	logic, ok := plan.(plannercore.LogicalPlan)
@@ -64,7 +64,7 @@ func TestInitGroupSchema(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select a from t", "", "")
 	require.NoError(t, err)
 
-	plan, _, err := plannercore.BuildLogicalPlan(context.Background(), ctx, stmt, is)
+	plan, _, err := plannercore.BuildTestLogicalPlan(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
 	logic, ok := plan.(plannercore.LogicalPlan)
@@ -87,7 +87,7 @@ func TestFillGroupStats(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select * from t t1 join t t2 on t1.a = t2.a", "", "")
 	require.NoError(t, err)
 
-	plan, _, err := plannercore.BuildLogicalPlan(context.Background(), ctx, stmt, is)
+	plan, _, err := plannercore.BuildTestLogicalPlan(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
 	logic, ok := plan.(plannercore.LogicalPlan)
@@ -119,7 +119,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select f, sum(a) from t group by f", "", "")
 	require.NoError(t, err)
 
-	plan, _, err := plannercore.BuildLogicalPlan(context.Background(), ctx, stmt, is)
+	plan, _, err := plannercore.BuildTestLogicalPlan(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
 	logic, ok := plan.(plannercore.LogicalPlan)
@@ -214,7 +214,7 @@ func TestAppliedRuleSet(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select 1", "", "")
 	require.NoError(t, err)
 
-	plan, _, err := plannercore.BuildLogicalPlan(context.Background(), ctx, stmt, is)
+	plan, _, err := plannercore.BuildTestLogicalPlan(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
 	logic, ok := plan.(plannercore.LogicalPlan)
