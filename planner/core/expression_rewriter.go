@@ -1056,7 +1056,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 	}
 	er.ctxStackAppend(expr, types.EmptyName)
 
-	subquery := PhysicalScalarSubquery{expr: expr}.Init(er.sctx, physicalPlan, physicalPlan.Stats())
+	subquery := &ScalarSubquery{child: physicalPlan, expr: expr}
 
 	stmtCtx.ScalarSubqueries = append(stmtCtx.ScalarSubqueries, subquery)
 
