@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -221,10 +221,16 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			memDelta += int64(p.buffer.Cap())
 		}
 	}()
+
+	collators := make([]collate.Collator, 0, len(e.args))
+	for _, arg := range e.args {
+		collators = append(collators, collate.GetCollator(arg.GetType().Collate))
+	}
+
 	for _, row := range rowsInGroup {
 		p.valsBuf.Reset()
 		p.encodeBytesBuffer = p.encodeBytesBuffer[:0]
-		for _, arg := range e.args {
+		for i, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
 				return memDelta, err
@@ -232,7 +238,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			if isNull {
 				break
 			}
-			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, hack.Slice(v))
+			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].Key(v))
 			p.valsBuf.WriteString(v)
 		}
 		if isNull {
@@ -537,10 +543,16 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 	v, isNull := "", false
 	memDelta -= int64(cap(p.encodeBytesBuffer))
 	defer func() { memDelta += int64(cap(p.encodeBytesBuffer)) }()
+
+	collators := make([]collate.Collator, 0, len(e.args))
+	for _, arg := range e.args {
+		collators = append(collators, collate.GetCollator(arg.GetType().Collate))
+	}
+
 	for _, row := range rowsInGroup {
 		buffer := new(bytes.Buffer)
 		p.encodeBytesBuffer = p.encodeBytesBuffer[:0]
-		for _, arg := range e.args {
+		for i, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
 				return memDelta, err
@@ -548,7 +560,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 			if isNull {
 				break
 			}
-			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, hack.Slice(v))
+			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].Key(v))
 			buffer.WriteString(v)
 		}
 		if isNull {

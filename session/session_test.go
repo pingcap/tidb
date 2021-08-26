@@ -4486,15 +4486,18 @@ func (s *testTxnStateSerialSuite) TestRunning(c *C) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1);")
 	tk.MustExec("begin pessimistic;")
-	failpoint.Enable("github.com/pingcap/tidb/session/mockStmtSlow", "sleep(100)")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockStmtSlow", "return(200)"), IsNil)
+	ch := make(chan struct{})
 	go func() {
-		tk.MustExec("select * from t for update;")
+		tk.MustExec("select * from t for update /* sleep */;")
 		tk.MustExec("commit;")
+		ch <- struct{}{}
 	}()
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	info := tk.Se.TxnInfo()
 	c.Assert(info.State, Equals, txninfo.TxnRunning)
-	failpoint.Disable("github.com/pingcap/tidb/session/mockStmtSlow")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockStmtSlow"), IsNil)
+	<-ch
 }
 
 func (s *testTxnStateSerialSuite) TestBlocked(c *C) {
@@ -4504,15 +4507,18 @@ func (s *testTxnStateSerialSuite) TestBlocked(c *C) {
 	tk.MustExec("insert into t(a) values (1);")
 	tk.MustExec("begin pessimistic;")
 	tk.MustExec("select * from t where a = 1 for update;")
+	ch := make(chan struct{})
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		tk2.MustExec("select * from t where a = 1 for update;")
 		tk2.MustExec("commit;")
+		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
 	c.Assert(tk2.Se.TxnInfo().State, Equals, txninfo.TxnLockWaiting)
 	c.Assert(tk2.Se.TxnInfo().BlockStartTime, NotNil)
 	tk.MustExec("commit;")
+	<-ch
 }
 
 func (s *testTxnStateSerialSuite) TestCommitting(c *C) {

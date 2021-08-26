@@ -2102,11 +2102,6 @@ func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionct
 		return nil, nil
 	}
 	e.retrieved = true
-	user := sctx.GetSessionVars().User
-	isSuper := false
-	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
-	}
 
 	var err error
 	var instanceAddr string
@@ -2118,7 +2113,8 @@ func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionct
 			return nil, err
 		}
 	}
-	reader := stmtsummary.NewStmtSummaryReader(user, isSuper, e.columns, instanceAddr)
+	user := sctx.GetSessionVars().User
+	reader := stmtsummary.NewStmtSummaryReader(user, hasPriv(sctx, mysql.ProcessPriv), e.columns, instanceAddr)
 	var rows [][]types.Datum
 	switch e.table.Name.O {
 	case infoschema.TableStatementsSummary,
