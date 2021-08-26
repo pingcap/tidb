@@ -1391,7 +1391,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 // reformatErrors casted error because `convertTo` function couldn't package column name and datum value for some errors.
 func (w *updateColumnWorker) reformatErrors(err error) error {
 	// Since row count is not precious in concurrent reorganization, here we substitute row count with datum value.
-	if types.ErrTruncated.Equal(err) {
+	if types.ErrTruncated.Equal(err) || types.ErrDataTooLong.Equal(err) {
 		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
 		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, dStr)
 	}

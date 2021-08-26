@@ -351,6 +351,12 @@
     ]
   },
   {
+    "name": "TestIssue27083",
+    "cases": [
+      "select * from t use index (idx_b) where b = 2 limit 1"
+    ]
+  },
+  {
     "name": "TestGroupBySetVar",
     "cases": [
       "select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;",
