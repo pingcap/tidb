@@ -18,15 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
-	"math/rand"
-	"path/filepath"
-	"reflect"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
-
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -45,6 +36,12 @@ import (
 	"github.com/tikv/pd/server/api"
 	pdconfig "github.com/tikv/pd/server/config"
 	"go.uber.org/zap"
+	"io"
+	"path/filepath"
+	"reflect"
+	"sort"
+	"strconv"
+	"strings"
 )
 
 const (
@@ -596,16 +593,14 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 	// tidb_rowid have a default value.
 	defaultCols[model.ExtraHandleName.String()] = struct{}{}
 
-	// only check the one random file of this table.
+	// only check the first file of this table.
 	dataFiles := make([]mydump.FileInfo, 0, 1)
 	if len(tableInfo.DataFiles) > 0 {
-		rand.Seed(time.Now().Unix())
-		index := rand.Intn(len(tableInfo.DataFiles))
-		dataFiles = append(dataFiles, tableInfo.DataFiles[index])
-		log.L().Info("pick random files to check", zap.String("db", tableInfo.DB),
-			zap.String("table", tableInfo.Name), zap.String("path", tableInfo.DataFiles[index].FileMeta.Path))
+		dataFiles = append(dataFiles, tableInfo.DataFiles[0])
 	}
 	for _, dataFile := range dataFiles {
+		log.L().Info("datafile to check", zap.String("db", tableInfo.DB),
+			zap.String("table", tableInfo.Name), zap.String("path", dataFile.FileMeta.Path))
 		// get columns name from data file.
 		dataFileMeta := dataFile.FileMeta
 
