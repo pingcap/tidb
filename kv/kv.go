@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"time"
 
+	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -68,6 +69,40 @@ type Retriever interface {
 	// If k is nil, the returned iterator will be positioned at the last key.
 	// TODO: Add lower bound limit
 	IterReverse(k Key) (Iterator, error)
+}
+
+// EmptyIterator is an iterator without any entry
+type EmptyIterator struct{}
+
+// Valid returns true if the current iterator is valid.
+func (i *EmptyIterator) Valid() bool { return false }
+
+// Key returns the current key. Always return nil for this iterator
+func (i *EmptyIterator) Key() Key { return nil }
+
+// Value returns the current value. Always return nil for this iterator
+func (i *EmptyIterator) Value() []byte { return nil }
+
+// Next goes the next position. Always return error for this iterator
+func (i *EmptyIterator) Next() error { return errors.New("scanner iterator is invalid") }
+
+// Close closes the iterator.
+func (i *EmptyIterator) Close() {}
+
+// EmptyRetriever is a retriever without any entry
+type EmptyRetriever struct{}
+
+// Get gets the value for key k from kv store. Always return nil for this retriever
+func (r *EmptyRetriever) Get(_ context.Context, _ Key) ([]byte, error) {
+	return nil, ErrNotExist
+}
+
+// Iter creates an Iterator. Always return EmptyIterator for this retriever
+func (r *EmptyRetriever) Iter(_ Key, _ Key) (Iterator, error) { return &EmptyIterator{}, nil }
+
+// IterReverse creates a reversed Iterator. Always return EmptyIterator for this retriever
+func (r *EmptyRetriever) IterReverse(_ Key) (Iterator, error) {
+	return &EmptyIterator{}, nil
 }
 
 // Mutator is the interface wraps the basic Set and Delete methods.
