@@ -268,10 +268,6 @@ func BuildBackupRangeAndSchema(
 			continue
 		}
 
-		idAlloc := autoid.NewAllocator(storage, dbInfo.ID, false, autoid.RowIDAllocType)
-		seqAlloc := autoid.NewAllocator(storage, dbInfo.ID, false, autoid.SequenceType)
-		randAlloc := autoid.NewAllocator(storage, dbInfo.ID, false, autoid.AutoRandomType)
-
 		tables, err := m.ListTables(dbInfo.ID)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
@@ -293,6 +289,10 @@ func BuildBackupRangeAndSchema(
 				zap.String("db", dbInfo.Name.O),
 				zap.String("table", tableInfo.Name.O),
 			)
+
+			idAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.RowIDAllocType)
+			seqAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.SequenceType)
+			randAlloc := autoid.NewAllocator(storage, dbInfo.ID, tableInfo.ID, false, autoid.AutoRandomType)
 
 			var globalAutoID int64
 			switch {
