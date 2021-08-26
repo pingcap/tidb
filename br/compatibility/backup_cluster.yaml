@@ -12,8 +12,8 @@ services:
       - /tmp/br/docker/backup_data/${TAG}:/data
       - /tmp/br/docker/backup_logs/${TAG}:/tmp
       - /tmp/br/docker/backup_logs/${TAG}:/logs
-      - ../bin:/go/src/github.com/pingcap/tidb/bin
-      - ./compatibility/prepare_data:/prepare_data
+      - ../../bin:/go/src/github.com/pingcap/tidb/bin
+      - ./prepare_data:/prepare_data
     command: -c "/usr/bin/tail -f /dev/null"
     environment:
       TAG: ${TAG}
