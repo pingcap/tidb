@@ -943,17 +943,15 @@ func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string
 	waitCh := make(chan error, 1)
 	rc.saveCpCh <- saveCp{tableName: tableName, merger: merger, waitCh: waitCh}
 
-	var saveCpErr error
 	select {
-	case saveCpErr = <-waitCh:
+	case saveCpErr := <-waitCh:
+		if saveCpErr != nil {
+			logger.Error("failed to save status checkpoint", log.ShortError(saveCpErr))
+		}
+		return saveCpErr
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	if saveCpErr != nil {
-		logger.Error("failed to save status checkpoint", zap.Error(saveCpErr))
-		return saveCpErr
-	}
-	return nil
 }
 
 // listenCheckpointUpdates will combine several checkpoints together to reduce database load.
