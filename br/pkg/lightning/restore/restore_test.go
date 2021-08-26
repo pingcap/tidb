@@ -2265,7 +2265,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 							// This type will make the check failed.
 							// but it's the second file for table.
 							// so it's unreachable so this case will success.
-							Type:     mydump.SourceTypeIgnore,
+							Type: mydump.SourceTypeIgnore,
 						},
 					},
 				},

@@ -18,6 +18,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"path/filepath"
+	"reflect"
+	"sort"
+	"strconv"
+	"strings"
+
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -36,12 +43,6 @@ import (
 	"github.com/tikv/pd/server/api"
 	pdconfig "github.com/tikv/pd/server/config"
 	"go.uber.org/zap"
-	"io"
-	"path/filepath"
-	"reflect"
-	"sort"
-	"strconv"
-	"strings"
 )
 
 const (
