@@ -436,7 +436,7 @@ func NewConfig() *Config {
 			OnDuplicate:     ReplaceOnDup,
 			MaxKVPairs:      4096,
 			SendKVPairs:     32768,
-			RegionSplitSize: SplitRegionSize,
+			RegionSplitSize: 0,
 			DiskQuota:       ByteSize(math.MaxInt64),
 		},
 		PostRestore: PostRestore{
@@ -739,9 +739,6 @@ func (cfg *Config) DefaultVarsForImporterAndLocalBackend(ctx context.Context) {
 	}
 	if cfg.TikvImporter.RangeConcurrency == 0 {
 		cfg.TikvImporter.RangeConcurrency = 16
-	}
-	if cfg.TikvImporter.RegionSplitSize == 0 {
-		cfg.TikvImporter.RegionSplitSize = SplitRegionSize
 	}
 	if cfg.TiDB.BuildStatsConcurrency == 0 {
 		cfg.TiDB.BuildStatsConcurrency = defaultBuildStatsConcurrency
