@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -42,22 +41,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type testIndexSuite struct {
-	s   kv.Storage
-	dom *domain.Domain
-}
-
-var s = testIndexSuite{}
-
-func TestSetUpSuite(t *testing.T) {
+func buildMock(t *testing.T) (kv.Storage, func()) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
-	s.s = store
-	s.dom, err = session.BootstrapSession(store)
+	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
+
+	closeFunc := func() {
+		dom.Close()
+		err := store.Close()
+		require.NoError(t, err)
+	}
+	return store, closeFunc
 }
 
 func TestIndex(t *testing.T) {
+	t.Parallel()
 	tblInfo := &model.TableInfo{
 		ID: 1,
 		Indices: []*model.IndexInfo{
@@ -78,7 +77,9 @@ func TestIndex(t *testing.T) {
 	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	// Test ununiq index.
-	txn, err := s.s.Begin()
+	s, closeFunc := buildMock(t)
+	defer closeFunc()
+	txn, err := s.Begin()
 	require.NoError(t, err)
 
 	values := types.MakeDatums(1, 2)
@@ -167,7 +168,7 @@ func TestIndex(t *testing.T) {
 	index = tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	// Test uniq index.
-	txn, err = s.s.Begin()
+	txn, err = s.Begin()
 	require.NoError(t, err)
 
 	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(1), nil)
@@ -203,7 +204,7 @@ func TestIndex(t *testing.T) {
 	_, err = index.FetchValues(make([]types.Datum, 0), nil)
 	require.NotNil(t, err)
 
-	txn, err = s.s.Begin()
+	txn, err = s.Begin()
 	require.NoError(t, err)
 
 	// Test the function of Next when the value of unique key is nil.
@@ -225,6 +226,7 @@ func TestIndex(t *testing.T) {
 }
 
 func TestCombineIndexSeek(t *testing.T) {
+	t.Parallel()
 	tblInfo := &model.TableInfo{
 		ID: 1,
 		Indices: []*model.IndexInfo{
@@ -245,7 +247,9 @@ func TestCombineIndexSeek(t *testing.T) {
 	}
 	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
-	txn, err := s.s.Begin()
+	s, closeFunc := buildMock(t)
+	defer closeFunc()
+	txn, err := s.Begin()
 	require.NoError(t, err)
 
 	mockCtx := mock.NewContext()
@@ -265,6 +269,7 @@ func TestCombineIndexSeek(t *testing.T) {
 }
 
 func TestSingleColumnCommonHandle(t *testing.T) {
+	t.Parallel()
 	tblInfo := buildTableInfo(t, "create table t (a varchar(255) primary key, u int unique, nu int, index nu (nu))")
 	var idxUnique, idxNonUnique table.Index
 	for _, idxInfo := range tblInfo.Indices {
@@ -275,7 +280,9 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 			idxNonUnique = idx
 		}
 	}
-	txn, err := s.s.Begin()
+	s, closeFunc := buildMock(t)
+	defer closeFunc()
+	txn, err := s.Begin()
 	require.NoError(t, err)
 
 	mockCtx := mock.NewContext()
@@ -319,6 +326,7 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 }
 
 func TestMultiColumnCommonHandle(t *testing.T) {
+	t.Parallel()
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tblInfo := buildTableInfo(t, "create table t (a int, b int, u varchar(64) unique, nu varchar(64), primary key (a, b), index nu (nu))")
@@ -342,7 +350,9 @@ func TestMultiColumnCommonHandle(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 
-	txn, err := s.s.Begin()
+	s, closeFunc := buildMock(t)
+	defer closeFunc()
+	txn, err := s.Begin()
 	require.NoError(t, err)
 	mockCtx := mock.NewContext()
 	sc := mockCtx.GetSessionVars().StmtCtx
@@ -397,10 +407,4 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 	tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 	return tblInfo
-}
-
-func TestTearDownSuite(t *testing.T) {
-	s.dom.Close()
-	err := s.s.Close()
-	require.NoError(t, err)
 }
