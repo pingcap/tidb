@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1390,7 +1391,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 // reformatErrors casted error because `convertTo` function couldn't package column name and datum value for some errors.
 func (w *updateColumnWorker) reformatErrors(err error) error {
 	// Since row count is not precious in concurrent reorganization, here we substitute row count with datum value.
-	if types.ErrTruncated.Equal(err) {
+	if types.ErrTruncated.Equal(err) || types.ErrDataTooLong.Equal(err) {
 		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
 		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, dStr)
 	}
@@ -1854,9 +1855,9 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 
 	if odValue == strings.ToUpper(ast.CurrentTimestamp) {
 		if col.Tp == mysql.TypeTimestamp {
-			odValue = time.Now().UTC().Format(types.TimeFormat)
+			odValue = types.NewTime(types.FromGoTime(time.Now().UTC()), col.Tp, int8(col.Decimal)).String()
 		} else if col.Tp == mysql.TypeDatetime {
-			odValue = time.Now().Format(types.TimeFormat)
+			odValue = types.NewTime(types.FromGoTime(time.Now()), col.Tp, int8(col.Decimal)).String()
 		}
 	}
 	return odValue, nil
