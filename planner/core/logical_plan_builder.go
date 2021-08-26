@@ -1145,6 +1145,8 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 		RetType:  expr.GetType(),
 	}
 	newCol.SetCoercibility(expr.Coercibility())
+	charset, collation := expr.CharsetAndCollation(b.ctx)
+	newCol.SetCharsetAndCollation(charset, collation)
 	return newCol, name, nil
 }
 
