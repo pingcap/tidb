@@ -142,7 +142,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		ret := &plannercore.PreprocessorReturn{}
 		err = plannercore.Preprocess(sctx, stmt, plannercore.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil, comment)
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmt, ret.InfoSchema)
+		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmt, ret.InfoSchema)
 		c.Assert(err, IsNil, comment)
 		tp := p.Schema().Columns[0].RetType
 
