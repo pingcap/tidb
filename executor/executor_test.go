@@ -5716,6 +5716,53 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	))
 }
 
+func (s *testSuiteWithCliBaseCharset) TestCollationWithDifferentCharset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a char(10) charset utf8mb4, b char(10) charset gbk, c char(10) charset ascii, d char(10) charset latin1, e char(10) charset utf8, f blob(10), g int);")
+	tk.MustExec("insert into t values ('a','a','a','a','a','a', 1);")
+
+	tk.MustQuery("select collation(concat(a,b)) from t;").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(concat(a collate utf8mb4_general_ci,b collate gbk_bin)) from t;").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(concat(a collate utf8mb4_general_ci,e)) from t;").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(concat(a collate utf8mb4_general_ci, f)) from t;").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(concat(f collate `binary`, a collate utf8mb4_general_ci)) from t;").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(concat(a, c)) from t;").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(concat(b, c)) from t;").Check(testkit.Rows("gbk_bin"))
+	tk.MustQuery("select collation(concat(b, e)) from t;").Check(testkit.Rows("utf8_bin"))
+	tk.MustQuery("select collation(concat(b, 'e')) from t;").Check(testkit.Rows("gbk_bin"))
+	tk.MustQuery("select collation(concat(c, d)) from t;").Check(testkit.Rows("latin1_bin"))
+	tk.MustQuery("select collation(concat(a, e collate utf8_bin)) from t;").Check(testkit.Rows("utf8_bin"))
+	tk.MustQuery("select collation(concat(a collate utf8mb4_general_ci, e collate utf8_bin)) from t;").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(concat(b, d, f collate `binary`)) from t;").Check(testkit.Rows("binary"))
+	tk.MustQuery("select collation(concat(b, d, a collate utf8mb4_general_ci)) from t;").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(concat(cast(g as char), d)) from t;").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(concat(g, d)) from t;").Check(testkit.Rows("latin1_bin"))
+	tk.MustQuery("select collation(concat(IF(a < b, 'smaller', 'greater'), b collate gbk_bin)) from t;").Check(testkit.Rows("gbk_bin"))
+
+	// FIXME
+	// tk.MustQuery("select collation(concat(b, '啊')) from t;").Check(testkit.Rows("gbk_bin"))
+
+	tk.MustExec("set names gbk;")
+	tk.MustQuery("select collation(concat(1, d)) from t;").Check(testkit.Rows("latin1_bin"))
+	tk.MustQuery("select collation(concat(g, d)) from t;").Check(testkit.Rows("latin1_bin"))
+	tk.MustQuery("select collation(concat(g,g, d)) from t;").Check(testkit.Rows("latin1_bin"))
+
+	tk.MustGetErrMsg("select collation(concat(g,g,'啊', d)) from t;", "[expression:1271]Illegal mix of collations for operation 'concat'")
+
+	// FIXME: explicate cast should has UNICODE repertoire if @@character_set_client is not ASCII
+	//tk.MustGetErrMsg("select collation(concat(cast(1 as char), d)) from t;", "[expression:1271]Illegal mix of collations (gbk_chinese_ci,IMPLICIT) and (latin1_swedish_ci,IMPLICIT) for operation 'concat'")
+	tk.MustGetErrMsg("select collation(concat(b, d, f)) from t;", "[expression:1270]Illegal mix of collations (gbk_bin,IMPLICIT), (latin1_bin,IMPLICIT), (binary,IMPLICIT) for operation 'concat'")
+	tk.MustGetErrMsg("select collation(concat(a, b collate gbk_bin)) from t;", "[expression:1267]Illegal mix of collations (utf8mb4_bin,IMPLICIT) and (gbk_bin,EXPLICIT) for operation 'concat'")
+	tk.MustGetErrMsg("select collation(concat(b, d)) from t;", "[expression:1267]Illegal mix of collations (gbk_bin,IMPLICIT) and (latin1_bin,IMPLICIT) for operation 'concat'")
+
+	// FIXME: a function return string type but has no string arguments will has ASCII repertoire if @@character_set_client is ASCII
+	tk.MustExec("SET NAMES ascii;")
+	tk.MustExec("select concat(format(g, 4), d) from t;")
+}
+
 func (s *testSerialSuite2) TestIssue23567(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	oriProbability := statistics.FeedbackProbability.Load()

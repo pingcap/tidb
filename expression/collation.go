@@ -15,6 +15,8 @@
 package expression
 
 import (
+	"strings"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -254,6 +256,12 @@ func inferCollation(exprs ...Expression) (dstCollation, dstCharset string, coerc
 	unknownCS := false
 
 	for _, arg := range exprs[1:] {
+		// some arg maybe has no charset and collation information, it should not happened, but our expression framework
+		// makes it is possible, just skip it.
+		// TODO: remove this
+		if arg.GetType().Collate == "" {
+			continue
+		}
 		if dstCollation == charset.CollationBin || arg.GetType().Collate == charset.CollationBin {
 			if coercibility > arg.Coercibility() || (coercibility == arg.Coercibility() && arg.GetType().Collate == charset.CollationBin) {
 				coercibility, dstCharset, dstCollation = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate
@@ -265,7 +273,8 @@ func inferCollation(exprs ...Expression) (dstCollation, dstCharset string, coerc
 		if dstCharset != arg.GetType().Charset {
 			switch {
 			case coercibility < arg.Coercibility():
-				if arg.Repertoire() == ASCII || arg.Coercibility() >= CoercibilitySysconst || isUnicodeCollation(dstCharset) {
+				// arg.Coercibility() >= CoercibilitySysconst should also consider, at this time we cannot support.
+				if arg.Repertoire() == ASCII || isUnicodeCollation(dstCharset) {
 					repertoire |= arg.Repertoire()
 					continue
 				}
@@ -286,7 +295,8 @@ func inferCollation(exprs ...Expression) (dstCollation, dstCharset string, coerc
 					continue
 				}
 			case coercibility > arg.Coercibility():
-				if repertoire == ASCII || coercibility >= CoercibilitySysconst || isUnicodeCollation(arg.GetType().Charset) {
+				// coercibility >= CoercibilitySysconst should also consider, at this time we cannot support.
+				if repertoire == ASCII || isUnicodeCollation(arg.GetType().Charset) {
 					coercibility, dstCharset, dstCollation = arg.Coercibility(), arg.GetType().Charset, arg.GetType().Collate
 					repertoire |= arg.Repertoire()
 					continue
@@ -324,6 +334,8 @@ func inferCollation(exprs ...Expression) (dstCollation, dstCharset string, coerc
 }
 
 func isUnicodeCollation(ch string) bool {
+	ch = strings.ToLower(ch)
+	// utf8mb4 charset always has unicode collation.
 	return ch == charset.CharsetUTF8 || ch == charset.CharsetUTF8MB4
 }
 
