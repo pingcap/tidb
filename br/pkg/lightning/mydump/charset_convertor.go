@@ -166,9 +166,3 @@ func (cc *CharsetConvertor) Encode(src string) (string, error) {
 	// Do the conversion then.
 	return cc.encoder.String(src)
 }
-
-// ContainsInvalidChar returns whether the given data contains any invalid char,
-// such as utf8.RuneError or invalid char replacement.
-func (cc *CharsetConvertor) ContainsInvalidChar(data string) bool {
-	return strings.Contains(data, utf8RuneErrorStr) || strings.Contains(data, cc.invalidCharReplacement)
-}
