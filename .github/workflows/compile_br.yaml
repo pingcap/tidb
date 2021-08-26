@@ -1,4 +1,4 @@
-name: BR & Lightning build
+name: BR & Lightning 
 on:
   push:
     branches:
@@ -31,7 +31,7 @@ env:
 
 jobs:
   compile:
-    name: ${{ matrix.os }} / ${{ matrix.target}}
+    name: Compile for ${{ matrix.os }} / ${{ matrix.target}}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
