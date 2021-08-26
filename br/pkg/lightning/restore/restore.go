@@ -1766,7 +1766,7 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 			}
 
 			if rc.cfg.App.CheckRequirements && noCheckpoint && rc.cfg.TikvImporter.Backend != config.BackendTiDB {
-				if msgs, _, err = rc.SchemaIsValid(ctx, tableInfo); err != nil {
+				if msgs, err = rc.SchemaIsValid(ctx, tableInfo); err != nil {
 					return errors.Trace(err)
 				}
 				if len(msgs) != 0 {

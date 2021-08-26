@@ -558,19 +558,19 @@ func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydu
 }
 
 // SchemaIsValid checks the import file and cluster schema is match.
-func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, int, error) {
+func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, error) {
 	msgs := make([]string, 0)
 	info, ok := rc.dbInfos[tableInfo.DB].Tables[tableInfo.Name]
 	if !ok {
 		msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't exists,"+
 			"please give a schema file in source dir or create table manually", tableInfo.DB, tableInfo.Name))
-		return msgs, 0, nil
+		return msgs, nil
 	}
 
 	igCols := make(map[string]struct{})
 	igCol, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(tableInfo.DB, tableInfo.Name, rc.cfg.Mydumper.CaseSensitive)
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	for _, col := range igCol.Columns {
 		igCols[col] = struct{}{}
@@ -578,7 +578,7 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 
 	if len(tableInfo.DataFiles) == 0 {
 		log.L().Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
-		return nil, 0, nil
+		return nil, nil
 	}
 
 	colCountFromTiDB := len(info.Core.Columns)
@@ -606,11 +606,11 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 
 		if tp := dataFileMeta.Type; tp != mydump.SourceTypeCSV && tp != mydump.SourceTypeSQL && tp != mydump.SourceTypeParquet {
 			msgs = append(msgs, fmt.Sprintf("file '%s' with unknown source type '%s'", dataFileMeta.Path, dataFileMeta.Type.String()))
-			return msgs, len(dataFiles), nil
+			return msgs, nil
 		}
 		colsFromDataFile, colCountFromDataFile, err := rc.readColumnsAndCount(ctx, dataFileMeta)
 		if err != nil {
-			return nil, len(dataFiles), errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if colsFromDataFile == nil && colCountFromDataFile == 0 {
 			log.L().Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
@@ -676,10 +676,10 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 			}
 		}
 		if len(msgs) > 0 {
-			return msgs, len(dataFiles), nil
+			return msgs, nil
 		}
 	}
-	return msgs, len(dataFiles), nil
+	return msgs, nil
 }
 
 func (rc *Controller) SampleDataFromTable(ctx context.Context, dbName string, tableMeta *mydump.MDTableMeta, tableInfo *model.TableInfo) error {

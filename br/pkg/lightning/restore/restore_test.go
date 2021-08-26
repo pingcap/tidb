@@ -2213,7 +2213,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 			0,
 		},
 		// Case 4:
-		// table4 has two datafiles for table. we only check one random file.
+		// table4 has two datafiles for table. we only check the first file.
 		// we expect the check success.
 		{
 			[]*config.IgnoreColumns{
@@ -2262,7 +2262,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 						FileMeta: mydump.SourceFileMeta{
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
-							Type:     mydump.SourceTypeCSV,
+							// This type will make the check failed.
+							// but it's the second file for table.
+							// so it's unreachable so this case will success.
+							Type:     mydump.SourceTypeIgnore,
 						},
 					},
 				},
@@ -2295,8 +2298,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 			dbInfos:       ca.dbInfos,
 			ioWorkers:     worker.NewPool(context.Background(), 1, "io"),
 		}
-		msgs, checkedFilesCount, err := rc.SchemaIsValid(ctx, ca.tableMeta)
-		c.Assert(checkedFilesCount, Equals, ca.checkFilesCount)
+		msgs, err := rc.SchemaIsValid(ctx, ca.tableMeta)
 		c.Assert(err, IsNil)
 		c.Assert(msgs, HasLen, ca.MsgNum)
 		if len(msgs) > 0 {
