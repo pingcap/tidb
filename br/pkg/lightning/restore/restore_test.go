@@ -1900,10 +1900,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 		ignoreColumns []*config.IgnoreColumns
 		expectMsg     string
 		// MsgNum == 0 means the check passed.
-		MsgNum          int
-		hasHeader       bool
-		dbInfos         map[string]*checkpoints.TidbDBInfo
-		tableMeta       *mydump.MDTableMeta
+		MsgNum    int
+		hasHeader bool
+		dbInfos   map[string]*checkpoints.TidbDBInfo
+		tableMeta *mydump.MDTableMeta
 	}{
 		// Case 1:
 		// csv has one column without header.
