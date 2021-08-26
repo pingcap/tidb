@@ -1419,32 +1419,6 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 	return nil
 }
 
-// buildLogicalUnionAll process each child and add a projection above original child.
-// So the schema of `UnionAll` can be the same with its children's.
-func buildLogicalUnionAll(u *LogicalUnionAll, unionCols []*expression.Column, b *PlanBuilder) {
-	for childID, child := range u.children {
-		exprs := make([]expression.Expression, len(child.Schema().Columns))
-		for i, srcCol := range child.Schema().Columns {
-			dstType := unionCols[i].RetType
-			srcType := srcCol.RetType
-			if !srcType.Equal(dstType) {
-				exprs[i] = expression.BuildCastFunction4Union(b.ctx, srcCol, dstType)
-			} else {
-				exprs[i] = srcCol
-			}
-		}
-		b.optFlag |= flagEliminateProjection
-		proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
-		proj.SetSchema(u.schema.Clone())
-		// reset the schema type to make the "not null" flag right.
-		for i, expr := range exprs {
-			proj.schema.Columns[i].RetType = expr.GetType()
-		}
-		proj.SetChildren(child)
-		u.children[childID] = proj
-	}
-}
-
 func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (LogicalPlan, error) {
 	if setOpr.With != nil {
 		l := len(b.outerCTEs)
