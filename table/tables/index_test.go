@@ -56,7 +56,7 @@ func buildMock(t *testing.T) (kv.Storage, func()) {
 }
 
 func TestIndex(t *testing.T) {
-	t.Parallel()
+	//t.Parallel()
 	tblInfo := &model.TableInfo{
 		ID: 1,
 		Indices: []*model.IndexInfo{
@@ -226,7 +226,7 @@ func TestIndex(t *testing.T) {
 }
 
 func TestCombineIndexSeek(t *testing.T) {
-	t.Parallel()
+	// t.Parallel()
 	tblInfo := &model.TableInfo{
 		ID: 1,
 		Indices: []*model.IndexInfo{
