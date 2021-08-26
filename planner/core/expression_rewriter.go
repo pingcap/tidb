@@ -962,6 +962,18 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	return v, true
 }
 
+// ScalarSubquery contains a non-correlated scalar subquery, which may be evaluated
+// before the query optimization.
+// This struct is used to generate explain info for the suqbuery.
+type ScalarSubquery struct {
+	// The physical plan for the subquery.
+	child PhysicalPlan
+	// The result expression for the subquery.
+	// For `explain` statement, this is a special expression as a placeholder.
+	// For `explain analyze` statement, this is the real result of the subquery.
+	expr 	 expression.Expression
+}
+
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.SubqueryExpr) (ast.Node, bool) {
 	ci := er.b.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
