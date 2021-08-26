@@ -722,9 +722,9 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 
 func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var oldSchemaID int64
-	var oldSchemaName string
+	var oldSchemaName model.CIStr
 	var tableName model.CIStr
-	if err := job.DecodeArgs(&oldSchemaID, &oldSchemaName, &tableName); err != nil {
+	if err := job.DecodeArgs(&oldSchemaID, &tableName, &oldSchemaName); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -739,7 +739,7 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	ver, tblInfo, err := checkAndRenameTables(t, job, oldSchemaName, oldSchemaID, job.SchemaID, &tableName)
+	ver, tblInfo, err := checkAndRenameTables(t, job, oldSchemaID, job.SchemaID, &oldSchemaName, &tableName)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -753,20 +753,21 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 }
 
 func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	oldSchemas := []*model.DBInfo{}
+	oldSchemaIDs := []int64{}
 	newSchemaIDs := []int64{}
 	tableNames := []*model.CIStr{}
 	tableIDs := []int64{}
-	if err := job.DecodeArgs(&oldSchemas, &newSchemaIDs, &tableNames, &tableIDs); err != nil {
+	oldSchemaNames := []*model.CIStr{}
+	if err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	tblInfo := &model.TableInfo{}
 	var err error
-	for i, oldSchema := range oldSchemas {
+	for i, oldSchemaID := range oldSchemaIDs {
 		job.TableID = tableIDs[i]
-		ver, tblInfo, err = checkAndRenameTables(t, job, oldSchema.Name.L, oldSchema.ID, newSchemaIDs[i], tableNames[i])
+		ver, tblInfo, err = checkAndRenameTables(t, job, oldSchemaID, newSchemaIDs[i], oldSchemaNames[i], tableNames[i])
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -780,7 +781,7 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	return ver, nil
 }
 
-func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaName string, oldSchemaID int64, newSchemaID int64, tableName *model.CIStr) (ver int64, tblInfo *model.TableInfo, _ error) {
+func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID int64, oldSchemaName, tableName *model.CIStr) (ver int64, tblInfo *model.TableInfo, _ error) {
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, oldSchemaID)
 	if err != nil {
 		return ver, tblInfo, errors.Trace(err)
@@ -822,12 +823,12 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaName string, ol
 	})
 
 	oldTableName := tblInfo.Name
-	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, oldSchemaName, oldTableName.L)
+	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, oldSchemaName.L, oldTableName.L)
 	oldRuleIDs := []string{tableRuleID}
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		if len(pi.Definitions) != 0 {
 			for _, def := range pi.Definitions {
-				oldRuleIDs = append(oldRuleIDs, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName, oldTableName.L, def.Name.L))
+				oldRuleIDs = append(oldRuleIDs, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName.L, oldTableName.L, def.Name.L))
 			}
 		}
 	}
@@ -867,7 +868,7 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaName string, ol
 	if tblInfo.GetPartitionInfo() != nil {
 		for _, r := range oldRules {
 			for _, def := range tblInfo.GetPartitionInfo().Definitions {
-				if r.ID == fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName, oldTableName.L, def.Name.L) {
+				if r.ID == fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName.L, oldTableName.L, def.Name.L) {
 					newRules = append(newRules, r.Clone().Reset(def.ID, job.SchemaName, tblInfo.Name.L, def.Name.L))
 				}
 			}
