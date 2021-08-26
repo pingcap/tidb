@@ -48,7 +48,7 @@ jobs:
     - name: Start server
       run: |
         TAG=nightly PORT_SUFFIX=1 docker-compose -f br/compatibility/backup_cluster.yaml rm -s -v
- 	TAG=nightly PORT_SUFFIX=1 docker-compose -f br/compatibility/backup_cluster.yaml build
+        TAG=nightly PORT_SUFFIX=1 docker-compose -f br/compatibility/backup_cluster.yaml build
         TAG=nightly PORT_SUFFIX=1 docker-compose -f br/compatibility/backup_cluster.yaml up --remove-orphans -d
         TAG=nightly PORT_SUFFIX=1 docker-compose -f br/compatibility/backup_cluster.yaml exec -T control (make build_br && br/tests/run_compatible.sh run)
 
