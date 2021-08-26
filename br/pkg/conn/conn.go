@@ -225,6 +225,7 @@ func NewMgr(
 		return nil, errors.Trace(err)
 	}
 
+	// Disable GC because TiDB enables GC already.
 	storage, err := g.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddrs), securityOption)
 	if err != nil {
 		return nil, errors.Trace(err)
