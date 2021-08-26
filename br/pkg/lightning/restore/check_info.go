@@ -595,11 +595,8 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 	defaultCols[model.ExtraHandleName.String()] = struct{}{}
 
 	// only check the first file of this table.
-	dataFiles := make([]mydump.FileInfo, 0, 1)
 	if len(tableInfo.DataFiles) > 0 {
-		dataFiles = append(dataFiles, tableInfo.DataFiles[0])
-	}
-	for _, dataFile := range dataFiles {
+		dataFile := tableInfo.DataFiles[0]
 		log.L().Info("datafile to check", zap.String("db", tableInfo.DB),
 			zap.String("table", tableInfo.Name), zap.String("path", dataFile.FileMeta.Path))
 		// get columns name from data file.
