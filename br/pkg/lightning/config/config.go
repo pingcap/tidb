@@ -256,16 +256,6 @@ type CSVConfig struct {
 	TrimLastSep     bool   `toml:"trim-last-separator" json:"trim-last-separator"`
 	NotNull         bool   `toml:"not-null" json:"not-null"`
 	BackslashEscape bool   `toml:"backslash-escape" json:"backslash-escape"`
-	// DataCharacterSet is the character set of the source file. Only CSV files are supported now. The following options are supported.
-	//   - utf8mb4
-	//   - GB18030
-	//   - GBK: an extension of the GB2312 character set and is also known as Code Page 936.
-	//   - binary: no attempt to convert the encoding.
-	// Leave DataCharacterSet empty will make it use `binary` by default.
-	DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
-	// DataInvalidCharReplace is the replacement characters for non-compatible characters, which shouldn't duplicate with the separators or line breaks.
-	// Changing the default value will result in increased parsing time. Non-compatible characters do not cause an increase in error.
-	DataInvalidCharReplace string `toml:"data-invalid-char-replace" json:"data-invalid-char-replace"`
 }
 
 type MydumperRuntime struct {
@@ -284,6 +274,16 @@ type MydumperRuntime struct {
 	StrictFormat     bool             `toml:"strict-format" json:"strict-format"`
 	DefaultFileRules bool             `toml:"default-file-rules" json:"default-file-rules"`
 	IgnoreColumns    AllIgnoreColumns `toml:"ignore-data-columns" json:"ignore-data-columns"`
+	// DataCharacterSet is the character set of the source file. Only CSV files are supported now. The following options are supported.
+	//   - utf8mb4
+	//   - GB18030
+	//   - GBK: an extension of the GB2312 character set and is also known as Code Page 936.
+	//   - binary: no attempt to convert the encoding.
+	// Leave DataCharacterSet empty will make it use `binary` by default.
+	DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
+	// DataInvalidCharReplace is the replacement characters for non-compatible characters, which shouldn't duplicate with the separators or line breaks.
+	// Changing the default value will result in increased parsing time. Non-compatible characters do not cause an increase in error.
+	DataInvalidCharReplace string `toml:"data-invalid-char-replace" json:"data-invalid-char-replace"`
 }
 
 type AllIgnoreColumns []*IgnoreColumns
@@ -438,19 +438,19 @@ func NewConfig() *Config {
 		Mydumper: MydumperRuntime{
 			ReadBlockSize: ReadBlockSize,
 			CSV: CSVConfig{
-				Separator:              ",",
-				Delimiter:              `"`,
-				Header:                 true,
-				NotNull:                false,
-				Null:                   `\N`,
-				BackslashEscape:        true,
-				TrimLastSep:            false,
-				DataCharacterSet:       defaultCSVDataCharacterSet,
-				DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
+				Separator:       ",",
+				Delimiter:       `"`,
+				Header:          true,
+				NotNull:         false,
+				Null:            `\N`,
+				BackslashEscape: true,
+				TrimLastSep:     false,
 			},
-			StrictFormat:  false,
-			MaxRegionSize: MaxRegionSize,
-			Filter:        DefaultFilter,
+			StrictFormat:           false,
+			MaxRegionSize:          MaxRegionSize,
+			Filter:                 DefaultFilter,
+			DataCharacterSet:       defaultCSVDataCharacterSet,
+			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
 		TikvImporter: TikvImporter{
 			Backend:         "",
@@ -579,10 +579,6 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		}
 	}
 
-	if len(csv.DataCharacterSet) == 0 {
-		csv.DataCharacterSet = defaultCSVDataCharacterSet
-	}
-
 	// adjust file routing
 	for _, rule := range cfg.Mydumper.FileRouters {
 		if filepath.IsAbs(rule.Path) {
@@ -601,6 +597,10 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	// enable default file route rule if no rules are set
 	if len(cfg.Mydumper.FileRouters) == 0 {
 		cfg.Mydumper.DefaultFileRules = true
+	}
+
+	if len(cfg.Mydumper.DataCharacterSet) == 0 {
+		cfg.Mydumper.DataCharacterSet = defaultCSVDataCharacterSet
 	}
 
 	if cfg.TikvImporter.Backend == "" {

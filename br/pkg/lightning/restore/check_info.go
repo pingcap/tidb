@@ -538,7 +538,7 @@ func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydu
 	switch dataFileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := rc.cfg.Mydumper.CSV.Header
-		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader)
+		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, nil)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
@@ -709,7 +709,7 @@ func (rc *Controller) SampleDataFromTable(ctx context.Context, dbName string, ta
 	switch tableMeta.DataFiles[0].FileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := rc.cfg.Mydumper.CSV.Header
-		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader)
+		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}

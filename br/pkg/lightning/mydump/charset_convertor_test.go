@@ -19,7 +19,6 @@ import (
 	"os"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 )
 
@@ -52,8 +51,7 @@ func (s testCharsetConvertorSuite) TestCharsetConvertor(c *C) {
 	gbkData, err := io.ReadAll(gbkReader)
 	c.Assert(err, IsNil)
 
-	cfg := &config.CSVConfig{DataCharacterSet: "gb18030", DataInvalidCharReplace: "\ufffd"}
-	cc, err := mydump.NewCharsetConvertor(cfg)
+	cc, err := mydump.NewCharsetConvertor("gb18030", "\ufffd")
 	c.Assert(err, IsNil)
 	gbkToUTF8Data, err := cc.Decode(gbkData)
 	c.Assert(err, IsNil)
@@ -77,12 +75,11 @@ func (s testCharsetConvertorSuite) TestInvalidCharReplace(c *C) {
 	c.Assert(os.WriteFile(testTempDataFile, inputData, 0666), IsNil)
 	defer func() { c.Assert(os.Remove(testTempDataFile), IsNil) }()
 
-	cfg := &config.CSVConfig{DataCharacterSet: "gb18030", DataInvalidCharReplace: dataInvalidCharReplace}
 	gbkReader, err := os.Open(testTempDataFile)
 	c.Assert(err, IsNil)
 	gbkData, err := io.ReadAll(gbkReader)
 	c.Assert(err, IsNil)
-	cc, err := mydump.NewCharsetConvertor(cfg)
+	cc, err := mydump.NewCharsetConvertor("gb18030", dataInvalidCharReplace)
 	c.Assert(err, IsNil)
 	gbkToUTF8Data, err := cc.Decode(gbkData)
 	c.Assert(err, IsNil)

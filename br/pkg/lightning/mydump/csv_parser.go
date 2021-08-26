@@ -78,19 +78,21 @@ func NewCSVParser(
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
 	shouldParseHeader bool,
+	charsetConvertor *CharsetConvertor,
 ) (*CSVParser, error) {
-	// Create the utf8mb4 convertor and encode some special symbols with the charset of CSV files.
-	charsetConvertor, err := NewCharsetConvertor(cfg)
-	if err != nil {
-		return nil, err
+	var err error
+	var separator, delimiter, terminator []byte
+	// Do not do the conversion if the charsetConvertor is nil.
+	if charsetConvertor == nil {
+		separator = []byte(cfg.Separator)
+		delimiter = []byte(cfg.Delimiter)
+		terminator = []byte(cfg.Terminator)
+	} else {
+		separator, delimiter, terminator, err = encodeSpecialSymbols(cfg, charsetConvertor)
+		if err != nil {
+			return nil, err
+		}
 	}
-	encodedSymbols, err := encodeSpecialSymbols(cfg, charsetConvertor)
-	if err != nil {
-		return nil, err
-	}
-	separator := encodedSymbols[cfg.Separator]
-	delimiter := encodedSymbols[cfg.Delimiter]
-	terminator := encodedSymbols[cfg.Terminator]
 
 	var quoteStopSet, newLineStopSet []byte
 	unquoteStopSet := []byte{separator[0]}
@@ -134,38 +136,36 @@ func NewCSVParser(
 
 // encodeSpecialSymbols will encode the special symbols, e,g, separator, delimiter and terminator
 // with the given charset according to the charset convertor.
-func encodeSpecialSymbols(cfg *config.CSVConfig, cc *CharsetConvertor) (map[string][]byte, error) {
-	var err error
-	encodedSymbols := make(map[string][]byte, 3)
+func encodeSpecialSymbols(cfg *config.CSVConfig, cc *CharsetConvertor) (separator, delimiter, terminator []byte, err error) {
 	// Separator
-	encodedSymbols[cfg.Separator], err = cc.Encode([]byte(cfg.Separator))
+	separator, err = cc.Encode([]byte(cfg.Separator))
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	// Delimiter
-	encodedSymbols[cfg.Delimiter], err = cc.Encode([]byte(cfg.Delimiter))
+	delimiter, err = cc.Encode([]byte(cfg.Delimiter))
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	// Terminator
-	encodedSymbols[cfg.Terminator], err = cc.Encode([]byte(cfg.Terminator))
+	terminator, err = cc.Encode([]byte(cfg.Terminator))
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
-	return encodedSymbols, nil
+	return
 }
 
 func (parser *CSVParser) unescapeString(input string) (unescaped string, isNull bool, err error) {
+	var decodedInputBytes []byte
 	// Convert the input from another charset to utf8mb4 before we return the string.
-	decodedInputBytes, err := parser.charsetConvertor.Decode([]byte(input))
-	if err != nil {
+	if decodedInputBytes, err = parser.charsetConvertor.Decode([]byte(input)); err != nil {
 		return
 	}
-	decodedInput := string(decodedInputBytes)
-	if parser.escFlavor == backslashEscapeFlavorMySQLWithNull && decodedInput == `\N` {
-		return decodedInput, true, nil
+	input = string(decodedInputBytes)
+	if parser.escFlavor == backslashEscapeFlavorMySQLWithNull && input == `\N` {
+		return input, true, nil
 	}
-	unescaped = unescape(decodedInput, "", parser.escFlavor)
+	unescaped = unescape(input, "", parser.escFlavor)
 	isNull = parser.escFlavor != backslashEscapeFlavorMySQLWithNull &&
 		!parser.cfg.NotNull &&
 		unescaped == parser.cfg.Null

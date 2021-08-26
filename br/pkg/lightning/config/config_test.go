@@ -718,56 +718,56 @@ func (s *configTestSuite) TestDataCharacterSet(c *C) {
 	}{
 		{
 			input: `
-				[mydumper.csv]
+				[mydumper]
 				data-character-set = 'binary'
 			`,
 			err: "",
 		},
 		{
 			input: `
-				[mydumper.csv]
+				[mydumper]
 				data-character-set = 'utf8mb4'
 			`,
 			err: "",
 		},
 		{
 			input: `
-				[mydumper.csv]
+				[mydumper]
 				data-character-set = 'gb18030'
 			`,
 			err: "",
 		},
 		{
 			input: `
-				[mydumper.csv]
+				[mydumper]
 				data-invalid-char-replace = "\u2323"
 			`,
 			err: "",
 		},
 		{
 			input: `
-				[mydumper.csv]
+				[mydumper]
 				data-invalid-char-replace = "a"
 			`,
 			err: "",
 		},
 		{
 			input: `
-				[mydumper.csv]
+				[mydumper]
 				data-invalid-char-replace = "INV"
 			`,
 			err: "",
 		},
 		{
 			input: `
-				[mydumper.csv]
+				[mydumper]
 				data-invalid-char-replace = "😊"
 			`,
 			err: "",
 		},
 		{
 			input: `
-				[mydumper.csv]
+				[mydumper]
 				data-invalid-char-replace = "😊😭😅😄"
 			`,
 			err: "",

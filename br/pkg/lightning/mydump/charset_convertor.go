@@ -16,21 +16,19 @@ package mydump
 
 import (
 	"bytes"
-	"io"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"go.uber.org/zap"
+	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"
-	"golang.org/x/text/transform"
 )
 
 type Charset int
 
 const (
-	BINARY Charset = iota
+	Binary Charset = iota
 	UTF8MB4
 	GB18030
 	GBK
@@ -38,7 +36,7 @@ const (
 
 func (c Charset) String() string {
 	switch c {
-	case BINARY:
+	case Binary:
 		return "binary"
 	case UTF8MB4:
 		return "utf8mb4"
@@ -56,43 +54,81 @@ func (c Charset) String() string {
 type CharsetConvertor struct {
 	// sourceCharacterSet represents the charset that the data source uses.
 	sourceCharacterSet Charset
-	// invalidCharReplacement is the default replacement character for the invalid content, e.g "\ufffd".
-	invalidCharReplacement      string
+	// invalidCharReplacementBytes is the default replacement character bytes for the invalid content, e.g "\ufffd".
 	invalidCharReplacementBytes []byte
+
+	decoder *encoding.Decoder
+	encoder *encoding.Encoder
 }
 
 // NewCharsetConvertor creates a new CharsetConvertor.
-func NewCharsetConvertor(cfg *config.CSVConfig) (*CharsetConvertor, error) {
-	sourceCharacterSet, invalidCharReplacement, err := loadCharsetFromConfig(cfg)
+func NewCharsetConvertor(dataCharacterSet, dataInvalidCharReplace string) (*CharsetConvertor, error) {
+	sourceCharacterSet, err := loadCharsetFromConfig(dataCharacterSet)
 	if err != nil {
 		return nil, err
 	}
-	invalidCharReplacementBytes := []byte(invalidCharReplacement)
+	invalidCharReplacementBytes := []byte(dataInvalidCharReplace)
 	log.L().Warn(
 		"incompatible strings may be encountered during the transcoding process and will be replaced, please be aware of the risk of not being able to retain the original information",
 		zap.String("source-character-set", sourceCharacterSet.String()),
 		zap.ByteString("invalid-char-replacement", invalidCharReplacementBytes))
-	return &CharsetConvertor{
-		sourceCharacterSet:          sourceCharacterSet,
-		invalidCharReplacement:      invalidCharReplacement,
-		invalidCharReplacementBytes: invalidCharReplacementBytes,
-	}, nil
+	cc := &CharsetConvertor{
+		sourceCharacterSet,
+		invalidCharReplacementBytes,
+		nil, nil,
+	}
+	err = cc.initDecoder()
+	if err != nil {
+		return nil, err
+	}
+	err = cc.initEncoder()
+	if err != nil {
+		return nil, err
+	}
+	return cc, nil
 }
 
-func loadCharsetFromConfig(cfg *config.CSVConfig) (Charset, string, error) {
-	dataInvalidCharReplace := cfg.DataInvalidCharReplace
-	switch cfg.DataCharacterSet {
+func loadCharsetFromConfig(dataCharacterSet string) (Charset, error) {
+	switch dataCharacterSet {
 	case "", "binary":
-		return BINARY, dataInvalidCharReplace, nil
+		return Binary, nil
 	case "utf8mb4":
-		return UTF8MB4, dataInvalidCharReplace, nil
+		return UTF8MB4, nil
 	case "gb18030":
-		return GB18030, dataInvalidCharReplace, nil
+		return GB18030, nil
 	case "gbk":
-		return GBK, dataInvalidCharReplace, nil
+		return GBK, nil
 	default:
-		return BINARY, dataInvalidCharReplace, errors.Errorf("found unsupported data-character-set: %s", cfg.DataCharacterSet)
+		return Binary, errors.Errorf("found unsupported data-character-set: %s", dataCharacterSet)
 	}
+}
+
+func (cc *CharsetConvertor) initDecoder() error {
+	switch cc.sourceCharacterSet {
+	case Binary, UTF8MB4:
+		return nil
+	case GB18030:
+		cc.decoder = simplifiedchinese.GB18030.NewDecoder()
+		return nil
+	case GBK:
+		cc.decoder = simplifiedchinese.GBK.NewDecoder()
+		return nil
+	}
+	return errors.Errorf("not support %s as the conversion source yet", cc.sourceCharacterSet)
+}
+
+func (cc *CharsetConvertor) initEncoder() error {
+	switch cc.sourceCharacterSet {
+	case Binary, UTF8MB4:
+		return nil
+	case GB18030:
+		cc.encoder = simplifiedchinese.GB18030.NewEncoder()
+		return nil
+	case GBK:
+		cc.encoder = simplifiedchinese.GBK.NewEncoder()
+		return nil
+	}
+	return errors.Errorf("not support %s as the conversion source yet", cc.sourceCharacterSet)
 }
 
 var utf8RuneErrorBytes = []byte(string(utf8.RuneError))
@@ -104,18 +140,10 @@ func (cc *CharsetConvertor) Decode(src []byte) ([]byte, error) {
 	if !cc.precheck(src) {
 		return src, nil
 	}
-	// To make sure the res have enough room to store the transcoded bytes, we assume every byte of src
-	// will take utf8.UTFMax bytes in the res.
-	res := make([]byte, len(src)*utf8.UTFMax)
-	// Create the decoder transformer first.
-	transformer, _, err := cc.buildTransformer(bytes.NewReader(src))
-	if err != nil {
-		return nil, err
-	}
 	// Do the conversion then.
-	_, err = transformer.Read(res)
+	res, err := cc.decoder.Bytes(src)
 	if err != nil {
-		return nil, err
+		return res, err
 	}
 	res = bytes.ReplaceAll(res, utf8RuneErrorBytes, cc.invalidCharReplacementBytes)
 	return bytes.Trim(res, "\x00"), nil
@@ -123,49 +151,25 @@ func (cc *CharsetConvertor) Decode(src []byte) ([]byte, error) {
 
 func (cc *CharsetConvertor) precheck(src []byte) bool {
 	// No need to convert the charset encoding, just return the original data.
-	if len(src) == 0 || cc.sourceCharacterSet == BINARY || cc.sourceCharacterSet == UTF8MB4 {
+	if len(src) == 0 || cc == nil ||
+		cc.sourceCharacterSet == Binary || cc.sourceCharacterSet == UTF8MB4 ||
+		cc.decoder == nil || cc.encoder == nil {
 		return false
 	}
 	return true
 }
-
-// GBKMax is the maximum number of bytes of a GBK encoded character.
-const GBKMax = 2
 
 // Encode will encode the data from utf8mb4 to sourceCharacterSet.
 func (cc *CharsetConvertor) Encode(src []byte) ([]byte, error) {
 	if !cc.precheck(src) {
 		return src, nil
 	}
-	// To make sure the res have enough room to store the transcoded bytes, we assume every byte of src
-	// will take GBKMax bytes in the res.
-	res := make([]byte, len(src)*GBKMax)
-	// Create the encoder transformer first.
-	var transformer *transform.Reader
-	_, transformer, err := cc.buildTransformer(bytes.NewReader(src))
-	if err != nil {
-		return nil, err
-	}
 	// Do the conversion then.
-	_, err = transformer.Read(res)
+	res, err := cc.encoder.Bytes(src)
 	if err != nil {
-		return nil, err
+		return res, err
 	}
 	return bytes.Trim(res, "\x00"), nil
-}
-
-func (cc *CharsetConvertor) buildTransformer(bytesReader io.Reader) (decoder, encoder *transform.Reader, err error) {
-	switch cc.sourceCharacterSet {
-	case GB18030:
-		decoder = transform.NewReader(bytesReader, simplifiedchinese.GB18030.NewDecoder())
-		encoder = transform.NewReader(bytesReader, simplifiedchinese.GB18030.NewEncoder())
-	case GBK:
-		decoder = transform.NewReader(bytesReader, simplifiedchinese.GBK.NewDecoder())
-		encoder = transform.NewReader(bytesReader, simplifiedchinese.GBK.NewEncoder())
-	default:
-		return nil, nil, errors.Errorf("not support %s as the conversion source yet", cc.sourceCharacterSet)
-	}
-	return decoder, encoder, nil
 }
 
 // ContainsInvalidChar returns whether the given data contains any invalid char,
