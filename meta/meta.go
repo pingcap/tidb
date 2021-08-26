@@ -490,6 +490,7 @@ func (m *Meta) RestartSequenceValue(dbID int64, tableInfo *model.TableInfo, seqV
 	return errors.Trace(m.txn.HSet(m.dbKey(dbID), m.sequenceKey(tableInfo.ID), []byte(strconv.FormatInt(seqValue, 10))))
 }
 
+// DropPolicy drops the specified policy.
 func (m *Meta) DropPolicy(policyID int64) error {
 	// Check if policy exists.
 	policyKey := m.policyKey(policyID)
