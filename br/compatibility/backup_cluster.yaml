@@ -7,12 +7,12 @@ services:
     image: control:nightly
     build:
       context: ../../
-      dockerfile: ./docker/Dockerfile
+      dockerfile: ./br/docker/Dockerfile
     volumes:
       - /tmp/br/docker/backup_data/${TAG}:/data
       - /tmp/br/docker/backup_logs/${TAG}:/tmp
       - /tmp/br/docker/backup_logs/${TAG}:/logs
-      - ../bin:/go/src/github.com/pingcap/br/bin
+      - ../bin:/go/src/github.com/pingcap/tidb/bin
       - ./compatibility/prepare_data:/prepare_data
     command: -c "/usr/bin/tail -f /dev/null"
     environment:
