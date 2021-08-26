@@ -72,6 +72,7 @@ type StatementContext struct {
 	InSelectStmt              bool
 	InLoadDataStmt            bool
 	InExplainStmt             bool
+	IsExplainAnalyze	      bool
 	InCreateOrAlterStmt       bool
 	IgnoreTruncate            bool
 	IgnoreZeroInDate          bool
@@ -182,6 +183,10 @@ type StatementContext struct {
 		DiskTracker disk.Tracker
 		LogOnExceed [2]memory.LogOnExceed
 	}
+
+	// ScalarSubquries stores the scalar subqueries that execute during the plan building.
+	// This is used to show the explain result of these subqueries.
+	ScalarSubqueries []interface{}
 }
 
 // StmtHints are SessionVars related sql hints.

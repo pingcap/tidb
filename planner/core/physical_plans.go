@@ -66,6 +66,7 @@ var (
 	_ PhysicalPlan = &PhysicalShuffleReceiverStub{}
 	_ PhysicalPlan = &BatchPointGetPlan{}
 	_ PhysicalPlan = &PhysicalTableSample{}
+	_ PhysicalPlan = &PhysicalScalarSubquery{}
 )
 
 // PhysicalTableReader is the table reader in tidb.
@@ -1493,4 +1494,12 @@ func (p *CTEDefinition) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
 	})
+}
+
+// PhysicalScalarSubquery is used to store the incorrelated scalar subquery
+// which is executed during the optimization.
+// This is just a wrapper of the subquery for the explain information.
+type PhysicalScalarSubquery struct {
+	basePhysicalPlan
+	expr expression.Expression
 }

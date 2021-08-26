@@ -124,8 +124,10 @@ const (
 	TypeCTETable = "CTETable"
 	// TypeCTE is the type of CTEFullScan.
 	TypeCTE = "CTEFullScan"
-	// TypeCTEDefinition is the type of CTE definition
+	// TypeCTEDefinition is the type of CTE definition.
 	TypeCTEDefinition = "CTE"
+	// TypeScalarSubquery is the type of ScalarSubquery.
+	TypeScalarSubquery = "ScalarSubquery"
 )
 
 // plan id.
@@ -183,6 +185,7 @@ const (
 	typeCTE                   int = 50
 	typeCTEDefinition         int = 51
 	typeCTETable              int = 52
+	typeScalarSubquery	  	  int = 53
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -292,6 +295,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeCTEDefinition
 	case TypeCTETable:
 		return typeCTETable
+	case TypeScalarSubquery:
+		return typeScalarSubquery
 	}
 	// Should never reach here.
 	return 0
@@ -402,6 +407,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeCTEDefinition
 	case typeCTETable:
 		return TypeCTETable
+	case typeScalarSubquery:
+		return TypeScalarSubquery
 	}
 
 	// Should never reach here.

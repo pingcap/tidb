@@ -1063,6 +1063,10 @@ func (e *Explain) RenderResult() error {
 			if err != nil {
 				return err
 			}
+			err = e.explainPlanInRowFormatScalarSubquery()
+			if err != nil {
+				return err
+			}
 		}
 	case types.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
@@ -1095,6 +1099,20 @@ func (e *Explain) explainPlanInRowFormatCTE() (err error) {
 		explainedCTEPlan[x.CTE.IDForStorage] = struct{}{}
 	}
 
+	return
+}
+
+func (e *Explain) explainPlanInRowFormatScalarSubquery() (err error) {
+	if e.ctx == nil {
+		return nil
+	}
+	subqueries := e.ctx.GetSessionVars().StmtCtx.ScalarSubqueries
+	for i := 0; i < len(subqueries); i++ {
+		subquery := subqueries[i].(*PhysicalScalarSubquery)
+		// Fill the runtime info from the child
+		
+		e.explainPlanInRowFormat(subquery, "root", "", "", true)
+	}
 	return
 }
 
