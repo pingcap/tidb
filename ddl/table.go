@@ -1174,7 +1174,7 @@ func onAlterTableAttributes(t *meta.Meta, job *model.Job) (ver int64, err error)
 		return 0, err
 	}
 
-	if rule.Labels == nil {
+	if len(rule.Labels) == 0 {
 		patch := label.NewRulePatch(nil, []string{rule.ID})
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
 	} else {
@@ -1212,7 +1212,7 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
-	if rule.Labels == nil {
+	if len(rule.Labels) == 0 {
 		patch := label.NewRulePatch(nil, []string{rule.ID})
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
 	} else {
