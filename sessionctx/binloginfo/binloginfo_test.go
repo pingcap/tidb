@@ -33,11 +33,9 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
@@ -73,26 +71,22 @@ func (p *mockBinlogPump) PullBinlogs(req *binlog.PullBinlogReq, srv binlog.Pump_
 	return nil
 }
 
-type testBinlogSuite struct {
-	store    kv.Storage
-	domain   *domain.Domain
-	unixFile string
-	serv     *grpc.Server
-	pump     *mockBinlogPump
-	client   *pumpcli.PumpsClient
-	ddl      ddl.DDL
+type binlogSuite struct {
+	store  kv.Storage
+	serv   *grpc.Server
+	pump   *mockBinlogPump
+	client *pumpcli.PumpsClient
+	ddl    ddl.DDL
 }
 
 const maxRecvMsgSize = 64 * 1024
 
-func SetUpTest(t *testing.T) *testBinlogSuite {
-	s := new(testBinlogSuite)
-	store, err := mockstore.NewMockStore()
-	require.Nil(t, err)
+func createBinlogSuite(t *testing.T) (s *binlogSuite, clean func()) {
+	s = new(binlogSuite)
+	store, cleanStore := testkit.CreateMockStore(t)
 	s.store = store
-	session.SetSchemaLease(0)
-	s.unixFile = "/tmp/mock-binlog-pump" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	l, err := net.Listen("unix", s.unixFile)
+	unixFile := "/tmp/mock-binlog-pump" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	l, err := net.Listen("unix", unixFile)
 	require.Nil(t, err)
 	s.serv = grpc.NewServer(grpc.MaxRecvMsgSize(maxRecvMsgSize))
 	s.pump = new(mockBinlogPump)
@@ -104,12 +98,11 @@ func SetUpTest(t *testing.T) *testBinlogSuite {
 	opt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 		return net.DialTimeout("unix", addr, timeout)
 	})
-	clientCon, err := grpc.Dial(s.unixFile, opt, grpc.WithInsecure())
+	clientCon, err := grpc.Dial(unixFile, opt, grpc.WithInsecure())
 	require.Nil(t, err)
 	require.NotNil(t, clientCon)
+
 	tk := testkit.NewTestKit(t, s.store)
-	s.domain, err = session.BootstrapSession(store)
-	require.Nil(t, err)
 	tk.MustExec("use test")
 	sessionDomain := domain.GetDomain(tk.Session().(sessionctx.Context))
 	s.ddl = sessionDomain.DDL()
@@ -117,25 +110,23 @@ func SetUpTest(t *testing.T) *testBinlogSuite {
 	s.client = binloginfo.MockPumpsClient(binlog.NewPumpClient(clientCon))
 	s.ddl.SetBinlogClient(s.client)
 
-	return s
-}
-
-func TearDownTest(t *testing.T, s *testBinlogSuite) {
-	err := s.ddl.Stop()
-	require.Nil(t, err)
-	s.serv.Stop()
-	err = os.Remove(s.unixFile)
-	if err != nil {
-		require.EqualError(t, err, fmt.Sprintf("remove %v: no such file or directory", s.unixFile))
+	clean = func() {
+		s.ddl.Stop()
+		require.Nil(t, err)
+		s.serv.Stop()
+		err = os.Remove(unixFile)
+		if err != nil {
+			require.EqualError(t, err, fmt.Sprintf("remove %v: no such file or directory", unixFile))
+		}
+		cleanStore()
 	}
-	s.domain.Close()
-	err = s.store.Close()
-	require.Nil(t, err)
+
+	return
 }
 
 func TestBinlog(t *testing.T) {
-	s := SetUpTest(t)
-	defer TearDownTest(t, s)
+	s, clean := createBinlogSuite(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
@@ -277,8 +268,8 @@ func TestBinlog(t *testing.T) {
 }
 
 func TestMaxRecvSize(t *testing.T) {
-	s := SetUpTest(t)
-	defer TearDownTest(t, s)
+	s, clean := createBinlogSuite(t)
+	defer clean()
 
 	info := &binloginfo.BinlogInfo{
 		Data: &binlog.Binlog{
@@ -289,7 +280,7 @@ func TestMaxRecvSize(t *testing.T) {
 	}
 	binlogWR := info.WriteBinlog(1)
 	err := binlogWR.GetError()
-	require.NotNil(t, err)
+	require.Error(t, err)
 	require.Falsef(t, terror.ErrCritical.Equal(err), fmt.Sprintf("%v", err))
 }
 
@@ -309,7 +300,7 @@ func getLatestBinlogPrewriteValue(t *testing.T, pump *mockBinlogPump) *binlog.Pr
 	require.NotNil(t, bin)
 	preVal := new(binlog.PrewriteValue)
 	err := preVal.Unmarshal(bin.PrewriteValue)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	return preVal
 }
 
@@ -319,7 +310,7 @@ func getLatestDDLBinlog(t *testing.T, pump *mockBinlogPump, ddlQuery string) (pr
 		payload := pump.mu.payloads[i]
 		bin := new(binlog.Binlog)
 		err := bin.Unmarshal(payload)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		if bin.Tp == binlog.BinlogType_Commit && bin.DdlJobId > 0 {
 			commitDDL = bin
 		}
@@ -394,12 +385,12 @@ func mutationRowsToRows(t *testing.T, mutationRows [][]byte, columnValueOffsets 
 }
 
 func TestBinlogForSequence(t *testing.T) {
-	s := SetUpTest(t)
-	defer TearDownTest(t, s)
+	s, clean := createBinlogSuite(t)
+	defer clean()
 
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit", `return(true)`))
 	defer func() {
-		require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit"))
 	}()
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
@@ -476,8 +467,8 @@ func TestBinlogForSequence(t *testing.T) {
 // Sometimes this test doesn't clean up fail, let the function name begin with 'Z'
 // so it runs last and would not disrupt other tests.
 func TestZIgnoreError(t *testing.T) {
-	s := SetUpTest(t)
-	defer TearDownTest(t, s)
+	s, clean := createBinlogSuite(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
@@ -502,8 +493,8 @@ func TestZIgnoreError(t *testing.T) {
 }
 
 func TestPartitionedTable(t *testing.T) {
-	s := SetUpTest(t)
-	defer TearDownTest(t, s)
+	s, clean := createBinlogSuite(t)
+	defer clean()
 
 	// This test checks partitioned table write binlog with table ID, rather than partition ID.
 	tk := testkit.NewTestKit(t, s.store)
@@ -528,8 +519,8 @@ func TestPartitionedTable(t *testing.T) {
 }
 
 func TestPessimisticLockThenCommit(t *testing.T) {
-	s := SetUpTest(t)
-	defer TearDownTest(t, s)
+	s, clean := createBinlogSuite(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
@@ -544,10 +535,10 @@ func TestPessimisticLockThenCommit(t *testing.T) {
 }
 
 func TestDeleteSchema(t *testing.T) {
-	s := SetUpTest(t)
-	defer TearDownTest(t, s)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-	tk := testkit.NewTestKit(t, s.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE `b1` (`id` int(11) NOT NULL AUTO_INCREMENT, `job_id` varchar(50) NOT NULL, `split_job_id` varchar(30) DEFAULT NULL, PRIMARY KEY (`id`), KEY `b1` (`job_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
 	tk.MustExec("CREATE TABLE `b2` (`id` int(11) NOT NULL AUTO_INCREMENT, `job_id` varchar(50) NOT NULL, `batch_class` varchar(20) DEFAULT NULL, PRIMARY KEY (`id`), UNIQUE KEY `bu` (`job_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
@@ -561,9 +552,6 @@ func TestDeleteSchema(t *testing.T) {
 }
 
 func TestAddSpecialComment(t *testing.T) {
-	s := SetUpTest(t)
-	defer TearDownTest(t, s)
-
 	testCase := []struct {
 		input  string
 		result string
@@ -696,7 +684,7 @@ func TestAddSpecialComment(t *testing.T) {
 	}
 }
 
-func mustGetDDLBinlog(s *testBinlogSuite, ddlQuery string, t *testing.T) (matched bool) {
+func mustGetDDLBinlog(s *binlogSuite, ddlQuery string, t *testing.T) (matched bool) {
 	for i := 0; i < 10; i++ {
 		preDDL, commitDDL, _ := getLatestDDLBinlog(t, s.pump, ddlQuery)
 		if preDDL != nil && commitDDL != nil {
@@ -723,8 +711,8 @@ func testGetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) 
 }
 
 func TestTempTableBinlog(t *testing.T) {
-	s := SetUpTest(t)
-	defer TearDownTest(t, s)
+	s, clean := createBinlogSuite(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
