@@ -122,7 +122,7 @@ func init() {
 type saveCp struct {
 	tableName string
 	merger    checkpoints.TableCheckpointMerger
-	waitCh    chan error
+	waitCh    chan<- error
 }
 
 type errorSummary struct {
