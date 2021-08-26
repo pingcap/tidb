@@ -1,4 +1,4 @@
-name: br compatibility test
+name: Compatibility Test
 
 on:
   push:
@@ -32,7 +32,7 @@ defaults:
     working-directory: ./br
 
 jobs:
-  build:
+  br:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:

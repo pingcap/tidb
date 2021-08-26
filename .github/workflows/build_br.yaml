@@ -1,4 +1,4 @@
-name: Tools build
+name: BR & Lightning build
 on:
   push:
     branches:
