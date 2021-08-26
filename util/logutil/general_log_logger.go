@@ -25,13 +25,16 @@ type GeneralLogEntry struct {
 
 	ConnID                 uint64
 	FnGetUser              func() string
+	User                   string
 	FnGetSchemaMetaVersion func() int64
+	SchemaMetaVersion      int64
 	TxnStartTS             uint64
 	TxnForUpdateTS         uint64
 	IsReadConsistency      bool
 	CurrentDB              string
 	TxnMode                string
 	FnGetQuery             func(*strings.Builder) string
+	Query                  string
 }
 
 const _hex = "0123456789abcdef"
@@ -64,6 +67,33 @@ func (e *GeneralLogEntry) writeToBuffer(buf *buffer.Buffer) {
 	e.buf.AppendString("] [sql=")
 	fnGetQueryBuf := fnGetQueryPool.Get().(*strings.Builder)
 	e.safeAddStringWithQuote(e.FnGetQuery(fnGetQueryBuf))
+	fnGetQueryBuf.Reset()
+	fnGetQueryPool.Put(fnGetQueryBuf)
+	e.buf.AppendString("]")
+}
+
+func (e *GeneralLogEntry) writeToBufferDirect(buf *buffer.Buffer) {
+	e.buf = buf
+
+	e.buf.AppendString("[GENERAL_LOG] [conn=")
+	e.buf.AppendUint(e.ConnID)
+	e.buf.AppendString("] [user=")
+	e.safeAddStringWithQuote(e.User)
+	e.buf.AppendString("] [schemaVersion=")
+	e.buf.AppendInt(e.SchemaMetaVersion)
+	e.buf.AppendString("] [txnStartTS=")
+	e.buf.AppendUint(e.TxnStartTS)
+	e.buf.AppendString("] [forUpdateTS=")
+	e.buf.AppendUint(e.TxnForUpdateTS)
+	e.buf.AppendString("] [isReadConsistency=")
+	e.buf.AppendBool(e.IsReadConsistency)
+	e.buf.AppendString("] [current_db=")
+	e.buf.AppendString(e.CurrentDB)
+	e.buf.AppendString("] [txn_mode=")
+	e.buf.AppendString(e.TxnMode)
+	e.buf.AppendString("] [sql=")
+	fnGetQueryBuf := fnGetQueryPool.Get().(*strings.Builder)
+	e.safeAddStringWithQuote(e.Query)
 	fnGetQueryBuf.Reset()
 	fnGetQueryPool.Put(fnGetQueryBuf)
 	e.buf.AppendString("]")
