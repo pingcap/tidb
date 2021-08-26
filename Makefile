@@ -59,7 +59,7 @@ errdoc:tools/bin/errdoc-gen
 
 lint:tools/bin/revive
 	@echo "linting"
-	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_WITHOUT_BR)
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(PACKAGES_WITHOUT_LIGHTNING)
 
 vet:
 	@echo "vet"

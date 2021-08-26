@@ -9,8 +9,8 @@ import (
 	"sync"
 
 	// #nosec
-	// register HTTP handler for /debug/pprof
 	"net/http"
+	// register HTTP handler for /debug/pprof
 	_ "net/http/pprof"
 
 	"github.com/pingcap/errors"
