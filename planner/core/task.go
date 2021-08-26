@@ -1523,13 +1523,12 @@ func BuildFinalModeAggregation(
 	// 		[part  agg] group by expr0 ->col#0, expr1 -> col#1
 	// distinct,  orderBy: can two phase
 	// 		[final agg] group_concat(distinct col#0, col#1, order by col#2,’,’)
-	// 		[part  agg] group by expr0 ->col#0, expr1 -> col#1, expr2-> col#2
+	// 		[part  agg] group by expr0 ->col#0, expr1 -> col#1; agg function: firstrow(expr2)-> col#2
 
 	for i, aggFunc := range original.AggFuncs {
 		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
 		finalAggFunc.Name = aggFunc.Name
 		args := make([]expression.Expression, 0, len(aggFunc.Args))
-		byItems := make([]*util.ByItems, 0, len(aggFunc.OrderByItems))
 		if aggFunc.HasDistinct {
 			/*
 				eg: SELECT COUNT(DISTINCT a), SUM(b) FROM t GROUP BY c
@@ -1602,6 +1601,7 @@ func BuildFinalModeAggregation(
 				args = append(args, getDistinctExpr(distinctArg, false))
 			}
 
+			byItems := make([]*util.ByItems, 0, len(aggFunc.OrderByItems))
 			for _, byItem := range aggFunc.OrderByItems {
 				byItems = append(byItems, &util.ByItems{Expr: getDistinctExpr(byItem.Expr, true), Desc: byItem.Desc})
 			}
@@ -1663,10 +1663,10 @@ func BuildFinalModeAggregation(
 				sumAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
 				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
-				approxCountDistinctAgg := *aggFunc
-				approxCountDistinctAgg.Name = aggFunc.Name
-				approxCountDistinctAgg.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
-				partial.AggFuncs = append(partial.AggFuncs, &approxCountDistinctAgg)
+				newAggFunc := *aggFunc
+				newAggFunc.Name = aggFunc.Name
+				newAggFunc.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
+				partial.AggFuncs = append(partial.AggFuncs, &newAggFunc)
 				if aggFunc.Name == ast.AggFuncGroupConcat {
 					// append the last separator arg
 					args = append(args, aggFunc.Args[len(aggFunc.Args)-1])
