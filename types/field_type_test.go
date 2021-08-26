@@ -275,7 +275,7 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 			mysql.TypeVarString, mysql.TypeGeometry:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeVarchar)
 		case mysql.TypeBit:
-			c.Assert(aggTp.Tp, Equals, mysql.TypeLonglong)
+			c.Assert(aggTp.Tp, Equals, mysql.TypeVarchar)
 		case mysql.TypeString:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeString)
 		case mysql.TypeUnspecified, mysql.TypeNewDecimal:

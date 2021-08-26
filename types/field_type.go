@@ -413,7 +413,7 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		// mysql.TypeBit          <16>-<244>
-		mysql.TypeLonglong,
+		mysql.TypeVarchar,
 		// mysql.TypeJSON
 		mysql.TypeVarchar,
 		// mysql.TypeNewDecimal   mysql.TypeEnum
@@ -446,7 +446,7 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		// mysql.TypeBit          <16>-<244>
-		mysql.TypeLonglong,
+		mysql.TypeVarchar,
 		// mysql.TypeJSON
 		mysql.TypeVarchar,
 		// mysql.TypeNewDecimal   mysql.TypeEnum
@@ -479,7 +479,7 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		// mysql.TypeBit          <16>-<244>
-		mysql.TypeLonglong,
+		mysql.TypeVarchar,
 		// mysql.TypeJSON
 		mysql.TypeVarchar,
 		// mysql.TypeNewDecimal   mysql.TypeEnum
@@ -512,7 +512,7 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		// mysql.TypeBit          <16>-<244>
-		mysql.TypeDouble,
+		mysql.TypeVarchar,
 		// mysql.TypeJSON
 		mysql.TypeVarchar,
 		// mysql.TypeNewDecimal   mysql.TypeEnum
@@ -545,7 +545,7 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		// mysql.TypeBit          <16>-<244>
-		mysql.TypeDouble,
+		mysql.TypeVarchar,
 		// mysql.TypeJSON
 		mysql.TypeVarchar,
 		// mysql.TypeNewDecimal   mysql.TypeEnum
@@ -644,7 +644,7 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
 		// mysql.TypeBit          <16>-<244>
-		mysql.TypeLonglong,
+		mysql.TypeVarchar,
 		// mysql.TypeJSON
 		mysql.TypeVarchar,
 		// mysql.TypeNewDecimal   mysql.TypeEnum
@@ -677,7 +677,7 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeNewDate, mysql.TypeVarchar,
 		// mysql.TypeBit          <16>-<244>
-		mysql.TypeLonglong,
+		mysql.TypeVarchar,
 		// mysql.TypeJSON
 		mysql.TypeVarchar,
 		// mysql.TypeNewDecimal    mysql.TypeEnum
@@ -892,15 +892,15 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 	/* mysql.TypeBit -> */
 	{
 		// mysql.TypeUnspecified  mysql.TypeTiny
-		mysql.TypeVarchar, mysql.TypeLonglong,
+		mysql.TypeVarchar, mysql.TypeVarchar,
 		// mysql.TypeShort        mysql.TypeLong
-		mysql.TypeLonglong, mysql.TypeLonglong,
+		mysql.TypeVarchar, mysql.TypeVarchar,
 		// mysql.TypeFloat        mysql.TypeDouble
-		mysql.TypeDouble, mysql.TypeDouble,
+		mysql.TypeVarchar, mysql.TypeVarchar,
 		// mysql.TypeNull         mysql.TypeTimestamp
 		mysql.TypeBit, mysql.TypeVarchar,
 		// mysql.TypeLonglong     mysql.TypeInt24
-		mysql.TypeLonglong, mysql.TypeLonglong,
+		mysql.TypeVarchar, mysql.TypeLonglong,
 		// mysql.TypeDate         mysql.TypeTime
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		// mysql.TypeDatetime     mysql.TypeYear
