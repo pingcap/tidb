@@ -63,7 +63,7 @@ lint:tools/bin/revive
 
 vet:
 	@echo "vet"
-	$(GO) vet -all $(PACKAGES_WITHOUT_BR) 2>&1 | $(FAIL_ON_STDOUT)
+	$(GO) vet -all $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
 
 tidy:
 	@echo "go mod tidy"

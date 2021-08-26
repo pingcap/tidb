@@ -800,7 +800,7 @@ type local struct {
 	engines sync.Map // sync version of map[uuid.UUID]*File
 
 	pdCtl    *pdutil.PdController
-	conns    common.GRPCConns
+	conns    *common.GRPCConns
 	splitCli split.SplitClient
 	tls      *common.TLS
 	pdAddr   string

@@ -64,7 +64,7 @@ type DuplicateManager struct {
 	db                *pebble.DB
 	splitCli          restore.SplitClient
 	regionConcurrency int
-	connPool          common.GRPCConns
+	connPool          *common.GRPCConns
 	tls               *common.TLS
 	ts                uint64
 	keyAdapter        KeyAdapter

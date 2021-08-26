@@ -336,7 +336,6 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 					goto _out
 				}
 			}
-			goto st21
 		tr12:
 			//.... lightning/mydump/parser.rl:110
 			te = p + 1
@@ -348,7 +347,6 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 					goto _out
 				}
 			}
-			goto st21
 		tr21:
 			//.... lightning/mydump/parser.rl:105
 			te = p + 1
@@ -360,7 +358,6 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 					goto _out
 				}
 			}
-			goto st21
 		tr28:
 			//.... lightning/mydump/parser.rl:70
 			te = p + 1
@@ -372,7 +369,6 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 					goto _out
 				}
 			}
-			goto st21
 		tr29:
 			//.... lightning/mydump/parser.rl:75
 			te = p + 1
@@ -384,7 +380,6 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 					goto _out
 				}
 			}
-			goto st21
 		tr42:
 			//.... lightning/mydump/parser.rl:120
 			te = p
@@ -397,7 +392,6 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 					goto _out
 				}
 			}
-			goto st21
 		tr43:
 			//.... lightning/mydump/parser.rl:115
 			te = p
@@ -410,7 +404,6 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 					goto _out
 				}
 			}
-			goto st21
 		tr44:
 			//.... lightning/mydump/parser.rl:130
 			te = p
@@ -423,7 +416,6 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 					goto _out
 				}
 			}
-			goto st21
 		tr46:
 			//.... lightning/mydump/parser.rl:68
 			te = p
@@ -442,7 +434,6 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 					goto _out
 				}
 			}
-			goto st21
 		tr79:
 			//.... lightning/mydump/parser.rl:125
 			te = p
@@ -455,7 +446,6 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 					goto _out
 				}
 			}
-			goto st21
 		st21:
 			//.... NONE:1
 			ts = 0
@@ -2511,6 +2501,4 @@ func (parser *ChunkParser) lex() (token, []byte, error) {
 			return tokNil, nil, errors.Trace(err)
 		}
 	}
-
-	return tokNil, nil, nil
 }
