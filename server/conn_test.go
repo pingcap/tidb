@@ -23,14 +23,12 @@ import (
 	"io"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -39,42 +37,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/arena"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
-
-type ConnTestSuite struct {
-	dom   *domain.Domain
-	store kv.Storage
-}
-
-var _ = SerialSuites(&ConnTestSuite{})
-
-func (ts *ConnTestSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	var err error
-	ts.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockCluster := c.(*unistore.Cluster)
-			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
-			store := c.AllocID()
-			peer := c.AllocID()
-			mockCluster.AddStore(store, "tiflash0", &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
-			mockCluster.AddPeer(region1, store, peer)
-		}),
-		mockstore.WithStoreType(mockstore.EmbedUnistore),
-	)
-	c.Assert(err, IsNil)
-	ts.dom, err = session.BootstrapSession(ts.store)
-	c.Assert(err, IsNil)
-}
-
-func (ts *ConnTestSuite) TearDownSuite(c *C) {
-	ts.dom.Close()
-	ts.store.Close()
-	testleak.AfterTest(c)()
-}
 
 func TestMalformHandshakeHeader(t *testing.T) {
 	t.Parallel()
