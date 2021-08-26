@@ -40,7 +40,7 @@ for script in br/tests/docker_compatible_*/${1}.sh; do
     GCS_PORT="$GCS_PORT" \
     TAGS="$TAGS" \
     EXPECTED_KVS="$EXPECTED_KVS" \
-    PATH="tests/_utils:bin:$PATH" \
+    PATH="br/tests/_utils:bin:$PATH" \
     TEST_NAME="$(basename "$(dirname "$script")")" \
     BR_LOG_TO_TERM=1 \
     bash "$script"
