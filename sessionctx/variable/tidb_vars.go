@@ -124,7 +124,6 @@ const (
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLogMaxAge = "tidb_general_log_max_age"
 
-
 	// tidb_pprof_sql_cpu is used to add label sql label to pprof result.
 	TiDBPProfSQLCPU = "tidb_pprof_sql_cpu"
 

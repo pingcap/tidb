@@ -144,6 +144,7 @@ func initGRPCLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
 	return l, prop, nil
 }
 
+// ReplaceLogger replace global logger instance with given log config.
 func ReplaceLogger(cfg *LogConfig) error {
 	gl, props, err := log.InitLogger(&cfg.Config, zap.AddStacktrace(zapcore.FatalLevel))
 	if err != nil {
@@ -151,12 +152,12 @@ func ReplaceLogger(cfg *LogConfig) error {
 	}
 	log.ReplaceGlobals(gl, props)
 
-	cfgJson, err := json.Marshal(&cfg.Config)
+	cfgJSON, err := json.Marshal(&cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	log.S().Infof("replaced global logger with config: %s", string(cfgJson))
+	log.S().Infof("replaced global logger with config: %s", string(cfgJSON))
 
 	return nil
 }
