@@ -1373,8 +1373,8 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			resultTp = unionJoinFieldType(resultTp, childTp)
 		}
 
-		for i := range tmpExprs {
-			tmpExprs[i] = expression.WrapWithCast(u.ctx, resultTp.EvalType(), tmpExprs[i])
+		for idx := range tmpExprs {
+			tmpExprs[idx] = expression.WrapWithCast(u.ctx, resultTp.EvalType(), tmpExprs[idx])
 		}
 
 		if err := expression.CheckIllegalMixCollation("UNION", tmpExprs, types.ETInt); err != nil {
