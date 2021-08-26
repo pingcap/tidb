@@ -385,7 +385,7 @@ func TestMismatchedUsage(t *testing.T) {
 
 	key, _, _, err = fs1.Output()
 	require.NoError(t, err)
-	require.NoError(t, err)
+	require.NotNil(t, key)
 
 	err = fs1.Input(nextRow(r, keySize, valSize))
 	require.EqualError(t, err, errmsg)
