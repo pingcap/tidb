@@ -256,7 +256,20 @@ func (rs *RegionSplitter) splitAndScatterRegions(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rs.ScatterRegions(ctx, newRegions)
+	// After we never split at the rewrite rule (i.e. begin of tables / indices),
+	// there would be some regions be scattered twice, e.g.:
+	// |--1-|--2-+----|-3--|
+	//      |    +(t1)|
+	//      +(t1_r4)  |
+	//                +(t2_r42)
+	// When spliting at `t1_r4`, we would scatter region 1, 2.
+	// When spliting at `t2_r42`, we would scatter region 2, 3.
+	// Because we don't split at t1 anymore.
+	// The trick here is a pinky promise: never scatter regions you didn't imported any data.
+	// In this scenario, it is the last region after spliting (applying to >= 5.0).
+	if len(newRegions) > 1 {
+		rs.ScatterRegions(ctx, newRegions[:len(newRegions)-1])
+	}
 	return newRegions, nil
 }
 
