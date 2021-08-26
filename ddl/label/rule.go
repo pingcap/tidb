@@ -57,6 +57,7 @@ func NewRule() *Rule {
 // ApplyAttributesSpec will transfer attributes defined in AttributesSpec to the labels.
 func (r *Rule) ApplyAttributesSpec(spec *ast.AttributesSpec) error {
 	if spec.Default {
+		r.Labels = []Label{}
 		return nil
 	}
 	// construct a string list
@@ -88,16 +89,15 @@ func (r *Rule) Clone() *Rule {
 
 // Reset will reset the label rule for a table/partition with a given ID and names.
 func (r *Rule) Reset(id int64, dbName, tableName string, partName ...string) *Rule {
-	if len(r.Labels) == 0 {
-		return r
-	}
 	isPartition := len(partName) != 0
 	if isPartition {
 		r.ID = fmt.Sprintf(PartitionIDFormat, IDPrefix, dbName, tableName, partName[0])
 	} else {
 		r.ID = fmt.Sprintf(TableIDFormat, IDPrefix, dbName, tableName)
 	}
-
+	if len(r.Labels) == 0 {
+		return r
+	}
 	var hasDBKey, hasTableKey, hasPartitionKey bool
 	for i := range r.Labels {
 		switch r.Labels[i].Key {
