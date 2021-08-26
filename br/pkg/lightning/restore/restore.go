@@ -960,7 +960,7 @@ func (rc *Controller) listenCheckpointUpdates() {
 
 	var lock sync.Mutex
 	coalesed := make(map[string]*checkpoints.TableCheckpointDiff)
-	var waiters []chan error
+	var waiters []chan<- error
 
 	hasCheckpoint := make(chan struct{}, 1)
 	defer close(hasCheckpoint)
