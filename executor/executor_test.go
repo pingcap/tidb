@@ -9019,6 +9019,27 @@ func (s *testSuite) TestIssue25506(c *C) {
 	tk.MustQuery("(select col_15 from tbl_23) union all (select col_15 from tbl_3 for update) order by col_15").Check(testkit.Rows("\x00\x00\x0F", "\x00\x00\xFF", "\x00\xFF\xFF"))
 }
 
+func (s *testSuite) TestIssue26348(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t (
+a varchar(8) DEFAULT NULL,
+b varchar(8) DEFAULT NULL,
+c decimal(20,2) DEFAULT NULL,
+d decimal(15,8) DEFAULT NULL
+);`)
+	tk.MustExec(`insert into t values(20210606, 20210606, 50000.00, 5.04600000);`)
+	tk.MustQuery(`select a * c *(d/36000) from t;`).Check(testkit.Rows("141642663.71666598"))
+	tk.MustQuery(`select cast(a as double) * cast(c as double) *cast(d/36000 as double) from t;`).Check(testkit.Rows("141642663.71666598"))
+	tk.MustQuery("select 20210606*50000.00*(5.04600000/36000)").Check(testkit.Rows("141642663.71666599297980"))
+
+	// differs from MySQL cause constant-fold .
+	tk.MustQuery("select \"20210606\"*50000.00*(5.04600000/36000)").Check(testkit.Rows("141642663.71666598"))
+	tk.MustQuery("select cast(\"20210606\" as double)*50000.00*(5.04600000/36000)").Check(testkit.Rows("141642663.71666598"))
+}
+
 func (s *testSuite) TestIssue26532(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -9054,4 +9075,16 @@ func (s *testSuite) TestIssue23602(c *C) {
 		"TableReader 2.00 root  data:TableRangeScan]\n" +
 			"[└─TableRangeScan 2.00 cop[tikv] table:t range:[1,2], keep order:false"))
 	tk.MustQuery("SELECT a FROM t WHERE a BETWEEN 0xFFFFFFFFFFFFFFF5 AND X'FFFFFFFFFFFFFFFA'").Check(testkit.Rows("18446744073709551605", "18446744073709551610"))
+}
+
+func (s *testSuite) TestCTEWithIndexLookupJoinDeadLock(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int(11) default null,b int(11) default null,key b (b),key ba (b))")
+	tk.MustExec("create table t1 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
+	tk.MustExec("create table t2 (a int(11) default null,b int(11) default null,key idx_ab (a,b),key idx_a (a),key idx_b (b))")
+	// It's easy to reproduce this problem in 30 times execution of IndexLookUpJoin.
+	for i := 0; i < 30; i++ {
+		tk.MustExec("with cte as (with cte1 as (select * from t2 use index(idx_ab) where a > 1 and b > 1) select * from cte1) select /*+use_index(t1 idx_ab)*/ * from cte join t1 on t1.a=cte.a;")
+	}
 }
