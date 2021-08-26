@@ -115,7 +115,7 @@ func (region zapMarshalRegionMarshaler) MarshalLogObject(enc zapcore.ObjectEncod
 	for _, peer := range region.GetPeers() {
 		peers = append(peers, peer.String())
 	}
-	enc.AddUint64("ID", region.Id)
+	enc.AddUint64("ID", region.GetId())
 	enc.AddString("startKey", redact.Key(region.GetStartKey()))
 	enc.AddString("endKey", redact.Key(region.GetEndKey()))
 	enc.AddString("epoch", region.GetRegionEpoch().String())
