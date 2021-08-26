@@ -1,31 +1,33 @@
-name: build
+name: br
 on:
   push:
     branches:
       - master
       - 'release-[0-9].[0-9]*'
+    paths:
+      - 'br/*'
     paths-ignore:
       - '**.html'
       - '**.md'
       - 'CNAME'
       - 'LICENSE'
-      - 'docs/**'
-      - 'tests/**'
-      - 'docker/**'
-      - '.github/workflows/**.yml'
+      - 'br/docs/**'
+      - 'br/tests/**'
+      - 'br/docker/**'
   pull_request:
     branches:
       - master
       - 'release-[0-9].[0-9]*'
+    paths:
+      - 'br/**'
     paths-ignore:
       - '**.html'
       - '**.md'
       - 'CNAME'
       - 'LICENSE'
-      - 'docs/**'
-      - 'tests/**'
-      - 'docker/**'
-      - '.github/workflows/**.yml'
+      - 'br/docs/**'
+      - 'br/tests/**'
+      - 'br/docker/**'
 
 jobs:
   compile:
