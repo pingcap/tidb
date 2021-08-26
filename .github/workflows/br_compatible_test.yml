@@ -1,4 +1,4 @@
-name: Compatibility Test
+name: BR / Compatibility Test
 
 on:
   push:
@@ -29,7 +29,7 @@ on:
       - '!br/docker/**'
 
 jobs:
-  BR:
+  check:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
