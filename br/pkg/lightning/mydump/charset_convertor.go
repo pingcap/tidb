@@ -15,7 +15,7 @@
 package mydump
 
 import (
-	"bytes"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -54,8 +54,8 @@ func (c Charset) String() string {
 type CharsetConvertor struct {
 	// sourceCharacterSet represents the charset that the data source uses.
 	sourceCharacterSet Charset
-	// invalidCharReplacementBytes is the default replacement character bytes for the invalid content, e.g "\ufffd".
-	invalidCharReplacementBytes []byte
+	// invalidCharReplacement is the default replacement character bytes for the invalid content, e.g "\ufffd".
+	invalidCharReplacement string
 
 	decoder *encoding.Decoder
 	encoder *encoding.Encoder
@@ -67,14 +67,13 @@ func NewCharsetConvertor(dataCharacterSet, dataInvalidCharReplace string) (*Char
 	if err != nil {
 		return nil, err
 	}
-	invalidCharReplacementBytes := []byte(dataInvalidCharReplace)
 	log.L().Warn(
 		"incompatible strings may be encountered during the transcoding process and will be replaced, please be aware of the risk of not being able to retain the original information",
 		zap.String("source-character-set", sourceCharacterSet.String()),
-		zap.ByteString("invalid-char-replacement", invalidCharReplacementBytes))
+		zap.ByteString("invalid-char-replacement", []byte(dataInvalidCharReplace)))
 	cc := &CharsetConvertor{
 		sourceCharacterSet,
-		invalidCharReplacementBytes,
+		dataInvalidCharReplace,
 		nil, nil,
 	}
 	err = cc.initDecoder()
@@ -131,25 +130,25 @@ func (cc *CharsetConvertor) initEncoder() error {
 	return errors.Errorf("not support %s as the conversion source yet", cc.sourceCharacterSet)
 }
 
-var utf8RuneErrorBytes = []byte(string(utf8.RuneError))
+var utf8RuneErrorStr = string(utf8.RuneError)
 
 // Decode does the charset conversion work from sourceCharacterSet to utf8mb4.
-// It will return a byte slice as the conversion result whose length may be less or greater
-// than the original byte slice `src`.
-func (cc *CharsetConvertor) Decode(src []byte) ([]byte, error) {
+// It will return a string as the conversion result whose length may be less or greater
+// than the original string `src`.
+// TODO: maybe using generic type later to make Decode/Encode accept both []byte and string.
+func (cc *CharsetConvertor) Decode(src string) (string, error) {
 	if !cc.precheck(src) {
 		return src, nil
 	}
 	// Do the conversion then.
-	res, err := cc.decoder.Bytes(src)
+	res, err := cc.decoder.String(src)
 	if err != nil {
 		return res, err
 	}
-	res = bytes.ReplaceAll(res, utf8RuneErrorBytes, cc.invalidCharReplacementBytes)
-	return bytes.Trim(res, "\x00"), nil
+	return strings.ReplaceAll(res, string(utf8.RuneError), cc.invalidCharReplacement), nil
 }
 
-func (cc *CharsetConvertor) precheck(src []byte) bool {
+func (cc *CharsetConvertor) precheck(src string) bool {
 	// No need to convert the charset encoding, just return the original data.
 	if len(src) == 0 || cc == nil ||
 		cc.sourceCharacterSet == Binary || cc.sourceCharacterSet == UTF8MB4 ||
@@ -160,20 +159,16 @@ func (cc *CharsetConvertor) precheck(src []byte) bool {
 }
 
 // Encode will encode the data from utf8mb4 to sourceCharacterSet.
-func (cc *CharsetConvertor) Encode(src []byte) ([]byte, error) {
+func (cc *CharsetConvertor) Encode(src string) (string, error) {
 	if !cc.precheck(src) {
 		return src, nil
 	}
 	// Do the conversion then.
-	res, err := cc.encoder.Bytes(src)
-	if err != nil {
-		return res, err
-	}
-	return bytes.Trim(res, "\x00"), nil
+	return cc.encoder.String(src)
 }
 
 // ContainsInvalidChar returns whether the given data contains any invalid char,
 // such as utf8.RuneError or invalid char replacement.
-func (cc *CharsetConvertor) ContainsInvalidChar(data []byte) bool {
-	return bytes.Contains(data, utf8RuneErrorBytes) || bytes.Contains(data, cc.invalidCharReplacementBytes)
+func (cc *CharsetConvertor) ContainsInvalidChar(data string) bool {
+	return strings.Contains(data, utf8RuneErrorStr) || strings.Contains(data, cc.invalidCharReplacement)
 }

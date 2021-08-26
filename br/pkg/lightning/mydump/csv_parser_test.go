@@ -940,19 +940,17 @@ func (s *testMydumpCSVParserSuite) TestCharsetConversion(c *C) {
 	}
 	charsetConvertor, err := mydump.NewCharsetConvertor(cfg.DataCharacterSet, cfg.DataInvalidCharReplace)
 	c.Assert(err, IsNil)
-	originalInputPart1 := []byte(`不要温驯地走进那个良夜，老年应当在日暮时燃烧咆哮，怒斥，怒斥光明的消逝。
-`)
-	originalInputPart2 := []byte(`虽然智慧的人临终时懂得黑暗有理，因为他们的话没有迸发出闪电，他们也并不温驯地走进那个良夜。
-`)
+	originalInputPart1 := `不要温驯地走进那个良夜，老年应当在日暮时燃烧咆哮，怒斥，怒斥光明的消逝。
+`
+	originalInputPart2 := `虽然智慧的人临终时懂得黑暗有理，因为他们的话没有迸发出闪电，他们也并不温驯地走进那个良夜。
+`
 	// Insert an invalid char to test DataInvalidCharReplace.
-	originalInput := append(originalInputPart1, 0x99)
-	originalInput = append(originalInput, originalInputPart2...)
-	rawInput, err := charsetConvertor.Encode(originalInput)
+	rawInput, err := charsetConvertor.Encode(originalInputPart1 + string([]byte{0x99}) + originalInputPart2)
 	c.Assert(err, IsNil)
 
 	testCases := []testCase{
 		{
-			input: string(rawInput),
+			input: rawInput,
 			expected: [][]types.Datum{
 				{types.NewStringDatum("不要温驯地走进那个良夜"),
 					types.NewStringDatum("老年应当在日暮时燃烧咆哮"),

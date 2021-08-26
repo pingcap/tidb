@@ -53,13 +53,13 @@ func (s testCharsetConvertorSuite) TestCharsetConvertor(c *C) {
 
 	cc, err := mydump.NewCharsetConvertor("gb18030", "\ufffd")
 	c.Assert(err, IsNil)
-	gbkToUTF8Data, err := cc.Decode(gbkData)
+	gbkToUTF8Data, err := cc.Decode(string(gbkData))
 	c.Assert(err, IsNil)
-	c.Assert(gbkToUTF8Data, DeepEquals, utf8Data)
+	c.Assert(gbkToUTF8Data, DeepEquals, string(utf8Data))
 
-	utf8ToGBKData, err := cc.Encode(normalCharUTF8MB4)
+	utf8ToGBKData, err := cc.Encode(string(normalCharUTF8MB4))
 	c.Assert(err, IsNil)
-	c.Assert(utf8ToGBKData, DeepEquals, normalCharGB18030)
+	c.Assert(utf8ToGBKData, DeepEquals, string(normalCharGB18030))
 }
 
 func (s testCharsetConvertorSuite) TestInvalidCharReplace(c *C) {
@@ -81,7 +81,7 @@ func (s testCharsetConvertorSuite) TestInvalidCharReplace(c *C) {
 	c.Assert(err, IsNil)
 	cc, err := mydump.NewCharsetConvertor("gb18030", dataInvalidCharReplace)
 	c.Assert(err, IsNil)
-	gbkToUTF8Data, err := cc.Decode(gbkData)
+	gbkToUTF8Data, err := cc.Decode(string(gbkData))
 	c.Assert(err, IsNil)
-	c.Assert(gbkToUTF8Data, DeepEquals, expectedData)
+	c.Assert(gbkToUTF8Data, DeepEquals, string(expectedData))
 }

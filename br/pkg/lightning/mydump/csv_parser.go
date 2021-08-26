@@ -81,12 +81,12 @@ func NewCSVParser(
 	charsetConvertor *CharsetConvertor,
 ) (*CSVParser, error) {
 	var err error
-	var separator, delimiter, terminator []byte
+	var separator, delimiter, terminator string
 	// Do not do the conversion if the charsetConvertor is nil.
 	if charsetConvertor == nil {
-		separator = []byte(cfg.Separator)
-		delimiter = []byte(cfg.Delimiter)
-		terminator = []byte(cfg.Terminator)
+		separator = cfg.Separator
+		delimiter = cfg.Delimiter
+		terminator = cfg.Terminator
 	} else {
 		separator, delimiter, terminator, err = encodeSpecialSymbols(cfg, charsetConvertor)
 		if err != nil {
@@ -123,9 +123,9 @@ func NewCSVParser(
 		blockParser:       makeBlockParser(reader, blockBufSize, ioWorkers),
 		cfg:               cfg,
 		charsetConvertor:  charsetConvertor,
-		comma:             separator,
-		quote:             delimiter,
-		newLine:           terminator,
+		comma:             []byte(separator),
+		quote:             []byte(delimiter),
+		newLine:           []byte(terminator),
 		escFlavor:         escFlavor,
 		quoteByteSet:      makeByteSet(quoteStopSet),
 		unquoteByteSet:    makeByteSet(unquoteStopSet),
@@ -136,32 +136,30 @@ func NewCSVParser(
 
 // encodeSpecialSymbols will encode the special symbols, e,g, separator, delimiter and terminator
 // with the given charset according to the charset convertor.
-func encodeSpecialSymbols(cfg *config.CSVConfig, cc *CharsetConvertor) (separator, delimiter, terminator []byte, err error) {
+func encodeSpecialSymbols(cfg *config.CSVConfig, cc *CharsetConvertor) (separator, delimiter, terminator string, err error) {
 	// Separator
-	separator, err = cc.Encode([]byte(cfg.Separator))
+	separator, err = cc.Encode(cfg.Separator)
 	if err != nil {
-		return nil, nil, nil, err
+		return
 	}
 	// Delimiter
-	delimiter, err = cc.Encode([]byte(cfg.Delimiter))
+	delimiter, err = cc.Encode(cfg.Delimiter)
 	if err != nil {
-		return nil, nil, nil, err
+		return
 	}
 	// Terminator
-	terminator, err = cc.Encode([]byte(cfg.Terminator))
+	terminator, err = cc.Encode(cfg.Terminator)
 	if err != nil {
-		return nil, nil, nil, err
+		return
 	}
 	return
 }
 
 func (parser *CSVParser) unescapeString(input string) (unescaped string, isNull bool, err error) {
-	var decodedInputBytes []byte
 	// Convert the input from another charset to utf8mb4 before we return the string.
-	if decodedInputBytes, err = parser.charsetConvertor.Decode([]byte(input)); err != nil {
+	if input, err = parser.charsetConvertor.Decode(input); err != nil {
 		return
 	}
-	input = string(decodedInputBytes)
 	if parser.escFlavor == backslashEscapeFlavorMySQLWithNull && input == `\N` {
 		return input, true, nil
 	}
