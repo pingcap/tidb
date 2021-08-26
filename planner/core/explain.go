@@ -1092,8 +1092,3 @@ func (p *PhysicalMemTable) OperatorInfo(_ bool) string {
 	}
 	return ""
 }
-
-// ExplainInfo implements Plan interface.
-func (p *PhysicalScalarSubquery) ExplainInfo() string {
-	return "output: " + p.expr.ExplainInfo()
-}

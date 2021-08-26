@@ -554,11 +554,3 @@ func (p PhysicalCTETable) Init(ctx sessionctx.Context, stats *property.StatsInfo
 	p.stats = stats
 	return &p
 }
-
-// Init only assigns the context.
-func (p PhysicalScalarSubquery) Init(ctx sessionctx.Context, child PhysicalPlan, childStat *property.StatsInfo) *PhysicalScalarSubquery {
-	p.basePlan = newBasePlan(ctx, plancodec.TypeScalarSubquery, 0)
-	p.children = []PhysicalPlan{child}
-	p.stats = &property.StatsInfo{RowCount: childStat.RowCount}
-	return &p
-}
