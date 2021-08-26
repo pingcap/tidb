@@ -163,6 +163,7 @@ type preprocessor struct {
 	ctx    sessionctx.Context
 	flag   preprocessorFlag
 	stmtTp byte
+	showTp ast.ShowStmtType
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
@@ -226,6 +227,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.stmtTp = TypeShow
+		p.showTp = node.Tp
 		p.resolveShowStmt(node)
 	case *ast.SetOprSelectList:
 		p.checkSetOprSelectList(node)
@@ -369,7 +371,16 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 		return nil, errors.Trace(ErrNoDB)
 	}
 	sName := model.NewCIStr(currentDB)
-	tbl, err := p.ensureInfoSchema().TableByName(sName, tn.Name)
+	is := p.ensureInfoSchema()
+
+	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
+	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence) {
+		if tempAttachedIs, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
+			is = tempAttachedIs.InfoSchema
+		}
+	}
+
+	tbl, err := is.TableByName(sName, tn.Name)
 	if err != nil {
 		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
@@ -411,34 +422,21 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 
 	// Check the bind operation is not on any temporary table.
-	var resNode ast.ResultSetNode
-	switch n := originNode.(type) {
-	case *ast.SelectStmt:
-		resNode = n.From.TableRefs
-	case *ast.DeleteStmt:
-		resNode = n.TableRefs.TableRefs
-	case *ast.UpdateStmt:
-		resNode = n.TableRefs.TableRefs
-	case *ast.InsertStmt:
-		resNode = n.Table.TableRefs
-	}
-	if resNode != nil {
-		tblNames := extractTableList(resNode, nil, false)
-		for _, tn := range tblNames {
-			tbl, err := p.tableByName(tn)
-			if err != nil {
-				// If the operation is order is: drop table -> drop binding
-				// The table doesn't  exist, it is not an error.
-				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
-					continue
-				}
-				p.err = err
-				return
+	tblNames := extractTableList(originNode, nil, false)
+	for _, tn := range tblNames {
+		tbl, err := p.tableByName(tn)
+		if err != nil {
+			// If the operation is order is: drop table -> drop binding
+			// The table doesn't  exist, it is not an error.
+			if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+				continue
 			}
-			if tbl.Meta().TempTableType != model.TempTableNone {
-				p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
-				return
-			}
+			p.err = err
+			return
+		}
+		if tbl.Meta().TempTableType != model.TempTableNone {
+			p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
+			return
 		}
 	}
 

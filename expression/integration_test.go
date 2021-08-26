@@ -5051,6 +5051,11 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	result = tk.MustQuery(sql)
 	rs = fmt.Sprintf(`{"index_id":1,"index_vals":{"a":null,"b":null,"c":null},"table_id":%d}`, tbl.Meta().ID)
 	result.Check(testkit.Rows(rs))
+
+	// https://github.com/pingcap/tidb/issues/27434.
+	hexKey = "7480000000000000375F69800000000000000103800000000001D4C1023B6458"
+	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	tk.MustQuery(sql).Check(testkit.Rows(hexKey))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
@@ -8954,7 +8959,7 @@ func (s *testIntegrationSerialSuite) TestLikeWithCollation(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 
 	tk.MustQuery(`select 'a' like 'A' collate utf8mb4_unicode_ci;`).Check(testkit.Rows("1"))
-	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin like 'A' collate utf8mb4_unicode_ci;`, "[expression:1270]Illegal mix of collations (utf8mb4_bin,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT), (utf8mb4_bin,NUMERIC) for operation 'like'")
+	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin like 'A' collate utf8mb4_unicode_ci;`, "[expression:1270]Illegal mix of collations (utf8mb4_bin,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT), (binary,NUMERIC) for operation 'like'")
 	tk.MustQuery(`select '😛' collate utf8mb4_general_ci like '😋';`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select '😛' collate utf8mb4_general_ci = '😋';`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select '😛' collate utf8mb4_unicode_ci like '😋';`).Check(testkit.Rows("0"))
