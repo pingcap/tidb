@@ -27,12 +27,11 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -40,20 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/stretchr/testify/require"
 )
-
-func buildMock(t *testing.T) (kv.Storage, func()) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-
-	closeFunc := func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	}
-	return store, closeFunc
-}
 
 func TestIndex(t *testing.T) {
 	//t.Parallel()
@@ -77,9 +62,9 @@ func TestIndex(t *testing.T) {
 	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	// Test ununiq index.
-	s, closeFunc := buildMock(t)
-	defer closeFunc()
-	txn, err := s.Begin()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	txn, err := store.Begin()
 	require.NoError(t, err)
 
 	values := types.MakeDatums(1, 2)
@@ -168,7 +153,7 @@ func TestIndex(t *testing.T) {
 	index = tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	// Test uniq index.
-	txn, err = s.Begin()
+	txn, err = store.Begin()
 	require.NoError(t, err)
 
 	_, err = index.Create(mockCtx, txn, values, kv.IntHandle(1), nil)
@@ -204,7 +189,7 @@ func TestIndex(t *testing.T) {
 	_, err = index.FetchValues(make([]types.Datum, 0), nil)
 	require.NotNil(t, err)
 
-	txn, err = s.Begin()
+	txn, err = store.Begin()
 	require.NoError(t, err)
 
 	// Test the function of Next when the value of unique key is nil.
@@ -247,9 +232,9 @@ func TestCombineIndexSeek(t *testing.T) {
 	}
 	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
-	s, closeFunc := buildMock(t)
-	defer closeFunc()
-	txn, err := s.Begin()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	txn, err := store.Begin()
 	require.NoError(t, err)
 
 	mockCtx := mock.NewContext()
@@ -280,9 +265,9 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 			idxNonUnique = idx
 		}
 	}
-	s, closeFunc := buildMock(t)
-	defer closeFunc()
-	txn, err := s.Begin()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	txn, err := store.Begin()
 	require.NoError(t, err)
 
 	mockCtx := mock.NewContext()
@@ -350,9 +335,9 @@ func TestMultiColumnCommonHandle(t *testing.T) {
 	require.NotNil(t, a)
 	require.NotNil(t, b)
 
-	s, closeFunc := buildMock(t)
-	defer closeFunc()
-	txn, err := s.Begin()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	txn, err := store.Begin()
 	require.NoError(t, err)
 	mockCtx := mock.NewContext()
 	sc := mockCtx.GetSessionVars().StmtCtx
