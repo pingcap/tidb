@@ -31,10 +31,10 @@ EOF
 )
 
 # save CREDENTIALS to file
-echo $KEY > "tests/$TEST_NAME/config.json"
+echo $KEY > "br/tests/$TEST_NAME/config.json"
 
 # export test CREDENTIALS for gcs oauth
-export GOOGLE_APPLICATION_CREDENTIALS="tests/$TEST_NAME/config.json"
+export GOOGLE_APPLICATION_CREDENTIALS="br/tests/$TEST_NAME/config.json"
 
 # restore backup data one by one
 for TAG in ${TAGS}; do
