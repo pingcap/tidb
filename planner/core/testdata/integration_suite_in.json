@@ -360,6 +360,7 @@
     "name": "TestGroupBySetVar",
     "cases": [
       "select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;",
+      // TODO: fix these two cases
       "select @n:=@n+1 as e from ta group by e",
       "select @n:=@n+a as e from ta group by e",
       "select * from (select @n:=@n+1 as e from ta) tt group by e",
