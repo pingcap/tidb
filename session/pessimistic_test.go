@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -69,13 +70,11 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	// Set it to 300ms for testing lock resolve.
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
 	transaction.PrewriteMaxBackoff = 500
-	transaction.VeryLongMaxBackoff = 500
 }
 
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
 	s.testSessionSuiteBase.TearDownSuite(c)
 	transaction.PrewriteMaxBackoff = 20000
-	transaction.VeryLongMaxBackoff = 600000
 }
 
 func (s *testPessimisticSuite) TestPessimisticTxn(c *C) {

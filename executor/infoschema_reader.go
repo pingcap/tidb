@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -749,7 +750,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 
 func calcCharOctLength(lenInChar int, cs string) int {
 	lenInBytes := lenInChar
-	if desc, err := charset.GetCharsetDesc(cs); err == nil {
+	if desc, err := charset.GetCharsetInfo(cs); err == nil {
 		lenInBytes = desc.Maxlen * lenInChar
 	}
 	return lenInBytes
@@ -2101,11 +2102,6 @@ func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionct
 		return nil, nil
 	}
 	e.retrieved = true
-	user := sctx.GetSessionVars().User
-	isSuper := false
-	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
-	}
 
 	var err error
 	var instanceAddr string
@@ -2117,7 +2113,8 @@ func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionct
 			return nil, err
 		}
 	}
-	reader := stmtsummary.NewStmtSummaryReader(user, isSuper, e.columns, instanceAddr)
+	user := sctx.GetSessionVars().User
+	reader := stmtsummary.NewStmtSummaryReader(user, hasPriv(sctx, mysql.ProcessPriv), e.columns, instanceAddr)
 	var rows [][]types.Datum
 	switch e.table.Name.O {
 	case infoschema.TableStatementsSummary,

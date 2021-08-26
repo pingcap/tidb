@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -885,6 +886,41 @@ func GetAllLabelRules(ctx context.Context) ([]*label.Rule, error) {
 
 	rules := []*label.Rule{}
 	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "region-label", "rules"), "GET", nil)
+
+	if err == nil && res != nil {
+		err = json.Unmarshal(res, &rules)
+	}
+	return rules, err
+}
+
+// GetLabelRules gets the label rules according to the given IDs from PD.
+func GetLabelRules(ctx context.Context, ruleIDs []string) ([]*label.Rule, error) {
+	if len(ruleIDs) == 0 {
+		return nil, nil
+	}
+
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	if is.etcdCli == nil {
+		return nil, nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return nil, errors.Errorf("pd unavailable")
+	}
+
+	ids, err := json.Marshal(ruleIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	rules := []*label.Rule{}
+	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "region-label", "rules", "ids"), "GET", bytes.NewReader(ids))
 
 	if err == nil && res != nil {
 		err = json.Unmarshal(res, &rules)
