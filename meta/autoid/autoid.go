@@ -109,6 +109,7 @@ func (step CustomAutoIncCacheOption) ApplyOn(alloc *allocator) {
 	alloc.customStep = true
 }
 
+// AllocOptionTableInfoVersion is used to pass the TableInfo.Version to the allocator.
 type AllocOptionTableInfoVersion uint64
 
 // ApplyOn implements the AllocOption interface.
@@ -506,16 +507,17 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 	var allocs []Allocator
 	dbID := tblInfo.GetDBID(schemaID)
 	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
+	tblVer := AllocOptionTableInfoVersion(tblInfo.Version)
 
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
 	if hasRowID || hasAutoIncID {
-		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt)
+		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
 	hasAutoRandID := tblInfo.ContainsAutoRandomBits()
 	if hasAutoRandID {
-		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType, idCacheOpt)
+		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
 	if tblInfo.IsSequence() {
