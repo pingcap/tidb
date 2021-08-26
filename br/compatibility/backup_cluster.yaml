@@ -21,7 +21,7 @@ services:
       - "tidb"
     restart: on-failure
     env_file:
-      - ../docker/minio.env
+      - ./br/docker/minio.env
 
   pd0:
     image: pingcap/pd:${TAG}

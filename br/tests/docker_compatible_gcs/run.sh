@@ -38,7 +38,7 @@ export GOOGLE_APPLICATION_CREDENTIALS="br/tests/$TEST_NAME/config.json"
 
 # restore backup data one by one
 for TAG in ${TAGS}; do
-    echo "restore ${TAG} data starts... ${pwd}"
+    echo "restore ${TAG} data starts... $(pwd)}"
     bin/br restore db --db test -s "gcs://$BUCKET/bk${TAG}" --pd $PD_ADDR --gcs.endpoint="http://$GCS_HOST:$GCS_PORT/storage/v1/"
     row_count=$(run_sql_in_container  "SELECT COUNT(*) FROM test.usertable;" | awk '/COUNT/{print $2}')
     if [ $row_count != $EXPECTED_KVS ]; then
