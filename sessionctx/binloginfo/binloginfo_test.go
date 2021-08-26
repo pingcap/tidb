@@ -87,23 +87,22 @@ func createBinlogSuite(t *testing.T) (s *binlogSuite, clean func()) {
 	s.store = store
 	unixFile := "/tmp/mock-binlog-pump" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	l, err := net.Listen("unix", unixFile)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	s.serv = grpc.NewServer(grpc.MaxRecvMsgSize(maxRecvMsgSize))
 	s.pump = new(mockBinlogPump)
 	binlog.RegisterPumpServer(s.serv, s.pump)
 	go func() {
 		err := s.serv.Serve(l)
-		require.Nil(t, err)
+		require.NoError(t, err)
 	}()
 	opt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 		return net.DialTimeout("unix", addr, timeout)
 	})
 	clientCon, err := grpc.Dial(unixFile, opt, grpc.WithInsecure())
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.NotNil(t, clientCon)
 
 	tk := testkit.NewTestKit(t, s.store)
-	tk.MustExec("use test")
 	sessionDomain := domain.GetDomain(tk.Session().(sessionctx.Context))
 	s.ddl = sessionDomain.DDL()
 
@@ -111,8 +110,8 @@ func createBinlogSuite(t *testing.T) (s *binlogSuite, clean func()) {
 	s.ddl.SetBinlogClient(s.client)
 
 	clean = func() {
-		s.ddl.Stop()
-		require.Nil(t, err)
+		err = s.ddl.Stop()
+		require.NoError(t, err)
 		s.serv.Stop()
 		err = os.Remove(unixFile)
 		if err != nil {
@@ -247,7 +246,7 @@ func TestBinlog(t *testing.T) {
 	tk.MustExec("insert into local_binlog5 value (1)")
 	// This statement execute fail and should not write binlog.
 	_, err := tk.Exec("insert into local_binlog5 value (4),(3),(1),(2)")
-	require.NotNil(t, err)
+	require.Error(t, err)
 	tk.MustExec("commit")
 	prewriteVal = getLatestBinlogPrewriteValue(t, pump)
 	require.Equal(t, []binlog.MutationType{
@@ -291,7 +290,7 @@ func getLatestBinlogPrewriteValue(t *testing.T, pump *mockBinlogPump) *binlog.Pr
 		payload := pump.mu.payloads[i]
 		bin = new(binlog.Binlog)
 		err := bin.Unmarshal(payload)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		if bin.Tp == binlog.BinlogType_Prewrite {
 			break
 		}
@@ -340,7 +339,7 @@ func checkBinlogCount(t *testing.T, pump *mockBinlogPump) {
 		payload := pump.mu.payloads[i]
 		bin = new(binlog.Binlog)
 		err := bin.Unmarshal(payload)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		if bin.Tp == binlog.BinlogType_Prewrite {
 			if bin.DdlJobId != 0 {
 				ddlCount++
@@ -369,7 +368,7 @@ func mutationRowsToRows(t *testing.T, mutationRows [][]byte, columnValueOffsets 
 	var rows = make([][]types.Datum, 0)
 	for _, mutationRow := range mutationRows {
 		datums, err := codec.Decode(mutationRow, 5)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		for i := range datums {
 			if datums[i].Kind() == types.KindBytes {
 				datums[i].SetBytesAsString(datums[i].GetBytes(), mysql.DefaultCollationName, collate.DefaultLen)
@@ -704,9 +703,9 @@ func testGetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) 
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	return tbl
 }
 
