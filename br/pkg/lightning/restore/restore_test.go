@@ -1904,7 +1904,6 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 		hasHeader       bool
 		dbInfos         map[string]*checkpoints.TidbDBInfo
 		tableMeta       *mydump.MDTableMeta
-		checkFilesCount int
 	}{
 		// Case 1:
 		// csv has one column without header.
@@ -1957,7 +1956,6 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 					},
 				},
 			},
-			1,
 		},
 		// Case 2.1:
 		// csv has two columns(colA, colB) with the header.
@@ -2002,7 +2000,6 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 					},
 				},
 			},
-			1,
 		},
 		// Case 2.2:
 		// csv has two columns(colA, colB) with the header.
@@ -2054,7 +2051,6 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 					},
 				},
 			},
-			1,
 		},
 		// Case 2.3:
 		// csv has two columns(colA, colB) with the header.
@@ -2114,7 +2110,6 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 					},
 				},
 			},
-			1,
 		},
 		// Case 2.4:
 		// csv has two columns(colA, colB) with the header.
@@ -2173,7 +2168,6 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 					},
 				},
 			},
-			1,
 		},
 		// Case 3:
 		// table3's schema file not found.
@@ -2210,7 +2204,6 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 					},
 				},
 			},
-			0,
 		},
 		// Case 4:
 		// table4 has two datafiles for table. we only check the first file.
@@ -2270,7 +2263,6 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 					},
 				},
 			},
-			1,
 		},
 	}
 
