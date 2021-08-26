@@ -28,6 +28,8 @@ on:
       - 'br/docs/**'
       - 'br/tests/**'
       - 'br/docker/**'
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   compile:
