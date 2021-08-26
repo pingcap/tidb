@@ -39,7 +39,7 @@ func testGroupToString(t *testing.T, input []string, output []struct {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 
-		plan, _, err := plannercore.BuildTestLogicalPlan(context.Background(), ctx, stmt, is)
+		plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 		require.NoError(t, err)
 
 		logic, ok := plan.(plannercore.LogicalPlan)
@@ -89,7 +89,7 @@ func TestAggPushDownGather(t *testing.T) {
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 
-		plan, _, err := plannercore.BuildTestLogicalPlan(context.Background(), ctx, stmt, is)
+		plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 		require.NoError(t, err)
 
 		logic, ok := plan.(plannercore.LogicalPlan)
