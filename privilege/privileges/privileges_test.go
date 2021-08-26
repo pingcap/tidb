@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
@@ -2178,8 +2177,31 @@ func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 	))
 }
 
-// https://github.com/pingcap/tidb/issues/27560
+func TestGrantLockTables(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
 
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE lock_tables_db")
+	tk.MustExec("USE lock_tables_db")
+	tk.MustExec("CREATE TABLE lock_tables_table (a int)")
+	tk.MustExec("CREATE USER lock_tables_user")
+	tk.MustExec("GRANT LOCK TABLES ON *.* TO lock_tables_user")
+	tk.MustExec("GRANT LOCK TABLES ON lock_tables_db.* TO lock_tables_user")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR lock_tables_user").Check(testkit.Rows(
+		`GRANT LOCK TABLES ON *.* TO 'lock_tables_user'@'%'`,
+		`GRANT LOCK TABLES ON lock_tables_db.* TO 'lock_tables_user'@'%'`))
+	tk.MustExec("DROP USER lock_tables_user")
+	tk.MustExec("DROP DATABASE lock_tables_db")
+}
+
+// https://github.com/pingcap/tidb/issues/27560
 func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
 	t.Parallel()
 
