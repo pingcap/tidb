@@ -37,13 +37,6 @@ jobs:
     timeout-minutes: 25
     steps:
 
-    - name: Free disk space
-      run: |
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /usr/share/dotnet
-        docker volume prune -f
-        docker image prune -f
-
     - uses: actions/checkout@v2
 
     - name: Set up Go

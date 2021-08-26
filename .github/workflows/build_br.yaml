@@ -53,7 +53,7 @@ jobs:
           go-version: 1.16
 
       - name: Run build
-        run: make build
+        run: make build_tools
 
   compile-freebsd:
     name: Compile for FreeBSD job
@@ -67,4 +67,4 @@ jobs:
           go-version: 1.16
 
       - name: Compile for FreeBSD
-        run: GOOS=freebsd make build
+        run: GOOS=freebsd make build_tools
