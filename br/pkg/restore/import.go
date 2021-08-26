@@ -318,6 +318,10 @@ func (importer *FileImporter) Import(
 						log.Debug("failpoint restore-storage-error injected.", zap.String("msg", msg))
 						e = errors.Annotate(e, msg)
 					})
+					failpoint.Inject("restore-gRPC-error", func(_ failpoint.Value) {
+						log.Warn("the connection to TiKV has been cut by a neko, meow :3")
+						e = status.Error(codes.Unavailable, "the connection to TiKV has been cut by a neko, meow :3")
+					})
 					if e != nil {
 						remainFiles = remainFiles[i:]
 						return errors.Trace(e)
