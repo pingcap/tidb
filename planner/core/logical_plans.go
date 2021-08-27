@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -422,6 +423,9 @@ type LogicalSelection struct {
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
+
+	// having selection can't be pushed down, because it must above the aggregation.
+	buildByHaving bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

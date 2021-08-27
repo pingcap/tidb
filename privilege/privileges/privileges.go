@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -221,6 +222,10 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 
 // GetAuthPlugin gets the authentication plugin for the account identified by the user and host
 func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
+	if SkipWithGrant {
+		return mysql.AuthNativePassword, nil
+	}
+
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
