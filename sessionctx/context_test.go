@@ -16,8 +16,9 @@ package sessionctx
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestBasicCtxTypeToString(t *testing.T) {
