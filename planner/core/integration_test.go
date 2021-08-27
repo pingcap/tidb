@@ -3956,6 +3956,9 @@ func (s *testIntegrationSerialSuite) TestIssue27167(c *C) {
 	tk.MustQuery("select * from (select d_date c from all_types union select d_float c from all_types) t order by c;").Check(testkit.Rows("1.5", "2021-12-12"))
 	// timestamp also OK
 	tk.MustQuery("select * from (select d_timestamp c from all_types union select d_float c from all_types) t order by c;").Check(testkit.Rows("1.5", "2021-12-12 12:00:00"))
+
+	// check collation
+	tk.MustQuery("select collation(c) from (select d_date c from all_types union select d_int c from all_types) t").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
 }
 
 func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {
