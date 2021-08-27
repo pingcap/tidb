@@ -10,8 +10,8 @@ import (
 	tcontext "github.com/pingcap/dumpling/v4/context"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/pingcap/br/pkg/storage"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
 var _ = Suite(&testMetaDataSuite{})
