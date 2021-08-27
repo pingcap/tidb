@@ -207,16 +207,9 @@ func newGeneralLog(logger *zap.Logger) *GeneralLog {
 // startFormatWorker starts a log flushing worker that flushes log periodically or when batch is full
 func (gl *GeneralLog) startFormatWorker() {
 	var buf *buffer.Buffer
-	var timeBuf [64]byte
 	for {
 		buf = gl.bufPool.Get()
 		logEntry := <-gl.logEntryChan
-		timeSlice := timeBuf[:0]
-		timeSlice = append(timeSlice, '[')
-		now := time.Now()
-		timeSlice = now.AppendFormat(timeSlice, "2006/01/02 15:04:05.000 -07:00")
-		timeSlice = append(timeSlice, "] "...)
-		buf.Write(timeSlice)
 		logEntry.writeToBuffer(buf)
 		gl.logBufChan <- buf
 	}
