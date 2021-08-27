@@ -4039,7 +4039,7 @@ func (s *testIntegrationSerialSuite) TestIssue26358(c *C) {
 	tk.MustQuery("select d_bit, d_bigint, if(d_bit, d_bit, d_bigint), if(d_bit, d_bigint, d_bit) from all_types;").Check(testkit.Rows("\x00\f 3 \x00\f 3"))
 	tk.MustQuery("select d_bit, d_float, if(d_bit, d_bit, d_float), if(d_bit, d_float, d_bit) from all_types;").Check(testkit.Rows("\x00\f 1.5 \x00\f 1.5"))
 	tk.MustQuery("select d_bit, d_double, if(d_bit, d_bit, d_double), if(d_bit, d_double, d_bit) from all_types;").Check(testkit.Rows("\x00\f 2.2 \x00\f 2.2"))
-	tk.MustQuery("select d_bit, d_decimal, if(d_bit, d_bit, d_decimal), if(d_bit, d_decimal, d_bit) from all_types;").Check(testkit.Rows("\x00\f 10.23 \x00\f 10.23"))
+	tk.MustQuery("select d_bit, d_decimal, if(d_bit, d_bit, d_decimal), if(d_bit, d_decimal, d_bit) from all_types;").Check(testkit.Rows("\x00\f 10.23 12 10.23"))
 	tk.MustExec("drop table if exists all_types")
 }
 
