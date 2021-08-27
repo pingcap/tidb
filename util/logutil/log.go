@@ -102,6 +102,7 @@ var GeneralLogLogger = log.L()
 var generalLog *GeneralLog
 
 func PutGeneralLogBlocking(entry *GeneralLogEntry) {
+	// TODO(dragonly): drop when channel is full, and increase drop counter for monitoring
 	generalLog.logEntryChan <- entry
 }
 
@@ -120,7 +121,7 @@ func InitLogger(cfg *LogConfig) error {
 	}
 
 	// initialize general log logger
-	GeneralLogLogger, err = newGeneralLogLogger(cfg)
+	GeneralLogLogger, err = newGeneralLogLogger()
 	if err != nil {
 		return errors.Trace(err)
 	}

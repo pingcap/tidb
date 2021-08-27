@@ -6,8 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
+	"github.com/natefinch/lumberjack"
 	"go.uber.org/zap"
 	"go.uber.org/zap/buffer"
 	"go.uber.org/zap/zapcore"
@@ -254,27 +253,23 @@ func (gl *GeneralLog) startLogWorker() {
 	}
 }
 
-func newGeneralLogLogger(cfg *LogConfig) (*zap.Logger, error) {
-	// reuse global config and override general log file
-	// if general log filename is empty, general log will behave the same as the global log
-	glConfig := &cfg.Config
-	glConfig.File = log.FileLogConfig{
-		MaxSize:  1000,
-		Filename: "general_log",
-		// Filename: "",
-	}
+func newGeneralLogLogger() (*zap.Logger, error) {
+	// create the general query logger
+	encCfg := zap.NewProductionEncoderConfig()
+	encCfg.LevelKey = zapcore.OmitKey
+	encCfg.EncodeTime = zapcore.EpochNanosTimeEncoder
+	jsonEncoder := zapcore.NewJSONEncoder(encCfg)
+	writeSyncer := zapcore.AddSync(&lumberjack.Logger{
+		Filename:   "general_log",
+		MaxSize:    1000, // megabytes
+		MaxBackups: 3,
+		MaxAge:     28, // days
+	})
+	level := zap.NewAtomicLevelAt(zap.InfoLevel)
+	ioCore := zapcore.NewCore(jsonEncoder, writeSyncer, level)
+	logger := zap.New(ioCore)
 
-	// create the slow query logger
-	generalLogLogger, prop, err := log.InitLogger(glConfig)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	generalLogLogger = generalLogLogger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-		return log.NewTextCore(&generalLogEncoder{}, prop.Syncer, prop.Level)
-	}))
-
-	return generalLogLogger, nil
+	return logger, nil
 }
 
 // generalLogEncoder implements a minimal textEncoder as pingcap/log, which only has the AddString() implementation
