@@ -20,11 +20,11 @@ import (
 
 	// import mysql driver
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/pingcap/br/pkg/storage"
-	"github.com/pingcap/br/pkg/summary"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
