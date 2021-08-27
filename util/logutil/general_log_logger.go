@@ -199,48 +199,27 @@ func newGeneralLog(logger *zap.Logger) *GeneralLog {
 	for i := 0; i < 5; i++ {
 		go gl.startFormatWorker()
 	}
-	go gl.startLogWorker()
 	return gl
 }
 
-// TODO(dragonly): try zapcore.BufferedWriteSyncer
 // startFormatWorker starts a log flushing worker that flushes log periodically or when batch is full
 func (gl *GeneralLog) startFormatWorker() {
-	var buf *buffer.Buffer
 	for {
-		buf = gl.bufPool.Get()
-		logEntry := <-gl.logEntryChan
-		logEntry.writeToBuffer(buf)
-		gl.logBufChan <- buf
-	}
-}
-
-func (gl *GeneralLog) startLogWorker() {
-	var buf buffer.Buffer
-	logCount := 0
-	timeout := time.After(flushTimeout)
-	for {
-		select {
-		case logBuf := <-gl.logBufChan:
-			if logCount > 0 {
-				buf.WriteByte('\n')
-			}
-			buf.WriteString(logBuf.String())
-			logCount += 1
-			logBuf.Free()
-			if logCount == generalLogBatchSize {
-				gl.logger.Info(buf.String())
-				buf.Reset()
-				logCount = 0
-			}
-		case <-timeout:
-			if logCount > 0 {
-				gl.logger.Info(buf.String())
-				buf.Reset()
-				logCount = 0
-			}
-			timeout = time.After(flushTimeout)
-		}
+		e := <-gl.logEntryChan
+		fnGetQueryBuf := fnGetQueryPool.Get().(*strings.Builder)
+		gl.logger.Info("GENERAL_LOG",
+			zap.Uint64("conn", e.ConnID),
+			zap.String("user", e.FnGetUser()),
+			zap.Int64("schemaVersion", e.FnGetSchemaMetaVersion()),
+			zap.Uint64("txnStartTS", e.TxnStartTS),
+			zap.Uint64("forUpdateTS", e.TxnForUpdateTS),
+			zap.Bool("isReadConsistency", e.IsReadConsistency),
+			zap.String("current_db", e.CurrentDB),
+			zap.String("txn_mode", e.TxnMode),
+			zap.String("sql", e.FnGetQuery(fnGetQueryBuf)),
+		)
+		fnGetQueryBuf.Reset()
+		fnGetQueryPool.Put(fnGetQueryBuf)
 	}
 }
 
@@ -250,14 +229,18 @@ func newGeneralLogLogger() (*zap.Logger, error) {
 	encCfg.LevelKey = zapcore.OmitKey
 	encCfg.EncodeTime = zapcore.EpochNanosTimeEncoder
 	jsonEncoder := zapcore.NewJSONEncoder(encCfg)
-	writeSyncer := zapcore.AddSync(&lumberjack.Logger{
+	ws := zapcore.AddSync(&lumberjack.Logger{
 		Filename:   "general_log",
 		MaxSize:    1000, // megabytes
 		MaxBackups: 3,
 		MaxAge:     28, // days
 	})
+	wsBuffered := zapcore.BufferedWriteSyncer{
+		WS:            ws,
+		FlushInterval: 100 * time.Millisecond,
+	}
 	level := zap.NewAtomicLevelAt(zap.InfoLevel)
-	ioCore := zapcore.NewCore(jsonEncoder, writeSyncer, level)
+	ioCore := zapcore.NewCore(jsonEncoder, &wsBuffered, level)
 	logger := zap.New(ioCore)
 
 	return logger, nil
