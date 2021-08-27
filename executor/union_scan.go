@@ -218,7 +218,6 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			return nil, err
 		}
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
-	OUTER:
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			var snapshotHandle kv.Handle
 			snapshotHandle, err = us.belowHandleCols.BuildHandle(row)
@@ -229,10 +228,11 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
 				continue
 			}
-			// Though the handle does not appear in added rows, there may be still some conflicts on unique indexes,
-			// UnionScan with two records which have same unique index is weird. This should be handled here.
+			// Though the handle does not appear in added rows,
+			// there may be still some conflicts on primary indexes when common handle is not enabled.
+			// UnionScan with two records which have same primary index is weird which should be handled here.
 			// The newly added rows will overwrite the snapshot rows.
-			// It's better to handle the conflict on unique indexes when execute the DMLs instead of handling here.
+			// FIXME: For optimistic transaction, it's better to handle the conflict on unique indexes when execute the DMLs instead of handling here.
 			if !us.table.Meta().IsCommonHandle {
 				cols := us.table.Meta().Columns
 				if datumCols == nil {
@@ -240,39 +240,46 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 						*model.ColumnInfo
 						offset int
 					})
-				}
-				for i, col := range us.columns {
-					datumCols[col.ID] = struct {
-						*model.ColumnInfo
-						offset int
-					}{
-						col,
-						i,
+					for i, col := range us.columns {
+						datumCols[col.ID] = struct {
+							*model.ColumnInfo
+							offset int
+						}{
+							col,
+							i,
+						}
 					}
 				}
-			CHECK:
-				for _, uniqueIndex := range us.table.Meta().Indices {
-					if !uniqueIndex.Unique {
-						continue
+				var pk *model.IndexInfo
+				for _, index := range us.table.Meta().Indices {
+					if index.Primary {
+						pk = index
+						break
 					}
-					indexDatums := make([]types.Datum, len(uniqueIndex.Columns))
-					for i, uniqueCol := range uniqueIndex.Columns {
+				}
+				if pk != nil {
+					needCheck := true
+					indexDatums := make([]types.Datum, len(pk.Columns))
+					for i, uniqueCol := range pk.Columns {
 						if col, ok := datumCols[cols[uniqueCol.Offset].ID]; ok {
 							// check when column exist
 							indexDatums[i] = row.GetDatum(col.offset, &col.FieldType)
 						} else {
-							// skip this index check
-							// here we have the risk of missing check operation does not use union scan
-							// e.g. push down some aggregation functions into TiKV, so we may calculate same record twice in TiDB
-							continue CHECK
+							// Skip this index check since there is not a full row.
+							// Here we have the risk of missing check operation does not use union scan.
+							// e.g. push down some aggregation functions into TiKV, so we may calculate same record twice in TiDB.
+							needCheck = false
+							break
 						}
 					}
-					checkKey, err := EncodeUniqueIndexKey(us.ctx, us.table.Meta(), uniqueIndex, indexDatums, us.table.Meta().ID)
-					if err != nil {
-						return nil, err
-					}
-					if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
-						continue OUTER
+					if needCheck {
+						checkKey, err := EncodeUniqueIndexKey(us.ctx, us.table.Meta(), pk, indexDatums, us.table.Meta().ID)
+						if err != nil {
+							return nil, err
+						}
+						if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
+							continue
+						}
 					}
 				}
 			}
