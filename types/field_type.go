@@ -974,7 +974,7 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		// mysql.TypeNewDate      mysql.TypeVarchar
 		mysql.TypeVarchar, mysql.TypeVarchar,
 		// mysql.TypeBit          <16>-<244>
-		mysql.TypeNewDecimal,
+		mysql.TypeVarchar,
 		// mysql.TypeJSON
 		mysql.TypeVarchar,
 		// mysql.TypeNewDecimal   mysql.TypeEnum

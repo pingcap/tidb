@@ -1538,7 +1538,7 @@ func (s *testSuiteP2) TestUnion(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bit(20), b float, c double, d int)")
 	tk.MustExec("insert into t values(10, 10, 10, 10), (1, -1, 2, -2), (2, -2, 1, 1), (2, 1.1, 2.1, 10.1)")
-	tk.MustQuery("select a from t union select 10 order by a").Check(testkit.Rows("1", "2", "10"))
+	tk.MustQuery("select a from t union select 10 order by a").Check(testkit.Rows("0x31", "0x3130", "0x32"))
 }
 
 func (s *testSuite2) TestUnionLimit(c *C) {
