@@ -193,5 +193,18 @@
       "EXPLAIN SELECT t1.pk FROM t1 INNER JOIN t2 ON t1.col1 = t2.pk INNER JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa'",
       "EXPLAIN SELECT t1.pk FROM t1 LEFT JOIN t2 ON t1.col1 = t2.pk LEFT JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa'"
     ]
+  },
+  {
+    "name": "TestGroupBySetVar",
+    "cases": [
+      "select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;",
+      // TODO: fix these two cases
+      "select @n:=@n+1 as e from ta group by e",
+      "select @n:=@n+a as e from ta group by e",
+      "select * from (select @n:=@n+1 as e from ta) tt group by e",
+      "select * from (select @n:=@n+a as e from ta) tt group by e",
+      "select a from ta group by @n:=@n+1",
+      "select a from ta group by @n:=@n+a"
+    ]
   }
 ]

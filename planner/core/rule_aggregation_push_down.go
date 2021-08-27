@@ -431,20 +431,57 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 			} else if proj, ok1 := child.(*LogicalProjection); ok1 && p.SCtx().GetSessionVars().AllowAggPushDown {
 				// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
 				// so we must do this optimization.
-				for i, gbyItem := range agg.GroupByItems {
-					agg.GroupByItems[i] = expression.ColumnSubstitute(gbyItem, proj.schema, proj.Exprs)
+				noSideEffects := true
+				newGbyItems := make([]expression.Expression, 0, len(agg.GroupByItems))
+				for _, gbyItem := range agg.GroupByItems {
+					newGbyItems = append(newGbyItems, expression.ColumnSubstitute(gbyItem, proj.schema, proj.Exprs))
+					if ExprsHasSideEffects(newGbyItems) {
+						noSideEffects = false
+						break
+					}
 				}
+				newAggFuncsArgs := make([][]expression.Expression, 0, len(agg.AggFuncs))
+				if noSideEffects {
+					for _, aggFunc := range agg.AggFuncs {
+						newArgs := make([]expression.Expression, 0, len(aggFunc.Args))
+						for _, arg := range aggFunc.Args {
+							newArgs = append(newArgs, expression.ColumnSubstitute(arg, proj.schema, proj.Exprs))
+						}
+						if ExprsHasSideEffects(newArgs) {
+							noSideEffects = false
+							break
+						}
+						newAggFuncsArgs = append(newAggFuncsArgs, newArgs)
+					}
+				}
+<<<<<<< HEAD
 				agg.collectGroupByColumns()
 				for _, aggFunc := range agg.AggFuncs {
 					newArgs := make([]expression.Expression, 0, len(aggFunc.Args))
 					for _, arg := range aggFunc.Args {
 						newArgs = append(newArgs, expression.ColumnSubstitute(arg, proj.schema, proj.Exprs))
+=======
+				if noSideEffects {
+					agg.GroupByItems = newGbyItems
+					for i, aggFunc := range agg.AggFuncs {
+						aggFunc.Args = newAggFuncsArgs[i]
+>>>>>>> 8dcebd123... planner, expression: avoid exprs with side effects in column pruning and agg pushdown (#27370)
 					}
-					aggFunc.Args = newArgs
+					projChild := proj.children[0]
+					agg.SetChildren(projChild)
+					// When the origin plan tree is `Aggregation->Projection->Union All->X`, we need to merge 'Aggregation' and 'Projection' first.
+					// And then push the new 'Aggregation' below the 'Union All' .
+					// The final plan tree should be 'Aggregation->Union All->Aggregation->X'.
+					child = projChild
 				}
+<<<<<<< HEAD
 				projChild := proj.children[0]
 				agg.SetChildren(projChild)
 			} else if union, ok1 := child.(*LogicalUnionAll); ok1 && p.SCtx().GetSessionVars().AllowAggPushDown {
+=======
+			}
+			if union, ok1 := child.(*LogicalUnionAll); ok1 && p.SCtx().GetSessionVars().AllowAggPushDown {
+>>>>>>> 8dcebd123... planner, expression: avoid exprs with side effects in column pruning and agg pushdown (#27370)
 				err := a.tryAggPushDownForUnion(union, agg)
 				if err != nil {
 					return nil, err
