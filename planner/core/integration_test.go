@@ -4034,7 +4034,7 @@ func (s *testIntegrationSerialSuite) TestIssue26358(c *C) {
 	tk.MustExec("CREATE TABLE all_types (\n  id int(11) NOT NULL,\n  d_tinyint tinyint(4) DEFAULT NULL,\n  d_smallint smallint(6) DEFAULT NULL,\n  d_int int(11) DEFAULT NULL,\n  d_bigint bigint(20) DEFAULT NULL,\n  d_float float DEFAULT NULL,\n  d_double double DEFAULT NULL,\n  d_decimal decimal(10,2) DEFAULT NULL,\n  d_bit bit(10) DEFAULT NULL,\n  d_binary binary(10) DEFAULT NULL,\n  d_date date DEFAULT NULL,\n  d_datetime datetime DEFAULT NULL,\n  d_timestamp timestamp NULL DEFAULT NULL,\n  d_varchar varchar(20) NULL default NULL,\n  PRIMARY KEY (id)\n);")
 	tk.MustExec("insert into all_types values(0, 0, 1, 2, 3, 1.5, 2.2, 10.23, 12, 'xy', '2021-12-12', '2021-12-12 12:00:00', '2021-12-12 12:00:00', '123');")
 	tk.MustQuery("select d_bit, d_smallint, if(d_bit, d_bit, d_smallint), if(d_bit, d_smallint, d_bit) from all_types;").Check(testkit.Rows("\x00\f 1 \x00\f 1"))
-	tk.MustQuery("select d_bit, d_tinyint, if(d_bit, d_bit, d_tinyint), if(d_bit, d_tinyint, d_bit) from all_types;").Check(testkit.Rows("\x00\f 1 \x00\f 0"))
+	tk.MustQuery("select d_bit, d_tinyint, if(d_bit, d_bit, d_tinyint), if(d_bit, d_tinyint, d_bit) from all_types;").Check(testkit.Rows("\x00\f 0 \x00\f 0"))
 	tk.MustQuery("select d_bit, d_int, if(d_bit, d_bit, d_int), if(d_bit, d_int, d_bit) from all_types;").Check(testkit.Rows("\x00\f 2 \x00\f 2"))
 	tk.MustQuery("select d_bit, d_bigint, if(d_bit, d_bit, d_bigint), if(d_bit, d_bigint, d_bit) from all_types;").Check(testkit.Rows("\x00\f 3 \x00\f 3"))
 	tk.MustQuery("select d_bit, d_float, if(d_bit, d_bit, d_float), if(d_bit, d_float, d_bit) from all_types;").Check(testkit.Rows("\x00\f 1.5 \x00\f 1.5"))
