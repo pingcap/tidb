@@ -51,7 +51,7 @@ require (
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20210806074406-317f69fb54b4
 	github.com/pingcap/log v0.0.0-20210818144256-6455d4a4c6f9
-	github.com/pingcap/parser v0.0.0-20210819101755-48d84c1db428
+	github.com/pingcap/parser v0.0.0-20210823033705-7a7940986a30
 	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
 	github.com/pingcap/tipb v0.0.0-20210708040514-0f154bb0dc0f
@@ -66,7 +66,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210820051608-ff94d0c9acb8
+	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210824090536-16d902a3c7e5
 	github.com/tikv/pd v1.1.0-beta.0.20210818082359-acba1da0018d
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.4.0
