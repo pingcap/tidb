@@ -27,7 +27,6 @@ import (
 )
 
 func TestTemporaryTableNoNetwork(t *testing.T) {
-	return
 	t.Run("global", func(t *testing.T) {
 		assertTemporaryTableNoNetwork(t, func(tk *testkit.TestKit) {
 			tk.MustExec("set tidb_enable_global_temporary_table=true")
