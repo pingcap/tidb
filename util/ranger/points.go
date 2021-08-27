@@ -573,6 +573,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 		if expr.GetArgs()[0].GetType().Tp == mysql.TypeEnum {
 			switch dt.Kind() {
 			case types.KindString, types.KindBytes, types.KindBinaryLiteral:
+				// Can't use ConvertTo directly, since we shouldn't convert numerical string to Enum in select stmt.
 				targetType := expr.GetArgs()[0].GetType()
 				enum, parseErr := types.ParseEnumName(targetType.Elems, dt.GetString(), targetType.Collate)
 				if parseErr == nil {
