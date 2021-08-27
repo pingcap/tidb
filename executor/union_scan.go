@@ -219,10 +219,13 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		return us.snapshotRows[us.cursor4SnapshotRows], nil
 	}
 	var err error
+	var datumCols map[int64]struct {
+		*model.ColumnInfo
+		offset int
+	}
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
-		logutil.Logger(ctx).Info("MYLOG srows len", zap.Int("len", len(us.snapshotRows)))
 		err = Next(ctx, us.children[0], us.snapshotChunkBuffer)
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
 			return nil, err
@@ -236,9 +239,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 				return nil, err
 			}
 			checkKey := tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
-			_, err := us.memBufSnap.Get(context.TODO(), checkKey)
-			//logutil.
-			if err == nil {
+			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
 				continue
 			}
 			// Though the handle does not appear in added rows, there may be still some conflicts on unique indexes,
@@ -247,13 +248,37 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			// FIXME: it's better to handle the conflict on unique indexes when execute the DMLs instead of handling here.
 			if !us.table.Meta().IsCommonHandle {
 				cols := us.table.Meta().Columns
+				if datumCols == nil {
+					datumCols = make(map[int64]struct {
+						*model.ColumnInfo
+						offset int
+					})
+				}
+				for i, col := range us.columns {
+					datumCols[col.ID] = struct {
+						*model.ColumnInfo
+						offset int
+					}{
+						col,
+						i,
+					}
+				}
+			CHECK:
 				for _, uniqueIndex := range us.table.Meta().Indices {
 					if !uniqueIndex.Unique {
 						continue
 					}
 					indexDatums := make([]types.Datum, len(uniqueIndex.Columns))
 					for i, uniqueCol := range uniqueIndex.Columns {
-						indexDatums[i] = row.GetDatum(uniqueCol.Offset, &cols[uniqueCol.Offset].FieldType)
+						if col, ok := datumCols[cols[uniqueCol.Offset].ID]; ok {
+							// check when column exist
+							indexDatums[i] = row.GetDatum(col.offset, &col.FieldType)
+						} else {
+							// skip this index check
+							// here we have the risk of missing check operation does not use union scan
+							// e.g. push down some aggregation functions into TiKV, so we may calculate same record twice in TiDB
+							continue CHECK
+						}
 					}
 					checkKey, err := EncodeUniqueIndexKey(us.ctx, us.table.Meta(), uniqueIndex, indexDatums, us.table.Meta().ID)
 					if err != nil {

@@ -476,5 +476,8 @@ func (s *testSuite7) TestIssuePessimisticConflictUnionScan(c *C) {
 		c.Assert(<-errCh, IsNil)
 		tk1.MustQuery("select * from t use index(primary) order by c1, c2").
 			Check(testkit.Rows("cat 20 c", "dress 40 d", "tag 10 t"))
+		tk1.MustExec("commit")
+		tk1.MustQuery("select * from t use index(primary) order by c1, c2").
+			Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
 	}
 }
