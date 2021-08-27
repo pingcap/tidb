@@ -26,10 +26,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -1125,6 +1124,7 @@ func TestSystemSchema(t *testing.T) {
 	// This test tests no privilege check for INFORMATION_SCHEMA database.
 	se := newSession(t, store, dbName)
 	mustExec(t, se, `CREATE USER 'u1'@'localhost';`)
+	mustExec(t, se, `GRANT SELECT ON *.* TO 'u1'@'localhost';`)
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, `select * from information_schema.tables`)
 	mustExec(t, se, `select * from information_schema.key_column_usage`)
@@ -1179,94 +1179,105 @@ func TestMetricsSchema(t *testing.T) {
 	tk.MustExec("GRANT Process ON *.* TO msprocess")
 	tk.MustExec("GRANT SELECT ON metrics_schema.* TO msselect")
 
-	// Mock data for metrics tables. Otherwise `pd unavailable` is thrown.
-	fpName := "github.com/pingcap/tidb/executor/mockMetricsTableData"
-	require.NoError(t, failpoint.Enable(fpName, `return`))
-	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
-	mockData := map[string][][]types.Datum{}
-	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
-	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
-		return fpName == fpname
-	})
-
 	tests := []struct {
-		stmt        string
-		priv        mysql.PrivilegeType
-		expectedErr error
+		stmt     string
+		user     string
+		checkErr func(err error)
 	}{
 		{
 			"SHOW CREATE DATABASE metrics_schema",
-			mysql.UsagePriv,
-			core.ErrPrivilegeCheckFail,
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, executor.ErrDBaccessDenied))
+			},
 		},
 		{
 			"SHOW CREATE DATABASE metrics_schema",
-			mysql.ProcessPriv,
-			nil,
+			"msprocess",
+			func(err error) {
+				require.NoError(t, err)
+			},
 		},
 		{
 			"SHOW CREATE DATABASE metrics_schema",
-			mysql.SelectPriv,
-			nil,
+			"msselect",
+			func(err error) {
+				require.NoError(t, err)
+			},
 		},
 		{
 			"SELECT * FROM metrics_schema.up",
-			mysql.UsagePriv,
-			core.ErrPrivilegeCheckFail,
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+			},
 		},
 		{
 			"SELECT * FROM metrics_schema.up",
-			mysql.ProcessPriv,
-			nil,
+			"msprocess",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, strings.Contains(err.Error(), "pd unavailable"))
+			},
 		},
 		{
 			"SELECT * FROM metrics_schema.up",
-			mysql.SelectPriv,
-			nil,
+			"msselect",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, strings.Contains(err.Error(), "pd unavailable"))
+			},
 		},
 		{
 			"SELECT * FROM information_schema.metrics_summary",
-			mysql.UsagePriv,
-			core.ErrSpecificAccessDenied,
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, core.ErrSpecificAccessDenied))
+			},
 		},
 		{
 			"SELECT * FROM information_schema.metrics_summary",
-			mysql.ProcessPriv,
-			nil,
+			"msprocess",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, strings.Contains(err.Error(), "pd unavailable"))
+			},
 		},
 		{
 			"SELECT * FROM information_schema.metrics_summary_by_label",
-			mysql.UsagePriv,
-			core.ErrSpecificAccessDenied,
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, core.ErrSpecificAccessDenied))
+			},
 		},
 		{
 			"SELECT * FROM information_schema.metrics_summary_by_label",
-			mysql.ProcessPriv,
-			nil,
+			"msprocess",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, strings.Contains(err.Error(), "pd unavailable"))
+			},
 		},
 	}
 
 	for _, test := range tests {
-		var userName string
-		switch test.priv {
-		case mysql.UsagePriv:
-			userName = "nobody"
-		case mysql.ProcessPriv:
-			userName = "msprocess"
-		case mysql.SelectPriv:
-			userName = "msselect"
-		}
 		tk.Session().Auth(&auth.UserIdentity{
-			Username: userName,
+			Username: test.user,
 			Hostname: "localhost",
 		}, nil, nil)
-		err := tk.QueryToErr(test.stmt)
-		if test.expectedErr == nil {
-			require.NoError(t, err)
-		} else {
-			require.Error(t, err)
-			require.True(t, terror.ErrorEqual(err, test.expectedErr))
+
+		rs, err := tk.Session().ExecuteInternal(context.Background(), test.stmt)
+		if err == nil {
+			_, err = session.GetRows4Test(context.Background(), tk.Session(), rs)
 		}
+		if rs != nil {
+			require.NoError(t, rs.Close())
+		}
+		test.checkErr(err)
 	}
 }
 
