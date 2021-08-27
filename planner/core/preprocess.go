@@ -422,37 +422,21 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 
 	// Check the bind operation is not on any temporary table.
-	var resNode ast.ResultSetNode
-	switch n := originNode.(type) {
-	case *ast.SelectStmt:
-		resNode = n
-	case *ast.SetOprStmt:
-		resNode = n
-	case *ast.DeleteStmt:
-		resNode = n.TableRefs.TableRefs
-	case *ast.UpdateStmt:
-		resNode = n.TableRefs.TableRefs
-	//TODO: What about insert into (select * from t)
-	case *ast.InsertStmt:
-		resNode = n.Table.TableRefs
-	}
-	if resNode != nil {
-		tblNames := extractTableList(resNode, nil, false)
-		for _, tn := range tblNames {
-			tbl, err := p.tableByName(tn)
-			if err != nil {
-				// If the operation is order is: drop table -> drop binding
-				// The table doesn't  exist, it is not an error.
-				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
-					continue
-				}
-				p.err = err
-				return
+	tblNames := extractTableList(originNode, nil, false)
+	for _, tn := range tblNames {
+		tbl, err := p.tableByName(tn)
+		if err != nil {
+			// If the operation is order is: drop table -> drop binding
+			// The table doesn't  exist, it is not an error.
+			if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+				continue
 			}
-			if tbl.Meta().TempTableType != model.TempTableNone {
-				p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
-				return
-			}
+			p.err = err
+			return
+		}
+		if tbl.Meta().TempTableType != model.TempTableNone {
+			p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
+			return
 		}
 	}
 
