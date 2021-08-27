@@ -210,6 +210,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		*model.ColumnInfo
 		offset int
 	}
+	isPessimistic := us.ctx.GetSessionVars().TxnCtx.IsPessimistic
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
@@ -218,6 +219,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			return nil, err
 		}
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
+	ITER:
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			var snapshotHandle kv.Handle
 			snapshotHandle, err = us.belowHandleCols.BuildHandle(row)
@@ -250,17 +252,15 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 						}
 					}
 				}
-				var pk *model.IndexInfo
+			INDEX:
 				for _, index := range us.table.Meta().Indices {
-					if index.Primary {
-						pk = index
-						break
+					// only check primary index for pessimistic transactions
+					// check all unique indexes for optimistic transactions
+					if !index.Unique || (!index.Primary && isPessimistic) {
+						continue
 					}
-				}
-				if pk != nil {
-					needCheck := true
-					indexDatums := make([]types.Datum, len(pk.Columns))
-					for i, uniqueCol := range pk.Columns {
+					indexDatums := make([]types.Datum, len(index.Columns))
+					for i, uniqueCol := range index.Columns {
 						if col, ok := datumCols[cols[uniqueCol.Offset].ID]; ok {
 							// check when column exist
 							indexDatums[i] = row.GetDatum(col.offset, &col.FieldType)
@@ -268,18 +268,17 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 							// Skip this index check since there is not a full row.
 							// Here we have the risk of missing check operation does not use union scan.
 							// e.g. push down some aggregation functions into TiKV, so we may calculate same record twice in TiDB.
-							needCheck = false
-							break
+							continue INDEX
 						}
 					}
-					if needCheck {
-						checkKey, err := EncodeUniqueIndexKey(us.ctx, us.table.Meta(), pk, indexDatums, us.table.Meta().ID)
-						if err != nil {
-							return nil, err
-						}
-						if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
-							continue
-						}
+					checkKey, err := EncodeUniqueIndexKey(us.ctx, us.table.Meta(), index, indexDatums, us.table.Meta().ID)
+					if err != nil {
+						return nil, err
+					}
+					if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
+						// duplicate unique indexes
+						// skip the snapshot iter row
+						continue ITER
 					}
 				}
 			}

@@ -452,6 +452,23 @@ func (s *testSuite7) TestIssueOptimisticConflictUnionScan(c *C) {
 		tk.MustQuery("select * from t").Check(testkit.Rows("tag 11"))
 		err = tk.ExecToErr("commit")
 		c.Assert(err, NotNil)
+
+		// unique index
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int, primary key (a), unique index uk(b))")
+		tk.MustExec("insert into t values(1, 10)")
+		// insert same value
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into t values (2, 10)")
+		tk.MustQuery("select * from t").Check(testkit.Rows("2 10"))
+		err = tk.ExecToErr("commit")
+		c.Assert(err, NotNil)
+		// insert same pk
+		tk.MustExec("begin optimistic")
+		tk.MustExec("insert into t values (1, 11)")
+		tk.MustQuery("select * from t").Check(testkit.Rows("1 11"))
+		err = tk.ExecToErr("commit")
+		c.Assert(err, NotNil)
 	}
 }
 
