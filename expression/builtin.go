@@ -246,8 +246,8 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 }
 
 // WrapWithCast cast expression to result type(ignore result charset collation and collation)
-func WrapWithCast(ctx sessionctx.Context, Tps types.EvalType, expr Expression) Expression {
-	switch Tps {
+func WrapWithCast(ctx sessionctx.Context, evalType types.EvalType, expr Expression) Expression {
+	switch evalType {
 	case types.ETInt:
 		return WrapWithCastAsInt(ctx, expr)
 	case types.ETReal:
