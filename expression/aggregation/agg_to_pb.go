@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -59,6 +60,8 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 		tp = tipb.ExprType_Agg_BitAnd
 	case ast.AggFuncVarPop:
 		tp = tipb.ExprType_VarPop
+	case ast.AggFuncJsonArrayagg:
+		tp = tipb.ExprType_JsonArrayAgg
 	case ast.AggFuncJsonObjectAgg:
 		tp = tipb.ExprType_JsonObjectAgg
 	case ast.AggFuncStddevPop:

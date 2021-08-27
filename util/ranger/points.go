@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -256,7 +257,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 				return err1
 			}
 			*value, err = value.ConvertToMysqlYear(r.sc, col.RetType)
-			if errors.ErrorEqual(err, types.ErrInvalidYear) {
+			if errors.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 				// Keep err for EQ and NE.
 				switch *op {
 				case ast.GT:

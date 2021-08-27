@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,13 +16,18 @@ package util
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -434,9 +440,22 @@ type SequenceTable interface {
 }
 
 // LoadTLSCertificates loads CA/KEY/CERT for special paths.
-func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error) {
+func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Config, autoReload bool, err error) {
+	autoReload = false
 	if len(cert) == 0 || len(key) == 0 {
-		return
+		if !autoTLS {
+			logutil.BgLogger().Warn("Automatic TLS Certificate creation is disabled", zap.Error(err))
+			return
+		}
+		autoReload = true
+		tempStoragePath := config.GetGlobalConfig().TempStoragePath
+		cert = filepath.Join(tempStoragePath, "/cert.pem")
+		key = filepath.Join(tempStoragePath, "/key.pem")
+		err = createTLSCertificates(cert, key)
+		if err != nil {
+			logutil.BgLogger().Warn("TLS Certificate creation failed", zap.Error(err))
+			return
+		}
 	}
 
 	var tlsCert tls.Certificate
@@ -448,6 +467,28 @@ func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error
 	}
 
 	requireTLS := config.GetGlobalConfig().Security.RequireSecureTransport
+	var minTLSVersion uint16 = tls.VersionTLS11
+	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
+	case "TLSv1.0":
+		minTLSVersion = tls.VersionTLS10
+	case "TLSv1.1":
+		minTLSVersion = tls.VersionTLS11
+	case "TLSv1.2":
+		minTLSVersion = tls.VersionTLS12
+	case "TLSv1.3":
+		minTLSVersion = tls.VersionTLS13
+	case "":
+	default:
+		logutil.BgLogger().Warn(
+			"Invalid TLS version, using default instead",
+			zap.String("tls-version", tlsver),
+		)
+	}
+	if minTLSVersion < tls.VersionTLS12 {
+		logutil.BgLogger().Warn(
+			"Minimum TLS version allows pre-TLSv1.2 protocols, this is not recommended",
+		)
+	}
 
 	// Try loading CA cert.
 	clientAuthPolicy := tls.NoClientCert
@@ -472,10 +513,12 @@ func LoadTLSCertificates(ca, key, cert string) (tlsConfig *tls.Config, err error
 			}
 		}
 	}
+	/* #nosec G402 */
 	tlsConfig = &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 		ClientCAs:    certPool,
 		ClientAuth:   clientAuthPolicy,
+		MinVersion:   minTLSVersion,
 	}
 	return
 }
@@ -545,4 +588,67 @@ func QueryStrForLog(query string) string {
 		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
 	}
 	return query
+}
+
+func createTLSCertificates(certpath string, keypath string) error {
+	privkey, err := rsa.GenerateKey(rand.Reader, 4096)
+	if err != nil {
+		return err
+	}
+
+	certValidity := 90 * 24 * time.Hour // 90 days
+	notBefore := time.Now()
+	notAfter := notBefore.Add(certValidity)
+	hostname, err := os.Hostname()
+	if err != nil {
+		return err
+	}
+
+	template := x509.Certificate{
+		Subject: pkix.Name{
+			CommonName: "TiDB_Server_Auto_Generated_Server_Certificate",
+		},
+		SerialNumber: big.NewInt(1),
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+		DNSNames:     []string{hostname},
+	}
+
+	// DER: Distinguished Encoding Rules, this is the ASN.1 encoding rule of the certificate.
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privkey.PublicKey, privkey)
+	if err != nil {
+		return err
+	}
+
+	certOut, err := os.Create(certpath)
+	if err != nil {
+		return err
+	}
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		return err
+	}
+	if err := certOut.Close(); err != nil {
+		return err
+	}
+
+	keyOut, err := os.OpenFile(keypath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+
+	privBytes, err := x509.MarshalPKCS8PrivateKey(privkey)
+	if err != nil {
+		return err
+	}
+
+	if err := pem.Encode(keyOut, &pem.Block{Type: "PRIVATE KEY", Bytes: privBytes}); err != nil {
+		return err
+	}
+
+	if err := keyOut.Close(); err != nil {
+		return err
+	}
+
+	logutil.BgLogger().Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath), zap.Duration("validity", certValidity))
+	return nil
 }

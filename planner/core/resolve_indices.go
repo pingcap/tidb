@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -371,11 +372,11 @@ func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
 		return err
 	}
 	for i, col := range p.HashCols {
-		colExpr, err1 := col.ResolveIndices(p.children[0].Schema())
+		colExpr, err1 := col.Col.ResolveIndices(p.children[0].Schema())
 		if err1 != nil {
 			return err1
 		}
-		p.HashCols[i], _ = colExpr.(*expression.Column)
+		p.HashCols[i].Col, _ = colExpr.(*expression.Column)
 	}
 	return err
 }

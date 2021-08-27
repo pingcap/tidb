@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/placementpolicy"
 )
 
 // Builder builds a new InfoSchema.
@@ -484,6 +486,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) *Builder {
 	b.is.schemaMetaVersion = oldIS.schemaMetaVersion
 	b.copySchemasMap(oldIS)
 	b.copyBundlesMap(oldIS)
+	b.copyPoliciesMap(oldIS)
 	copy(b.is.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return b
 }
@@ -498,6 +501,15 @@ func (b *Builder) copyBundlesMap(oldIS *infoSchema) {
 	is := b.is
 	for _, v := range oldIS.RuleBundles() {
 		is.SetBundle(v)
+	}
+}
+
+func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
+	is := b.is
+	is.policyMutex.Lock()
+	defer is.policyMutex.Unlock()
+	for _, v := range oldIS.PlacementPolicies() {
+		is.policyMap[v.Name.L] = v
 	}
 }
 
@@ -588,6 +600,7 @@ func NewBuilder(store kv.Storage) *Builder {
 		store: store,
 		is: &infoSchema{
 			schemaMap:           map[string]*schemaTables{},
+			policyMap:           map[string]*placementpolicy.PolicyInfo{},
 			ruleBundleMap:       map[string]*placement.Bundle{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},

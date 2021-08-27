@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -738,5 +739,46 @@ func (s *testBinlogSuite) TestTempTableBinlog(c *C) {
 	ddlQuery = "drop table if exists temp_table"
 	tk.MustExec(ddlQuery)
 	ok = mustGetDDLBinlog(s, ddlQuery, c)
+	c.Assert(ok, IsTrue)
+
+	// for local temporary table
+	latestNonLocalTemporaryTableDDL := ddlQuery
+	tk.MustExec("set tidb_enable_noop_functions=true")
+	tk.MustExec("create temporary table l_temp_table(id int)")
+	// create temporary table do not write to bin log, so the latest ddl binlog is the previous one
+	ok = mustGetDDLBinlog(s, latestNonLocalTemporaryTableDDL, c)
+	c.Assert(ok, IsTrue)
+
+	tk.MustExec("insert l_temp_table value(1)")
+	prewriteVal = getLatestBinlogPrewriteValue(c, s.pump)
+	c.Assert(len(prewriteVal.Mutations), Equals, 0)
+
+	tk.MustExec("update l_temp_table set id=id+1")
+	prewriteVal = getLatestBinlogPrewriteValue(c, s.pump)
+	c.Assert(len(prewriteVal.Mutations), Equals, 0)
+
+	tk.MustExec("delete from l_temp_table")
+	prewriteVal = getLatestBinlogPrewriteValue(c, s.pump)
+	c.Assert(len(prewriteVal.Mutations), Equals, 0)
+
+	tk.MustExec("begin")
+	tk.MustExec("insert l_temp_table value(1)")
+	tk.MustExec("update l_temp_table set id=id+1")
+	tk.MustExec("commit")
+	prewriteVal = getLatestBinlogPrewriteValue(c, s.pump)
+	c.Assert(len(prewriteVal.Mutations), Equals, 0)
+
+	tk.MustExec("begin")
+	tk.MustExec("delete from l_temp_table")
+	tk.MustExec("commit")
+	prewriteVal = getLatestBinlogPrewriteValue(c, s.pump)
+	c.Assert(len(prewriteVal.Mutations), Equals, 0)
+
+	tk.MustExec("truncate table l_temp_table")
+	ok = mustGetDDLBinlog(s, latestNonLocalTemporaryTableDDL, c)
+	c.Assert(ok, IsTrue)
+
+	tk.MustExec("drop table l_temp_table")
+	ok = mustGetDDLBinlog(s, latestNonLocalTemporaryTableDDL, c)
 	c.Assert(ok, IsTrue)
 }

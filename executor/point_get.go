@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -410,7 +411,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 
 	// Local temporary table always get snapshot value from session
 	if e.tblInfo.TempTableType == model.TempTableLocal {
-		return e.ctx.GetSessionVars().GetTemporaryTableSnapshotValue(ctx, key)
+		return e.ctx.GetSessionVars().TemporaryTableSnapshotReader(e.tblInfo).Get(ctx, key)
 	}
 
 	lock := e.tblInfo.Lock

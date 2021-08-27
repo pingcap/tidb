@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -25,10 +26,12 @@ import (
 
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -129,7 +132,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
 	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source
-	FROM mysql.bind_info WHERE update_time > %? ORDER BY update_time`, updateTime)
+	FROM mysql.bind_info WHERE update_time > %? ORDER BY update_time, create_time`, updateTime)
 	if err != nil {
 		return err
 	}
@@ -218,13 +221,15 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 	if err = h.lockBindInfoTable(); err != nil {
 		return err
 	}
-	// Binding recreation should physically delete previous bindings.
-	_, err = exec.ExecuteInternal(context.TODO(), `DELETE FROM mysql.bind_info WHERE original_sql = %?`, record.OriginalSQL)
+
+	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+
+	updateTs := now.String()
+	_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
+		deleted, updateTs, record.OriginalSQL, updateTs)
 	if err != nil {
 		return err
 	}
-
-	now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 
 	for i := range record.Bindings {
 		record.Bindings[i].CreateTime = now
@@ -387,6 +392,45 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 	}
 
 	deleteRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())
+	return err
+}
+
+// GCBindRecord physically removes the deleted bind records in mysql.bind_info.
+func (h *BindHandle) GCBindRecord() (err error) {
+	h.bindInfo.Lock()
+	h.sctx.Lock()
+	defer func() {
+		h.sctx.Unlock()
+		h.bindInfo.Unlock()
+	}()
+	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN PESSIMISTIC")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
+			terror.Log(err1)
+			return
+		}
+
+		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
+		if err != nil {
+			return
+		}
+	}()
+
+	// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
+	if err = h.lockBindInfoTable(); err != nil {
+		return err
+	}
+
+	// To make sure that all the deleted bind records have been acknowledged to all tidb,
+	// we only garbage collect those records with update_time before 10 leases.
+	updateTime := time.Now().Add(-(10 * Lease))
+	updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
+	_, err = exec.ExecuteInternal(context.TODO(), `DELETE FROM mysql.bind_info WHERE status = 'deleted' and update_time < %?`, updateTimeStr)
 	return err
 }
 
@@ -610,10 +654,104 @@ func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
 	return nil
 }
 
+type captureFilter struct {
+	dbs       map[string]struct{}
+	frequency int64
+	tables    map[stmtctx.TableEntry]struct{}
+
+	fail      bool
+	currentDB string
+}
+
+func (cf *captureFilter) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	switch x := in.(type) {
+	case *ast.TableName:
+		tblEntry := stmtctx.TableEntry{
+			DB:    x.Schema.L,
+			Table: x.Name.L,
+		}
+		if x.Schema.L == "" {
+			tblEntry.DB = cf.currentDB
+		}
+		if _, ok := cf.dbs[tblEntry.DB]; ok {
+			cf.fail = true
+		} else if _, ok := cf.tables[tblEntry]; ok {
+			cf.fail = true
+		}
+	}
+	return in, cf.fail
+}
+
+func (cf *captureFilter) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
+func (cf *captureFilter) isEmpty() bool {
+	return len(cf.dbs) == 0 && len(cf.tables) == 0
+}
+
+func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
+	filter = &captureFilter{
+		dbs:       make(map[string]struct{}),
+		frequency: 1,
+		tables:    make(map[stmtctx.TableEntry]struct{}),
+	}
+	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
+	stmt, err := exec.ParseWithParams(context.TODO(), `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
+	if err != nil {
+		logutil.BgLogger().Warn("[sql-bind] failed to parse query for mysql.capture_plan_baselines_blacklist load", zap.Error(err))
+		return
+	}
+	// No need to acquire the session context lock for ExecRestrictedStmt, it
+	// uses another background session.
+	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
+	if err != nil {
+		logutil.BgLogger().Warn("[sql-bind] failed to load mysql.capture_plan_baselines_blacklist", zap.Error(err))
+		return
+	}
+	for _, row := range rows {
+		filterTp := strings.ToLower(row.GetString(0))
+		valStr := strings.ToLower(row.GetString(1))
+		switch filterTp {
+		case "db":
+			filter.dbs[valStr] = struct{}{}
+		case "table":
+			strs := strings.Split(valStr, ".")
+			if len(strs) != 2 {
+				logutil.BgLogger().Warn("[sql-bind] failed to parse table name, ignore it", zap.String("filter_value", valStr))
+				continue
+			}
+			tblEntry := stmtctx.TableEntry{
+				DB:    strs[0],
+				Table: strs[1],
+			}
+			filter.tables[tblEntry] = struct{}{}
+		case "frequency":
+			f, err := strconv.ParseInt(valStr, 10, 64)
+			if err != nil {
+				logutil.BgLogger().Warn("[sql-bind] failed to parse frequency type value, ignore it", zap.String("filter_value", valStr), zap.Error(err))
+				continue
+			}
+			if f < 1 {
+				logutil.BgLogger().Warn("[sql-bind] frequency threshold is less than 1, ignore it", zap.Int64("frequency", f))
+				continue
+			}
+			if f > filter.frequency {
+				filter.frequency = f
+			}
+		default:
+			logutil.BgLogger().Warn("[sql-bind] unknown capture filter type, ignore it", zap.String("filter_type", filterTp))
+		}
+	}
+	return
+}
+
 // CaptureBaselines is used to automatically capture plan baselines.
 func (h *BindHandle) CaptureBaselines() {
 	parser4Capture := parser.New()
-	bindableStmts := stmtsummary.StmtSummaryByDigestMap.GetMoreThanOnceBindableStmt()
+	captureFilter := h.extractCaptureFilterFromStorage()
+	emptyCaptureFilter := captureFilter.isEmpty()
+	bindableStmts := stmtsummary.StmtSummaryByDigestMap.GetMoreThanCntBindableStmt(captureFilter.frequency)
 	for _, bindableStmt := range bindableStmts {
 		stmt, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 		if err != nil {
@@ -622,6 +760,14 @@ func (h *BindHandle) CaptureBaselines() {
 		}
 		if insertStmt, ok := stmt.(*ast.InsertStmt); ok && insertStmt.Select == nil {
 			continue
+		}
+		if !emptyCaptureFilter {
+			captureFilter.fail = false
+			captureFilter.currentDB = bindableStmt.Schema
+			stmt.Accept(captureFilter)
+			if captureFilter.fail {
+				continue
+			}
 		}
 		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
 		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName, bindableStmt.Query))
@@ -658,7 +804,13 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("EXPLAIN FORMAT='hint' %s", sql))
 	sctx.GetSessionVars().UsePlanBaselines = origVals
 	if rs != nil {
-		defer terror.Call(rs.Close)
+		defer func() {
+			// Audit log is collected in Close(), set InRestrictedSQL to avoid 'create sql binding' been recorded as 'explain'.
+			origin := sctx.GetSessionVars().InRestrictedSQL
+			sctx.GetSessionVars().InRestrictedSQL = true
+			terror.Call(rs.Close)
+			sctx.GetSessionVars().InRestrictedSQL = origin
+		}()
 	}
 	if err != nil {
 		return "", err
@@ -705,7 +857,22 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 		bindSQL = bindSQL[updateIdx:]
 		return strings.Replace(bindSQL, "UPDATE", fmt.Sprintf("UPDATE /*+ %s*/", planHint), 1)
 	case *ast.SelectStmt:
-		selectIdx := strings.Index(bindSQL, "SELECT")
+		var selectIdx int
+		if n.With != nil {
+			var withSb strings.Builder
+			withIdx := strings.Index(bindSQL, "WITH")
+			restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &withSb)
+			restoreCtx.DefaultDB = defaultDB
+			err := n.With.Restore(restoreCtx)
+			if err != nil {
+				logutil.BgLogger().Debug("[sql-bind] restore SQL failed", zap.Error(err))
+				return ""
+			}
+			withEnd := withIdx + len(withSb.String())
+			tmp := strings.Replace(bindSQL[withEnd:], "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
+			return strings.Join([]string{bindSQL[withIdx:withEnd], tmp}, "")
+		}
+		selectIdx = strings.Index(bindSQL, "SELECT")
 		// Remove possible `explain` prefix.
 		bindSQL = bindSQL[selectIdx:]
 		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)

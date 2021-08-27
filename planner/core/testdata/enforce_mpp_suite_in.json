@@ -58,7 +58,7 @@
   {
     "name": "TestEnforceMPPWarning3",
     "cases": [
-      "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;",
+      "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;set @@tidb_hash_exchange_with_new_collation=0;",
       "cmd: enable-new-collation",
       "EXPLAIN SELECT count(*) from t group by b; -- 1. new collation FIXME",
       "EXPLAIN SELECT * from t t1 join t t2 on t1.b=t2.b; -- 2. new collation FIXME"

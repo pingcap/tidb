@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1529,10 +1530,11 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 	if s.ReloadTLS {
 		logutil.BgLogger().Info("execute reload tls", zap.Bool("NoRollbackOnError", s.NoRollbackOnError))
 		sm := e.ctx.GetSessionManager()
-		tlsCfg, err := util.LoadTLSCertificates(
+		tlsCfg, _, err := util.LoadTLSCertificates(
 			variable.GetSysVar("ssl_ca").Value,
 			variable.GetSysVar("ssl_key").Value,
 			variable.GetSysVar("ssl_cert").Value,
+			config.GetGlobalConfig().Security.AutoTLS,
 		)
 		if err != nil {
 			if !s.NoRollbackOnError || config.GetGlobalConfig().Security.RequireSecureTransport {
