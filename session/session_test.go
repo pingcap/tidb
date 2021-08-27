@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -832,6 +833,50 @@ func (s *testSessionSuite) TestRetryGlobalTempTable(c *C) {
 	tk.MustExec("insert temp_table value(1, 2)")
 	// before update: normal_table=(1 1) (100 102), temp_table=(1 2)
 	tk.MustExec("update normal_table, temp_table set normal_table.b=temp_table.b where normal_table.a=temp_table.a")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 3)
+
+	// try to conflict with tk
+	tk1.MustExec("update normal_table set b=b+1 where a=100")
+
+	// It will retry internally.
+	tk.MustExec("commit")
+	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 2", "100 104"))
+}
+
+func (s *testSessionSuite) TestRetryLocalTempTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_enable_noop_functions=true")
+	tk.MustExec("drop table if exists normal_table")
+	tk.MustExec("create table normal_table(a int primary key, b int)")
+	defer tk.MustExec("drop table if exists normal_table")
+	tk.MustExec("drop table if exists temp_table")
+	tk.MustExec("create temporary table l_temp_table(a int primary key, b int)")
+	defer tk.MustExec("drop table if exists l_temp_table")
+
+	// insert select
+	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("insert normal_table value(100, 100)")
+	tk.MustExec("set @@autocommit = 0")
+	// used to make conflicts
+	tk.MustExec("update normal_table set b=b+1 where a=100")
+	tk.MustExec("insert l_temp_table value(1, 2)")
+	tk.MustExec("insert normal_table select * from l_temp_table")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 3)
+
+	// try to conflict with tk
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("update normal_table set b=b+1 where a=100")
+
+	// It will retry internally.
+	tk.MustExec("commit")
+	tk.MustQuery("select a, b from normal_table order by a").Check(testkit.Rows("1 2", "100 102"))
+	tk.MustQuery("select a, b from l_temp_table order by a").Check(testkit.Rows("1 2"))
+
+	// update multi-tables
+	tk.MustExec("update normal_table set b=b+1 where a=100")
+	tk.MustExec("insert l_temp_table value(3, 4)")
+	// before update: normal_table=(1 1) (100 102), temp_table=(1 2)
+	tk.MustExec("update normal_table, l_temp_table set normal_table.b=l_temp_table.b where normal_table.a=l_temp_table.a")
 	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 3)
 
 	// try to conflict with tk
@@ -4441,15 +4486,18 @@ func (s *testTxnStateSerialSuite) TestRunning(c *C) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1);")
 	tk.MustExec("begin pessimistic;")
-	failpoint.Enable("github.com/pingcap/tidb/session/mockStmtSlow", "sleep(100)")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockStmtSlow", "return(200)"), IsNil)
+	ch := make(chan struct{})
 	go func() {
-		tk.MustExec("select * from t for update;")
+		tk.MustExec("select * from t for update /* sleep */;")
 		tk.MustExec("commit;")
+		ch <- struct{}{}
 	}()
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	info := tk.Se.TxnInfo()
 	c.Assert(info.State, Equals, txninfo.TxnRunning)
-	failpoint.Disable("github.com/pingcap/tidb/session/mockStmtSlow")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockStmtSlow"), IsNil)
+	<-ch
 }
 
 func (s *testTxnStateSerialSuite) TestBlocked(c *C) {
@@ -4459,15 +4507,18 @@ func (s *testTxnStateSerialSuite) TestBlocked(c *C) {
 	tk.MustExec("insert into t(a) values (1);")
 	tk.MustExec("begin pessimistic;")
 	tk.MustExec("select * from t where a = 1 for update;")
+	ch := make(chan struct{})
 	go func() {
 		tk2.MustExec("begin pessimistic")
 		tk2.MustExec("select * from t where a = 1 for update;")
 		tk2.MustExec("commit;")
+		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
 	c.Assert(tk2.Se.TxnInfo().State, Equals, txninfo.TxnLockWaiting)
 	c.Assert(tk2.Se.TxnInfo().BlockStartTime, NotNil)
 	tk.MustExec("commit;")
+	<-ch
 }
 
 func (s *testTxnStateSerialSuite) TestCommitting(c *C) {
@@ -4704,6 +4755,8 @@ func (s *testSessionSuite) TestTMPTableSize(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_enable_global_temporary_table=on")
 	tk.MustExec("create global temporary table t (c1 int, c2 varchar(512)) on commit delete rows")
+	tk.MustExec("set tidb_enable_noop_functions=on")
+	tk.MustExec("create temporary table tl (c1 int, c2 varchar(512))")
 
 	tk.MustQuery("select @@global.tmp_table_size").Check(testkit.Rows(strconv.Itoa(variable.DefTMPTableSize)))
 	c.Assert(tk.Se.GetSessionVars().TMPTableSize, Equals, int64(variable.DefTMPTableSize))
@@ -4726,6 +4779,21 @@ func (s *testSessionSuite) TestTMPTableSize(c *C) {
 	tk.MustExec("insert into t values (1, repeat('x', 512))")
 	tk.MustExec("insert into t values (1, repeat('x', 512))")
 	tk.MustGetErrCode("insert into t values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("rollback")
+
+	// Check local temporary table
+	tk.MustExec("begin")
+	tk.MustExec("insert into tl values (1, repeat('x', 512))")
+	tk.MustExec("insert into tl values (1, repeat('x', 512))")
+	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("rollback")
+
+	// Check local temporary table with some data in session
+	tk.MustExec("insert into tl values (1, repeat('x', 512))")
+	tk.MustExec("begin")
+	tk.MustExec("insert into tl values (1, repeat('x', 512))")
+	tk.MustGetErrCode("insert into tl values (1, repeat('x', 512))", errno.ErrRecordFileFull)
+	tk.MustExec("rollback")
 }
 
 func (s *testSessionSuite) TestTiDBEnableGlobalTemporaryTable(c *C) {

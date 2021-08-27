@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -315,6 +316,8 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 			logutil.BgLogger().Debug("truncated/wrong value error", zap.Error(err1))
 		}
 		err = table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
+	} else if types.ErrWarnDataOutOfRange.Equal(err) {
+		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
 	}
 
 	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {

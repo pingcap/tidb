@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -256,7 +257,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 				return err1
 			}
 			*value, err = value.ConvertToMysqlYear(r.sc, col.RetType)
-			if errors.ErrorEqual(err, types.ErrInvalidYear) {
+			if errors.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 				// Keep err for EQ and NE.
 				switch *op {
 				case ast.GT:
@@ -570,7 +571,20 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 			dt.SetString(dt.GetString(), colCollate)
 		}
 		if expr.GetArgs()[0].GetType().Tp == mysql.TypeEnum {
-			dt, err = dt.ConvertTo(r.sc, expr.GetArgs()[0].GetType())
+			switch dt.Kind() {
+			case types.KindString, types.KindBytes, types.KindBinaryLiteral:
+				// Can't use ConvertTo directly, since we shouldn't convert numerical string to Enum in select stmt.
+				targetType := expr.GetArgs()[0].GetType()
+				enum, parseErr := types.ParseEnumName(targetType.Elems, dt.GetString(), targetType.Collate)
+				if parseErr == nil {
+					dt.SetMysqlEnum(enum, targetType.Collate)
+				} else {
+					err = parseErr
+				}
+			default:
+				dt, err = dt.ConvertTo(r.sc, expr.GetArgs()[0].GetType())
+			}
+
 			if err != nil {
 				// in (..., an impossible value (not valid enum), ...), the range is empty, so skip it.
 				continue

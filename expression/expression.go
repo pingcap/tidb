@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1065,7 +1066,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		}
 	case ast.Round:
 		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal:
+		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundDec,
+			tipb.ScalarFuncSig_RoundWithFracInt, tipb.ScalarFuncSig_RoundWithFracReal, tipb.ScalarFuncSig_RoundWithFracDec:
 			return true
 		}
 	case ast.Extract:
@@ -1287,4 +1289,52 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
 	}
 	return FoldConstant(sf), nil
+}
+
+// PropagateType propagates the type information to the `expr`.
+// Note: For now, we only propagate type for the function CastDecimalAsDouble.
+//
+// e.g.
+// > create table t(a decimal(9, 8));
+// > insert into t values(5.04600000)
+// > select a/36000 from t;
+// Type:       NEWDECIMAL
+// Length:     15
+// Decimals:   12
+// +------------------+
+// | 5.04600000/36000 |
+// +------------------+
+// |   0.000140166667 |
+// +------------------+
+//
+// > select cast(a/36000 as double) as result from t;
+// Type:       DOUBLE
+// Length:     23
+// Decimals:   31
+// +----------------------+
+// | result               |
+// +----------------------+
+// | 0.000140166666666666 |
+// +----------------------+
+// The expected `decimal` and `length` of the outer cast_as_double need to be
+// propagated to the inner div.
+func PropagateType(evalType types.EvalType, args ...Expression) {
+	switch evalType {
+	case types.ETReal:
+		expr := args[0]
+		oldFlen, oldDecimal := expr.GetType().Flen, expr.GetType().Decimal
+		newFlen, newDecimal := setDataTypeDouble(expr.GetType().Decimal)
+		// For float(M,D), double(M,D) or decimal(M,D), M must be >= D.
+		if newFlen < newDecimal {
+			newFlen = oldFlen - oldDecimal + newDecimal
+		}
+		if oldFlen != newFlen || oldDecimal != newDecimal {
+			if col, ok := args[0].(*Column); ok {
+				newCol := col.Clone()
+				newCol.(*Column).RetType = col.RetType.Clone()
+				args[0] = newCol
+			}
+			args[0].GetType().Flen, args[0].GetType().Decimal = newFlen, newDecimal
+		}
+	}
 }

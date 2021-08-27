@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -93,7 +94,7 @@ func TestHashChunkRowCollation(t *testing.T) {
 	cols := []int{0}
 	buf := make([]byte, 1)
 
-	tp.Collate = "bin"
+	tp.Collate = "binary"
 	for i := 0; i < n; i++ {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
@@ -138,7 +139,7 @@ func TestHashChunkColumnsCollation(t *testing.T) {
 	h1s := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 	h2s := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
-	tp.Collate = "bin"
+	tp.Collate = "binary"
 	require.NoError(t, HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull))
 	require.NoError(t, HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull))
 

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -526,10 +527,6 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 
 			createOptions := ""
 
-			if table.IsSequence() {
-				continue
-			}
-
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
@@ -566,6 +563,12 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				tableType := "BASE TABLE"
 				if util.IsSystemView(schema.Name.L) {
 					tableType = "SYSTEM VIEW"
+				}
+				if table.IsSequence() {
+					tableType = "SEQUENCE"
+					if rowCount == 0 {
+						rowCount = 1
+					}
 				}
 				if table.PKIsHandle || table.IsCommonHandle {
 					pkType = "CLUSTERED"
@@ -747,7 +750,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 
 func calcCharOctLength(lenInChar int, cs string) int {
 	lenInBytes := lenInChar
-	if desc, err := charset.GetCharsetDesc(cs); err == nil {
+	if desc, err := charset.GetCharsetInfo(cs); err == nil {
 		lenInBytes = desc.Maxlen * lenInChar
 	}
 	return lenInBytes
@@ -2099,11 +2102,6 @@ func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionct
 		return nil, nil
 	}
 	e.retrieved = true
-	user := sctx.GetSessionVars().User
-	isSuper := false
-	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		isSuper = pm.RequestVerificationWithUser("", "", "", mysql.SuperPriv, user)
-	}
 
 	var err error
 	var instanceAddr string
@@ -2115,7 +2113,8 @@ func (e *stmtSummaryTableRetriever) retrieve(ctx context.Context, sctx sessionct
 			return nil, err
 		}
 	}
-	reader := stmtsummary.NewStmtSummaryReader(user, isSuper, e.columns, instanceAddr)
+	user := sctx.GetSessionVars().User
+	reader := stmtsummary.NewStmtSummaryReader(user, hasPriv(sctx, mysql.ProcessPriv), e.columns, instanceAddr)
 	var rows [][]types.Datum
 	switch e.table.Name.O {
 	case infoschema.TableStatementsSummary,

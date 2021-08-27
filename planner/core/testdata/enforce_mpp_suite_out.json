@@ -351,10 +351,10 @@
       {
         "SQL": "EXPLAIN SELECT count(a) from t where c=1; -- 11. type not supported",
         "Plan": [
-          "HashAgg_7 1.00 root  funcs:count(test.t.a)->Column#5",
-          "└─Selection_17 10000.00 root  eq(test.t.c, 00:00:01.000000)",
-          "  └─TableReader_16 10000.00 root  data:TableFullScan_15",
-          "    └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg_11 1.00 root  funcs:count(test.t.a)->Column#5",
+          "└─Selection_29 10.00 root  eq(test.t.c, 00:00:01.000000)",
+          "  └─TableReader_28 10000.00 root  data:TableFullScan_27",
+          "    └─TableFullScan_27 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Expr 'test.t.c' can not be pushed to TiFlash because it contains Duration type",

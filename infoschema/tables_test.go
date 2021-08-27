@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1148,51 +1149,61 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		from information_schema.statements_summary`,
 	).Check(testkit.Rows())
 
-	// Create a new session to test
-	tk = s.newTestKitWithRoot(c)
-
 	tk.MustExec("set global tidb_enable_stmt_summary = on")
 	tk.MustExec("set global tidb_stmt_summary_history_size = 24")
+}
+
+func (s *testTableSuite) TestStmtSummaryTablePriv(c *C) {
+	tk := s.newTestKitWithRoot(c)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
+	defer tk.MustExec("drop table if exists t")
+
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
+	// Clear all statements.
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 
 	// Create a new user to test statements summary table privilege
+	tk.MustExec("drop user if exists 'test_user'@'localhost'")
 	tk.MustExec("create user 'test_user'@'localhost'")
-	tk.MustExec("grant select on *.* to 'test_user'@'localhost'")
-	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "root",
-		Hostname:     "%",
-		AuthUsername: "root",
-		AuthHostname: "%",
-	}, nil, nil)
+	defer tk.MustExec("drop user if exists 'test_user'@'localhost'")
+	tk.MustExec("grant select on test.t to 'test_user'@'localhost'")
 	tk.MustExec("select * from t where a=1")
 	result := tk.MustQuery("select * from information_schema.statements_summary where digest_text like 'select * from `t`%'")
-	// Super user can query all records.
 	c.Assert(len(result.Rows()), Equals, 1)
 	result = tk.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
 	c.Assert(len(result.Rows()), Equals, 1)
-	tk.Se.Auth(&auth.UserIdentity{
+
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.Se.Auth(&auth.UserIdentity{
 		Username:     "test_user",
 		Hostname:     "localhost",
 		AuthUsername: "test_user",
 		AuthHostname: "localhost",
 	}, nil, nil)
-	result = tk.MustQuery("select * from information_schema.statements_summary where digest_text like 'select * from `t`%'")
+
+	result = tk1.MustQuery("select * from information_schema.statements_summary where digest_text like 'select * from `t`%'")
 	// Ordinary users can not see others' records
 	c.Assert(len(result.Rows()), Equals, 0)
-	result = tk.MustQuery("select *	from information_schema.statements_summary_history where digest_text like 'select * from `t`%'")
+	result = tk1.MustQuery("select *	from information_schema.statements_summary_history where digest_text like 'select * from `t`%'")
 	c.Assert(len(result.Rows()), Equals, 0)
-	tk.MustExec("select * from t where a=1")
-	result = tk.MustQuery("select *	from information_schema.statements_summary	where digest_text like 'select * from `t`%'")
+	tk1.MustExec("select * from t where b=1")
+	result = tk1.MustQuery("select *	from information_schema.statements_summary	where digest_text like 'select * from `t`%'")
+	// Ordinary users can see his own records
 	c.Assert(len(result.Rows()), Equals, 1)
-	tk.MustExec("select * from t where a=1")
-	result = tk.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
+	result = tk1.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
 	c.Assert(len(result.Rows()), Equals, 1)
-	// use root user to set variables back
-	tk.Se.Auth(&auth.UserIdentity{
-		Username:     "root",
-		Hostname:     "%",
-		AuthUsername: "root",
-		AuthHostname: "%",
-	}, nil, nil)
+
+	tk.MustExec("grant process on *.* to 'test_user'@'localhost'")
+	result = tk1.MustQuery("select *	from information_schema.statements_summary	where digest_text like 'select * from `t`%'")
+	// Users with 'PROCESS' privileges can query all records.
+	c.Assert(len(result.Rows()), Equals, 2)
+	result = tk1.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
+	c.Assert(len(result.Rows()), Equals, 2)
 }
 
 func (s *testTableSuite) TestIssue18845(c *C) {
