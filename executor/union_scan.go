@@ -19,8 +19,6 @@ import (
 	"fmt"
 	"runtime/trace"
 
-	"go.uber.org/zap"
-
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -30,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
 )
 
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.
@@ -174,16 +171,6 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	}
 	addedRow := us.getAddedRow()
 
-	if us.ctx.GetSessionVars().ConnectionID > 0 {
-		logutil.Logger(ctx).Info("MYLOG get one row",
-			zap.Int("sr", us.cursor4SnapshotRows),
-			zap.Int("sr all", len(us.snapshotRows)),
-			zap.Int("ar", us.cursor4AddRows),
-			zap.Int("ad all", len(us.addedRows)),
-			zap.String("snapshot row", fmt.Sprintf("%v", snapshotRow)),
-			zap.String("added row", fmt.Sprintf("%v", addedRow)))
-	}
-
 	var row []types.Datum
 	var isSnapshotRow bool
 	if addedRow == nil {
@@ -245,7 +232,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			// Though the handle does not appear in added rows, there may be still some conflicts on unique indexes,
 			// UnionScan with two records which have same unique index is weird. This should be handled here.
 			// The newly added rows will overwrite the snapshot rows.
-			// FIXME: it's better to handle the conflict on unique indexes when execute the DMLs instead of handling here.
+			// It's better to handle the conflict on unique indexes when execute the DMLs instead of handling here.
 			if !us.table.Meta().IsCommonHandle {
 				cols := us.table.Meta().Columns
 				if datumCols == nil {
