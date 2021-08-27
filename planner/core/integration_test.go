@@ -3929,7 +3929,7 @@ func (s *testIntegrationSerialSuite) TestIssue25300(c *C) {
 func (s *testIntegrationSerialSuite) TestIssue27167(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ts")
+	tk.MustExec("drop table if exists all_types")
 
 	tk.MustExec(`CREATE TABLE all_types (
   		id int(11) NOT NULL,
