@@ -57,7 +57,7 @@ func TestSimpleCases(t *testing.T) {
 		p := parser.New()
 
 		stmt, err := p.ParseOneStmt(test.sql, "", "")
-		require.Nil(t, err)
+		require.NoError(t, err)
 
 		ans, ok := utilparser.SimpleCases(stmt, test.db, test.sql)
 		require.True(t, ok)
