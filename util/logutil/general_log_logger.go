@@ -12,8 +12,6 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-var _pool2 = buffer.NewPool()
-
 const (
 	generalLogBatchSize = 102400
 	flushTimeout        = 1000 * time.Millisecond
@@ -271,40 +269,3 @@ func newGeneralLogLogger() (*zap.Logger, error) {
 
 	return logger, nil
 }
-
-// generalLogEncoder implements a minimal textEncoder as pingcap/log, which only has the AddString() implementation
-type generalLogEncoder struct{}
-
-func (enc *generalLogEncoder) EncodeEntry(entry zapcore.Entry, fields []zapcore.Field) (*buffer.Buffer, error) {
-	buf := _pool2.Get()
-	buf.WriteString(entry.Message)
-	buf.WriteByte('\n')
-	return buf, nil
-}
-
-func (enc *generalLogEncoder) Clone() zapcore.Encoder                          { return enc }
-func (enc *generalLogEncoder) AddArray(string, zapcore.ArrayMarshaler) error   { return nil }
-func (enc *generalLogEncoder) AddObject(string, zapcore.ObjectMarshaler) error { return nil }
-func (enc *generalLogEncoder) AddBinary(string, []byte)                        {}
-func (enc *generalLogEncoder) AddByteString(string, []byte)                    {}
-func (enc *generalLogEncoder) AddBool(string, bool)                            {}
-func (enc *generalLogEncoder) AddComplex128(string, complex128)                {}
-func (enc *generalLogEncoder) AddComplex64(string, complex64)                  {}
-func (enc *generalLogEncoder) AddDuration(string, time.Duration)               {}
-func (enc *generalLogEncoder) AddFloat64(string, float64)                      {}
-func (enc *generalLogEncoder) AddFloat32(string, float32)                      {}
-func (enc *generalLogEncoder) AddInt(string, int)                              {}
-func (enc *generalLogEncoder) AddInt64(string, int64)                          {}
-func (enc *generalLogEncoder) AddInt32(string, int32)                          {}
-func (enc *generalLogEncoder) AddInt16(string, int16)                          {}
-func (enc *generalLogEncoder) AddInt8(string, int8)                            {}
-func (enc *generalLogEncoder) AddString(string, string)                        {}
-func (enc *generalLogEncoder) AddTime(string, time.Time)                       {}
-func (enc *generalLogEncoder) AddUint(string, uint)                            {}
-func (enc *generalLogEncoder) AddUint64(string, uint64)                        {}
-func (enc *generalLogEncoder) AddUint32(string, uint32)                        {}
-func (enc *generalLogEncoder) AddUint16(string, uint16)                        {}
-func (enc *generalLogEncoder) AddUint8(string, uint8)                          {}
-func (enc *generalLogEncoder) AddUintptr(string, uintptr)                      {}
-func (enc *generalLogEncoder) AddReflected(string, interface{}) error          { return nil }
-func (enc *generalLogEncoder) OpenNamespace(string)                            {}
