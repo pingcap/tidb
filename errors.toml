@@ -1061,6 +1061,16 @@ error = '''
 DDL reorg element does not exist
 '''
 
+["meta:8238"]
+error = '''
+Can't create placement policy '%-.192s'; policy exists
+'''
+
+["meta:8239"]
+error = '''
+Unknown placement policy '%-.192s'
+'''
+
 ["planner:1044"]
 error = '''
 Access denied for user '%-.48s'@'%-.64s' to database '%-.192s'
