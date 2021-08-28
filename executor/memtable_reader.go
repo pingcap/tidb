@@ -756,8 +756,9 @@ type HistoryHotRegionsRequest struct {
 	RegionIDs      []uint64 `json:"region_ids,omitempty"`
 	StoreIDs       []uint64 `json:"store_ids,omitempty"`
 	PeerIDs        []uint64 `json:"peer_ids,omitempty"`
-	Roles          []uint64 `json:"roles,omitempty"`
-	HotRegionTypes []string `json:"hot_region_types,omitempty"`
+	IsLearners     []bool   `json:"is_learners,omitempty"`
+	IsLeaders      []bool   `json:"is_leaders,omitempty"`
+	HotRegionTypes []string `json:"hot_region_type,omitempty"`
 }
 
 // HistoryHotRegions records filtered hot regions stored in each PD.
@@ -773,6 +774,7 @@ type HistoryHotRegion struct {
 	RegionID      uint64  `json:"region_id,omitempty"`
 	StoreID       uint64  `json:"store_id,omitempty"`
 	PeerID        uint64  `json:"peer_id,omitempty"`
+	IsLearner     bool    `json:"is_learner,omitempty"`
 	IsLeader      bool    `json:"is_leader,omitempty"`
 	HotRegionType string  `json:"hot_region_type,omitempty"`
 	HotDegree     int64   `json:"hot_degree,omitempty"`
@@ -817,14 +819,40 @@ func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx session
 	for typ := range e.extractor.HotRegionTypes {
 		hotRegionTypes = append(hotRegionTypes, typ)
 	}
+
+	// Request all if no conditions
+	if len(e.extractor.IsLearners) == 0 {
+		e.extractor.IsLearners = []uint64{0, 1}
+	}
+	if len(e.extractor.IsLeaders) == 0 {
+		e.extractor.IsLeaders = []uint64{0, 1}
+	}
+	// Change uint to ture false slice,
+	var isLearners, isLeaders []bool
+	for _, l := range e.extractor.IsLearners {
+		if l == 1 {
+			isLearners = append(isLearners, true)
+		} else if l == 0 {
+			isLearners = append(isLearners, false)
+		}
+	}
+	for _, l := range e.extractor.IsLeaders {
+		if l == 1 {
+			isLeaders = append(isLeaders, true)
+		} else if l == 0 {
+			isLeaders = append(isLeaders, false)
+		}
+	}
+
 	// set hotType before request
 	historyHotRegionsRequest := &HistoryHotRegionsRequest{
-		StartTime: e.extractor.StartTime,
-		EndTime:   e.extractor.EndTime,
-		RegionIDs: e.extractor.RegionIDs,
-		StoreIDs:  e.extractor.StoreIDs,
-		PeerIDs:   e.extractor.PeerIDs,
-		Roles:     e.extractor.Roles,
+		StartTime:  e.extractor.StartTime,
+		EndTime:    e.extractor.EndTime,
+		RegionIDs:  e.extractor.RegionIDs,
+		StoreIDs:   e.extractor.StoreIDs,
+		PeerIDs:    e.extractor.PeerIDs,
+		IsLearners: isLearners,
+		IsLeaders:  isLeaders,
 	}
 
 	return e.startRetrieving(ctx, sctx, pdServers, historyHotRegionsRequest)
@@ -981,32 +1009,37 @@ func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 	row[6].SetInt64(int64(hisHotRegion.RegionID))
 	row[7].SetInt64(int64(hisHotRegion.StoreID))
 	row[8].SetInt64(int64(hisHotRegion.PeerID))
-	if hisHotRegion.IsLeader {
+	if hisHotRegion.IsLearner {
 		row[9].SetInt64(1)
 	} else {
 		row[9].SetInt64(0)
 	}
-
-	row[10].SetString(strings.ToUpper(hisHotRegion.HotRegionType), mysql.DefaultCollationName)
-	if hisHotRegion.HotDegree != 0 {
-		row[11].SetInt64(hisHotRegion.HotDegree)
+	if hisHotRegion.IsLeader {
+		row[10].SetInt64(1)
 	} else {
-		row[11].SetNull()
+		row[10].SetInt64(0)
 	}
-	if hisHotRegion.FlowBytes != 0 {
-		row[12].SetFloat64(float64(hisHotRegion.FlowBytes))
+
+	row[11].SetString(strings.ToUpper(hisHotRegion.HotRegionType), mysql.DefaultCollationName)
+	if hisHotRegion.HotDegree != 0 {
+		row[12].SetInt64(hisHotRegion.HotDegree)
 	} else {
 		row[12].SetNull()
 	}
-	if hisHotRegion.KeyRate != 0 {
-		row[13].SetFloat64(float64(hisHotRegion.KeyRate))
+	if hisHotRegion.FlowBytes != 0 {
+		row[13].SetFloat64(float64(hisHotRegion.FlowBytes))
 	} else {
 		row[13].SetNull()
 	}
-	if hisHotRegion.QueryRate != 0 {
-		row[14].SetFloat64(float64(hisHotRegion.QueryRate))
+	if hisHotRegion.KeyRate != 0 {
+		row[14].SetFloat64(float64(hisHotRegion.KeyRate))
 	} else {
 		row[14].SetNull()
+	}
+	if hisHotRegion.QueryRate != 0 {
+		row[15].SetFloat64(float64(hisHotRegion.QueryRate))
+	} else {
+		row[15].SetNull()
 	}
 	return row, nil
 }
