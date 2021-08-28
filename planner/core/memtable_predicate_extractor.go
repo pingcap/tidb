@@ -694,7 +694,7 @@ type HotRegionsHistoryTableExtractor struct {
 	// e.g: SELECT * FROM tidb_hot_regions_history WHERE update_time<'2019-10-11 10:10:10.999'
 	EndTime int64
 
-	// RegionIDs(StoreIDs) represents all region(store) ids we should filter in PD to reduce network IO.
+	// RegionIDs/StoreIDs/PeerIDs represents all region/store/peer ids we should filter in PD to reduce network IO.
 	// e.g:
 	// 1. SELECT * FROM tidb_hot_regions_history WHERE region_id=1
 	// 2. SELECT * FROM tidb_hot_regions_history WHERE table_id in (11, 22)
@@ -702,8 +702,12 @@ type HotRegionsHistoryTableExtractor struct {
 	RegionIDs []uint64
 	StoreIDs  []uint64
 	PeerIDs   []uint64
-	// Roles represents all roles (leader or follower) we should filter in PD to reduce network IO.
-	Roles []uint64
+	// IsLearners/IsLeaders represents whether we should request for learner/leader role in PD to reduce network IO.
+	// e.g:
+	// 1. SELECT * FROM tidb_hot_regions_history WHERE is_learner=1
+	// 2. SELECT * FROM tidb_hot_regions_history WHERE is_learner in (0,1,2,3) -> request all
+	IsLearners []uint64
+	IsLeaders  []uint64
 
 	// HotRegionTypes represents all hot region types we should filter in PD to reduce network IO.
 	// e.g:
@@ -720,20 +724,26 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
-	// Extract the `region_id/store_id/peer_id/is_leader` columns.
+	// Extract the `region_id/store_id/peer_id` columns.
 	remained, regionIDSkipRequest, regionIDs := e.extractCol(schema, names, predicates, "region_id", false)
 	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false)
 	remained, peerIDSkipRequest, peerIDs := e.extractCol(schema, names, remained, "peer_id", false)
-	remained, isLeaderSkipRequest, roles := e.extractCol(schema, names, remained, "is_leader", false)
-
-	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest || peerIDSkipRequest || isLeaderSkipRequest
-	e.RegionIDs, e.StoreIDs = e.parseQuantilesUint64(regionIDs), e.parseQuantilesUint64(storeIDs)
-	e.PeerIDs, e.Roles = e.parseQuantilesUint64(peerIDs), e.parseQuantilesUint64(roles)
+	e.RegionIDs, e.StoreIDs, e.PeerIDs = e.parseQuantilesUint64(regionIDs), e.parseQuantilesUint64(storeIDs), e.parseQuantilesUint64(peerIDs)
+	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest || peerIDSkipRequest
 	if e.SkipRequest {
 		return nil
 	}
 
-	// Extract the `type` columns.
+	// Extract the is_learner/is_leader columns.
+	remained, isLearnerSkipRequest, isLearners := e.extractCol(schema, names, remained, "is_learner", false)
+	remained, isLeaderSkipRequest, isLeaders := e.extractCol(schema, names, remained, "is_leader", false)
+	e.IsLearners, e.IsLeaders = e.parseQuantilesUint64(isLearners), e.parseQuantilesUint64(isLeaders)
+	e.SkipRequest = isLearnerSkipRequest || isLeaderSkipRequest
+	if e.SkipRequest {
+		return nil
+	}
+
+	// Extract the `type` column.
 	remained, typeSkipRequest, types := e.extractCol(schema, names, remained, "type", false)
 	e.HotRegionTypes = types
 	e.SkipRequest = typeSkipRequest
@@ -780,8 +790,11 @@ func (e *HotRegionsHistoryTableExtractor) explainInfo(p *PhysicalMemTable) strin
 	if len(e.PeerIDs) > 0 {
 		r.WriteString(fmt.Sprintf("peer_ids:[%s], ", extractStringFromUint64Slice(e.PeerIDs)))
 	}
-	if len(e.Roles) > 0 {
-		r.WriteString(fmt.Sprintf("roles:[%s], ", extractStringFromUint64Slice(e.Roles)))
+	if len(e.IsLearners) > 0 {
+		r.WriteString(fmt.Sprintf("roles:[%s], ", extractStringFromUint64Slice(e.IsLearners)))
+	}
+	if len(e.IsLeaders) > 0 {
+		r.WriteString(fmt.Sprintf("roles:[%s], ", extractStringFromUint64Slice(e.IsLeaders)))
 	}
 	if len(e.HotRegionTypes) > 0 {
 		r.WriteString(fmt.Sprintf("hot_region_types:[%s], ", extractStringFromStringSet(e.HotRegionTypes)))
