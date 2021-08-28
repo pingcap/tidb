@@ -1050,17 +1050,18 @@ func (s *extractorSuite) TestInspectionRuleTableExtractor(c *C) {
 
 func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 	var cases = []struct {
-		sql                                 string
-		skipRequest                         bool
-		startTime, endTime                  int64
-		regionIDs, storeIDs, peerIDs, roles []uint64
-		hotRegionTypes                      set.StringSet
+		sql                          string
+		skipRequest                  bool
+		startTime, endTime           int64
+		regionIDs, storeIDs, peerIDs []uint64
+		isLearners, isLeaders        []uint64
+		hotRegionTypes               set.StringSet
 	}{
-		// Test full data, will not call Extract(),and executor(retriver) will panic and remind user to add conditions to save network IO.
+		// Test full data, it will not call Extract() and executor(retriver) will panic and remind user to add conditions to save network IO.
 		{
 			sql: "select * from information_schema.tidb_hot_regions_history",
 		},
-		// Test startTime and endTime
+		// Test startTime and endTime.
 		{
 			// Test for invalid update_time.
 			sql: "select * from information_schema.tidb_hot_regions_history where update_time='2019-10-10 10::10'",
@@ -1116,7 +1117,7 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 			endTime:   timestamp(c, "2019-10-10 10:10:10"),
 		},
 
-		// Test regionIDs, storeIDs, peerIDs
+		// Test `region_id`, `store_id`, `peer_id` columns.
 		{
 			sql:       "select * from information_schema.tidb_hot_regions_history where region_id=100",
 			regionIDs: []uint64{100},
@@ -1162,7 +1163,7 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 			regionIDs: []uint64{100},
 			storeIDs:  []uint64{200},
 		},
-		{ // and case
+		{
 			sql:         "select * from information_schema.tidb_hot_regions_history where region_id=100 and region_id=101",
 			skipRequest: true,
 		},
@@ -1193,7 +1194,7 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 								and store_id=200 and store_id in (201,202)`,
 			skipRequest: true,
 		},
-		{ // Intersection
+		{
 			sql:       "select * from information_schema.tidb_hot_regions_history where region_id in (100,101) and region_id in (101,102)",
 			regionIDs: []uint64{101},
 		},
@@ -1226,7 +1227,7 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 							and region_id in (103,104)`,
 			skipRequest: true,
 		},
-		// Test hotRegionTypes
+		// Test `type` column.
 		{
 			sql:            "select * from information_schema.tidb_hot_regions_history where type='read'",
 			hotRegionTypes: set.NewStringSet("read"),
@@ -1251,37 +1252,46 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 			sql:         "select * from information_schema.tidb_hot_regions_history where type in ('read') and type in ('write')",
 			skipRequest: true,
 		},
-		// Test peer roles
+		// Test `is_learner`, `is_leaeder` columns.
 		{
-			sql:   "select * from information_schema.tidb_hot_regions_history where is_leader=1",
-			roles: []uint64{1},
+			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner=1",
+			isLearners: []uint64{1},
 		},
 		{
-			sql:   "select * from information_schema.tidb_hot_regions_history where is_leader=true",
-			roles: []uint64{1},
+			sql:       "select * from information_schema.tidb_hot_regions_history where is_leader=0",
+			isLeaders: []uint64{0},
 		},
 		{
-			sql:   "select * from information_schema.tidb_hot_regions_history where is_leader in(0,1)",
-			roles: []uint64{0, 1},
+			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner=true",
+			isLearners: []uint64{1},
 		},
 		{
-			sql:   "select * from information_schema.tidb_hot_regions_history where is_leader in(true,false)",
-			roles: []uint64{0, 1},
+			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner in(0,1)",
+			isLearners: []uint64{0, 1},
 		},
 		{
-			sql:   "select * from information_schema.tidb_hot_regions_history where is_leader in(3,4)",
-			roles: []uint64{3, 4},
+			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner in(true,false)",
+			isLearners: []uint64{0, 1},
 		},
 		{
-			sql:         "select * from information_schema.tidb_hot_regions_history where is_leader=1 and is_leader=0",
+			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner in(3,4)",
+			isLearners: []uint64{3, 4},
+		},
+		{
+			sql:        "select * from information_schema.tidb_hot_regions_history where is_learner in(3,4) and is_leader in(0,1,true,false,3,4)",
+			isLearners: []uint64{3, 4},
+			isLeaders:  []uint64{0, 1, 3, 4},
+		},
+		{
+			sql:         "select * from information_schema.tidb_hot_regions_history where is_learner=1 and is_learner=0",
 			skipRequest: true,
 		},
 		{
-			sql:         "select * from information_schema.tidb_hot_regions_history where is_leader=3 and is_leader=false",
+			sql:         "select * from information_schema.tidb_hot_regions_history where is_learner=3 and is_learner=false",
 			skipRequest: true,
 		},
 		{
-			sql:         "select * from information_schema.tidb_hot_regions_history where is_leader=3 and is_leader=4",
+			sql:         "select * from information_schema.tidb_hot_regions_history where is_learner=3 and is_learner=4",
 			skipRequest: true,
 		},
 	}
@@ -1301,8 +1311,11 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 			c.Assert(hotRegionsHistoryExtractor.EndTime, Equals, ca.endTime, Commentf("SQL: %v", ca.sql))
 		}
 		c.Assert(hotRegionsHistoryExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
-		if len(ca.roles) > 0 {
-			c.Assert(hotRegionsHistoryExtractor.Roles, DeepEquals, ca.roles, Commentf("SQL: %v", ca.sql))
+		if len(ca.isLearners) > 0 {
+			c.Assert(hotRegionsHistoryExtractor.IsLearners, DeepEquals, ca.isLearners, Commentf("SQL: %v", ca.sql))
+		}
+		if len(ca.isLeaders) > 0 {
+			c.Assert(hotRegionsHistoryExtractor.IsLeaders, DeepEquals, ca.isLeaders, Commentf("SQL: %v", ca.sql))
 		}
 		if ca.hotRegionTypes.Count() > 0 {
 			c.Assert(hotRegionsHistoryExtractor.HotRegionTypes, DeepEquals, ca.hotRegionTypes, Commentf("SQL: %v", ca.sql))
