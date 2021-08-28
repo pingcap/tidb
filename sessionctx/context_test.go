@@ -32,6 +32,6 @@ func TestBasicCtxTypeToString(t *testing.T) {
 		{basicCtxType(9), "unknown"},
 	}
 	for _, tt := range tests {
-		require.Equalf(t, tt.key.String(), tt.v, "want %s but got %s", tt.v, tt.key.String())
+		require.Equal(t, tt.key.String(), tt.v)
 	}
 }
