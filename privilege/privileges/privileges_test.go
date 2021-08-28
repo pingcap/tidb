@@ -2086,6 +2086,50 @@ func TestGrantReferences(t *testing.T) {
 	tk.MustExec("DROP SCHEMA reftestdb")
 }
 
+func TestDashboardClientDynamicPriv(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE ROLE dc_r1")
+	tk.MustExec("CREATE USER dc_u1")
+	tk.MustExec("GRANT dc_r1 TO dc_u1")
+	tk.MustExec("SET DEFAULT ROLE dc_r1 TO dc_u1")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.Session().Auth(&auth.UserIdentity{
+		Username: "dc_u1",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("GRANT DASHBOARD_CLIENT ON *.* TO dc_r1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+		"GRANT DASHBOARD_CLIENT ON *.* TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("REVOKE DASHBOARD_CLIENT ON *.* FROM dc_r1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("GRANT DASHBOARD_CLIENT ON *.* TO dc_u1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+		"GRANT DASHBOARD_CLIENT ON *.* TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("REVOKE DASHBOARD_CLIENT ON *.* FROM dc_u1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+	))
+}
+
 // https://github.com/pingcap/tidb/issues/27213
 func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 	t.Parallel()
@@ -2175,4 +2219,28 @@ func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
 		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
 	))
+}
+
+func TestGrantLockTables(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE lock_tables_db")
+	tk.MustExec("USE lock_tables_db")
+	tk.MustExec("CREATE TABLE lock_tables_table (a int)")
+	tk.MustExec("CREATE USER lock_tables_user")
+	tk.MustExec("GRANT LOCK TABLES ON *.* TO lock_tables_user")
+	tk.MustExec("GRANT LOCK TABLES ON lock_tables_db.* TO lock_tables_user")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR lock_tables_user").Check(testkit.Rows(
+		`GRANT LOCK TABLES ON *.* TO 'lock_tables_user'@'%'`,
+		`GRANT LOCK TABLES ON lock_tables_db.* TO 'lock_tables_user'@'%'`))
+	tk.MustExec("DROP USER lock_tables_user")
+	tk.MustExec("DROP DATABASE lock_tables_db")
 }
