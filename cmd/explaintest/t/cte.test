@@ -226,3 +226,32 @@ create table tpk1(c1 int primary key);
 insert into tpk1 values(1), (2), (3);
 explain with cte1 as (select c1 from tpk) select /*+ merge_join(dt1, dt2) */ * from tpk1 dt1 inner join cte1 dt2 inner join cte1 dt3 on dt1.c1 = dt2.c1 and dt2.c1 = dt3.c1;
 with cte1 as (select c1 from tpk) select /*+ merge_join(dt1, dt2) */ * from tpk1 dt1 inner join cte1 dt2 inner join cte1 dt3 on dt1.c1 = dt2.c1 and dt2.c1 = dt3.c1;
+# case 34
+drop table if exists t;
+create table t(a int, b int, key (b));
+insert into t(a, b) values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+
+--echo // Basic subquery that can be inlined.
+explain
+with x as (select * from (select b from t) ss)
+select * from x where b = 1;
+
+--echo // Stable functions are safe to inline.
+explain
+with x as (select * from (select b, sleep(1) from t) ss)
+select * from x where b = 1;
+
+--echo // SELECT FOR UPDATE cannot be inlined.
+explain
+with x as (select * from (select b from t for update) ss)
+select * from x where b = 1;
+
+--echo // Multiply-referenced CTEs cannot be inlined.
+explain
+with x as (select * from (select b from t) ss)
+select * from x, x x2 where x.b = x2.b;
+
+--echo // Check handling of outer references.
+explain
+with x as (select * from t)
+select * from (with y as (select * from x) select * from y) ss;

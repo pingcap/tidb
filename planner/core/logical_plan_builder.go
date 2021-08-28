@@ -3482,6 +3482,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	if sel.With != nil {
+		// By default, we will inline CTEs (non-recursive) into the outer query if they are called just once.
+		if !sel.With.IsRecursive {
+			inlineCTEs(sel.With.CTEs, sel)
+		}
+
 		l := len(b.outerCTEs)
 		defer func() {
 			b.outerCTEs = b.outerCTEs[:l]
@@ -6384,4 +6389,111 @@ func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVar
 		col.RetType.Flag &= ^mysql.NotNullFlag
 	}
 	return res
+}
+
+type cteRefScanner struct {
+	cteRefCountMap map[*ast.CommonTableExpression]int
+}
+
+func (s *cteRefScanner) Enter(n ast.Node) (ast.Node, bool) {
+	switch v := n.(type) {
+	case *ast.TableName:
+		for cte := range s.cteRefCountMap {
+			if strings.EqualFold(cte.Name.String(), v.Name.String()) {
+				s.cteRefCountMap[cte]++
+				return n, true
+			}
+		}
+	}
+	return n, false
+}
+
+func (s *cteRefScanner) Leave(n ast.Node) (ast.Node, bool) {
+	return n, true
+}
+
+type cteSideEffectsChecker struct {
+	nameMap                     map[string]struct{}
+	containInvalidTable         bool
+	containNonPlainSelect       bool
+	containNonDeterministicFunc bool
+}
+
+func (c *cteSideEffectsChecker) Enter(n ast.Node) (ast.Node, bool) {
+	switch node := n.(type) {
+	case *ast.SelectStmt:
+		if node.LockInfo != nil {
+			c.containNonPlainSelect = true
+			return n, true
+		}
+	case *ast.FuncCallExpr:
+		_, isNonDeterministicFunc := expression.DeferredFunctions[node.FnName.L]
+		if isNonDeterministicFunc || !expression.IsFunctionSupported(node.FnName.L) {
+			c.containNonDeterministicFunc = true
+			return n, true
+		}
+	case *ast.TableName:
+		if _, ok := c.nameMap[node.Name.L]; isCTE(node) && !ok {
+			c.containInvalidTable = true
+			return n, true
+		}
+	}
+	return n, false
+}
+
+func (c *cteSideEffectsChecker) Leave(n ast.Node) (ast.Node, bool) {
+	return n, true
+}
+
+type cteInlineSolver struct {
+	cte *ast.CommonTableExpression
+}
+
+func (s *cteInlineSolver) Enter(n ast.Node) (ast.Node, bool) {
+	switch v := n.(type) {
+	case *ast.TableSource:
+		if tblName, ok := v.Source.(*ast.TableName); ok && strings.EqualFold(s.cte.Name.String(), tblName.Name.String()) {
+			// Convert the CTE Source into a subquery's Query.
+			v.Source = s.cte.Query.Query
+			if v.AsName.L == "" {
+				v.AsName = s.cte.Name
+				break
+			}
+			return n, true
+		}
+	}
+	return n, false
+}
+
+func (s *cteInlineSolver) Leave(n ast.Node) (ast.Node, bool) {
+	return n, true
+}
+
+func inlineCTEs(ctes []*ast.CommonTableExpression, sel *ast.SelectStmt) {
+	// Collect CTE from AST Node and record references.
+	cteRefCountMap := make(map[*ast.CommonTableExpression]int)
+	for _, cte := range ctes {
+		cteRefCountMap[cte] = 0
+	}
+	p := &cteRefScanner{cteRefCountMap}
+	sel.Accept(p)
+
+	nameMap := make(map[string]struct{})
+	for cte, count := range cteRefCountMap {
+		// Inline only singly-referenced CTEs.
+		if count == 1 && len(cte.ColNameList) == 0 {
+			// We can't inline if the CTE has side effects;
+			// this includes either not being a plain SELECT, or containing non-deterministic functions.
+			c := &cteSideEffectsChecker{nameMap: nameMap}
+			cte.Query.Accept(c)
+			if c.containInvalidTable {
+				break
+			}
+			if !c.containNonPlainSelect && !c.containNonDeterministicFunc {
+				s := &cteInlineSolver{cte}
+				sel.Accept(s)
+			}
+		}
+		nameMap[cte.Name.L] = struct{}{}
+	}
 }
