@@ -37,6 +37,16 @@ func NewWorkerPool(limit uint, name string) *WorkerPool {
 	}
 }
 
+// IdleCount counts how many idle workers in the pool.
+func (pool *WorkerPool) IdleCount() int {
+	return len(pool.workers)
+}
+
+// Limit is the limit of the pool
+func (pool *WorkerPool) Limit() int {
+	return int(pool.limit)
+}
+
 // Apply executes a task.
 func (pool *WorkerPool) Apply(fn taskFunc) {
 	worker := pool.ApplyWorker()
@@ -95,5 +105,5 @@ func (pool *WorkerPool) RecycleWorker(worker *Worker) {
 
 // HasWorker checks if the pool has unallocated workers.
 func (pool *WorkerPool) HasWorker() bool {
-	return len(pool.workers) > 0
+	return pool.IdleCount() > 0
 }

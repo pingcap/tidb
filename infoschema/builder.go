@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
+	"github.com/pingcap/tidb/util/placementpolicy"
 )
 
 // Builder builds a new InfoSchema.
@@ -358,12 +359,13 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	if len(allocs) == 0 {
 		allocs = autoid.NewAllocatorsFromTblInfo(b.store, dbInfo.ID, tblInfo)
 	} else {
+		tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
 		switch tp {
 		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
-			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType)
+			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType, tblVer)
 			allocs = append(allocs, newAlloc)
 		case model.ActionRebaseAutoRandomBase:
-			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
+			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)
 			allocs = append(allocs, newAlloc)
 		case model.ActionModifyColumn:
 			// Change column attribute from auto_increment to auto_random.
@@ -372,7 +374,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 				allocs = allocs.Filter(func(a autoid.Allocator) bool {
 					return a.GetType() != autoid.AutoIncrementType && a.GetType() != autoid.RowIDAllocType
 				})
-				newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
+				newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)
 				allocs = append(allocs, newAlloc)
 			}
 		}
@@ -485,6 +487,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) *Builder {
 	b.is.schemaMetaVersion = oldIS.schemaMetaVersion
 	b.copySchemasMap(oldIS)
 	b.copyBundlesMap(oldIS)
+	b.copyPoliciesMap(oldIS)
 	copy(b.is.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return b
 }
@@ -499,6 +502,15 @@ func (b *Builder) copyBundlesMap(oldIS *infoSchema) {
 	is := b.is
 	for _, v := range oldIS.RuleBundles() {
 		is.SetBundle(v)
+	}
+}
+
+func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
+	is := b.is
+	is.policyMutex.Lock()
+	defer is.policyMutex.Unlock()
+	for _, v := range oldIS.PlacementPolicies() {
+		is.policyMap[v.Name.L] = v
 	}
 }
 
@@ -589,6 +601,7 @@ func NewBuilder(store kv.Storage) *Builder {
 		store: store,
 		is: &infoSchema{
 			schemaMap:           map[string]*schemaTables{},
+			policyMap:           map[string]*placementpolicy.PolicyInfo{},
 			ruleBundleMap:       map[string]*placement.Bundle{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},
