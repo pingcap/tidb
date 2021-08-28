@@ -64,7 +64,7 @@ func TestSequenceAutoid(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	alloc := autoid.NewSequenceAllocator(store, 1, seq)
+	alloc := autoid.NewSequenceAllocator(store, 1, 1, seq)
 	require.NotNil(t, alloc)
 
 	// allocate sequence cache.
@@ -199,7 +199,7 @@ func TestConcurrentAllocSequence(t *testing.T) {
 	errCh := make(chan error, count)
 
 	allocSequence := func() {
-		alloc := autoid.NewSequenceAllocator(store, 2, seq)
+		alloc := autoid.NewSequenceAllocator(store, 2, 2, seq)
 		for j := 0; j < 3; j++ {
 			base, end, _, err1 := alloc.AllocSeqCache(2)
 			if err1 != nil {
