@@ -1314,21 +1314,25 @@ var defaultSysVars = []*SysVar{
 	}, GetSession: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(ProcessGeneralLog.Load()), nil
 	}},
-	{Scope: ScopeSession, Name: TiDBGeneralLogMaxAge, Value: strconv.Itoa(DefTiDBGeneralLogMaxAge), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, skipInit: true, SetSession: func(s *SessionVars, val string) error {
-		maxAge := int32(tidbOptPositiveInt32(val, DefTiDBGeneralLogMaxAge))
-		atomic.StoreInt32(&GeneralLogMaxAge, maxAge)
+	{Scope: ScopeSession, Name: TiDBGeneralLogMaxAge, Value: strconv.Itoa(config.GetGlobalConfig().Log.File.MaxDays), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+		maxAge, err := strconv.ParseInt(val, 10, 32)
+		if err != nil {
+			return err
+		}
+
+		GeneralLogMaxDays.Store(int32(maxAge))
 
 		cfg := config.GetGlobalConfig().Log.ToLogConfig()
 		cfg.Config.File.MaxDays = int(maxAge)
 
-		err := logutil.ReplaceLogger(cfg)
+		err = logutil.ReplaceLogger(cfg)
 		if err != nil {
 			return err
 		}
 
 		return nil
 	}, GetSession: func(s *SessionVars) (string, error) {
-		return strconv.FormatInt(int64(atomic.LoadInt32(&GeneralLogMaxAge)), 10), nil
+		return strconv.FormatInt(int64(GeneralLogMaxDays.Load()), 10), nil
 	}},
 	{Scope: ScopeSession, Name: TiDBPProfSQLCPU, Value: strconv.Itoa(DefTiDBPProfSQLCPU), Type: TypeInt, skipInit: true, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
 		EnablePProfSQLCPU.Store(uint32(tidbOptPositiveInt32(val, DefTiDBPProfSQLCPU)) > 0)

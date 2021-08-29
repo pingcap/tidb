@@ -748,13 +748,12 @@ const (
 	DefTMPTableSize                       = 16777216
 	DefTiDBEnableLocalTxn                 = false
 	DefTiDBEnableOrderedResultMode        = false
-	DefTiDBGeneralLogMaxAge               = 0
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog            = atomic.NewBool(false)
-	GeneralLogMaxAge       int32 = DefTiDBGeneralLogMaxAge
+	GeneralLogMaxDays             = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
 	EnablePProfSQLCPU            = atomic.NewBool(false)
 	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
 	maxDDLReorgWorkerCount int32 = 128
