@@ -459,7 +459,7 @@ func getCurrentTable(d *ddl, schemaID, tableID int64) (table.Table, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	alloc := autoid.NewAllocator(d.store, schemaID, false, autoid.RowIDAllocType)
+	alloc := autoid.NewAllocator(d.store, schemaID, tblInfo.ID, false, autoid.RowIDAllocType)
 	tbl, err := table.TableFromMeta(autoid.NewAllocators(alloc), tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
