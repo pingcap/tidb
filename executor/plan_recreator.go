@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,7 +17,7 @@ package executor
 import (
 	"archive/zip"
 	"context"
-	"crypto/md5"
+	"crypto/md5" // #nosec G501
 	"encoding/hex"
 	"fmt"
 	"math/rand"
@@ -155,7 +156,7 @@ func (e *PlanRecreatorSingleInfo) dumpSingle() (string, error) {
 		}
 	}
 	// Generate Token
-	token := md5.Sum([]byte(fmt.Sprintf("%s%d", fileName, rand.Int63())))
+	token := md5.Sum([]byte(fmt.Sprintf("%s%d", fileName, rand.Int63()))) // #nosec G401 G404
 	e.Ctx.Value(PlanRecreatorFileList).(fileList).FileInfo[fileName] = fileInfo{StartTime: startTime, Token: token}
 	e.Ctx.Value(PlanRecreatorFileList).(fileList).TokenMap[token] = fileName
 

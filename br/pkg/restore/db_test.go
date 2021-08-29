@@ -77,7 +77,7 @@ func (s *testRestoreSchemaSuite) TestRestoreAutoIncID(c *C) {
 		DB:   dbInfo,
 	}
 	// Get the next AutoIncID
-	idAlloc := autoid.NewAllocator(s.mock.Storage, dbInfo.ID, false, autoid.RowIDAllocType)
+	idAlloc := autoid.NewAllocator(s.mock.Storage, dbInfo.ID, table.Info.ID, false, autoid.RowIDAllocType)
 	globalAutoID, err := idAlloc.NextGlobalAutoID(table.Info.ID)
 	c.Assert(err, IsNil, Commentf("Error allocate next auto id"))
 	c.Assert(autoIncID, Equals, uint64(globalAutoID))
@@ -131,6 +131,8 @@ func (s *testRestoreSchemaSuite) TestFilterDDLJobs(c *C) {
 	c.Assert(err, IsNil, Commentf("Error get ddl jobs: %s", err))
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	c.Assert(err, IsNil, Commentf("Flush failed", err))
+	err = metaWriter.FlushBackupMeta(ctx)
+	c.Assert(err, IsNil, Commentf("Finially flush backupmeta failed", err))
 	infoSchema, err := s.mock.Domain.GetSnapshotInfoSchema(ts)
 	c.Assert(err, IsNil, Commentf("Error get snapshot info schema: %s", err))
 	dbInfo, ok := infoSchema.SchemaByName(model.NewCIStr("test_db"))
@@ -187,6 +189,9 @@ func (s *testRestoreSchemaSuite) TestFilterDDLJobsV2(c *C) {
 	c.Assert(err, IsNil, Commentf("Error get ddl jobs: %s", err))
 	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
 	c.Assert(err, IsNil, Commentf("Flush failed", err))
+	err = metaWriter.FlushBackupMeta(ctx)
+	c.Assert(err, IsNil, Commentf("Flush BackupMeta failed", err))
+
 	infoSchema, err := s.mock.Domain.GetSnapshotInfoSchema(ts)
 	c.Assert(err, IsNil, Commentf("Error get snapshot info schema: %s", err))
 	dbInfo, ok := infoSchema.SchemaByName(model.NewCIStr("test_db"))

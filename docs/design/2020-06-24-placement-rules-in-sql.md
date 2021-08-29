@@ -318,7 +318,7 @@ This is what a label rule may look like:
 }
 ```
 
-It connects the table name `db1/tb` with the key range.
+It connects the table name `db1/tb1` with the key range.
 
 Now you need to connect the label with the database / table / partition name in the placement rules.
 

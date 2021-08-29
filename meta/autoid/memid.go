@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -67,7 +68,7 @@ func (alloc *inMemoryAllocator) NextGlobalAutoID(tableID int64) (int64, error) {
 	return alloc.base, nil
 }
 
-func (alloc *inMemoryAllocator) Alloc(ctx context.Context, tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
+func (alloc *inMemoryAllocator) Alloc(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error) {
 	if n == 0 {
 		return 0, 0, nil
 	}

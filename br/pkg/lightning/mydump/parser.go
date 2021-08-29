@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -91,8 +92,9 @@ type Chunk struct {
 
 // Row is the content of a row.
 type Row struct {
-	RowID int64
-	Row   []types.Datum
+	RowID  int64
+	Row    []types.Datum
+	Length int
 }
 
 // MarshalLogArray implements the zapcore.ArrayMarshaler interface
@@ -412,6 +414,7 @@ func (parser *ChunkParser) ReadRow() error {
 
 	row := &parser.lastRow
 	st := stateValues
+	row.Length = 0
 
 	for {
 		tok, content, err := parser.lex()
@@ -421,6 +424,7 @@ func (parser *ChunkParser) ReadRow() error {
 			}
 			return errors.Trace(err)
 		}
+		row.Length += len(content)
 		switch st {
 		case stateTableName:
 			switch tok {

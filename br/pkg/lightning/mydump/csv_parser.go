@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -444,6 +445,7 @@ func (parser *CSVParser) replaceEOF(err error, replaced error) error {
 // ReadRow reads a row from the datafile.
 func (parser *CSVParser) ReadRow() error {
 	row := &parser.lastRow
+	row.Length = 0
 	row.RowID++
 
 	// skip the header first
@@ -475,6 +477,7 @@ func (parser *CSVParser) ReadRow() error {
 		row.Row = make([]types.Datum, len(records))
 	}
 	for i, record := range records {
+		row.Length += len(record)
 		unescaped, isNull := parser.unescapeString(record)
 		if isNull {
 			row.Row[i].SetNull()

@@ -3,6 +3,7 @@
 package logutil_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func Test(t *testing.T) {
@@ -206,4 +208,51 @@ func (s *testLoggingSuite) TestShortError(c *C) {
 	err := errors.Annotate(berrors.ErrInvalidArgument, "test")
 
 	assertTrimEqual(c, logutil.ShortError(err), `{"error": "test: [BR:Common:ErrInvalidArgument]invalid argument"}`)
+}
+
+type FieldEquals struct{}
+
+func (f FieldEquals) Info() *CheckerInfo {
+	return &CheckerInfo{
+		Name: "FieldEquals",
+		Params: []string{
+			"expected",
+			"actual",
+		},
+	}
+}
+
+func (f FieldEquals) Check(params []interface{}, names []string) (result bool, err string) {
+	expected := params[0].(zap.Field)
+	actual := params[1].(zap.Field)
+
+	if !expected.Equals(actual) {
+		return false, "Field not match."
+	}
+	return true, ""
+}
+
+func (s *testLoggingSuite) TestContextual(c *C) {
+	testCore, logs := observer.New(zap.InfoLevel)
+	logutil.ResetGlobalLogger(zap.New(testCore))
+
+	ctx := context.Background()
+	l0 := logutil.LoggerFromContext(ctx)
+	l0.Info("going to take an adventure?", zap.Int("HP", 50), zap.Int("HP-MAX", 50), zap.String("character", "solte"))
+	lctx := logutil.ContextWithField(ctx, zap.Strings("firends", []string{"firo", "seren", "black"}))
+	l := logutil.LoggerFromContext(lctx)
+	l.Info("let's go!", zap.String("character", "solte"))
+
+	observedLogs := logs.TakeAll()
+	checkLog(c, observedLogs[0],
+		"going to take an adventure?", zap.Int("HP", 50), zap.Int("HP-MAX", 50), zap.String("character", "solte"))
+	checkLog(c, observedLogs[1],
+		"let's go!", zap.Strings("firends", []string{"firo", "seren", "black"}), zap.String("character", "solte"))
+}
+
+func checkLog(c *C, actual observer.LoggedEntry, message string, fields ...zap.Field) {
+	c.Assert(message, Equals, actual.Message)
+	for i, f := range fields {
+		c.Assert(f, FieldEquals{}, actual.Context[i])
+	}
 }
