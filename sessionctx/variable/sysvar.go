@@ -1314,7 +1314,7 @@ var defaultSysVars = []*SysVar{
 	}, GetSession: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(ProcessGeneralLog.Load()), nil
 	}},
-	{Scope: ScopeSession, Name: TiDBGeneralLogMaxAge, Value: strconv.Itoa(config.GetGlobalConfig().Log.File.MaxDays), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeSession, Name: TiDBGeneralLogMaxDays, Value: strconv.Itoa(config.GetGlobalConfig().Log.File.MaxDays), Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32, skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		maxAge, err := strconv.ParseInt(val, 10, 32)
 		if err != nil {
 			return err
