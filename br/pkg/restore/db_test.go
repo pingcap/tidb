@@ -77,7 +77,7 @@ func (s *testRestoreSchemaSuite) TestRestoreAutoIncID(c *C) {
 		DB:   dbInfo,
 	}
 	// Get the next AutoIncID
-	idAlloc := autoid.NewAllocator(s.mock.Storage, dbInfo.ID, false, autoid.RowIDAllocType)
+	idAlloc := autoid.NewAllocator(s.mock.Storage, dbInfo.ID, table.Info.ID, false, autoid.RowIDAllocType)
 	globalAutoID, err := idAlloc.NextGlobalAutoID(table.Info.ID)
 	c.Assert(err, IsNil, Commentf("Error allocate next auto id"))
 	c.Assert(autoIncID, Equals, uint64(globalAutoID))
