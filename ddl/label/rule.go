@@ -56,6 +56,10 @@ func NewRule() *Rule {
 
 // ApplyAttributesSpec will transfer attributes defined in AttributesSpec to the labels.
 func (r *Rule) ApplyAttributesSpec(spec *ast.AttributesSpec) error {
+	if spec.Default {
+		r.Labels = []Label{}
+		return nil
+	}
 	// construct a string list
 	attrBytes := []byte("[" + spec.Attributes + "]")
 	attributes := []string{}
@@ -91,7 +95,9 @@ func (r *Rule) Reset(id int64, dbName, tableName string, partName ...string) *Ru
 	} else {
 		r.ID = fmt.Sprintf(TableIDFormat, IDPrefix, dbName, tableName)
 	}
-
+	if len(r.Labels) == 0 {
+		return r
+	}
 	var hasDBKey, hasTableKey, hasPartitionKey bool
 	for i := range r.Labels {
 		switch r.Labels[i].Key {
