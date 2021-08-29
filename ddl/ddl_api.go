@@ -2225,7 +2225,7 @@ func checkCharsetAndCollation(cs string, co string) error {
 func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd int64, tp autoid.AllocatorType) error {
 	allocs := autoid.NewAllocatorsFromTblInfo(d.store, schemaID, tbInfo)
 	if alloc := allocs.Get(tp); alloc != nil {
-		err := alloc.Rebase(tbInfo.ID, newEnd, false)
+		err := alloc.Rebase(newEnd, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2683,7 +2683,7 @@ func adjustNewBaseToNextGlobalID(ctx sessionctx.Context, t table.Table, tp autoi
 	if alloc == nil {
 		return newBase, nil
 	}
-	autoID, err := alloc.NextGlobalAutoID(t.Meta().ID)
+	autoID, err := alloc.NextGlobalAutoID()
 	if err != nil {
 		return newBase, errors.Trace(err)
 	}
