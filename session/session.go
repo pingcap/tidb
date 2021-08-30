@@ -2889,6 +2889,9 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		fnGetSMV := func() int64 {
 			return s.GetInfoSchema().SchemaMetaVersion()
 		}
+		fnGetReadConsistency := func() bool {
+			return vars.IsIsolation(ast.ReadCommitted)
+		}
 
 		logEntry := logutil.GeneralLogEntry{
 			ConnID:                 vars.ConnectionID,
@@ -2896,7 +2899,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			FnGetSchemaMetaVersion: fnGetSMV,
 			TxnStartTS:             vars.TxnCtx.StartTS,
 			TxnForUpdateTS:         vars.TxnCtx.GetForUpdateTS(),
-			IsReadConsistency:      vars.IsIsolation(ast.ReadCommitted),
+			FnGetReadConsistency:   fnGetReadConsistency,
 			CurrentDB:              vars.CurrentDB,
 			TxnMode:                vars.GetReadableTxnMode(),
 			FnGetQuery:             fnGetQuery,

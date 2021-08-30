@@ -20,18 +20,20 @@ const (
 type GeneralLogEntry struct {
 	ConnID                 uint64
 	FnGetUser              func() string
-	User                   string
 	FnGetSchemaMetaVersion func() int64
-	SchemaMetaVersion      int64
 	TxnStartTS             uint64
 	TxnForUpdateTS         uint64
-	IsReadConsistency      bool
+	FnGetReadConsistency   func() bool
 	CurrentDB              string
 	TxnMode                string
 	FnGetQuery             func(*strings.Builder) string
-	Query                  string
 
 	buf *buffer.Buffer
+	// following fields are for benchmark testing
+	user              string
+	schemaMetaVersion int64
+	isReadConsistency bool
+	query             string
 }
 
 const _hex = "0123456789abcdef"
@@ -47,22 +49,22 @@ func (e *GeneralLogEntry) writeToBufferDirect(buf *buffer.Buffer) {
 	e.buf.AppendString("[GENERAL_LOG] [conn=")
 	e.buf.AppendUint(e.ConnID)
 	e.buf.AppendString("] [user=")
-	e.safeAddStringWithQuote(e.User)
+	e.safeAddStringWithQuote(e.user)
 	e.buf.AppendString("] [schemaVersion=")
-	e.buf.AppendInt(e.SchemaMetaVersion)
+	e.buf.AppendInt(e.schemaMetaVersion)
 	e.buf.AppendString("] [txnStartTS=")
 	e.buf.AppendUint(e.TxnStartTS)
 	e.buf.AppendString("] [forUpdateTS=")
 	e.buf.AppendUint(e.TxnForUpdateTS)
 	e.buf.AppendString("] [isReadConsistency=")
-	e.buf.AppendBool(e.IsReadConsistency)
+	e.buf.AppendBool(e.isReadConsistency)
 	e.buf.AppendString("] [current_db=")
 	e.buf.AppendString(e.CurrentDB)
 	e.buf.AppendString("] [txn_mode=")
 	e.buf.AppendString(e.TxnMode)
 	e.buf.AppendString("] [sql=")
 	fnGetQueryBuf := fnGetQueryPool.Get().(*strings.Builder)
-	e.safeAddStringWithQuote(e.Query)
+	e.safeAddStringWithQuote(e.query)
 	fnGetQueryBuf.Reset()
 	fnGetQueryPool.Put(fnGetQueryBuf)
 	e.buf.AppendString("]")
@@ -183,7 +185,7 @@ func (gl *GeneralLog) startFormatWorker() {
 			zap.Int64("schemaVersion", e.FnGetSchemaMetaVersion()),
 			zap.Uint64("txnStartTS", e.TxnStartTS),
 			zap.Uint64("forUpdateTS", e.TxnForUpdateTS),
-			zap.Bool("isReadConsistency", e.IsReadConsistency),
+			zap.Bool("isReadConsistency", e.FnGetReadConsistency()),
 			zap.String("current_db", e.CurrentDB),
 			zap.String("txn_mode", e.TxnMode),
 			zap.String("sql", e.FnGetQuery(fnGetQueryBuf)),

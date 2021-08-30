@@ -18,14 +18,14 @@ func BenchmarkGeneralLog(b *testing.B) {
 	query := buf.String()
 	glEntry := GeneralLogEntry{
 		ConnID:            1,
-		User:              "user",
-		SchemaMetaVersion: 1,
+		user:              "user",
+		schemaMetaVersion: 1,
 		TxnStartTS:        1,
 		TxnForUpdateTS:    1,
-		IsReadConsistency: true,
+		isReadConsistency: true,
 		CurrentDB:         "database",
 		TxnMode:           "optimistic",
-		Query:             query,
+		query:             query,
 	}
 	var glBuf buffer.Buffer
 	zapFields := []zapcore.Field{
