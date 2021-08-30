@@ -2351,6 +2351,6 @@ func TestPlacementPolicyStmt(t *testing.T) {
 
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "empty_user", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, createStmt)
-	mustExec(t, se, "drop placement policy if exists x")
-	//require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+	_, err := se.ExecuteInternal(context.Background(), "drop placement policy if exists x")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or PLACEMENT_ADMIN privilege(s) for this operation")
 }
