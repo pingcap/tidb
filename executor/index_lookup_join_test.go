@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -272,7 +273,7 @@ func (s *testSuite5) TestIssue19411(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 values (2)")
 	tk.MustExec("insert into t2 values (2)")
-	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */ * from t1 left join t2 on t1.c_int = t2.c_int").Check(testkit.Rows(
+	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */ * from t1 left join t2 on t1.c_int = t2.c_int").Sort().Check(testkit.Rows(
 		"1 1",
 		"2 2"))
 	tk.MustExec("commit")

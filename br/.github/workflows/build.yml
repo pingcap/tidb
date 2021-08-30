@@ -1,0 +1,68 @@
+name: build
+on:
+  push:
+    branches:
+      - master
+      - 'release-[0-9].[0-9]*'
+    paths-ignore:
+      - '**.html'
+      - '**.md'
+      - 'CNAME'
+      - 'LICENSE'
+      - 'docs/**'
+      - 'tests/**'
+      - 'docker/**'
+      - '.github/workflows/**.yml'
+  pull_request:
+    branches:
+      - master
+      - 'release-[0-9].[0-9]*'
+    paths-ignore:
+      - '**.html'
+      - '**.md'
+      - 'CNAME'
+      - 'LICENSE'
+      - 'docs/**'
+      - 'tests/**'
+      - 'docker/**'
+      - '.github/workflows/**.yml'
+
+jobs:
+  compile:
+    name: ${{ matrix.os }} / ${{ matrix.target}}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: x86_64-apple-darwin
+
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v2.1.0
+
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.16
+
+      - name: Run build
+        run: make build
+
+  compile-freebsd:
+    name: Compile for FreeBSD job
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2.1.0
+
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: 1.16
+
+      - name: Compile for FreeBSD
+        run: GOOS=freebsd make build

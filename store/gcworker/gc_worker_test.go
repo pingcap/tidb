@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1587,6 +1588,17 @@ func (s *testGCWorkerSuite) TestGCPlacementRules(c *C) {
 	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
 	pid, err := s.gcWorker.doGCPlacementRules(dr)
 	c.Assert(pid, Equals, int64(1))
+	c.Assert(err, IsNil)
+}
+
+func (s *testGCWorkerSuite) TestGCLabelRules(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/gcworker/mockHistoryJob", "return(\"schema/d1/t1\")"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/gcworker/mockHistoryJob"), IsNil)
+	}()
+
+	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
+	err := s.gcWorker.doGCLabelRules(dr)
 	c.Assert(err, IsNil)
 }
 
