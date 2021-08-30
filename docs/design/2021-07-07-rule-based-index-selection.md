@@ -1,8 +1,8 @@
 # Proposal: Improve rule based index selection
 
 - Author(s): [xuyifangreeneyes](https://github.com/xuyifangreeneyes)
-- Last updated: 2021-08-13 
-- Discussion at:
+- Discussion PR: https://github.com/pingcap/tidb/pull/27223
+- Tracking Issue: https://github.com/pingcap/tidb/issues/26020
 
 ## Abstract
 
