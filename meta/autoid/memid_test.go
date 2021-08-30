@@ -49,47 +49,47 @@ func TestInMemoryAlloc(t *testing.T) {
 
 	// alloc 1
 	ctx := context.Background()
-	_, id, err := alloc.Alloc(ctx, 1, 1, 1, 1)
+	_, id, err := alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
-	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
+	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), id)
 
 	// alloc N
-	_, id, err = alloc.Alloc(ctx, 1, 10, 1, 1)
+	_, id, err = alloc.Alloc(ctx, 10, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(12), id)
 
 	// increment > N
-	_, id, err = alloc.Alloc(ctx, 1, 1, 10, 1)
+	_, id, err = alloc.Alloc(ctx, 1, 10, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(21), id)
 
 	// offset
-	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 30)
+	_, id, err = alloc.Alloc(ctx, 1, 1, 30)
 	require.NoError(t, err)
 	require.Equal(t, int64(30), id)
 
 	// rebase
 	err = alloc.Rebase(1, int64(40), true)
 	require.NoError(t, err)
-	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
+	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(41), id)
 	err = alloc.Rebase(1, int64(10), true)
 	require.NoError(t, err)
-	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
+	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(42), id)
 
 	// maxInt64
 	err = alloc.Rebase(1, int64(math.MaxInt64-2), true)
 	require.NoError(t, err)
-	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
+	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(math.MaxInt64-1), id)
-	_, _, err = alloc.Alloc(ctx, 1, 1, 1, 1)
+	_, _, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.True(t, terror.ErrorEqual(err, autoid.ErrAutoincReadFailed))
 
 	// test unsigned
@@ -100,9 +100,9 @@ func TestInMemoryAlloc(t *testing.T) {
 	var n uint64 = math.MaxUint64 - 2
 	err = alloc.Rebase(1, int64(n), true)
 	require.NoError(t, err)
-	_, id, err = alloc.Alloc(ctx, 1, 1, 1, 1)
+	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(n+1), id)
-	_, _, err = alloc.Alloc(ctx, 1, 1, 1, 1)
+	_, _, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.True(t, terror.ErrorEqual(err, autoid.ErrAutoincReadFailed))
 }
