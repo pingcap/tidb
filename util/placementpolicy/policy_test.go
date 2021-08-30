@@ -17,8 +17,15 @@ package placementpolicy
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/goleak"
 )
+
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	goleak.VerifyTestMain(m)
+}
 
 func TestPlacementSettingsString(t *testing.T) {
 	assert := assert.New(t)
