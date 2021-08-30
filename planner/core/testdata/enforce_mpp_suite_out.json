@@ -317,21 +317,6 @@
         ]
       },
       {
-        "SQL": "EXPLAIN SELECT group_concat(a) from t; -- 9. agg func not supported",
-        "Plan": [
-          "HashAgg_6 1.00 root  funcs:group_concat(Column#6 separator \",\")->Column#5",
-          "└─Projection_31 10000.00 root  cast(test.t.a, var_string(20))->Column#6",
-          "  └─TableReader_14 10000.00 root  data:TableFullScan_12",
-          "    └─TableFullScan_12 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
-        ],
-        "Warn": [
-          "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now",
-          "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now",
-          "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now",
-          "Aggregation can not be pushed to tiflash because AggFunc `group_concat` is not supported now"
-        ]
-      },
-      {
         "SQL": "EXPLAIN SELECT count(a) from t group by md5(a); -- 10. scalar func not supported",
         "Plan": [
           "HashAgg_6 8000.00 root  group by:Column#7, funcs:count(Column#6)->Column#5",
