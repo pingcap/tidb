@@ -498,13 +498,19 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 }
 
 // CutDatumByPrefixLen cuts the datum according to the prefix length.
-// If it's UTF8 encoded, we will cut it by characters rather than bytes.
+// If it's binary or ascii encoded, we will cut it by bytes rather than characters.
 func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
 		colCharset := tp.Charset
 		colValue := v.GetBytes()
-		isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
-		if isUTF8Charset {
+		if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII {
+			// truncate value and limit its length
+			v.SetBytes(colValue[:length])
+			if v.Kind() == types.KindString {
+				v.SetString(v.GetString(), tp.Collate)
+			}
+			return true
+		} else {
 			if length != types.UnspecifiedLength && utf8.RuneCount(colValue) > length {
 				rs := bytes.Runes(colValue)
 				truncateStr := string(rs[:length])
@@ -512,13 +518,6 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 				v.SetString(truncateStr, tp.Collate)
 				return true
 			}
-		} else if length != types.UnspecifiedLength && len(colValue) > length {
-			// truncate value and limit its length
-			v.SetBytes(colValue[:length])
-			if v.Kind() == types.KindString {
-				v.SetString(v.GetString(), tp.Collate)
-			}
-			return true
 		}
 	}
 	return false
@@ -529,11 +528,10 @@ func ReachPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
 		colCharset := tp.Charset
 		colValue := v.GetBytes()
-		isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
-		if isUTF8Charset {
-			return length != types.UnspecifiedLength && utf8.RuneCount(colValue) == length
+		if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII {
+			return length != types.UnspecifiedLength && len(colValue) == length
 		}
-		return length != types.UnspecifiedLength && len(colValue) == length
+		return length != types.UnspecifiedLength && utf8.RuneCount(colValue) == length
 	}
 	return false
 }
