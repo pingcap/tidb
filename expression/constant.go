@@ -16,8 +16,6 @@ package expression
 
 import (
 	"fmt"
-	"sync"
-
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -59,8 +57,6 @@ func NewNull() *Constant {
 // Constant stands for a constant value.
 type Constant struct {
 	Value types.Datum
-	// once protects the changes of RetType
-	lock    sync.Mutex
 	RetType *types.FieldType
 	// DeferredExpr holds deferred function in PlanCache cached plan.
 	// it's only used to represent non-deterministic functions(see expression.DeferredFunctions)
@@ -124,23 +120,6 @@ func (c *Constant) GetType() *types.FieldType {
 		dt := c.ParamMarker.GetUserVar()
 		types.DefaultParamTypeForValue(dt.GetValue(), tp)
 		return tp
-	}
-	if !c.Value.IsNull() {
-		// c.once.Do(func() {
-		// 	c.RetType = c.RetType.Clone()
-		// 	c.RetType.Flag |= mysql.NotNullFlag
-		// })
-		// tp := c.RetType.Clone()
-		// tp.Flag |= mysql.NotNullFlag
-		// return tp
-
-		c.lock.Lock()
-		c.RetType.Flag |= mysql.NotNullFlag
-		c.lock.Unlock()
-	} else {
-		c.lock.Lock()
-		c.RetType.Flag &^= mysql.NotNullFlag
-		c.lock.Unlock()
 	}
 	return c.RetType
 }
