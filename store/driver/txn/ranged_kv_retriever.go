@@ -143,8 +143,8 @@ func (retrievers sortedRetrievers) TryBatchGet(ctx context.Context, keys []kv.Ke
 	return nonCustomKeys, nil
 }
 
-// GetScanRetrievers gets all retrievers located in range [StartKey, endKey).
-// If snapshot is not nil, the snapshot range between two custom retrievers will also be returned.
+// GetScanRetrievers gets all retrievers who have intersections with range [StartKey, endKey).
+// If snapshot is not nil, the range between two custom retrievers with a snapshot retriever will also be returned.
 func (retrievers sortedRetrievers) GetScanRetrievers(startKey, endKey kv.Key, snapshot kv.Retriever) []*RangedKVRetriever {
 	// According to our experience, in most cases there is only one retriever returned.
 	result := make([]*RangedKVRetriever, 0, 1)
