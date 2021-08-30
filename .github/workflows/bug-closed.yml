@@ -18,7 +18,7 @@ jobs:
       - name: Label issues
         uses: andymckay/labeler@1.0.3
         with:
-          add-labels: "need-more-info"
+          add-labels: "needs-more-info"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Add comment
         uses: peter-evans/create-or-update-comment@v1.4.5
