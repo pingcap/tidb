@@ -170,7 +170,7 @@ func (s *testMemTableReaderSuite) TestTiDBClusterConfig(c *C) {
 
 	// mock servers
 	servers := []string{}
-	for _, typ := range []string{"tidb", "tikv", "pd"} {
+	for _, typ := range []string{"tidb", "tikv", "tiflash", "pd"} {
 		for _, server := range testServers {
 			servers = append(servers, strings.Join([]string{typ, server.address, server.address}, ","))
 		}
