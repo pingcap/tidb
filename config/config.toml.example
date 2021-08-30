@@ -211,6 +211,9 @@ auto-tls = true
 # Minium TLS version to use, e.g. "TLSv1.2"
 tls-version = ""
 
+# The RSA Key size for automatic generated RSA keys
+rsa-key-size = 4096
+
 [status]
 # If enable status report HTTP service.
 report-status = true
