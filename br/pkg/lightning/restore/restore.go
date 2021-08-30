@@ -1452,12 +1452,12 @@ func (tr *TableRestore) restoreTable(
 		// rebase the allocator so it exceeds the number of rows.
 		if tr.tableInfo.Core.PKIsHandle && tr.tableInfo.Core.ContainsAutoRandomBits() {
 			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, tr.tableInfo.Core.AutoRandID)
-			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(tr.tableInfo.ID, cp.AllocBase, false); err != nil {
+			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(cp.AllocBase, false); err != nil {
 				return false, err
 			}
 		} else {
 			cp.AllocBase = mathutil.MaxInt64(cp.AllocBase, tr.tableInfo.Core.AutoIncID)
-			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(tr.tableInfo.ID, cp.AllocBase, false); err != nil {
+			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(cp.AllocBase, false); err != nil {
 				return false, err
 			}
 		}
@@ -1621,7 +1621,8 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			task := logger.Begin(zap.WarnLevel, "importing large engines for disk quota")
 			var importErr error
 			for _, engine := range largeEngines {
-				if err := rc.backend.UnsafeImportAndReset(ctx, engine); err != nil {
+				// Use a larger split region size to avoid split the same region by many times.
+				if err := rc.backend.UnsafeImportAndReset(ctx, engine, int64(config.SplitRegionSize)*int64(config.MaxSplitRegionSizeRatio)); err != nil {
 					importErr = multierr.Append(importErr, err)
 				}
 			}
