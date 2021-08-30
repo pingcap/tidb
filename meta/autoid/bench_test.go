@@ -111,7 +111,7 @@ func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
 	alloc := autoid.NewSequenceAllocator(store, 1, 1, seq)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _, err := alloc.AllocSeqCache(1)
+		_, _, _, err := alloc.AllocSeqCache()
 		if err != nil {
 			fmt.Println("err")
 		}
