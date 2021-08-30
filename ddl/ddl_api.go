@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -6210,7 +6211,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		bundle.Index = 0
 		bundle.Override = false
 	} else {
-		bundle.Index = placement.RuleIndexPartition
+		bundle.Index = ddlutil.RuleIndexPartition
 		bundle.Override = true
 	}
 

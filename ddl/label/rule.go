@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"gopkg.in/yaml.v2"
@@ -28,7 +29,6 @@ import (
 const (
 	// IDPrefix is the prefix for label rule ID.
 	IDPrefix = "schema"
-
 	ruleType = "key-range"
 )
 
@@ -44,6 +44,7 @@ var (
 // Rule is used to establish the relationship between labels and a key range.
 type Rule struct {
 	ID       string      `json:"id"`
+	Index    int         `json:"index"`
 	Labels   Labels      `json:"labels"`
 	RuleType string      `json:"rule_type"`
 	Rule     interface{} `json:"rule"`
@@ -131,6 +132,11 @@ func (r *Rule) Reset(id int64, dbName, tableName string, partName ...string) *Ru
 	r.Rule = map[string]string{
 		"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id))),
 		"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id+1))),
+	}
+	// We may support more types in the later.
+	r.Index = util.RuleIndexTable
+	if isPartition {
+		r.Index = util.RuleIndexPartition
 	}
 	return r
 }

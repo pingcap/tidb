@@ -31,19 +31,6 @@ func GroupID(id int64) string {
 }
 
 const (
-	// RuleIndexDefault is the default index for a rule, check Rule.Index.
-	RuleIndexDefault int = iota
-	// RuleIndexDatabase is the index for a rule of database.
-	RuleIndexDatabase
-	// RuleIndexTable is the index for a rule of table.
-	RuleIndexTable
-	// RuleIndexPartition is the index for a rule of partition.
-	RuleIndexPartition
-	// RuleIndexIndex is the index for a rule of index.
-	RuleIndexIndex
-)
-
-const (
 	// DCLabelKey indicates the key of label which represents the dc for Store.
 	// FIXME: currently we assumes "zone" is the dcLabel key in Store
 	DCLabelKey = "zone"
