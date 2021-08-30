@@ -26,9 +26,14 @@ func TestPlacementSettingsString(t *testing.T) {
 	settings := &PlacementSettings{
 		PrimaryRegion: "us-east-1",
 		Regions:       "us-east-1,us-east-2",
-		Voters:        2,
+		Schedule:      "EVEN",
 	}
-	assert.Equal("PRIMARY_REGION=\"us-east-1\" REGIONS=\"us-east-1,us-east-2\" VOTERS=2", settings.String())
+	assert.Equal("PRIMARY_REGION=\"us-east-1\" REGIONS=\"us-east-1,us-east-2\" SCHEDULE=\"EVEN\"", settings.String())
+
+	settings = &PlacementSettings{
+		LeaderConstraints: "[+region=bj]",
+	}
+	assert.Equal("LEADER_CONSTRAINTS=\"[+region=bj]\"", settings.String())
 
 	settings = &PlacementSettings{
 		Voters:              1,
@@ -37,9 +42,8 @@ func TestPlacementSettingsString(t *testing.T) {
 		FollowerConstraints: "[+disk=ssd]",
 		Learners:            3,
 		LearnerConstraints:  "[+region=us-east-2]",
-		Schedule:            "EVEN",
 	}
-	assert.Equal("VOTERS=1 VOTER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2 FOLLOWER_CONSTRAINTS=\"[+disk=ssd]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=us-east-2]\" SCHEDULE=\"EVEN\"", settings.String())
+	assert.Equal("VOTERS=1 VOTER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2 FOLLOWER_CONSTRAINTS=\"[+disk=ssd]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=us-east-2]\"", settings.String())
 
 	settings = &PlacementSettings{
 		Voters:      3,
@@ -47,5 +51,5 @@ func TestPlacementSettingsString(t *testing.T) {
 		Learners:    1,
 		Constraints: "{+us-east-1:1,+us-east-2:1}",
 	}
-	assert.Equal("VOTERS=3 FOLLOWERS=2 LEARNERS=1 CONSTRAINTS=\"{+us-east-1:1,+us-east-2:1}\"", settings.String())
+	assert.Equal("CONSTRAINTS=\"{+us-east-1:1,+us-east-2:1}\" VOTERS=3 FOLLOWERS=2 LEARNERS=1", settings.String())
 }
