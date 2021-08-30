@@ -203,6 +203,7 @@ func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 	case kv.TiFlash:
 		ret = CheckAggPushFlash(aggFunc)
 	case kv.TiKV:
+		// TiKV does not support group_concat now
 		ret = aggFunc.Name != ast.AggFuncGroupConcat
 	}
 	if ret {

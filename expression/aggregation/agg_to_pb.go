@@ -82,8 +82,9 @@ func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFunc
 	}
 	if tp == tipb.ExprType_GroupConcat {
 		orderBy := make([]*tipb.ByItem, 0, len(aggFunc.OrderByItems))
+		sc := sctx.GetSessionVars().StmtCtx
 		for _, arg := range aggFunc.OrderByItems {
-			pbArg := expression.SortByItemToPB(sctx.GetSessionVars().StmtCtx, client, arg.Expr, arg.Desc)
+			pbArg := expression.SortByItemToPB(sc, client, arg.Expr, arg.Desc)
 			if pbArg == nil {
 				return nil
 			}
@@ -92,13 +93,13 @@ func AggFuncToPBExpr(sctx sessionctx.Context, client kv.Client, aggFunc *AggFunc
 		// encode GroupConcatMaxLen
 		GCMaxLen, err := variable.GetSessionOrGlobalSystemVar(sctx.GetSessionVars(), variable.GroupConcatMaxLen)
 		if err != nil {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen))
+			sc.AppendWarning(errors.Errorf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen))
 			return nil
 		}
 		maxLen, err := strconv.ParseUint(GCMaxLen, 10, 64)
 		// Should never happen
 		if err != nil {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Error happened when buildGroupConcat: %s", err.Error()))
+			sc.AppendWarning(errors.Errorf("Error happened when buildGroupConcat: %s", err.Error()))
 			return nil
 		}
 		return &tipb.Expr{Tp: tp, Val: codec.EncodeUint(nil, maxLen), Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp), HasDistinct: aggFunc.HasDistinct, OrderBy: orderBy}
