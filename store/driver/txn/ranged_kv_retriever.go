@@ -110,12 +110,21 @@ func (retrievers sortedRetrievers) TryBatchGet(ctx context.Context, keys []kv.Ke
 		return keys, nil
 	}
 
-	nonCustomKeys := make([]kv.Key, 0, len(keys))
-	for _, k := range keys {
+	// assign keys to nonCustomKeys, if all the keys are non-custom, no new space will be allocated
+	nonCustomKeys := keys
+	hasCustomKeys := false
+	for i, k := range keys {
 		custom, val, err := retrievers.TryGet(ctx, k)
 		if !custom {
-			nonCustomKeys = append(nonCustomKeys, k)
+			if hasCustomKeys {
+				nonCustomKeys = append(nonCustomKeys, k)
+			}
 			continue
+		}
+
+		if !hasCustomKeys {
+			hasCustomKeys = true
+			nonCustomKeys = append(make([]kv.Key, 0, i), nonCustomKeys[:i]...)
 		}
 
 		if kv.ErrNotExist.Equal(err) {
@@ -132,7 +141,10 @@ func (retrievers sortedRetrievers) TryBatchGet(ctx context.Context, keys []kv.Ke
 	return nonCustomKeys, nil
 }
 
+// GetScanRetrievers gets all retrievers located in range [StartKey, endKey).
+// If snapshot is not nil, the snapshot range between two custom retrievers will also be returned.
 func (retrievers sortedRetrievers) GetScanRetrievers(startKey, endKey kv.Key, snapshot kv.Retriever) []*RangedKVRetriever {
+	// According to our experience, in most cases there is only one retriever returned.
 	result := make([]*RangedKVRetriever, 0, 1)
 
 	// Firstly, we should find the first retriever whose EndKey is after input startKey,
@@ -140,7 +152,7 @@ func (retrievers sortedRetrievers) GetScanRetrievers(startKey, endKey kv.Key, sn
 	idx, _ := retrievers.searchRetrieverByKey(startKey)
 
 	// The scan range is located out of retrievers, just use snapshot to scan it
-	if idx < 0 {
+	if idx == len(retrievers) {
 		if snapshot != nil {
 			result = append(result, NewRangeRetriever(snapshot, startKey, endKey))
 		}
@@ -193,7 +205,7 @@ func (retrievers sortedRetrievers) GetScanRetrievers(startKey, endKey kv.Key, sn
 func (retrievers sortedRetrievers) searchRetrieverByKey(k kv.Key) (int, *RangedKVRetriever) {
 	n := len(retrievers)
 	if n == 0 {
-		return -1, nil
+		return n, nil
 	}
 
 	i := sort.Search(n, func(i int) bool {
@@ -201,9 +213,9 @@ func (retrievers sortedRetrievers) searchRetrieverByKey(k kv.Key) (int, *RangedK
 		return len(r.EndKey) == 0 || bytes.Compare(r.EndKey, k) > 0
 	})
 
-	if i == n {
-		return -1, nil
+	if i < n {
+		return i, retrievers[i]
 	}
 
-	return i, retrievers[i]
+	return n, nil
 }

@@ -335,8 +335,8 @@ func TestSearchRetrieverByKey(t *testing.T) {
 		{retrievers: retrievers, search: "ab71", expectedIdx: 3},
 		{retrievers: retrievers, search: "ab8", expectedIdx: 3},
 		{retrievers: retrievers, search: "ab81", expectedIdx: 3},
-		{retrievers: retrievers, search: "ab9", expectedIdx: -1},
-		{retrievers: retrievers, search: "aba", expectedIdx: -1},
+		{retrievers: retrievers, search: "ab9", expectedIdx: 4},
+		{retrievers: retrievers, search: "aba", expectedIdx: 4},
 		{retrievers: retrievers2, search: nil, expectedIdx: 0},
 		{retrievers: retrievers2, search: "ab0", expectedIdx: 0},
 		{retrievers: retrievers2, search: "ab8", expectedIdx: 3},
@@ -346,10 +346,10 @@ func TestSearchRetrieverByKey(t *testing.T) {
 	for _, c := range cases {
 		idx, r := c.retrievers.searchRetrieverByKey(makeBytes(c.search))
 		assert.Equal(t, c.expectedIdx, idx)
-		if idx < 0 {
-			assert.Nil(t, r)
-		} else {
+		if idx < len(c.retrievers) {
 			assert.Equal(t, c.retrievers[idx], r)
+		} else {
+			assert.Nil(t, r)
 		}
 	}
 }
