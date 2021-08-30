@@ -46,6 +46,14 @@ func (p *PlacementSettings) String() string {
 		settings = append(settings, fmt.Sprintf("REGIONS=\"%s\"", p.Regions))
 	}
 
+	if len(p.Schedule) > 0 {
+		settings = append(settings, fmt.Sprintf("SCHEDULE=\"%s\"", p.Schedule))
+	}
+
+	if len(p.Constraints) > 0 {
+		settings = append(settings, fmt.Sprintf("CONSTRAINTS=\"%s\"", p.Constraints))
+	}
+
 	if len(p.LeaderConstraints) > 0 {
 		settings = append(settings, fmt.Sprintf("LEADER_CONSTRAINTS=\"%s\"", p.LeaderConstraints))
 	}
@@ -72,14 +80,6 @@ func (p *PlacementSettings) String() string {
 
 	if len(p.LearnerConstraints) > 0 {
 		settings = append(settings, fmt.Sprintf("LEARNER_CONSTRAINTS=\"%s\"", p.LearnerConstraints))
-	}
-
-	if len(p.Constraints) > 0 {
-		settings = append(settings, fmt.Sprintf("CONSTRAINTS=\"%s\"", p.Constraints))
-	}
-
-	if len(p.Schedule) > 0 {
-		settings = append(settings, fmt.Sprintf("SCHEDULE=\"%s\"", p.Schedule))
 	}
 
 	return strings.Join(settings, " ")

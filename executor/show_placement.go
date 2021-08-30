@@ -143,7 +143,7 @@ func (e *ShowExec) fetchAllPlacementPolicies() error {
 	for _, policy := range policies {
 		name := policy.Name
 		settings := policy.PlacementSettings
-		e.appendRow([]interface{}{name.String(), settings.String(), "SCHEDULED"})
+		e.appendRow([]interface{}{"POLICY " + name.String(), settings.String(), "SCHEDULED"})
 	}
 
 	return nil
