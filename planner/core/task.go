@@ -2245,7 +2245,7 @@ func (p *PhysicalXchg) attach2Task(tasks ...task) task {
 		return &xchgTask{
 			rootTask:    rootTask{cst: tasks[0].cost(), p: p},
 			dop:         p.inStreamCnt,
-			consumedThr: p.inStreamCnt + senderTask.consumedThr,
+			consumedThr: senderTask.consumedThr,
 		}
 	}
 
@@ -2269,7 +2269,7 @@ func (p *PhysicalXchg) attach2Task(tasks ...task) task {
 	}
 }
 
-func convertToXchgTask(ctx sessionctx.Context, t task) *xchgTask {
+func convertToXchgTask(ctx sessionctx.Context, t task, consumedThr int) *xchgTask {
 	if tmpTask, ok := t.(*xchgTask); ok {
 		return tmpTask
 	}
@@ -2278,6 +2278,6 @@ func convertToXchgTask(ctx sessionctx.Context, t task) *xchgTask {
 	return &xchgTask{
 		rootTask:    *t.convertToRootTask(ctx),
 		dop:         0,
-		consumedThr: 0,
+		consumedThr: consumedThr,
 	}
 }

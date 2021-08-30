@@ -1468,6 +1468,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		e.probeTypes[key.Index].Flag = key.RetType.Flag
 	}
 	if b.ctx.GetSessionVars().UseParallel {
+		var isBuildSideHT bool
 		if receiver, ok := e.buildSideExec.(*ExchangeReceiverPassThroughHT); ok {
 			sender, ok := receiver.children[0].(*ExchangeSenderBroadcastHT)
 			if !ok {
@@ -1480,11 +1481,13 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			sender.buildTypes = e.buildTypes
 			sender.useOuterToBuild = e.useOuterToBuild
 			sender.isNullEQ = e.isNullEQ
+			isBuildSideHT = true
 		}
-		return &NonParallelHashJoinExec{
+		res := &NonParallelHashJoinExec{
 			HashJoinExec:  e,
-			isBroadcastHJ: v.IsBroadcastHJ,
+			isBuildSideHT: isBuildSideHT,
 		}
+		return res
 	}
 	return e
 }
@@ -4805,10 +4808,21 @@ func (b *executorBuilder) buildXchgSender(v *plannercore.PhysicalXchg) Executor 
 	execID := b.ctx.GetSessionVars().PlanID
 	switch v.Tp() {
 	case plannercore.TypeXchgSenderBroadcastHT:
+		senderChildren := make([]Executor, 0, v.InStreamCnt())
+		senderChildren = append(senderChildren, child)
+		for i := 1; i < v.InStreamCnt(); i++ {
+			child := b.build(v.Children()[0])
+			if b.err != nil {
+				return nil
+			}
+			b.ctx.GetSessionVars().PlanID++
+			execID = b.ctx.GetSessionVars().PlanID
+			senderChildren = append(senderChildren, child)
+		}
 		sender = &ExchangeSenderBroadcastHT{
 			ExchangeSender: ExchangeSender{
 				// TODO: v.ID maybe duplicated.
-				baseExecutor: newBaseExecutor(b.ctx, child.base().schema, execID, child),
+				baseExecutor: newBaseExecutor(b.ctx, child.base().schema, execID, senderChildren...),
 			},
 			// TODO: chkChs
 			outputs: v.ChkChs,
@@ -4826,7 +4840,8 @@ func (b *executorBuilder) buildXchgSender(v *plannercore.PhysicalXchg) Executor 
 			ExchangeSender: ExchangeSender{
 				baseExecutor: newBaseExecutor(b.ctx, child.base().schema, execID, child),
 			},
-			outputs: v.ChkChs,
+			chkChs: v.ChkChs,
+			resChs: v.ResChs,
 		}
 	case plannercore.TypeXchgSenderHash:
 		sender = &ExchangeSenderHash{

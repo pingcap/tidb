@@ -269,10 +269,12 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	base := e.base()
 	if base.runtimeStats != nil {
 		start := time.Now()
-		// if _, ok := e.(*ExchangeReceiverPassThroughHT); !ok {
-		// TODO: finish row num stats
-		defer func() { base.runtimeStats.Record(time.Since(start), 0) }()
-		// }
+		if _, ok := e.(*ExchangeReceiverPassThroughHT); !ok && req != nil {
+			// TODO: finish row num stats
+			defer func() { base.runtimeStats.Record(time.Since(start), req.NumRows()) }()
+		} else {
+			defer func() { base.runtimeStats.Record(time.Since(start), 1) }()
+		}
 	}
 	sessVars := base.ctx.GetSessionVars()
 	if atomic.LoadUint32(&sessVars.Killed) == 1 {
@@ -1665,7 +1667,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		DiskTracker:   disk.NewTracker(memory.LabelForSQLText, -1),
 		TaskID:        stmtctx.AllocateTaskID(),
 		CTEStorageMap: map[int]*CTEStorages{},
-		BroadcastHT:   make([]*HashRowContainer, 0),
+		BroadcastHT:   make([]*HashRowContainerSlice, 0),
 	}
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()

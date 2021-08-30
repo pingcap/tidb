@@ -38,7 +38,9 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
+	_ "github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	_ "go.uber.org/zap"
 )
 
 var (
@@ -63,8 +65,10 @@ type NonParallelHashJoinExec struct {
 	probeRow            chunk.Row
 	probeChk            *chunk.Chunk
 	resChk              *chunk.Chunk
+	isBuildSideHT       bool
+	isProbeSideEmpty    bool
 
-	isBroadcastHJ bool
+	rowContainerSlice *HashRowContainerSlice
 }
 
 func (e *NonParallelHashJoinExec) Open(ctx context.Context) error {
@@ -111,11 +115,17 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 		}
 	}
 
+	if e.isProbeSideEmpty {
+		req.SwapColumns(e.resChk)
+		return nil
+	}
+
 	if err = Next(ctx, e.probeSideExec, e.probeSideResult); err != nil {
 		return err
 	}
 
 	if e.probeSideResult.NumRows() == 0 {
+		e.isProbeSideEmpty = true
 		req.SwapColumns(e.resChk)
 		return nil
 	}
@@ -126,6 +136,10 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 			return err
 		}
 		e.hashTblDone = true
+	}
+
+	if e.rowContainerSlice == nil {
+		return nil
 	}
 
 	// probe hash table
@@ -144,6 +158,7 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 		}
 
 		if e.probeSideResult.NumRows() == 0 {
+			e.isProbeSideEmpty = true
 			req.SwapColumns(e.resChk)
 			break
 		}
@@ -152,8 +167,9 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 }
 
 func (e *NonParallelHashJoinExec) buildHashTable(ctx context.Context) (err error) {
-	if e.isBroadcastHJ {
-		if err = Next(ctx, e.buildSideExec, (*chunk.Chunk)(unsafe.Pointer(&e.rowContainer))); err != nil {
+	if e.isBuildSideHT {
+		tmpPtr := unsafe.Pointer(&e.rowContainerSlice)
+		if err = Next(ctx, e.buildSideExec, (*chunk.Chunk)(tmpPtr)); err != nil {
 			return err
 		}
 	} else {
@@ -165,7 +181,7 @@ func (e *NonParallelHashJoinExec) buildHashTable(ctx context.Context) (err error
 			allTypes:  e.buildTypes,
 			keyColIdx: buildKeyColIdx,
 		}
-		e.rowContainer = newHashRowContainerMultiple(e.ctx, int(e.buildSideEstCount), hCtx, 1)
+		e.rowContainerSlice = newHashRowContainerSlice(e.ctx, int(e.buildSideEstCount), hCtx, 1)
 
 		for {
 			chk := chunk.NewChunkWithCapacity(e.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
@@ -175,10 +191,11 @@ func (e *NonParallelHashJoinExec) buildHashTable(ctx context.Context) (err error
 			if chk.NumRows() == 0 {
 				break
 			}
-			if err = e.rowContainer.PutChunk(chk, e.isNullEQ); err != nil {
+			if err = e.rowContainerSlice.PutChunk(chk, e.isNullEQ, 0); err != nil {
 				return err
 			}
 		}
+		// logutil.BgLogger().Warn("!!! gjt buildHashTable done", zap.Uint64("rc cnt: ", uint64(e.rowContainer.rowContainers[0].NumRow())))
 	}
 	return nil
 }
@@ -195,7 +212,7 @@ func (e *NonParallelHashJoinExec) doJoinWork(probeChk *chunk.Chunk, resChk *chun
 
 		for keyIdx, i := range e.hCtx.keyColIdx {
 			ignoreNull := len(e.isNullEQ) > keyIdx && e.isNullEQ[keyIdx]
-			err = codec.HashChunkSelected(e.rowContainer.sc, e.hCtx.hashVals, probeChk, e.hCtx.allTypes[i], i, e.hCtx.buf, e.hCtx.hasNull, e.selected, ignoreNull)
+			err = codec.HashChunkSelected(e.rowContainerSlice.rcs[0].sc, e.hCtx.hashVals, probeChk, e.hCtx.allTypes[i], i, e.hCtx.buf, e.hCtx.hasNull, e.selected, ignoreNull)
 			if err != nil {
 				return err
 			}
@@ -215,7 +232,7 @@ func (e *NonParallelHashJoinExec) probeHashTable(probeChk *chunk.Chunk, startIdx
 		} else {
 			probeKey := hCtx.hashVals[i].Sum64()
 			e.probeRow = probeChk.GetRow(i)
-			buildSideRows, _, err := e.rowContainer.GetMatchedRowsAndPtrsMultiple(probeKey, e.probeRow, hCtx, e.workerID)
+			buildSideRows, _, err := e.rowContainerSlice.GetMatchedRowsAndPtrs(probeKey, e.probeRow, hCtx, e.workerID)
 			if err != nil {
 				return err
 			}
@@ -411,10 +428,6 @@ func (e *HashJoinExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *HashJoinExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
-
 	e.prepared = false
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -437,6 +450,9 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 			concurrent: cap(e.joiners),
 		}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
 	}
 	return nil
 }

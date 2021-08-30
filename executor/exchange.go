@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/pingcap/tidb/util/codec"
 	"reflect"
+	"sync"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -192,9 +193,8 @@ func (e *ExchangeSenderPassThrough) Close() error {
 type ExchangeReceiverPassThrough struct {
 	ExchangeReceiver
 
-	chkCh   chan *chunk.Chunk
-	resCh   chan *chunk.Chunk
-	cleaned bool
+	chkCh chan *chunk.Chunk
+	resCh chan *chunk.Chunk
 }
 
 func (e *ExchangeReceiverPassThrough) Open(ctx context.Context) error {
@@ -205,23 +205,16 @@ func (e *ExchangeReceiverPassThrough) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	chk := newFirstChunk(e)
-	e.chkCh <- chk
 	return nil
 }
 
 func (e *ExchangeReceiverPassThrough) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	chk, ok := <-e.resCh
-	if ok {
-		req.SwapColumns(chk)
-		e.chkCh <- chk
-	} else {
-		if !e.cleaned {
-			clearChan(e.chkCh)
-			close(e.chkCh)
-			e.cleaned = true
-		}
+	e.chkCh <- req
+	_, ok := <-e.resCh
+	if !ok {
+		clearChan(e.chkCh)
+		close(e.chkCh)
 	}
 	return nil
 }
@@ -233,8 +226,12 @@ func (e *ExchangeReceiverPassThrough) Close() error {
 type ExchangeSenderRandom struct {
 	ExchangeSender
 
-	outputs     []chan *chunk.Chunk
-	selectCases []reflect.SelectCase
+	chkChs          []chan *chunk.Chunk
+	resChs          []chan *chunk.Chunk
+	childResult     *chunk.Chunk
+	recvSelectCases []reflect.SelectCase
+	// TODO: opened closed, make in base struct
+	closed bool
 }
 
 func (e *ExchangeSenderRandom) Open(ctx context.Context) error {
@@ -242,54 +239,61 @@ func (e *ExchangeSenderRandom) Open(ctx context.Context) error {
 		return nil
 	}
 	e.opened = true
-	e.selectCases = make([]reflect.SelectCase, len(e.outputs))
-	for i := 0; i < len(e.outputs); i++ {
-		e.selectCases[i] = reflect.SelectCase{Dir: reflect.SelectSend, Chan: reflect.ValueOf(e.outputs[i])}
+	e.recvSelectCases = make([]reflect.SelectCase, len(e.chkChs))
+	for i, ch := range e.chkChs {
+		e.recvSelectCases[i] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)}
 	}
+	e.childResult = newFirstChunk(e)
 	return e.baseExecutor.Open(ctx)
 }
 
 func (e *ExchangeSenderRandom) closeOutputs() {
-	for _, ch := range e.outputs {
+	for _, ch := range e.resChs {
 		close(ch)
 	}
 }
 
-func (e *ExchangeSenderRandom) Next(ctx context.Context, req *chunk.Chunk) error {
-	// req.Reset()
-	chk := newFirstChunk(e)
-	if err := Next(ctx, e.children[0], chk); err != nil {
+func (e *ExchangeSenderRandom) Next(ctx context.Context, _ *chunk.Chunk) error {
+	if err := Next(ctx, e.children[0], e.childResult); err != nil {
 		e.closeOutputs()
 		return err
 	}
-	if chk.NumRows() == 0 {
+	if e.childResult.NumRows() == 0 {
 		e.closeOutputs()
 		return errors.New("sender random done")
 	}
-	for i := 0; i < len(e.outputs); i++ {
-		e.selectCases[i].Send = reflect.ValueOf(chk)
+	chosen, value, ok := reflect.Select(e.recvSelectCases)
+	if ok {
+		tmpChk := value.Interface().(*chunk.Chunk)
+		e.childResult.SwapColumns(tmpChk)
+		e.resChs[chosen] <- tmpChk
+	} else {
+		panic("ExchangeSenderRandom must be ok to read chkChs")
 	}
-	_, _, _ = reflect.Select(e.selectCases)
 	return nil
 }
 
 func (e *ExchangeSenderRandom) Close() error {
-	return e.baseExecutor.Close()
+	if !e.closed {
+		e.closed = true
+		return e.baseExecutor.Close()
+	}
+	return nil
 }
 
 type ExchangeSenderBroadcastHT struct {
 	ExchangeSender
 
 	outputs []chan *chunk.Chunk
-	ht      *HashRowContainer
+
+	ht *HashRowContainerSlice
 
 	buildSideEstCount float64
 	buildKeys         []*expression.Column
 	buildTypes        []*types.FieldType
 	useOuterToBuild   bool
 	isNullEQ          []bool
-
-	childResult *chunk.Chunk
+	closed            bool
 }
 
 func (e *ExchangeSenderBroadcastHT) Open(ctx context.Context) error {
@@ -310,9 +314,8 @@ func (e *ExchangeSenderBroadcastHT) Open(ctx context.Context) error {
 		allTypes:  e.buildTypes,
 		keyColIdx: buildKeyColIdx,
 	}
-	e.ht = newHashRowContainerMultiple(e.ctx, int(e.buildSideEstCount), hCtx, len(e.outputs))
-	e.childResult = newFirstChunk(e)
-	htSlice, ok := e.ctx.GetSessionVars().StmtCtx.BroadcastHT.([]*HashRowContainer)
+	e.ht = newHashRowContainerSlice(e.ctx, int(e.buildSideEstCount), hCtx, len(e.outputs))
+	htSlice, ok := e.ctx.GetSessionVars().StmtCtx.BroadcastHT.([]*HashRowContainerSlice)
 	if !ok {
 		panic("unexpected htSlice")
 	}
@@ -328,25 +331,37 @@ func (e *ExchangeSenderBroadcastHT) sendAndCloseOutputs() {
 }
 
 func (e *ExchangeSenderBroadcastHT) Next(ctx context.Context, req *chunk.Chunk) error {
-	if err := Next(ctx, e.children[0], e.childResult); err != nil {
-		// TODO: another way to indicates done
-		panic("got error in BroadcastHT")
+	var wg sync.WaitGroup
+	wg.Add(len(e.children))
+	for i := 0; i < len(e.children); i++ {
+		go func(childIdx int) {
+			defer wg.Done()
+			for {
+				chk := chunk.NewChunkWithCapacity(e.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
+				if err := Next(ctx, e.children[childIdx], chk); err != nil {
+					// TODO: another way to indicates done
+					panic("got error in BroadcastHT")
+				}
+				if chk.NumRows() == 0 {
+					break
+				}
+				if err := e.ht.PutChunk(chk, e.isNullEQ, childIdx); err != nil {
+					panic("put chunk error")
+				}
+			}
+		}(i)
 	}
-	if e.childResult.NumRows() == 0 {
-		e.sendAndCloseOutputs()
-		return errors.New("sender broadcast done")
-	}
-
-	tmp := chunk.NewChunkWithOld(e.childResult)
-	if err := e.ht.PutChunk(e.childResult, e.isNullEQ); err != nil {
-		panic("put chunk error")
-	}
-	e.childResult = tmp
-	return nil
+	wg.Wait()
+	e.sendAndCloseOutputs()
+	return errors.New("ExchangeSenderBroadcastHT done")
 }
 
 func (e *ExchangeSenderBroadcastHT) Close() error {
-	return e.baseExecutor.Close()
+	if !e.closed {
+		e.closed = true
+		return e.baseExecutor.Close()
+	}
+	return nil
 }
 
 type ExchangeReceiverPassThroughHT struct {

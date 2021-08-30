@@ -451,6 +451,13 @@ func (a *ExecStmt) cutTreeByExchange(ctx context.Context, e Executor) error {
 }
 
 func (a *ExecStmt) cutTreeByExchangeHelper(ctx context.Context, e Executor) error {
+	if exec, ok := e.(*ExplainExec); ok && exec.analyzeExec != nil {
+		if err := a.cutTreeByExchangeHelper(ctx, exec.analyzeExec); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	for _, exec := range e.base().children {
 		if err := a.cutTreeByExchangeHelper(ctx, exec); err != nil {
 			return err

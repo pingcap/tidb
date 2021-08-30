@@ -40,6 +40,23 @@ type hashContext struct {
 	hasNull   []bool
 }
 
+func (hc *hashContext) Clone() *hashContext {
+	newHCtx := &hashContext{
+		allTypes:  make([]*types.FieldType, len(hc.allTypes)),
+		keyColIdx: make([]int, len(hc.keyColIdx)),
+		// buf: make([]byte, len(hc.buf)),
+		// hashVals: make([]hash.Hash64, len(hc.hashVals)),
+		// hasNull: make([]bool, len(hc.hasNull)),
+	}
+	copy(newHCtx.allTypes, hc.allTypes)
+	copy(newHCtx.keyColIdx, hc.keyColIdx)
+	// Following will be handle in initHash, we left these as nil.
+	// copy(newHCtx.buf, hc.buf)
+	// copy(newHCtx.hashVals, hc.hashVals)
+	// copy(newHCtx.hasNull, hc.hasNull)
+	return newHCtx
+}
+
 func (hc *hashContext) initHash(rows int) {
 	if hc.buf == nil {
 		hc.buf = make([]byte, 1)
@@ -59,6 +76,47 @@ func (hc *hashContext) initHash(rows int) {
 	}
 }
 
+type HashRowContainerSlice struct {
+	rcs []*HashRowContainer
+}
+
+func newHashRowContainerSlice(sCtx sessionctx.Context, estCount int, hCtx *hashContext, threadCnt int) *HashRowContainerSlice {
+	rcs := make([]*HashRowContainer, 0, threadCnt)
+	for i := 0; i < threadCnt; i++ {
+		rc := newHashRowContainerMultiple(sCtx, estCount, hCtx.Clone(), threadCnt)
+		rcs = append(rcs, rc)
+	}
+	return &HashRowContainerSlice{
+		rcs: rcs,
+	}
+}
+
+func (c *HashRowContainerSlice) PutChunk(chk *chunk.Chunk, ignoreNulls []bool, threadID int) error {
+	return c.rcs[threadID].PutChunk(chk, ignoreNulls)
+}
+
+func (c *HashRowContainerSlice) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, threadID int) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {
+	for i := 0; i < len(c.rcs); i++ {
+		tmpMatched, tmpMatchedPtrs, err := c.rcs[i].GetMatchedRowsAndPtrsMultiple(probeKey, probeRow, hCtx, threadID)
+		if err != nil {
+			return nil, nil, err
+		}
+		matched = append(matched, tmpMatched...)
+		matchedPtrs = append(matchedPtrs, tmpMatchedPtrs...)
+	}
+	return
+}
+
+func (c *HashRowContainerSlice) Close() error {
+	// TODO: handle error
+	for i := 0; i < len(c.rcs); i++ {
+		if err := c.rcs[i].Close(); err != nil {
+			panic(err)
+		}
+	}
+	return nil
+}
+
 type hashStatistic struct {
 	probeCollision   int
 	buildTableElapse time.Duration
@@ -75,7 +133,7 @@ type HashRowContainer struct {
 	stat hashStatistic
 
 	// hashTable stores the map of hashKey and RowPtr
-	hashTable baseHashTable
+	hashTable *concurrentMapHashTable
 
 	rowContainers []*chunk.RowContainer
 }
@@ -83,16 +141,16 @@ type HashRowContainer struct {
 func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext) *HashRowContainer {
 	return newHashRowContainerMultiple(sCtx, estCount, hCtx, 1)
 }
-func newHashRowContainerMultiple(sCtx sessionctx.Context, estCount int, hCtx *hashContext, rcCnt int) *HashRowContainer {
-	rowContainers := make([]*chunk.RowContainer, 0, rcCnt)
+func newHashRowContainerMultiple(sCtx sessionctx.Context, estCount int, hCtx *hashContext, threadCnt int) *HashRowContainer {
+	rowContainers := make([]*chunk.RowContainer, 0, threadCnt)
 	maxChunkSize := sCtx.GetSessionVars().MaxChunkSize
-	for i := 0; i < rcCnt; i++ {
+	for i := 0; i < threadCnt; i++ {
 		rowContainers = append(rowContainers, chunk.NewRowContainer(hCtx.allTypes, maxChunkSize))
 	}
 	c := &HashRowContainer{
 		sc:            sCtx.GetSessionVars().StmtCtx,
 		hCtx:          hCtx,
-		hashTable:     newConcurrentMapHashTable(),
+		hashTable:     newConcurrentMapHashTableMultiple(threadCnt),
 		rowContainers: rowContainers,
 	}
 	return c
@@ -105,7 +163,7 @@ func (c *HashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 	return c.GetMatchedRowsAndPtrsMultiple(probeKey, probeRow, hCtx, 0)
 }
 
-func (c *HashRowContainer) GetMatchedRowsAndPtrsMultiple(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, rcIdx int) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {
+func (c *HashRowContainer) GetMatchedRowsAndPtrsMultiple(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, threadID int) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {
 	innerPtrs := c.hashTable.Get(probeKey)
 	if len(innerPtrs) == 0 {
 		return
@@ -114,7 +172,7 @@ func (c *HashRowContainer) GetMatchedRowsAndPtrsMultiple(probeKey uint64, probeR
 	var matchedRow chunk.Row
 	matchedPtrs = make([]chunk.RowPtr, 0, len(innerPtrs))
 	for _, ptr := range innerPtrs {
-		matchedRow, err = c.rowContainers[rcIdx].GetRow(ptr)
+		matchedRow, err = c.rowContainers[threadID].GetRow(ptr)
 		if err != nil {
 			return
 		}
@@ -325,17 +383,24 @@ func (ht *unsafeHashTable) Len() uint64 { return ht.length }
 
 // concurrentMapHashTable is a concurrent hash table built on concurrentMap
 type concurrentMapHashTable struct {
-	hashMap    concurrentMap
-	entryStore *entryStore
-	length     uint64
+	hashMap     concurrentMap
+	entryStores []*entryStore
+	length      uint64
+	storeCnt    int
 }
 
 // newConcurrentMapHashTable creates a concurrentMapHashTable
 func newConcurrentMapHashTable() *concurrentMapHashTable {
+	return newConcurrentMapHashTableMultiple(1)
+}
+func newConcurrentMapHashTableMultiple(threadCnt int) *concurrentMapHashTable {
 	ht := new(concurrentMapHashTable)
 	ht.hashMap = newConcurrentMap()
-	ht.entryStore = newEntryStore()
 	ht.length = 0
+	ht.storeCnt = threadCnt
+	for i := 0; i < ht.storeCnt; i++ {
+		ht.entryStores = append(ht.entryStores, newEntryStore())
+	}
 	return ht
 }
 
@@ -346,7 +411,12 @@ func (ht *concurrentMapHashTable) Len() uint64 {
 
 // Put puts the key/rowPtr pairs to the concurrentMapHashTable, multiple rowPtrs are stored in a list.
 func (ht *concurrentMapHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
-	newEntry := ht.entryStore.GetStore()
+	ht.PutMultiple(hashKey, rowPtr, 0)
+}
+
+// TODO: make it in interface baseHashTable
+func (ht *concurrentMapHashTable) PutMultiple(hashKey uint64, rowPtr chunk.RowPtr, threadID int) {
+	newEntry := ht.entryStores[threadID].GetStore()
 	newEntry.ptr = rowPtr
 	newEntry.next = nil
 	ht.hashMap.Insert(hashKey, newEntry)
