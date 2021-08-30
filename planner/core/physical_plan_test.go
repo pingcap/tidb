@@ -1694,41 +1694,6 @@ func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
 	tk.MustQuery("explain format = 'brief' select * from test.tt where a=1 and b=1").Check(testkit.Rows(output[1].Plan...))
 }
 
-<<<<<<< HEAD
-=======
-func (s *testPlanSuite) TestEnumIndex(c *C) {
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Plan   []string
-			Result []string
-		}
-	)
-	s.testData.GetTestCases(c, &input, &output)
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	tk := testkit.NewTestKit(c, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(e enum('c','b','a',''), index idx(e))")
-	tk.MustExec("insert ignore into t values(0),(1),(2),(3),(4);")
-
-	for i, ts := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + ts).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
-		})
-		tk.MustQuery("explain format='brief' " + ts).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
-	}
-}
-
 func (s *testPlanSuite) TestIssue27233(c *C) {
 	var (
 		input  []string
@@ -1762,7 +1727,6 @@ func (s *testPlanSuite) TestIssue27233(c *C) {
 	}
 }
 
->>>>>>> 1c6c54833... planner: add missing column for Apply convert to Join (#27246)
 func (s *testPlanSuite) TestPossibleProperties(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
