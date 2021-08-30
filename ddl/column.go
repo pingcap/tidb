@@ -1652,7 +1652,7 @@ func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = autoRandAlloc.Rebase(tblInfo.ID, nextAutoIncID, false)
+	err = autoRandAlloc.Rebase(nextAutoIncID, false)
 	if err != nil {
 		return errors.Trace(err)
 	}

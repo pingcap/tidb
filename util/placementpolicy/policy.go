@@ -29,6 +29,7 @@ type PolicyInfo struct {
 	Voters              uint64            `json:"voters"`
 	Schedule            string            `json:"schedule"`
 	Constraints         string            `json:"constraints"`
+	LeaderConstraints   string            `json:"leader_constraints"`
 	LearnerConstraints  string            `json:"learner_constraints"`
 	FollowerConstraints string            `json:"follower_constraints"`
 	VoterConstraints    string            `json:"voter_constraints"`
