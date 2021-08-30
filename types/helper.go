@@ -207,6 +207,7 @@ func strToInt(str string) (int64, error) {
 	return int64(r), err
 }
 
+// DecimalLength2Precision gets the precision.
 func DecimalLength2Precision(length int, scale int, hashUnsignedFlag bool) int {
 	if scale > 0 {
 		length--
@@ -217,6 +218,7 @@ func DecimalLength2Precision(length int, scale int, hashUnsignedFlag bool) int {
 	return length
 }
 
+// Precision2LengthNoTruncation gets the length.
 func Precision2LengthNoTruncation(length int, scale int, hashUnsignedFlag bool) int {
 	if scale > 0 {
 		length++

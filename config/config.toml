@@ -1,7 +1,0 @@
-
-enable-table-lock = true
-
-enable-telemetry = false
-
-[security]
-spilled-file-encryption-method = "aes128-ctr"
