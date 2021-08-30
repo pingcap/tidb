@@ -852,7 +852,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 	importer := backend.MakeBackend(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
-	rc := &Controller{saveCpCh: chptCh}
+	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
 	go func() {
 		for scp := range chptCh {
 			if scp.waitCh != nil {
@@ -868,7 +868,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 		CloseEngine(ctx, nil, engineUUID).
 		Return(nil)
 	mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID).
+		ImportEngine(ctx, engineUUID, gomock.Any()).
 		Return(nil)
 	mockBackend.EXPECT().
 		CleanupEngine(ctx, engineUUID).
@@ -887,7 +887,7 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 	importer := backend.MakeBackend(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
-	rc := &Controller{saveCpCh: chptCh}
+	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
 	go func() {
 		for scp := range chptCh {
 			if scp.waitCh != nil {
@@ -903,7 +903,7 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 		CloseEngine(ctx, nil, engineUUID).
 		Return(nil)
 	mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID).
+		ImportEngine(ctx, engineUUID, gomock.Any()).
 		Return(errors.Annotate(context.Canceled, "fake import error"))
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID)
@@ -2239,6 +2239,65 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
 							Type:     mydump.SourceTypeCSV,
+						},
+					},
+				},
+			},
+		},
+		// Case 4:
+		// table4 has two datafiles for table. we only check the first file.
+		// we expect the check success.
+		{
+			[]*config.IgnoreColumns{
+				{
+					DB:      "db1",
+					Table:   "table2",
+					Columns: []string{"cola"},
+				},
+			},
+			"",
+			0,
+			true,
+			map[string]*checkpoints.TidbDBInfo{
+				"db1": {
+					Name: "db1",
+					Tables: map[string]*checkpoints.TidbTableInfo{
+						"table2": {
+							ID:   1,
+							DB:   "db1",
+							Name: "table2",
+							Core: &model.TableInfo{
+								Columns: []*model.ColumnInfo{
+									{
+										// colB has the default value
+										Name:          model.NewCIStr("colB"),
+										DefaultIsExpr: true,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			&mydump.MDTableMeta{
+				DB:   "db1",
+				Name: "table2",
+				DataFiles: []mydump.FileInfo{
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							Type:     mydump.SourceTypeCSV,
+						},
+					},
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							// This type will make the check failed.
+							// but it's the second file for table.
+							// so it's unreachable so this case will success.
+							Type: mydump.SourceTypeIgnore,
 						},
 					},
 				},

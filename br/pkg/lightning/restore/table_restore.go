@@ -869,11 +869,20 @@ func (tr *TableRestore) importKV(
 	engineID int32,
 ) error {
 	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
-
-	err := closedEngine.Import(ctx)
+	regionSplitSize := int64(rc.cfg.TikvImporter.RegionSplitSize)
+	if regionSplitSize == 0 && rc.taskMgr != nil {
+		regionSplitSize = int64(config.SplitRegionSize)
+		rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
+			if len(tasks) > 0 {
+				regionSplitSize = int64(config.SplitRegionSize) * int64(utils.MinInt(len(tasks), config.MaxSplitRegionSizeRatio))
+			}
+			return nil, nil
+		})
+	}
+	err := closedEngine.Import(ctx, regionSplitSize)
 	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints.CheckpointStatusImported)
-	// Don't cleanup when save checkpoint failed, because we will verifyLocalFile and import engine again after restart.
-	if saveCpErr == nil && err == nil {
+	// Don't clean up when save checkpoint failed, because we will verifyLocalFile and import engine again after restart.
+	if err == nil && saveCpErr == nil {
 		err = multierr.Append(err, closedEngine.Cleanup(ctx))
 	}
 	err = firstErr(err, saveCpErr)

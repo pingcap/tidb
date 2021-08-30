@@ -1397,7 +1397,7 @@ func AllocHandle(ctx context.Context, sctx sessionctx.Context, t table.Table) (k
 
 func allocHandleIDs(ctx context.Context, sctx sessionctx.Context, t table.Table, n uint64) (int64, int64, error) {
 	meta := t.Meta()
-	base, maxID, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, meta.ID, n, 1, 1)
+	base, maxID, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
 	if err != nil {
 		return 0, 0, err
 	}
