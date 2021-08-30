@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	// TODO: Remove "github.com/pingcap/check" dependency from this file
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -46,6 +47,7 @@ import (
 )
 
 func TestT(t *testing.T) {
+	// TODO: CustomVerboseFlag seems to come from "github.com/pingcap/check"
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
 	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
@@ -57,10 +59,12 @@ func TestT(t *testing.T) {
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 	testleak.BeforeTest()
+	// TODO: Testing(...) seems to come from "github.com/pingcap/check"
 	TestingT(t)
 	testleak.AfterTestT(t)()
 }
 
+// TODO: SerialSuites(...) seems to come from "github.com/pingcap/check"
 var _ = SerialSuites(&testFailDBSuite{})
 
 type testFailDBSuite struct {
@@ -74,6 +78,7 @@ type testFailDBSuite struct {
 	CommonHandleSuite
 }
 
+// TODO: type C seems to come from "github.com/pingcap/check"
 func (s *testFailDBSuite) SetUpSuite(c *C) {
 	s.lease = 200 * time.Millisecond
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
@@ -84,27 +89,35 @@ func (s *testFailDBSuite) SetUpSuite(c *C) {
 			s.cluster = c
 		}),
 	)
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(s.lease)
 	s.dom, err = session.BootstrapSession(s.store)
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, IsNil)
 	s.se, err = session.CreateSession4Test(s.store)
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, IsNil)
 	s.p = parser.New()
 }
 
+// TODO: type C seems to come from "github.com/pingcap/check"
 func (s *testFailDBSuite) TearDownSuite(c *C) {
 	_, err := s.se.Execute(context.Background(), "drop database if exists test_db_state")
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, IsNil)
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
 }
 
+// TODO: type C seems to come from "github.com/pingcap/check"
 // TestHalfwayCancelOperations tests the case that the schema is correct after the execution of operations are cancelled halfway.
 func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/truncateTableErr", `return(true)`), IsNil)
 	defer func() {
+		// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/truncateTableErr"), IsNil)
 	}()
 	tk := testkit.NewTestKit(c, s.store)
@@ -115,6 +128,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1)")
 	_, err := tk.Exec("truncate table t")
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, NotNil)
 
 	// Make sure that the table's data has not been deleted.
@@ -122,6 +136,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Execute ddl statement reload schema
 	tk.MustExec("alter table t comment 'test1'")
 	err = s.dom.DDL().GetHook().OnChanged(nil)
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, IsNil)
 
 	tk = testkit.NewTestKit(c, s.store)
@@ -136,14 +151,18 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	tk.MustExec("create table tx(a int)")
 	tk.MustExec("insert into tx values(1)")
 	_, err = tk.Exec("rename table tx to ty")
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, NotNil)
 	tk.MustExec("create table ty(a int)")
 	tk.MustExec("insert into ty values(2)")
 	_, err = tk.Exec("rename table ty to tz, tx to ty")
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("select * from tz")
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("rename table tx to ty, ty to tz")
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, NotNil)
 	tk.MustQuery("select * from ty").Check(testkit.Rows("2"))
 	// Make sure that the table's data has not been deleted.
@@ -151,6 +170,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Execute ddl statement reload schema.
 	tk.MustExec("alter table tx comment 'tx'")
 	err = s.dom.DDL().GetHook().OnChanged(nil)
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, IsNil)
 
 	tk = testkit.NewTestKit(c, s.store)
@@ -168,6 +188,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	_, err = tk.Exec("alter table pt exchange partition p1 with table nt")
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, NotNil)
 
 	tk.MustQuery("select * from pt").Check(testkit.Rows("1", "3", "5"))
@@ -175,6 +196,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Execute ddl statement reload schema.
 	tk.MustExec("alter table pt comment 'pt'")
 	err = s.dom.DDL().GetHook().OnChanged(nil)
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, IsNil)
 
 	tk = testkit.NewTestKit(c, s.store)
@@ -186,6 +208,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	tk.MustExec("drop database cancel_job_db")
 }
 
+// TODO: type C seems to come from "github.com/pingcap/check"
 // TestInitializeOffsetAndState tests the case that the column's offset and state don't be initialized in the file of ddl_api.go when
 // doing the operation of 'modify column'.
 func (s *testFailDBSuite) TestInitializeOffsetAndState(c *C) {
@@ -194,14 +217,18 @@ func (s *testFailDBSuite) TestInitializeOffsetAndState(c *C) {
 	tk.MustExec("create table t(a int, b int, c int)")
 	defer tk.MustExec("drop table t")
 
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState", `return(true)`), IsNil)
 	tk.MustExec("ALTER TABLE t MODIFY COLUMN b int FIRST;")
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState"), IsNil)
 }
 
+// TODO: type C seems to come from "github.com/pingcap/check"
 func (s *testFailDBSuite) TestUpdateHandleFailed(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `1*return`), IsNil)
 	defer func() {
+		// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle"), IsNil)
 	}()
 	tk := testkit.NewTestKit(c, s.store)
@@ -216,9 +243,12 @@ func (s *testFailDBSuite) TestUpdateHandleFailed(c *C) {
 	tk.MustExec("admin check index t idx_b")
 }
 
+// TODO: type C seems to come from "github.com/pingcap/check"
 func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockBackfillRunErr", `1*return`), IsNil)
 	defer func() {
+		// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillRunErr"), IsNil)
 	}()
 	tk := testkit.NewTestKit(c, s.store)
@@ -235,6 +265,7 @@ func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
 	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, IsNil)
 	tblID := tbl.Meta().ID
 
@@ -247,6 +278,7 @@ func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
 	tk.MustExec("admin check table t")
 }
 
+// TODO: type C seems to come from "github.com/pingcap/check"
 // TestFailSchemaSyncer test when the schema syncer is done,
 // should prohibit DML executing until the syncer is restartd by loadSchemaInLoop.
 func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
@@ -260,10 +292,13 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 	defer func() {
 		domain.SchemaOutOfDateRetryTimes = originalRetryTimes
 	}()
+	// TODO: c, Assert and isTrue seem to come from "github.com/pingcap/check"
 	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
 	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*ddl.MockSchemaSyncer)
+	// TODO: c, Assert and isTrue seem to come from "github.com/pingcap/check"
 	c.Assert(ok, IsTrue)
 
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	// make reload failed.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`), IsNil)
 	mockSyncer.CloseSession()
@@ -275,10 +310,14 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
+	// TODO: c, Assert and isFalse seem to come from "github.com/pingcap/check"
 	c.Assert(s.dom.SchemaValidator.IsStarted(), IsFalse)
 	_, err := tk.Exec("insert into t values(1)")
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, NotNil)
+	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
 	c.Assert(err.Error(), Equals, "[domain:8027]Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV")
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"), IsNil)
 	// wait the schemaValidator is started.
 	for i := 0; i < 50; i++ {
@@ -287,13 +326,17 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	// TODO: c, Assert and isTrue seem to come from "github.com/pingcap/check"
 	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
 	_, err = tk.Exec("insert into t values(1)")
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, IsNil)
 }
 
+// TODO: type C seems to come from "github.com/pingcap/check"
 func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
 	defer func() {
+		// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail"), IsNil)
 	}()
 	tk := testkit.NewTestKit(c, s.store)
@@ -328,6 +371,7 @@ func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
 		if test.mockErr {
 			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail", `return(true)`), IsNil)
 			_, err := tk.Exec(test.sql)
+			// TODO: c, Assert and NotNil and Commentf seem to come from "github.com/pingcap/check"
 			c.Assert(err, NotNil, Commentf("the %dth test case '%s' fail", idx, test.sql))
 		} else {
 			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail", `return(false)`), IsNil)
@@ -351,6 +395,7 @@ func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 	tk.MustExec(dml)
 }
 
+// TODO: type C seems to come from "github.com/pingcap/check"
 func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_db")
@@ -374,6 +419,7 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	schemaName := model.NewCIStr("test_db")
 	tableName := model.NewCIStr("test_add_index")
 	tbl, err := is.TableByName(schemaName, tableName)
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, IsNil)
 
 	splitCount := 100
@@ -382,6 +428,7 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), splitCount)
 
 	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, IsNil)
 	originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
 	lastSetWorkerCnt := originDDLAddIndexWorkerCnt
@@ -390,8 +437,10 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
 
 	if !s.IsCommonHandle { // only enable failpoint once
+		// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 		c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`), IsNil)
 		defer func() {
+			// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 			c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"), IsNil)
 		}()
 	}
@@ -406,6 +455,7 @@ LOOP:
 			if err == nil {
 				break LOOP
 			}
+			// TODO: c, Assert and isNil and Commentf seem to come from "github.com/pingcap/check"
 			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ddl.TestCheckWorkerNumCh:
 			lastSetWorkerCnt = int32(rand.Intn(8) + 8)
@@ -414,6 +464,7 @@ LOOP:
 			checkNum++
 		}
 	}
+	// TODO: c, Assert and Greater seem to come from "github.com/pingcap/check"
 	c.Assert(checkNum, Greater, 5)
 	tk.MustExec("admin check table test_add_index")
 	tk.MustExec("drop table test_add_index")
@@ -421,6 +472,7 @@ LOOP:
 	s.RerunWithCommonHandleEnabled(c, s.TestAddIndexWorkerNum)
 }
 
+// TODO: type C seems to come from "github.com/pingcap/check"
 // TestRunDDLJobPanic tests recover panic when run ddl job panic.
 func (s *testFailDBSuite) TestRunDDLJobPanic(c *C) {
 	defer func() {
@@ -431,10 +483,13 @@ func (s *testFailDBSuite) TestRunDDLJobPanic(c *C) {
 	tk.MustExec("drop table if exists t")
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`), IsNil)
 	_, err := tk.Exec("create table t(c1 int, c2 int)")
+	// TODO: c, Assert and NoNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, NotNil)
+	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
 	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 }
 
+// TODO: type C seems to come from "github.com/pingcap/check"
 func (s *testFailDBSuite) TestPartitionAddIndexGC(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -449,13 +504,16 @@ func (s *testFailDBSuite) TestPartitionAddIndexGC(c *C) {
 	);`)
 	tk.MustExec("insert into partition_add_idx values(1, '2010-01-01'), (2, '1990-01-01'), (3, '2001-01-01')")
 
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateCachedSafePoint", `return(true)`), IsNil)
 	defer func() {
+		// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateCachedSafePoint"), IsNil)
 	}()
 	tk.MustExec("alter table partition_add_idx add index idx (id, hired)")
 }
 
+// TODO: type C seems to come from "github.com/pingcap/check"
 func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -464,11 +522,13 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk.MustExec("create table t (a int not null default 1, b int default 2, c int not null default 0, primary key(c), index idx(b), index idx1(a), index idx2(b, c))")
 	tk.MustExec("insert into t values(1, 2, 3), (11, 22, 33)")
 	_, err := tk.Exec("alter table t change column c cc mediumint")
+	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: this column has primary key flag")
 	tk.MustExec("alter table t change column b bb mediumint first")
 	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, IsNil)
 	cols := tbl.Meta().Columns
 	colsStr := ""
@@ -479,7 +539,9 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	for _, idx := range tbl.Meta().Indices {
 		idxsStr += idx.Name.L + " "
 	}
+	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
 	c.Assert(len(cols), Equals, 3)
+	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
 	c.Assert(len(tbl.Meta().Indices), Equals, 3)
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 1 3", "22 11 33"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -493,6 +555,7 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("admin check table t")
 	tk.MustExec("insert into t values(111, 222, 333)")
+	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
 	_, err = tk.Exec("alter table t change column a aa tinyint after c")
 	c.Assert(err.Error(), Equals, "[types:1690]constant 222 overflows tinyint")
 	tk.MustExec("alter table t change column a aa mediumint after c")
@@ -511,15 +574,20 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	// Test unsupport statements.
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 2")
 	_, err = tk.Exec("alter table t1 modify column a mediumint")
+	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: table is partition table")
 	tk.MustExec("create table t2(id int, a int, b int generated always as (abs(a)) virtual, c int generated always as (a+1) stored)")
 	_, err = tk.Exec("alter table t2 modify column b mediumint")
+	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
 	_, err = tk.Exec("alter table t2 modify column c mediumint")
+	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
 	_, err = tk.Exec("alter table t2 modify column a mediumint generated always as(id+1) stored")
+	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: newCol IsGenerated true, oldCol IsGenerated false")
 	_, err = tk.Exec("alter table t2 modify column a mediumint")
+	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
 
 	// Test multiple rows of data.
@@ -555,19 +623,25 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk.MustExec("drop table t, t1, t2, t3, t4, t5")
 }
 
+// TODO: type C seems to come from "github.com/pingcap/check"
 func (s *testFailDBSuite) TestPartitionAddPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a int) partition by range(a) (partition p0 values less than (10));`)
+	// TODO: c, Assert and IsNil seem to come from "github.com/pingcap/check"
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr", `return(true)`), IsNil)
 	defer func() {
+		// TODO: c, Assert and IsNil seem to come from "github.com/pingcap/check"
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr"), IsNil)
 	}()
 
 	_, err := tk.Exec(`alter table t add partition (partition p1 values less than (20));`)
+	// TODO: c, Assert and NotNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, NotNil)
 	result := tk.MustQuery("show create table t").Rows()[0][1]
+	// TODO: c, Assert and Matches seem to come from "github.com/pingcap/check"
 	c.Assert(result, Matches, `(?s).*PARTITION .p0. VALUES LESS THAN \(10\).*`)
+	// TODO: c, Assert and Not(Matches) seem to come from "github.com/pingcap/check"
 	c.Assert(result, Not(Matches), `(?s).*PARTITION .p0. VALUES LESS THAN \(20\).*`)
 }
