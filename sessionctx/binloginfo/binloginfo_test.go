@@ -82,6 +82,8 @@ type binlogSuite struct {
 const maxRecvMsgSize = 64 * 1024
 
 func createBinlogSuite(t *testing.T) (s *binlogSuite, clean func()) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit", `return(true)`))
+
 	s = new(binlogSuite)
 	store, cleanStore := testkit.CreateMockStore(t)
 	s.store = store
@@ -118,6 +120,7 @@ func createBinlogSuite(t *testing.T) (s *binlogSuite, clean func()) {
 			require.EqualError(t, err, fmt.Sprintf("remove %v: no such file or directory", unixFile))
 		}
 		cleanStore()
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit"))
 	}
 
 	return
@@ -387,10 +390,6 @@ func TestBinlogForSequence(t *testing.T) {
 	s, clean := createBinlogSuite(t)
 	defer clean()
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/driver/txn/mockSyncBinlogCommit"))
-	}()
 	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	s.pump.mu.Lock()
