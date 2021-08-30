@@ -16,7 +16,10 @@ package txn
 
 import (
 	"bytes"
+	"context"
+	"sort"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 )
 
@@ -61,4 +64,146 @@ func (s *RangedKVRetriever) Intersect(startKey, endKey kv.Key) *RangedKVRetrieve
 	}
 
 	return nil
+}
+
+// ScanCurrentRange scans the retriever for current range
+func (s *RangedKVRetriever) ScanCurrentRange(reverse bool) (kv.Iterator, error) {
+	if !s.Valid() {
+		return nil, errors.New("retriever is invalid")
+	}
+
+	startKey, endKey := s.StartKey, s.EndKey
+	if !reverse {
+		return s.Iter(startKey, endKey)
+	}
+
+	iter, err := s.IterReverse(endKey)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(startKey) > 0 {
+		iter = newLowerBoundReverseIter(iter, startKey)
+	}
+
+	return iter, nil
+}
+
+type sortedRetrievers []*RangedKVRetriever
+
+func (retrievers sortedRetrievers) TryGet(ctx context.Context, k kv.Key) (bool, []byte, error) {
+	if len(retrievers) == 0 {
+		return false, nil, nil
+	}
+
+	_, r := retrievers.searchRetrieverByKey(k)
+	if r == nil || !r.Contains(k) {
+		return false, nil, nil
+	}
+
+	val, err := r.Get(ctx, k)
+	return true, val, err
+}
+
+func (retrievers sortedRetrievers) TryBatchGet(ctx context.Context, keys []kv.Key, collectF func(k kv.Key, v []byte)) ([]kv.Key, error) {
+	if len(retrievers) == 0 {
+		return keys, nil
+	}
+
+	nonCustomKeys := make([]kv.Key, 0, len(keys))
+	for _, k := range keys {
+		custom, val, err := retrievers.TryGet(ctx, k)
+		if !custom {
+			nonCustomKeys = append(nonCustomKeys, k)
+			continue
+		}
+
+		if kv.ErrNotExist.Equal(err) {
+			continue
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		collectF(k, val)
+	}
+
+	return nonCustomKeys, nil
+}
+
+func (retrievers sortedRetrievers) GetScanRetrievers(startKey, endKey kv.Key, snapshot kv.Retriever) []*RangedKVRetriever {
+	result := make([]*RangedKVRetriever, 0, 1)
+
+	// Firstly, we should find the first retriever whose EndKey is after input startKey,
+	// it is obvious that the retrievers before it do not have a common range with the input.
+	idx, _ := retrievers.searchRetrieverByKey(startKey)
+
+	// The scan range is located out of retrievers, just use snapshot to scan it
+	if idx < 0 {
+		if snapshot != nil {
+			result = append(result, NewRangeRetriever(snapshot, startKey, endKey))
+		}
+		return result
+	}
+
+	// Check every retriever who has an index >= idx if it intersects with the input range.
+	//	If it is true, put the intersected range to the result.
+	// The range between two retrievers should be checked because we read snapshot data from there.
+	checks := retrievers[idx:]
+	for i, retriever := range checks {
+		// Intersect range with left range of the retriever, use snapshot to read it
+		// Notice r.StartKey may be nil, that means there is no left range for it
+		if len(retriever.StartKey) > 0 && snapshot != nil {
+			var snapStartKey kv.Key
+			if i != 0 {
+				snapStartKey = checks[i-1].EndKey
+			} else {
+				snapStartKey = nil
+			}
+
+			if r := NewRangeRetriever(snapshot, snapStartKey, retriever.StartKey).Intersect(startKey, endKey); r != nil {
+				result = append(result, r)
+			}
+		}
+
+		// Intersect the current retriever
+		if r := retriever.Intersect(startKey, endKey); r != nil {
+			result = append(result, r)
+			continue
+		}
+
+		// Not necessary to continue when the current retriever does not have a valid intersection
+		// because the next ranges will not have valid intersections too.
+		return result
+	}
+
+	// If the last retriever has an intersection, we should check the right range at last.
+	lastRetriever := checks[len(checks)-1]
+	if snapshot != nil && len(lastRetriever.EndKey) > 0 {
+		if r := NewRangeRetriever(snapshot, lastRetriever.EndKey, nil).Intersect(startKey, endKey); r != nil {
+			result = append(result, r)
+		}
+	}
+
+	return result
+}
+
+// searchRetrieverByKey searches the first retriever whose EndKey after the specified key
+func (retrievers sortedRetrievers) searchRetrieverByKey(k kv.Key) (int, *RangedKVRetriever) {
+	n := len(retrievers)
+	if n == 0 {
+		return -1, nil
+	}
+
+	i := sort.Search(n, func(i int) bool {
+		r := retrievers[i]
+		return len(r.EndKey) == 0 || bytes.Compare(r.EndKey, k) > 0
+	})
+
+	if i == n {
+		return -1, nil
+	}
+
+	return i, retrievers[i]
 }
