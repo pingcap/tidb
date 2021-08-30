@@ -15,8 +15,7 @@
       {
         "SQL": "select b, c from t where t.b = 2 and t.c = 2 and t.b+1=3",
         "Plan": [
-          "Selection 0.80 root  1",
-          "└─Point_Get 1.00 root table:t, index:b(b, c) "
+          "Point_Get 1.00 root table:t, index:b(b, c) "
         ],
         "Res": [
           "2 2"
