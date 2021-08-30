@@ -1063,7 +1063,7 @@ DDL reorg element does not exist
 
 ["meta:8238"]
 error = '''
-Can't create placement policy '%-.192s'; policy exists
+Placement policy '%-.192s' already exists
 '''
 
 ["meta:8239"]
@@ -1614,6 +1614,16 @@ TiDB admin check table failed.
 ["schema:8020"]
 error = '''
 Table '%s' was locked in %s by %v
+'''
+
+["schema:8238"]
+error = '''
+Placement policy '%-.192s' already exists
+'''
+
+["schema:8239"]
+error = '''
+Unknown placement policy '%-.192s'
 '''
 
 ["session:8002"]
