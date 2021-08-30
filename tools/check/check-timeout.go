@@ -99,6 +99,7 @@ func init() {
 		"testIntegrationSuite2.TestPartitionCancelAddPrimaryKey",
 		"testDBSuite1.TestAddIndexWithSplitTable",
 		"testSerialDBSuite.TestAddIndexWithShardRowID",
+		"testColumnTypeChangeSuite.TestColumnTypeChangeFromDateTimeTypeToOthers",
 	}
 	for _, v := range tmp {
 		allowList[v] = struct{}{}

@@ -561,7 +561,8 @@ func (*testSysVarSuite) TestInstanceScopedVars(c *C) {
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBRecordPlanInSlowLog)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog)), 10))
+	enabled := atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog) == 1
+	c.Assert(val, Equals, BoolToOnOff(enabled))
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableSlowLog)
 	c.Assert(err, IsNil)

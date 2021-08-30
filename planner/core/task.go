@@ -34,8 +34,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 var (
@@ -155,7 +157,12 @@ func (t *copTask) finishIndexPlan() {
 	var tableInfo *model.TableInfo
 	if t.tablePlan != nil {
 		ts := t.tablePlan.(*PhysicalTableScan)
+		originStats := ts.stats
 		ts.stats = t.indexPlan.statsInfo()
+		if originStats != nil {
+			// keep the original stats version
+			ts.stats.StatsVersion = originStats.StatsVersion
+		}
 		tableInfo = ts.Table
 	}
 	// Network cost of transferring rows of index scan to TiDB.
@@ -1042,7 +1049,12 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	}
 
 	if len(t.rootTaskConds) > 0 {
-		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.statsInfo(), newTask.p.SelectBlockOffset())
+		selectivity, _, err := t.tblColHists.Selectivity(ctx, t.rootTaskConds, nil)
+		if err != nil {
+			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+			selectivity = SelectionFactor
+		}
+		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.statsInfo().Scale(selectivity), newTask.p.SelectBlockOffset())
 		sel.SetChildren(newTask.p)
 		newTask.p = sel
 		sel.cost = newTask.cost()
@@ -1163,7 +1175,12 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 		Offset: p.Offset,
 		Count:  p.Count,
 	}
+	originStats := ts.stats
 	ts.stats = p.stats
+	if originStats != nil {
+		// keep the original stats version
+		ts.stats.StatsVersion = originStats.StatsVersion
+	}
 	reader.stats = p.stats
 	if isProj {
 		proj.stats = p.stats

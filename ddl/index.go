@@ -140,6 +140,9 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	// Length must be specified and non-zero for BLOB and TEXT column indexes.
 	if types.IsTypeBlob(col.FieldType.Tp) {
 		if indexColumnLen == types.UnspecifiedLength {
+			if col.Hidden {
+				return errFunctionalIndexOnBlob
+			}
 			return errors.Trace(errBlobKeyWithoutLength.GenWithStackByArgs(col.Name.O))
 		}
 		if indexColumnLen == types.ErrorLength {
@@ -165,7 +168,7 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int) error {
 	}
 
 	if types.IsString(col.FieldType.Tp) {
-		desc, err := charset.GetCharsetDesc(col.Charset)
+		desc, err := charset.GetCharsetInfo(col.Charset)
 		if err != nil {
 			return err
 		}
@@ -192,7 +195,7 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 		return (length + 7) >> 3, nil
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
 		// Different charsets occupy different numbers of bytes on each character.
-		desc, err := charset.GetCharsetDesc(col.Charset)
+		desc, err := charset.GetCharsetInfo(col.Charset)
 		if err != nil {
 			return 0, errUnsupportedCharset.GenWithStackByArgs(col.Charset, col.Collate)
 		}
