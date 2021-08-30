@@ -23,7 +23,7 @@ type GeneralLogEntry struct {
 	FnGetSchemaMetaVersion func() int64
 	TxnStartTS             uint64
 	TxnForUpdateTS         uint64
-	FnGetReadConsistency   func() bool
+	IsReadConsistency      bool
 	CurrentDB              string
 	TxnMode                string
 	FnGetQuery             func(*strings.Builder) string
@@ -32,7 +32,6 @@ type GeneralLogEntry struct {
 	// following fields are for benchmark testing
 	user              string
 	schemaMetaVersion int64
-	isReadConsistency bool
 	query             string
 }
 
@@ -57,7 +56,7 @@ func (e *GeneralLogEntry) writeToBufferDirect(buf *buffer.Buffer) {
 	e.buf.AppendString("] [forUpdateTS=")
 	e.buf.AppendUint(e.TxnForUpdateTS)
 	e.buf.AppendString("] [isReadConsistency=")
-	e.buf.AppendBool(e.isReadConsistency)
+	e.buf.AppendBool(e.IsReadConsistency)
 	e.buf.AppendString("] [current_db=")
 	e.buf.AppendString(e.CurrentDB)
 	e.buf.AppendString("] [txn_mode=")
@@ -185,7 +184,7 @@ func (gl *GeneralLog) startFormatWorker() {
 			zap.Int64("schemaVersion", e.FnGetSchemaMetaVersion()),
 			zap.Uint64("txnStartTS", e.TxnStartTS),
 			zap.Uint64("forUpdateTS", e.TxnForUpdateTS),
-			zap.Bool("isReadConsistency", e.FnGetReadConsistency()),
+			zap.Bool("isReadConsistency", e.IsReadConsistency),
 			zap.String("current_db", e.CurrentDB),
 			zap.String("txn_mode", e.TxnMode),
 			zap.String("sql", e.FnGetQuery(fnGetQueryBuf)),

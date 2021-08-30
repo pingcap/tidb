@@ -22,7 +22,7 @@ func BenchmarkGeneralLog(b *testing.B) {
 		schemaMetaVersion: 1,
 		TxnStartTS:        1,
 		TxnForUpdateTS:    1,
-		isReadConsistency: true,
+		IsReadConsistency: true,
 		CurrentDB:         "database",
 		TxnMode:           "optimistic",
 		query:             query,
