@@ -52,16 +52,19 @@ func newOneByOneIter(iters []kv.Iterator) *oneByOneIter {
 }
 
 func (o *oneByOneIter) updateCur() {
-	for o.cur >= 0 && o.cur < len(o.iters) {
-		if o.iters[o.cur].Valid() {
+	for o.cur < len(o.iters) {
+		currentIter := o.iters[o.cur]
+		if currentIter.Valid() {
 			break
 		}
+
+		currentIter.Close()
 		o.cur++
 	}
 }
 
 func (o *oneByOneIter) Valid() bool {
-	return o.cur >= 0 && o.cur < len(o.iters)
+	return o.cur < len(o.iters)
 }
 
 func (o *oneByOneIter) Next() error {
@@ -94,10 +97,10 @@ func (o *oneByOneIter) Value() []byte {
 }
 
 func (o *oneByOneIter) Close() {
-	for _, iter := range o.iters {
-		iter.Close()
+	for o.cur < len(o.iters) {
+		o.iters[o.cur].Close()
+		o.cur++
 	}
-	o.cur = -1
 }
 
 type lowerBoundReverseIter struct {
@@ -158,8 +161,10 @@ func (i *lowerBoundReverseIter) Next() error {
 }
 
 func (i *lowerBoundReverseIter) Close() {
-	i.valid = false
-	i.iter.Close()
+	if i.valid {
+		i.valid = false
+		i.iter.Close()
+	}
 }
 
 type filterEmptyValueIter struct {
