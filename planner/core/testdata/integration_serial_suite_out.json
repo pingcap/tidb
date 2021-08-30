@@ -2879,11 +2879,14 @@
       {
         "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_1, id order by col_0) from ts",
         "Plan": [
-          "HashAgg 1.00 root  funcs:group_concat(Column#6, Column#7, Column#8 order by Column#9 separator \",\")->Column#5",
-          "└─Projection 10000.00 root  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#8, test.ts.col_0",
-          "  └─TableReader 10000.00 root  data:ExchangeSender",
-          "    └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:ts keep order:false, stats:pseudo"
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(Column#6, Column#7, Column#8 order by Column#9 separator \",\")->Column#5",
+          "      └─Projection 10000.00 batchCop[tiflash]  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#8, test.ts.col_0",
+          "        └─ExchangeReceiver 10000.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2903,11 +2906,14 @@
       {
         "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_1, id order by col_0),count(*),min(col_1) from ts",
         "Plan": [
-          "HashAgg 1.00 root  funcs:group_concat(Column#8, Column#9, Column#10 order by Column#11 separator \",\")->Column#5, funcs:count(1)->Column#6, funcs:min(Column#12)->Column#7",
-          "└─Projection 10000.00 root  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#10, test.ts.col_0, test.ts.col_1",
-          "  └─TableReader 10000.00 root  data:ExchangeSender",
-          "    └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:ts keep order:false, stats:pseudo"
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5, Column#6, Column#7",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(Column#8, Column#9, Column#10 order by Column#11 separator \",\")->Column#5, funcs:count(1)->Column#6, funcs:min(Column#12)->Column#7",
+          "      └─Projection 10000.00 batchCop[tiflash]  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#10, test.ts.col_0, test.ts.col_1",
+          "        └─ExchangeReceiver 10000.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
         ]
       },
       {
@@ -3037,11 +3043,14 @@
       {
         "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_1, id order by col_0),count(distinct id),min(col_0),avg(id) from ts",
         "Plan": [
-          "HashAgg 1.00 root  funcs:group_concat(Column#9, Column#10, Column#11 order by Column#12 separator \",\")->Column#5, funcs:count(Column#13)->Column#6, funcs:min(Column#14)->Column#7, funcs:avg(Column#15)->Column#8",
-          "└─Projection 10000.00 root  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#11, test.ts.col_0, test.ts.id, test.ts.col_0, cast(test.ts.id, decimal(15,4) BINARY)->Column#15",
-          "  └─TableReader 10000.00 root  data:ExchangeSender",
-          "    └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:ts keep order:false, stats:pseudo"
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5, Column#6, Column#7, div(Column#8, cast(case(eq(Column#10, 0), 1, Column#10), decimal(20,0) BINARY))->Column#8",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(Column#11, Column#12, Column#13 order by Column#14 separator \",\")->Column#5, funcs:count(Column#15)->Column#6, funcs:min(Column#16)->Column#7, funcs:count(Column#17)->Column#10, funcs:sum(Column#18)->Column#8",
+          "      └─Projection 10000.00 batchCop[tiflash]  test.ts.col_0, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#13, test.ts.col_0, test.ts.id, test.ts.col_0, test.ts.id, cast(test.ts.id, decimal(15,4) BINARY)->Column#18",
+          "        └─ExchangeReceiver 10000.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
         ]
       },
       {
@@ -3143,11 +3152,14 @@
       {
         "SQL": "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, id),count(distinct id),group_concat(col_1, id order by 1,2),min(col_0),avg(id) from ts",
         "Plan": [
-          "HashAgg 1.00 root  funcs:group_concat(Column#16, Column#17 separator \",\")->Column#5, funcs:count(Column#18)->Column#6, funcs:group_concat(Column#19, Column#20 order by Column#21, Column#22 separator \",\")->Column#7, funcs:min(Column#23)->Column#8, funcs:avg(Column#24)->Column#9",
-          "└─Projection 10000.00 root  test.ts.col_0, cast(test.ts.id, var_string(20))->Column#17, test.ts.id, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#20, test.ts.col_1, test.ts.id, test.ts.col_0, cast(test.ts.id, decimal(15,4) BINARY)->Column#24",
-          "  └─TableReader 10000.00 root  data:ExchangeSender",
-          "    └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:ts keep order:false, stats:pseudo"
+          "TableReader 1.00 root  data:ExchangeSender",
+          "└─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 1.00 batchCop[tiflash]  Column#5, Column#6, Column#7, Column#8, div(Column#9, cast(case(eq(Column#15, 0), 1, Column#15), decimal(20,0) BINARY))->Column#9",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:group_concat(Column#18, Column#19 separator \",\")->Column#5, funcs:count(Column#20)->Column#6, funcs:group_concat(Column#21, Column#22 order by Column#23, Column#24 separator \",\")->Column#7, funcs:min(Column#25)->Column#8, funcs:count(Column#26)->Column#15, funcs:sum(Column#27)->Column#9",
+          "      └─Projection 10000.00 batchCop[tiflash]  test.ts.col_0, cast(test.ts.id, var_string(20))->Column#19, test.ts.id, test.ts.col_1, cast(test.ts.id, var_string(20))->Column#22, test.ts.col_1, test.ts.id, test.ts.col_0, test.ts.id, cast(test.ts.id, decimal(15,4) BINARY)->Column#27",
+          "        └─ExchangeReceiver 10000.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "            └─TableFullScan 10000.00 batchCop[tiflash] table:ts keep order:false, stats:pseudo"
         ]
       },
       {

@@ -339,6 +339,16 @@ func (la *LogicalAggregation) HasDistinct() bool {
 	return false
 }
 
+// HasOrderBy shows whether LogicalAggregation has functions with order-by items.
+func (la *LogicalAggregation) HasOrderBy() bool {
+	for _, aggFunc := range la.AggFuncs {
+		if len(aggFunc.OrderByItems) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // CopyAggHints copies the aggHints from another LogicalAggregation.
 func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
 	// TODO: Copy the hint may make the un-applicable hint throw the
