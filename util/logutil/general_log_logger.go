@@ -18,8 +18,6 @@ const (
 )
 
 type GeneralLogEntry struct {
-	buf *buffer.Buffer
-
 	ConnID                 uint64
 	FnGetUser              func() string
 	User                   string
@@ -32,6 +30,8 @@ type GeneralLogEntry struct {
 	TxnMode                string
 	FnGetQuery             func(*strings.Builder) string
 	Query                  string
+
+	buf *buffer.Buffer
 }
 
 const _hex = "0123456789abcdef"
@@ -42,36 +42,8 @@ var fnGetQueryPool = sync.Pool{New: func() interface{} {
 	return &ret
 }}
 
-func (e *GeneralLogEntry) writeToBuffer(buf *buffer.Buffer) {
-	e.buf = buf
-
-	e.buf.AppendString("[GENERAL_LOG] [conn=")
-	e.buf.AppendUint(e.ConnID)
-	e.buf.AppendString("] [user=")
-	e.safeAddStringWithQuote(e.FnGetUser())
-	e.buf.AppendString("] [schemaVersion=")
-	e.buf.AppendInt(e.FnGetSchemaMetaVersion())
-	e.buf.AppendString("] [txnStartTS=")
-	e.buf.AppendUint(e.TxnStartTS)
-	e.buf.AppendString("] [forUpdateTS=")
-	e.buf.AppendUint(e.TxnForUpdateTS)
-	e.buf.AppendString("] [isReadConsistency=")
-	e.buf.AppendBool(e.IsReadConsistency)
-	e.buf.AppendString("] [current_db=")
-	e.buf.AppendString(e.CurrentDB)
-	e.buf.AppendString("] [txn_mode=")
-	e.buf.AppendString(e.TxnMode)
-	e.buf.AppendString("] [sql=")
-	fnGetQueryBuf := fnGetQueryPool.Get().(*strings.Builder)
-	e.safeAddStringWithQuote(e.FnGetQuery(fnGetQueryBuf))
-	fnGetQueryBuf.Reset()
-	fnGetQueryPool.Put(fnGetQueryBuf)
-	e.buf.AppendString("]")
-}
-
 func (e *GeneralLogEntry) writeToBufferDirect(buf *buffer.Buffer) {
 	e.buf = buf
-
 	e.buf.AppendString("[GENERAL_LOG] [conn=")
 	e.buf.AppendUint(e.ConnID)
 	e.buf.AppendString("] [user=")
@@ -183,22 +155,20 @@ func needDoubleQuotes(s string) bool {
 }
 
 type GeneralLog struct {
-	bufPool      buffer.Pool
-	logger       *zap.Logger
-	logEntryChan chan *GeneralLogEntry
-	logBufChan   chan *buffer.Buffer
+	bufPool         buffer.Pool
+	logger          *zap.Logger
+	logEntryChan    chan *GeneralLogEntry
+	droppedLogCount uint64
 }
 
 func newGeneralLog(logger *zap.Logger) *GeneralLog {
 	gl := &GeneralLog{
-		bufPool:      buffer.NewPool(),
-		logger:       logger,
-		logEntryChan: make(chan *GeneralLogEntry, generalLogBatchSize),
-		logBufChan:   make(chan *buffer.Buffer, generalLogBatchSize),
+		bufPool:         buffer.NewPool(),
+		logger:          logger,
+		logEntryChan:    make(chan *GeneralLogEntry, generalLogBatchSize),
+		droppedLogCount: 0,
 	}
-	for i := 0; i < 5; i++ {
-		go gl.startFormatWorker()
-	}
+	go gl.startFormatWorker()
 	return gl
 }
 

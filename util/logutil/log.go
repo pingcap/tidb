@@ -101,9 +101,16 @@ var GeneralLogLogger = log.L()
 
 var generalLog *GeneralLog
 
-func PutGeneralLogBlocking(entry *GeneralLogEntry) {
-	// TODO(dragonly): drop when channel is full, and increase drop counter for monitoring
-	generalLog.logEntryChan <- entry
+func PutGeneralLogOrDrop(entry *GeneralLogEntry) {
+	select {
+	case generalLog.logEntryChan <- entry:
+	default:
+		// When logEntryChan is full, the system resource is under so much pressure that the logging system capacity
+		// is reduced. We should NOT output another warning log saying that we are dropping a general log, which will
+		// add more pressure on the system load.
+		// TODO(dragonly): add prometheus counter for dropped log count?
+		generalLog.droppedLogCount++
+	}
 }
 
 // InitLogger initializes a logger with cfg.

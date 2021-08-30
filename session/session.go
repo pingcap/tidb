@@ -2860,7 +2860,6 @@ func genFnGetQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) fun
 				queryMutable[i] = ' '
 			}
 		}
-		// query = *(*string)(unsafe.Pointer(&queryMutable))
 		if !vars.EnableRedactLog {
 			buf.WriteString(vars.PreparedParams.String())
 		}
@@ -2903,7 +2902,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			FnGetQuery:             fnGetQuery,
 		}
 
-		logutil.PutGeneralLogBlocking(&logEntry)
+		logutil.PutGeneralLogOrDrop(&logEntry)
 
 		// logutil.GeneralLogLogger.Info(generalLogText)
 		// logutil.BgLogger().Info("GENERAL_LOG",
