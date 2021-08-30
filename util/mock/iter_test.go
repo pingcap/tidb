@@ -11,38 +11,40 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-package kv
+package mock
 
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/kv"
+
 	"github.com/stretchr/testify/assert"
 )
 
-func newSliceIterWithCopy(data []*Entry) *SliceIter {
+func newSliceIterWithCopy(data []*kv.Entry) *SliceIter {
 	if data == nil {
 		return NewSliceIter(nil)
 	}
 
-	return NewSliceIter(append([]*Entry{}, data...))
+	return NewSliceIter(append([]*kv.Entry{}, data...))
 }
 
 func TestSliceIter(t *testing.T) {
 	assert := assert.New(t)
 	slices := []struct {
-		data []*Entry
+		data []*kv.Entry
 	}{
 		{data: nil},
-		{data: []*Entry{}},
-		{data: []*Entry{{Key: Key("k1"), Value: []byte("v1")}}},
-		{data: []*Entry{
-			{Key: Key("k1"), Value: []byte("v1")},
-			{Key: Key("k2"), Value: []byte("v2")},
+		{data: []*kv.Entry{}},
+		{data: []*kv.Entry{{Key: kv.Key("k1"), Value: []byte("v1")}}},
+		{data: []*kv.Entry{
+			{Key: kv.Key("k1"), Value: []byte("v1")},
+			{Key: kv.Key("k2"), Value: []byte("v2")},
 		}},
-		{data: []*Entry{
-			{Key: Key("k1"), Value: []byte("v1")},
-			{Key: Key("k0"), Value: []byte("")},
-			{Key: Key("k2"), Value: []byte("v2")},
+		{data: []*kv.Entry{
+			{Key: kv.Key("k1"), Value: []byte("v1")},
+			{Key: kv.Key("k0"), Value: []byte("")},
+			{Key: kv.Key("k2"), Value: []byte("v2")},
 		}},
 	}
 

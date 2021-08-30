@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -53,16 +54,16 @@ func checkCloseIter(t *testing.T, iter kv.Iterator) {
 }
 
 func TestOneByOneIter(t *testing.T) {
-	iter1 := kv.NewSliceIter([]*kv.Entry{
+	iter1 := mock.NewSliceIter([]*kv.Entry{
 		r("k1", "v1"),
 		r("k5", "v3"),
 	})
-	iter2 := kv.NewSliceIter([]*kv.Entry{
+	iter2 := mock.NewSliceIter([]*kv.Entry{
 		r("k2", "v2"),
 		r("k4", "v4"),
 	})
-	iter3 := kv.NewSliceIter([]*kv.Entry{})
-	iter4 := kv.NewSliceIter([]*kv.Entry{
+	iter3 := mock.NewSliceIter([]*kv.Entry{})
+	iter4 := mock.NewSliceIter([]*kv.Entry{
 		r("k3", "v3"),
 		r("k6", "v6"),
 	})
@@ -81,7 +82,7 @@ func TestOneByOneIter(t *testing.T) {
 	checkCloseIter(t, oneByOne)
 
 	// test for one inner iter
-	iter1 = kv.NewSliceIter([]*kv.Entry{
+	iter1 = mock.NewSliceIter([]*kv.Entry{
 		r("k1", "v1"),
 		r("k5", "v3"),
 	})
@@ -91,7 +92,7 @@ func TestOneByOneIter(t *testing.T) {
 	checkExpectedIterData(t, expected, oneByOne)
 
 	// test for empty iter
-	iter3 = kv.NewSliceIter([]*kv.Entry{})
+	iter3 = mock.NewSliceIter([]*kv.Entry{})
 	oneByOne = newOneByOneIter([]kv.Iterator{iter3})
 	checkExpectedIterData(t, nil, oneByOne)
 }
@@ -142,11 +143,11 @@ func TestFilterEmptyValueIter(t *testing.T) {
 			}
 		}
 
-		iter, err := filterEmptyValue(kv.NewSliceIter(c.data))
+		iter, err := filterEmptyValue(mock.NewSliceIter(c.data))
 		assert.Nil(t, err)
 		checkExpectedIterData(t, data, iter)
 
-		iter, err = filterEmptyValue(kv.NewSliceIter(c.data))
+		iter, err = filterEmptyValue(mock.NewSliceIter(c.data))
 		assert.Nil(t, err)
 		checkCloseIter(t, iter)
 	}
@@ -232,10 +233,10 @@ func TestLowerBoundReverseIter(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		iter := newLowerBoundReverseIter(kv.NewSliceIter(c.data), c.lowerBound)
+		iter := newLowerBoundReverseIter(mock.NewSliceIter(c.data), c.lowerBound)
 		checkExpectedIterData(t, c.expected, iter)
 
-		iter = newLowerBoundReverseIter(kv.NewSliceIter(c.data), c.lowerBound)
+		iter = newLowerBoundReverseIter(mock.NewSliceIter(c.data), c.lowerBound)
 		checkCloseIter(t, iter)
 	}
 }

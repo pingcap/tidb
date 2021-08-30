@@ -18,6 +18,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 var _ = Suite(&testUnionIterSuit{})
@@ -94,12 +95,12 @@ func (s *testUnionIterSuit) TestUnionIter(c *C) {
 }
 
 func assertUnionIter(c *C, dirtyRecords, snapRecords, expected []*kv.Entry) {
-	iter, err := executor.NewUnionIter(kv.NewSliceIter(dirtyRecords), kv.NewSliceIter(snapRecords), false)
+	iter, err := executor.NewUnionIter(mock.NewSliceIter(dirtyRecords), mock.NewSliceIter(snapRecords), false)
 	c.Assert(err, IsNil)
 	assertIter(c, iter, expected)
 
 	// assert reverse is true
-	iter, err = executor.NewUnionIter(kv.NewSliceIter(reverseRecords(dirtyRecords)), kv.NewSliceIter(reverseRecords(snapRecords)), true)
+	iter, err = executor.NewUnionIter(mock.NewSliceIter(reverseRecords(dirtyRecords)), mock.NewSliceIter(reverseRecords(snapRecords)), true)
 	c.Assert(err, IsNil)
 	assertIter(c, iter, reverseRecords(expected))
 }
