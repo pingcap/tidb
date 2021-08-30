@@ -18,8 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -1804,37 +1802,6 @@ func BenchmarkCompileExecutePreparedStmt(b *testing.B) {
 		}
 	}
 	b.StopTimer()
-}
-
-type BenchOutput struct {
-	Date   string
-	Commit string
-	Result []BenchResult
-}
-
-type BenchResult struct {
-	Name        string
-	NsPerOp     int64
-	AllocsPerOp int64
-	BytesPerOp  int64
-}
-
-func benchmarkResultToJSON(name string, r testing.BenchmarkResult) BenchResult {
-	return BenchResult{
-		Name:        name,
-		NsPerOp:     r.NsPerOp(),
-		AllocsPerOp: r.AllocsPerOp(),
-		BytesPerOp:  r.AllocedBytesPerOp(),
-	}
-}
-
-func callerName(f func(b *testing.B)) string {
-	fullName := runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
-	idx := strings.LastIndexByte(fullName, '.')
-	if idx > 0 && idx+1 < len(fullName) {
-		return fullName[idx+1:]
-	}
-	return fullName
 }
 
 // TestBenchDaily collects the daily benchmark test result and generates a json output file.
