@@ -153,7 +153,7 @@ func (retrievers sortedRetrievers) GetScanRetrievers(startKey, endKey kv.Key, sn
 	// it is obvious that the retrievers before it do not have a common range with the input.
 	idx, _ := retrievers.searchRetrieverByKey(startKey)
 
-	// The scan range is located out of retrievers, just use snapshot to scan it
+	// If not found, it means the scan range is located out of retrievers, just use snapshot to scan it
 	if idx == len(retrievers) {
 		if snapshot != nil {
 			result = append(result, NewRangeRetriever(snapshot, startKey, endKey))
@@ -161,13 +161,13 @@ func (retrievers sortedRetrievers) GetScanRetrievers(startKey, endKey kv.Key, sn
 		return result
 	}
 
-	// Check every retriever who has an index >= idx if it intersects with the input range.
-	//	If it is true, put the intersected range to the result.
-	// The range between two retrievers should be checked because we read snapshot data from there.
+	// Check every retriever whose index >= idx whether it intersects with the input range.
+	// If it is true, put the intersected range to the result.
+	// The range between two retrievers should also be checked because we read snapshot data from there.
 	checks := retrievers[idx:]
 	for i, retriever := range checks {
-		// Intersect range with left range of the retriever, use snapshot to read it
-		// Notice r.StartKey may be nil, that means there is no left range for it
+		// Intersect with the range which is on the left of the retriever and use snapshot to read it
+		// Notice that when len(retriever.StartKey) == 0, that means there is no left range for it
 		if len(retriever.StartKey) > 0 && snapshot != nil {
 			var snapStartKey kv.Key
 			if i != 0 {
@@ -188,11 +188,10 @@ func (retrievers sortedRetrievers) GetScanRetrievers(startKey, endKey kv.Key, sn
 		}
 
 		// Not necessary to continue when the current retriever does not have a valid intersection
-		// because the next ranges will not have valid intersections too.
 		return result
 	}
 
-	// If the last retriever has an intersection, we should check the right range at last.
+	// If the last retriever has an intersection, we should still check the range on its right.
 	lastRetriever := checks[len(checks)-1]
 	if snapshot != nil && len(lastRetriever.EndKey) > 0 {
 		if r := NewRangeRetriever(snapshot, lastRetriever.EndKey, nil).Intersect(startKey, endKey); r != nil {
