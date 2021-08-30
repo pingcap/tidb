@@ -6171,6 +6171,8 @@ func buildPolicyInfo(stmt *ast.CreatePlacementPolicyStmt) (*placementpolicy.Poli
 			policyInfo.FollowerConstraints = opt.StrValue
 		case ast.PlacementOptionVoterConstraints:
 			policyInfo.VoterConstraints = opt.StrValue
+		case ast.PlacementOptionLearnerConstraints:
+			policyInfo.LeaderConstraints = opt.StrValue
 		default:
 			return nil, errors.Trace(errors.New("unknown placement policy option"))
 		}
