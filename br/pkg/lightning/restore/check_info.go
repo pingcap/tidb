@@ -594,7 +594,11 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 	// tidb_rowid have a default value.
 	defaultCols[model.ExtraHandleName.String()] = struct{}{}
 
-	for _, dataFile := range tableInfo.DataFiles {
+	// only check the first file of this table.
+	if len(tableInfo.DataFiles) > 0 {
+		dataFile := tableInfo.DataFiles[0]
+		log.L().Info("datafile to check", zap.String("db", tableInfo.DB),
+			zap.String("table", tableInfo.Name), zap.String("path", dataFile.FileMeta.Path))
 		// get columns name from data file.
 		dataFileMeta := dataFile.FileMeta
 
@@ -608,7 +612,7 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 		}
 		if colsFromDataFile == nil && colCountFromDataFile == 0 {
 			log.L().Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
-			continue
+			return msgs, nil
 		}
 
 		if colsFromDataFile == nil {
@@ -668,9 +672,6 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 					"please give a default value for %s or choose another column to ignore or add this column in data file",
 					tableInfo.DB, tableInfo.Name, col, col))
 			}
-		}
-		if len(msgs) > 0 {
-			return msgs, nil
 		}
 	}
 	return msgs, nil

@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,26 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sessionctx
+package filesort
 
 import (
-	"fmt"
+	"math/rand"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-func TestBasicCtxTypeToString(t *testing.T) {
-	tests := []struct {
-		key fmt.Stringer
-		v   string
-	}{
-		{QueryString, "query_string"},
-		{Initing, "initing"},
-		{LastExecuteDDL, "last_execute_ddl"},
-		{basicCtxType(9), "unknown"},
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	goleak.VerifyTestMain(m)
+}
+
+func nextRow(r *rand.Rand, keySize int, valSize int) (key []types.Datum, val []types.Datum, handle int64) {
+	key = make([]types.Datum, keySize)
+	for i := range key {
+		key[i] = types.NewDatum(r.Int())
 	}
-	for _, tt := range tests {
-		require.Equal(t, tt.key.String(), tt.v)
+
+	val = make([]types.Datum, valSize)
+	for j := range val {
+		val[j] = types.NewDatum(r.Int())
 	}
+
+	handle = r.Int63()
+	return
 }
