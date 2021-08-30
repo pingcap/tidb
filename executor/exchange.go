@@ -4,7 +4,6 @@ import (
 	"context"
 	"github.com/pingcap/tidb/util/codec"
 	"reflect"
-	"sync"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -286,7 +285,7 @@ type ExchangeSenderBroadcastHT struct {
 
 	outputs []chan *chunk.Chunk
 
-	ht *HashRowContainerSlice
+	ht *HashRowContainer
 
 	buildSideEstCount float64
 	buildKeys         []*expression.Column
@@ -314,8 +313,8 @@ func (e *ExchangeSenderBroadcastHT) Open(ctx context.Context) error {
 		allTypes:  e.buildTypes,
 		keyColIdx: buildKeyColIdx,
 	}
-	e.ht = newHashRowContainerSlice(e.ctx, int(e.buildSideEstCount), hCtx, len(e.outputs))
-	htSlice, ok := e.ctx.GetSessionVars().StmtCtx.BroadcastHT.([]*HashRowContainerSlice)
+	e.ht = newHashRowContainerMultiple(e.ctx, int(e.buildSideEstCount), hCtx, len(e.outputs))
+	htSlice, ok := e.ctx.GetSessionVars().StmtCtx.BroadcastHT.([]*HashRowContainer)
 	if !ok {
 		panic("unexpected htSlice")
 	}
@@ -331,11 +330,17 @@ func (e *ExchangeSenderBroadcastHT) sendAndCloseOutputs() {
 }
 
 func (e *ExchangeSenderBroadcastHT) Next(ctx context.Context, req *chunk.Chunk) error {
-	var wg sync.WaitGroup
-	wg.Add(len(e.children))
+	chkChs := make([]chan *chunk.Chunk, 0, len(e.children))
+	for i := 0; i < len(e.children); i++ {
+		chkChs = append(chkChs, make(chan *chunk.Chunk, 100))
+	}
+	recvSelectCases := make([]reflect.SelectCase, 0, len(e.children))
+	for _, ch := range chkChs {
+		recvSelectCases = append(recvSelectCases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)})
+	}
+
 	for i := 0; i < len(e.children); i++ {
 		go func(childIdx int) {
-			defer wg.Done()
 			for {
 				chk := chunk.NewChunkWithCapacity(e.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
 				if err := Next(ctx, e.children[childIdx], chk); err != nil {
@@ -343,15 +348,32 @@ func (e *ExchangeSenderBroadcastHT) Next(ctx context.Context, req *chunk.Chunk) 
 					panic("got error in BroadcastHT")
 				}
 				if chk.NumRows() == 0 {
+					close(chkChs[childIdx])
 					break
 				}
-				if err := e.ht.PutChunk(chk, e.isNullEQ, childIdx); err != nil {
-					panic("put chunk error")
-				}
+
+				chkChs[childIdx] <- chk
 			}
 		}(i)
 	}
-	wg.Wait()
+
+	for {
+		if len(recvSelectCases) == 0 {
+			break
+		}
+
+		chosen, value, ok := reflect.Select(recvSelectCases)
+
+		if ok {
+			tmpChk := value.Interface().(*chunk.Chunk)
+			if err := e.ht.PutChunk(tmpChk, e.isNullEQ); err != nil {
+				panic("put chunk error")
+			}
+			continue
+		}
+		recvSelectCases = append(recvSelectCases[:chosen], recvSelectCases[chosen+1:]...)
+	}
+
 	e.sendAndCloseOutputs()
 	return errors.New("ExchangeSenderBroadcastHT done")
 }

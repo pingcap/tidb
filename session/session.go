@@ -1720,7 +1720,7 @@ func resetCTEStorageMap(se *session) error {
 }
 
 func resetBroadcastHT(se *session) error {
-	htSlice, ok := se.GetSessionVars().StmtCtx.BroadcastHT.([]*executor.HashRowContainerSlice)
+	htSlice, ok := se.GetSessionVars().StmtCtx.BroadcastHT.([]*executor.HashRowContainer)
 	if !ok {
 		panic("unexpected htSlice")
 	}

@@ -68,7 +68,7 @@ type NonParallelHashJoinExec struct {
 	isBuildSideHT       bool
 	isProbeSideEmpty    bool
 
-	rowContainerSlice *HashRowContainerSlice
+	rowContainer *HashRowContainer
 }
 
 func (e *NonParallelHashJoinExec) Open(ctx context.Context) error {
@@ -124,6 +124,10 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 		return err
 	}
 
+	start := time.Now()
+	defer func() {
+		e.stats.fetchAndProbe += int64(time.Since(start))
+	}()
 	if e.probeSideResult.NumRows() == 0 {
 		e.isProbeSideEmpty = true
 		req.SwapColumns(e.resChk)
@@ -138,7 +142,7 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 		e.hashTblDone = true
 	}
 
-	if e.rowContainerSlice == nil {
+	if e.rowContainer == nil {
 		return nil
 	}
 
@@ -167,8 +171,12 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 }
 
 func (e *NonParallelHashJoinExec) buildHashTable(ctx context.Context) (err error) {
+	start := time.Now()
+	defer func() {
+		e.stats.fetchAndBuildHashTable = time.Since(start)
+	}()
 	if e.isBuildSideHT {
-		tmpPtr := unsafe.Pointer(&e.rowContainerSlice)
+		tmpPtr := unsafe.Pointer(&e.rowContainer)
 		if err = Next(ctx, e.buildSideExec, (*chunk.Chunk)(tmpPtr)); err != nil {
 			return err
 		}
@@ -181,7 +189,7 @@ func (e *NonParallelHashJoinExec) buildHashTable(ctx context.Context) (err error
 			allTypes:  e.buildTypes,
 			keyColIdx: buildKeyColIdx,
 		}
-		e.rowContainerSlice = newHashRowContainerSlice(e.ctx, int(e.buildSideEstCount), hCtx, 1)
+		e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
 
 		for {
 			chk := chunk.NewChunkWithCapacity(e.buildSideExec.base().retFieldTypes, e.ctx.GetSessionVars().MaxChunkSize)
@@ -191,7 +199,7 @@ func (e *NonParallelHashJoinExec) buildHashTable(ctx context.Context) (err error
 			if chk.NumRows() == 0 {
 				break
 			}
-			if err = e.rowContainerSlice.PutChunk(chk, e.isNullEQ, 0); err != nil {
+			if err = e.rowContainer.PutChunk(chk, e.isNullEQ); err != nil {
 				return err
 			}
 		}
@@ -201,6 +209,11 @@ func (e *NonParallelHashJoinExec) buildHashTable(ctx context.Context) (err error
 }
 
 func (e *NonParallelHashJoinExec) doJoinWork(probeChk *chunk.Chunk, resChk *chunk.Chunk) (err error) {
+	start := time.Now()
+	defer func() {
+		probeTime := int64(time.Since(start))
+		atomic.AddInt64(&e.stats.probe, probeTime)
+	}()
 	e.hCtx.initHash(probeChk.NumRows())
 	if e.useOuterToBuild {
 		panic("not implemented yet")
@@ -212,7 +225,7 @@ func (e *NonParallelHashJoinExec) doJoinWork(probeChk *chunk.Chunk, resChk *chun
 
 		for keyIdx, i := range e.hCtx.keyColIdx {
 			ignoreNull := len(e.isNullEQ) > keyIdx && e.isNullEQ[keyIdx]
-			err = codec.HashChunkSelected(e.rowContainerSlice.rcs[0].sc, e.hCtx.hashVals, probeChk, e.hCtx.allTypes[i], i, e.hCtx.buf, e.hCtx.hasNull, e.selected, ignoreNull)
+			err = codec.HashChunkSelected(e.rowContainer.sc, e.hCtx.hashVals, probeChk, e.hCtx.allTypes[i], i, e.hCtx.buf, e.hCtx.hasNull, e.selected, ignoreNull)
 			if err != nil {
 				return err
 			}
@@ -232,7 +245,7 @@ func (e *NonParallelHashJoinExec) probeHashTable(probeChk *chunk.Chunk, startIdx
 		} else {
 			probeKey := hCtx.hashVals[i].Sum64()
 			e.probeRow = probeChk.GetRow(i)
-			buildSideRows, _, err := e.rowContainerSlice.GetMatchedRowsAndPtrs(probeKey, e.probeRow, hCtx, e.workerID)
+			buildSideRows, _, err := e.rowContainer.GetMatchedRowsAndPtrsMultiple(probeKey, e.probeRow, hCtx, e.workerID)
 			if err != nil {
 				return err
 			}
