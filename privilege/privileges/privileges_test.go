@@ -2299,3 +2299,26 @@ func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
 	))
 
 }
+
+func TestGrantPlacementAdminDynamicPriv(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE placement_db")
+	tk.MustExec("USE placement_db")
+	tk.MustExec("CREATE TABLE placement_table (a int)")
+	tk.MustExec("CREATE USER placement_user")
+	tk.MustExec("GRANT PLACEMENT_ADMIN ON *.* TO placement_user")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR placement_user").Check(testkit.Rows(
+		`GRANT USAGE ON *.* TO 'placement_user'@'%'`,
+		`GRANT PLACEMENT_ADMIN ON *.* TO 'placement_user'@'%'`))
+	tk.MustExec("DROP USER placement_user")
+	tk.MustExec("DROP DATABASE placement_db")
+}
