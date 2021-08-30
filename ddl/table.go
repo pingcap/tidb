@@ -627,9 +627,9 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.Al
 		// The next value to allocate is `newBase`.
 		newEnd := newBase - 1
 		if force {
-			err = alloc.ForceRebase(tblInfo.ID, newEnd)
+			err = alloc.ForceRebase(newEnd)
 		} else {
-			err = alloc.Rebase(tblInfo.ID, newEnd, false)
+			err = alloc.Rebase(newEnd, false)
 		}
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -710,7 +710,7 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 	defer s.put(ctx)
 
 	// Check next global max auto ID first.
-	autoIncID, err := tbl.Allocators(ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID(tbl.Meta().ID)
+	autoIncID, err := tbl.Allocators(ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID()
 	if err != nil {
 		return errors.Trace(err)
 	}
