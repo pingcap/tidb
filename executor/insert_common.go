@@ -915,7 +915,7 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	tableInfo := e.Table.Meta()
 	increment := e.ctx.GetSessionVars().AutoIncrementIncrement
 	offset := e.ctx.GetSessionVars().AutoIncrementOffset
-	_, autoRandomID, err := alloc.Alloc(ctx, tableInfo.ID, 1, int64(increment), int64(offset))
+	_, autoRandomID, err := alloc.Alloc(ctx, 1, int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
