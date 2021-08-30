@@ -1061,6 +1061,16 @@ error = '''
 DDL reorg element does not exist
 '''
 
+["meta:8238"]
+error = '''
+Placement policy '%-.192s' already exists
+'''
+
+["meta:8239"]
+error = '''
+Unknown placement policy '%-.192s'
+'''
+
 ["planner:1044"]
 error = '''
 Access denied for user '%-.48s'@'%-.64s' to database '%-.192s'
@@ -1604,6 +1614,16 @@ TiDB admin check table failed.
 ["schema:8020"]
 error = '''
 Table '%s' was locked in %s by %v
+'''
+
+["schema:8238"]
+error = '''
+Placement policy '%-.192s' already exists
+'''
+
+["schema:8239"]
+error = '''
+Unknown placement policy '%-.192s'
 '''
 
 ["session:8002"]

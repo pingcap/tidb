@@ -2951,10 +2951,6 @@ func (s *testIntegrationSuite3) TestCreateTemporaryTable(c *C) {
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
-
-	// Considering snapshot, local temporary table is always visible.
-	tk.MustExec("set @@tidb_snapshot = '2016-01-01 15:04:05.999999'")
-	tk.MustExec("select * from overlap")
 }
 
 func (s *testIntegrationSuite3) TestAvoidCreateViewOnLocalTemporaryTable(c *C) {

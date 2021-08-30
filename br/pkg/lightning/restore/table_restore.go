@@ -850,8 +850,17 @@ func (tr *TableRestore) importKV(
 	engineID int32,
 ) error {
 	task := closedEngine.Logger().Begin(zap.InfoLevel, "import and cleanup engine")
-
-	err := closedEngine.Import(ctx)
+	regionSplitSize := int64(rc.cfg.TikvImporter.RegionSplitSize)
+	if regionSplitSize == 0 && rc.taskMgr != nil {
+		regionSplitSize = int64(config.SplitRegionSize)
+		rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
+			if len(tasks) > 0 {
+				regionSplitSize = int64(config.SplitRegionSize) * int64(utils.MinInt(len(tasks), config.MaxSplitRegionSizeRatio))
+			}
+			return nil, nil
+		})
+	}
+	err := closedEngine.Import(ctx, regionSplitSize)
 	rc.saveStatusCheckpoint(tr.tableName, engineID, err, checkpoints.CheckpointStatusImported)
 	// Also cleanup engine when encountered ErrDuplicateDetected, since all duplicates kv pairs are recorded.
 	if err == nil {
