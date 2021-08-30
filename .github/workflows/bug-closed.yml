@@ -7,7 +7,10 @@ on:
 
 jobs:
   label_issues:
-    if: contains(github.event.issue.labels.*.name, 'type/bug')
+    if: |
+      contains(github.event.issue.labels.*.name, 'type/bug') &&
+      !(contains(join(github.event.issue.labels.*.name, ', '), 'affects-') &&
+        contains(join(github.event.issue.labels.*.name, ', '), 'backport-'))
     runs-on: ubuntu-latest
     permissions:
       issues: write
