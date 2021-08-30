@@ -210,7 +210,6 @@ import (
 	over              "OVER"
 	partition         "PARTITION"
 	percentRank       "PERCENT_RANK"
-	placement         "PLACEMENT"
 	precisionType     "PRECISION"
 	primary           "PRIMARY"
 	procedure         "PROCEDURE"
@@ -661,6 +660,7 @@ import (
 	max                   "MAX"
 	now                   "NOW"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
+	placement             "PLACEMENT"
 	plan                  "PLAN"
 	position              "POSITION"
 	primaryRegion         "PRIMARY_REGION"
@@ -1388,6 +1388,7 @@ import (
 
 %precedence empty
 %precedence as
+%precedence placement
 %precedence lowerThanSelectOpt
 %precedence sqlBufferResult
 %precedence sqlBigResult
@@ -2381,6 +2382,7 @@ KeyOrIndexOpt:
 |	KeyOrIndex
 
 ColumnKeywordOpt:
+	/* empty */ %prec empty
 	{}
 |	"COLUMN"
 
@@ -2428,6 +2430,7 @@ PartitionNameList:
 	}
 
 ConstraintKeywordOpt:
+	/* empty */ %prec empty
 	{
 		$$ = nil
 	}
@@ -6124,6 +6127,7 @@ NotKeywordToken:
 |	"RECENT"
 |	"RECREATOR"
 |	"RUNNING"
+|	"PLACEMENT"
 |	"PLAN"
 |	"POSITION"
 |	"S3"
