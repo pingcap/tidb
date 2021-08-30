@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -105,7 +106,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		syns := e.getSynonyms(name)
 		// Set system variable
 		for _, n := range syns {
-			err := e.setSysVariable(n, v)
+			err := e.setSysVariable(ctx, n, v)
 			if err != nil {
 				return err
 			}
@@ -124,7 +125,7 @@ func (e *SetExecutor) getSynonyms(varName string) []string {
 	return synonyms
 }
 
-func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) error {
+func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expression.VarAssignment) error {
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
@@ -186,7 +187,10 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		}
 		newSnapshotIsSet := sessionVars.SnapshotTS > 0 && sessionVars.SnapshotTS != oldSnapshotTS
 		if newSnapshotIsSet {
-			err = gcutil.ValidateSnapshot(e.ctx, sessionVars.SnapshotTS)
+			err = sessionctx.ValidateSnapshotReadTS(ctx, e.ctx, sessionVars.SnapshotTS)
+			if err == nil {
+				err = gcutil.ValidateSnapshot(e.ctx, sessionVars.SnapshotTS)
+			}
 			if err != nil {
 				sessionVars.SnapshotTS = oldSnapshotTS
 				return err
