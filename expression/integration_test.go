@@ -3117,6 +3117,19 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil> 4"))
 	result = tk.MustQuery("select * from t where b = case when a is null then 4 when  a = 'str5' then 7 else 9 end")
 	result.Check(testkit.Rows("<nil> 4"))
+	result = tk.MustQuery(`SELECT -Max(+23) * -+Cast(--10 AS SIGNED) * -CASE
+                                               WHEN 0 > 85 THEN NULL
+                                               WHEN NOT
+              CASE +55
+                WHEN +( +82 ) + -89 * -69 THEN +Count(-88)
+                WHEN +CASE 57
+                        WHEN +89 THEN -89 * Count(*)
+                        WHEN 17 THEN NULL
+                      END THEN ( -10 )
+              END IS NULL THEN NULL
+                                               ELSE 83 + 48
+                                             END AS col0; `)
+	result.Check(testkit.Rows("-30130"))
 
 	// return type of case when expr should not include NotNullFlag. issue-23036
 	tk.MustExec("drop table if exists t1")
@@ -4905,7 +4918,7 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		ret := &plannercore.PreprocessorReturn{}
 		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
+		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
@@ -10270,4 +10283,14 @@ func (s *testIntegrationSuite) TestIssue26977(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	result := tk.MustQuery("select a + 1 as f from (select cast(0xfffffffffffffff0 as unsigned) as a union select cast(1 as unsigned)) t having f != 2;")
 	result.Check(testkit.Rows("18446744073709551601"))
+}
+
+func (s *testIntegrationSuite) TestIssue27610(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists PK_TCOLLATION3966STROBJSTROBJ;`)
+	tk.MustExec("CREATE TABLE `PK_TCOLLATION3966STROBJSTROBJ` (\n  `COL1` enum('ll','aa','bb','cc','dd','ee') COLLATE utf8_general_ci NOT NULL,\n  `COL2` varchar(20) COLLATE utf8_general_ci DEFAULT NULL,\n  PRIMARY KEY (`COL1`) /*T![clustered_index] CLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
+	tk.MustExec(`insert into PK_TCOLLATION3966STROBJSTROBJ values("ee", "tttt");`)
+	tk.MustQuery("SELECT col1, COL2 FROM PK_TCOLLATION3966STROBJSTROBJ WHERE COL1 IN ('notexist','6') and col2 not in (\"abcd\");").
+		Check(testkit.Rows())
 }

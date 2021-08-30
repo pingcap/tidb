@@ -71,6 +71,19 @@ type Constant struct {
 	collationInfo
 }
 
+// Clone implements Expression interface.
+func (c *Constant) Clone() Expression {
+	con := &Constant{
+		Value:         c.Value,
+		RetType:       c.RetType.Clone(),
+		DeferredExpr:  c.DeferredExpr,
+		ParamMarker:   c.ParamMarker,
+		hashcode:      c.hashcode,
+		collationInfo: c.collationInfo,
+	}
+	return con
+}
+
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
 type ParamMarker struct {
 	ctx   sessionctx.Context
@@ -97,12 +110,6 @@ func (c *Constant) String() string {
 // MarshalJSON implements json.Marshaler interface.
 func (c *Constant) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf("%q", c)), nil
-}
-
-// Clone implements Expression interface.
-func (c *Constant) Clone() Expression {
-	con := *c
-	return &con
 }
 
 // GetType implements Expression interface.
