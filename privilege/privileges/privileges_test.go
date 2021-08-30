@@ -2322,3 +2322,36 @@ func TestGrantPlacementAdminDynamicPriv(t *testing.T) {
 	tk.MustExec("DROP USER placement_user")
 	tk.MustExec("DROP DATABASE placement_db")
 }
+
+
+func TestPlacementPolicyStmt(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+	se := newSession(t, store, dbName)
+	mustExec(t, se, "drop placement policy if exists x")
+	createStmt := "create placement policy x " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1,cn-east-2\" " +
+		"LEARNERS=1 " +
+		"LEARNER_CONSTRAINTS=\"[+region=cn-west-1]\" " +
+		"VOTERS=3 " +
+		"VOTER_CONSTRAINTS=\"[+disk=ssd]\""
+
+	// high privileged user setting password for other user (passes)
+	mustExec(t, se, "CREATE USER super_user, placement_user, empty_user")
+	mustExec(t, se, "GRANT ALL ON *.* TO super_user")
+	mustExec(t, se, "GRANT PLACEMENT_ADMIN ON *.* TO placement_user")
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "super_user", Hostname: "localhost"}, nil, nil))
+	mustExec(t, se, createStmt)
+	mustExec(t, se, "drop placement policy if exists x")
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "placement_user", Hostname: "localhost"}, nil, nil))
+	mustExec(t, se, createStmt)
+	mustExec(t, se, "drop placement policy if exists x")
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "empty_user", Hostname: "localhost"}, nil, nil))
+	mustExec(t, se, createStmt)
+	mustExec(t, se, "drop placement policy if exists x")
+	//require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
+}
