@@ -254,6 +254,10 @@ func (rs *RegionSplitter) waitForScatterRegion(ctx context.Context, regionInfo *
 func (rs *RegionSplitter) splitAndScatterRegions(
 	ctx context.Context, regionInfo *RegionInfo, keys [][]byte,
 ) ([]*RegionInfo, error) {
+	if len(keys) == 0 {
+		return []*RegionInfo{regionInfo}, nil
+	}
+
 	newRegions, err := rs.client.BatchSplitRegions(ctx, regionInfo, keys)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -269,9 +273,10 @@ func (rs *RegionSplitter) splitAndScatterRegions(
 	// Because we don't split at t1 anymore.
 	// The trick here is a pinky promise: never scatter regions you didn't imported any data.
 	// In this scenario, it is the last region after spliting (applying to >= 5.0).
-	if len(newRegions) > 1 {
-		rs.ScatterRegions(ctx, newRegions[:len(newRegions)-1])
+	if bytes.Equal(newRegions[len(newRegions)-1].Region.StartKey, keys[len(keys)-1]) {
+		newRegions = newRegions[:len(newRegions)-1]
 	}
+	rs.ScatterRegions(ctx, newRegions)
 	return newRegions, nil
 }
 
