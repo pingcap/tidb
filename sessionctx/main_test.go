@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,23 +15,13 @@
 package sessionctx
 
 import (
-	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-func TestBasicCtxTypeToString(t *testing.T) {
-	tests := []struct {
-		key fmt.Stringer
-		v   string
-	}{
-		{QueryString, "query_string"},
-		{Initing, "initing"},
-		{LastExecuteDDL, "last_execute_ddl"},
-		{basicCtxType(9), "unknown"},
-	}
-	for _, tt := range tests {
-		require.Equal(t, tt.key.String(), tt.v)
-	}
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	goleak.VerifyTestMain(m)
 }
