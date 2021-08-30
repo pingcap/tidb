@@ -753,27 +753,6 @@ func (e *tableScanProcessor) Finish() error {
 	return e.scanFinish()
 }
 
-type mockReaderScanProcessor struct {
-	skipVal
-	*closureExecutor
-}
-
-func (e *mockReaderScanProcessor) Process(key, value []byte) error {
-	if e.rowCount == e.limit {
-		return dbreader.ErrScanBreak
-	}
-	e.rowCount++
-	err := e.mockReadScanProcessCore(key, value)
-	if e.scanCtx.chk.NumRows() == chunkMaxRows {
-		err = e.chunkToOldChunk(e.scanCtx.chk)
-	}
-	return err
-}
-
-func (e *mockReaderScanProcessor) Finish() error {
-	return e.scanFinish()
-}
-
 func (e *closureExecutor) processCore(key, value []byte) error {
 	if e.mockReader != nil {
 		return e.mockReadScanProcessCore(key, value)
