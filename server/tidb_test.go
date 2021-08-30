@@ -885,6 +885,7 @@ func (ts *tidbTestSerialSuite) TestTLSAuto(c *C) {
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = true
+	cfg.Security.RSAKeySize = 528 // Reduces unittest runtime
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
@@ -1032,9 +1033,9 @@ func (ts *tidbTestSerialSuite) TestTLSVerify(c *C) {
 	c.Assert(util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.CANotAuthorizedForThisName}), IsFalse)
 	c.Assert(util.IsTLSExpiredError(x509.CertificateInvalidError{Reason: x509.Expired}), IsTrue)
 
-	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert", true)
+	_, _, err = util.LoadTLSCertificates("", "wrong key", "wrong cert", true, 528)
 	c.Assert(err, NotNil)
-	_, _, err = util.LoadTLSCertificates("wrong ca", "/tmp/server-key.pem", "/tmp/server-cert.pem", true)
+	_, _, err = util.LoadTLSCertificates("wrong ca", "/tmp/server-key.pem", "/tmp/server-cert.pem", true, 528)
 	c.Assert(err, NotNil)
 }
 
