@@ -1906,7 +1906,11 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 		argLen = -1
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
-	tp.Charset, tp.Collate = expr.CharsetAndCollation(ctx)
+	if expr.Coercibility() == CoercibilityExplicit {
+		tp.Charset, tp.Collate = expr.CharsetAndCollation(ctx)
+	} else {
+		tp.Charset, tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	}
 	tp.Flen, tp.Decimal = argLen, types.UnspecifiedLength
 	return BuildCastFunction(ctx, expr, tp)
 }
