@@ -2323,7 +2323,6 @@ func TestGrantPlacementAdminDynamicPriv(t *testing.T) {
 	tk.MustExec("DROP DATABASE placement_db")
 }
 
-
 func TestPlacementPolicyStmt(t *testing.T) {
 	store, clean := newStore(t)
 	defer clean()
