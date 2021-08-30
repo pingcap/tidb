@@ -100,13 +100,21 @@ func (a AllocatorType) String() string {
 // CustomAutoIncCacheOption is one kind of AllocOption to customize the allocator step length.
 type CustomAutoIncCacheOption int64
 
-// ApplyOn is implement the AllocOption interface.
+// ApplyOn implements the AllocOption interface.
 func (step CustomAutoIncCacheOption) ApplyOn(alloc *allocator) {
 	if step == 0 {
 		return
 	}
 	alloc.step = int64(step)
 	alloc.customStep = true
+}
+
+// AllocOptionTableInfoVersion is used to pass the TableInfo.Version to the allocator.
+type AllocOptionTableInfoVersion uint64
+
+// ApplyOn implements the AllocOption interface.
+func (v AllocOptionTableInfoVersion) ApplyOn(alloc *allocator) {
+	alloc.tbVersion = uint64(v)
 }
 
 // AllocOption is a interface to define allocator custom options coming in future.
@@ -124,30 +132,30 @@ type Allocator interface {
 	// The returned range is (min, max]:
 	// case increment=1 & offset=1: you can derive the ids like min+1, min+2... max.
 	// case increment=x & offset=y: you firstly need to seek to firstID by `SeekToFirstAutoIDXXX`, then derive the IDs like firstID, firstID + increment * 2... in the caller.
-	Alloc(ctx context.Context, tableID int64, n uint64, increment, offset int64) (int64, int64, error)
+	Alloc(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error)
 
 	// AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering
 	// the size of sequence cache with it's increment. The returned round indicates the sequence cycle times if it is with
 	// cycle option.
-	AllocSeqCache(sequenceID int64) (min int64, max int64, round int64, err error)
+	AllocSeqCache() (min int64, max int64, round int64, err error)
 
 	// Rebase rebases the autoID base for table with tableID and the new base value.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
-	Rebase(tableID, newBase int64, allocIDs bool) error
+	Rebase(newBase int64, allocIDs bool) error
 
 	// ForceRebase set the next global auto ID to newBase.
-	ForceRebase(tableID, newBase int64) error
+	ForceRebase(newBase int64) error
 
 	// RebaseSeq rebases the sequence value in number axis with tableID and the new base value.
-	RebaseSeq(table, newBase int64) (int64, bool, error)
+	RebaseSeq(newBase int64) (int64, bool, error)
 
 	// Base return the current base of Allocator.
 	Base() int64
 	// End is only used for test.
 	End() int64
 	// NextGlobalAutoID returns the next global autoID.
-	NextGlobalAutoID(tableID int64) (int64, error)
+	NextGlobalAutoID() (int64, error)
 	GetType() AllocatorType
 }
 
@@ -187,6 +195,8 @@ type allocator struct {
 	store kv.Storage
 	// dbID is current database's ID.
 	dbID          int64
+	tbID          int64
+	tbVersion     uint64
 	isUnsigned    bool
 	lastAllocTime time.Time
 	step          int64
@@ -216,13 +226,13 @@ func (alloc *allocator) End() int64 {
 }
 
 // NextGlobalAutoID implements autoid.Allocator NextGlobalAutoID interface.
-func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
+func (alloc *allocator) NextGlobalAutoID() (int64, error) {
 	var autoID int64
 	startTime := time.Now()
 	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		var err1 error
 		m := meta.NewMeta(txn)
-		autoID, err1 = GetAutoID(m, alloc.dbID, tableID, alloc.allocType)
+		autoID, err1 = GetAutoID(m, alloc.dbID, alloc.tbID, alloc.allocType)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -370,23 +380,17 @@ func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) (int64, boo
 // Rebase implements autoid.Allocator Rebase interface.
 // The requiredBase is the minimum base value after Rebase.
 // The real base may be greater than the required base.
-func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error {
-	if tableID == 0 {
-		return errInvalidTableID.GenWithStack("Invalid tableID")
-	}
+func (alloc *allocator) Rebase(requiredBase int64, allocIDs bool) error {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.isUnsigned {
-		return alloc.rebase4Unsigned(tableID, uint64(requiredBase), allocIDs)
+		return alloc.rebase4Unsigned(alloc.tbID, uint64(requiredBase), allocIDs)
 	}
-	return alloc.rebase4Signed(tableID, requiredBase, allocIDs)
+	return alloc.rebase4Signed(alloc.tbID, requiredBase, allocIDs)
 }
 
 // ForceRebase implements autoid.Allocator ForceRebase interface.
-func (alloc *allocator) ForceRebase(tableID, requiredBase int64) error {
-	if tableID <= 0 {
-		return errInvalidTableID.GenWithStack("Invalid tableID")
-	}
+func (alloc *allocator) ForceRebase(requiredBase int64) error {
 	if requiredBase == -1 {
 		return ErrAutoincReadFailed.GenWithStack("Cannot force rebase the next global ID to '0'")
 	}
@@ -395,7 +399,7 @@ func (alloc *allocator) ForceRebase(tableID, requiredBase int64) error {
 	startTime := time.Now()
 	err := kv.RunInNewTxn(context.Background(), alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
-		currentEnd, err1 := GetAutoID(m, alloc.dbID, tableID, alloc.allocType)
+		currentEnd, err1 := GetAutoID(m, alloc.dbID, alloc.tbID, alloc.allocType)
 		if err1 != nil {
 			return err1
 		}
@@ -406,7 +410,7 @@ func (alloc *allocator) ForceRebase(tableID, requiredBase int64) error {
 			uRequiredBase, uCurrentEnd := uint64(requiredBase), uint64(currentEnd)
 			step = int64(uRequiredBase - uCurrentEnd)
 		}
-		_, err1 = GenerateAutoID(m, alloc.dbID, tableID, step, alloc.allocType)
+		_, err1 = GenerateAutoID(m, alloc.dbID, alloc.tbID, step, alloc.allocType)
 		return err1
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -423,14 +427,10 @@ func (alloc *allocator) ForceRebase(tableID, requiredBase int64) error {
 // case1:When requiredBase is satisfied with current value, it will return (0, true, nil),
 // case2:When requiredBase is successfully set in, it will return (requiredBase, false, nil).
 // If some error occurs in the process, return it immediately.
-func (alloc *allocator) RebaseSeq(tableID, requiredBase int64) (int64, bool, error) {
-	if tableID == 0 {
-		return 0, false, errInvalidTableID.GenWithStack("Invalid tableID")
-	}
-
+func (alloc *allocator) RebaseSeq(requiredBase int64) (int64, bool, error) {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
-	return alloc.rebase4Sequence(tableID, requiredBase)
+	return alloc.rebase4Sequence(alloc.tbID, requiredBase)
 }
 
 func (alloc *allocator) GetType() AllocatorType {
@@ -461,10 +461,12 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 }
 
 // NewAllocator returns a new auto increment id generator on the store.
-func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool, allocType AllocatorType, opts ...AllocOption) Allocator {
+func NewAllocator(store kv.Storage, dbID, tbID int64, isUnsigned bool,
+	allocType AllocatorType, opts ...AllocOption) Allocator {
 	alloc := &allocator{
 		store:         store,
 		dbID:          dbID,
+		tbID:          tbID,
 		isUnsigned:    isUnsigned,
 		step:          step,
 		lastAllocTime: time.Now(),
@@ -477,10 +479,11 @@ func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool, allocType Alloc
 }
 
 // NewSequenceAllocator returns a new sequence value generator on the store.
-func NewSequenceAllocator(store kv.Storage, dbID int64, info *model.SequenceInfo) Allocator {
+func NewSequenceAllocator(store kv.Storage, dbID, tbID int64, info *model.SequenceInfo) Allocator {
 	return &allocator{
 		store: store,
 		dbID:  dbID,
+		tbID:  tbID,
 		// Sequence allocator is always signed.
 		isUnsigned:    false,
 		lastAllocTime: time.Now(),
@@ -494,20 +497,21 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 	var allocs []Allocator
 	dbID := tblInfo.GetDBID(schemaID)
 	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
+	tblVer := AllocOptionTableInfoVersion(tblInfo.Version)
 
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
 	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
 	if hasRowID || hasAutoIncID {
-		alloc := NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt)
+		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
 	hasAutoRandID := tblInfo.ContainsAutoRandomBits()
 	if hasAutoRandID {
-		alloc := NewAllocator(store, dbID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType, idCacheOpt)
+		alloc := NewAllocator(store, dbID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType, idCacheOpt, tblVer)
 		allocs = append(allocs, alloc)
 	}
 	if tblInfo.IsSequence() {
-		allocs = append(allocs, NewSequenceAllocator(store, dbID, tblInfo.Sequence))
+		allocs = append(allocs, NewSequenceAllocator(store, dbID, tblInfo.ID, tblInfo.Sequence))
 	}
 	return NewAllocators(allocs...)
 }
@@ -525,8 +529,8 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 // but actually we don't care about it, all we need is to calculate the new autoID corresponding to the
 // increment and offset at this time now. To simplify the rule is like (ID - offset) % increment = 0,
 // so the first autoID should be 9, then add increment to it to get 13.
-func (alloc *allocator) Alloc(ctx context.Context, tableID int64, n uint64, increment, offset int64) (int64, int64, error) {
-	if tableID == 0 {
+func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset int64) (int64, int64, error) {
+	if alloc.tbID == 0 {
 		return 0, 0, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
 	}
 	if n == 0 {
@@ -540,18 +544,15 @@ func (alloc *allocator) Alloc(ctx context.Context, tableID int64, n uint64, incr
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	if alloc.isUnsigned {
-		return alloc.alloc4Unsigned(ctx, tableID, n, increment, offset)
+		return alloc.alloc4Unsigned(ctx, alloc.tbID, n, increment, offset)
 	}
-	return alloc.alloc4Signed(ctx, tableID, n, increment, offset)
+	return alloc.alloc4Signed(ctx, alloc.tbID, n, increment, offset)
 }
 
-func (alloc *allocator) AllocSeqCache(tableID int64) (int64, int64, int64, error) {
-	if tableID == 0 {
-		return 0, 0, 0, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
-	}
+func (alloc *allocator) AllocSeqCache() (int64, int64, int64, error) {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
-	return alloc.alloc4Sequence(tableID)
+	return alloc.alloc4Sequence(alloc.tbID)
 }
 
 func validIncrementAndOffset(increment, offset int64) bool {
