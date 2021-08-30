@@ -2341,6 +2341,10 @@ func TestPlacementPolicyStmt(t *testing.T) {
 	mustExec(t, se, "GRANT ALL ON *.* TO super_user")
 	mustExec(t, se, "GRANT PLACEMENT_ADMIN ON *.* TO placement_user")
 
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "empty_user", Hostname: "localhost"}, nil, nil))
+	_, err := se.ExecuteInternal(context.Background(), "drop placement policy if exists x")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or PLACEMENT_ADMIN privilege(s) for this operation")
+
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "super_user", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, createStmt)
 	mustExec(t, se, "drop placement policy if exists x")
@@ -2349,8 +2353,4 @@ func TestPlacementPolicyStmt(t *testing.T) {
 	mustExec(t, se, createStmt)
 	mustExec(t, se, "drop placement policy if exists x")
 
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "empty_user", Hostname: "localhost"}, nil, nil))
-	mustExec(t, se, createStmt)
-	_, err := se.ExecuteInternal(context.Background(), "drop placement policy if exists x")
-	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or PLACEMENT_ADMIN privilege(s) for this operation")
 }
