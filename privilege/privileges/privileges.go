@@ -46,7 +46,8 @@ var dynamicPrivs = []string{
 	"SYSTEM_VARIABLES_ADMIN",
 	"ROLE_ADMIN",
 	"CONNECTION_ADMIN",
-	"PLACEMENT_ADMIN",
+	"PLACEMENT_ADMIN",                 // Can Create/Drop/Alter PLACEMENT POLICY
+	"DASHBOARD_CLIENT",                // Can login to the TiDB-Dashboard.
 	"RESTRICTED_TABLES_ADMIN",         // Can see system tables when SEM is enabled
 	"RESTRICTED_STATUS_ADMIN",         // Can see all status vars when SEM is enabled.
 	"RESTRICTED_VARIABLES_ADMIN",      // Can see all variables when SEM is enabled
@@ -223,6 +224,10 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 
 // GetAuthPlugin gets the authentication plugin for the account identified by the user and host
 func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
+	if SkipWithGrant {
+		return mysql.AuthNativePassword, nil
+	}
+
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {

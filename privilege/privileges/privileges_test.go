@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
@@ -2084,4 +2085,217 @@ func TestGrantReferences(t *testing.T) {
 		`GRANT REFERENCES ON reftestdb.reftest TO 'referencesUser'@'%'`))
 	tk.MustExec("DROP USER referencesUser")
 	tk.MustExec("DROP SCHEMA reftestdb")
+}
+
+func TestDashboardClientDynamicPriv(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE ROLE dc_r1")
+	tk.MustExec("CREATE USER dc_u1")
+	tk.MustExec("GRANT dc_r1 TO dc_u1")
+	tk.MustExec("SET DEFAULT ROLE dc_r1 TO dc_u1")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.Session().Auth(&auth.UserIdentity{
+		Username: "dc_u1",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("GRANT DASHBOARD_CLIENT ON *.* TO dc_r1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+		"GRANT DASHBOARD_CLIENT ON *.* TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("REVOKE DASHBOARD_CLIENT ON *.* FROM dc_r1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("GRANT DASHBOARD_CLIENT ON *.* TO dc_u1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+		"GRANT DASHBOARD_CLIENT ON *.* TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("REVOKE DASHBOARD_CLIENT ON *.* FROM dc_u1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+	))
+}
+
+// https://github.com/pingcap/tidb/issues/27213
+func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
+	t.Parallel()
+
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE ROLE tsg_r1")
+	tk.MustExec("CREATE USER tsg_u1, tsg_u2")
+	tk.MustExec("GRANT CONNECTION_ADMIN, ROLE_ADMIN, SYSTEM_VARIABLES_ADMIN, PROCESS ON *.* TO tsg_r1")
+	tk.MustExec("GRANT CONNECTION_ADMIN ON *.* TO tsg_u1 WITH GRANT OPTION") // grant a superior privilege to the user
+	tk.MustExec("GRANT CONNECTION_ADMIN ON *.* TO tsg_u2 WITH GRANT OPTION") // grant a superior privilege to the user
+	tk.MustExec("GRANT ROLE_ADMIN ON *.* TO tsg_u1")
+	tk.MustExec("GRANT ROLE_ADMIN ON *.* TO tsg_u2")
+	tk.MustExec("GRANT ROLE_ADMIN ON *.* TO tsg_r1 WITH GRANT OPTION") // grant a superior privilege to the role
+	tk.MustExec("GRANT CONFIG ON *.* TO tsg_r1")                       // grant a static privilege to the role
+
+	tk.MustExec("GRANT tsg_r1 TO tsg_u1, tsg_u2")    // grant the role to both users
+	tk.MustExec("SET DEFAULT ROLE tsg_r1 TO tsg_u1") // u1 has the role by default, but results should be identical.
+
+	// login as tsg_u1
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "tsg_u1",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows(
+		"GRANT PROCESS,CONFIG ON *.* TO 'tsg_u1'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'",
+		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u1'@'%'",
+		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION",
+	))
+	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT PROCESS,CONFIG ON *.* TO 'tsg_u1'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'",
+		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u1'@'%'",
+		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION",
+	))
+	tk.MustQuery("SHOW GRANTS FOR 'tsg_u1'").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'tsg_u1'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'",
+		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u1'@'%'",
+		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION",
+	))
+
+	// login as tsg_u2 + SET ROLE
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "tsg_u2",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
+	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
+	// This should not show the privileges gained from (default) roles
+	tk.MustQuery("SHOW GRANTS FOR 'tsg_u2'").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
+	tk.MustExec("SET ROLE tsg_r1")
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows(
+		"GRANT PROCESS,CONFIG ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
+	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT PROCESS,CONFIG ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
+	// This should not show the privileges gained from SET ROLE tsg_r1.
+	tk.MustQuery("SHOW GRANTS FOR 'tsg_u2'").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
+}
+
+func TestGrantLockTables(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE lock_tables_db")
+	tk.MustExec("USE lock_tables_db")
+	tk.MustExec("CREATE TABLE lock_tables_table (a int)")
+	tk.MustExec("CREATE USER lock_tables_user")
+	tk.MustExec("GRANT LOCK TABLES ON *.* TO lock_tables_user")
+	tk.MustExec("GRANT LOCK TABLES ON lock_tables_db.* TO lock_tables_user")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR lock_tables_user").Check(testkit.Rows(
+		`GRANT LOCK TABLES ON *.* TO 'lock_tables_user'@'%'`,
+		`GRANT LOCK TABLES ON lock_tables_db.* TO 'lock_tables_user'@'%'`))
+	tk.MustExec("DROP USER lock_tables_user")
+	tk.MustExec("DROP DATABASE lock_tables_db")
+}
+
+// https://github.com/pingcap/tidb/issues/27560
+func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
+	t.Parallel()
+
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("DROP USER IF EXISTS joe, engineering, notgranted, otherrole, delete_stuff_privilege")
+	tk.MustExec("CREATE USER joe;")
+	tk.MustExec("CREATE ROLE engineering;")
+	tk.MustExec("CREATE ROLE admins;")
+	tk.MustExec("CREATE ROLE notgranted;")
+	tk.MustExec("CREATE ROLE otherrole;")
+	tk.MustExec("GRANT INSERT ON test.* TO engineering;")
+	tk.MustExec("GRANT DELETE ON test.* TO admins;")
+	tk.MustExec("GRANT SELECT on test.* to joe;")
+	tk.MustExec("GRANT engineering TO joe;")
+	tk.MustExec("GRANT admins TO joe;")
+	tk.MustExec("SET DEFAULT ROLE admins TO joe;")
+	tk.MustExec("GRANT otherrole TO joe;")
+	tk.MustExec("GRANT UPDATE ON role.* TO otherrole;")
+	tk.MustExec("GRANT SELECT ON mysql.user TO otherrole;")
+	tk.MustExec("CREATE ROLE delete_stuff_privilege;")
+	tk.MustExec("GRANT DELETE ON mysql.user TO delete_stuff_privilege;")
+	tk.MustExec("GRANT delete_stuff_privilege TO otherrole;")
+
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "joe",
+		Hostname: "%",
+	}, nil, nil)
+
+	err := tk.QueryToErr("SHOW GRANTS FOR CURRENT_USER() USING notgranted")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, executor.ErrRoleNotGranted))
+
+	tk.MustQuery("SHOW GRANTS FOR current_user() USING otherrole;").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'joe'@'%'",
+		"GRANT UPDATE ON role.* TO 'joe'@'%'",
+		"GRANT SELECT ON test.* TO 'joe'@'%'",
+		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
+	))
+	tk.MustQuery("SHOW GRANTS FOR joe USING otherrole;").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'joe'@'%'",
+		"GRANT UPDATE ON role.* TO 'joe'@'%'",
+		"GRANT SELECT ON test.* TO 'joe'@'%'",
+		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
+	))
+
 }
