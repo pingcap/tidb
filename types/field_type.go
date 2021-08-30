@@ -41,12 +41,7 @@ func NewFieldType(tp byte) *FieldType {
 		Flen:    UnspecifiedLength,
 		Decimal: UnspecifiedLength,
 	}
-	if tp != mysql.TypeVarchar && tp != mysql.TypeVarString && tp != mysql.TypeString {
-		ft.Collate = charset.CollationBin
-	} else {
-		ft.Collate = mysql.DefaultCollationName
-	}
-	// TODO: use DefaultCharsetForType to set charset and collate
+	ft.Charset, ft.Collate = DefaultCharsetForType(tp)
 	return ft
 }
 

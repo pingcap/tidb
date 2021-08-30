@@ -802,13 +802,13 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	// binary
 	reset(tk)
 	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
-	tk.MustGetErrCode("alter table t modify d binary(10)", mysql.ErrDataTooLong)
+	tk.MustGetErrCode("alter table t modify d binary(10)", mysql.WarnDataTruncated)
 	tk.MustExec("alter table t modify n binary(10)")
-	tk.MustGetErrCode("alter table t modify r binary(10)", mysql.ErrDataTooLong)
-	tk.MustGetErrCode("alter table t modify db binary(10)", mysql.ErrDataTooLong)
+	tk.MustGetErrCode("alter table t modify r binary(10)", mysql.WarnDataTruncated)
+	tk.MustGetErrCode("alter table t modify db binary(10)", mysql.WarnDataTruncated)
 	// MySQL will run with no error.
-	tk.MustGetErrCode("alter table t modify f32 binary(10)", mysql.ErrDataTooLong)
-	tk.MustGetErrCode("alter table t modify f64 binary(10)", mysql.ErrDataTooLong)
+	tk.MustGetErrCode("alter table t modify f32 binary(10)", mysql.WarnDataTruncated)
+	tk.MustGetErrCode("alter table t modify f64 binary(10)", mysql.WarnDataTruncated)
 	tk.MustExec("alter table t modify b binary(10)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33\x00\x00\x00\x00 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 21\x00\x00\x00\x00\x00\x00\x00\x00"))
 
