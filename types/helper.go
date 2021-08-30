@@ -206,3 +206,23 @@ func strToInt(str string) (int64, error) {
 	}
 	return int64(r), err
 }
+
+func DecimalLength2Precision(length int, scale int, hashUnsignedFlag bool) int {
+	if scale > 0 {
+		length--
+	}
+	if hashUnsignedFlag || length > 0 {
+		length--
+	}
+	return length
+}
+
+func Precision2LengthNoTruncation(length int, scale int, hashUnsignedFlag bool) int {
+	if scale > 0 {
+		length++
+	}
+	if hashUnsignedFlag || length > 0 {
+		length++
+	}
+	return length
+}
