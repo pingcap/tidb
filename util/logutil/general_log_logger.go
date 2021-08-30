@@ -202,8 +202,7 @@ func newGeneralLogLogger() (*zap.Logger, error) {
 	ws := zapcore.AddSync(&lumberjack.Logger{
 		Filename:   "general_log",
 		MaxSize:    1000, // megabytes
-		MaxBackups: 3,
-		MaxAge:     28, // days
+		MaxBackups: 10,
 	})
 	wsBuffered := zapcore.BufferedWriteSyncer{
 		WS:            ws,
