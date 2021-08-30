@@ -30,6 +30,7 @@ type PlacementSettings struct {
 	Voters              uint64 `json:"voters"`
 	Schedule            string `json:"schedule"`
 	Constraints         string `json:"constraints"`
+	LeaderConstraints   string `json:"leader_constraints"`
 	LearnerConstraints  string `json:"learner_constraints"`
 	FollowerConstraints string `json:"follower_constraints"`
 	VoterConstraints    string `json:"voter_constraints"`
@@ -43,6 +44,10 @@ func (p *PlacementSettings) String() string {
 
 	if len(p.Regions) > 0 {
 		settings = append(settings, fmt.Sprintf("REGIONS=\"%s\"", p.Regions))
+	}
+
+	if len(p.LeaderConstraints) > 0 {
+		settings = append(settings, fmt.Sprintf("LEADER_CONSTRAINTS=\"%s\"", p.LeaderConstraints))
 	}
 
 	if p.Voters > 0 {
