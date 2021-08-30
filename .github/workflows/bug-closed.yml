@@ -26,4 +26,4 @@ jobs:
           issue-number: ${{ github.event.issue.number }}
           body: |
             Please check whether the issue should be labeled with 'affects-x.y' or 'backport-x.y.z', 
-            and then remove 'need-more-info' label.
+            and then remove 'needs-more-info' label.
