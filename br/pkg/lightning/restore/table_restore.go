@@ -15,7 +15,9 @@ package restore
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -33,12 +35,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
-	"github.com/pingcap/tidb/br/pkg/utils"
 )
 
 type TableRestore struct {
@@ -886,9 +889,38 @@ func (tr *TableRestore) compareChecksum(remoteChecksum *RemoteChecksum, localChe
 	return nil
 }
 
+func (tr *TableRestore) genAnalyzeSQL(ctx context.Context, g glue.SQLExecutor) string {
+	// TODO: because tidb v5.2 analyze full table OOM easily, we fallback to add `WITH NUM 10000` parameter
+	// if there are more than 600 regions in this table
+	sql := "ANALYZE TABLE "+tr.tableName
+	analyzeVer, err := g.ObtainStringWithLog(ctx, "SELECT @@tidb_analyze_version", "fetch tidb analyze version", tr.logger)
+	if err != nil {
+		tr.logger.Warn("fetch tidb analyze version failed, will fallback to naive analyze", logutil.ShortError(err))
+		return sql
+	}
+	if analyzeVer != "2" {
+		return sql
+	}
+	query := fmt.Sprintf("SELECT COUNT(*) FROM information_schema.TIKV_REGION_STATUS WHERE TABLE_ID = %d", tr.tableInfo.ID)
+	countStr, err := g.ObtainStringWithLog(ctx, query, "fetch table regions count", tr.logger)
+	if err != nil {
+		log.L().Warn("fetch table regions count failed", logutil.ShortError(err))
+		return sql
+	}
+	count, err := strconv.ParseInt(countStr, 10, 64)
+	if err != nil {
+		log.L().Warn("parse table regions count failed", zap.String("count", countStr), logutil.ShortError(err))
+		return sql
+	}
+	if count >= 600 {
+		sql += " WITH 10000 SAMPLES"
+	}
+	return sql
+}
+
 func (tr *TableRestore) analyzeTable(ctx context.Context, g glue.SQLExecutor) error {
 	task := tr.logger.Begin(zap.InfoLevel, "analyze")
-	err := g.ExecuteWithLog(ctx, "ANALYZE TABLE "+tr.tableName, "analyze table", tr.logger)
+	err := g.ExecuteWithLog(ctx, tr.genAnalyzeSQL(ctx, g), "analyze table", tr.logger)
 	task.End(zap.ErrorLevel, err)
 	return err
 }
