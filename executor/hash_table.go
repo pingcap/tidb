@@ -93,6 +93,12 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	return c
 }
 
+func (c *hashRowContainer) ShallowCopy() *hashRowContainer {
+	newHRC := *c
+	newHRC.rowContainer = c.rowContainer.ShallowCopyWithNewMutex()
+	return &newHRC
+}
+
 // GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
