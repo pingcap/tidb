@@ -116,7 +116,7 @@ func prepareTestTableData(t *testing.T, keyNumber int, tableID int64) *data {
 		datum := types.MakeDatums(i, "abc", 10.0)
 		rows[int64(i)] = datum
 		rowEncodedData, err := tablecodec.EncodeRow(stmtCtx, datum, colIds, nil, nil, encoder)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		rowKeyEncodedData := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(i))
 		encodedTestKVDatas[i] = &encodedTestKVData{encodedRowKey: rowKeyEncodedData, encodedRowValue: rowEncodedData}
 	}
@@ -316,8 +316,8 @@ func TestPointGet(t *testing.T) {
 	dagCtx := newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, handle)},
 		dagRequest, dagRequestStartTs)
 	chunks, rowCount, err := buildExecutorsAndExecute(dagRequest, dagCtx)
-	require.Equal(t, 0, len(chunks))
-	require.Nil(t, err)
+	require.Len(t, chunks, 0)
+	require.NoError(t, err)
 	require.Equal(t, 0, rowCount)
 
 	// point get should return one row when handle = 0
@@ -330,20 +330,20 @@ func TestPointGet(t *testing.T) {
 	dagCtx = newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, handle)},
 		dagRequest, dagRequestStartTs)
 	chunks, rowCount, err = buildExecutorsAndExecute(dagRequest, dagCtx)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, 1, rowCount)
 	returnedRow, err := codec.Decode(chunks[0].RowsData, 2)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	// returned row should has 2 cols
-	require.Equal(t, 2, len(returnedRow))
+	require.Len(t, returnedRow, 2)
 
 	// verify the returned rows value as input
 	expectedRow := data.rows[handle]
 	eq, err := returnedRow[0].CompareDatum(nil, &expectedRow[0])
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, 0, eq)
 	eq, err = returnedRow[1].CompareDatum(nil, &expectedRow[1])
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, 0, eq)
 }
 
@@ -368,7 +368,7 @@ func TestClosureExecutor(t *testing.T) {
 	dagCtx := newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, 1)},
 		dagRequest, dagRequestStartTs)
 	_, rowCount, err := buildExecutorsAndExecute(dagRequest, dagCtx)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	require.Equal(t, 0, rowCount)
 }
 

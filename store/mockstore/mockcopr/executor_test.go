@@ -44,18 +44,18 @@ type testExecutorSuite struct {
 func SetUpSuite(t *testing.T) (s *testExecutorSuite, clean func()) {
 	s = &testExecutorSuite{}
 	rpcClient, cluster, pdClient, err := testutils.NewMockTiKV("", mockcopr.NewCoprRPCHandler())
-	require.Nil(t, err)
+	require.NoError(t, err)
 	testutils.BootstrapWithSingleStore(cluster)
 	s.cluster = cluster
 	s.mvccStore = rpcClient.MvccStore
 	store, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	s.store, err = mockstorage.NewMockStorage(store)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	clean = func() {
 		s.dom.Close()
@@ -79,13 +79,13 @@ func TestResolvedLargeTxnLocks(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	schema := dom.InfoSchema()
 	tbl, err := schema.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	tk.MustExec("insert into t values (1, 1)")
 
 	o := s.store.GetOracle()
 	tso, err := o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: kv.GlobalTxnScope})
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	key := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
 	pairs := s.mvccStore.Scan(key, nil, 1, tso, kvrpcpb.IsolationLevel_SI, nil)
