@@ -36,53 +36,60 @@ type PlacementSettings struct {
 	VoterConstraints    string `json:"voter_constraints"`
 }
 
+func writeSettingItemToBuilder(sb *strings.Builder, item string) {
+	if sb.Len() != 0 {
+		sb.WriteString(" ")
+	}
+	sb.WriteString(item)
+}
+
 func (p *PlacementSettings) String() string {
-	settings := make([]string, 0)
+	sb := new(strings.Builder)
 	if len(p.PrimaryRegion) > 0 {
-		settings = append(settings, fmt.Sprintf("PRIMARY_REGION=\"%s\"", p.PrimaryRegion))
+		writeSettingItemToBuilder(sb, fmt.Sprintf("PRIMARY_REGION=\"%s\"", p.PrimaryRegion))
 	}
 
 	if len(p.Regions) > 0 {
-		settings = append(settings, fmt.Sprintf("REGIONS=\"%s\"", p.Regions))
+		writeSettingItemToBuilder(sb, fmt.Sprintf("REGIONS=\"%s\"", p.Regions))
 	}
 
 	if len(p.Schedule) > 0 {
-		settings = append(settings, fmt.Sprintf("SCHEDULE=\"%s\"", p.Schedule))
+		writeSettingItemToBuilder(sb, fmt.Sprintf("SCHEDULE=\"%s\"", p.Schedule))
 	}
 
 	if len(p.Constraints) > 0 {
-		settings = append(settings, fmt.Sprintf("CONSTRAINTS=\"%s\"", p.Constraints))
+		writeSettingItemToBuilder(sb, fmt.Sprintf("CONSTRAINTS=\"%s\"", p.Constraints))
 	}
 
 	if len(p.LeaderConstraints) > 0 {
-		settings = append(settings, fmt.Sprintf("LEADER_CONSTRAINTS=\"%s\"", p.LeaderConstraints))
+		writeSettingItemToBuilder(sb, fmt.Sprintf("LEADER_CONSTRAINTS=\"%s\"", p.LeaderConstraints))
 	}
 
 	if p.Voters > 0 {
-		settings = append(settings, fmt.Sprintf("VOTERS=%d", p.Voters))
+		writeSettingItemToBuilder(sb, fmt.Sprintf("VOTERS=%d", p.Voters))
 	}
 
 	if len(p.VoterConstraints) > 0 {
-		settings = append(settings, fmt.Sprintf("VOTER_CONSTRAINTS=\"%s\"", p.VoterConstraints))
+		writeSettingItemToBuilder(sb, fmt.Sprintf("VOTER_CONSTRAINTS=\"%s\"", p.VoterConstraints))
 	}
 
 	if p.Followers > 0 {
-		settings = append(settings, fmt.Sprintf("FOLLOWERS=%d", p.Followers))
+		writeSettingItemToBuilder(sb, fmt.Sprintf("FOLLOWERS=%d", p.Followers))
 	}
 
 	if len(p.FollowerConstraints) > 0 {
-		settings = append(settings, fmt.Sprintf("FOLLOWER_CONSTRAINTS=\"%s\"", p.FollowerConstraints))
+		writeSettingItemToBuilder(sb, fmt.Sprintf("FOLLOWER_CONSTRAINTS=\"%s\"", p.FollowerConstraints))
 	}
 
 	if p.Learners > 0 {
-		settings = append(settings, fmt.Sprintf("LEARNERS=%d", p.Learners))
+		writeSettingItemToBuilder(sb, fmt.Sprintf("LEARNERS=%d", p.Learners))
 	}
 
 	if len(p.LearnerConstraints) > 0 {
-		settings = append(settings, fmt.Sprintf("LEARNER_CONSTRAINTS=\"%s\"", p.LearnerConstraints))
+		writeSettingItemToBuilder(sb, fmt.Sprintf("LEARNER_CONSTRAINTS=\"%s\"", p.LearnerConstraints))
 	}
 
-	return strings.Join(settings, " ")
+	return sb.String()
 }
 
 // PolicyInfo is the struct to store the placement policy.

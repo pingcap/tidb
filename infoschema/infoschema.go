@@ -375,7 +375,8 @@ func (is *infoSchema) PolicyByName(name model.CIStr) (*placementpolicy.PolicyInf
 	return t, r
 }
 
-func (is *infoSchema) PlacementPolicies() []*placementpolicy.PolicyInfo {
+// AllPlacementPolicies returns all placement policies
+func (is *infoSchema) AllPlacementPolicies() []*placementpolicy.PolicyInfo {
 	is.policyMutex.RLock()
 	defer is.policyMutex.RUnlock()
 	policies := make([]*placementpolicy.PolicyInfo, 0, len(is.policyMap))
@@ -406,13 +407,6 @@ func (is *infoSchema) SetBundle(bundle *placement.Bundle) {
 	is.ruleBundleMutex.Lock()
 	defer is.ruleBundleMutex.Unlock()
 	is.ruleBundleMap[bundle.ID] = bundle
-}
-
-func (is *infoSchema) AllPlacementPolicies() (policies []*placementpolicy.PolicyInfo) {
-	for _, p := range is.policyMap {
-		policies = append(policies, p)
-	}
-	return
 }
 
 func (is *infoSchema) deleteBundle(id string) {
