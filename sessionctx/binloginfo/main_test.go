@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,26 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package sessionctx
+package binloginfo
 
 import (
-	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-func TestBasicCtxTypeToString(t *testing.T) {
-	tests := []struct {
-		key fmt.Stringer
-		v   string
-	}{
-		{QueryString, "query_string"},
-		{Initing, "initing"},
-		{LastExecuteDDL, "last_execute_ddl"},
-		{basicCtxType(9), "unknown"},
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("google.golang.org/grpc.(*addrConn).resetTransport"),
+		goleak.IgnoreTopFunction("google.golang.org/grpc.(*ccBalancerWrapper).watcher"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 	}
-	for _, tt := range tests {
-		require.Equal(t, tt.key.String(), tt.v)
-	}
+	goleak.VerifyTestMain(m, opts...)
 }

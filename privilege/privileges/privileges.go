@@ -144,14 +144,24 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		}
 		return true
 	// We should be very careful of limiting privileges, so ignore `mysql` for now.
-	case util.PerformanceSchemaName.L, util.MetricSchemaName.L:
-		if (dbLowerName == util.PerformanceSchemaName.L && perfschema.IsPredefinedTable(table)) ||
-			(dbLowerName == util.MetricSchemaName.L && infoschema.IsMetricTable(table)) {
+	case util.PerformanceSchemaName.L:
+		if perfschema.IsPredefinedTable(table) {
 			switch priv {
 			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
 				return false
+			// TODO: remove this and update the test cases.
 			case mysql.SelectPriv:
 				return true
+			}
+		}
+	case util.MetricSchemaName.L:
+		if infoschema.IsMetricTable(table) {
+			switch priv {
+			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+				return false
+			// PROCESS is the same with SELECT for metrics_schema.
+			case mysql.SelectPriv:
+				priv |= mysql.ProcessPriv
 			}
 		}
 	}
