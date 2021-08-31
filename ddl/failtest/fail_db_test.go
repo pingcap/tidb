@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"regexp"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -39,12 +40,34 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
+	newtestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	. "github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
+
+func TestTCopy(t *testing.T) {
+	logLevel := os.Getenv("log_level")
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+	testleak.BeforeTest()
+	s := &testFailDBSuite{}
+	s.SetUpSuiteCopy(t)
+	// // TODO: Testing(...) seems to come from "github.com/pingcap/check"
+	// TestingT(t)
+	s.MyTestPartitionAddPanicCopy(t)
+	s.TearDownSuiteCopy(t)
+	testleak.AfterTestT(t)()
+}
 
 func TestT(t *testing.T) {
 	// TODO: CustomVerboseFlag seems to come from "github.com/pingcap/check"
@@ -78,6 +101,25 @@ type testFailDBSuite struct {
 	CommonHandleSuite
 }
 
+func (s *testFailDBSuite) SetUpSuiteCopy(t *testing.T) {
+	s.lease = 200 * time.Millisecond
+	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
+	var err error
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
+	)
+	require.NoError(t, err)
+	session.SetSchemaLease(s.lease)
+	s.dom, err = session.BootstrapSession(s.store)
+	require.NoError(t, err)
+	s.se, err = session.CreateSession4Test(s.store)
+	require.NoError(t, err)
+	s.p = parser.New()
+}
+
 // TODO: type C seems to come from "github.com/pingcap/check"
 func (s *testFailDBSuite) SetUpSuite(c *C) {
 	s.lease = 200 * time.Millisecond
@@ -106,6 +148,14 @@ func (s *testFailDBSuite) TearDownSuite(c *C) {
 	_, err := s.se.Execute(context.Background(), "drop database if exists test_db_state")
 	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	c.Assert(err, IsNil)
+	s.se.Close()
+	s.dom.Close()
+	s.store.Close()
+}
+
+func (s *testFailDBSuite) TearDownSuiteCopy(t *testing.T) {
+	_, err := s.se.Execute(context.Background(), "drop database if exists test_db_state")
+	require.NoError(t, err)
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
@@ -644,4 +694,21 @@ func (s *testFailDBSuite) TestPartitionAddPanic(c *C) {
 	c.Assert(result, Matches, `(?s).*PARTITION .p0. VALUES LESS THAN \(10\).*`)
 	// TODO: c, Assert and Not(Matches) seem to come from "github.com/pingcap/check"
 	c.Assert(result, Not(Matches), `(?s).*PARTITION .p0. VALUES LESS THAN \(20\).*`)
+}
+
+func (s *testFailDBSuite) MyTestPartitionAddPanicCopy(t *testing.T) {
+	tk := newtestkit.NewTestKit(t, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (a int) partition by range(a) (partition p0 values less than (10));`)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr"))
+	}()
+
+	_, err := tk.Exec(`alter table t add partition (partition p1 values less than (20));`)
+	require.Error(t, err)
+	result := tk.MustQuery("show create table t").Rows()[0][1]
+	require.Regexp(t, regexp.MustCompile(`(?s).*PARTITION .p0. VALUES LESS THAN \(10\).*`), result)
+	require.NotRegexp(t, regexp.MustCompile(`(?s).*PARTITION .p0. VALUES LESS THAN \(20\).*`), result)
 }
