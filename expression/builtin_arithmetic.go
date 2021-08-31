@@ -145,14 +145,7 @@ func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.Fi
 	}
 	aPrec := types.DecimalLength2Precision(a.Flen, a.Decimal, mysql.HasUnsignedFlag(a.Flag))
 	retTp.Flen = aPrec + decb + precIncrement
-	newFlen := retTp.Flen
-	if retTp.Decimal > int(types.DefaultFsp) {
-		newFlen++
-	}
-	if !mysql.HasUnsignedFlag(retTp.Flag) && retTp.Flen > 0 {
-		newFlen++
-	}
-	retTp.Flen = newFlen
+	retTp.Flen = types.Precision2LengthNoTruncation(retTp.Flen, retTp.Decimal, mysql.HasUnsignedFlag(retTp.Flag))
 	if retTp.Flen > mysql.MaxDecimalWidth {
 		retTp.Flen = mysql.MaxDecimalWidth
 	}
