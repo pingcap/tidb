@@ -1341,6 +1341,48 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
+	ntrID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, nt.Name.L)
+	ptrID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, pt.Name.L, partDef.Name.L)
+
+	rules, err := infosync.GetLabelRules(context.TODO(), []string{ntrID, ptrID})
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Wrapf(err, "failed to get PD the label rules")
+	}
+
+	var ntr, ptr *label.Rule
+	for _, rule := range rules {
+		if rule.ID == ntrID {
+			ntr = rule
+		} else if rule.ID == ptrID {
+			ptr = rule
+		} else {
+			logutil.BgLogger().Error("[ddl] unexpected label rule", zap.Any("rule", rule))
+		}
+	}
+
+	var setRules []*label.Rule
+	var deleteRules []string
+	if ntr != nil && ptr != nil {
+		setRules = append(setRules, ntr.Clone().Reset(partDef.ID, job.SchemaName, pt.Name.L, partDef.Name.L))
+		setRules = append(setRules, ptr.Clone().Reset(nt.ID, job.SchemaName, nt.Name.L))
+	} else if ptr != nil {
+		setRules = append(setRules, ptr.Clone().Reset(nt.ID, job.SchemaName, nt.Name.L))
+		// delete ptr
+		deleteRules = append(deleteRules, ptrID)
+	} else if ntr != nil {
+		setRules = append(setRules, ntr.Clone().Reset(partDef.ID, job.SchemaName, pt.Name.L, partDef.Name.L))
+		// delete ntr
+		deleteRules = append(deleteRules, ntrID)
+	}
+
+	patch := label.NewRulePatch(setRules, deleteRules)
+	err = infosync.UpdateLabelRules(context.TODO(), patch)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
+	}
+
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
