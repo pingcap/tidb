@@ -1020,7 +1020,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	incrementAllocator := allocators.Get(autoid.RowIDAllocType)
 	if hasAutoIncID && incrementAllocator != nil {
-		autoIncID, err := incrementAllocator.NextGlobalAutoID(tableInfo.ID)
+		autoIncID, err := incrementAllocator.NextGlobalAutoID()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1037,7 +1037,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	randomAllocator := allocators.Get(autoid.AutoRandomType)
 	if randomAllocator != nil {
-		autoRandID, err := randomAllocator.NextGlobalAutoID(tableInfo.ID)
+		autoRandID, err := randomAllocator.NextGlobalAutoID()
 		if err != nil {
 			return errors.Trace(err)
 		}
