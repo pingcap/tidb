@@ -43,6 +43,63 @@ func (fpdc fakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]
 	return append([]*metapb.Store{}, fpdc.stores...), nil
 }
 
+func (s *testClientSuite) TestCheckStoresAlive(c *C) {
+	stores := []*metapb.Store{
+		{
+			Id:    1,
+			State: metapb.StoreState_Up,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+		{
+			Id:    2,
+			State: metapb.StoreState_Offline,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+		{
+			Id:    3,
+			State: metapb.StoreState_Up,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tikv",
+				},
+			},
+		},
+		{
+			Id:    4,
+			State: metapb.StoreState_Offline,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tikv",
+				},
+			},
+		},
+	}
+
+	fpdc := fakePDClient{
+		stores: stores,
+	}
+
+	kvStores, err := GetAllTiKVStores(s.ctx, fpdc, SkipTiFlash)
+	c.Assert(err, IsNil)
+	c.Assert(len(kvStores), Equals, 2)
+	c.Assert(kvStores, DeepEquals, stores[2:])
+
+	err = checkStoresAlive(s.ctx, fpdc, SkipTiFlash)
+	c.Assert(err, IsNil)
+}
+
 func (s *testClientSuite) TestGetAllTiKVStores(c *C) {
 	testCases := []struct {
 		stores         []*metapb.Store
