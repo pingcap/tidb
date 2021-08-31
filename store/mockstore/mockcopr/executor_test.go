@@ -18,7 +18,6 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
@@ -28,18 +27,12 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mockcopr"
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 )
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-var _ = Suite(&testExecutorSuite{})
 
 type testExecutorSuite struct {
 	cluster   *testutils.MockCluster
@@ -48,54 +41,61 @@ type testExecutorSuite struct {
 	dom       *domain.Domain
 }
 
-func (s *testExecutorSuite) SetUpSuite(c *C) {
+func SetUpSuite(t *testing.T) (s *testExecutorSuite, clean func()) {
+	s = &testExecutorSuite{}
 	rpcClient, cluster, pdClient, err := testutils.NewMockTiKV("", mockcopr.NewCoprRPCHandler())
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	testutils.BootstrapWithSingleStore(cluster)
 	s.cluster = cluster
 	s.mvccStore = rpcClient.MvccStore
 	store, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	s.store, err = mockstorage.NewMockStorage(store)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
+
+	clean = func() {
+		s.dom.Close()
+		require.NoError(t, s.store.Close())
+	}
+	return
 }
 
-func (s *testExecutorSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-}
-
-func (s *testExecutorSuite) TestResolvedLargeTxnLocks(c *C) {
+func TestResolvedLargeTxnLocks(t *testing.T) {
 	// This test checks the resolve lock functionality.
 	// When a txn meets the lock of a large transaction, it should not block by the
 	// lock.
-	tk := testkit.NewTestKit(c, s.store)
+	t.Parallel()
+
+	s, clean := SetUpSuite(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key, val int)")
-	dom := domain.GetDomain(tk.Se)
+	dom := domain.GetDomain(tk.Session())
 	schema := dom.InfoSchema()
 	tbl, err := schema.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	tk.MustExec("insert into t values (1, 1)")
 
 	o := s.store.GetOracle()
 	tso, err := o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: kv.GlobalTxnScope})
-	c.Assert(err, IsNil)
+	require.Nil(t, err)
 
 	key := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
 	pairs := s.mvccStore.Scan(key, nil, 1, tso, kvrpcpb.IsolationLevel_SI, nil)
-	c.Assert(pairs, HasLen, 1)
-	c.Assert(pairs[0].Err, IsNil)
+	require.Len(t, pairs, 1)
+	require.Nil(t, pairs[0].Err)
 
 	// Simulate a large txn (holding a pk lock with large TTL).
 	// Secondary lock 200ms, primary lock 100s
-	c.Assert(prewriteMVCCStore(s.mvccStore, putMutations("primary", "value"), "primary", tso, 100000), IsTrue)
-	c.Assert(prewriteMVCCStore(s.mvccStore, putMutations(string(key), "value"), "primary", tso, 200), IsTrue)
+	require.True(t, prewriteMVCCStore(s.mvccStore, putMutations("primary", "value"), "primary", tso, 100000))
+	require.True(t, prewriteMVCCStore(s.mvccStore, putMutations(string(key), "value"), "primary", tso, 200))
 
 	// Simulate the action of reading meet the lock of a large txn.
 	// The lock of the large transaction should not block read.
@@ -113,13 +113,17 @@ func (s *testExecutorSuite) TestResolvedLargeTxnLocks(c *C) {
 
 	// And check the large txn is still alive.
 	pairs = s.mvccStore.Scan([]byte("primary"), nil, 1, tso, kvrpcpb.IsolationLevel_SI, nil)
-	c.Assert(pairs, HasLen, 1)
+	require.Len(t, pairs, 1)
 	_, ok := errors.Cause(pairs[0].Err).(*testutils.ErrLocked)
-	c.Assert(ok, IsTrue)
+	require.True(t, ok)
 }
 
-func (s *testExecutorSuite) TestIssue15662(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue15662(t *testing.T) {
+	t.Parallel()
+
+	store, close := testkit.CreateMockStore(t)
+	defer close()
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 
