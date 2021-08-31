@@ -852,9 +852,12 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 	importer := backend.MakeBackend(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
-	rc := &Controller{saveCpCh: chptCh}
+	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
 	go func() {
-		for range chptCh {
+		for scp := range chptCh {
+			if scp.waitCh != nil {
+				scp.waitCh <- nil
+			}
 		}
 	}()
 
@@ -865,7 +868,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 		CloseEngine(ctx, nil, engineUUID).
 		Return(nil)
 	mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID).
+		ImportEngine(ctx, engineUUID, gomock.Any()).
 		Return(nil)
 	mockBackend.EXPECT().
 		CleanupEngine(ctx, engineUUID).
@@ -884,9 +887,12 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 	importer := backend.MakeBackend(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
-	rc := &Controller{saveCpCh: chptCh}
+	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
 	go func() {
-		for range chptCh {
+		for scp := range chptCh {
+			if scp.waitCh != nil {
+				scp.waitCh <- nil
+			}
 		}
 	}()
 
@@ -897,7 +903,7 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 		CloseEngine(ctx, nil, engineUUID).
 		Return(nil)
 	mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID).
+		ImportEngine(ctx, engineUUID, gomock.Any()).
 		Return(errors.Annotate(context.Canceled, "fake import error"))
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID)
@@ -968,7 +974,10 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 		diskQuotaLock:     newDiskQuotaLock(),
 	}
 	go func() {
-		for range chptCh {
+		for scp := range chptCh {
+			if scp.waitCh != nil {
+				scp.waitCh <- nil
+			}
 		}
 	}()
 	exec := mock.NewMockSQLExecutor(controller)
@@ -991,6 +1000,36 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 
 	tableFinished := metric.ReadCounter(metric.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
 	c.Assert(tableFinished-tableFinishedBase, Equals, float64(1))
+}
+
+func (s *tableRestoreSuite) TestSaveStatusCheckpoint(c *C) {
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckpointUpdate", "sleep(100)")
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckpointUpdate")
+	}()
+
+	web.BroadcastInitProgress([]*mydump.MDDatabaseMeta{{
+		Name:   "test",
+		Tables: []*mydump.MDTableMeta{{DB: "test", Name: "tbl"}},
+	}})
+	web.BroadcastTableCheckpoint(common.UniqueTable("test", "tbl"), &checkpoints.TableCheckpoint{})
+
+	saveCpCh := make(chan saveCp)
+
+	rc := &Controller{
+		saveCpCh:      saveCpCh,
+		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
+	}
+	go rc.listenCheckpointUpdates()
+
+	start := time.Now()
+	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, nil, checkpoints.CheckpointStatusImported)
+	c.Assert(err, IsNil)
+	elapsed := time.Since(start)
+	c.Assert(elapsed, GreaterEqual, time.Millisecond*100)
+
+	close(saveCpCh)
+	rc.checkpointsWg.Wait()
 }
 
 var _ = Suite(&chunkRestoreSuite{})
@@ -2200,6 +2239,65 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
 							Type:     mydump.SourceTypeCSV,
+						},
+					},
+				},
+			},
+		},
+		// Case 4:
+		// table4 has two datafiles for table. we only check the first file.
+		// we expect the check success.
+		{
+			[]*config.IgnoreColumns{
+				{
+					DB:      "db1",
+					Table:   "table2",
+					Columns: []string{"cola"},
+				},
+			},
+			"",
+			0,
+			true,
+			map[string]*checkpoints.TidbDBInfo{
+				"db1": {
+					Name: "db1",
+					Tables: map[string]*checkpoints.TidbTableInfo{
+						"table2": {
+							ID:   1,
+							DB:   "db1",
+							Name: "table2",
+							Core: &model.TableInfo{
+								Columns: []*model.ColumnInfo{
+									{
+										// colB has the default value
+										Name:          model.NewCIStr("colB"),
+										DefaultIsExpr: true,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			&mydump.MDTableMeta{
+				DB:   "db1",
+				Name: "table2",
+				DataFiles: []mydump.FileInfo{
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							Type:     mydump.SourceTypeCSV,
+						},
+					},
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							// This type will make the check failed.
+							// but it's the second file for table.
+							// so it's unreachable so this case will success.
+							Type: mydump.SourceTypeIgnore,
 						},
 					},
 				},
