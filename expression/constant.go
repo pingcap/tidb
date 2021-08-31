@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -56,7 +57,7 @@ func NewNull() *Constant {
 
 // Constant stands for a constant value.
 type Constant struct {
-	Value types.Datum
+	Value   types.Datum
 	RetType *types.FieldType
 	// DeferredExpr holds deferred function in PlanCache cached plan.
 	// it's only used to represent non-deterministic functions(see expression.DeferredFunctions)
@@ -74,7 +75,7 @@ type Constant struct {
 func (c *Constant) Clone() Expression {
 	con := &Constant{
 		Value:         c.Value,
-		RetType:       c.RetType,
+		RetType:       c.RetType.Clone(),
 		DeferredExpr:  c.DeferredExpr,
 		ParamMarker:   c.ParamMarker,
 		hashcode:      c.hashcode,
