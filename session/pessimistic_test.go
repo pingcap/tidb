@@ -69,7 +69,6 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 	// Set it to 300ms for testing lock resolve.
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 300)
 	transaction.PrewriteMaxBackoff = 500
-	transaction.VeryLongMaxBackoff = 500
 }
 
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
