@@ -561,3 +561,13 @@ func (sf *ScalarFunction) CharsetAndCollation(ctx sessionctx.Context) (string, s
 func (sf *ScalarFunction) SetCharsetAndCollation(chs, coll string) {
 	sf.Function.SetCharsetAndCollation(chs, coll)
 }
+
+// SetSkip ...
+func (sf *ScalarFunction) SetSkip() {
+	sf.Function.SetSkip()
+}
+
+// Skipped ...
+func (sf *ScalarFunction) Skipped() bool {
+	return sf.Function.Skipped()
+}

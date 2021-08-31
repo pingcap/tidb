@@ -97,6 +97,7 @@ func (c *databaseFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.SetCoercibility(CoercibilitySysconst)
 	bf.tp.Flen = 64
 	sig := &builtinDatabaseSig{bf}
 	return sig, nil
@@ -170,6 +171,7 @@ func (c *currentUserFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, err
 	}
 	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.SetCoercibility(CoercibilitySysconst)
 	bf.tp.Flen = 64
 	sig := &builtinCurrentUserSig{bf}
 	return sig, nil
@@ -208,6 +210,7 @@ func (c *currentRoleFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, err
 	}
 	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.SetCoercibility(CoercibilitySysconst)
 	bf.tp.Flen = 64
 	sig := &builtinCurrentRoleSig{bf}
 	return sig, nil
@@ -260,6 +263,7 @@ func (c *userFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.SetCoercibility(CoercibilitySysconst)
 	bf.tp.Flen = 64
 	sig := &builtinUserSig{bf}
 	return sig, nil
@@ -402,6 +406,7 @@ func (c *versionFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.SetCoercibility(CoercibilitySysconst)
 	bf.tp.Flen = 64
 	sig := &builtinVersionSig{bf}
 	return sig, nil
@@ -634,6 +639,7 @@ func (c *coercibilityFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
+	args[0].SetSkip()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, args[0].GetType().EvalType())
 	if err != nil {
 		return nil, err

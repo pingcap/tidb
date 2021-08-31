@@ -607,6 +607,8 @@ func (m *MockExpr) SupportReverseEval() bool                                    
 func (m *MockExpr) HasCoercibility() bool                                         { return false }
 func (m *MockExpr) Coercibility() Coercibility                                    { return 0 }
 func (m *MockExpr) SetCoercibility(Coercibility)                                  {}
+func (m *MockExpr) Skipped() bool                                                 { return false }
+func (m *MockExpr) SetSkip()                                                      {}
 
 func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
 	return "", ""

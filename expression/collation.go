@@ -15,11 +15,11 @@
 package expression
 
 import (
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 )
 
@@ -30,6 +30,8 @@ type collationInfo struct {
 	charset   string
 	collation string
 	flen      int
+
+	skip bool
 }
 
 func (c *collationInfo) HasCoercibility() bool {
@@ -65,6 +67,14 @@ func (c *collationInfo) CharsetAndCollation(ctx sessionctx.Context) (string, str
 	return c.charset, c.collation
 }
 
+func (c *collationInfo) SetSkip() {
+	c.skip = true
+}
+
+func (c *collationInfo) Skipped() bool {
+	return c.skip
+}
+
 // CollationInfo contains all interfaces about dealing with collation.
 type CollationInfo interface {
 	// HasCoercibility returns if the Coercibility value is initialized.
@@ -81,6 +91,12 @@ type CollationInfo interface {
 
 	// SetCharsetAndCollation ...
 	SetCharsetAndCollation(chs, coll string)
+
+	// SetSkip set the skip flag to true.
+	SetSkip()
+
+	// Skipped indicate this expression should skip when infer the collation.
+	Skipped() bool
 }
 
 // Coercibility values are used to check whether the collation of one item can be coerced to
@@ -105,14 +121,6 @@ const (
 )
 
 var (
-	sysConstFuncs = map[string]struct{}{
-		ast.User:        {},
-		ast.Version:     {},
-		ast.Database:    {},
-		ast.CurrentRole: {},
-		ast.CurrentUser: {},
-	}
-
 	// collationPriority is the priority when infer the result collation, the priority of collation a > b iff collationPriority[a] > collationPriority[b]
 	// collation a and b are incompatible if collationPriority[a] = collationPriority[b]
 	collationPriority = map[string]int{
@@ -152,21 +160,7 @@ var (
 )
 
 func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
-	if _, ok := sysConstFuncs[sf.FuncName.L]; ok {
-		return CoercibilitySysconst
-	}
-	if sf.RetType.EvalType() != types.ETString {
-		return CoercibilityNumeric
-	}
-
-	_, _, coer, _ := inferCollation(sf.GetArgs()...)
-
-	// it is weird if a ScalarFunction is CoercibilityNumeric but return string type
-	if coer == CoercibilityNumeric {
-		return CoercibilityCoercible
-	}
-
-	return coer
+	panic("this function should never be called")
 }
 
 func deriveCoercibilityForConstant(c *Constant) Coercibility {
@@ -190,9 +184,35 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 }
 
 // DeriveCollationFromExprs derives collation information from these expressions.
+// Deprecated, use CheckAndDeriveCollationFromExprs instead.
 func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string) {
 	dstCollation, dstCharset, _, _ = inferCollation(exprs...)
 	return
+}
+
+// CheckAndDeriveCollationFromExprs derives collation information from these expressions, return error if derives collation error.
+func CheckAndDeriveCollationFromExprs(ctx sessionctx.Context, funcName string, evalType types.EvalType, args ...Expression) (dstCharset, dstCollation string, err error) {
+	dstCharset, dstCollation, _, err = CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, evalType, args...)
+	return
+}
+
+// CheckAndDeriveCollationFromExprsWithCoer is the same with CheckAndDeriveCollationFromExprs, but also return Coercibility.
+func CheckAndDeriveCollationFromExprsWithCoer(ctx sessionctx.Context, funcName string, evalType types.EvalType, args ...Expression) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	coll, chs, coercibility, legal := inferCollation(args...)
+	if !legal {
+		return "", "", CoercibilityIgnorable, illegalMixCollationErr(funcName, args)
+	}
+
+	if evalType != types.ETString && coercibility == CoercibilityNone {
+		return "", "", CoercibilityIgnorable, illegalMixCollationErr(funcName, args)
+	}
+
+	if evalType == types.ETString && coercibility == CoercibilityNumeric {
+		charsetInfo, collation := ctx.GetSessionVars().GetCharsetInfo()
+		return charsetInfo, collation, CoercibilityCoercible, nil
+	}
+
+	return chs, coll, coercibility, nil
 }
 
 // inferCollation infers collation, charset, coercibility and check the legitimacy.
@@ -201,6 +221,9 @@ func inferCollation(exprs ...Expression) (dstCollation, dstCharset string, coerc
 	coercibility = CoercibilityIgnorable
 	dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
 	for _, arg := range exprs {
+		if arg.Skipped() {
+			continue
+		}
 		if arg.Coercibility() == CoercibilityExplicit {
 			if firstExplicitCollation == "" {
 				firstExplicitCollation = arg.GetType().Collate
@@ -238,4 +261,21 @@ func getBinCollation(cs string) string {
 	logutil.BgLogger().Error("unexpected charset " + cs)
 	// it must return something, never reachable
 	return charset.CollationUTF8MB4
+}
+
+var (
+	coerString = []string{"EXPLICIT", "NONE", "IMPLICIT", "SYSCONST", "COERCIBLE", "NUMERIC", "IGNORABLE"}
+)
+
+func illegalMixCollationErr(funcName string, args []Expression) error {
+	funcName = GetDisplayName(funcName)
+
+	switch len(args) {
+	case 2:
+		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], funcName)
+	case 3:
+		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], args[2].GetType().Collate, coerString[args[2].Coercibility()], funcName)
+	default:
+		return collate.ErrIllegalMixCollation.GenWithStackByArgs(funcName)
+	}
 }
