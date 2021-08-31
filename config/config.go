@@ -140,8 +140,9 @@ type Config struct {
 	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
 	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
-	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
-	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
+	RepairMode               bool     `toml:"repair-mode" json:"repair-mode"`
+	RepairTableList          []string `toml:"repair-table-list" json:"repair-table-list"`
+	ResolveLockLiteThreshold uint64   `toml:"resolve-lock-lite-threshold" json:"resolve-lock-lite-threshold"`
 	// IsolationRead indicates that the TiDB reads data from which isolation level(engine and label).
 	IsolationRead IsolationRead `toml:"isolation-read" json:"isolation-read"`
 	// MaxServerConnections is the maximum permitted number of simultaneous client connections.
@@ -198,18 +199,19 @@ func (c *Config) UpdateTempStoragePath() {
 
 func (c *Config) getTiKVConfig() *tikvcfg.Config {
 	return &tikvcfg.Config{
-		CommitterConcurrency:  c.Performance.CommitterConcurrency,
-		MaxTxnTTL:             c.Performance.MaxTxnTTL,
-		TiKVClient:            c.TiKVClient,
-		Security:              c.Security.ClusterSecurity(),
-		PDClient:              c.PDClient,
-		PessimisticTxn:        tikvcfg.PessimisticTxn{MaxRetryCount: c.PessimisticTxn.MaxRetryCount},
-		TxnLocalLatches:       c.TxnLocalLatches,
-		StoresRefreshInterval: c.StoresRefreshInterval,
-		OpenTracingEnable:     c.OpenTracing.Enable,
-		Path:                  c.Path,
-		EnableForwarding:      c.EnableForwarding,
-		TxnScope:              c.Labels["zone"],
+		CommitterConcurrency:     c.Performance.CommitterConcurrency,
+		MaxTxnTTL:                c.Performance.MaxTxnTTL,
+		TiKVClient:               c.TiKVClient,
+		Security:                 c.Security.ClusterSecurity(),
+		PDClient:                 c.PDClient,
+		PessimisticTxn:           tikvcfg.PessimisticTxn{MaxRetryCount: c.PessimisticTxn.MaxRetryCount},
+		TxnLocalLatches:          c.TxnLocalLatches,
+		StoresRefreshInterval:    c.StoresRefreshInterval,
+		OpenTracingEnable:        c.OpenTracing.Enable,
+		Path:                     c.Path,
+		EnableForwarding:         c.EnableForwarding,
+		TxnScope:                 c.Labels["zone"],
+		ResolveLockLiteThreshold: c.ResolveLockLiteThreshold,
 	}
 }
 
@@ -583,6 +585,7 @@ var defaultConf = Config{
 	SplitRegionMaxNum:            1000,
 	RepairMode:                   false,
 	RepairTableList:              []string{},
+	ResolveLockLiteThreshold:     16,
 	MaxServerConnections:         0,
 	TxnLocalLatches:              defTiKVCfg.TxnLocalLatches,
 	LowerCaseTableNames:          2,

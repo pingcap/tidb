@@ -105,6 +105,9 @@ repair-mode = false
 # In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
 repair-table-list = []
 
+# If the number of keys that one prewrite request of one region involves exceed this threshold, it will use `ResolveLock` instead of `ResolveLockLite`.
+resolve-lock-lite-threshold = 16
+
 # The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
 max-server-connections = 0
 
