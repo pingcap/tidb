@@ -58,6 +58,8 @@ type InfoSchema interface {
 	SetBundle(*placement.Bundle)
 	// RuleBundles will return a copy of all rule bundles.
 	RuleBundles() []*placement.Bundle
+	// AllPlacementPolicies returns all placement policies
+	AllPlacementPolicies() []*placementpolicy.PolicyInfo
 }
 
 type sortedTables []table.Table
@@ -373,7 +375,8 @@ func (is *infoSchema) PolicyByName(name model.CIStr) (*placementpolicy.PolicyInf
 	return t, r
 }
 
-func (is *infoSchema) PlacementPolicies() []*placementpolicy.PolicyInfo {
+// AllPlacementPolicies returns all placement policies
+func (is *infoSchema) AllPlacementPolicies() []*placementpolicy.PolicyInfo {
 	is.policyMutex.RLock()
 	defer is.policyMutex.RUnlock()
 	policies := make([]*placementpolicy.PolicyInfo, 0, len(is.policyMap))
