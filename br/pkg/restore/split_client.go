@@ -24,10 +24,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/server/config"
 	"github.com/tikv/pd/server/schedule/placement"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -80,15 +82,36 @@ type pdClient struct {
 	client     pd.Client
 	tlsConf    *tls.Config
 	storeCache map[uint64]*metapb.Store
+
+	// FIXME when config changed during the lifetime of pdClient,
+	// 	this may mislead the scatter.
+	needScatterVal  bool
+	needScatterInit sync.Once
 }
 
 // NewSplitClient returns a client used by RegionSplitter.
 func NewSplitClient(client pd.Client, tlsConf *tls.Config) SplitClient {
-	return &pdClient{
+	cli := &pdClient{
 		client:     client,
 		tlsConf:    tlsConf,
 		storeCache: make(map[uint64]*metapb.Store),
 	}
+	return cli
+}
+
+func (c *pdClient) needScatter(ctx context.Context) bool {
+	c.needScatterInit.Do(func() {
+		var err error
+		c.needScatterVal, err = c.checkNeedScatter(ctx)
+		if err != nil {
+			log.Warn("failed to check whether need to scatter, use permissive strategy: always scatter", logutil.ShortError(err))
+			c.needScatterVal = true
+		}
+		if !c.needScatterVal {
+			log.Info("skipping scatter because the replica number isn't less than store count.")
+		}
+	})
+	return c.needScatterVal
 }
 
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
@@ -374,7 +397,55 @@ func (c *pdClient) BatchSplitRegions(
 	return newRegions, err
 }
 
+func (c *pdClient) getStoreCount(ctx context.Context) (int, error) {
+	stores, err := conn.GetAllTiKVStores(ctx, c.client, conn.SkipTiFlash)
+	if err != nil {
+		return 0, err
+	}
+	return len(stores), err
+}
+
+func (c *pdClient) getMaxReplica(ctx context.Context) (int, error) {
+	api := c.getPDAPIAddr()
+	configAPI := api + "/pd/api/v1/config"
+	req, err := http.NewRequestWithContext(ctx, "GET", configAPI, nil)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	res, err := httputil.NewClient(c.tlsConf).Do(req)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	var conf config.Config
+	if err := json.NewDecoder(res.Body).Decode(&conf); err != nil {
+		return 0, errors.Trace(err)
+	}
+	return int(conf.Replication.MaxReplicas), nil
+}
+
+func (c *pdClient) checkNeedScatter(ctx context.Context) (bool, error) {
+	storeCount, err := c.getStoreCount(ctx)
+	if err != nil {
+		return false, err
+	}
+	maxReplica, err := c.getMaxReplica(ctx)
+	if err != nil {
+		return false, err
+	}
+	log.Info("checking whether need to scatter", zap.Int("store", storeCount), zap.Int("max-replica", maxReplica))
+	// Skipping scatter may lead to leader unbalanced,
+	// currently, we skip scatter only when:
+	//   1. max-replica > store-count (Probably a misconfigured or playground cluster.)
+	//   2. store-count == 1 (No meaning for scattering.)
+	// We can still omit scatter when `max-replica == store-count`, if we create a BalanceLeader operator here,
+	//   however, there isn't evidence for transform leader is much faster than scattering empty regions.
+	return storeCount >= maxReplica && storeCount > 1, nil
+}
+
 func (c *pdClient) ScatterRegion(ctx context.Context, regionInfo *RegionInfo) error {
+	if !c.needScatter(ctx) {
+		return nil
+	}
 	return c.client.ScatterRegion(ctx, regionInfo.Region.GetId())
 }
 
