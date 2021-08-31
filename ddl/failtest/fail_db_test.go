@@ -673,29 +673,6 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk.MustExec("drop table t, t1, t2, t3, t4, t5")
 }
 
-// TODO: type C seems to come from "github.com/pingcap/check"
-func (s *testFailDBSuite) TestPartitionAddPanic(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test;`)
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t (a int) partition by range(a) (partition p0 values less than (10));`)
-	// TODO: c, Assert and IsNil seem to come from "github.com/pingcap/check"
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr", `return(true)`), IsNil)
-	defer func() {
-		// TODO: c, Assert and IsNil seem to come from "github.com/pingcap/check"
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr"), IsNil)
-	}()
-
-	_, err := tk.Exec(`alter table t add partition (partition p1 values less than (20));`)
-	// TODO: c, Assert and NotNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, NotNil)
-	result := tk.MustQuery("show create table t").Rows()[0][1]
-	// TODO: c, Assert and Matches seem to come from "github.com/pingcap/check"
-	c.Assert(result, Matches, `(?s).*PARTITION .p0. VALUES LESS THAN \(10\).*`)
-	// TODO: c, Assert and Not(Matches) seem to come from "github.com/pingcap/check"
-	c.Assert(result, Not(Matches), `(?s).*PARTITION .p0. VALUES LESS THAN \(20\).*`)
-}
-
 func (s *testFailDBSuite) MyTestPartitionAddPanicCopy(t *testing.T) {
 	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec(`use test;`)
