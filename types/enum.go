@@ -15,6 +15,8 @@
 package types
 
 import (
+	"strconv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -49,8 +51,12 @@ func ParseEnum(elems []string, name string, collation string) (Enum, error) {
 	if enumName, err := ParseEnumName(elems, name, collation); err == nil {
 		return enumName, nil
 	}
-	// If the string name is not in the enum collection, an empty enum will be returned.
-	return Enum{}, nil
+	// name doesn't exist, maybe an integer?
+	if num, err := strconv.ParseUint(name, 0, 64); err == nil {
+		return ParseEnumValue(elems, num)
+	}
+
+	return Enum{}, errors.Errorf("item %s is not in enum %v", name, elems)
 }
 
 // ParseEnumName creates a Enum with item name.
