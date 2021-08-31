@@ -100,6 +100,7 @@ func init() {
 		"testDBSuite1.TestAddIndexWithSplitTable",
 		"testSerialDBSuite.TestAddIndexWithShardRowID",
 		"testColumnTypeChangeSuite.TestColumnTypeChangeFromDateTimeTypeToOthers",
+		"TestMemStoreConcurrent",
 	}
 	for _, v := range tmp {
 		allowList[v] = struct{}{}

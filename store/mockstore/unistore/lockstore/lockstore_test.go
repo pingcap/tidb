@@ -144,7 +144,7 @@ func TestReplace(t *testing.T) {
 	checkMemStore(t, ls, prefix, "new", n)
 }
 
-func TestConcurrent(t *testing.T) {
+func TestMemStoreConcurrent(t *testing.T) {
 	keyRange := 10
 	concurrentKeys := make([][]byte, keyRange)
 	for i := 0; i < keyRange; i++ {
