@@ -1272,9 +1272,7 @@ func (local *local) allocateTSIfNotExists(ctx context.Context, engine *File) err
 	return engine.saveEngineMeta()
 }
 
-// CloseEngine closes backend engine by uuid
-// NOTE: we will return nil if engine is not exist. This will happen if engine import&cleanup successfully
-// but exit before update checkpoint. Thus after restart, we will try to import this engine again.
+// CloseEngine closes backend engine by uuid.
 func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
 	// flush mem table to storage, to free memory,
 	// ask others' advise, looks like unnecessary, but with this we can control memory precisely.
@@ -1283,10 +1281,6 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 		// recovery mode, we should reopen this engine file
 		db, err := local.openEngineDB(engineUUID, true)
 		if err != nil {
-			// if engine db does not exist, just skip
-			if os.IsNotExist(errors.Cause(err)) {
-				return nil
-			}
 			return err
 		}
 		engineFile := &File{
