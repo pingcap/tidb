@@ -2328,13 +2328,8 @@ func TestPlacementPolicyStmt(t *testing.T) {
 	defer clean()
 	se := newSession(t, store, dbName)
 	mustExec(t, se, "drop placement policy if exists x")
-	createStmt := "create placement policy x " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1,cn-east-2\" " +
-		"LEARNERS=1 " +
-		"LEARNER_CONSTRAINTS=\"[+region=cn-west-1]\" " +
-		"VOTERS=3 " +
-		"VOTER_CONSTRAINTS=\"[+disk=ssd]\""
+	createStmt := "create placement policy x PRIMARY_REGION=\"cn-east-1\" "
+	dropStmt := "drop placement policy if exists x"
 
 	// high privileged user setting password for other user (passes)
 	mustExec(t, se, "CREATE USER super_user, placement_user, empty_user")
@@ -2342,15 +2337,17 @@ func TestPlacementPolicyStmt(t *testing.T) {
 	mustExec(t, se, "GRANT PLACEMENT_ADMIN ON *.* TO placement_user")
 
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "empty_user", Hostname: "localhost"}, nil, nil))
-	_, err := se.ExecuteInternal(context.Background(), "drop placement policy if exists x")
+	_, err := se.ExecuteInternal(context.Background(), createStmt)
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or PLACEMENT_ADMIN privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), dropStmt)
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or PLACEMENT_ADMIN privilege(s) for this operation")
 
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "super_user", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, createStmt)
-	mustExec(t, se, "drop placement policy if exists x")
+	mustExec(t, se, dropStmt)
 
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "placement_user", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, createStmt)
-	mustExec(t, se, "drop placement policy if exists x")
+	mustExec(t, se, dropStmt)
 
 }
