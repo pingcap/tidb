@@ -4,7 +4,7 @@
 
 1. ci pipeline will be triggered when your comment on pull request matched trigger phrase.
 
-2. Some ci pipeline only response to people belong to specify organization like pingcap & tikv.
+2. Some ci pipeline only response to people belong to specific organization like pingcap & tikv.
 
 3. "**Only use trigger phrase for build triggering**". What does that mean?
 
