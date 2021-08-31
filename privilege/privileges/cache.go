@@ -1073,6 +1073,10 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 		if record.Privileges&globalDBVisible > 0 {
 			return true
 		}
+		// For metrics_schema, `PROCESS` can also work.
+		if record.Privileges&mysql.ProcessPriv > 0 && strings.EqualFold(db, util.MetricSchemaName.O) {
+			return true
+		}
 	}
 
 	// INFORMATION_SCHEMA is visible to all users.
