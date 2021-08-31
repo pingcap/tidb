@@ -933,8 +933,7 @@ func dropLabelRules(d *ddlCtx, schemaName, tableName string, partNames []string)
 	}
 	// delete batch rules
 	patch := label.NewRulePatch(nil, deleteRules)
-	err := infosync.UpdateLabelRules(context.TODO(), patch)
-	return err
+	return infosync.UpdateLabelRules(context.TODO(), patch)
 }
 
 // onDropTablePartition deletes old partition meta.
