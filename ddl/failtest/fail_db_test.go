@@ -62,9 +62,8 @@ func TestTCopy(t *testing.T) {
 	testleak.BeforeTest()
 	s := &testFailDBSuite{}
 	s.SetUpSuiteCopy(t)
-	// // TODO: Testing(...) seems to come from "github.com/pingcap/check"
-	// TestingT(t)
 	s.MyTestPartitionAddPanicCopy(t)
+	s.MyTestModifyColumn(t)
 	s.TearDownSuiteCopy(t)
 	testleak.AfterTestT(t)()
 }
@@ -563,23 +562,20 @@ func (s *testFailDBSuite) TestPartitionAddIndexGC(c *C) {
 	tk.MustExec("alter table partition_add_idx add index idx (id, hired)")
 }
 
-// TODO: type C seems to come from "github.com/pingcap/check"
-func (s *testFailDBSuite) TestModifyColumn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func (s *testFailDBSuite) MyTestModifyColumn(t *testing.T) {
+	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 
 	tk.MustExec("create table t (a int not null default 1, b int default 2, c int not null default 0, primary key(c), index idx(b), index idx1(a), index idx2(b, c))")
 	tk.MustExec("insert into t values(1, 2, 3), (11, 22, 33)")
 	_, err := tk.Exec("alter table t change column c cc mediumint")
-	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: this column has primary key flag")
+	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: this column has primary key flag")
 	tk.MustExec("alter table t change column b bb mediumint first")
-	dom := domain.GetDomain(tk.Se)
+	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	cols := tbl.Meta().Columns
 	colsStr := ""
 	idxsStr := ""
@@ -589,10 +585,8 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	for _, idx := range tbl.Meta().Indices {
 		idxsStr += idx.Name.L + " "
 	}
-	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
-	c.Assert(len(cols), Equals, 3)
-	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
-	c.Assert(len(tbl.Meta().Indices), Equals, 3)
+	require.Equal(t, 3, len(cols))
+	require.Equal(t, 3, len(tbl.Meta().Indices))
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 1 3", "22 11 33"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
@@ -605,9 +599,8 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("admin check table t")
 	tk.MustExec("insert into t values(111, 222, 333)")
-	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
 	_, err = tk.Exec("alter table t change column a aa tinyint after c")
-	c.Assert(err.Error(), Equals, "[types:1690]constant 222 overflows tinyint")
+	require.EqualError(t, err, "[types:1690]constant 222 overflows tinyint")
 	tk.MustExec("alter table t change column a aa mediumint after c")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
@@ -624,21 +617,16 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	// Test unsupport statements.
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 2")
 	_, err = tk.Exec("alter table t1 modify column a mediumint")
-	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: table is partition table")
+	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: table is partition table")
 	tk.MustExec("create table t2(id int, a int, b int generated always as (abs(a)) virtual, c int generated always as (a+1) stored)")
 	_, err = tk.Exec("alter table t2 modify column b mediumint")
-	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
+	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
 	_, err = tk.Exec("alter table t2 modify column c mediumint")
-	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
+	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
 	_, err = tk.Exec("alter table t2 modify column a mediumint generated always as(id+1) stored")
-	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: newCol IsGenerated true, oldCol IsGenerated false")
+	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: newCol IsGenerated true, oldCol IsGenerated false")
 	_, err = tk.Exec("alter table t2 modify column a mediumint")
-	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
+	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
 
 	// Test multiple rows of data.
 	tk.MustExec("create table t3(a int not null default 1, b int default 2, c int not null default 0, primary key(c), index idx(b), index idx1(a), index idx2(b, c))")
