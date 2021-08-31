@@ -450,7 +450,7 @@ func (importer *FileImporter) downloadSST(
 ) (*import_sstpb.SSTMeta, error) {
 	uid := uuid.New()
 	id := uid[:]
-	// Get the rewrite rulefor the file.
+	// Get the rewrite rule for the file.
 	fileRule := findMatchedRewriteRule(file, rewriteRules)
 	if fileRule == nil {
 		return nil, errors.Trace(berrors.ErrKVRewriteRuleNotFound)
