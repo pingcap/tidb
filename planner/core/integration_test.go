@@ -3960,6 +3960,43 @@ func (s *testIntegrationSuite) TestSequenceAsDataSource(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestIssue27167(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set names utf8mb4")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists all_types")
+
+	tk.MustExec("CREATE TABLE `all_types` (" +
+		"`id` int(11) NOT NULL," +
+		"`d_tinyint` tinyint(4) DEFAULT NULL," +
+		"`d_smallint` smallint(6) DEFAULT NULL," +
+		"`d_int` int(11) DEFAULT NULL," +
+		"`d_bigint` bigint(20) DEFAULT NULL," +
+		"`d_float` float DEFAULT NULL," +
+		"`d_double` double DEFAULT NULL," +
+		"`d_decimal` decimal(10,2) DEFAULT NULL," +
+		"`d_bit` bit(10) DEFAULT NULL," +
+		"`d_binary` binary(10) DEFAULT NULL," +
+		"`d_date` date DEFAULT NULL," +
+		"`d_datetime` datetime DEFAULT NULL," +
+		"`d_timestamp` timestamp NULL DEFAULT NULL," +
+		"`d_varchar` varchar(20) NULL default NULL," +
+		"PRIMARY KEY (`id`));",
+	)
+
+	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("utf8mb4_bin"))
+
+	tk.MustExec(`insert into all_types values(0, 0, 1, 2, 3, 1.5, 2.2, 10.23, 12, 'xy', '2021-12-12', '2021-12-12 12:00:00', '2021-12-12 12:00:00', '123');`)
+
+	tk.MustQuery("select collation(c) from (select d_date c from all_types union select d_int c from all_types) t").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
+	tk.MustQuery("select collation(c) from (select d_date c from all_types union select d_int collate binary c from all_types) t").Check(testkit.Rows("binary", "binary"))
+	tk.MustQuery("select collation(c) from (select d_date c from all_types union select d_float c from all_types) t").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
+	// timestamp also OK
+	tk.MustQuery("select collation(c) from (select d_timestamp c from all_types union select d_float c from all_types) t").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
+}
+
 func (s *testIntegrationSerialSuite) TestIssue25300(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -3968,11 +4005,11 @@ func (s *testIntegrationSerialSuite) TestIssue25300(c *C) {
 	tk.MustExec(`create table t (a char(65) collate utf8_unicode_ci, b text collate utf8_general_ci not null);`)
 	tk.MustExec(`insert into t values ('a', 'A');`)
 	tk.MustExec(`insert into t values ('b', 'B');`)
-	tk.MustGetErrCode(`(select a from t) union ( select b from t);`, mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode(`(select 'a' collate utf8mb4_unicode_ci) union (select 'b' collate utf8mb4_general_ci);`, mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode(`(select a from t) union ( select b from t) union all select 'a';`, mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a';`, mysql.ErrCantAggregate3collations)
-	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a' except select 'd';`, mysql.ErrCantAggregate3collations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t);`, mysql.ErrCantAggregateNcollations)
+	tk.MustGetErrCode(`(select 'a' collate utf8mb4_unicode_ci) union (select 'b' collate utf8mb4_general_ci);`, mysql.ErrCantAggregateNcollations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t) union all select 'a';`, mysql.ErrCantAggregateNcollations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a';`, mysql.ErrCantAggregateNcollations)
+	tk.MustGetErrCode(`(select a from t) union ( select b from t) union select 'a' except select 'd';`, mysql.ErrCantAggregateNcollations)
 }
 
 func (s *testIntegrationSerialSuite) TestMergeContinuousSelections(c *C) {

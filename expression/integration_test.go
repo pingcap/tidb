@@ -6558,7 +6558,7 @@ func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
 	tk.MustQuery("select c from t where c = 'b';").Check(testkit.Rows("B"))
 	tk.MustQuery("select c from t where c = 'B';").Check(testkit.Rows("B"))
 
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE `t1` (" +
 		"  `COL1` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL," +
 		"  PRIMARY KEY (`COL1`(5)) clustered" +
@@ -6829,13 +6829,14 @@ func (s *testIntegrationSerialSuite) TestMixCollation(c *C) {
 	tk.MustQuery("select coercibility(concat(concat(mb4unicode, mb4general), concat(unicode, general))) from t;").Check(testkit.Rows("1"))
 	tk.MustQuery("select collation(concat(i, 1)) from t;").Check(testkit.Rows("utf8mb4_general_ci"))
 	tk.MustQuery("select coercibility(concat(i, 1)) from t;").Check(testkit.Rows("4"))
-	tk.MustQuery("select collation(concat(i, user())) from t;").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(concat(i, user())) from t;").Check(testkit.Rows("utf8mb4_bin"))
 	tk.MustQuery("select coercibility(concat(i, user())) from t;").Check(testkit.Rows("3"))
+	tk.MustQuery("select field('s', mb4general, mb4unicode, mb4bin) from t;").Check(testkit.Rows("1"))
+	tk.MustQuery("select field('s', mb4general, mb4unicode collate utf8mb4_bin, mb4bin collate utf8mb4_unicode_ci) from t;").Check(testkit.Rows("1"))
 	tk.MustGetErrMsg("select * from t where mb4unicode = mb4general;", "[expression:1267]Illegal mix of collations (utf8mb4_unicode_ci,IMPLICIT) and (utf8mb4_general_ci,IMPLICIT) for operation '='")
 	tk.MustGetErrMsg("select * from t where unicode = general;", "[expression:1267]Illegal mix of collations (utf8_unicode_ci,IMPLICIT) and (utf8_general_ci,IMPLICIT) for operation '='")
 	tk.MustGetErrMsg("select concat(mb4general) = concat(mb4unicode) from t;", "[expression:1267]Illegal mix of collations (utf8mb4_general_ci,IMPLICIT) and (utf8mb4_unicode_ci,IMPLICIT) for operation '='")
 	tk.MustGetErrMsg("select * from t t1, t t2 where t1.mb4unicode = t2.mb4general;", "[expression:1267]Illegal mix of collations (utf8mb4_unicode_ci,IMPLICIT) and (utf8mb4_general_ci,IMPLICIT) for operation '='")
-	tk.MustGetErrMsg("select field('s', mb4general, mb4unicode, mb4bin) from t;", "[expression:1271]Illegal mix of collations for operation 'field'")
 	tk.MustGetErrMsg("select concat(mb4unicode, mb4general) = mb4unicode from t;", "[expression:1267]Illegal mix of collations (utf8mb4_bin,NONE) and (utf8mb4_unicode_ci,IMPLICIT) for operation '='")
 
 	tk.MustExec("drop table t;")
@@ -7085,9 +7086,9 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustQuery("select field('a', 'b', 'A');").Check(testkit.Rows("0"))
 	tk.MustQuery("select field('a', 'b', 'A' collate utf8mb4_bin);").Check(testkit.Rows("0"))
 	tk.MustQuery("select field('a', 'b', 'a ' collate utf8mb4_bin);").Check(testkit.Rows("2"))
-	tk.MustQuery("select field('a', 'b', 'A' collate utf8mb4_unicode_ci);").Check(testkit.Rows("2"))
+	tk.MustQuery("select field('a', 'b', 'A' collate utf8mb4_unicode_ci);").Check(testkit.Rows("0"))
 	tk.MustQuery("select field('a', 'b', 'a ' collate utf8mb4_unicode_ci);").Check(testkit.Rows("2"))
-	tk.MustQuery("select field('a', 'b', 'A' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
+	tk.MustQuery("select field('a', 'b', 'A' collate utf8mb4_general_ci);").Check(testkit.Rows("0"))
 	tk.MustQuery("select field('a', 'b', 'a ' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
 
 	tk.MustExec("USE test")
@@ -7129,7 +7130,7 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustQuery("select INSTR(p1,n4) from t1;").Check(testkit.Rows("0"))
 	tk.MustQuery("select INSTR(p2,n1) from t1;").Check(testkit.Rows("0"))
 	tk.MustQuery("select INSTR(p2,n2) from t1;").Check(testkit.Rows("1"))
-	tk.MustQuery("select INSTR(p2,n3) from t1;").Check(testkit.Rows("0"))
+	tk.MustQuery("select INSTR(p2,n3) from t1;").Check(testkit.Rows("1"))
 	tk.MustQuery("select INSTR(p2,n4) from t1;").Check(testkit.Rows("1"))
 	tk.MustQuery("select INSTR(p3,n1) from t1;").Check(testkit.Rows("0"))
 	tk.MustQuery("select INSTR(p3,n2) from t1;").Check(testkit.Rows("0"))
@@ -7137,7 +7138,7 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustQuery("select INSTR(p3,n4) from t1;").Check(testkit.Rows("0"))
 	tk.MustQuery("select INSTR(p4,n1) from t1;").Check(testkit.Rows("0"))
 	tk.MustQuery("select INSTR(p4,n2) from t1;").Check(testkit.Rows("1"))
-	tk.MustQuery("select INSTR(p4,n3) from t1;").Check(testkit.Rows("0"))
+	tk.MustQuery("select INSTR(p4,n3) from t1;").Check(testkit.Rows("1"))
 	tk.MustQuery("select INSTR(p4,n4) from t1;").Check(testkit.Rows("1"))
 
 	tk.MustExec("truncate table t1;")
@@ -7146,7 +7147,7 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustExec("insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (3,'0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ');")
 
 	tk.MustQuery("select LOCATE(p1,n1) from t1;").Check(testkit.Rows("0", "0", "0"))
-	tk.MustQuery("select LOCATE(p1,n2) from t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustQuery("select LOCATE(p1,n2) from t1;").Check(testkit.Rows("0", "1", "1"))
 	tk.MustQuery("select LOCATE(p1,n3) from t1;").Check(testkit.Rows("0", "0", "0"))
 	tk.MustQuery("select LOCATE(p1,n4) from t1;").Check(testkit.Rows("0", "1", "1"))
 	tk.MustQuery("select LOCATE(p2,n1) from t1;").Check(testkit.Rows("0", "0", "0"))
@@ -7154,10 +7155,10 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustQuery("select LOCATE(p2,n3) from t1;").Check(testkit.Rows("0", "0", "0"))
 	tk.MustQuery("select LOCATE(p2,n4) from t1;").Check(testkit.Rows("0", "1", "1"))
 	tk.MustQuery("select LOCATE(p3,n1) from t1;").Check(testkit.Rows("0", "0", "0"))
-	tk.MustQuery("select LOCATE(p3,n2) from t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustQuery("select LOCATE(p3,n2) from t1;").Check(testkit.Rows("0", "1", "1"))
 	tk.MustQuery("select LOCATE(p3,n3) from t1;").Check(testkit.Rows("0", "0", "0"))
-	tk.MustQuery("select LOCATE(p3,n4) from t1;").Check(testkit.Rows("0", "0", "0"))
-	tk.MustQuery("select LOCATE(p4,n1) from t1;").Check(testkit.Rows("0", "1", "1"))
+	tk.MustQuery("select LOCATE(p3,n4) from t1;").Check(testkit.Rows("0", "1", "1"))
+	tk.MustQuery("select LOCATE(p4,n1) from t1;").Check(testkit.Rows("0", "0", "0"))
 	tk.MustQuery("select LOCATE(p4,n2) from t1;").Check(testkit.Rows("0", "1", "1"))
 	tk.MustQuery("select LOCATE(p4,n3) from t1;").Check(testkit.Rows("0", "0", "0"))
 	tk.MustQuery("select LOCATE(p4,n4) from t1;").Check(testkit.Rows("0", "1", "1"))
@@ -8029,8 +8030,8 @@ func (s *testIntegrationSerialSuite) TestIssue18662(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a varchar(10) collate utf8mb4_bin, b varchar(10) collate utf8mb4_general_ci);")
 	tk.MustExec("insert into t (a, b) values ('a', 'A');")
-	tk.MustQuery("select * from t where field('A', a collate utf8mb4_general_ci, b) > 1;").Check(testkit.Rows())
-	tk.MustQuery("select * from t where field('A', a, b collate utf8mb4_general_ci) > 1;").Check(testkit.Rows())
+	tk.MustQuery("select * from t where field('A', a collate utf8mb4_general_ci, b) > 1;").Check(testkit.Rows("a A"))
+	tk.MustQuery("select * from t where field('A', a, b collate utf8mb4_general_ci) > 1;").Check(testkit.Rows("a A"))
 	tk.MustQuery("select * from t where field('A' collate utf8mb4_general_ci, a, b) > 1;").Check(testkit.Rows())
 	tk.MustQuery("select * from t where field('A', a, b) > 1;").Check(testkit.Rows("a A"))
 }
@@ -8987,7 +8988,7 @@ func (s *testIntegrationSerialSuite) TestLikeWithCollation(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 
 	tk.MustQuery(`select 'a' like 'A' collate utf8mb4_unicode_ci;`).Check(testkit.Rows("1"))
-	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin like 'A' collate utf8mb4_unicode_ci;`, "[expression:1270]Illegal mix of collations (utf8mb4_bin,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT), (binary,NUMERIC) for operation 'like'")
+	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin like 'A' collate utf8mb4_unicode_ci;`, "[expression:1267]Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_unicode_ci,EXPLICIT) for operation 'like'")
 	tk.MustQuery(`select '😛' collate utf8mb4_general_ci like '😋';`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select '😛' collate utf8mb4_general_ci = '😋';`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select '😛' collate utf8mb4_unicode_ci like '😋';`).Check(testkit.Rows("0"))
