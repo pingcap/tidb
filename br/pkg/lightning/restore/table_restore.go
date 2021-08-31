@@ -720,6 +720,9 @@ func (tr *TableRestore) postProcess(
 				}
 
 				remoteChecksum, err := DoChecksum(ctx, tr.tableInfo)
+				if err != nil {
+					return false, err
+				}
 				// TODO: If there are duplicate keys, do not set the `ChecksumMismatch` error
 				err = tr.compareChecksum(remoteChecksum, localChecksum)
 				// with post restore level 'optional', we will skip checksum error
