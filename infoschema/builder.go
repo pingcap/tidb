@@ -537,7 +537,7 @@ func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
 	is := b.is
 	is.policyMutex.Lock()
 	defer is.policyMutex.Unlock()
-	for _, v := range oldIS.PlacementPolicies() {
+	for _, v := range oldIS.AllPlacementPolicies() {
 		is.policyMap[v.Name.L] = v
 	}
 }
