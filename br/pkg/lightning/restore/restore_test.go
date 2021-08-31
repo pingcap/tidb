@@ -854,7 +854,10 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 	defer close(chptCh)
 	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
 	go func() {
-		for range chptCh {
+		for scp := range chptCh {
+			if scp.waitCh != nil {
+				scp.waitCh <- nil
+			}
 		}
 	}()
 
@@ -886,7 +889,10 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 	defer close(chptCh)
 	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
 	go func() {
-		for range chptCh {
+		for scp := range chptCh {
+			if scp.waitCh != nil {
+				scp.waitCh <- nil
+			}
 		}
 	}()
 
@@ -968,7 +974,10 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 		diskQuotaLock:     newDiskQuotaLock(),
 	}
 	go func() {
-		for range chptCh {
+		for scp := range chptCh {
+			if scp.waitCh != nil {
+				scp.waitCh <- nil
+			}
 		}
 	}()
 	exec := mock.NewMockSQLExecutor(controller)
@@ -991,6 +1000,36 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 
 	tableFinished := metric.ReadCounter(metric.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
 	c.Assert(tableFinished-tableFinishedBase, Equals, float64(1))
+}
+
+func (s *tableRestoreSuite) TestSaveStatusCheckpoint(c *C) {
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckpointUpdate", "sleep(100)")
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckpointUpdate")
+	}()
+
+	web.BroadcastInitProgress([]*mydump.MDDatabaseMeta{{
+		Name:   "test",
+		Tables: []*mydump.MDTableMeta{{DB: "test", Name: "tbl"}},
+	}})
+	web.BroadcastTableCheckpoint(common.UniqueTable("test", "tbl"), &checkpoints.TableCheckpoint{})
+
+	saveCpCh := make(chan saveCp)
+
+	rc := &Controller{
+		saveCpCh:      saveCpCh,
+		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
+	}
+	go rc.listenCheckpointUpdates()
+
+	start := time.Now()
+	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, nil, checkpoints.CheckpointStatusImported)
+	c.Assert(err, IsNil)
+	elapsed := time.Since(start)
+	c.Assert(elapsed, GreaterEqual, time.Millisecond*100)
+
+	close(saveCpCh)
+	rc.checkpointsWg.Wait()
 }
 
 var _ = Suite(&chunkRestoreSuite{})
