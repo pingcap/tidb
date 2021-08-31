@@ -74,7 +74,6 @@ func (s *testPessimisticSuite) SetUpSuite(c *C) {
 func (s *testPessimisticSuite) TearDownSuite(c *C) {
 	s.testSessionSuiteBase.TearDownSuite(c)
 	transaction.PrewriteMaxBackoff = 20000
-	transaction.VeryLongMaxBackoff = 600000
 }
 
 func (s *testPessimisticSuite) TestPessimisticTxn(c *C) {
