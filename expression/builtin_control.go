@@ -92,14 +92,17 @@ func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
 				resultFieldType.Decimal = mathutil.Max(lhs.Decimal, rhs.Decimal)
 			}
 		}
+
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
-			resultFieldType.Collate, resultFieldType.Charset, _, _ = inferCollation(lexp, rexp)
+			collation := inferCollation(lexp, rexp)
+			resultFieldType.Collate, resultFieldType.Charset = collation.Collation, collation.Charset
 			resultFieldType.Flag = 0
 			if mysql.HasBinaryFlag(lhs.Flag) || !types.IsNonBinaryStr(rhs) {
 				resultFieldType.Flag |= mysql.BinaryFlag
 			}
 		} else if types.IsNonBinaryStr(rhs) && !types.IsBinaryStr(lhs) {
-			resultFieldType.Collate, resultFieldType.Charset, _, _ = inferCollation(lexp, rexp)
+			collation := inferCollation(lexp, rexp)
+			resultFieldType.Collate, resultFieldType.Charset = collation.Collation, collation.Charset
 			resultFieldType.Flag = 0
 			if mysql.HasBinaryFlag(rhs.Flag) || !types.IsNonBinaryStr(lhs) {
 				resultFieldType.Flag |= mysql.BinaryFlag

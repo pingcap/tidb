@@ -300,8 +300,9 @@ func IsCICollation(collate string) bool {
 
 // IsBinCollation returns if the collation is 'xx_bin'
 func IsBinCollation(collate string) bool {
-	return collate == "ascii_bin" || collate == "latin1_bin" ||
-		collate == "utf8_bin" || collate == "utf8mb4_bin"
+	return collate == charset.CollationASCII || collate == charset.CollationLatin1 ||
+		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
+		collate == charset.CollationGBKBin
 }
 
 func init() {
