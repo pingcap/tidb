@@ -835,7 +835,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionAlterTablePartitionAttributes:
 		ver, err = onAlterTablePartitionAttributes(t, job)
 	case model.ActionCreatePlacementPolicy:
-		ver, err = onCreatePlacementPolicy(d, t, job)
+		ver, err = w.onCreatePlacementPolicy(d, t, job)
 	case model.ActionDropPlacementPolicy:
 		ver, err = onDropPlacementPolicy(t, job)
 	default:

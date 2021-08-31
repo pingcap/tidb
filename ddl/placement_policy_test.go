@@ -194,3 +194,10 @@ func (s *testDBSuite6) TestConstraintCompatibility(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:-1]conflicting label constraints: '-zone=cn-east-1' and '+zone=cn-east-1'")
 }
+
+func (s *testDBSuite6) TestCheckPlacementPolicyLabels(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop placement policy if exists x")
+
+}

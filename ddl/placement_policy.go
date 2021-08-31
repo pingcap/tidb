@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/errors"
@@ -23,9 +24,10 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/util/placementpolicy"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	policyInfo := &placementpolicy.PolicyInfo{}
 	if err := job.DecodeArgs(policyInfo); err != nil {
 		job.State = model.JobStateCancelled
@@ -37,7 +39,7 @@ func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	err = checkPolicyValidation(policyInfo)
+	err = w.checkPolicyConstraints(policyInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -65,15 +67,61 @@ func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 	}
 }
 
-func checkPolicyValidation(info *placementpolicy.PolicyInfo) error {
+func checkPolicyLabels(w *worker, rules []*placement.Rule) error {
+	distinctLabels := make(map[string]struct{})
+	for _, rule := range rules {
+		if rule.Constraints != nil {
+			for _, cons := range rule.Constraints {
+				distinctLabels[cons.Key] = struct{}{}
+			}
+		}
+	}
+	if len(distinctLabels) == 0 {
+		return nil
+	}
+	sysSe, err := w.sessPool.get()
+	if err != nil {
+		return err
+	}
+	defer w.sessPool.put(sysSe)
+	stmt, err := sysSe.(sqlexec.RestrictedSQLExecutor).ParseWithParams(context.Background(), "show placement labels")
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	rows, _, err := sysSe.(sqlexec.RestrictedSQLExecutor).ExecRestrictedStmt(context.Background(), stmt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	b := &placementpolicy.ShowPlacementLabelsResultBuilder{}
+	for _, row := range rows {
+		bj := row.GetJSON(1)
+		if err := b.AppendStoreLabels(bj); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	err = b.CheckLabels(distinctLabels)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (w *worker) checkPolicyConstraints(info *placementpolicy.PolicyInfo) error {
+	var totalRules []*placement.Rule
 	checkMergeConstraint := func(replica uint64, constr1, constr2 string) error {
 		// Constr2 only make sense when replica is set (whether it is in the replica field or included in the constr1)
 		if replica == 0 && constr1 == "" {
 			return nil
 		}
-		if _, err := placement.NewMergeRules(replica, constr1, constr2); err != nil {
+		var (
+			rules []*placement.Rule
+			err   error
+		)
+		if rules, err = placement.NewMergeRules(replica, constr1, constr2); err != nil {
 			return err
 		}
+		totalRules = append(totalRules, rules...)
 		return nil
 	}
 	if err := checkMergeConstraint(1, info.LeaderConstraints, info.Constraints); err != nil {
@@ -89,6 +137,9 @@ func checkPolicyValidation(info *placementpolicy.PolicyInfo) error {
 		return err
 	}
 	// For constraint labels and default region label, they should be checked by `SHOW LABELS` if necessary when it is applied.
+	if err := checkPolicyLabels(w, totalRules); err != nil {
+		return err
+	}
 	return nil
 }
 

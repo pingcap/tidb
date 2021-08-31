@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/placementpolicy"
 )
 
 var _ = SerialSuites(&testShowPlacementLabelSuit{})
@@ -54,7 +55,7 @@ func (s *testShowPlacementLabelSuit) TestShowPlacementLabelsBuilder(c *C) {
 		},
 	}
 
-	b := &showPlacementLabelsResultBuilder{}
+	b := &placementpolicy.ShowPlacementLabelsResultBuilder{}
 	toBinaryJSON := func(obj interface{}) (bj json.BinaryJSON) {
 		d, err := gjson.Marshal(obj)
 		c.Assert(err, IsNil)
