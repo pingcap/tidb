@@ -557,7 +557,7 @@ func setGlobalVars() {
 	if hostname, err := os.Hostname(); err != nil {
 		variable.SetSysVar(variable.Hostname, hostname)
 	}
-	variable.GeneralLogMaxDays.Store(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	variable.GlobalLogMaxDays.Store(int32(config.GetGlobalConfig().Log.File.MaxDays))
 
 	if cfg.Security.EnableSEM {
 		sem.Enable()

@@ -157,6 +157,11 @@ func ReplaceLogger(cfg *LogConfig) error {
 		return errors.Trace(err)
 	}
 
+	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	log.S().Infof("replaced global logger with config: %s", string(cfgJSON))
 
 	return nil
