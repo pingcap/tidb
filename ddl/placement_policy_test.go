@@ -134,3 +134,63 @@ func testGetPolicyByNameFromIS(c *C, ctx sessionctx.Context, policy string) *pla
 	c.Assert(ok, Equals, true)
 	return po
 }
+
+func (s *testDBSuite6) TestConstraintCompatibility(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop placement policy if exists x")
+
+	// Dict is not allowed for common constraint.
+	_, err := tk.Exec("create placement policy x " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1,cn-east-2\" " +
+		"LEARNERS=1 " +
+		"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1]\" " +
+		"CONSTRAINTS=\"{'+disk=ssd':2}\"")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]invalid label constraints format: should be [constraint1, ...] (error yaml: unmarshal errors:\n  line 1: cannot unmarshal !!map into []string)")
+
+	// Special constraints may be incompatible with itself.
+	_, err = tk.Exec("create placement policy x " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1,cn-east-2\" " +
+		"LEARNERS=1 " +
+		"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-2]\"")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]conflicting label constraints: '+zone=cn-west-2' and '+zone=cn-west-1'")
+
+	_, err = tk.Exec("create placement policy x " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1,cn-east-2\" " +
+		"LEARNERS=1 " +
+		"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, -zone=cn-west-1]\"")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]conflicting label constraints: '-zone=cn-west-1' and '+zone=cn-west-1'")
+
+	_, err = tk.Exec("create placement policy x " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1,cn-east-2\" " +
+		"LEARNERS=1 " +
+		"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-1]\"")
+	c.Assert(err, IsNil)
+
+	// Special constraints may be incompatible with common constraint.
+	tk.MustExec("drop placement policy if exists x")
+	_, err = tk.Exec("create placement policy x " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+		"CONSTRAINTS=\"[+zone=cn-east-2]\"")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]conflicting label constraints: '+zone=cn-east-2' and '+zone=cn-east-1'")
+
+	_, err = tk.Exec("create placement policy x " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+		"CONSTRAINTS=\"[+disk=ssd,-zone=cn-east-1]\"")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]conflicting label constraints: '-zone=cn-east-1' and '+zone=cn-east-1'")
+}
