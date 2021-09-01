@@ -455,10 +455,6 @@ func MustPrewriteLockErr(pk []byte, key []byte, startTs uint64, store *TestStore
 	require.Error(store.t, err)
 }
 
-func MustGC(key []byte, safePoint uint64, s *TestStore) {
-	s.MvccStore.UpdateSafePoint(safePoint)
-}
-
 func MustCleanup(key []byte, startTs, currentTs uint64, store *TestStore) {
 	err := store.MvccStore.Cleanup(store.newReqCtx(), key, startTs, currentTs)
 	require.NoError(store.t, err)
@@ -1196,67 +1192,6 @@ func TestMinCommitTs(t *testing.T) {
 	MustCheckTxnStatus(k, 30, 40, 40, false, 100, 0,
 		kvrpcpb.Action_MinCommitTSPushed, store)
 	MustCommit(k, 30, 50, store)
-}
-
-func TestGC(t *testing.T) {
-	t.Parallel()
-	t.Skip("GC work is hand over to badger.")
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
-
-	k := []byte("tk")
-	v1 := []byte("v1")
-	v2 := []byte("v2")
-	v3 := []byte("v3")
-	v4 := []byte("v4")
-
-	MustPrewritePut(k, k, v1, 5, store)
-	MustCommit(k, 5, 10, store)
-	MustPrewritePut(k, k, v2, 15, store)
-	MustCommit(k, 15, 20, store)
-	MustPrewriteDelete(k, k, 25, store)
-	MustCommit(k, 25, 30, store)
-	MustPrewritePut(k, k, v3, 35, store)
-	MustCommit(k, 35, 40, store)
-	MustPrewriteLock(k, k, 45, store)
-	MustCommit(k, 45, 50, store)
-	MustPrewritePut(k, k, v4, 55, store)
-	MustRollbackKey(k, 55, store)
-
-	// Transactions:
-	// startTS commitTS Command
-	// --
-	// 55      -        PUT "x55" (Rollback)
-	// 45      50       LOCK
-	// 35      40       PUT "x35"
-	// 25      30       DELETE
-	// 15      20       PUT "x15"
-	//  5      10       PUT "x5"
-
-	// CF data layout:
-	// ts CFDefault   CFWrite
-	// --
-	// 55             Rollback(PUT,50)
-	// 50             Commit(LOCK,45)
-	// 45
-	// 40             Commit(PUT,35)
-	// 35   x35
-	// 30             Commit(Delete,25)
-	// 25
-	// 20             Commit(PUT,15)
-	// 15   x15
-	// 10             Commit(PUT,5)
-	// 5    x5
-	MustGC(k, 12, store)
-	MustGetVal(k, v1, 12, store)
-	MustGC(k, 22, store)
-	MustGetVal(k, v2, 22, store)
-	MustGetNone(k, 12, store)
-	MustGC(k, 32, store)
-	MustGetNone(k, 22, store)
-	MustGetNone(k, 35, store)
-	MustGC(k, 60, store)
-	MustGetVal(k, v3, 62, store)
 }
 
 func TestPessimisticLock(t *testing.T) {
