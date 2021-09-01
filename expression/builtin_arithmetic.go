@@ -86,13 +86,6 @@ func numericContextResultType(ft *types.FieldType) types.EvalType {
 	return evalTp4Ft
 }
 
-// setFlenDecimal4Int is called to set proper `Flen` and `Decimal` of return
-// type according to the two input parameter's types.
-func setFlenDecimal4Int(retTp, a, b *types.FieldType) {
-	retTp.Decimal = 0
-	retTp.Flen = mysql.MaxIntWidth
-}
-
 // setFlenDecimal4RealOrDecimal is called to set proper `Flen` and `Decimal` of return
 // type according to the two input parameter's types.
 func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool, isMultiply bool) {
@@ -190,7 +183,6 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx sessionctx.Context, args [
 		if mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
-		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 		sig := &builtinArithmeticPlusIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_PlusInt)
 		return sig, nil
@@ -338,7 +330,6 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 		if err != nil {
 			return nil, err
 		}
-		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 		if (mysql.HasUnsignedFlag(args[0].GetType().Flag) || mysql.HasUnsignedFlag(args[1].GetType().Flag)) && !ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode() {
 			bf.tp.Flag |= mysql.UnsignedFlag
 		}
@@ -523,12 +514,10 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx sessionctx.Context, ar
 		}
 		if mysql.HasUnsignedFlag(lhsTp.Flag) || mysql.HasUnsignedFlag(rhsTp.Flag) {
 			bf.tp.Flag |= mysql.UnsignedFlag
-			setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 			sig := &builtinArithmeticMultiplyIntUnsignedSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_MultiplyIntUnsigned)
 			return sig, nil
 		}
-		setFlenDecimal4Int(bf.tp, args[0].GetType(), args[1].GetType())
 		sig := &builtinArithmeticMultiplyIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyInt)
 		return sig, nil
