@@ -63,6 +63,9 @@ func TestTCopy(t *testing.T) {
 	s := &testFailDBSuite{}
 	s.SetUpSuiteCopy(t)
 
+	t.Run("TestHalfwayCancelOperations", func(t *testing.T) {
+		s.MyTestHalfwayCancelOperations(t)
+	})
 	t.Run("TestAddIndexFailed", func(t *testing.T) {
 		s.MyTestAddIndexFailed(t)
 	})
@@ -184,16 +187,13 @@ func (s *testFailDBSuite) TearDownSuiteCopy(t *testing.T) {
 	s.store.Close()
 }
 
-// TODO: type C seems to come from "github.com/pingcap/check"
 // TestHalfwayCancelOperations tests the case that the schema is correct after the execution of operations are cancelled halfway.
-func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/truncateTableErr", `return(true)`), IsNil)
+func (s *testFailDBSuite) MyTestHalfwayCancelOperations(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/truncateTableErr", `return(true)`))
 	defer func() {
-		// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/truncateTableErr"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/truncateTableErr"))
 	}()
-	tk := testkit.NewTestKit(c, s.store)
+	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("create database cancel_job_db")
 	tk.MustExec("use cancel_job_db")
 
@@ -201,58 +201,51 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1)")
 	_, err := tk.Exec("truncate table t")
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// Make sure that the table's data has not been deleted.
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 	// Execute ddl statement reload schema
 	tk.MustExec("alter table t comment 'test1'")
 	err = s.dom.DDL().GetHook().OnChanged(nil)
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	tk = testkit.NewTestKit(c, s.store)
+	tk = newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("use cancel_job_db")
 	// Test schema is correct.
 	tk.MustExec("select * from t")
 	// test for renaming table
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/renameTableErr", `return("ty")`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/renameTableErr", `return("ty")`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/renameTableErr"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/renameTableErr"))
 	}()
 	tk.MustExec("create table tx(a int)")
 	tk.MustExec("insert into tx values(1)")
 	_, err = tk.Exec("rename table tx to ty")
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	tk.MustExec("create table ty(a int)")
 	tk.MustExec("insert into ty values(2)")
 	_, err = tk.Exec("rename table ty to tz, tx to ty")
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	_, err = tk.Exec("select * from tz")
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	_, err = tk.Exec("rename table tx to ty, ty to tz")
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	tk.MustQuery("select * from ty").Check(testkit.Rows("2"))
 	// Make sure that the table's data has not been deleted.
 	tk.MustQuery("select * from tx").Check(testkit.Rows("1"))
 	// Execute ddl statement reload schema.
 	tk.MustExec("alter table tx comment 'tx'")
 	err = s.dom.DDL().GetHook().OnChanged(nil)
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	tk = testkit.NewTestKit(c, s.store)
+	tk = newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("use cancel_job_db")
 	tk.MustExec("select * from tx")
 	// test for exchanging partition
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionErr", `return(true)`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionErr", `return(true)`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionErr"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionErr"))
 	}()
 	tk.MustExec("create table pt(a int) partition by hash (a) partitions 2")
 	tk.MustExec("insert into pt values(1), (3), (5)")
@@ -261,18 +254,16 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	_, err = tk.Exec("alter table pt exchange partition p1 with table nt")
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	tk.MustQuery("select * from pt").Check(testkit.Rows("1", "3", "5"))
 	tk.MustQuery("select * from nt").Check(testkit.Rows("7"))
 	// Execute ddl statement reload schema.
 	tk.MustExec("alter table pt comment 'pt'")
 	err = s.dom.DDL().GetHook().OnChanged(nil)
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	tk = testkit.NewTestKit(c, s.store)
+	tk = newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("use cancel_job_db")
 	// Test schema is correct.
 	tk.MustExec("select * from pt")
