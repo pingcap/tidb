@@ -147,7 +147,7 @@ func (e *HashJoinExec) Close() error {
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
 
 	if e.stats != nil && e.rowContainer != nil {
-		e.stats.hashStat = e.rowContainer.stat
+		e.stats.hashStat = *e.rowContainer.stat
 	}
 	err := e.baseExecutor.Close()
 	return err
@@ -1150,7 +1150,7 @@ func (e *hashJoinRuntimeStats) String() string {
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe - e.probe)))
 		if e.hashStat.probeCollision > 0 {
 			buf.WriteString(", probe_collision:")
-			buf.WriteString(strconv.Itoa(e.hashStat.probeCollision))
+			buf.WriteString(strconv.FormatInt(e.hashStat.probeCollision, 10))
 		}
 		buf.WriteString("}")
 	}

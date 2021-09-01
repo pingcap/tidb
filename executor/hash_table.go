@@ -61,7 +61,8 @@ func (hc *hashContext) initHash(rows int) {
 }
 
 type hashStatistic struct {
-	probeCollision   int
+	// NOTE: probeCollision may be accessed from multiple goroutines concurrently.
+	probeCollision   int64
 	buildTableElapse time.Duration
 }
 
@@ -70,10 +71,12 @@ func (s *hashStatistic) String() string {
 }
 
 // hashRowContainer handles the rows and the hash map of a table.
+// NOTE: a hashRowContainer may be shallow copied by the invoker, define all the
+// member attributes as pointer type to avoid unexpected problems.
 type hashRowContainer struct {
 	sc   *stmtctx.StatementContext
 	hCtx *hashContext
-	stat hashStatistic
+	stat *hashStatistic
 
 	// hashTable stores the map of hashKey and RowPtr
 	hashTable baseHashTable
@@ -87,6 +90,7 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	c := &hashRowContainer{
 		sc:           sCtx.GetSessionVars().StmtCtx,
 		hCtx:         hCtx,
+		stat:         new(hashStatistic),
 		hashTable:    newConcurrentMapHashTable(),
 		rowContainer: rc,
 	}
@@ -121,7 +125,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 			return
 		}
 		if !ok {
-			c.stat.probeCollision++
+			atomic.AddInt64(&c.stat.probeCollision, 1)
 			continue
 		}
 		matched = append(matched, matchedRow)

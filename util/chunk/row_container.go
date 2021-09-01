@@ -31,6 +31,8 @@ import (
 type rowContainerRecord struct {
 	inMemory *List
 	inDisk   *ListInDisk
+	// spillError stores the error when spilling.
+	spillError error
 }
 
 type mutexForRowContainer struct {
@@ -45,8 +47,6 @@ type mutexForRowContainer struct {
 	rLock   *sync.RWMutex
 	wLocks  []*sync.RWMutex
 	records *rowContainerRecord
-	// spillError stores the error when spilling.
-	spillError error
 }
 
 // Lock locks rw for writing.
@@ -141,7 +141,7 @@ func (c *RowContainer) SpillToDisk() {
 		chk := c.m.records.inMemory.GetChunk(i)
 		err = c.m.records.inDisk.Add(chk)
 		if err != nil {
-			c.m.spillError = err
+			c.m.records.spillError = err
 			return
 		}
 	}
@@ -218,8 +218,8 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 		}
 	})
 	if c.alreadySpilled() {
-		if c.m.spillError != nil {
-			return c.m.spillError
+		if err := c.m.records.spillError; err != nil {
+			return err
 		}
 		err = c.m.records.inDisk.Add(chk)
 	} else {
@@ -240,8 +240,8 @@ func (c *RowContainer) GetChunk(chkIdx int) (*Chunk, error) {
 	if !c.alreadySpilled() {
 		return c.m.records.inMemory.GetChunk(chkIdx), nil
 	}
-	if c.m.spillError != nil {
-		return nil, c.m.spillError
+	if err := c.m.records.spillError; err != nil {
+		return nil, err
 	}
 	return c.m.records.inDisk.GetChunk(chkIdx)
 }
@@ -251,8 +251,8 @@ func (c *RowContainer) GetRow(ptr RowPtr) (Row, error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.alreadySpilled() {
-		if c.m.spillError != nil {
-			return Row{}, c.m.spillError
+		if err := c.m.records.spillError; err != nil {
+			return Row{}, err
 		}
 		return c.m.records.inDisk.GetRow(ptr)
 	}
