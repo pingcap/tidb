@@ -667,7 +667,7 @@ func TestSortedRetrieversTryBatchGet(t *testing.T) {
 				"ab41": "v41",
 				"ab7":  "v7",
 			},
-			retKeys: []kv.Key{},
+			retKeys: nil,
 		},
 		{
 			keys: []kv.Key{kv.Key("ab0"), kv.Key("ab2"), kv.Key("ab51"), kv.Key("ab7"), kv.Key("ab9")},

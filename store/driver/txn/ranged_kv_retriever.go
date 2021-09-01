@@ -110,23 +110,12 @@ func (retrievers sortedRetrievers) TryBatchGet(ctx context.Context, keys []kv.Ke
 		return keys, nil
 	}
 
-	// assign keys to nonCustomKeys, if all the keys are non-custom, no new space will be allocated
-	nonCustomKeys := keys
-	hasCustomKeys := false
-	for i, k := range keys {
+	var nonCustomKeys []kv.Key
+	for _, k := range keys {
 		custom, val, err := retrievers.TryGet(ctx, k)
 		if !custom {
-			// hasCustomKeys means that nonCustomKeys is a newly allocated slice, so we must append the key to its end.
-			if hasCustomKeys {
-				nonCustomKeys = append(nonCustomKeys, k)
-			}
+			nonCustomKeys = append(nonCustomKeys, k)
 			continue
-		}
-
-		if !hasCustomKeys {
-			// If we encounter a custom key first time, we must alloc a new slice and append all the keys before i into it.
-			hasCustomKeys = true
-			nonCustomKeys = append(make([]kv.Key, 0, i), nonCustomKeys[:i]...)
 		}
 
 		if kv.ErrNotExist.Equal(err) {
