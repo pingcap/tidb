@@ -7527,14 +7527,19 @@ func (s *testDBSuite5) TestDropIndexes(c *C) {
 	idxNames := []string{"i1", "i2"}
 	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
 
-	// test drop primary key and index
 	createSQL = "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id) nonclustered, unique key i1(c1), key i2(c2));"
-	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index i2;"
-	idxNames = []string{"primary", "i2"}
+	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index i1;"
+	idxNames = []string{"primary", "i1"}
 	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
-	testCancelDropIndexes(c, s.store, s.dom.DDL())
+
+	createSQL = "create table test_drop_indexes (uuid varchar(32), c1 int, c2 int, primary key(uuid), unique key i1(c1), key i2(c2));"
+	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index i1, drop index i2;"
+	idxNames = []string{"primary", "i1", "i2"}
+	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
+
 	testDropIndexesIfExists(c, s.store)
 	testDropIndexesFromPartitionedTable(c, s.store)
+	testCancelDropIndexes(c, s.store, s.dom.DDL())
 }
 
 // Close issue #24580.
