@@ -69,6 +69,9 @@ func TestTCopy(t *testing.T) {
 	t.Run("TestInitializeOffsetAndState", func(t *testing.T) {
 		s.MyTestInitializeOffsetAndState(t)
 	})
+	t.Run("TestUpdateHandleFailed", func(t *testing.T) {
+		s.MyTestUpdateHandleFailed(t)
+	})
 	t.Run("TestAddIndexFailed", func(t *testing.T) {
 		s.MyTestAddIndexFailed(t)
 	})
@@ -288,14 +291,12 @@ func (s *testFailDBSuite) MyTestInitializeOffsetAndState(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState"))
 }
 
-// TODO: type C seems to come from "github.com/pingcap/check"
-func (s *testFailDBSuite) TestUpdateHandleFailed(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `1*return`), IsNil)
+func (s *testFailDBSuite) MyTestUpdateHandleFailed(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `1*return`))
 	defer func() {
-		// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle"))
 	}()
-	tk := testkit.NewTestKit(c, s.store)
+	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("create database if not exists test_handle_failed")
 	defer tk.MustExec("drop database test_handle_failed")
 	tk.MustExec("use test_handle_failed")
