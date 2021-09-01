@@ -434,7 +434,7 @@ func (s *testFailDBSuite) MyTestGenGlobalIDFail(t *testing.T) {
 	tk.MustExec("admin check table t2")
 }
 
-func batchInsertCopy(tk *newtestkit.TestKit, tbl string, start, end int) {
+func batchInsert(tk *newtestkit.TestKit, tbl string, start, end int) {
 	dml := fmt.Sprintf("insert into %s values", tbl)
 	for i := start; i < end; i++ {
 		dml += fmt.Sprintf("(%d, %d, %d)", i, i, i)
@@ -461,7 +461,7 @@ func (s *testFailDBSuite) MyTestAddIndexWorkerNum(t *testing.T) {
 	start := -10
 	// first add some rows
 	for i := start; i < 4090; i += 100 {
-		batchInsertCopy(tk, "test_add_index", i, i+100)
+		batchInsert(tk, "test_add_index", i, i+100)
 	}
 
 	is := s.dom.InfoSchema()
