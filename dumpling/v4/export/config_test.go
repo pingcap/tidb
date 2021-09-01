@@ -3,23 +3,22 @@
 package export
 
 import (
-	tcontext "github.com/pingcap/dumpling/v4/context"
+	"testing"
 
-	. "github.com/pingcap/check"
+	tcontext "github.com/pingcap/dumpling/v4/context"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testConfigSuite{})
-
-type testConfigSuite struct{}
-
-func (s *testConfigSuite) TestCreateExternalStorage(c *C) {
-	mockConfig := defaultConfigForTest(c)
+func TestCreateExternalStorage(t *testing.T) {
+	t.Parallel()
+	mockConfig := defaultConfigForTest(t)
 	loc, err := mockConfig.createExternalStorage(tcontext.Background())
-	c.Assert(err, IsNil)
-	c.Assert(loc.URI(), Matches, "file:.*")
+	require.NoError(t, err)
+	require.Regexp(t, "file:.*", loc.URI())
 }
 
-func (s *testConfigSuite) TestMatchMysqlBugversion(c *C) {
+func TestMatchMysqlBugVersion(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		serverInfo ServerInfo
 		expected   bool
@@ -31,7 +30,6 @@ func (s *testConfigSuite) TestMatchMysqlBugversion(c *C) {
 		{ParseServerInfo(tcontext.Background(), "8.0.23"), false},
 	}
 	for _, x := range cases {
-		cmt := Commentf("server info %s", x.serverInfo)
-		c.Assert(x.expected, Equals, matchMysqlBugversion(x.serverInfo), cmt)
+		require.Equalf(t, x.expected, matchMysqlBugversion(x.serverInfo), "server info: %s", x.serverInfo)
 	}
 }

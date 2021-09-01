@@ -7,5 +7,4 @@ require (
 	github.com/golangci/golangci-lint v1.33.0
 	github.com/mgechev/revive v1.0.2
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
-	mvdan.cc/gofumpt v0.0.0-20201123090407-3077abae40c0
 )

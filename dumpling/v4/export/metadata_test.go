@@ -6,15 +6,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"testing"
 
 	tcontext "github.com/pingcap/dumpling/v4/context"
+	"github.com/stretchr/testify/require"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
-
-var _ = Suite(&testMetaDataSuite{})
 
 const (
 	logFile = "ON.000001"
@@ -22,14 +22,17 @@ const (
 	gtidSet = "6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29"
 )
 
-type testMetaDataSuite struct{}
+func TestMysqlMetaData(t *testing.T) {
+	t.Parallel()
 
-func (s *testMetaDataSuite) TestMysqlMetaData(c *C) {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	rows := sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}).
 		AddRow(logFile, pos, "", "", gtidSet)
@@ -38,29 +41,28 @@ func (s *testMetaDataSuite) TestMysqlMetaData(c *C) {
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(
 		sqlmock.NewRows([]string{"exec_master_log_pos", "relay_master_log_file", "master_host", "Executed_Gtid_Set", "Seconds_Behind_Master"}))
 
-	m := newGlobalMetadata(tcontext.Background(), s.createStorage(c), "")
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
+	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
+	require.NoError(t, m.recordGlobalMetaData(conn, ServerTypeMySQL, false))
 
-	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
-		"\tLog: ON.000001\n"+
-		"\tPos: 7502\n"+
-		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n")
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	expected := "SHOW MASTER STATUS:\n" +
+		"\tLog: ON.000001\n" +
+		"\tPos: 7502\n" +
+		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n"
+	require.Equal(t, expected, m.buffer.String())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *testMetaDataSuite) createStorage(c *C) storage.ExternalStorage {
-	backend, err := storage.ParseBackend("file:///"+c.MkDir(), nil)
-	c.Assert(err, IsNil)
-	testLoc, _ := storage.Create(context.Background(), backend, true)
-	return testLoc
-}
+func TestMetaDataAfterConn(t *testing.T) {
+	t.Parallel()
 
-func (s *testMetaDataSuite) TestMetaDataAfterConn(c *C) {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	rows := sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}).
 		AddRow(logFile, pos, "", "", gtidSet)
@@ -73,28 +75,35 @@ func (s *testMetaDataSuite) TestMetaDataAfterConn(c *C) {
 		sqlmock.NewRows([]string{"exec_master_log_pos", "relay_master_log_file", "master_host", "Executed_Gtid_Set", "Seconds_Behind_Master"}))
 	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows2)
 
-	m := newGlobalMetadata(tcontext.Background(), s.createStorage(c), "")
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, true), IsNil)
+	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
+	require.NoError(t, m.recordGlobalMetaData(conn, ServerTypeMySQL, false))
+	require.NoError(t, m.recordGlobalMetaData(conn, ServerTypeMySQL, true))
+
 	m.buffer.Write(m.afterConnBuffer.Bytes())
 
-	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
-		"\tLog: ON.000001\n"+
-		"\tPos: 7502\n"+
-		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n"+
-		"SHOW MASTER STATUS: /* AFTER CONNECTION POOL ESTABLISHED */\n"+
-		"\tLog: ON.000001\n"+
-		"\tPos: 7510\n"+
-		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n")
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	expected := "SHOW MASTER STATUS:\n" +
+		"\tLog: ON.000001\n" +
+		"\tPos: 7502\n" +
+		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n" +
+		"SHOW MASTER STATUS: /* AFTER CONNECTION POOL ESTABLISHED */\n" +
+		"\tLog: ON.000001\n" +
+		"\tPos: 7510\n" +
+		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n"
+	require.Equal(t, expected, m.buffer.String())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *testMetaDataSuite) TestMysqlWithFollowersMetaData(c *C) {
+func TestMysqlWithFollowersMetaData(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	rows := sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}).
 		AddRow(logFile, pos, "", "", gtidSet)
@@ -104,27 +113,33 @@ func (s *testMetaDataSuite) TestMysqlWithFollowersMetaData(c *C) {
 	mock.ExpectQuery("SELECT @@default_master_connection").WillReturnError(fmt.Errorf("mock error"))
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(followerRows)
 
-	m := newGlobalMetadata(tcontext.Background(), s.createStorage(c), "")
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
+	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
+	require.NoError(t, m.recordGlobalMetaData(conn, ServerTypeMySQL, false))
 
-	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
-		"\tLog: ON.000001\n"+
-		"\tPos: 7502\n"+
-		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n"+
-		"SHOW SLAVE STATUS:\n"+
-		"\tHost: 192.168.1.100\n"+
-		"\tLog: mysql-bin.001821\n"+
-		"\tPos: 256529431\n"+
-		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n")
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	expected := "SHOW MASTER STATUS:\n" +
+		"\tLog: ON.000001\n" +
+		"\tPos: 7502\n" +
+		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n" +
+		"SHOW SLAVE STATUS:\n" +
+		"\tHost: 192.168.1.100\n" +
+		"\tLog: mysql-bin.001821\n" +
+		"\tPos: 256529431\n" +
+		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n"
+	require.Equal(t, expected, m.buffer.String())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *testMetaDataSuite) TestMysqlWithNullFollowersMetaData(c *C) {
+func TestMysqlWithNullFollowersMetaData(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	rows := sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}).
 		AddRow(logFile, pos, "", "", gtidSet)
@@ -132,22 +147,28 @@ func (s *testMetaDataSuite) TestMysqlWithNullFollowersMetaData(c *C) {
 	mock.ExpectQuery("SELECT @@default_master_connection").WillReturnError(fmt.Errorf("mock error"))
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(sqlmock.NewRows([]string{"SQL_Remaining_Delay"}).AddRow(nil))
 
-	m := newGlobalMetadata(tcontext.Background(), s.createStorage(c), "")
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
+	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
+	require.NoError(t, m.recordGlobalMetaData(conn, ServerTypeMySQL, false))
 
-	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
-		"\tLog: ON.000001\n"+
-		"\tPos: 7502\n"+
-		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n")
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	expected := "SHOW MASTER STATUS:\n" +
+		"\tLog: ON.000001\n" +
+		"\tPos: 7502\n" +
+		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n"
+	require.Equal(t, expected, m.buffer.String())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *testMetaDataSuite) TestMariaDBMetaData(c *C) {
+func TestMariaDBMetaData(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	logFile := "mariadb-bin.000016"
 	pos := "475"
@@ -159,18 +180,22 @@ func (s *testMetaDataSuite) TestMariaDBMetaData(c *C) {
 		AddRow(gtidSet)
 	mock.ExpectQuery("SELECT @@global.gtid_binlog_pos").WillReturnRows(rows)
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(rows)
-	m := newGlobalMetadata(tcontext.Background(), s.createStorage(c), "")
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMariaDB, false), IsNil)
-
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
+	require.NoError(t, m.recordGlobalMetaData(conn, ServerTypeMariaDB, false))
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *testMetaDataSuite) TestMariaDBWithFollowersMetaData(c *C) {
+func TestMariaDBWithFollowersMetaData(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	rows := sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}).
 		AddRow(logFile, pos, "", "", gtidSet)
@@ -183,34 +208,40 @@ func (s *testMetaDataSuite) TestMariaDBWithFollowersMetaData(c *C) {
 			AddRow("connection_1"))
 	mock.ExpectQuery("SHOW ALL SLAVES STATUS").WillReturnRows(followerRows)
 
-	m := newGlobalMetadata(tcontext.Background(), s.createStorage(c), "")
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
+	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
+	require.NoError(t, m.recordGlobalMetaData(conn, ServerTypeMySQL, false))
 
-	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
-		"\tLog: ON.000001\n"+
-		"\tPos: 7502\n"+
-		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n"+
-		"SHOW SLAVE STATUS:\n"+
-		"\tConnection name: connection_1\n"+
-		"\tHost: 192.168.1.100\n"+
-		"\tLog: mysql-bin.001821\n"+
-		"\tPos: 256529431\n"+
-		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n"+
-		"SHOW SLAVE STATUS:\n"+
-		"\tConnection name: connection_2\n"+
-		"\tHost: 192.168.1.102\n"+
-		"\tLog: mysql-bin.001820\n"+
-		"\tPos: 256529451\n"+
-		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n")
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	expected := "SHOW MASTER STATUS:\n" +
+		"\tLog: ON.000001\n" +
+		"\tPos: 7502\n" +
+		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n" +
+		"SHOW SLAVE STATUS:\n" +
+		"\tConnection name: connection_1\n" +
+		"\tHost: 192.168.1.100\n" +
+		"\tLog: mysql-bin.001821\n" +
+		"\tPos: 256529431\n" +
+		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n" +
+		"SHOW SLAVE STATUS:\n" +
+		"\tConnection name: connection_2\n" +
+		"\tHost: 192.168.1.102\n" +
+		"\tLog: mysql-bin.001820\n" +
+		"\tPos: 256529451\n" +
+		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n"
+	require.Equal(t, expected, m.buffer.String())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *testMetaDataSuite) TestEarlierMysqlMetaData(c *C) {
+func TestEarlierMysqlMetaData(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	logFile := "mysql-bin.000001"
 	pos := "4879"
@@ -221,22 +252,28 @@ func (s *testMetaDataSuite) TestEarlierMysqlMetaData(c *C) {
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(
 		sqlmock.NewRows([]string{"exec_master_log_pos", "relay_master_log_file", "master_host", "Executed_Gtid_Set", "Seconds_Behind_Master"}))
 
-	m := newGlobalMetadata(tcontext.Background(), s.createStorage(c), "")
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
+	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
+	require.NoError(t, m.recordGlobalMetaData(conn, ServerTypeMySQL, false))
 
-	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
-		"\tLog: mysql-bin.000001\n"+
-		"\tPos: 4879\n"+
-		"\tGTID:\n\n")
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	expected := "SHOW MASTER STATUS:\n" +
+		"\tLog: mysql-bin.000001\n" +
+		"\tPos: 4879\n" +
+		"\tGTID:\n\n"
+	require.Equal(t, expected, m.buffer.String())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *testMetaDataSuite) TestTiDBSnapshotMetaData(c *C) {
+func TestTiDBSnapshotMetaData(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	logFile := "tidb-binlog"
 	pos := "420633329401856001"
@@ -244,37 +281,53 @@ func (s *testMetaDataSuite) TestTiDBSnapshotMetaData(c *C) {
 		AddRow(logFile, pos, "", "")
 	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows)
 
-	m := newGlobalMetadata(tcontext.Background(), s.createStorage(c), "")
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeTiDB, false), IsNil)
-	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
-		"\tLog: tidb-binlog\n"+
-		"\tPos: 420633329401856001\n"+
-		"\tGTID:\n\n")
+	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
+	require.NoError(t, m.recordGlobalMetaData(conn, ServerTypeTiDB, false))
+
+	expected := "SHOW MASTER STATUS:\n" +
+		"\tLog: tidb-binlog\n" +
+		"\tPos: 420633329401856001\n" +
+		"\tGTID:\n\n"
+	require.Equal(t, expected, m.buffer.String())
 
 	snapshot := "420633273211289601"
 	rows = sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB"}).
 		AddRow(logFile, pos, "", "")
 	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows)
-	m = newGlobalMetadata(tcontext.Background(), s.createStorage(c), snapshot)
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeTiDB, false), IsNil)
-	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
-		"\tLog: tidb-binlog\n"+
-		"\tPos: 420633273211289601\n"+
-		"\tGTID:\n\n")
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	m = newGlobalMetadata(tcontext.Background(), createStorage(t), snapshot)
+	require.NoError(t, m.recordGlobalMetaData(conn, ServerTypeTiDB, false))
+
+	expected = "SHOW MASTER STATUS:\n" +
+		"\tLog: tidb-binlog\n" +
+		"\tPos: 420633273211289601\n" +
+		"\tGTID:\n\n"
+	require.Equal(t, expected, m.buffer.String())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *testMetaDataSuite) TestNoPrivilege(c *C) {
+func TestNoPrivilege(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnError(errors.New("lack SUPER or REPLICATION CLIENT privilege"))
 
-	m := newGlobalMetadata(tcontext.Background(), s.createStorage(c), "")
+	m := newGlobalMetadata(tcontext.Background(), createStorage(t), "")
 	// some consistencyType will ignore this error, this test make sure no extra message is written
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeTiDB, false), NotNil)
-	c.Assert(m.buffer.String(), Equals, "")
+	require.Error(t, m.recordGlobalMetaData(conn, ServerTypeTiDB, false))
+	require.Equal(t, "", m.buffer.String())
+}
+
+func createStorage(t *testing.T) storage.ExternalStorage {
+	backend, err := storage.ParseBackend("file:///"+os.TempDir(), nil)
+	require.NoError(t, err)
+	testLoc, _ := storage.Create(context.Background(), backend, true)
+	return testLoc
 }
