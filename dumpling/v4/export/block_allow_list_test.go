@@ -4,19 +4,17 @@ package export
 
 import (
 	"strings"
+	"testing"
 
 	tcontext "github.com/pingcap/dumpling/v4/context"
-
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-tools/pkg/filter"
 	tf "github.com/pingcap/tidb-tools/pkg/table-filter"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testBWListSuite{})
+func TestFilterTables(t *testing.T) {
+	t.Parallel()
 
-type testBWListSuite struct{}
-
-func (s *testBWListSuite) TestFilterTables(c *C) {
 	tctx := tcontext.Background().WithLogger(appLogger)
 	dbTables := DatabaseTables{}
 	expectedDBTables := DatabaseTables{}
@@ -28,7 +26,8 @@ func (s *testBWListSuite) TestFilterTables(c *C) {
 	dbTables.AppendTables("yyy", []string{"xxx"}, []uint64{0})
 
 	tableFilter, err := tf.Parse([]string{"*.*"})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	conf := &Config{
 		ServerInfo: ServerInfo{
 			ServerType: ServerTypeTiDB,
@@ -36,18 +35,20 @@ func (s *testBWListSuite) TestFilterTables(c *C) {
 		Tables:      dbTables,
 		TableFilter: tableFilter,
 	}
-
 	databases := []string{filter.InformationSchemaName, filter.PerformanceSchemaName, "xxx", "yyy"}
-	c.Assert(filterDatabases(tctx, conf, databases), DeepEquals, databases)
+	require.Equal(t, databases, filterDatabases(tctx, conf, databases))
 
 	conf.TableFilter = tf.NewSchemasFilter("xxx")
-	c.Assert(filterDatabases(tctx, conf, databases), DeepEquals, []string{"xxx"})
+	require.Equal(t, []string{"xxx"}, filterDatabases(tctx, conf, databases))
+
 	filterTables(tcontext.Background(), conf)
-	c.Assert(conf.Tables, HasLen, 1)
-	c.Assert(conf.Tables, DeepEquals, expectedDBTables)
+	require.Len(t, conf.Tables, 1)
+	require.Equal(t, expectedDBTables, conf.Tables)
 }
 
-func (s *testBWListSuite) TestFilterDatabaseWithNoTable(c *C) {
+func TestFilterDatabaseWithNoTable(t *testing.T) {
+	t.Parallel()
+
 	dbTables := DatabaseTables{}
 	expectedDBTables := DatabaseTables{}
 
@@ -61,21 +62,21 @@ func (s *testBWListSuite) TestFilterDatabaseWithNoTable(c *C) {
 		DumpEmptyDatabase: true,
 	}
 	filterTables(tcontext.Background(), conf)
-	c.Assert(conf.Tables, HasLen, 0)
+	require.Len(t, conf.Tables, 0)
 
 	dbTables["xxx"] = []*TableInfo{}
 	expectedDBTables["xxx"] = []*TableInfo{}
 	conf.Tables = dbTables
 	conf.TableFilter = tf.NewSchemasFilter("xxx")
 	filterTables(tcontext.Background(), conf)
-	c.Assert(conf.Tables, HasLen, 1)
-	c.Assert(conf.Tables, DeepEquals, expectedDBTables)
+	require.Len(t, conf.Tables, 1)
+	require.Equal(t, expectedDBTables, conf.Tables)
 
 	dbTables["xxx"] = []*TableInfo{}
 	expectedDBTables = DatabaseTables{}
 	conf.Tables = dbTables
 	conf.DumpEmptyDatabase = false
 	filterTables(tcontext.Background(), conf)
-	c.Assert(conf.Tables, HasLen, 0)
-	c.Assert(conf.Tables, DeepEquals, expectedDBTables)
+	require.Len(t, conf.Tables, 0)
+	require.Equal(t, expectedDBTables, conf.Tables)
 }

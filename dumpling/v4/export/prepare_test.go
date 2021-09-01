@@ -6,24 +6,26 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"testing"
 
 	tcontext "github.com/pingcap/dumpling/v4/context"
+	"github.com/stretchr/testify/require"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	. "github.com/pingcap/check"
 )
 
-var _ = Suite(&testPrepareSuite{})
+func TestPrepareDumpingDatabases(t *testing.T) {
+	t.Parallel()
 
-type testPrepareSuite struct{}
-
-func (s *testPrepareSuite) TestPrepareDumpingDatabases(c *C) {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	tctx := tcontext.Background().WithLogger(appLogger)
 	conn, err := db.Conn(tctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	rows := sqlmock.NewRows([]string{"Database"}).
 		AddRow("db1").
@@ -31,11 +33,11 @@ func (s *testPrepareSuite) TestPrepareDumpingDatabases(c *C) {
 		AddRow("db3").
 		AddRow("db5")
 	mock.ExpectQuery("SHOW DATABASES").WillReturnRows(rows)
-	conf := defaultConfigForTest(c)
+	conf := defaultConfigForTest(t)
 	conf.Databases = []string{"db1", "db2", "db3"}
 	result, err := prepareDumpingDatabases(tctx, conf, conn)
-	c.Assert(err, IsNil)
-	c.Assert(result, DeepEquals, []string{"db1", "db2", "db3"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"db1", "db2", "db3"}, result)
 
 	conf.Databases = nil
 	rows = sqlmock.NewRows([]string{"Database"}).
@@ -43,12 +45,12 @@ func (s *testPrepareSuite) TestPrepareDumpingDatabases(c *C) {
 		AddRow("db2")
 	mock.ExpectQuery("SHOW DATABASES").WillReturnRows(rows)
 	result, err = prepareDumpingDatabases(tctx, conf, conn)
-	c.Assert(err, IsNil)
-	c.Assert(result, DeepEquals, []string{"db1", "db2"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"db1", "db2"}, result)
 
 	mock.ExpectQuery("SHOW DATABASES").WillReturnError(fmt.Errorf("err"))
 	_, err = prepareDumpingDatabases(tctx, conf, conn)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	rows = sqlmock.NewRows([]string{"Database"}).
 		AddRow("db1").
@@ -58,16 +60,21 @@ func (s *testPrepareSuite) TestPrepareDumpingDatabases(c *C) {
 	mock.ExpectQuery("SHOW DATABASES").WillReturnRows(rows)
 	conf.Databases = []string{"db1", "db2", "db4", "db6"}
 	_, err = prepareDumpingDatabases(tctx, conf, conn)
-	c.Assert(err, ErrorMatches, `Unknown databases \[db4,db6\]`)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.EqualError(t, err, `Unknown databases [db4,db6]`)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *testPrepareSuite) TestListAllTables(c *C) {
+func TestListAllTables(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tctx := tcontext.Background().WithLogger(appLogger)
 
 	// Test list all tables and skipping views.
@@ -92,14 +99,13 @@ func (s *testPrepareSuite) TestListAllTables(c *C) {
 	mock.ExpectQuery(query).WillReturnRows(rows)
 
 	tables, err := ListAllDatabasesTables(tctx, conn, dbNames, listTableByInfoSchema, TableTypeBase)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	for d, t := range tables {
+	for d, table := range tables {
 		expectedTbs, ok := data[d]
-		c.Assert(ok, IsTrue)
-		for i := 0; i < len(t); i++ {
-			cmt := Commentf("%v mismatch: %v", t[i], expectedTbs[i])
-			c.Assert(t[i].Equals(expectedTbs[i]), IsTrue, cmt)
+		require.True(t, ok)
+		for i := 0; i < len(table); i++ {
+			require.Truef(t, table[i].Equals(expectedTbs[i]), "%v mismatches expected: %v", table[i], expectedTbs[i])
 		}
 	}
 
@@ -111,23 +117,29 @@ func (s *testPrepareSuite) TestListAllTables(c *C) {
 	mock.ExpectQuery(query).WillReturnRows(sqlmock.NewRows([]string{"TABLE_SCHEMA", "TABLE_NAME", "TABLE_TYPE", "AVG_ROW_LENGTH"}).
 		AddRow("db", "t1", TableTypeBaseStr, 1).AddRow("db", "t2", TableTypeViewStr, nil))
 	tables, err = ListAllDatabasesTables(tctx, conn, []string{"db"}, listTableByInfoSchema, TableTypeBase, TableTypeView)
-	c.Assert(err, IsNil)
-	c.Assert(len(tables), Equals, 1)
-	c.Assert(len(tables["db"]), Equals, 2)
+	require.NoError(t, err)
+	require.Len(t, tables, 1)
+	require.Len(t, tables["db"], 2)
+
 	for i := 0; i < len(tables["db"]); i++ {
-		cmt := Commentf("%v mismatch: %v", tables["db"][i], data["db"][i])
-		c.Assert(tables["db"][i].Equals(data["db"][i]), IsTrue, cmt)
+		require.Truef(t, tables["db"][i].Equals(data["db"][i]), "%v mismatches expected: %v", tables["db"][i], data["db"][i])
 	}
 
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *testPrepareSuite) TestListAllTablesByTableStatus(c *C) {
+func TestListAllTablesByTableStatus(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	tctx := tcontext.Background().WithLogger(appLogger)
 
 	// Test list all tables and skipping views.
@@ -154,14 +166,14 @@ func (s *testPrepareSuite) TestListAllTablesByTableStatus(c *C) {
 	}
 
 	tables, err := ListAllDatabasesTables(tctx, conn, dbNames, listTableByShowTableStatus, TableTypeBase)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	for d, t := range tables {
+	for d, table := range tables {
 		expectedTbs, ok := data[d]
-		c.Assert(ok, IsTrue)
-		for i := 0; i < len(t); i++ {
-			cmt := Commentf("%v mismatch: %v", t[i], expectedTbs[i])
-			c.Assert(t[i].Equals(expectedTbs[i]), IsTrue, cmt)
+		require.True(t, ok)
+
+		for i := 0; i < len(table); i++ {
+			require.Truef(t, table[i].Equals(expectedTbs[i]), "%v mismatches expected: %v", table[i], expectedTbs[i])
 		}
 	}
 
@@ -173,23 +185,29 @@ func (s *testPrepareSuite) TestListAllTablesByTableStatus(c *C) {
 		AddRow("t1", "InnoDB", 10, "Dynamic", 0, 1, 16384, 0, 0, 0, nil, "2021-07-08 03:04:07", nil, nil, "latin1_swedish_ci", nil, "", "").
 		AddRow("t2", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, TableTypeView.String()))
 	tables, err = ListAllDatabasesTables(tctx, conn, []string{"db"}, listTableByShowTableStatus, TableTypeBase, TableTypeView)
-	c.Assert(err, IsNil)
-	c.Assert(len(tables), Equals, 1)
-	c.Assert(len(tables["db"]), Equals, 2)
+	require.NoError(t, err)
+	require.Len(t, tables, 1)
+	require.Len(t, tables["db"], 2)
+
 	for i := 0; i < len(tables["db"]); i++ {
-		cmt := Commentf("%v mismatch: %v", tables["db"][i], data["db"][i])
-		c.Assert(tables["db"][i].Equals(data["db"][i]), IsTrue, cmt)
+		require.Truef(t, tables["db"][i].Equals(data["db"][i]), "%v mismatches expected: %v", tables["db"][i], data["db"][i])
 	}
 
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *testPrepareSuite) TestListAllTablesByShowFullTables(c *C) {
+func TestListAllTablesByShowFullTables(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	tctx := tcontext.Background().WithLogger(appLogger)
 
 	// Test list all tables and skipping views.
@@ -215,14 +233,14 @@ func (s *testPrepareSuite) TestListAllTablesByShowFullTables(c *C) {
 	}
 
 	tables, err := ListAllDatabasesTables(tctx, conn, dbNames, listTableByShowFullTables, TableTypeBase)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	for d, t := range tables {
+	for d, table := range tables {
 		expectedTbs, ok := data[d]
-		c.Assert(ok, IsTrue)
-		for i := 0; i < len(t); i++ {
-			cmt := Commentf("%v mismatch: %v", t[i], expectedTbs[i])
-			c.Assert(t[i].Equals(expectedTbs[i]), IsTrue, cmt)
+		require.True(t, ok)
+
+		for i := 0; i < len(table); i++ {
+			require.Truef(t, table[i].Equals(expectedTbs[i]), "%v mismatches expected: %v", table[i], expectedTbs[i])
 		}
 	}
 
@@ -244,39 +262,48 @@ func (s *testPrepareSuite) TestListAllTablesByShowFullTables(c *C) {
 		mock.ExpectQuery(fmt.Sprintf(query, dbName)).WillReturnRows(rows)
 	}
 	tables, err = ListAllDatabasesTables(tctx, conn, []string{"db"}, listTableByShowFullTables, TableTypeBase, TableTypeView)
-	c.Assert(err, IsNil)
-	c.Assert(len(tables), Equals, 1)
-	c.Assert(len(tables["db"]), Equals, 2)
+	require.NoError(t, err)
+	require.Len(t, tables, 1)
+	require.Len(t, tables["db"], 2)
+
 	for i := 0; i < len(tables["db"]); i++ {
-		cmt := Commentf("%v mismatch: %v", tables["db"][i], data["db"][i])
-		c.Assert(tables["db"][i].Equals(data["db"][i]), IsTrue, cmt)
+		require.Truef(t, tables["db"][i].Equals(data["db"][i]), "%v mismatches expected: %v", tables["db"][i], data["db"][i])
 	}
 
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *testPrepareSuite) TestConfigValidation(c *C) {
-	conf := defaultConfigForTest(c)
+func TestConfigValidation(t *testing.T) {
+	t.Parallel()
+
+	conf := defaultConfigForTest(t)
 	conf.Where = "id < 5"
 	conf.SQL = "select * from t where id > 3"
-	c.Assert(validateSpecifiedSQL(conf), ErrorMatches, "can't specify both --sql and --where at the same time. Please try to combine them into --sql")
+	require.EqualError(t, validateSpecifiedSQL(conf), "can't specify both --sql and --where at the same time. Please try to combine them into --sql")
+
 	conf.Where = ""
-	c.Assert(validateSpecifiedSQL(conf), IsNil)
+	require.NoError(t, validateSpecifiedSQL(conf))
 
 	conf.FileType = FileFormatSQLTextString
-	c.Assert(adjustFileFormat(conf), ErrorMatches, ".*please unset --filetype or set it to 'csv'.*")
+	err := adjustFileFormat(conf)
+	require.Error(t, err)
+	require.Regexp(t, ".*please unset --filetype or set it to 'csv'.*", err.Error())
+
 	conf.FileType = FileFormatCSVString
-	c.Assert(adjustFileFormat(conf), IsNil)
+	require.NoError(t, adjustFileFormat(conf))
+
 	conf.FileType = ""
-	c.Assert(adjustFileFormat(conf), IsNil)
-	c.Assert(conf.FileType, Equals, FileFormatCSVString)
+	require.NoError(t, adjustFileFormat(conf))
+	require.Equal(t, FileFormatCSVString, conf.FileType)
+
 	conf.SQL = ""
 	conf.FileType = FileFormatSQLTextString
-	c.Assert(adjustFileFormat(conf), IsNil)
+	require.NoError(t, adjustFileFormat(conf))
+
 	conf.FileType = ""
-	c.Assert(adjustFileFormat(conf), IsNil)
-	c.Assert(conf.FileType, Equals, FileFormatSQLTextString)
+	require.NoError(t, adjustFileFormat(conf))
+	require.Equal(t, FileFormatSQLTextString, conf.FileType)
 
 	conf.FileType = "rand_str"
-	c.Assert(adjustFileFormat(conf), ErrorMatches, "unknown config.FileType 'rand_str'")
+	require.EqualError(t, adjustFileFormat(conf), "unknown config.FileType 'rand_str'")
 }

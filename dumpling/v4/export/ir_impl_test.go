@@ -4,14 +4,11 @@ package export
 
 import (
 	"strings"
+	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testIRImplSuite{})
-
-type testIRImplSuite struct{}
 
 type simpleRowReceiver struct {
 	data []string
@@ -27,10 +24,14 @@ func (s *simpleRowReceiver) BindAddress(args []interface{}) {
 	}
 }
 
-func (s *testIRImplSuite) TestRowIter(c *C) {
+func TestRowIter(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
 
 	expectedRows := mock.NewRows([]string{"id"}).
 		AddRow("1").
@@ -38,32 +39,40 @@ func (s *testIRImplSuite) TestRowIter(c *C) {
 		AddRow("3")
 	mock.ExpectQuery("SELECT id from t").WillReturnRows(expectedRows)
 	rows, err := db.Query("SELECT id from t")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	iter := newRowIter(rows, 1)
 	for i := 0; i < 100; i++ {
-		c.Assert(iter.HasNext(), IsTrue)
+		require.True(t, iter.HasNext())
 	}
+
 	res := newSimpleRowReceiver(1)
-	c.Assert(iter.Decode(res), IsNil)
-	c.Assert(res.data, DeepEquals, []string{"1"})
+	require.NoError(t, iter.Decode(res))
+	require.Equal(t, []string{"1"}, res.data)
+
 	iter.Next()
-	c.Assert(iter.HasNext(), IsTrue)
-	c.Assert(iter.HasNext(), IsTrue)
-	c.Assert(iter.Decode(res), IsNil)
-	c.Assert(res.data, DeepEquals, []string{"2"})
+	require.True(t, iter.HasNext())
+	require.True(t, iter.HasNext())
+	require.NoError(t, iter.Decode(res))
+	require.Equal(t, []string{"2"}, res.data)
+
 	iter.Next()
-	c.Assert(iter.HasNext(), IsTrue)
-	c.Assert(iter.Decode(res), IsNil)
+	require.True(t, iter.HasNext())
+	require.NoError(t, iter.Decode(res))
+
 	iter.Next()
-	c.Assert(res.data, DeepEquals, []string{"3"})
-	c.Assert(iter.HasNext(), IsFalse)
+	require.Equal(t, []string{"3"}, res.data)
+	require.False(t, iter.HasNext())
 }
 
-func (s *testIRImplSuite) TestChunkRowIter(c *C) {
+func TestChunkRowIter(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
 
 	twentyBytes := strings.Repeat("x", 20)
 	thirtyBytes := strings.Repeat("x", 30)
@@ -73,8 +82,10 @@ func (s *testIRImplSuite) TestChunkRowIter(c *C) {
 	}
 	mock.ExpectQuery("SELECT a, b FROM t").WillReturnRows(expectedRows)
 	rows, err := db.Query("SELECT a, b FROM t")
-	c.Assert(err, IsNil)
-	defer rows.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, rows.Close())
+	}()
 
 	var (
 		testFileSize      uint64 = 200
@@ -97,7 +108,7 @@ func (s *testIRImplSuite) TestChunkRowIter(c *C) {
 	for sqlRowIter.HasNext() {
 		wp.currentStatementSize = 0
 		for sqlRowIter.HasNext() {
-			c.Assert(sqlRowIter.Decode(res), IsNil)
+			require.NoError(t, sqlRowIter.Decode(res))
 			sz := uint64(len(res.data[0]) + len(res.data[1]))
 			wp.AddFileSize(sz)
 			sqlRowIter.Next()
@@ -111,11 +122,11 @@ func (s *testIRImplSuite) TestChunkRowIter(c *C) {
 		}
 	}
 
-	c.Assert(resSize, DeepEquals, expectedSize)
-	c.Assert(sqlRowIter.HasNext(), IsTrue)
-	c.Assert(wp.ShouldSwitchFile(), IsTrue)
-	c.Assert(wp.ShouldSwitchStatement(), IsTrue)
-	rows.Close()
-	c.Assert(sqlRowIter.Decode(res), NotNil)
+	require.Equal(t, expectedSize, resSize)
+	require.True(t, sqlRowIter.HasNext())
+	require.True(t, wp.ShouldSwitchFile())
+	require.True(t, wp.ShouldSwitchStatement())
+	require.NoError(t, rows.Close())
+	require.Error(t, sqlRowIter.Decode(res))
 	sqlRowIter.Next()
 }

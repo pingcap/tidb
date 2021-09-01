@@ -5,20 +5,25 @@ package export
 import (
 	"context"
 	"fmt"
+	"testing"
 	"time"
 
 	tcontext "github.com/pingcap/dumpling/v4/context"
+	"github.com/stretchr/testify/require"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"golang.org/x/sync/errgroup"
 )
 
-func (s *testSQLSuite) TestDumpBlock(c *C) {
+func TestDumpBlock(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
 
 	mock.ExpectQuery(fmt.Sprintf("SHOW CREATE DATABASE `%s`", escapeString(database))).
 		WillReturnRows(sqlmock.NewRows([]string{"Database", "Create Database"}).
@@ -27,7 +32,7 @@ func (s *testSQLSuite) TestDumpBlock(c *C) {
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
 	defer cancel()
 	conn, err := db.Conn(tctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	d := &Dumper{
 		tctx:      tctx,
@@ -49,19 +54,24 @@ func (s *testSQLSuite) TestDumpBlock(c *C) {
 	taskChan := make(chan Task, 1)
 	taskChan <- &TaskDatabaseMeta{}
 	d.conf.Tables = DatabaseTables{}.AppendTable(database, nil)
-	c.Assert(errors.ErrorEqual(d.dumpDatabases(writerCtx, conn, taskChan), context.Canceled), IsTrue)
-	c.Assert(errors.ErrorEqual(wg.Wait(), writerErr), IsTrue)
+	require.ErrorIs(t, d.dumpDatabases(writerCtx, conn, taskChan), context.Canceled)
+	require.ErrorIs(t, wg.Wait(), writerErr)
 }
 
-func (s *testSQLSuite) TestDumpTableMeta(c *C) {
+func TestDumpTableMeta(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
 
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
 	defer cancel()
 	conn, err := db.Conn(tctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	conf := DefaultConfig()
 	conf.NoSchemas = true
 
@@ -79,18 +89,20 @@ func (s *testSQLSuite) TestDumpTableMeta(c *C) {
 		mock.ExpectQuery(fmt.Sprintf("SELECT \\* FROM `%s`.`%s`", database, table)).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
 		meta, err := dumpTableMeta(conf, conn, database, &TableInfo{Type: TableTypeBase, Name: table})
-		c.Assert(err, IsNil)
-		c.Assert(meta.DatabaseName(), Equals, database)
-		c.Assert(meta.TableName(), Equals, table)
-		c.Assert(meta.SelectedField(), Equals, "*")
-		c.Assert(meta.SelectedLen(), Equals, 1)
-		c.Assert(meta.ShowCreateTable(), Equals, "")
-		c.Assert(meta.HasImplicitRowID(), Equals, hasImplicitRowID)
+		require.NoError(t, err)
+		require.Equal(t, database, meta.DatabaseName())
+		require.Equal(t, table, meta.TableName())
+		require.Equal(t, "*", meta.SelectedField())
+		require.Equal(t, 1, meta.SelectedLen())
+		require.Equal(t, "", meta.ShowCreateTable())
+		require.Equal(t, hasImplicitRowID, meta.HasImplicitRowID())
 	}
 }
 
-func (s *testSQLSuite) TestGetListTableTypeByConf(c *C) {
-	conf := defaultConfigForTest(c)
+func TestGetListTableTypeByConf(t *testing.T) {
+	t.Parallel()
+
+	conf := defaultConfigForTest(t)
 	tctx := tcontext.Background().WithLogger(appLogger)
 	cases := []struct {
 		serverInfo  ServerInfo
@@ -112,7 +124,6 @@ func (s *testSQLSuite) TestGetListTableTypeByConf(c *C) {
 	for _, x := range cases {
 		conf.Consistency = x.consistency
 		conf.ServerInfo = x.serverInfo
-		cmt := Commentf("server info %s consistency %s", x.serverInfo, x.consistency)
-		c.Assert(getListTableTypeByConf(conf), Equals, x.expected, cmt)
+		require.Equalf(t, x.expected, getListTableTypeByConf(conf), "server info: %s, consistency: %s", x.serverInfo, x.consistency)
 	}
 }

@@ -9,56 +9,13 @@ import (
 	"testing"
 
 	tcontext "github.com/pingcap/dumpling/v4/context"
-	"github.com/pingcap/dumpling/v4/log"
+	"github.com/stretchr/testify/require"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
-var appLogger log.Logger
-
-func TestT(t *testing.T) {
-	initColTypeRowReceiverMap()
-	logger, _, err := log.InitAppLogger(&log.Config{
-		Level:  "debug",
-		File:   "",
-		Format: "text",
-	})
-	if err != nil {
-		t.Log("fail to init logger, err: " + err.Error())
-		t.Fail()
-	}
-	appLogger = logger
-	registry := prometheus.NewRegistry()
-	registry.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
-	registry.MustRegister(prometheus.NewGoCollector())
-	RegisterMetrics(registry)
-	TestingT(t)
-}
-
-var _ = SerialSuites(&testWriteSuite{})
-
-type testWriteSuite struct {
-	mockCfg *Config
-}
-
-func (s *testWriteSuite) SetUpSuite(_ *C) {
-	s.mockCfg = &Config{
-		FileSize: UnspecifiedSize,
-	}
-	InitMetricsVector(s.mockCfg.Labels)
-}
-
-func (s *testWriteSuite) TearDownTest(c *C) {
-	RemoveLabelValuesWithTaskInMetrics(s.mockCfg.Labels)
-
-	c.Assert(ReadGauge(finishedRowsGauge, s.mockCfg.Labels), Equals, float64(0))
-	c.Assert(ReadGauge(finishedSizeGauge, s.mockCfg.Labels), Equals, float64(0))
-}
-
-func (s *testWriteSuite) TestWriteMeta(c *C) {
+func TestWriteMeta(t *testing.T) {
 	createTableStmt := "CREATE TABLE `t1` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;\n"
@@ -67,15 +24,19 @@ func (s *testWriteSuite) TestWriteMeta(c *C) {
 	writer := storage.NewBufferWriter()
 
 	err := WriteMeta(tcontext.Background(), meta, writer)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	expected := "/*!40103 SET TIME_ZONE='+00:00' */;\n" +
 		"CREATE TABLE `t1` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;\n"
-	c.Assert(writer.String(), Equals, expected)
+	require.Equal(t, expected, writer.String())
 }
 
-func (s *testWriteSuite) TestWriteInsert(c *C) {
+func TestWriteInsert(t *testing.T) {
+	cfg, clean := createMockConfig(t)
+	defer clean()
+
 	data := [][]driver.Value{
 		{"1", "male", "bob@mail.com", "020-1234", nil},
 		{"2", "female", "sarah@mail.com", "020-1253", "healthy"},
@@ -90,10 +51,11 @@ func (s *testWriteSuite) TestWriteInsert(c *C) {
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
 	bf := storage.NewBufferWriter()
 
-	conf := configForWriteSQL(s.mockCfg, UnspecifiedSize, UnspecifiedSize)
+	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf)
-	c.Assert(n, Equals, uint64(4))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), n)
+
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 		"INSERT INTO `employee` VALUES\n" +
@@ -101,12 +63,15 @@ func (s *testWriteSuite) TestWriteInsert(c *C) {
 		"(2,'female','sarah@mail.com','020-1253','healthy'),\n" +
 		"(3,'male','john@mail.com','020-1256','healthy'),\n" +
 		"(4,'female','sarah@mail.com','020-1235','healthy');\n"
-	c.Assert(bf.String(), Equals, expected)
-	c.Assert(ReadGauge(finishedRowsGauge, conf.Labels), Equals, float64(len(data)))
-	c.Assert(ReadGauge(finishedSizeGauge, conf.Labels), Equals, float64(len(expected)))
+	require.Equal(t, expected, bf.String())
+	require.Equal(t, ReadGauge(finishedRowsGauge, conf.Labels), float64(len(data)))
+	require.Equal(t, ReadGauge(finishedSizeGauge, conf.Labels), float64(len(expected)))
 }
 
-func (s *testWriteSuite) TestWriteInsertReturnsError(c *C) {
+func TestWriteInsertReturnsError(t *testing.T) {
+	cfg, clean := createMockConfig(t)
+	defer clean()
+
 	data := [][]driver.Value{
 		{"1", "male", "bob@mail.com", "020-1234", nil},
 		{"2", "female", "sarah@mail.com", "020-1253", "healthy"},
@@ -124,23 +89,27 @@ func (s *testWriteSuite) TestWriteInsertReturnsError(c *C) {
 	tableIR.rowErr = rowErr
 	bf := storage.NewBufferWriter()
 
-	conf := configForWriteSQL(s.mockCfg, UnspecifiedSize, UnspecifiedSize)
+	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf)
-	c.Assert(n, Equals, uint64(3))
-	c.Assert(err, Equals, rowErr)
+	require.ErrorIs(t, err, rowErr)
+	require.Equal(t, uint64(3), n)
+
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
 		"INSERT INTO `employee` VALUES\n" +
 		"(1,'male','bob@mail.com','020-1234',NULL),\n" +
 		"(2,'female','sarah@mail.com','020-1253','healthy'),\n" +
 		"(3,'male','john@mail.com','020-1256','healthy');\n"
-	c.Assert(bf.String(), Equals, expected)
+	require.Equal(t, expected, bf.String())
 	// error occurred, should revert pointer to zero
-	c.Assert(ReadGauge(finishedRowsGauge, conf.Labels), Equals, float64(0))
-	c.Assert(ReadGauge(finishedSizeGauge, conf.Labels), Equals, float64(0))
+	require.Equal(t, ReadGauge(finishedRowsGauge, conf.Labels), float64(0))
+	require.Equal(t, ReadGauge(finishedSizeGauge, conf.Labels), float64(0))
 }
 
-func (s *testWriteSuite) TestWriteInsertInCsv(c *C) {
+func TestWriteInsertInCsv(t *testing.T) {
+	cfg, clean := createMockConfig(t)
+	defer clean()
+
 	data := [][]driver.Value{
 		{"1", "male", "bob@mail.com", "020-1234", nil},
 		{"2", "female", "sarah@mail.com", "020-1253", "healthy"},
@@ -153,51 +122,57 @@ func (s *testWriteSuite) TestWriteInsertInCsv(c *C) {
 
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: doubleQuotationMark, nullValue: "\\N"}
-	conf := configForWriteCSV(s.mockCfg, true, opt)
+	conf := configForWriteCSV(cfg, true, opt)
 	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
-	c.Assert(n, Equals, uint64(4))
-	c.Assert(err, IsNil)
+	require.Equal(t, uint64(4), n)
+	require.NoError(t, err)
+
 	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\n" +
 		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\n" +
 		"3,\"male\",\"john@mail.com\",\"020-1256\",\"healthy\"\n" +
 		"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"healthy\"\n"
-	c.Assert(bf.String(), Equals, expected)
-	c.Assert(ReadGauge(finishedRowsGauge, conf.Labels), Equals, float64(len(data)))
-	c.Assert(ReadGauge(finishedSizeGauge, conf.Labels), Equals, float64(len(expected)))
+	require.Equal(t, expected, bf.String())
+	require.Equal(t, float64(len(data)), ReadGauge(finishedRowsGauge, conf.Labels))
+	require.Equal(t, float64(len(expected)), ReadGauge(finishedSizeGauge, conf.Labels))
+
 	RemoveLabelValuesWithTaskInMetrics(conf.Labels)
 
 	// test delimiter
 	bf.Reset()
 	opt.delimiter = quotationMark
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
-	conf = configForWriteCSV(s.mockCfg, true, opt)
+	conf = configForWriteCSV(cfg, true, opt)
 	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
-	c.Assert(n, Equals, uint64(4))
-	c.Assert(err, IsNil)
+	require.Equal(t, uint64(4), n)
+	require.NoError(t, err)
+
 	expected = "1,'male','bob@mail.com','020-1234',\\N\n" +
 		"2,'female','sarah@mail.com','020-1253','healthy'\n" +
 		"3,'male','john@mail.com','020-1256','healthy'\n" +
 		"4,'female','sarah@mail.com','020-1235','healthy'\n"
-	c.Assert(bf.String(), Equals, expected)
-	c.Assert(ReadGauge(finishedRowsGauge, conf.Labels), Equals, float64(len(data)))
-	c.Assert(ReadGauge(finishedSizeGauge, conf.Labels), Equals, float64(len(expected)))
+	require.Equal(t, expected, bf.String())
+	require.Equal(t, float64(len(data)), ReadGauge(finishedRowsGauge, conf.Labels))
+	require.Equal(t, float64(len(expected)), ReadGauge(finishedSizeGauge, conf.Labels))
+
 	RemoveLabelValuesWithTaskInMetrics(conf.Labels)
 
 	// test separator
 	bf.Reset()
 	opt.separator = []byte(";")
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
-	conf = configForWriteCSV(s.mockCfg, true, opt)
+	conf = configForWriteCSV(cfg, true, opt)
 	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
-	c.Assert(n, Equals, uint64(4))
-	c.Assert(err, IsNil)
+	require.Equal(t, uint64(4), n)
+	require.NoError(t, err)
+
 	expected = "1;'male';'bob@mail.com';'020-1234';\\N\n" +
 		"2;'female';'sarah@mail.com';'020-1253';'healthy'\n" +
 		"3;'male';'john@mail.com';'020-1256';'healthy'\n" +
 		"4;'female';'sarah@mail.com';'020-1235';'healthy'\n"
-	c.Assert(bf.String(), Equals, expected)
-	c.Assert(ReadGauge(finishedRowsGauge, conf.Labels), Equals, float64(len(data)))
-	c.Assert(ReadGauge(finishedSizeGauge, conf.Labels), Equals, float64(len(expected)))
+	require.Equal(t, expected, bf.String())
+	require.Equal(t, float64(len(data)), ReadGauge(finishedRowsGauge, conf.Labels))
+	require.Equal(t, float64(len(expected)), ReadGauge(finishedSizeGauge, conf.Labels))
+
 	RemoveLabelValuesWithTaskInMetrics(conf.Labels)
 
 	// test delimiter that included in values
@@ -206,22 +181,27 @@ func (s *testWriteSuite) TestWriteInsertInCsv(c *C) {
 	opt.delimiter = []byte("ma")
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	tableIR.colNames = []string{"id", "gender", "email", "phone_number", "status"}
-	conf = configForWriteCSV(s.mockCfg, false, opt)
+	conf = configForWriteCSV(cfg, false, opt)
 	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
-	c.Assert(n, Equals, uint64(4))
-	c.Assert(err, IsNil)
+	require.Equal(t, uint64(4), n)
+	require.NoError(t, err)
+
 	expected = "maidma&;,?magenderma&;,?maemamailma&;,?maphone_numberma&;,?mastatusma\n" +
 		"1&;,?mamamalema&;,?mabob@mamail.comma&;,?ma020-1234ma&;,?\\N\n" +
 		"2&;,?mafemamalema&;,?masarah@mamail.comma&;,?ma020-1253ma&;,?mahealthyma\n" +
 		"3&;,?mamamalema&;,?majohn@mamail.comma&;,?ma020-1256ma&;,?mahealthyma\n" +
 		"4&;,?mafemamalema&;,?masarah@mamail.comma&;,?ma020-1235ma&;,?mahealthyma\n"
-	c.Assert(bf.String(), Equals, expected)
-	c.Assert(ReadGauge(finishedRowsGauge, conf.Labels), Equals, float64(len(data)))
-	c.Assert(ReadGauge(finishedSizeGauge, conf.Labels), Equals, float64(len(expected)))
+	require.Equal(t, expected, bf.String())
+	require.Equal(t, float64(len(data)), ReadGauge(finishedRowsGauge, conf.Labels))
+	require.Equal(t, float64(len(expected)), ReadGauge(finishedSizeGauge, conf.Labels))
+
 	RemoveLabelValuesWithTaskInMetrics(conf.Labels)
 }
 
-func (s *testWriteSuite) TestWriteInsertInCsvReturnsError(c *C) {
+func TestWriteInsertInCsvReturnsError(t *testing.T) {
+	cfg, clean := createMockConfig(t)
+	defer clean()
+
 	data := [][]driver.Value{
 		{"1", "male", "bob@mail.com", "020-1234", nil},
 		{"2", "female", "sarah@mail.com", "020-1253", "healthy"},
@@ -238,20 +218,25 @@ func (s *testWriteSuite) TestWriteInsertInCsvReturnsError(c *C) {
 
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: doubleQuotationMark, nullValue: "\\N"}
-	conf := configForWriteCSV(s.mockCfg, true, opt)
+	conf := configForWriteCSV(cfg, true, opt)
 	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf)
-	c.Assert(n, Equals, uint64(3))
-	c.Assert(err, Equals, rowErr)
+	require.Equal(t, uint64(3), n)
+	require.ErrorIs(t, err, rowErr)
+
 	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\n" +
 		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\n" +
 		"3,\"male\",\"john@mail.com\",\"020-1256\",\"healthy\"\n"
-	c.Assert(bf.String(), Equals, expected)
-	c.Assert(ReadGauge(finishedRowsGauge, conf.Labels), Equals, float64(0))
-	c.Assert(ReadGauge(finishedSizeGauge, conf.Labels), Equals, float64(0))
+	require.Equal(t, expected, bf.String())
+	require.Equal(t, float64(0), ReadGauge(finishedRowsGauge, conf.Labels))
+	require.Equal(t, float64(0), ReadGauge(finishedSizeGauge, conf.Labels))
+
 	RemoveLabelValuesWithTaskInMetrics(conf.Labels)
 }
 
-func (s *testWriteSuite) TestSQLDataTypes(c *C) {
+func TestSQLDataTypes(t *testing.T) {
+	cfg, clean := createMockConfig(t)
+	defer clean()
+
 	data := [][]driver.Value{
 		{"CHAR", "char1", `'char1'`},
 		{"INT", 12345, `12345`},
@@ -266,20 +251,22 @@ func (s *testWriteSuite) TestSQLDataTypes(c *C) {
 		tableIR := newMockTableIR("test", "t", tableData, nil, colType)
 		bf := storage.NewBufferWriter()
 
-		conf := configForWriteSQL(s.mockCfg, UnspecifiedSize, UnspecifiedSize)
+		conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 		n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf)
-		c.Assert(n, Equals, uint64(1))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
+		require.Equal(t, uint64(1), n)
+
 		lines := strings.Split(bf.String(), "\n")
-		c.Assert(len(lines), Equals, 3)
-		c.Assert(lines[1], Equals, fmt.Sprintf("(%s);", result))
-		c.Assert(ReadGauge(finishedRowsGauge, conf.Labels), Equals, float64(1))
-		c.Assert(ReadGauge(finishedSizeGauge, conf.Labels), Equals, float64(len(bf.String())))
+		require.Len(t, lines, 3)
+		require.Equal(t, fmt.Sprintf("(%s);", result), lines[1])
+		require.Equal(t, float64(1), ReadGauge(finishedRowsGauge, conf.Labels))
+		require.Equal(t, float64(len(bf.String())), ReadGauge(finishedSizeGauge, conf.Labels))
+
 		RemoveLabelValuesWithTaskInMetrics(conf.Labels)
 	}
 }
 
-func (s *testWriteSuite) TestWrite(c *C) {
+func TestWrite(t *testing.T) {
 	mocksw := &mockPoisonWriter{}
 	src := []string{"test", "loooooooooooooooooooong", "poison"}
 	exp := []string{"test", "loooooooooooooooooooong", "poison_error"}
@@ -287,14 +274,13 @@ func (s *testWriteSuite) TestWrite(c *C) {
 	for i, s := range src {
 		err := write(tcontext.Background(), mocksw, s)
 		if err != nil {
-			c.Assert(err.Error(), Equals, exp[i])
+			require.EqualError(t, err, exp[i])
 		} else {
-			c.Assert(s, Equals, mocksw.buf)
-			c.Assert(mocksw.buf, Equals, exp[i])
+			require.Equal(t, s, mocksw.buf)
+			require.Equal(t, exp[i], mocksw.buf)
 		}
 	}
-	err := write(tcontext.Background(), mocksw, "test")
-	c.Assert(err, IsNil)
+	require.NoError(t, write(tcontext.Background(), mocksw, "test"))
 }
 
 // cloneConfigForTest clones a dumpling config.
@@ -319,4 +305,20 @@ func configForWriteCSV(config *Config, noHeader bool, opt *csvOption) *Config {
 	cfg.CsvSeparator = string(opt.separator)
 	cfg.FileSize = UnspecifiedSize
 	return cfg
+}
+
+func createMockConfig(t *testing.T) (cfg *Config, clean func()) {
+	cfg = &Config{
+		FileSize: UnspecifiedSize,
+	}
+
+	InitMetricsVector(cfg.Labels)
+
+	clean = func() {
+		RemoveLabelValuesWithTaskInMetrics(cfg.Labels)
+		require.Equal(t, float64(0), ReadGauge(finishedRowsGauge, cfg.Labels))
+		require.Equal(t, float64(0), ReadGauge(finishedSizeGauge, cfg.Labels))
+	}
+
+	return
 }
