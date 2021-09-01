@@ -47,7 +47,7 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 )
 
-func TestTCopy(t *testing.T) {
+func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
 	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
 	if err != nil {
@@ -59,7 +59,7 @@ func TestTCopy(t *testing.T) {
 	})
 	testleak.BeforeTest()
 	s := &testFailDBSuite{}
-	s.SetUpSuiteCopy(t)
+	s.SetUpSuite(t)
 
 	t.Run("TestHalfwayCancelOperations", func(t *testing.T) {
 		s.TestHalfwayCancelOperations(t)
@@ -91,11 +91,11 @@ func TestTCopy(t *testing.T) {
 	t.Run("TestModifyColumn", func(t *testing.T) {
 		s.TestModifyColumn(t)
 	})
-	t.Run("TestPartitionAddPanicCopy", func(t *testing.T) {
-		s.TestPartitionAddPanicCopy(t)
+	t.Run("TestPartitionAddPanic", func(t *testing.T) {
+		s.TestPartitionAddPanic(t)
 	})
 
-	s.TearDownSuiteCopy(t)
+	s.TearDownSuite(t)
 	testleak.AfterTestT(t)()
 }
 
@@ -110,7 +110,7 @@ type testFailDBSuite struct {
 	CommonHandleSuite
 }
 
-func (s *testFailDBSuite) SetUpSuiteCopy(t *testing.T) {
+func (s *testFailDBSuite) SetUpSuite(t *testing.T) {
 	s.lease = 200 * time.Millisecond
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	var err error
@@ -129,7 +129,7 @@ func (s *testFailDBSuite) SetUpSuiteCopy(t *testing.T) {
 	s.p = parser.New()
 }
 
-func (s *testFailDBSuite) TearDownSuiteCopy(t *testing.T) {
+func (s *testFailDBSuite) TearDownSuite(t *testing.T) {
 	_, err := s.se.Execute(context.Background(), "drop database if exists test_db_state")
 	require.NoError(t, err)
 	s.se.Close()
@@ -602,7 +602,7 @@ func (s *testFailDBSuite) TestModifyColumn(t *testing.T) {
 	tk.MustExec("drop table t, t1, t2, t3, t4, t5")
 }
 
-func (s *testFailDBSuite) TestPartitionAddPanicCopy(t *testing.T) {
+func (s *testFailDBSuite) TestPartitionAddPanic(t *testing.T) {
 	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
