@@ -708,7 +708,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return checkCharacterSet(normalizedValue, "")
 	}},
-	{Scope: ScopeNone, Name: VersionComment, Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 5.7 compatible"},
+	{Scope: ScopeNone, Name: VersionComment, Value: "Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 5.7 compatible"},
 	{Scope: ScopeGlobal | ScopeSession, Name: TxnIsolation, Value: "REPEATABLE-READ", Type: TypeEnum, Aliases: []string{TransactionIsolation}, PossibleValues: []string{"READ-UNCOMMITTED", "READ-COMMITTED", "REPEATABLE-READ", "SERIALIZABLE"}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		// MySQL appends a warning here for tx_isolation is deprecated
 		// TiDB doesn't currently, but may in future. It is still commonly used by applications
