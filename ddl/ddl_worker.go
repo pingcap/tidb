@@ -1008,7 +1008,8 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		newSchemaIDs := []int64{}
 		tableNames := []*model.CIStr{}
 		tableIDs := []int64{}
-		err = job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs)
+		oldSchemaNames := []*model.CIStr{}
+		err = job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
