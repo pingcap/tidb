@@ -1958,7 +1958,7 @@
           "IndexLookUp_13 0.00 19.33 root  limit embedded(offset:0, count:1)",
           "├─Limit_12(Build) 0.00 20.00 cop[tikv]  offset:0, count:1",
           "│ └─IndexRangeScan_10 0.00 20.00 cop[tikv] table:t, index:idx_b(b) range:[6,6], keep order:false",
-          "└─TableRowIDScan_11(Probe) 0.00 20.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableRowIDScan_11(Probe) 0.00 20.00 cop[tikv] table:t keep order:false"
         ],
         "Warnings": [
           "Note 1105 [idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: copDoubleReadTask}"
