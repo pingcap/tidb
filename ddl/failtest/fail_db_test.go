@@ -435,6 +435,7 @@ func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
 	tk.MustExec("admin check table t2")
 }
 
+// TODO: Remove this as it depends on testkit
 func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 	dml := fmt.Sprintf("insert into %s values", tbl)
 	for i := start; i < end; i++ {
@@ -446,6 +447,18 @@ func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
 	tk.MustExec(dml)
 }
 
+func batchInsertCopy(tk *newtestkit.TestKit, tbl string, start, end int) {
+	dml := fmt.Sprintf("insert into %s values", tbl)
+	for i := start; i < end; i++ {
+		dml += fmt.Sprintf("(%d, %d, %d)", i, i, i)
+		if i != end-1 {
+			dml += ","
+		}
+	}
+	tk.MustExec(dml)
+}
+
+// MIGRATING NOW
 // TODO: type C seems to come from "github.com/pingcap/check"
 func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -496,7 +509,7 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 		}()
 	}
 
-	testutil.SessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
+	testutil.SessionExecInGoroutine(s.store, "create index c3_index on test_add_index (c3)", done)
 	checkNum := 0
 
 LOOP:
@@ -521,6 +534,87 @@ LOOP:
 	tk.MustExec("drop table test_add_index")
 
 	s.RerunWithCommonHandleEnabled(c, s.TestAddIndexWorkerNum)
+}
+
+func (s *testFailDBSuite) MyTestAddIndexWorkerNum(t *testing.T) {
+	tk := newtestkit.NewTestKit(t, s.store)
+	tk.MustExec("create database if not exists test_db")
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists test_add_index")
+	if s.IsCommonHandle {
+		tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
+	} else {
+		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
+	}
+
+	done := make(chan error, 1)
+	start := -10
+	// first add some rows
+	for i := start; i < 4090; i += 100 {
+		batchInsertCopy(tk, "test_add_index", i, i+100)
+	}
+
+	is := s.dom.InfoSchema()
+	schemaName := model.NewCIStr("test_db")
+	tableName := model.NewCIStr("test_add_index")
+	tbl, err := is.TableByName(schemaName, tableName)
+	require.NoError(t, err)
+
+	splitCount := 100
+	// Split table to multi region.
+	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), splitCount)
+
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
+	require.NoError(t, err)
+	originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
+	lastSetWorkerCnt := originDDLAddIndexWorkerCnt
+	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
+	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
+
+	if !s.IsCommonHandle { // only enable failpoint once
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"))
+		}()
+	}
+
+	testutil.SessionExecInGoroutine(s.store, "create index c3_index on test_add_index (c3)", done)
+	checkNum := 0
+
+LOOP:
+	for {
+		select {
+		case err = <-done:
+			if err == nil {
+				break LOOP
+			}
+			require.NoErrorf(t, err, "err:%v", errors.ErrorStack(err))
+		case <-ddl.TestCheckWorkerNumCh:
+			lastSetWorkerCnt = int32(rand.Intn(8) + 8)
+			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
+			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
+			checkNum++
+		}
+	}
+	require.Greater(t, checkNum, 5)
+	tk.MustExec("admin check table test_add_index")
+	tk.MustExec("drop table test_add_index")
+
+	// TODO: Should we inline this and remove the extra method?
+	// Or should we rerun same test from top level test with common handle value inverted?
+	s.rerunWithCommonHandleEnabled(t, s.MyTestAddIndexWorkerNum)
+}
+
+// TODO: Can we simplify this? Do we need this kind of thing?
+func (s *testFailDBSuite) rerunWithCommonHandleEnabled(t *testing.T, f func(*testing.T)) {
+	if !s.IsCommonHandle {
+		s.IsCommonHandle = true
+		f(t)
+		s.IsCommonHandle = false
+	}
 }
 
 // TestRunDDLJobPanic tests recover panic when run ddl job panic.
