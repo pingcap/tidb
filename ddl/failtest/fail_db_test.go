@@ -62,13 +62,30 @@ func TestTCopy(t *testing.T) {
 	testleak.BeforeTest()
 	s := &testFailDBSuite{}
 	s.SetUpSuiteCopy(t)
-	s.MyTestFailSchemaSyncer(t)
-	s.MyTestGenGlobalIDFail(t)
-	s.MyTestAddIndexWorkerNum(t)
-	s.MyTestRunDDLJobPanic(t)
-	s.MyTestPartitionAddIndexGC(t)
-	s.MyTestModifyColumn(t)
-	s.MyTestPartitionAddPanicCopy(t)
+
+	t.Run("TestFailSchemaSyncer", func(t *testing.T) {
+		s.MyTestFailSchemaSyncer(t)
+	})
+
+	t.Run("TestGenGlobalIDFail", func(t *testing.T) {
+		s.MyTestGenGlobalIDFail(t)
+	})
+	t.Run("TestAddIndexWorkerNum", func(t *testing.T) {
+		s.MyTestAddIndexWorkerNum(t)
+	})
+	t.Run("TestRunDDLJobPanic", func(t *testing.T) {
+		s.MyTestRunDDLJobPanic(t)
+	})
+	t.Run("TestPartitionAddIndexGC", func(t *testing.T) {
+		s.MyTestPartitionAddIndexGC(t)
+	})
+	t.Run("TestModifyColumn", func(t *testing.T) {
+		s.MyTestModifyColumn(t)
+	})
+	t.Run("TestPartitionAddPanicCopy", func(t *testing.T) {
+		s.MyTestPartitionAddPanicCopy(t)
+	})
+
 	s.TearDownSuiteCopy(t)
 	testleak.AfterTestT(t)()
 }
