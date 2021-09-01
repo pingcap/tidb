@@ -627,9 +627,9 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.Al
 		// The next value to allocate is `newBase`.
 		newEnd := newBase - 1
 		if force {
-			err = alloc.ForceRebase(tblInfo.ID, newEnd)
+			err = alloc.ForceRebase(newEnd)
 		} else {
-			err = alloc.Rebase(tblInfo.ID, newEnd, false)
+			err = alloc.Rebase(newEnd, false)
 		}
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -710,7 +710,7 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 	defer s.put(ctx)
 
 	// Check next global max auto ID first.
-	autoIncID, err := tbl.Allocators(ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID(tbl.Meta().ID)
+	autoIncID, err := tbl.Allocators(ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1205,7 +1205,7 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 
 func onAlterTableAttributes(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	rule := label.NewRule()
-	err = job.DecodeArgs(&rule)
+	err = job.DecodeArgs(rule)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
@@ -1216,7 +1216,12 @@ func onAlterTableAttributes(t *meta.Meta, job *model.Job) (ver int64, err error)
 		return 0, err
 	}
 
-	err = infosync.PutLabelRule(context.TODO(), rule)
+	if len(rule.Labels) == 0 {
+		patch := label.NewRulePatch(nil, []string{rule.ID})
+		err = infosync.UpdateLabelRules(context.TODO(), patch)
+	} else {
+		err = infosync.PutLabelRule(context.TODO(), rule)
+	}
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to notify PD label rule")
@@ -1233,7 +1238,7 @@ func onAlterTableAttributes(t *meta.Meta, job *model.Job) (ver int64, err error)
 func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	var partitionID int64
 	rule := label.NewRule()
-	err = job.DecodeArgs(&partitionID, &rule)
+	err = job.DecodeArgs(&partitionID, rule)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
@@ -1249,7 +1254,12 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
-	err = infosync.PutLabelRule(context.TODO(), rule)
+	if len(rule.Labels) == 0 {
+		patch := label.NewRulePatch(nil, []string{rule.ID})
+		err = infosync.UpdateLabelRules(context.TODO(), patch)
+	} else {
+		err = infosync.PutLabelRule(context.TODO(), rule)
+	}
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to notify PD region label")
