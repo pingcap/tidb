@@ -39,6 +39,7 @@ type InfoSchema interface {
 	TableExists(schema, table model.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
+	PolicyByName(name model.CIStr) (*placementpolicy.PolicyInfo, bool)
 	TableByID(id int64) (table.Table, bool)
 	AllocByID(id int64) (autoid.Allocators, bool)
 	AllSchemaNames() []string
@@ -57,6 +58,8 @@ type InfoSchema interface {
 	SetBundle(*placement.Bundle)
 	// RuleBundles will return a copy of all rule bundles.
 	RuleBundles() []*placement.Bundle
+	// AllPlacementPolicies returns all placement policies
+	AllPlacementPolicies() []*placementpolicy.PolicyInfo
 }
 
 type sortedTables []table.Table
@@ -214,6 +217,16 @@ func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
 	return false
 }
 
+func (is *infoSchema) PolicyByID(id int64) (val *placementpolicy.PolicyInfo, ok bool) {
+	// TODO: use another hash map to avoid traveling on the policy map
+	for _, v := range is.policyMap {
+		if v.ID == id {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
 func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 	for _, v := range is.schemaMap {
 		if v.dbInfo.ID == id {
@@ -355,14 +368,15 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 }
 
 // PolicyByName is used to find the policy.
-func (is *infoSchema) PolicyByName(name string) (*placementpolicy.PolicyInfo, bool) {
+func (is *infoSchema) PolicyByName(name model.CIStr) (*placementpolicy.PolicyInfo, bool) {
 	is.policyMutex.RLock()
 	defer is.policyMutex.RUnlock()
-	t, r := is.policyMap[name]
+	t, r := is.policyMap[name.L]
 	return t, r
 }
 
-func (is *infoSchema) PlacementPolicies() []*placementpolicy.PolicyInfo {
+// AllPlacementPolicies returns all placement policies
+func (is *infoSchema) AllPlacementPolicies() []*placementpolicy.PolicyInfo {
 	is.policyMutex.RLock()
 	defer is.policyMutex.RUnlock()
 	policies := make([]*placementpolicy.PolicyInfo, 0, len(is.policyMap))
