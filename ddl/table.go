@@ -207,7 +207,7 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 		if tblInfo.IsSequence() {
-			if err = t.DropSequence(job.SchemaID, job.TableID, true); err != nil {
+			if err = t.DropSequence(job.SchemaID, job.TableID); err != nil {
 				break
 			}
 		} else {

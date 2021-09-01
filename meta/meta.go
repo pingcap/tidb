@@ -487,8 +487,12 @@ func (m *Meta) DropDatabase(dbID int64) error {
 
 // DropSequence drops sequence in database.
 // Sequence is made of table struct and kv value pair.
-func (m *Meta) DropSequence(dbID int64, tblID int64, delAutoID bool) error {
-	err := m.DropTableOrView(dbID, tblID, delAutoID)
+func (m *Meta) DropSequence(dbID int64, tblID int64) error {
+	err := m.DropTableOrView(dbID, tblID)
+	if err != nil {
+		return err
+	}
+	err = m.GetAutoIDCtrl(dbID, tblID).All().Del()
 	if err != nil {
 		return err
 	}

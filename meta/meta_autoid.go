@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
-var _ AutoIDAccessor = autoIDAccessor(nil)
+var _ AutoIDAccessor = autoIDAccessor{}
 
 // AutoIDAccessor represents the entry to retrieve/mutate auto IDs.
 type AutoIDAccessor interface {
@@ -75,6 +75,8 @@ func (a autoIDAccessor) Del() error {
 	}
 	return nil
 }
+
+var _ AutoIDAccessors = autoIDAccessors{}
 
 // AutoIDAccessors represents all the auto IDs of a table.
 type AutoIDAccessors interface {

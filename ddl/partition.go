@@ -1247,13 +1247,13 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	}
 
-	// partition table auto id.
+	// partition table auto IDs.
 	ptAutoIDs, err := t.GetAutoIDCtrl(ptSchemaID, ptID).All().Get()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	// non-partition table base auto id
+	// non-partition table auto IDs.
 	ntAutoIDs, err := t.GetAutoIDCtrl(job.SchemaID, nt.ID).All().Get()
 	if err != nil {
 		job.State = model.JobStateCancelled
