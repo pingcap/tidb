@@ -1056,7 +1056,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrAsOf:                     mysql.Message("invalid as of timestamp: %s", nil),
 	ErrFunctionLimitedSupport:   mysql.Message("function %s has only limited support. SET tidb_enable_noop_functions=1 to allow unsupported cases", nil),
 	ErrInvalidAttributesSpec:    mysql.Message("Invalid attributes '%s': %s", nil),
-	ErrPlacementPolicyExists:    mysql.Message("Can't create placement policy '%-.192s'; policy exists", nil),
+	ErrPlacementPolicyExists:    mysql.Message("Placement policy '%-.192s' already exists", nil),
 	ErrPlacementPolicyNotExists: mysql.Message("Unknown placement policy '%-.192s'", nil),
 
 	// TiKV/PD errors.

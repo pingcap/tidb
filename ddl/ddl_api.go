@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/placementpolicy"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 )
@@ -2225,7 +2226,7 @@ func checkCharsetAndCollation(cs string, co string) error {
 func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd int64, tp autoid.AllocatorType) error {
 	allocs := autoid.NewAllocatorsFromTblInfo(d.store, schemaID, tbInfo)
 	if alloc := allocs.Get(tp); alloc != nil {
-		err := alloc.Rebase(tbInfo.ID, newEnd, false)
+		err := alloc.Rebase(newEnd, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2683,7 +2684,7 @@ func adjustNewBaseToNextGlobalID(ctx sessionctx.Context, t table.Table, tp autoi
 	if alloc == nil {
 		return newBase, nil
 	}
-	autoID, err := alloc.NextGlobalAutoID(t.Meta().ID)
+	autoID, err := alloc.NextGlobalAutoID()
 	if err != nil {
 		return newBase, errors.Trace(err)
 	}
@@ -4832,7 +4833,7 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 		SchemaName: schemas[1].Name.L,
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{schemas[0].ID, newIdent.Name},
+		Args:       []interface{}{schemas[0].ID, newIdent.Name, schemas[0].Name},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -4846,6 +4847,7 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 	oldSchemaIDs := make([]int64, 0, len(oldIdents))
 	newSchemaIDs := make([]int64, 0, len(oldIdents))
 	tableIDs := make([]int64, 0, len(oldIdents))
+	oldSchemaNames := make([]*model.CIStr, 0, len(oldIdents))
 
 	var schemas []*model.DBInfo
 	var tableID int64
@@ -4861,6 +4863,7 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 		tableNames = append(tableNames, &newIdents[i].Name)
 		oldSchemaIDs = append(oldSchemaIDs, schemas[0].ID)
 		newSchemaIDs = append(newSchemaIDs, schemas[1].ID)
+		oldSchemaNames = append(oldSchemaNames, &schemas[0].Name)
 	}
 
 	job := &model.Job{
@@ -4869,7 +4872,7 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 		SchemaName: schemas[1].Name.L,
 		Type:       model.ActionRenameTables,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs},
+		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs, oldSchemaNames},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -6141,6 +6144,96 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 		return errors.Trace(err)
 	}
 
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func buildPolicyInfo(stmt *ast.CreatePlacementPolicyStmt) (*placementpolicy.PolicyInfo, error) {
+	policyInfo := &placementpolicy.PolicyInfo{}
+	policyInfo.Name = stmt.PolicyName
+	for _, opt := range stmt.PlacementOptions {
+		switch opt.Tp {
+		case ast.PlacementOptionPrimaryRegion:
+			policyInfo.PrimaryRegion = opt.StrValue
+		case ast.PlacementOptionRegions:
+			policyInfo.Regions = opt.StrValue
+		case ast.PlacementOptionFollowerCount:
+			policyInfo.Followers = opt.UintValue
+		case ast.PlacementOptionVoterCount:
+			policyInfo.Voters = opt.UintValue
+		case ast.PlacementOptionLearnerCount:
+			policyInfo.Learners = opt.UintValue
+		case ast.PlacementOptionSchedule:
+			policyInfo.Schedule = opt.StrValue
+		case ast.PlacementOptionConstraints:
+			policyInfo.Constraints = opt.StrValue
+		case ast.PlacementOptionLearnerConstraints:
+			policyInfo.LearnerConstraints = opt.StrValue
+		case ast.PlacementOptionFollowerConstraints:
+			policyInfo.FollowerConstraints = opt.StrValue
+		case ast.PlacementOptionVoterConstraints:
+			policyInfo.VoterConstraints = opt.StrValue
+		case ast.PlacementOptionLeaderConstraints:
+			policyInfo.LeaderConstraints = opt.StrValue
+		default:
+			return nil, errors.Trace(errors.New("unknown placement policy option"))
+		}
+	}
+	return policyInfo, nil
+}
+
+func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) (err error) {
+	policyName := stmt.PolicyName
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	// Check policy existence.
+	_, ok := is.PolicyByName(policyName)
+	if ok {
+		err = infoschema.ErrPlacementPolicyExists.GenWithStackByArgs(policyName)
+		if stmt.IfNotExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
+	}
+	// Auto fill the policyID when it is inserted.
+	policyInfo, err := buildPolicyInfo(stmt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaName: policyInfo.Name.L,
+		Type:       model.ActionCreatePlacementPolicy,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{policyInfo},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) (err error) {
+	policyName := stmt.PolicyName
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	// Check policy existence.
+	policy, ok := is.PolicyByName(policyName)
+	if !ok {
+		err = infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(policyName)
+		if stmt.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
+	}
+
+	job := &model.Job{
+		SchemaID:   policy.ID,
+		SchemaName: policy.Name.L,
+		Type:       model.ActionDropPlacementPolicy,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{policyName},
+	}
+	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

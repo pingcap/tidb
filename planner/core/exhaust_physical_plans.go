@@ -2421,7 +2421,7 @@ func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
 	for _, agg := range la.AggFuncs {
 		// MPP does not support distinct except count distinct now
 		if agg.HasDistinct {
-			if agg.Name != ast.AggFuncCount {
+			if agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncGroupConcat {
 				hasUnsupportedDistinct = true
 			}
 		}
@@ -2493,7 +2493,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
-		if la.HasDistinct() {
+		if la.HasDistinct() || la.HasOrderBy() {
 			agg.MppRunMode = MppScalar
 		} else {
 			agg.MppRunMode = MppTiDB
