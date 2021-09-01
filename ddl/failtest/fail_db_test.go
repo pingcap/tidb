@@ -63,10 +63,12 @@ func TestTCopy(t *testing.T) {
 	s := &testFailDBSuite{}
 	s.SetUpSuiteCopy(t)
 
+	t.Run("TestAddIndexFailed", func(t *testing.T) {
+		s.MyTestAddIndexFailed(t)
+	})
 	t.Run("TestFailSchemaSyncer", func(t *testing.T) {
 		s.MyTestFailSchemaSyncer(t)
 	})
-
 	t.Run("TestGenGlobalIDFail", func(t *testing.T) {
 		s.MyTestGenGlobalIDFail(t)
 	})
@@ -314,15 +316,12 @@ func (s *testFailDBSuite) TestUpdateHandleFailed(c *C) {
 	tk.MustExec("admin check index t idx_b")
 }
 
-// TODO: type C seems to come from "github.com/pingcap/check"
-func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockBackfillRunErr", `1*return`), IsNil)
+func (s *testFailDBSuite) MyTestAddIndexFailed(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockBackfillRunErr", `1*return`))
 	defer func() {
-		// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillRunErr"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillRunErr"))
 	}()
-	tk := testkit.NewTestKit(c, s.store)
+	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("create database if not exists test_add_index_failed")
 	defer tk.MustExec("drop database test_add_index_failed")
 	tk.MustExec("use test_add_index_failed")
@@ -333,11 +332,10 @@ func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
 	}
 
 	// Get table ID for split.
-	dom := domain.GetDomain(tk.Se)
+	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
 	// Split the table.
