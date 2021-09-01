@@ -62,6 +62,7 @@ func TestTCopy(t *testing.T) {
 	testleak.BeforeTest()
 	s := &testFailDBSuite{}
 	s.SetUpSuiteCopy(t)
+	s.MyTestGenGlobalIDFail(t)
 	s.MyTestRunDDLJobPanic(t)
 	s.MyTestPartitionAddIndexGC(t)
 	s.MyTestModifyColumn(t)
@@ -384,6 +385,7 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 	c.Assert(err, IsNil)
 }
 
+// MIGRATING NOW
 // TODO: type C seems to come from "github.com/pingcap/check"
 func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
 	defer func() {
@@ -426,6 +428,54 @@ func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
 			c.Assert(err, NotNil, Commentf("the %dth test case '%s' fail", idx, test.sql))
 		} else {
 			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail", `return(false)`), IsNil)
+			tk.MustExec(test.sql)
+			tk.MustExec(fmt.Sprintf("insert into %s values (%d, 42)", test.table, rand.Intn(65536)))
+			tk.MustExec(fmt.Sprintf("admin check table %s", test.table))
+		}
+	}
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
+}
+
+func (s *testFailDBSuite) MyTestGenGlobalIDFail(t *testing.T) {
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail"))
+	}()
+	tk := newtestkit.NewTestKit(t, s.store)
+	tk.MustExec("create database if not exists gen_global_id_fail")
+	tk.MustExec("use gen_global_id_fail")
+
+	sql1 := "create table t1(a bigint PRIMARY KEY, b int)"
+	sql2 := `create table t2(a bigint PRIMARY KEY, b int) partition by range (a) (
+			      partition p0 values less than (3440),
+			      partition p1 values less than (61440),
+			      partition p2 values less than (122880),
+			      partition p3 values less than maxvalue)`
+	sql3 := `truncate table t1`
+	sql4 := `truncate table t2`
+
+	testcases := []struct {
+		sql     string
+		table   string
+		mockErr bool
+	}{
+		{sql1, "t1", true},
+		{sql2, "t2", true},
+		{sql1, "t1", false},
+		{sql2, "t2", false},
+		{sql3, "t1", true},
+		{sql4, "t2", true},
+		{sql3, "t1", false},
+		{sql4, "t2", false},
+	}
+
+	for idx, test := range testcases {
+		if test.mockErr {
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail", `return(true)`))
+			_, err := tk.Exec(test.sql)
+			require.Errorf(t, err, "the %dth test case '%s' fail", idx, test.sql)
+		} else {
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail", `return(false)`))
 			tk.MustExec(test.sql)
 			tk.MustExec(fmt.Sprintf("insert into %s values (%d, 42)", test.table, rand.Intn(65536)))
 			tk.MustExec(fmt.Sprintf("admin check table %s", test.table))
