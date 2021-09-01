@@ -105,8 +105,6 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 		ce.processor = &tableScanProcessor{closureExecutor: ce}
 	} else if scanExec.Tp == tipb.ExecType_TypeIndexScan {
 		ce.processor = &indexScanProcessor{closureExecutor: ce}
-	} else if scanExec.Tp == tipb.ExecType_TypeJoin || scanExec.Tp == tipb.ExecType_TypeExchangeReceiver {
-		ce.processor = &mockReaderScanProcessor{closureExecutor: ce}
 	}
 	outputFieldTypes := make([]*types.FieldType, 0, 1)
 	lastExecutor := executors[len(executors)-1]
@@ -199,8 +197,8 @@ func convertToExprs(sc *stmtctx.StatementContext, fieldTps []*types.FieldType, p
 
 func isScanNode(executor *tipb.Executor) bool {
 	switch executor.Tp {
-	case tipb.ExecType_TypeTableScan, tipb.ExecType_TypeExchangeReceiver,
-		tipb.ExecType_TypeIndexScan, tipb.ExecType_TypeJoin:
+	case tipb.ExecType_TypeTableScan,
+		tipb.ExecType_TypeIndexScan:
 		return true
 	default:
 		return false
@@ -752,27 +750,6 @@ func (e *tableScanProcessor) Process(key, value []byte) error {
 }
 
 func (e *tableScanProcessor) Finish() error {
-	return e.scanFinish()
-}
-
-type mockReaderScanProcessor struct {
-	skipVal
-	*closureExecutor
-}
-
-func (e *mockReaderScanProcessor) Process(key, value []byte) error {
-	if e.rowCount == e.limit {
-		return dbreader.ErrScanBreak
-	}
-	e.rowCount++
-	err := e.mockReadScanProcessCore(key, value)
-	if e.scanCtx.chk.NumRows() == chunkMaxRows {
-		err = e.chunkToOldChunk(e.scanCtx.chk)
-	}
-	return err
-}
-
-func (e *mockReaderScanProcessor) Finish() error {
 	return e.scanFinish()
 }
 
