@@ -435,18 +435,6 @@ func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
 	tk.MustExec("admin check table t2")
 }
 
-// TODO: Remove this as it depends on testkit
-func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
-	dml := fmt.Sprintf("insert into %s values", tbl)
-	for i := start; i < end; i++ {
-		dml += fmt.Sprintf("(%d, %d, %d)", i, i, i)
-		if i != end-1 {
-			dml += ","
-		}
-	}
-	tk.MustExec(dml)
-}
-
 func batchInsertCopy(tk *newtestkit.TestKit, tbl string, start, end int) {
 	dml := fmt.Sprintf("insert into %s values", tbl)
 	for i := start; i < end; i++ {
