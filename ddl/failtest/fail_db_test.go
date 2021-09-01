@@ -62,6 +62,7 @@ func TestTCopy(t *testing.T) {
 	testleak.BeforeTest()
 	s := &testFailDBSuite{}
 	s.SetUpSuiteCopy(t)
+	s.MyTestFailSchemaSyncer(t)
 	s.MyTestGenGlobalIDFail(t)
 	s.MyTestAddIndexWorkerNum(t)
 	s.MyTestRunDDLJobPanic(t)
@@ -331,11 +332,10 @@ func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
 	tk.MustExec("admin check table t")
 }
 
-// TODO: type C seems to come from "github.com/pingcap/check"
 // TestFailSchemaSyncer test when the schema syncer is done,
 // should prohibit DML executing until the syncer is restartd by loadSchemaInLoop.
-func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func (s *testFailDBSuite) MyTestFailSchemaSyncer(t *testing.T) {
+	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -345,15 +345,12 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 	defer func() {
 		domain.SchemaOutOfDateRetryTimes = originalRetryTimes
 	}()
-	// TODO: c, Assert and isTrue seem to come from "github.com/pingcap/check"
-	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
+	require.True(t, s.dom.SchemaValidator.IsStarted())
 	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*ddl.MockSchemaSyncer)
-	// TODO: c, Assert and isTrue seem to come from "github.com/pingcap/check"
-	c.Assert(ok, IsTrue)
+	require.True(t, ok)
 
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
 	// make reload failed.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`))
 	mockSyncer.CloseSession()
 	// wait the schemaValidator is stopped.
 	for i := 0; i < 50; i++ {
@@ -363,15 +360,11 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	// TODO: c, Assert and isFalse seem to come from "github.com/pingcap/check"
-	c.Assert(s.dom.SchemaValidator.IsStarted(), IsFalse)
+	require.False(t, s.dom.SchemaValidator.IsStarted())
 	_, err := tk.Exec("insert into t values(1)")
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, NotNil)
-	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
-	c.Assert(err.Error(), Equals, "[domain:8027]Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV")
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"), IsNil)
+	require.Error(t, err)
+	require.EqualError(t, err, "[domain:8027]Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"))
 	// wait the schemaValidator is started.
 	for i := 0; i < 50; i++ {
 		if s.dom.SchemaValidator.IsStarted() {
@@ -379,11 +372,9 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	// TODO: c, Assert and isTrue seem to come from "github.com/pingcap/check"
-	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
+	require.True(t, s.dom.SchemaValidator.IsStarted())
 	_, err = tk.Exec("insert into t values(1)")
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
 func (s *testFailDBSuite) MyTestGenGlobalIDFail(t *testing.T) {
