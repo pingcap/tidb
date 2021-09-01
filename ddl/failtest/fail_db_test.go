@@ -62,37 +62,37 @@ func TestTCopy(t *testing.T) {
 	s.SetUpSuiteCopy(t)
 
 	t.Run("TestHalfwayCancelOperations", func(t *testing.T) {
-		s.MyTestHalfwayCancelOperations(t)
+		s.TestHalfwayCancelOperations(t)
 	})
 	t.Run("TestInitializeOffsetAndState", func(t *testing.T) {
-		s.MyTestInitializeOffsetAndState(t)
+		s.TestInitializeOffsetAndState(t)
 	})
 	t.Run("TestUpdateHandleFailed", func(t *testing.T) {
-		s.MyTestUpdateHandleFailed(t)
+		s.TestUpdateHandleFailed(t)
 	})
 	t.Run("TestAddIndexFailed", func(t *testing.T) {
-		s.MyTestAddIndexFailed(t)
+		s.TestAddIndexFailed(t)
 	})
 	t.Run("TestFailSchemaSyncer", func(t *testing.T) {
-		s.MyTestFailSchemaSyncer(t)
+		s.TestFailSchemaSyncer(t)
 	})
 	t.Run("TestGenGlobalIDFail", func(t *testing.T) {
-		s.MyTestGenGlobalIDFail(t)
+		s.TestGenGlobalIDFail(t)
 	})
 	t.Run("TestAddIndexWorkerNum", func(t *testing.T) {
-		s.MyTestAddIndexWorkerNum(t)
+		s.TestAddIndexWorkerNum(t)
 	})
 	t.Run("TestRunDDLJobPanic", func(t *testing.T) {
-		s.MyTestRunDDLJobPanic(t)
+		s.TestRunDDLJobPanic(t)
 	})
 	t.Run("TestPartitionAddIndexGC", func(t *testing.T) {
-		s.MyTestPartitionAddIndexGC(t)
+		s.TestPartitionAddIndexGC(t)
 	})
 	t.Run("TestModifyColumn", func(t *testing.T) {
-		s.MyTestModifyColumn(t)
+		s.TestModifyColumn(t)
 	})
 	t.Run("TestPartitionAddPanicCopy", func(t *testing.T) {
-		s.MyTestPartitionAddPanicCopy(t)
+		s.TestPartitionAddPanicCopy(t)
 	})
 
 	s.TearDownSuiteCopy(t)
@@ -138,7 +138,7 @@ func (s *testFailDBSuite) TearDownSuiteCopy(t *testing.T) {
 }
 
 // TestHalfwayCancelOperations tests the case that the schema is correct after the execution of operations are cancelled halfway.
-func (s *testFailDBSuite) MyTestHalfwayCancelOperations(t *testing.T) {
+func (s *testFailDBSuite) TestHalfwayCancelOperations(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/truncateTableErr", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/truncateTableErr"))
@@ -224,7 +224,7 @@ func (s *testFailDBSuite) MyTestHalfwayCancelOperations(t *testing.T) {
 
 // TestInitializeOffsetAndState tests the case that the column's offset and state don't be initialized in the file of ddl_api.go when
 // doing the operation of 'modify column'.
-func (s *testFailDBSuite) MyTestInitializeOffsetAndState(t *testing.T) {
+func (s *testFailDBSuite) TestInitializeOffsetAndState(t *testing.T) {
 	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int)")
@@ -235,7 +235,7 @@ func (s *testFailDBSuite) MyTestInitializeOffsetAndState(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState"))
 }
 
-func (s *testFailDBSuite) MyTestUpdateHandleFailed(t *testing.T) {
+func (s *testFailDBSuite) TestUpdateHandleFailed(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `1*return`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle"))
@@ -252,7 +252,7 @@ func (s *testFailDBSuite) MyTestUpdateHandleFailed(t *testing.T) {
 	tk.MustExec("admin check index t idx_b")
 }
 
-func (s *testFailDBSuite) MyTestAddIndexFailed(t *testing.T) {
+func (s *testFailDBSuite) TestAddIndexFailed(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockBackfillRunErr", `1*return`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillRunErr"))
@@ -285,7 +285,7 @@ func (s *testFailDBSuite) MyTestAddIndexFailed(t *testing.T) {
 
 // TestFailSchemaSyncer test when the schema syncer is done,
 // should prohibit DML executing until the syncer is restartd by loadSchemaInLoop.
-func (s *testFailDBSuite) MyTestFailSchemaSyncer(t *testing.T) {
+func (s *testFailDBSuite) TestFailSchemaSyncer(t *testing.T) {
 	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -328,7 +328,7 @@ func (s *testFailDBSuite) MyTestFailSchemaSyncer(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func (s *testFailDBSuite) MyTestGenGlobalIDFail(t *testing.T) {
+func (s *testFailDBSuite) TestGenGlobalIDFail(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail"))
 	}()
@@ -387,7 +387,7 @@ func batchInsert(tk *newtestkit.TestKit, tbl string, start, end int) {
 	tk.MustExec(dml)
 }
 
-func (s *testFailDBSuite) MyTestAddIndexWorkerNum(t *testing.T) {
+func (s *testFailDBSuite) TestAddIndexWorkerNum(t *testing.T) {
 	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("create database if not exists test_db")
 	tk.MustExec("use test_db")
@@ -456,7 +456,7 @@ LOOP:
 
 	// TODO: Should we inline this and remove the extra method?
 	// Or should we rerun same test from top level test with common handle value inverted?
-	s.rerunWithCommonHandleEnabled(t, s.MyTestAddIndexWorkerNum)
+	s.rerunWithCommonHandleEnabled(t, s.TestAddIndexWorkerNum)
 }
 
 // TODO: Can we simplify this? Do we need this kind of thing?
@@ -469,7 +469,7 @@ func (s *testFailDBSuite) rerunWithCommonHandleEnabled(t *testing.T, f func(*tes
 }
 
 // TestRunDDLJobPanic tests recover panic when run ddl job panic.
-func (s *testFailDBSuite) MyTestRunDDLJobPanic(t *testing.T) {
+func (s *testFailDBSuite) TestRunDDLJobPanic(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob"))
 	}()
@@ -482,7 +482,7 @@ func (s *testFailDBSuite) MyTestRunDDLJobPanic(t *testing.T) {
 	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
 }
 
-func (s *testFailDBSuite) MyTestPartitionAddIndexGC(t *testing.T) {
+func (s *testFailDBSuite) TestPartitionAddIndexGC(t *testing.T) {
 	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table partition_add_idx (
@@ -503,7 +503,7 @@ func (s *testFailDBSuite) MyTestPartitionAddIndexGC(t *testing.T) {
 	tk.MustExec("alter table partition_add_idx add index idx (id, hired)")
 }
 
-func (s *testFailDBSuite) MyTestModifyColumn(t *testing.T) {
+func (s *testFailDBSuite) TestModifyColumn(t *testing.T) {
 	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -602,7 +602,7 @@ func (s *testFailDBSuite) MyTestModifyColumn(t *testing.T) {
 	tk.MustExec("drop table t, t1, t2, t3, t4, t5")
 }
 
-func (s *testFailDBSuite) MyTestPartitionAddPanicCopy(t *testing.T) {
+func (s *testFailDBSuite) TestPartitionAddPanicCopy(t *testing.T) {
 	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
