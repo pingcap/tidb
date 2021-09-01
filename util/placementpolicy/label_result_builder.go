@@ -23,10 +23,12 @@ import (
 	"github.com/pingcap/tidb/types/json"
 )
 
+// CheckPolicyLabelsResultBuilder is used to fetch the `show placement labels` result.
 type CheckPolicyLabelsResultBuilder struct {
 	labelKey2ValueList map[string][]string
 }
 
+// AppendShowLabels is used to fill the LabelKey and valuesList into the builder.
 func (b *CheckPolicyLabelsResultBuilder) AppendShowLabels(key string, valueList json.BinaryJSON) error {
 	if b.labelKey2ValueList == nil {
 		b.labelKey2ValueList = make(map[string][]string)
@@ -53,6 +55,7 @@ func (b *CheckPolicyLabelsResultBuilder) AppendShowLabels(key string, valueList 
 	return nil
 }
 
+// CheckLabels is used to check whether the target label is existing in the builder.
 func (b *CheckPolicyLabelsResultBuilder) CheckLabels(targetsMap map[string]struct{}) error {
 	for target := range targetsMap {
 		var founded bool
@@ -70,10 +73,12 @@ func (b *CheckPolicyLabelsResultBuilder) CheckLabels(targetsMap map[string]struc
 	return nil
 }
 
+// ShowPlacementLabelsResultBuilder is used to fetch the `tikv_store_status` result.
 type ShowPlacementLabelsResultBuilder struct {
 	labelKey2values map[string]interface{}
 }
 
+// AppendStoreLabels is used to fill the labelKey:labelValue json into builder.
 func (b *ShowPlacementLabelsResultBuilder) AppendStoreLabels(bj json.BinaryJSON) error {
 	if b.labelKey2values == nil {
 		b.labelKey2values = make(map[string]interface{})
@@ -109,10 +114,11 @@ func (b *ShowPlacementLabelsResultBuilder) AppendStoreLabels(bj json.BinaryJSON)
 	return nil
 }
 
+// BuildRows is used to retrieve the rows.
 func (b *ShowPlacementLabelsResultBuilder) BuildRows() ([][]interface{}, error) {
 	rows := make([][]interface{}, 0, len(b.labelKey2values))
-	for _, key := range b.SortMapKeys(b.labelKey2values) {
-		values := b.SortMapKeys(b.labelKey2values[key].(map[string]interface{}))
+	for _, key := range b.sortMapKeys(b.labelKey2values) {
+		values := b.sortMapKeys(b.labelKey2values[key].(map[string]interface{}))
 		d, err := gjson.Marshal(values)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -129,7 +135,7 @@ func (b *ShowPlacementLabelsResultBuilder) BuildRows() ([][]interface{}, error) 
 	return rows, nil
 }
 
-func (b *ShowPlacementLabelsResultBuilder) SortMapKeys(m map[string]interface{}) []string {
+func (b *ShowPlacementLabelsResultBuilder) sortMapKeys(m map[string]interface{}) []string {
 	sorted := make([]string, 0, len(m))
 	for key := range m {
 		sorted = append(sorted, key)
