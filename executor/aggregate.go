@@ -265,7 +265,9 @@ func (e *HashAggExec) Close() error {
 		}
 		if e.listInDisks != nil {
 			for _, listInDisk := range e.listInDisks {
-				firstErr = listInDisk.Close()
+				if err := listInDisk.Close(); firstErr == nil {
+					firstErr = err
+				}
 			}
 		}
 		e.spillAction, e.tmpChkForSpills = nil, nil
@@ -1060,10 +1062,14 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 
 func (e *HashAggExec) spillUnprocessedData() (err error) {
 	for i := 0; i < e.childResult.NumRows(); i++ {
-		groupKey := e.groupKeyBuffer[e.childResult.GetRow(i).Idx()]
-		partitionIdx := farm.Hash32(groupKey) % defPartitionsToBeSpilled
+		row := e.childResult.GetRow(i)
+		groupKey := e.groupKeyBuffer[row.Idx()]
+		partitionIdx := e.offsetOfSpilledPartitions
+		if e.numOfSpilledChks == 0 {
+			partitionIdx = int(farm.Hash32(groupKey) % defPartitionsToBeSpilled)
+		}
 		tmpChkForSpill := e.tmpChkForSpills[partitionIdx]
-		tmpChkForSpill.AppendRow(e.childResult.GetRow(i))
+		tmpChkForSpill.AppendRow(row)
 		if tmpChkForSpill.IsFull() {
 			err = e.listInDisks[partitionIdx].Add(tmpChkForSpill)
 			if err != nil {
