@@ -66,6 +66,9 @@ func TestTCopy(t *testing.T) {
 	t.Run("TestHalfwayCancelOperations", func(t *testing.T) {
 		s.MyTestHalfwayCancelOperations(t)
 	})
+	t.Run("TestInitializeOffsetAndState", func(t *testing.T) {
+		s.MyTestInitializeOffsetAndState(t)
+	})
 	t.Run("TestAddIndexFailed", func(t *testing.T) {
 		s.MyTestAddIndexFailed(t)
 	})
@@ -272,20 +275,17 @@ func (s *testFailDBSuite) MyTestHalfwayCancelOperations(t *testing.T) {
 	tk.MustExec("drop database cancel_job_db")
 }
 
-// TODO: type C seems to come from "github.com/pingcap/check"
 // TestInitializeOffsetAndState tests the case that the column's offset and state don't be initialized in the file of ddl_api.go when
 // doing the operation of 'modify column'.
-func (s *testFailDBSuite) TestInitializeOffsetAndState(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func (s *testFailDBSuite) MyTestInitializeOffsetAndState(t *testing.T) {
+	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int)")
 	defer tk.MustExec("drop table t")
 
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState", `return(true)`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState", `return(true)`))
 	tk.MustExec("ALTER TABLE t MODIFY COLUMN b int FIRST;")
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState"), IsNil)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState"))
 }
 
 // TODO: type C seems to come from "github.com/pingcap/check"
