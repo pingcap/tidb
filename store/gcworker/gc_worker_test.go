@@ -1204,7 +1204,7 @@ func makeMergedChannel(t *testing.T, count int) (*mergeLockScanner, []chan scanL
 	return scanner, channels, storeIDs, resultCh
 }
 
-func (s *testGCWorkerSuite)makeMergedMockClient(t *testing.T, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*txnlock.Lock) {
+func (s *testGCWorkerSuite) makeMergedMockClient(t *testing.T, count int) (*mergeLockScanner, []chan scanLockResult, []uint64, <-chan []*txnlock.Lock) {
 	stores := s.cluster.GetAllStores()
 	require.Equal(t, len(stores), count)
 	storeIDs := make([]uint64, count)
@@ -1272,7 +1272,7 @@ func (s *testGCWorkerSuite)makeMergedMockClient(t *testing.T, count int) (*merge
 
 func TestMergeLockScanner(t *testing.T) {
 	t.Parallel()
-	s, clean:= SetUpTest(t)
+	s, clean := SetUpTest(t)
 	defer clean()
 	// Shortcuts to make the following test code simpler
 
