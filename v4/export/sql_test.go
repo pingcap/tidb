@@ -14,31 +14,45 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"testing"
 
 	tcontext "github.com/pingcap/dumpling/v4/context"
+	"github.com/stretchr/testify/require"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/coreos/go-semver/semver"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 )
 
-var (
-	_                = Suite(&testSQLSuite{})
-	showIndexHeaders = []string{"Table", "Non_unique", "Key_name", "Seq_in_index", "Column_name", "Collation", "Cardinality", "Sub_part", "Packed", "Null", "Index_type", "Comment", "Index_comment"}
-)
+var showIndexHeaders = []string{
+	"Table",
+	"Non_unique",
+	"Key_name",
+	"Seq_in_index",
+	"Column_name",
+	"Collation",
+	"Cardinality",
+	"Sub_part",
+	"Packed",
+	"Null",
+	"Index_type",
+	"Comment",
+	"Index_comment",
+}
 
 const (
 	database = "foo"
 	table    = "bar"
 )
 
-type testSQLSuite struct{}
+func TestDetectServerInfo(t *testing.T) {
+	t.Parallel()
 
-func (s *testSQLSuite) TestDetectServerInfo(c *C) {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
 
 	mkVer := makeVersion
 	data := [][]interface{}{
@@ -55,66 +69,75 @@ func (s *testSQLSuite) TestDetectServerInfo(c *C) {
 
 	for _, datum := range data {
 		tag, r, serverTp, expectVer := dec(datum)
-		cmt := Commentf("test case number: %d", tag)
-
+		comment := fmt.Sprintf("test case number: %d", tag)
 		rows := sqlmock.NewRows([]string{"version"}).AddRow(r)
 		mock.ExpectQuery("SELECT version()").WillReturnRows(rows)
 
 		verStr, err := SelectVersion(db)
-		c.Assert(err, IsNil, cmt)
+		require.NoError(t, err, comment)
+
 		info := ParseServerInfo(tcontext.Background(), verStr)
-		c.Assert(info.ServerType, Equals, serverTp, cmt)
-		c.Assert(info.ServerVersion == nil, Equals, expectVer == nil, cmt)
+		require.Equal(t, serverTp, info.ServerType, comment)
+		require.Equal(t, expectVer == nil, info.ServerVersion == nil, comment)
+
 		if info.ServerVersion == nil {
-			c.Assert(expectVer, IsNil, cmt)
+			require.Nil(t, expectVer, comment)
 		} else {
-			c.Assert(info.ServerVersion.Equal(*expectVer), IsTrue)
+			require.True(t, info.ServerVersion.Equal(*expectVer), comment)
 		}
-		c.Assert(mock.ExpectationsWereMet(), IsNil, cmt)
+
+		require.NoError(t, mock.ExpectationsWereMet(), comment)
 	}
 }
 
-func (s *testSQLSuite) TestBuildSelectAllQuery(c *C) {
-	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
-	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+func TestBuildSelectAllQuery(t *testing.T) {
+	t.Parallel()
 
-	mockConf := defaultConfigForTest(c)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	mockConf := defaultConfigForTest(t)
 	mockConf.SortByPk = true
 
 	// Test TiDB server.
 	mockConf.ServerInfo.ServerType = ServerTypeTiDB
 
 	orderByClause, err := buildOrderByClause(mockConf, conn, database, table, true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
 	selectedField, _, err := buildSelectField(conn, database, table, false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	q := buildSelectQuery(database, table, selectedField, "", "", orderByClause)
-	c.Assert(q, Equals, fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `_tidb_rowid`", database, table))
+	require.Equal(t, fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `_tidb_rowid`", database, table), q)
 
 	mock.ExpectQuery(fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", database, table)).
 		WillReturnRows(sqlmock.NewRows(showIndexHeaders).
 			AddRow(table, 0, "PRIMARY", 1, "id", "A", 0, nil, nil, "", "BTREE", "", ""))
 
 	orderByClause, err = buildOrderByClause(mockConf, conn, database, table, false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	mock.ExpectQuery("SHOW COLUMNS FROM").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
 	selectedField, _, err = buildSelectField(conn, database, table, false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	q = buildSelectQuery(database, table, selectedField, "", "", orderByClause)
-	c.Assert(q, Equals, fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `id`", database, table))
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.Equal(t, fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `id`", database, table), q)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	// Test other servers.
 	otherServers := []ServerType{ServerTypeUnknown, ServerTypeMySQL, ServerTypeMariaDB}
@@ -122,97 +145,109 @@ func (s *testSQLSuite) TestBuildSelectAllQuery(c *C) {
 	// Test table with primary key.
 	for _, serverTp := range otherServers {
 		mockConf.ServerInfo.ServerType = serverTp
-		cmt := Commentf("server type: %s", serverTp)
+		comment := fmt.Sprintf("server type: %s", serverTp)
+
 		mock.ExpectQuery(fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", database, table)).
 			WillReturnRows(sqlmock.NewRows(showIndexHeaders).
 				AddRow(table, 0, "PRIMARY", 1, "id", "A", 0, nil, nil, "", "BTREE", "", ""))
 		orderByClause, err := buildOrderByClause(mockConf, conn, database, table, false)
-		c.Assert(err, IsNil, cmt)
+		require.NoError(t, err, comment)
 
 		mock.ExpectQuery("SHOW COLUMNS FROM").
 			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
 		selectedField, _, err = buildSelectField(conn, database, table, false)
-		c.Assert(err, IsNil)
+		require.NoError(t, err, comment)
+
 		q = buildSelectQuery(database, table, selectedField, "", "", orderByClause)
-		c.Assert(q, Equals, fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `id`", database, table), cmt)
+		require.Equal(t, fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `id`", database, table), q, comment)
+
 		err = mock.ExpectationsWereMet()
-		c.Assert(err, IsNil, cmt)
-		c.Assert(mock.ExpectationsWereMet(), IsNil, cmt)
+		require.NoError(t, err, comment)
+		require.NoError(t, mock.ExpectationsWereMet(), comment)
 	}
 
 	// Test table without primary key.
 	for _, serverTp := range otherServers {
 		mockConf.ServerInfo.ServerType = serverTp
-		cmt := Commentf("server type: %s", serverTp)
+		comment := fmt.Sprintf("server type: %s", serverTp)
+
 		mock.ExpectQuery(fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", database, table)).
 			WillReturnRows(sqlmock.NewRows(showIndexHeaders))
 
 		orderByClause, err := buildOrderByClause(mockConf, conn, database, table, false)
-		c.Assert(err, IsNil, cmt)
+		require.NoError(t, err, comment)
 
 		mock.ExpectQuery("SHOW COLUMNS FROM").
 			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
 		selectedField, _, err = buildSelectField(conn, "test", "t", false)
-		c.Assert(err, IsNil)
+		require.NoError(t, err, comment)
+
 		q := buildSelectQuery(database, table, selectedField, "", "", orderByClause)
-		c.Assert(q, Equals, fmt.Sprintf("SELECT * FROM `%s`.`%s`", database, table), cmt)
+		require.Equal(t, fmt.Sprintf("SELECT * FROM `%s`.`%s`", database, table), q, comment)
+
 		err = mock.ExpectationsWereMet()
-		c.Assert(err, IsNil, cmt)
-		c.Assert(mock.ExpectationsWereMet(), IsNil)
+		require.NoError(t, err, comment)
+		require.NoError(t, mock.ExpectationsWereMet(), comment)
 	}
 
 	// Test when config.SortByPk is disabled.
 	mockConf.SortByPk = false
 	for tp := ServerTypeUnknown; tp < ServerTypeAll; tp++ {
 		mockConf.ServerInfo.ServerType = ServerType(tp)
-		cmt := Commentf("current server type: ", tp)
+		comment := fmt.Sprintf("current server type: %v", tp)
 
 		mock.ExpectQuery("SHOW COLUMNS FROM").
 			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
 		selectedField, _, err := buildSelectField(conn, "test", "t", false)
-		c.Assert(err, IsNil)
+		require.NoError(t, err, comment)
+
 		q := buildSelectQuery(database, table, selectedField, "", "", "")
-		c.Assert(q, Equals, fmt.Sprintf("SELECT * FROM `%s`.`%s`", database, table), cmt)
-		c.Assert(mock.ExpectationsWereMet(), IsNil, cmt)
+		require.Equal(t, fmt.Sprintf("SELECT * FROM `%s`.`%s`", database, table), q, comment)
+		require.NoError(t, mock.ExpectationsWereMet(), comment)
 	}
 }
 
-func (s *testSQLSuite) TestBuildOrderByClause(c *C) {
-	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
-	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+func TestBuildOrderByClause(t *testing.T) {
+	t.Parallel()
 
-	mockConf := defaultConfigForTest(c)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+
+	mockConf := defaultConfigForTest(t)
 	mockConf.SortByPk = true
 
 	// Test TiDB server.
 	mockConf.ServerInfo.ServerType = ServerTypeTiDB
 
 	orderByClause, err := buildOrderByClause(mockConf, conn, database, table, true)
-	c.Assert(err, IsNil)
-	c.Assert(orderByClause, Equals, orderByTiDBRowID)
+	require.NoError(t, err)
+	require.Equal(t, orderByTiDBRowID, orderByClause)
 
 	mock.ExpectQuery(fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", database, table)).
 		WillReturnRows(sqlmock.NewRows(showIndexHeaders).AddRow(table, 0, "PRIMARY", 1, "id", "A", 0, nil, nil, "", "BTREE", "", ""))
 
 	orderByClause, err = buildOrderByClause(mockConf, conn, database, table, false)
-	c.Assert(err, IsNil)
-	c.Assert(orderByClause, Equals, "ORDER BY `id`")
+	require.NoError(t, err)
+	require.Equal(t, "ORDER BY `id`", orderByClause)
 
 	// Test table with primary key.
 	mock.ExpectQuery(fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", database, table)).
 		WillReturnRows(sqlmock.NewRows(showIndexHeaders).AddRow(table, 0, "PRIMARY", 1, "id", "A", 0, nil, nil, "", "BTREE", "", ""))
 	orderByClause, err = buildOrderByClause(mockConf, conn, database, table, false)
-	c.Assert(err, IsNil)
-	c.Assert(orderByClause, Equals, "ORDER BY `id`")
+	require.NoError(t, err)
+	require.Equal(t, "ORDER BY `id`", orderByClause)
 
 	// Test table with joint primary key.
 	mock.ExpectQuery(fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", database, table)).
@@ -220,34 +255,39 @@ func (s *testSQLSuite) TestBuildOrderByClause(c *C) {
 			AddRow(table, 0, "PRIMARY", 1, "id", "A", 0, nil, nil, "", "BTREE", "", "").
 			AddRow(table, 0, "PRIMARY", 2, "name", "A", 0, nil, nil, "", "BTREE", "", ""))
 	orderByClause, err = buildOrderByClause(mockConf, conn, database, table, false)
-	c.Assert(err, IsNil)
-	c.Assert(orderByClause, Equals, "ORDER BY `id`,`name`")
+	require.NoError(t, err)
+	require.Equal(t, "ORDER BY `id`,`name`", orderByClause)
 
 	// Test table without primary key.
 	mock.ExpectQuery(fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", database, table)).
 		WillReturnRows(sqlmock.NewRows(showIndexHeaders))
 
 	orderByClause, err = buildOrderByClause(mockConf, conn, database, table, false)
-	c.Assert(err, IsNil)
-	c.Assert(orderByClause, Equals, "")
+	require.NoError(t, err)
+	require.Equal(t, "", orderByClause)
 
 	// Test when config.SortByPk is disabled.
 	mockConf.SortByPk = false
 	for _, hasImplicitRowID := range []bool{false, true} {
-		cmt := Commentf("current hasImplicitRowID: ", hasImplicitRowID)
+		comment := fmt.Sprintf("current hasImplicitRowID: %v", hasImplicitRowID)
 
 		orderByClause, err := buildOrderByClause(mockConf, conn, database, table, hasImplicitRowID)
-		c.Assert(err, IsNil, cmt)
-		c.Assert(orderByClause, Equals, "", cmt)
+		require.NoError(t, err, comment)
+		require.Equal(t, "", orderByClause, comment)
 	}
 }
 
-func (s *testSQLSuite) TestBuildSelectField(c *C) {
+func TestBuildSelectField(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// generate columns not found
 	mock.ExpectQuery("SHOW COLUMNS FROM").
@@ -255,9 +295,9 @@ func (s *testSQLSuite) TestBuildSelectField(c *C) {
 			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
 
 	selectedField, _, err := buildSelectField(conn, "test", "t", false)
-	c.Assert(selectedField, Equals, "*")
-	c.Assert(err, IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.Equal(t, "*", selectedField)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	// user assigns completeInsert
 	mock.ExpectQuery("SHOW COLUMNS FROM").
@@ -267,9 +307,9 @@ func (s *testSQLSuite) TestBuildSelectField(c *C) {
 			AddRow("quo`te", "varchar(12)", "NO", "UNI", nil, ""))
 
 	selectedField, _, err = buildSelectField(conn, "test", "t", true)
-	c.Assert(selectedField, Equals, "`id`,`name`,`quo``te`")
-	c.Assert(err, IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.Equal(t, "`id`,`name`,`quo``te`", selectedField)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	// found generate columns, rest columns is `id`,`name`
 	mock.ExpectQuery("SHOW COLUMNS FROM").
@@ -280,15 +320,19 @@ func (s *testSQLSuite) TestBuildSelectField(c *C) {
 			AddRow("generated", "varchar(12)", "NO", "", nil, "VIRTUAL GENERATED"))
 
 	selectedField, _, err = buildSelectField(conn, "test", "t", false)
-	c.Assert(selectedField, Equals, "`id`,`name`,`quo``te`")
-	c.Assert(err, IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.Equal(t, "`id`,`name`,`quo``te`", selectedField)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *testSQLSuite) TestParseSnapshotToTSO(c *C) {
+func TestParseSnapshotToTSO(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
 
 	snapshot := "2020/07/18 20:31:50"
 	var unixTimeStamp uint64 = 1595075510
@@ -297,26 +341,31 @@ func (s *testSQLSuite) TestParseSnapshotToTSO(c *C) {
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{`unix_timestamp("2020/07/18 20:31:50")`}).AddRow(1595075510))
 	tso, err := parseSnapshotToTSO(db, snapshot)
-	c.Assert(err, IsNil)
-	c.Assert(tso, Equals, (unixTimeStamp<<18)*1000)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, err)
+	require.Equal(t, (unixTimeStamp<<18)*1000, tso)
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	// generate columns not valid snapshot
 	mock.ExpectQuery(`SELECT unix_timestamp(?)`).
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{`unix_timestamp("XXYYZZ")`}).AddRow(nil))
 	tso, err = parseSnapshotToTSO(db, "XXYYZZ")
-	c.Assert(err, ErrorMatches, "snapshot XXYYZZ format not supported. please use tso or '2006-01-02 15:04:05' format time")
-	c.Assert(tso, Equals, uint64(0))
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.EqualError(t, err, "snapshot XXYYZZ format not supported. please use tso or '2006-01-02 15:04:05' format time")
+	require.Equal(t, uint64(0), tso)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *testSQLSuite) TestShowCreateView(c *C) {
+func TestShowCreateView(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	mock.ExpectQuery("SHOW FIELDS FROM `test`.`v`").
 		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
@@ -327,13 +376,15 @@ func (s *testSQLSuite) TestShowCreateView(c *C) {
 			AddRow("v", "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`) AS SELECT `t`.`a` AS `a` FROM `test`.`t`", "utf8", "utf8_general_ci"))
 
 	createTableSQL, createViewSQL, err := ShowCreateView(conn, "test", "v")
-	c.Assert(err, IsNil)
-	c.Assert(createTableSQL, Equals, "CREATE TABLE `v`(\n`a` int\n)ENGINE=MyISAM;\n")
-	c.Assert(createViewSQL, Equals, "DROP TABLE IF EXISTS `v`;\nDROP VIEW IF EXISTS `v`;\nSET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;\nSET @PREV_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS;\nSET @PREV_COLLATION_CONNECTION=@@COLLATION_CONNECTION;\nSET character_set_client = utf8;\nSET character_set_results = utf8;\nSET collation_connection = utf8_general_ci;\nCREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`) AS SELECT `t`.`a` AS `a` FROM `test`.`t`;\nSET character_set_client = @PREV_CHARACTER_SET_CLIENT;\nSET character_set_results = @PREV_CHARACTER_SET_RESULTS;\nSET collation_connection = @PREV_COLLATION_CONNECTION;\n")
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, err)
+	require.Equal(t, "CREATE TABLE `v`(\n`a` int\n)ENGINE=MyISAM;\n", createTableSQL)
+	require.Equal(t, "DROP TABLE IF EXISTS `v`;\nDROP VIEW IF EXISTS `v`;\nSET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;\nSET @PREV_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS;\nSET @PREV_COLLATION_CONNECTION=@@COLLATION_CONNECTION;\nSET character_set_client = utf8;\nSET character_set_results = utf8;\nSET collation_connection = utf8_general_ci;\nCREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`) AS SELECT `t`.`a` AS `a` FROM `test`.`t`;\nSET character_set_client = @PREV_CHARACTER_SET_CLIENT;\nSET character_set_results = @PREV_CHARACTER_SET_RESULTS;\nSET collation_connection = @PREV_COLLATION_CONNECTION;\n", createViewSQL)
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func (s *testSQLSuite) TestGetSuitableRows(c *C) {
+func TestGetSuitableRows(t *testing.T) {
+	t.Parallel()
+
 	testCases := []struct {
 		avgRowLength uint64
 		expectedRows uint64
@@ -357,47 +408,59 @@ func (s *testSQLSuite) TestGetSuitableRows(c *C) {
 	}
 	for _, testCase := range testCases {
 		rows := GetSuitableRows(testCase.avgRowLength)
-		c.Assert(rows, Equals, testCase.expectedRows)
+		require.Equal(t, testCase.expectedRows, rows)
 	}
 }
 
-func (s *testSQLSuite) TestSelectTiDBRowID(c *C) {
+func TestSelectTiDBRowID(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	database, table := "test", "t"
 
 	// _tidb_rowid is unavailable, or PKIsHandle.
 	mock.ExpectExec("SELECT _tidb_rowid from `test`.`t`").
 		WillReturnError(errors.New(`1054, "Unknown column '_tidb_rowid' in 'field list'"`))
 	hasImplicitRowID, err := SelectTiDBRowID(conn, database, table)
-	c.Assert(err, IsNil)
-	c.Assert(hasImplicitRowID, IsFalse)
+	require.NoError(t, err)
+	require.False(t, hasImplicitRowID)
 
 	// _tidb_rowid is available.
 	mock.ExpectExec("SELECT _tidb_rowid from `test`.`t`").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	hasImplicitRowID, err = SelectTiDBRowID(conn, database, table)
-	c.Assert(err, IsNil)
-	c.Assert(hasImplicitRowID, IsTrue)
+	require.NoError(t, err)
+	require.True(t, hasImplicitRowID)
 
 	// _tidb_rowid returns error
 	expectedErr := errors.New("mock error")
 	mock.ExpectExec("SELECT _tidb_rowid from `test`.`t`").
 		WillReturnError(expectedErr)
 	hasImplicitRowID, err = SelectTiDBRowID(conn, database, table)
-	c.Assert(errors.Cause(err), Equals, expectedErr)
-	c.Assert(hasImplicitRowID, IsFalse)
+	require.ErrorIs(t, errors.Cause(err), expectedErr)
+	require.False(t, hasImplicitRowID)
 }
 
-func (s *testSQLSuite) TestBuildTableSampleQueries(c *C) {
+func TestBuildTableSampleQueries(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
 
 	d := &Dumper{
@@ -615,7 +678,7 @@ func (s *testSQLSuite) TestBuildTableSampleQueries(c *C) {
 	}
 
 	for caseID, testCase := range testCases {
-		c.Log(fmt.Sprintf("case #%d", caseID))
+		t.Logf("case #%d", caseID)
 		handleColNames := testCase.handleColNames
 		handleColTypes := testCase.handleColTypes
 		handleVals := testCase.handleVals
@@ -623,7 +686,7 @@ func (s *testSQLSuite) TestBuildTableSampleQueries(c *C) {
 
 		// Test build whereClauses
 		whereClauses := buildWhereClauses(handleColNames, handleValStrings)
-		c.Assert(whereClauses, DeepEquals, testCase.expectedWhereClauses)
+		require.Equal(t, testCase.expectedWhereClauses, whereClauses)
 
 		// Test build tasks through table sample
 		if len(handleColNames) > 0 {
@@ -675,18 +738,19 @@ func (s *testSQLSuite) TestBuildTableSampleQueries(c *C) {
 				}
 			}
 
-			c.Assert(d.concurrentDumpTable(tctx, conn, meta, taskChan), IsNil)
-			c.Assert(mock.ExpectationsWereMet(), IsNil)
+			require.NoError(t, d.concurrentDumpTable(tctx, conn, meta, taskChan))
+			require.NoError(t, mock.ExpectationsWereMet())
 			orderByClause := buildOrderByClauseString(handleColNames)
 
 			checkQuery := func(i int, query string) {
 				task := <-taskChan
 				taskTableData, ok := task.(*TaskTableData)
-				c.Assert(ok, IsTrue)
-				c.Assert(taskTableData.ChunkIndex, Equals, i)
+				require.True(t, ok)
+				require.Equal(t, i, taskTableData.ChunkIndex)
+
 				data, ok := taskTableData.Data.(*tableData)
-				c.Assert(ok, IsTrue)
-				c.Assert(data.query, Equals, query)
+				require.True(t, ok)
+				require.Equal(t, query, data.query)
 			}
 
 			// special case, no value found
@@ -704,7 +768,9 @@ func (s *testSQLSuite) TestBuildTableSampleQueries(c *C) {
 	}
 }
 
-func (s *testSQLSuite) TestBuildPartitionClauses(c *C) {
+func TestBuildPartitionClauses(t *testing.T) {
+	t.Parallel()
+
 	const (
 		dbName        = "test"
 		tbName        = "t"
@@ -758,16 +824,22 @@ func (s *testSQLSuite) TestBuildPartitionClauses(c *C) {
 	}
 	for _, testCase := range testCases {
 		query := buildSelectQuery(dbName, tbName, fields, testCase.partition, testCase.where, testCase.orderByClause)
-		c.Assert(query, Equals, testCase.expectedQuery)
+		require.Equal(t, testCase.expectedQuery, query)
 	}
 }
 
-func (s *testSQLSuite) TestBuildRegionQueriesWithoutPartition(c *C) {
+func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
 
 	d := &Dumper{
@@ -852,8 +924,8 @@ func (s *testSQLSuite) TestBuildRegionQueriesWithoutPartition(c *C) {
 		},
 	}
 
-	for caseID, testCase := range testCases {
-		c.Log(fmt.Sprintf("case #%d", caseID))
+	for i, testCase := range testCases {
+		t.Logf("case #%d", i)
 		handleColNames := testCase.handleColNames
 		handleColTypes := testCase.handleColTypes
 		regionResults := testCase.regionResults
@@ -901,28 +973,34 @@ func (s *testSQLSuite) TestBuildRegionQueriesWithoutPartition(c *C) {
 			mock.ExpectQuery(fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", database, table)).WillReturnRows(rows)
 			mock.ExpectQuery("SHOW INDEX FROM").WillReturnRows(sqlmock.NewRows(showIndexHeaders))
 		}
-		c.Assert(d.concurrentDumpTable(tctx, conn, meta, taskChan), IsNil)
-		c.Assert(mock.ExpectationsWereMet(), IsNil)
+		require.NoError(t, d.concurrentDumpTable(tctx, conn, meta, taskChan))
+		require.NoError(t, mock.ExpectationsWereMet())
 
 		for i, w := range testCase.expectedWhereClauses {
 			query := buildSelectQuery(database, table, "*", "", buildWhereCondition(d.conf, w), orderByClause)
 			task := <-taskChan
 			taskTableData, ok := task.(*TaskTableData)
-			c.Assert(ok, IsTrue)
-			c.Assert(taskTableData.ChunkIndex, Equals, i)
+			require.True(t, ok)
+			require.Equal(t, i, taskTableData.ChunkIndex)
 			data, ok := taskTableData.Data.(*tableData)
-			c.Assert(ok, IsTrue)
-			c.Assert(data.query, Equals, query)
+			require.True(t, ok)
+			require.Equal(t, query, data.query)
 		}
 	}
 }
 
-func (s *testSQLSuite) TestBuildRegionQueriesWithPartitions(c *C) {
+func TestBuildRegionQueriesWithPartitions(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
 
 	d := &Dumper{
@@ -1050,7 +1128,7 @@ func (s *testSQLSuite) TestBuildRegionQueriesWithPartitions(c *C) {
 	}
 
 	for i, testCase := range testCases {
-		c.Log(fmt.Sprintf("case #%d", i))
+		t.Logf("case #%d", i)
 		handleColNames := testCase.handleColNames
 		handleColTypes := testCase.handleColTypes
 		regionResults := testCase.regionResults
@@ -1095,8 +1173,8 @@ func (s *testSQLSuite) TestBuildRegionQueriesWithPartitions(c *C) {
 		}
 
 		orderByClause := buildOrderByClauseString(handleColNames)
-		c.Assert(d.concurrentDumpTable(tctx, conn, meta, taskChan), IsNil)
-		c.Assert(mock.ExpectationsWereMet(), IsNil)
+		require.NoError(t, d.concurrentDumpTable(tctx, conn, meta, taskChan))
+		require.NoError(t, mock.ExpectationsWereMet())
 
 		chunkIdx := 0
 		for i, partition := range partitions {
@@ -1104,11 +1182,11 @@ func (s *testSQLSuite) TestBuildRegionQueriesWithPartitions(c *C) {
 				query := buildSelectQuery(database, table, "*", partition, buildWhereCondition(d.conf, w), orderByClause)
 				task := <-taskChan
 				taskTableData, ok := task.(*TaskTableData)
-				c.Assert(ok, IsTrue)
-				c.Assert(taskTableData.ChunkIndex, Equals, chunkIdx)
+				require.True(t, ok)
+				require.Equal(t, chunkIdx, taskTableData.ChunkIndex)
 				data, ok := taskTableData.Data.(*tableData)
-				c.Assert(ok, IsTrue)
-				c.Assert(data.query, Equals, query)
+				require.True(t, ok)
+				require.Equal(t, query, data.query)
 				chunkIdx++
 			}
 		}
@@ -1123,12 +1201,12 @@ func buildMockNewRows(mock sqlmock.Sqlmock, columns []string, driverValues [][]d
 	return rows
 }
 
-func readRegionCsvDriverValues(c *C) [][]driver.Value {
+func readRegionCsvDriverValues(t *testing.T) [][]driver.Value {
 	// nolint: dogsled
 	_, filename, _, _ := runtime.Caller(0)
 	csvFilename := path.Join(path.Dir(filename), "region_results.csv")
 	file, err := os.Open(csvFilename)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	csvReader := csv.NewReader(file)
 	values := make([][]driver.Value, 0, 990)
 	for {
@@ -1136,24 +1214,30 @@ func readRegionCsvDriverValues(c *C) [][]driver.Value {
 		if err == io.EOF {
 			break
 		}
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if len(results) != 3 {
 			continue
 		}
 		regionID, err := strconv.Atoi(results[0])
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		startKey, endKey := results[1], results[2]
 		values = append(values, []driver.Value{regionID, startKey, endKey})
 	}
 	return values
 }
 
-func (s *testSQLSuite) TestBuildVersion3RegionQueries(c *C) {
+func TestBuildVersion3RegionQueries(t *testing.T) {
+	t.Parallel()
+
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
-	defer db.Close()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
 	conn, err := db.Conn(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	tctx, cancel := tcontext.Background().WithLogger(appLogger).WithCancel()
 	oldOpenFunc := openDBFunc
 	defer func() {
@@ -1258,7 +1342,7 @@ func (s *testSQLSuite) TestBuildVersion3RegionQueries(c *C) {
 			{2142, "2021-06-28 10:59:03", 1959424},
 			{2142, "2021-06-28 10:59:04", 2000000},
 		})
-	selectRegionStatusHistograms := buildMockNewRows(mock, []string{"REGION_ID", "START_KEY", "END_KEY"}, readRegionCsvDriverValues(c))
+	selectRegionStatusHistograms := buildMockNewRows(mock, []string{"REGION_ID", "START_KEY", "END_KEY"}, readRegionCsvDriverValues(t))
 	selectInformationSchemaTables := buildMockNewRows(mock, []string{"TABLE_SCHEMA", "TABLE_NAME", "TIDB_TABLE_ID"},
 		[][]driver.Value{
 			{"mysql", "expr_pushdown_blacklist", 39},
@@ -1295,8 +1379,8 @@ func (s *testSQLSuite) TestBuildVersion3RegionQueries(c *C) {
 	mock.ExpectQuery("SELECT REGION_ID,START_KEY,END_KEY FROM INFORMATION_SCHEMA.TIKV_REGION_STATUS ORDER BY START_KEY;").
 		WillReturnRows(selectRegionStatusHistograms)
 
-	c.Assert(d.renewSelectTableRegionFuncForLowerTiDB(tctx), IsNil)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, d.renewSelectTableRegionFuncForLowerTiDB(tctx))
+	require.NoError(t, mock.ExpectationsWereMet())
 
 	testCases := []struct {
 		tableName            string
@@ -1371,7 +1455,7 @@ func (s *testSQLSuite) TestBuildVersion3RegionQueries(c *C) {
 	}
 
 	for i, testCase := range testCases {
-		c.Log(fmt.Sprintf("case #%d", i))
+		t.Logf("case #%d", i)
 		table := testCase.tableName
 		handleColNames := testCase.handleColNames
 		handleColTypes := testCase.handleColTypes
@@ -1399,19 +1483,21 @@ func (s *testSQLSuite) TestBuildVersion3RegionQueries(c *C) {
 		}
 
 		orderByClause := buildOrderByClauseString(handleColNames)
-		c.Assert(d.concurrentDumpTable(tctx, conn, meta, taskChan), IsNil)
-		c.Assert(mock.ExpectationsWereMet(), IsNil)
+		require.NoError(t, d.concurrentDumpTable(tctx, conn, meta, taskChan))
+		require.NoError(t, mock.ExpectationsWereMet())
 
 		chunkIdx := 0
 		for _, w := range testCase.expectedWhereClauses {
 			query := buildSelectQuery(database, table, "*", "", buildWhereCondition(d.conf, w), orderByClause)
 			task := <-taskChan
 			taskTableData, ok := task.(*TaskTableData)
-			c.Assert(ok, IsTrue)
-			c.Assert(taskTableData.ChunkIndex, Equals, chunkIdx)
+			require.True(t, ok)
+			require.Equal(t, chunkIdx, taskTableData.ChunkIndex)
+
 			data, ok := taskTableData.Data.(*tableData)
-			c.Assert(ok, IsTrue)
-			c.Assert(data.query, Equals, query)
+			require.True(t, ok)
+			require.Equal(t, query, data.query)
+
 			chunkIdx++
 		}
 	}

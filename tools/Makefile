@@ -1,7 +1,4 @@
-all: bin/gofumports bin/govet bin/revive bin/golangci-lint bin/failpoint-ctl
-
-bin/gofumports:
-	go build -o $@ mvdan.cc/gofumpt/gofumports
+all: bin/govet bin/revive bin/golangci-lint bin/failpoint-ctl
 
 bin/govet:
 	go build -o $@ github.com/dnephin/govet

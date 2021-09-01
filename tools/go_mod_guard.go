@@ -14,7 +14,5 @@ import (
 
 	// failpoint enables manual 'failure' of some execution points.
 	_ "github.com/pingcap/failpoint"
-
-	// A stricter gofmt
-	_ "mvdan.cc/gofumpt/gofumports"
+	_ "github.com/pingcap/failpoint/code"
 )

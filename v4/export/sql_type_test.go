@@ -4,15 +4,14 @@ package export
 
 import (
 	"bytes"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testSQLByteSuite{})
+func TestEscape(t *testing.T) {
+	t.Parallel()
 
-type testSQLByteSuite struct{}
-
-func (s *testSQLByteSuite) TestEscape(c *C) {
 	var bf bytes.Buffer
 	str := []byte(`MWQeWw""'\rNmtGxzGp`)
 	expectStrBackslash := `MWQeWw\"\"\'\\rNmtGxzGp`
@@ -20,37 +19,39 @@ func (s *testSQLByteSuite) TestEscape(c *C) {
 	expectStrBackslashDoubleQuote := `MWQeWw\"\"'\\rNmtGxzGp`
 	expectStrWithoutBackslashDoubleQuote := `MWQeWw""""'\rNmtGxzGp`
 	escapeSQL(str, &bf, true)
-	c.Assert(bf.String(), Equals, expectStrBackslash)
+	require.Equal(t, expectStrBackslash, bf.String())
+
 	bf.Reset()
 	escapeSQL(str, &bf, false)
-	c.Assert(bf.String(), Equals, expectStrWithoutBackslash)
+	require.Equal(t, expectStrWithoutBackslash, bf.String())
+
 	bf.Reset()
 	opt := &csvOption{
 		delimiter: []byte(`"`),
 		separator: []byte(`,`),
 	}
 	escapeCSV(str, &bf, true, opt)
-	c.Assert(bf.String(), Equals, expectStrBackslashDoubleQuote)
+	require.Equal(t, expectStrBackslashDoubleQuote, bf.String())
+
 	bf.Reset()
 	escapeCSV(str, &bf, false, opt)
-	c.Assert(bf.String(), Equals, expectStrWithoutBackslashDoubleQuote)
-	bf.Reset()
+	require.Equal(t, expectStrWithoutBackslashDoubleQuote, bf.String())
 
+	bf.Reset()
 	str = []byte(`a|*|b"cd`)
 	expectedStrWithDelimiter := `a|*|b""cd`
 	expectedStrBackslashWithoutDelimiter := `a\|*\|b"cd`
 	expectedStrWithoutDelimiter := `a|*|b"cd`
-
 	escapeCSV(str, &bf, false, opt)
-	c.Assert(bf.String(), Equals, expectedStrWithDelimiter)
-	bf.Reset()
+	require.Equal(t, expectedStrWithDelimiter, bf.String())
 
+	bf.Reset()
 	opt.delimiter = []byte("")
 	opt.separator = []byte(`|*|`)
 	escapeCSV(str, &bf, true, opt)
-	c.Assert(bf.String(), Equals, expectedStrBackslashWithoutDelimiter)
+	require.Equal(t, expectedStrBackslashWithoutDelimiter, bf.String())
+
 	bf.Reset()
 	escapeCSV(str, &bf, false, opt)
-	c.Assert(bf.String(), Equals, expectedStrWithoutDelimiter)
-	bf.Reset()
+	require.Equal(t, expectedStrWithoutDelimiter, bf.String())
 }
