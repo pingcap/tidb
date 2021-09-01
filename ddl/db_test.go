@@ -83,6 +83,7 @@ var _ = Suite(&testDBSuite7{&testDBSuite{}})
 var _ = Suite(&testDBSuite8{&testDBSuite{}})
 var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
 var _ = SerialSuites(&testSerialDBSuite1{&testDBSuite{}})
+var _ = SerialSuites(&testSerialPolicySuite{&testDBSuite{}})
 
 const defaultBatchSize = 1024
 const defaultReorgBatchSize = 256
@@ -155,6 +156,7 @@ type testDBSuite7 struct{ *testDBSuite }
 type testDBSuite8 struct{ *testDBSuite }
 type testSerialDBSuite struct{ *testDBSuite }
 type testSerialDBSuite1 struct{ *testDBSuite }
+type testSerialPolicySuite struct{ *testDBSuite }
 
 func testAddIndexWithPK(tk *testkit.TestKit) {
 	tk.MustExec("drop table if exists test_add_index_with_pk")

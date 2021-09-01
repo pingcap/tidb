@@ -17,8 +17,8 @@ package ddl
 import (
 	"context"
 	"fmt"
-
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
@@ -93,10 +93,11 @@ func checkPolicyLabels(w *worker, rules []*placement.Rule) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	b := &placementpolicy.ShowPlacementLabelsResultBuilder{}
+	b := &placementpolicy.CheckPolicyLabelsResultBuilder{}
 	for _, row := range rows {
-		bj := row.GetJSON(1)
-		if err := b.AppendStoreLabels(bj); err != nil {
+		key := row.GetString(0)
+		valueList := row.GetJSON(1)
+		if err := b.AppendShowLabels(key, valueList); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -137,6 +138,9 @@ func (w *worker) checkPolicyConstraints(info *placementpolicy.PolicyInfo) error 
 		return err
 	}
 	// For constraint labels and default region label, they should be checked by `SHOW LABELS` if necessary when it is applied.
+	failpoint.Inject("SkipCheckPolicyLabel", func(_ failpoint.Value) {
+		failpoint.Return(nil)
+	})
 	if err := checkPolicyLabels(w, totalRules); err != nil {
 		return err
 	}

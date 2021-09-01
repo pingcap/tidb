@@ -23,6 +23,53 @@ import (
 	"github.com/pingcap/tidb/types/json"
 )
 
+type CheckPolicyLabelsResultBuilder struct {
+	labelKey2ValueList map[string][]string
+}
+
+func (b *CheckPolicyLabelsResultBuilder) AppendShowLabels(key string, valueList json.BinaryJSON) error {
+	if b.labelKey2ValueList == nil {
+		b.labelKey2ValueList = make(map[string][]string)
+	}
+
+	data, err := valueList.MarshalJSON()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if string(data) == "null" {
+		return nil
+	}
+
+	if valueList.TypeCode != json.TypeCodeArray {
+		return errors.New("only array or null type is allowed")
+	}
+	labels := make([]string, 0, valueList.GetElemCount())
+	err = gjson.Unmarshal(data, &labels)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	b.labelKey2ValueList[key] = labels
+	return nil
+}
+
+func (b *CheckPolicyLabelsResultBuilder) CheckLabels(targetsMap map[string]struct{}) error {
+	for target := range targetsMap {
+		var founded bool
+		for label := range b.labelKey2ValueList {
+			if label == target {
+				founded = true
+				break
+			}
+		}
+		if founded {
+			continue
+		}
+		return errors.Errorf("Placement label %s doesn't exist in the storage", target)
+	}
+	return nil
+}
+
 type ShowPlacementLabelsResultBuilder struct {
 	labelKey2values map[string]interface{}
 }
@@ -90,21 +137,4 @@ func (b *ShowPlacementLabelsResultBuilder) SortMapKeys(m map[string]interface{})
 
 	sort.Strings(sorted)
 	return sorted
-}
-
-func (b *ShowPlacementLabelsResultBuilder) CheckLabels(targetsMap map[string]struct{}) error {
-	for target := range targetsMap {
-		var founded bool
-		for _, label := range b.labelKey2values {
-			if label == target {
-				founded = true
-				break
-			}
-		}
-		if founded {
-			continue
-		}
-		return errors.Errorf("Placement label %s doesn't exist in the storage", target)
-	}
-	return nil
 }

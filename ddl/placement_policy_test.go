@@ -18,6 +18,7 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -29,7 +30,21 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testDBSuite6) TestPlacementPolicy(c *C) {
+// For placement policy test, better move it to this test file.
+// Because, we would use failpoint to skip the checkPolicyLabel
+// since there is no actually PD and Cluster Label environment.
+
+func (s *testSerialPolicySuite) SetUpSuite(c *C) {
+	s.testDBSuite.SetUpSuite(c)
+	failpoint.Enable("github.com/pingcap/tidb/ddl/SkipCheckPolicyLabel", "return")
+}
+
+func (s *testSerialPolicySuite) TearDownSuite(c *C) {
+	failpoint.Disable("github.com/pingcap/tidb/ddl/SkipCheckPolicyLabel")
+	s.testDBSuite.TearDownSuite(c)
+}
+
+func (s *testSerialPolicySuite) TestPlacementPolicy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
@@ -135,7 +150,7 @@ func testGetPolicyByNameFromIS(c *C, ctx sessionctx.Context, policy string) *pla
 	return po
 }
 
-func (s *testDBSuite6) TestConstraintCompatibility(c *C) {
+func (s *testSerialPolicySuite) TestConstraintCompatibility(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
@@ -195,9 +210,48 @@ func (s *testDBSuite6) TestConstraintCompatibility(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:-1]conflicting label constraints: '-zone=cn-east-1' and '+zone=cn-east-1'")
 }
 
-func (s *testDBSuite6) TestCheckPlacementPolicyLabels(c *C) {
+func (s *testSerialPolicySuite) TestShowPlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("drop placement policy if exists p1")
 
+	tk.MustExec("create placement policy pa1 " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1,cn-east-2\"" +
+		"SCHEDULE=\"EVEN\"")
+	defer tk.MustExec("drop placement policy pa1")
+
+	tk.MustExec("create placement policy pa2 " +
+		"LEADER_CONSTRAINTS=\"[+region=us-east-1]\" " +
+		"FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" " +
+		"FOLLOWERS=3")
+	defer tk.MustExec("drop placement policy pa2")
+
+	tk.MustExec("create placement policy pb1 " +
+		"VOTER_CONSTRAINTS=\"[+region=bj]\" " +
+		"LEARNER_CONSTRAINTS=\"[+region=sh]\" " +
+		"CONSTRAINTS=\"[+disk=ssd]\"" +
+		"VOTERS=5 " +
+		"LEARNERS=3")
+	defer tk.MustExec("drop placement policy pb1")
+
+	tk.MustQuery("show placement").Check(testkit.Rows(
+		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SCHEDULED",
+		"POLICY pa2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" SCHEDULED",
+		"POLICY pb1 CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" SCHEDULED",
+	))
+
+	tk.MustQuery("show placement like 'POLICY%'").Check(testkit.Rows(
+		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SCHEDULED",
+		"POLICY pa2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" SCHEDULED",
+		"POLICY pb1 CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" SCHEDULED",
+	))
+
+	tk.MustQuery("show placement like 'POLICY pa%'").Check(testkit.Rows(
+		"POLICY pa1 PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east-2\" SCHEDULE=\"EVEN\" SCHEDULED",
+		"POLICY pa2 LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" SCHEDULED",
+	))
+
+	tk.MustQuery("show placement where Target='POLICY pb1'").Check(testkit.Rows(
+		"POLICY pb1 CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" SCHEDULED",
+	))
 }
