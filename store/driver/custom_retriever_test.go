@@ -339,6 +339,7 @@ func (s *testCustomRetrieverSuite) newMemBufferRetriever(c *C, start interface{}
 			err := memBuffer.Set(k, []byte("12345"))
 			c.Assert(err, IsNil)
 			err = memBuffer.Delete(k)
+			c.Assert(err, IsNil)
 		} else {
 			err := memBuffer.Set(k, makeBytes(d[1]))
 			c.Assert(err, IsNil)
