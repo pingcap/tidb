@@ -57,7 +57,7 @@ func CheckIndexConsistency(sc *stmtctx.StatementContext, sessVars *variable.Sess
 		return nil
 	}
 	mutations := collectTableMutationsFromBufferStage(t, memBuffer, sh)
-	if err := checkRowValues(sc, sessVars, t, dataAdded, dataRemoved, mutations); err != nil {
+	if err := checkRowAdditionConsistency(sc, sessVars, t, dataAdded, mutations); err != nil {
 		return errors.Trace(err)
 	}
 	if err := checkIndexKeys(sc, sessVars, t, dataAdded, dataRemoved, mutations); err != nil {
@@ -125,14 +125,14 @@ func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 	return nil
 }
 
-// checkRowValues checks whether  the values of row mutations are consistent with the expected ones
-func checkRowValues(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, t *TableCommon,
-	dataAdded, dataRemoved []types.Datum, mutations []mutation) error {
-	rowsAdded, rowsRemoved := ExtractRowMutations(mutations)
-	if len(rowsAdded) > 1 || len(rowsRemoved) > 1 {
+// checkRowAdditionConsistency checks whether the values of row mutations are consistent with the expected ones
+// We only check data added since a deletion of a row doesn't care about its value (and we cannot know it)
+func checkRowAdditionConsistency(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, t *TableCommon,
+	dataAdded []types.Datum, mutations []mutation) error {
+	rowsAdded, _ := ExtractRowMutations(mutations)
+	if len(rowsAdded) > 1 {
 		// TODO: is it possible?
-		logutil.BgLogger().Error("multiple row mutations added/mutated", zap.Any("rowsAdded", rowsAdded),
-			zap.Any("rowsRemoved", rowsRemoved))
+		logutil.BgLogger().Error("multiple row mutations added/mutated", zap.Any("rowsAdded", rowsAdded))
 		return errors.New("multiple row mutations added/mutated")
 	}
 
@@ -146,15 +146,13 @@ func checkRowValues(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 	if err := checkRowMutationsWithData(sc, sessVars, rowsAdded, columnFieldMap, dataAdded, columnMap); err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkRowMutationsWithData(sc, sessVars, rowsRemoved, columnFieldMap, dataRemoved, columnMap); err != nil {
-		return errors.Trace(err)
-	}
 	return nil
 }
 
 func checkRowMutationsWithData(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, rowMutations []mutation,
 	columnFieldMap map[int64]*types.FieldType, expectedData []types.Datum, columnMap map[int64]*model.ColumnInfo) error {
 	if len(rowMutations) > 0 {
+		// FIXME: len(value) == 0 (delete)
 		decodedData, err := tablecodec.DecodeRowToDatumMap(rowMutations[0].value, columnFieldMap, sessVars.Location())
 		if err != nil {
 			return errors.Trace(err)
