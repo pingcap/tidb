@@ -24,8 +24,6 @@ import (
 	"testing"
 	"time"
 
-	// TODO: Remove "github.com/pingcap/check" dependency from this file
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
@@ -101,27 +99,6 @@ func TestTCopy(t *testing.T) {
 	testleak.AfterTestT(t)()
 }
 
-func TestT(t *testing.T) {
-	// TODO: CustomVerboseFlag seems to come from "github.com/pingcap/check"
-	CustomVerboseFlag = true
-	logLevel := os.Getenv("log_level")
-	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-	})
-	testleak.BeforeTest()
-	// TODO: Testing(...) seems to come from "github.com/pingcap/check"
-	TestingT(t)
-	testleak.AfterTestT(t)()
-}
-
-// TODO: SerialSuites(...) seems to come from "github.com/pingcap/check"
-var _ = SerialSuites(&testFailDBSuite{})
-
 type testFailDBSuite struct {
 	cluster testutils.Cluster
 	lease   time.Duration
@@ -150,39 +127,6 @@ func (s *testFailDBSuite) SetUpSuiteCopy(t *testing.T) {
 	s.se, err = session.CreateSession4Test(s.store)
 	require.NoError(t, err)
 	s.p = parser.New()
-}
-
-// TODO: type C seems to come from "github.com/pingcap/check"
-func (s *testFailDBSuite) SetUpSuite(c *C) {
-	s.lease = 200 * time.Millisecond
-	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
-	var err error
-	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithSingleStore(c)
-			s.cluster = c
-		}),
-	)
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, IsNil)
-	session.SetSchemaLease(s.lease)
-	s.dom, err = session.BootstrapSession(s.store)
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, IsNil)
-	s.se, err = session.CreateSession4Test(s.store)
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, IsNil)
-	s.p = parser.New()
-}
-
-// TODO: type C seems to come from "github.com/pingcap/check"
-func (s *testFailDBSuite) TearDownSuite(c *C) {
-	_, err := s.se.Execute(context.Background(), "drop database if exists test_db_state")
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, IsNil)
-	s.se.Close()
-	s.dom.Close()
-	s.store.Close()
 }
 
 func (s *testFailDBSuite) TearDownSuiteCopy(t *testing.T) {
