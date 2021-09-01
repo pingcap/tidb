@@ -2396,19 +2396,19 @@ func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, executor.ErrRoleNotGranted))
 
-	tk.MustQuery("SHOW GRANTS FOR current_user() USING otherrole;").Sort().Check(testkit.Rows(
-		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
-		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+	tk.MustQuery("SHOW GRANTS FOR current_user() USING otherrole;").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'joe'@'%'",
 		"GRANT SELECT ON test.* TO 'joe'@'%'",
 		"GRANT UPDATE ON role.* TO 'joe'@'%'",
-		"GRANT USAGE ON *.* TO 'joe'@'%'",
+		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
 	))
-	tk.MustQuery("SHOW GRANTS FOR joe USING otherrole;").Sort().Check(testkit.Rows(
-		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
-		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+	tk.MustQuery("SHOW GRANTS FOR joe USING otherrole;").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'joe'@'%'",
 		"GRANT SELECT ON test.* TO 'joe'@'%'",
 		"GRANT UPDATE ON role.* TO 'joe'@'%'",
-		"GRANT USAGE ON *.* TO 'joe'@'%'",
+		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
 	))
 
 }
