@@ -62,9 +62,10 @@ func TestTCopy(t *testing.T) {
 	testleak.BeforeTest()
 	s := &testFailDBSuite{}
 	s.SetUpSuiteCopy(t)
-	s.MyTestPartitionAddPanicCopy(t)
-	s.MyTestModifyColumn(t)
+	s.MyTestRunDDLJobPanic(t)
 	s.MyTestPartitionAddIndexGC(t)
+	s.MyTestModifyColumn(t)
+	s.MyTestPartitionAddPanicCopy(t)
 	s.TearDownSuiteCopy(t)
 	testleak.AfterTestT(t)()
 }
@@ -522,21 +523,18 @@ LOOP:
 	s.RerunWithCommonHandleEnabled(c, s.TestAddIndexWorkerNum)
 }
 
-// TODO: type C seems to come from "github.com/pingcap/check"
 // TestRunDDLJobPanic tests recover panic when run ddl job panic.
-func (s *testFailDBSuite) TestRunDDLJobPanic(c *C) {
+func (s *testFailDBSuite) MyTestRunDDLJobPanic(t *testing.T) {
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob"))
 	}()
-	tk := testkit.NewTestKit(c, s.store)
+	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`))
 	_, err := tk.Exec("create table t(c1 int, c2 int)")
-	// TODO: c, Assert and NoNil seem to come from "github.com/pingcap/check"
-	c.Assert(err, NotNil)
-	// TODO: c, Assert and Equals seem to come from "github.com/pingcap/check"
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	require.Error(t, err)
+	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
 }
 
 func (s *testFailDBSuite) MyTestPartitionAddIndexGC(t *testing.T) {
