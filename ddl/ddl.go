@@ -680,12 +680,11 @@ func (d *ddl) startCleanDeadTableLock() {
 
 // RecoverInfo contains information needed by DDL.RecoverTable.
 type RecoverInfo struct {
-	SchemaID      int64
-	TableInfo     *model.TableInfo
-	DropJobID     int64
-	SnapshotTS    uint64
-	CurAutoIncID  int64
-	CurAutoRandID int64
+	SchemaID   int64
+	TableInfo  *model.TableInfo
+	DropJobID  int64
+	SnapshotTS uint64
+	AutoIDs    meta.AutoIDs
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.

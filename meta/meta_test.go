@@ -193,11 +193,11 @@ func TestMeta(t *testing.T) {
 	err = m.CreateTableOrView(1, tbInfo)
 	require.NoError(t, err)
 
-	n, err = m.GenAutoTableID(1, 1, 10)
+	n, err = m.GetAutoIDCtrl(1, 1).RowID().Inc(10)
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	n, err = m.GetAutoTableID(1, 1)
+	n, err = m.GetAutoIDCtrl(1, 1).RowID().Get()
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
@@ -228,18 +228,20 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo, tbInfo2}, tables)
 	// Generate an auto id.
-	n, err = m.GenAutoTableID(1, 2, 10)
+	n, err = m.GetAutoIDCtrl(1, 2).RowID().Inc(10)
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 	// Make sure the auto id key-value entry is there.
-	n, err = m.GetAutoTableID(1, 2)
+	n, err = m.GetAutoIDCtrl(1, 2).RowID().Get()
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	err = m.DropTableOrView(1, tbInfo2.ID, true)
+	err = m.DropTableOrView(1, tbInfo2.ID)
+	require.NoError(t, err)
+	err = m.GetAutoIDCtrl(1, tbInfo2.ID).All().Del()
 	require.NoError(t, err)
 	// Make sure auto id key-value entry is gone.
-	n, err = m.GetAutoTableID(1, 2)
+	n, err = m.GetAutoIDCtrl(1, 2).RowID().Get()
 	require.NoError(t, err)
 	require.Equal(t, int64(0), n)
 
@@ -258,19 +260,19 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	// Update auto ID.
 	currentDBID := int64(1)
-	n, err = m.GenAutoTableID(currentDBID, tid, 10)
+	n, err = m.GetAutoIDCtrl(currentDBID, tid).RowID().Inc(10)
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 	// Fail to update auto ID.
 	// The table ID doesn't exist.
 	nonExistentID := int64(1234)
-	_, err = m.GenAutoTableID(currentDBID, nonExistentID, 10)
+	_, err = m.GetAutoIDCtrl(currentDBID, nonExistentID).RowID().Inc(10)
 	require.NotNil(t, err)
 	require.True(t, meta.ErrTableNotExists.Equal(err))
 	// Fail to update auto ID.
 	// The current database ID doesn't exist.
 	currentDBID = nonExistentID
-	_, err = m.GenAutoTableID(currentDBID, tid, 10)
+	_, err = m.GetAutoIDCtrl(currentDBID, tid).RowID().Inc(10)
 	require.NotNil(t, err)
 	require.True(t, meta.ErrDBNotExists.Equal(err))
 	// Test case for CreateTableAndSetAutoID.
@@ -280,7 +282,7 @@ func TestMeta(t *testing.T) {
 	}
 	err = m.CreateTableAndSetAutoID(1, tbInfo3, 123, 0)
 	require.NoError(t, err)
-	id, err := m.GetAutoTableID(1, tbInfo3.ID)
+	id, err := m.GetAutoIDCtrl(1, tbInfo3.ID).RowID().Get()
 	require.NoError(t, err)
 	require.Equal(t, int64(123), id)
 	// Test case for GenAutoTableIDKeyValue.

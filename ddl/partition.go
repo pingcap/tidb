@@ -1247,27 +1247,14 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	}
 
-	// partition table base auto id
-	ptBaseID, err := t.GetAutoTableID(ptSchemaID, pt.ID)
+	// partition table auto id.
+	ptAutoIDs, err := t.GetAutoIDCtrl(ptSchemaID, ptID).All().Get()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
-	ptRandID, err := t.GetAutoRandomID(ptSchemaID, pt.ID)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
 	// non-partition table base auto id
-	ntBaseID, err := t.GetAutoTableID(job.SchemaID, nt.ID)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	ntRandID, err := t.GetAutoRandomID(job.SchemaID, nt.ID)
+	ntAutoIDs, err := t.GetAutoIDCtrl(job.SchemaID, nt.ID).All().Get()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1305,7 +1292,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	})
 
 	// recreate non-partition table meta info
-	err = t.DropTableOrView(job.SchemaID, partDef.ID, true)
+	err = t.DropTableOrView(job.SchemaID, partDef.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1318,34 +1305,19 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	// both pt and nt set the maximum auto_id between ntBaseID and ptBaseID
-	if ntBaseID > ptBaseID {
-		_, err = t.GenAutoTableID(ptSchemaID, pt.ID, ntBaseID-ptBaseID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
+	newAutoIDs := meta.AutoIDs{
+		RowID:    mathutil.MaxInt64(ptAutoIDs.RowID, ntAutoIDs.RowID),
+		RandomID: mathutil.MaxInt64(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
 	}
-
-	_, err = t.GenAutoTableID(job.SchemaID, nt.ID, mathutil.MaxInt64(ptBaseID, ntBaseID))
+	err = t.GetAutoIDCtrl(ptSchemaID, pt.ID).All().Put(newAutoIDs)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
-	if ntRandID != 0 || ptRandID != 0 {
-		if ntRandID > ptRandID {
-			_, err = t.GenAutoRandomID(ptSchemaID, pt.ID, ntRandID-ptRandID)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-		}
-
-		_, err = t.GenAutoRandomID(job.SchemaID, nt.ID, mathutil.MaxInt64(ptRandID, ntRandID))
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
+	err = t.GetAutoIDCtrl(job.SchemaID, nt.ID).All().Put(newAutoIDs)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
 	}
 
 	// the follow code is a swap function for rules of two partitions
