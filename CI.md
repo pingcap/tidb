@@ -8,9 +8,9 @@
 
 3. "**Only use trigger phrase for build triggering**". What does that mean?
 
-   * Yes，this ci will be triggered only when your comment on pr matched trigger phrase.
+   * Yes, this ci will be triggered only when your comment on pr matched trigger phrase.
 
-   * No，this ci will be triggered by every new commit on current pr，comment matched trigger phrase also trigger ci pipeline.
+   * No, this ci will be triggered by every new commit on current pr, comment matched trigger phrase also trigger ci pipeline.
 
 ## Commands
 
