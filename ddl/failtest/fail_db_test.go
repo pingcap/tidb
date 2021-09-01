@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	newtestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	. "github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
@@ -154,7 +153,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(t *testing.T) {
 	require.Error(t, err)
 
 	// Make sure that the table's data has not been deleted.
-	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t").Check(newtestkit.Rows("1"))
 	// Execute ddl statement reload schema
 	tk.MustExec("alter table t comment 'test1'")
 	err = s.dom.DDL().GetHook().OnChanged(nil)
@@ -181,9 +180,9 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(t *testing.T) {
 	require.Error(t, err)
 	_, err = tk.Exec("rename table tx to ty, ty to tz")
 	require.Error(t, err)
-	tk.MustQuery("select * from ty").Check(testkit.Rows("2"))
+	tk.MustQuery("select * from ty").Check(newtestkit.Rows("2"))
 	// Make sure that the table's data has not been deleted.
-	tk.MustQuery("select * from tx").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from tx").Check(newtestkit.Rows("1"))
 	// Execute ddl statement reload schema.
 	tk.MustExec("alter table tx comment 'tx'")
 	err = s.dom.DDL().GetHook().OnChanged(nil)
@@ -206,8 +205,8 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(t *testing.T) {
 	_, err = tk.Exec("alter table pt exchange partition p1 with table nt")
 	require.Error(t, err)
 
-	tk.MustQuery("select * from pt").Check(testkit.Rows("1", "3", "5"))
-	tk.MustQuery("select * from nt").Check(testkit.Rows("7"))
+	tk.MustQuery("select * from pt").Check(newtestkit.Rows("1", "3", "5"))
+	tk.MustQuery("select * from nt").Check(newtestkit.Rows("7"))
 	// Execute ddl statement reload schema.
 	tk.MustExec("alter table pt comment 'pt'")
 	err = s.dom.DDL().GetHook().OnChanged(nil)
@@ -248,7 +247,7 @@ func (s *testFailDBSuite) TestUpdateHandleFailed(t *testing.T) {
 	tk.MustExec("insert into t values(-1, 1)")
 	tk.MustExec("alter table t add index idx_b(b)")
 	result := tk.MustQuery("select count(*) from t use index(idx_b)")
-	result.Check(testkit.Rows("1"))
+	result.Check(newtestkit.Rows("1"))
 	tk.MustExec("admin check index t idx_b")
 }
 
@@ -528,8 +527,8 @@ func (s *testFailDBSuite) TestModifyColumn(t *testing.T) {
 	}
 	require.Equal(t, 3, len(cols))
 	require.Equal(t, 3, len(tbl.Meta().Indices))
-	tk.MustQuery("select * from t").Check(testkit.Rows("2 1 3", "22 11 33"))
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+	tk.MustQuery("select * from t").Check(newtestkit.Rows("2 1 3", "22 11 33"))
+	tk.MustQuery("show create table t").Check(newtestkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
 		"  `a` int(11) NOT NULL DEFAULT '1',\n" +
 		"  `c` int(11) NOT NULL DEFAULT '0',\n" +
@@ -543,7 +542,7 @@ func (s *testFailDBSuite) TestModifyColumn(t *testing.T) {
 	_, err = tk.Exec("alter table t change column a aa tinyint after c")
 	require.EqualError(t, err, "[types:1690]constant 222 overflows tinyint")
 	tk.MustExec("alter table t change column a aa mediumint after c")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+	tk.MustQuery("show create table t").Check(newtestkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
 		"  `c` int(11) NOT NULL DEFAULT '0',\n" +
 		"  `aa` mediumint(9) DEFAULT NULL,\n" +
@@ -552,7 +551,7 @@ func (s *testFailDBSuite) TestModifyColumn(t *testing.T) {
 		"  KEY `idx1` (`aa`),\n" +
 		"  KEY `idx2` (`bb`,`c`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("select * from t").Check(testkit.Rows("2 3 1", "22 33 11", "111 333 222"))
+	tk.MustQuery("select * from t").Check(newtestkit.Rows("2 3 1", "22 33 11", "111 333 222"))
 	tk.MustExec("admin check table t")
 
 	// Test unsupport statements.
@@ -592,7 +591,7 @@ func (s *testFailDBSuite) TestModifyColumn(t *testing.T) {
 	tk.MustExec("create table t4(a bigint, b int, unique index idx(a));")
 	tk.MustExec("insert into t4 values (1,1),(2,2),(3,3),(4,4),(5,5);")
 	tk.MustExec("alter table t4 modify a bigint unsigned;")
-	tk.MustQuery("select * from t4 where a=1;").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t4 where a=1;").Check(newtestkit.Rows("1 1"))
 
 	// Test changing null to not null.
 	tk.MustExec("create table t5(a bigint, b int, unique index idx(a));")
