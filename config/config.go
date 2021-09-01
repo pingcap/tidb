@@ -370,6 +370,7 @@ type Security struct {
 	// Allow automatic TLS certificate generation
 	AutoTLS       bool   `toml:"auto-tls" json:"auto-tls"`
 	MinTLSVersion string `toml:"tls-version" json:"tls-version"`
+	RSAKeySize    int    `toml:"rsa-key-size" json:"rsa-key-size"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -548,6 +549,8 @@ type IsolationRead struct {
 type Experimental struct {
 	// Whether enable global kill.
 	EnableGlobalKill bool `toml:"enable-global-kill" json:"-"`
+	// Whether enable charset feature.
+	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
 }
 
 var defTiKVCfg = tikvcfg.DefaultConfig()
@@ -670,6 +673,7 @@ var defaultConf = Config{
 	},
 	Experimental: Experimental{
 		EnableGlobalKill: false,
+		EnableNewCharset: false,
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
@@ -679,6 +683,7 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
 		AutoTLS:                     true,
+		RSAKeySize:                  4096,
 	},
 	DeprecateIntegerDisplayWidth: false,
 	EnableEnumLengthLimit:        true,

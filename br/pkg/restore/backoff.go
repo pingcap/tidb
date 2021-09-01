@@ -56,7 +56,8 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	} else {
-		switch errors.Cause(err) { // nolint:errorlint
+		e := errors.Cause(err)
+		switch e { // nolint:errorlint
 		case berrors.ErrKVEpochNotMatch, berrors.ErrKVDownloadFailed, berrors.ErrKVIngestFailed:
 			bo.delayTime = 2 * bo.delayTime
 			bo.attempt--
@@ -65,7 +66,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 			bo.delayTime = 0
 			bo.attempt = 0
 		default:
-			switch status.Code(err) {
+			switch status.Code(e) {
 			case codes.Unavailable, codes.Aborted:
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--

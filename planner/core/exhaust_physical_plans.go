@@ -418,6 +418,7 @@ func (p *LogicalJoin) constructIndexJoin(
 	keyOff2IdxOff []int,
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
+	extractOtherEQ bool,
 ) []PhysicalPlan {
 	joinType := p.JoinType
 	var (
@@ -463,7 +464,7 @@ func (p *LogicalJoin) constructIndexJoin(
 	copy(outerHashKeys, newOuterKeys)
 	copy(innerHashKeys, newInnerKeys)
 	// we can use the `col <eq> col` in `OtherCondition` to build the hashtable to avoid the unnecessary calculating.
-	for i := len(newOtherConds) - 1; i >= 0; i = i - 1 {
+	for i := len(newOtherConds) - 1; extractOtherEQ && i >= 0; i = i - 1 {
 		switch c := newOtherConds[i].(type) {
 		case *expression.ScalarFunction:
 			if c.FuncName.L == ast.EQ {
@@ -528,7 +529,11 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
 ) []PhysicalPlan {
-	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
+	hintExists := false
+	if (outerIdx == 1 && (p.preferJoinType&preferLeftAsINLMJInner) > 0) || (outerIdx == 0 && (p.preferJoinType&preferRightAsINLMJInner) > 0) {
+		hintExists = true
+	}
+	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters, !hintExists)
 	indexMergeJoins := make([]PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
 		join := plan.(*PhysicalIndexJoin)
@@ -631,7 +636,7 @@ func (p *LogicalJoin) constructIndexHashJoin(
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
 ) []PhysicalPlan {
-	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
+	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters, true)
 	indexHashJoins := make([]PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
 		join := plan.(*PhysicalIndexJoin)
@@ -806,7 +811,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, path, lastColMng))
 		}
 	})
-	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, lastColMng)...)
+	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, lastColMng, true)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
 	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, lastColMng)...)
@@ -841,7 +846,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager))
 		}
 	})
-	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager, true)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
 	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
@@ -1066,6 +1071,10 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 				}
 			}
 		}
+		// We set `StatsVersion` here and fill other fields in `(*copTask).finishIndexPlan`. Since `copTask.indexPlan` may
+		// change before calling `(*copTask).finishIndexPlan`, we don't know the stats information of `ts` currently and on
+		// the other hand, it may be hard to identify `StatsVersion` of `ts` in `(*copTask).finishIndexPlan`.
+		ts.stats = &property.StatsInfo{StatsVersion: ds.tableStats.StatsVersion}
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
 			var needExtraProj bool
@@ -2411,7 +2420,7 @@ func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
 	for _, agg := range la.AggFuncs {
 		// MPP does not support distinct except count distinct now
 		if agg.HasDistinct {
-			if agg.Name != ast.AggFuncCount {
+			if agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncGroupConcat {
 				hasUnsupportedDistinct = true
 			}
 		}
@@ -2483,7 +2492,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
-		if la.HasDistinct() {
+		if la.HasDistinct() || la.HasOrderBy() {
 			agg.MppRunMode = MppScalar
 		} else {
 			agg.MppRunMode = MppTiDB

@@ -76,8 +76,8 @@ func init() {
 		"testPlanSerialSuite.TestPartitionWithVariedDatasources",
 		"HTTPHandlerTestSuite.TestZipInfoForSQL",
 		"HTTPHandlerTestSuite.TestBinlogRecover",
-		"ConnTestSuite.TestConnExecutionTimeout",
-		"ConnTestSuite.TestTiFlashFallback",
+		"TestConnExecutionTimeout",
+		"TestTiFlashFallback",
 		"tidbTestTopSQLSuite.TestTopSQLCPUProfile",
 		"testPessimisticSuite.TestAmendForIndexChange",
 		"testPessimisticSuite.TestGenerateColPointGet",
@@ -99,6 +99,7 @@ func init() {
 		"testIntegrationSuite2.TestPartitionCancelAddPrimaryKey",
 		"testDBSuite1.TestAddIndexWithSplitTable",
 		"testSerialDBSuite.TestAddIndexWithShardRowID",
+		"testColumnTypeChangeSuite.TestColumnTypeChangeFromDateTimeTypeToOthers",
 	}
 	for _, v := range tmp {
 		allowList[v] = struct{}{}

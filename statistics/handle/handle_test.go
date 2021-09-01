@@ -878,7 +878,7 @@ func (s *testStatsSuite) TestBuildGlobalLevelStats(c *C) {
 }
 
 // nolint:unused
-func (s *testStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, tblName, dbName string) {
+func (s *testSerialStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, tblName, dbName string) {
 	tk.MustExec("create database if not exists " + dbName)
 	tk.MustExec("use " + dbName)
 	tk.MustExec("drop table if exists " + tblName)
@@ -902,7 +902,7 @@ func (s *testStatsSuite) prepareForGlobalStatsWithOpts(c *C, tk *testkit.TestKit
 }
 
 // nolint:unused
-func (s *testStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, t string, p string, topn, buckets int) {
+func (s *testSerialStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, t string, p string, topn, buckets int) {
 	delta := buckets/2 + 1
 	for _, isIdx := range []int{0, 1} {
 		c.Assert(len(tk.MustQuery(fmt.Sprintf("show stats_topn where table_name='%v' and partition_name='%v' and is_index=%v", t, p, isIdx)).Rows()), Equals, topn)
@@ -914,7 +914,7 @@ func (s *testStatsSuite) checkForGlobalStatsWithOpts(c *C, tk *testkit.TestKit, 
 	}
 }
 
-func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
+func (s *testSerialStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
 	}
@@ -953,7 +953,7 @@ func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts(c *C) {
 	}
 }
 
-func (s *testStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
+func (s *testSerialStatsSuite) TestAnalyzeGlobalStatsWithOpts2(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")
 	}
@@ -2865,6 +2865,27 @@ func (s *testSerialStatsSuite) TestCorrelationWithDefinedCollate(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][3], Equals, "[b,c]")
 	c.Assert(rows[0][5], Equals, "-1.000000")
+}
+
+func (s *testSerialStatsSuite) TestLoadHistogramWithCollate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a varchar(10) collate utf8mb4_unicode_ci);")
+	testKit.MustExec("insert into t values('abcdefghij');")
+	testKit.MustExec("insert into t values('abcdufghij');")
+	testKit.MustExec("analyze table t with 0 topn;")
+	do := s.do
+	h := do.StatsHandle()
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	_, err = h.TableStatsFromStorage(tblInfo, tblInfo.ID, true, 0)
+	c.Assert(err, IsNil)
 }
 
 func (s *testSerialStatsSuite) TestFastAnalyzeColumnHistWithNullValue(c *C) {
