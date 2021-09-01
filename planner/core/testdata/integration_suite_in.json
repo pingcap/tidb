@@ -380,7 +380,6 @@
       "select * from (select @n:=@n+a as e from ta) tt group by e",
       "select a from ta group by @n:=@n+1",
       "select a from ta group by @n:=@n+a"
->>>>>>> master
     ]
   }
 ]
