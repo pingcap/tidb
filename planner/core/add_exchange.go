@@ -6,6 +6,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"sync"
 )
 
 var MaxThrNum int
@@ -382,17 +383,8 @@ func (p *PhysicalTableReader) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPr
 
 		var sender *PhysicalXchg
 		var receiver *PhysicalXchg
-		if reqProp.isBroadcastHT {
-			sender = &PhysicalXchg{tp: TypeXchgSenderBroadcastHT}
-			receiver = &PhysicalXchg{tp: TypeXchgReceiverPassThroughHT}
-		} else if len(reqProp.hashPartition) != 0 {
-			// TODO: maybe no need copy
-			sender = &PhysicalXchg{tp: TypeXchgSenderHash, HashPartition: cloneCols(reqProp.hashPartition)}
-			receiver = &PhysicalXchg{tp: TypeXchgReceiverPassThrough}
-		} else {
-			sender = &PhysicalXchg{tp: TypeXchgSenderRandom}
-			receiver = &PhysicalXchg{tp: TypeXchgReceiverPassThrough}
-		}
+		sender = &PhysicalXchg{tp: TypeXchgSenderRandom}
+		receiver = &PhysicalXchg{tp: TypeXchgReceiverPassThrough}
 		if err := initXchg(ctx, sender, newNode, newNode.Stats(), reqProp.output); err != nil {
 			return nil, err
 		}
@@ -446,20 +438,17 @@ func (p *PhysicalHashJoin) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPrope
 		// If parent of HashJoin already requires parallel, build child have to enforce BroadcastHT.
 		p.GetChildXchgProps()[buildSideIdx].isBroadcastHT = true
 		p.GetChildXchgProps()[probeSideIdx].isBroadcastHT = false
+		p.IsBroadcast = true
+		setupBroadcastHashJoin(p, reqProp.output)
+	} else {
+		outStreamCnt := ctx.GetSessionVars().ExecutorConcurrency
+		var res1 []PhysicalPlan
+		if res1, err = tryBroadcastHJ(ctx, p, outStreamCnt, reqProp, buildSideIdx, probeSideIdx); err != nil {
+			return nil, err
+		}
+		res = append(res, res1...)
 	}
 
-	// We have to add exchange broadcast ht, so only HJ is not ok.
-	if reqProp.output != 1 && reqProp.isBroadcastHT {
-		res = res[:0]
-	}
-
-	outStreamCnt := ctx.GetSessionVars().ExecutorConcurrency
-	var res1 []PhysicalPlan
-
-	if res1, err = tryBroadcastHJ(ctx, p, outStreamCnt, reqProp, buildSideIdx, probeSideIdx); err != nil {
-		return nil, err
-	}
-	res = append(res, res1...)
 	return res, nil
 }
 
@@ -472,6 +461,8 @@ func tryBroadcastHJ(ctx sessionctx.Context, node *PhysicalHashJoin, outStreamCnt
 	if !ok {
 		return nil, errors.Errorf("Cloned node must be HashJoin: %v", newHJNode.TP())
 	}
+	newHJNode.IsBroadcast = true
+	setupBroadcastHashJoin(newHJNode, outStreamCnt)
 
 	buildReqProp := &XchgProperty{
 		output:        outStreamCnt,
@@ -485,31 +476,15 @@ func tryBroadcastHJ(ctx sessionctx.Context, node *PhysicalHashJoin, outStreamCnt
 
 	var sender *PhysicalXchg
 	var receiver *PhysicalXchg
-	if reqProp.isBroadcastHT {
-		sender = &PhysicalXchg{tp: TypeXchgSenderBroadcastHT}
-		if err = initXchg(ctx, sender, newNode, newNode.Stats(), outStreamCnt); err != nil {
-			return nil, err
-		}
-		// If parent require HJ to be broadcast, SenderBroadcast needs to handle multiple children.
-		// SenderBroadcast will start multiple threads.
-		if reqProp.isBroadcastHT {
-			// TODO: put this in initXchg
-			sender.inStreamCnt = outStreamCnt
-		}
-		receiver = &PhysicalXchg{tp: TypeXchgReceiverPassThroughHT}
-		if err = initXchg(ctx, receiver, sender, newNode.Stats(), outStreamCnt); err != nil {
-			return nil, err
-		}
-	} else {
-		sender = &PhysicalXchg{tp: TypeXchgSenderPassThrough}
-		if err = initXchg(ctx, sender, newNode, newNode.Stats(), outStreamCnt); err != nil {
-			return nil, err
-		}
-		receiver = &PhysicalXchg{tp: TypeXchgReceiverRandom}
-		if err = initXchg(ctx, receiver, sender, newNode.Stats(), outStreamCnt); err != nil {
-			return nil, err
-		}
+	sender = &PhysicalXchg{tp: TypeXchgSenderPassThrough}
+	if err = initXchg(ctx, sender, newNode, newNode.Stats(), outStreamCnt); err != nil {
+		return nil, err
 	}
+	receiver = &PhysicalXchg{tp: TypeXchgReceiverRandom}
+	if err = initXchg(ctx, receiver, sender, newNode.Stats(), outStreamCnt); err != nil {
+		return nil, err
+	}
+
 	setupChans(sender, receiver, outStreamCnt)
 	res = append(res, receiver)
 
@@ -751,4 +726,25 @@ func hasAvailableThr(available int, needed int) bool {
 		return true
 	}
 	return false
+}
+
+func setupBroadcastHashJoin(p *PhysicalHashJoin, reqOutput int) {
+	p.HashVals = make([][]uint64, 0, reqOutput)
+	for i := 0; i < reqOutput; i++ {
+		p.HashVals = append(p.HashVals, make([]uint64, 0, 100))
+	}
+
+	p.RowPtrs = make([][]chunk.RowPtr, 0, reqOutput)
+	for i := 0; i < reqOutput; i++ {
+		p.RowPtrs = append(p.RowPtrs, make([]chunk.RowPtr, 0, 100))
+	}
+
+	p.Chks = make([][]*chunk.Chunk, 0, reqOutput)
+	for i := 0; i < reqOutput; i++ {
+		p.Chks = append(p.Chks, make([]*chunk.Chunk, 0, 100))
+	}
+	p.GWg = sync.WaitGroup{}
+	p.PutRCDone = sync.WaitGroup{}
+	p.PutHTDone = sync.WaitGroup{}
+	p.WorkerCnt = reqOutput
 }

@@ -16,6 +16,7 @@ package core
 import (
 	"fmt"
 	"strconv"
+	"sync"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -769,6 +771,17 @@ type PhysicalHashJoin struct {
 	storeTp          kv.StoreType
 	globalChildIndex int
 	mppShuffleJoin   bool
+
+	IsBroadcast bool
+	HashVals    [][]uint64
+	RowPtrs     [][]chunk.RowPtr
+	Chks        [][]*chunk.Chunk
+	GWg         sync.WaitGroup
+	PutRCDone   sync.WaitGroup
+	PutHTDone   sync.WaitGroup
+	CurWorkerID int
+	Rc          interface{}
+	WorkerCnt   int
 }
 
 // Clone implements PhysicalPlan interface.

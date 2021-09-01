@@ -1468,25 +1468,41 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		e.probeTypes[key.Index].Flag = key.RetType.Flag
 	}
 	if b.ctx.GetSessionVars().UseParallel {
-		var isBuildSideHT bool
-		if receiver, ok := e.buildSideExec.(*ExchangeReceiverPassThroughHT); ok {
-			sender, ok := receiver.children[0].(*ExchangeSenderBroadcastHT)
-			if !ok {
-				b.err = errors.New("expect xchg sender broadcast HT")
-				return nil
-			}
-			// TODO: make it better, it's strange to setup send's member in receiver.
-			sender.buildSideEstCount = e.buildSideEstCount
-			sender.buildKeys = e.buildKeys
-			sender.buildTypes = e.buildTypes
-			sender.useOuterToBuild = e.useOuterToBuild
-			sender.isNullEQ = e.isNullEQ
-			isBuildSideHT = true
-		}
 		res := &NonParallelHashJoinExec{
-			HashJoinExec:  e,
-			isBuildSideHT: isBuildSideHT,
+			HashJoinExec: e,
+
+			workerID:    v.CurWorkerID,
+			isBroadcast: v.IsBroadcast,
+			hashVals:    v.HashVals,
+			rowPtrs:     v.RowPtrs,
+			chks:        v.Chks,
+			gWg:         &v.GWg,
+			gPutRCDone:  &v.PutRCDone,
+			gPutHTDone:  &v.PutHTDone,
 		}
+		if v.CurWorkerID == 0 {
+			buildKeyColIdx := make([]int, len(e.buildKeys))
+			for i := range e.buildKeys {
+				buildKeyColIdx[i] = e.buildKeys[i].Index
+			}
+			hCtx := &hashContext{
+				allTypes:  e.buildTypes,
+				keyColIdx: buildKeyColIdx,
+			}
+			rc := newHashRowContainerMultiple(b.ctx, 0, hCtx, v.WorkerCnt)
+			res.rowContainer = rc
+			v.Rc = rc
+			v.GWg.Add(v.WorkerCnt)
+			v.PutRCDone.Add(1)
+			v.PutHTDone.Add(v.WorkerCnt)
+		} else {
+			var ok bool
+			res.rowContainer, ok = v.Rc.(*HashRowContainer)
+			if !ok {
+				panic("must be RC")
+			}
+		}
+		v.CurWorkerID++
 		return res
 	}
 	return e

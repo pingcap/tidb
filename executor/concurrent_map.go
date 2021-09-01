@@ -18,7 +18,7 @@ import (
 )
 
 // ShardCount controls the shard maps within the concurrent map
-var ShardCount = 320
+var ShardCount = 1024
 
 // A "thread" safe map of type string:Anything.
 // To avoid lock bottlenecks this map is dived to several (ShardCount) map shards.
