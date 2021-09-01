@@ -369,6 +369,25 @@ func (s *tiflashTestSuite) TestMppEnum(c *C) {
 	tk.MustQuery("select t1.b from t t1 join t t2 on t1.a = t2.a order by t1.b").Check(testkit.Rows("aca", "bca", "zca"))
 }
 
+func (s *tiflashTestSuite) TestDispatchTaskRetry(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tk.MustExec("insert into t values(1,0)")
+	tk.MustExec("insert into t values(2,0)")
+	tk.MustExec("insert into t values(3,0)")
+	tk.MustExec("insert into t values(4,0)")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout", "3*return(true)"), IsNil)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/mppDispatchTimeout"), IsNil)
+}
+
 func (s *tiflashTestSuite) TestCancelMppTasks(c *C) {
 	testleak.BeforeTest()
 	defer testleak.AfterTest(c)()
@@ -445,6 +464,60 @@ func (s *tiflashTestSuite) TestMppGoroutinesExitFromErrors(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(failpoint.Disable(mppNonRootTaskError), IsNil)
 	c.Assert(failpoint.Disable(hang), IsNil)
+}
+
+func (s *tiflashTestSuite) TestMppUnionAll(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists x1")
+	tk.MustExec("create table x1(a int , b int);")
+	tk.MustExec("alter table x1 set tiflash replica 1")
+	tk.MustExec("drop table if exists x2")
+	tk.MustExec("create table x2(a int , b int);")
+	tk.MustExec("alter table x2 set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "x1")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tb = testGetTableByName(c, tk.Se, "test", "x2")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side=1")
+
+	tk.MustExec("insert into x1 values (1, 1), (2, 2), (3, 3), (4, 4)")
+	tk.MustExec("insert into x2 values (5, 1), (2, 2), (3, 3), (4, 4)")
+
+	// test join + union (join + select)
+	tk.MustQuery("select x1.a, x.a from x1 left join (select x2.b a, x1.b from x1 join x2 on x1.a = x2.b union all select * from x1 ) x on x1.a = x.a order by x1.a").Check(testkit.Rows("1 1", "1 1", "2 2", "2 2", "3 3", "3 3", "4 4", "4 4"))
+	tk.MustQuery("select x1.a, x.a from x1 left join (select count(*) a, sum(b) b from x1 group by a union all select * from x2 ) x on x1.a = x.a order by x1.a").Check(testkit.Rows("1 1", "1 1", "1 1", "1 1", "2 2", "3 3", "4 4"))
+
+	tk.MustExec("drop table if exists x3")
+	tk.MustExec("create table x3(a int , b int);")
+	tk.MustExec("alter table x3 set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "x3")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert into x3 values (2, 2), (2, 3), (2, 4)")
+	// test nested union all
+	tk.MustQuery("select count(*) from (select a, b from x1 union all select a, b from x3 union all (select x1.a, x3.b from (select * from x3 union all select * from x2) x3 left join x1 on x3.a = x1.b))").Check(testkit.Rows("14"))
+	// test union all join union all
+	tk.MustQuery("select count(*) from (select * from x1 union all select * from x2 union all select * from x3) x join (select * from x1 union all select * from x2 union all select * from x3) y on x.a = y.b").Check(testkit.Rows("29"))
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count=100000")
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(6)`)
+	tk.MustQuery("select count(*) from (select * from x1 union all select * from x2 union all select * from x3) x join (select * from x1 union all select * from x2 union all select * from x3) y on x.a = y.b").Check(testkit.Rows("29"))
+	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
+
+	tk.MustExec("drop table if exists x4")
+	tk.MustExec("create table x4(a int not null, b int not null);")
+	tk.MustExec("alter table x4 set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "x4")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("insert into x4 values (2, 2), (2, 3)")
+	tk.MustQuery("(select * from x1 union all select * from x4) order by a, b").Check(testkit.Rows("1 1", "2 2", "2 2", "2 3", "3 3", "4 4"))
+
 }
 
 func (s *tiflashTestSuite) TestMppApply(c *C) {

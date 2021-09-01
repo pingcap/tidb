@@ -245,7 +245,8 @@ func (s *testSuite5) TestIndexJoinEnumSetIssue19233(c *C) {
 	tk.MustExec(`insert into p1 values('HOST_PORT');`)
 	tk.MustExec(`insert into p2 values('HOST_PORT');`)
 	for _, table := range []string{"p1", "p2"} {
-		for _, hint := range []string{"INL_HASH_JOIN", "INL_MERGE_JOIN", "INL_JOIN"} {
+		// INL_MERGE_JOIN do not support enum type. ref: https://github.com/pingcap/tidb/issues/24473
+		for _, hint := range []string{"INL_HASH_JOIN", "INL_JOIN"} {
 			sql := fmt.Sprintf(`select /*+ %s(%s) */ * from i, %s where i.objectType = %s.type;`, hint, table, table, table)
 			rows := tk.MustQuery(sql).Rows()
 			c.Assert(len(rows), Equals, 64)
