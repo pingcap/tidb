@@ -3,8 +3,7 @@
 ## Guide
 
 1. ci pipeline will be triggered when your comment on pull request matched command.
-2. Some ci pipelines only response to people belong to specific organization like pingcap & tikv.
-3. "**Only triggered by command**". What does that mean?
+2. "**Only triggered by command**". What does that mean?
    * Yes, this ci will be triggered only when your comment on pr matched command.
    * No, this ci will be triggered by every new commit on current pr, comment matched command also trigger ci pipeline.
 
