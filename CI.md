@@ -3,13 +3,9 @@
 ## Guide
 
 1. ci pipeline will be triggered when your comment on pull request matched trigger phrase.
-
 2. Some ci pipelines only response to people belong to specific organization like pingcap & tikv.
-
 3. "**Only use trigger phrase for build triggering**". What does that mean?
-
    * Yes, this ci will be triggered only when your comment on pr matched trigger phrase.
-
    * No, this ci will be triggered by every new commit on current pr, comment matched trigger phrase also trigger ci pipeline.
 
 ## Commands
