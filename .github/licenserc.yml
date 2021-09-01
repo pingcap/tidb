@@ -8,7 +8,6 @@ header:
     - '.gitignore'
     - '.gitattributes'
     - '.golangci.yml'
-    - 'licenserc.yml'
     - 'LICENSES/'
     - '**/*.md'
     - '**/*.json'
