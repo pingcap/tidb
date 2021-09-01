@@ -220,6 +220,7 @@ func (m *Meta) GenAutoTableIDKeyValue(dbID, tableID, autoID int64) (key, value [
 	return m.txn.EncodeHashAutoIDKeyValue(dbKey, autoTableIDKey, autoID)
 }
 
+// GetAutoIDCtrl gets the controller for auto IDs.
 func (m *Meta) GetAutoIDCtrl(dbID, tableID int64) *AutoIDCtrl {
 	return NewAutoIDCtrl(m, dbID, tableID)
 }

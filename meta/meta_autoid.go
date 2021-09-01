@@ -108,10 +108,7 @@ func (a autoIDAccessors) Put(autoIDs AutoIDs) error {
 	if err := a.rowIDAcc.Put(autoIDs.RowID); err != nil {
 		return err
 	}
-	if err := a.randIDAcc.Put(autoIDs.RandomID); err != nil {
-		return err
-	}
-	return nil
+	return a.randIDAcc.Put(autoIDs.RandomID)
 }
 
 // Del implements the interface AutoIDAccessors.
@@ -119,10 +116,7 @@ func (a autoIDAccessors) Del() error {
 	if err := a.rowIDAcc.Del(); err != nil {
 		return err
 	}
-	if err := a.randIDAcc.Del(); err != nil {
-		return err
-	}
-	return nil
+	return a.randIDAcc.Del()
 }
 
 // AutoIDCtrl can be changed into rowid/auto_increment/auto_random ID accessor.
