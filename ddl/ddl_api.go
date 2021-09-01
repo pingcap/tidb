@@ -2410,16 +2410,11 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 func isSameTypeMultiSpecs(specs []*ast.AlterTableSpec) bool {
 	specType := specs[0].Tp
 	for _, spec := range specs {
-		if spec.Tp != specType {
-			return false
+		// We think AlterTableDropPrimaryKey and AlterTableDropIndex are the same types.
+		if spec.Tp == ast.AlterTableDropPrimaryKey || spec.Tp == ast.AlterTableDropIndex {
+			continue
 		}
-	}
-	return true
-}
-
-func isDropIndexes(specs []*ast.AlterTableSpec) bool {
-	for _, spec := range specs {
-		if spec.Tp != ast.AlterTableDropPrimaryKey && spec.Tp != ast.AlterTableDropIndex {
+		if spec.Tp != specType {
 			return false
 		}
 	}
@@ -2442,19 +2437,14 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			return errRunMultiSchemaChanges
 		}
 
-		if isDropIndexes(validSpecs) {
-			if err = d.DropIndexes(sctx, ident, validSpecs); err != nil {
-				return errors.Trace(err)
-			}
-			return nil
-		}
-
 		if isSameTypeMultiSpecs(validSpecs) {
 			switch validSpecs[0].Tp {
 			case ast.AlterTableAddColumns:
 				err = d.AddColumns(sctx, ident, validSpecs)
 			case ast.AlterTableDropColumn:
 				err = d.DropColumns(sctx, ident, validSpecs)
+			case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
+				err = d.DropIndexes(sctx, ident, validSpecs)
 			default:
 				return errRunMultiSchemaChanges
 			}
