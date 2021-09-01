@@ -64,6 +64,7 @@ func TestTCopy(t *testing.T) {
 	s.SetUpSuiteCopy(t)
 	s.MyTestPartitionAddPanicCopy(t)
 	s.MyTestModifyColumn(t)
+	s.MyTestPartitionAddIndexGC(t)
 	s.TearDownSuiteCopy(t)
 	testleak.AfterTestT(t)()
 }
@@ -538,9 +539,8 @@ func (s *testFailDBSuite) TestRunDDLJobPanic(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 }
 
-// TODO: type C seems to come from "github.com/pingcap/check"
-func (s *testFailDBSuite) TestPartitionAddIndexGC(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func (s *testFailDBSuite) MyTestPartitionAddIndexGC(t *testing.T) {
+	tk := newtestkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,
@@ -553,11 +553,9 @@ func (s *testFailDBSuite) TestPartitionAddIndexGC(c *C) {
 	);`)
 	tk.MustExec("insert into partition_add_idx values(1, '2010-01-01'), (2, '1990-01-01'), (3, '2001-01-01')")
 
-	// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateCachedSafePoint", `return(true)`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateCachedSafePoint", `return(true)`))
 	defer func() {
-		// TODO: c, Assert and isNil seem to come from "github.com/pingcap/check"
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateCachedSafePoint"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateCachedSafePoint"))
 	}()
 	tk.MustExec("alter table partition_add_idx add index idx (id, hired)")
 }
