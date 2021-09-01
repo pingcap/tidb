@@ -63,6 +63,7 @@ func TestTCopy(t *testing.T) {
 	s := &testFailDBSuite{}
 	s.SetUpSuiteCopy(t)
 	s.MyTestGenGlobalIDFail(t)
+	s.MyTestAddIndexWorkerNum(t)
 	s.MyTestRunDDLJobPanic(t)
 	s.MyTestPartitionAddIndexGC(t)
 	s.MyTestModifyColumn(t)
