@@ -394,7 +394,7 @@ type mockChecksumKVClient struct {
 }
 
 // a mock client for checksum request
-func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) kv.Response {
+func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, diagInfo kv.DiagnosticInfo) kv.Response {
 	if c.curErrCount < c.maxErrCount {
 		c.curErrCount++
 		return &mockErrorResponse{err: "tikv timeout"}

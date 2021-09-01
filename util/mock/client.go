@@ -29,6 +29,6 @@ type Client struct {
 }
 
 // Send implement kv.Client interface.
-func (c *Client) Send(ctx context.Context, req *kv.Request, kv interface{}, sessionMemTracker *memory.Tracker, enabledRateLimit bool) kv.Response {
+func (c *Client) Send(ctx context.Context, req *kv.Request, kv interface{}, sessionMemTracker *memory.Tracker, enabledRateLimit bool, diagInfo kv.DiagnosticInfo) kv.Response {
 	return c.MockResponse
 }
