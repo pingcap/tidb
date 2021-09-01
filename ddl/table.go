@@ -520,31 +520,28 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L)
 	ids := []string{tableRuleID}
+	var partRuleIDs []string
 	if tblInfo.GetPartitionInfo() != nil {
 		for _, def := range tblInfo.GetPartitionInfo().Definitions {
-			ids = append(ids, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, def.Name.L))
+			partRuleIDs = append(partRuleIDs, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, def.Name.L))
 		}
 	}
 
-	oldRules, err := infosync.GetLabelRules(context.TODO(), ids)
+	oldRules, err := infosync.GetLabelRules(context.TODO(), append(ids, partRuleIDs...))
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to get PD the label rule")
 	}
 
 	var newRules []*label.Rule
-	for _, r := range oldRules {
-		if r.ID == tableRuleID {
-			newRules = append(newRules, r.Clone().Reset(newTableID, job.SchemaName, tblInfo.Name.L))
-		}
+	if r, ok := oldRules[tableRuleID]; ok {
+		newRules = append(newRules, r.Clone().Reset(newTableID, job.SchemaName, tblInfo.Name.L))
 	}
 
 	if tblInfo.GetPartitionInfo() != nil {
-		for _, r := range oldRules {
-			for _, def := range tblInfo.GetPartitionInfo().Definitions {
-				if r.ID == fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, def.Name.L) {
-					newRules = append(newRules, r.Clone().Reset(def.ID, job.SchemaName, tblInfo.Name.L, def.Name.L))
-				}
+		for _, def := range tblInfo.GetPartitionInfo().Definitions {
+			if r, ok := oldRules[fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, def.Name.L)]; ok {
+				newRules = append(newRules, r.Clone().Reset(def.ID, job.SchemaName, tblInfo.Name.L, def.Name.L))
 			}
 		}
 	}

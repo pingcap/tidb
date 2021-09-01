@@ -1381,14 +1381,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	var ntr, ptr *label.Rule
-	for _, rule := range rules {
-		if rule.ID == ntrID {
-			ntr = rule
-		} else if rule.ID == ptrID {
-			ptr = rule
-		} else {
-			logutil.BgLogger().Error("[ddl] unexpected label rule", zap.Any("rule", rule))
-		}
+	if r, ok := rules[ntrID]; ok {
+		ntr = r
+	}
+
+	if r, ok := rules[ptrID]; ok {
+		ptr = r
 	}
 
 	var setRules []*label.Rule
