@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -315,6 +316,21 @@ func InterpolateMySQLString(s string) string {
 	}
 	builder.WriteByte('\'')
 	return builder.String()
+}
+
+// TableExists return whether table with specified name exists in target db
+func TableExists(ctx context.Context, db *sql.DB, schema, table string) (bool, error) {
+	query := "SELECT 1 from INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
+	var exist string
+	err := db.QueryRowContext(ctx, query, schema, table).Scan(&exist)
+	switch {
+	case err == nil:
+		return true, nil
+	case err == sql.ErrNoRows:
+		return false, nil
+	default:
+		return false, errors.Annotatef(err, "check table exists failed")
+	}
 }
 
 // GetJSON fetches a page and parses it as JSON. The parsed result will be

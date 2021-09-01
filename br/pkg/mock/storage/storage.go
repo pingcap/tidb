@@ -138,3 +138,17 @@ func (mr *MockExternalStorageMockRecorder) WriteFile(arg0, arg1, arg2 interface{
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WriteFile", reflect.TypeOf((*MockExternalStorage)(nil).WriteFile), arg0, arg1, arg2)
 }
+
+// DeleteFile mocks base method.
+func (m *MockExternalStorage) DeleteFile(ctx context.Context, name string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteFile", ctx, name)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteFile indicates an expected call of DeleteFile.
+func (mr *MockExternalStorageMockRecorder) DeleteFile(ctx, name interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteFile", reflect.TypeOf((*MockExternalStorage)(nil).DeleteFile), ctx, name)
+}

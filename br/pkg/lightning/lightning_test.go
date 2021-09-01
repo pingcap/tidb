@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -446,7 +447,8 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 	cfg.App.CheckRequirements = true
 	cfg.App.TableConcurrency = 4
 	cfg.TikvImporter.Backend = config.BackendLocal
-	cfg.TikvImporter.EngineMemCacheSize = 512 * units.MiB
+	cfg.TikvImporter.LocalWriterMemCacheSize = 128 * units.MiB
+	cfg.TikvImporter.RangeConcurrency = 16
 
 	dbMetas := []*mydump.MDDatabaseMeta{
 		{
@@ -484,15 +486,14 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 		},
 	}
 
-	// with max open files 1024, the max table size will be: 65536MB
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue", "return(2049)")
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue", "return(139439)")
 	c.Assert(err, IsNil)
 	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/SetRlimitError", "return(true)")
 	c.Assert(err, IsNil)
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/SetRlimitError")
 	}()
-	// with this dbMetas, the estimated fds will be 2050, so should return error
+	// with this dbMetas, the estimated fds will be 139440, so should return error
 	err = checkSystemRequirement(cfg, dbMetas)
 	c.Assert(err, NotNil)
 
@@ -500,7 +501,7 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 	c.Assert(err, IsNil)
 
 	// the min rlimit should be bigger than the default min value (16384)
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue", "return(8200)")
+	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue", "return(139440)")
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue")
 	}()

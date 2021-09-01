@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -315,6 +316,8 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 			logutil.BgLogger().Debug("truncated/wrong value error", zap.Error(err1))
 		}
 		err = table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
+	} else if types.ErrWarnDataOutOfRange.Equal(err) {
+		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
 	}
 
 	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
@@ -912,7 +915,7 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	tableInfo := e.Table.Meta()
 	increment := e.ctx.GetSessionVars().AutoIncrementIncrement
 	offset := e.ctx.GetSessionVars().AutoIncrementOffset
-	_, autoRandomID, err := alloc.Alloc(ctx, tableInfo.ID, 1, int64(increment), int64(offset))
+	_, autoRandomID, err := alloc.Alloc(ctx, 1, int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}
@@ -943,7 +946,7 @@ func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.Field
 	layout := autoid.NewShardIDLayout(fieldType, tableInfo.AutoRandomBits)
 	autoRandomID := layout.IncrementalMask() & recordID
 
-	return alloc.Rebase(tableInfo.ID, autoRandomID, true)
+	return alloc.Rebase(autoRandomID, true)
 }
 
 func (e *InsertValues) adjustImplicitRowID(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
@@ -997,7 +1000,7 @@ func (e *InsertValues) rebaseImplicitRowID(recordID int64) error {
 	layout := autoid.NewShardIDLayout(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits)
 	newTiDBRowIDBase := layout.IncrementalMask() & recordID
 
-	return alloc.Rebase(tableInfo.ID, newTiDBRowIDBase, true)
+	return alloc.Rebase(newTiDBRowIDBase, true)
 }
 
 func (e *InsertValues) handleWarning(err error) {

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -410,12 +411,12 @@ func (g GlueCheckpointsDB) InsertEngineCheckpoints(ctx context.Context, tableNam
 	return errors.Trace(err)
 }
 
-func (g GlueCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) {
+func (g GlueCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDiff) error {
 	logger := log.L()
 	se, err := g.getSessionFunc()
 	if err != nil {
 		log.L().Error("can't get a session to update GlueCheckpointsDB", zap.Error(errors.Trace(err)))
-		return
+		return err
 	}
 	defer se.Close()
 
@@ -423,7 +424,7 @@ func (g GlueCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDif
 	rebaseQuery := fmt.Sprintf(UpdateTableRebaseTemplate, g.schema, CheckpointTableNameTable)
 	tableStatusQuery := fmt.Sprintf(UpdateTableStatusTemplate, g.schema, CheckpointTableNameTable)
 	engineStatusQuery := fmt.Sprintf(UpdateEngineTemplate, g.schema, CheckpointTableNameEngine)
-	err = Transact(context.Background(), "update checkpoints", se, logger, func(c context.Context, s Session) error {
+	return Transact(context.Background(), "update checkpoints", se, logger, func(c context.Context, s Session) error {
 		chunkStmt, _, _, err := s.PrepareStmt(chunkQuery)
 		if err != nil {
 			return errors.Trace(err)
@@ -500,9 +501,6 @@ func (g GlueCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpointDif
 		}
 		return nil
 	})
-	if err != nil {
-		log.L().Error("save checkpoint failed", zap.Error(err))
-	}
 }
 
 func (g GlueCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName string) error {

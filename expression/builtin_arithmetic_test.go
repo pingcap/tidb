@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -191,6 +192,23 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	intResult, _, err = intSig.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(intResult, Equals, int64(9007199254740993))
+
+	bitStr, err := types.NewBitLiteral("0b00011")
+	c.Assert(err, IsNil)
+	args = []interface{}{bitStr, int64(1)}
+
+	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf, NotNil)
+
+	//check the result type is int
+	intSig, ok = bf.(*builtinArithmeticPlusIntSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(intSig, NotNil)
+
+	intResult, _, err = intSig.evalInt(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(intResult, Equals, int64(4))
 }
 
 func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {

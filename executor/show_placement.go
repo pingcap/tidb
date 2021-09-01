@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -122,6 +123,27 @@ func (e *ShowExec) fetchShowPlacementLabels(ctx context.Context) error {
 
 	for _, row := range result {
 		e.appendRow(row)
+	}
+
+	return nil
+}
+
+func (e *ShowExec) fetchShowPlacement(_ context.Context) error {
+	err := e.fetchAllPlacementPolicies()
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (e *ShowExec) fetchAllPlacementPolicies() error {
+	policies := e.is.AllPlacementPolicies()
+	sort.Slice(policies, func(i, j int) bool { return policies[i].Name.O < policies[j].Name.O })
+	for _, policy := range policies {
+		name := policy.Name
+		settings := policy.PlacementSettings
+		e.appendRow([]interface{}{"POLICY " + name.String(), settings.String(), "SCHEDULED"})
 	}
 
 	return nil

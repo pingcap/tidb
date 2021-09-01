@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -409,7 +410,7 @@ func (s *localSuite) doTestBatchSplitRegionByRanges(ctx context.Context, c *C, h
 	// current region ranges: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	rangeStart := codec.EncodeBytes([]byte{}, []byte("b"))
 	rangeEnd := codec.EncodeBytes([]byte{}, []byte("c"))
-	regions, err := paginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
+	regions, err := restore.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
 	c.Assert(err, IsNil)
 	// regions is: [aay, bba), [bba, bbh), [bbh, cca)
 	checkRegionRanges(c, regions, [][]byte{[]byte("aay"), []byte("bba"), []byte("bbh"), []byte("cca")})
@@ -423,7 +424,7 @@ func (s *localSuite) doTestBatchSplitRegionByRanges(ctx context.Context, c *C, h
 		start = end
 	}
 
-	err = local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true)
+	err = local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
 	if len(errPat) == 0 {
 		c.Assert(err, IsNil)
 	} else {
@@ -434,7 +435,7 @@ func (s *localSuite) doTestBatchSplitRegionByRanges(ctx context.Context, c *C, h
 	splitHook.check(c, client)
 
 	// check split ranges
-	regions, err = paginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
+	regions, err = restore.PaginateScanRegion(ctx, client, rangeStart, rangeEnd, 5)
 	c.Assert(err, IsNil)
 	result := [][]byte{
 		[]byte("b"), []byte("ba"), []byte("bb"), []byte("bba"), []byte("bbh"), []byte("bc"),
@@ -498,7 +499,7 @@ func (h *scanRegionEmptyHook) AfterScanRegions(res []*restore.RegionInfo, err er
 }
 
 func (s *localSuite) TestBatchSplitRegionByRangesScanFailed(c *C) {
-	s.doTestBatchSplitRegionByRanges(context.Background(), c, &scanRegionEmptyHook{}, "paginate scan region returns empty result", defaultHook{})
+	s.doTestBatchSplitRegionByRanges(context.Background(), c, &scanRegionEmptyHook{}, ".*scan region return empty result.*", defaultHook{})
 }
 
 type splitRegionEpochNotMatchHook struct {
@@ -642,13 +643,13 @@ func (s *localSuite) doTestBatchSplitByRangesWithClusteredIndex(c *C, hook clien
 		start = e
 	}
 
-	err := local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true)
+	err := local.SplitAndScatterRegionByRanges(ctx, ranges, nil, true, 1000)
 	c.Assert(err, IsNil)
 
 	startKey := codec.EncodeBytes([]byte{}, rangeKeys[0])
 	endKey := codec.EncodeBytes([]byte{}, rangeKeys[len(rangeKeys)-1])
 	// check split ranges
-	regions, err := paginateScanRegion(ctx, client, startKey, endKey, 5)
+	regions, err := restore.PaginateScanRegion(ctx, client, startKey, endKey, 5)
 	c.Assert(err, IsNil)
 	c.Assert(len(regions), Equals, len(ranges)+1)
 

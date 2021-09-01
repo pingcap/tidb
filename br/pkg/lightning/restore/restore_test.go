@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,6 +16,7 @@ package restore
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -33,6 +35,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_kvpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -59,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/ddl"
 	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/tikv/pd/server/api"
 )
 
 var _ = Suite(&restoreSuite{})
@@ -848,9 +852,12 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 	importer := backend.MakeBackend(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
-	rc := &Controller{saveCpCh: chptCh}
+	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
 	go func() {
-		for range chptCh {
+		for scp := range chptCh {
+			if scp.waitCh != nil {
+				scp.waitCh <- nil
+			}
 		}
 	}()
 
@@ -861,7 +868,7 @@ func (s *tableRestoreSuite) TestImportKVSuccess(c *C) {
 		CloseEngine(ctx, nil, engineUUID).
 		Return(nil)
 	mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID).
+		ImportEngine(ctx, engineUUID, gomock.Any()).
 		Return(nil)
 	mockBackend.EXPECT().
 		CleanupEngine(ctx, engineUUID).
@@ -880,9 +887,12 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 	importer := backend.MakeBackend(mockBackend)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
-	rc := &Controller{saveCpCh: chptCh}
+	rc := &Controller{saveCpCh: chptCh, cfg: config.NewConfig()}
 	go func() {
-		for range chptCh {
+		for scp := range chptCh {
+			if scp.waitCh != nil {
+				scp.waitCh <- nil
+			}
 		}
 	}()
 
@@ -893,7 +903,7 @@ func (s *tableRestoreSuite) TestImportKVFailure(c *C) {
 		CloseEngine(ctx, nil, engineUUID).
 		Return(nil)
 	mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID).
+		ImportEngine(ctx, engineUUID, gomock.Any()).
 		Return(errors.Annotate(context.Canceled, "fake import error"))
 
 	closedEngine, err := importer.UnsafeCloseEngineWithUUID(ctx, nil, "tag", engineUUID)
@@ -964,7 +974,10 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 		diskQuotaLock:     newDiskQuotaLock(),
 	}
 	go func() {
-		for range chptCh {
+		for scp := range chptCh {
+			if scp.waitCh != nil {
+				scp.waitCh <- nil
+			}
 		}
 	}()
 	exec := mock.NewMockSQLExecutor(controller)
@@ -987,6 +1000,36 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics(c *C) {
 
 	tableFinished := metric.ReadCounter(metric.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
 	c.Assert(tableFinished-tableFinishedBase, Equals, float64(1))
+}
+
+func (s *tableRestoreSuite) TestSaveStatusCheckpoint(c *C) {
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckpointUpdate", "sleep(100)")
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownCheckpointUpdate")
+	}()
+
+	web.BroadcastInitProgress([]*mydump.MDDatabaseMeta{{
+		Name:   "test",
+		Tables: []*mydump.MDTableMeta{{DB: "test", Name: "tbl"}},
+	}})
+	web.BroadcastTableCheckpoint(common.UniqueTable("test", "tbl"), &checkpoints.TableCheckpoint{})
+
+	saveCpCh := make(chan saveCp)
+
+	rc := &Controller{
+		saveCpCh:      saveCpCh,
+		checkpointsDB: checkpoints.NewNullCheckpointsDB(),
+	}
+	go rc.listenCheckpointUpdates()
+
+	start := time.Now()
+	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, nil, checkpoints.CheckpointStatusImported)
+	c.Assert(err, IsNil)
+	elapsed := time.Since(start)
+	c.Assert(elapsed, GreaterEqual, time.Millisecond*100)
+
+	close(saveCpCh)
+	rc.checkpointsWg.Wait()
 }
 
 var _ = Suite(&chunkRestoreSuite{})
@@ -1597,7 +1640,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 							"id": 2
 						},
 						"status": {
-							"capacity": "24"
+							"available": "24"
 						}
 					}
 				]
@@ -1605,7 +1648,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 			[]byte(`{
 				"max-replicas": 1
 			}`),
-			"(.*)Cluster capacity is rich(.*)",
+			"(.*)Cluster available is rich(.*)",
 			true,
 			0,
 		},
@@ -1618,7 +1661,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 							"id": 2
 						},
 						"status": {
-							"capacity": "15"
+							"available": "15"
 						}
 					}
 				]
@@ -1674,6 +1717,130 @@ func (s *tableRestoreSuite) TestCheckClusterResource(c *C) {
 		c.Assert(template.FailedCount(Critical), Equals, ca.expectErrorCount)
 		c.Assert(template.Success(), Equals, ca.expectResult)
 		c.Assert(strings.ReplaceAll(template.Output(), "\n", ""), Matches, ca.expectMsg)
+
+		server.Close()
+	}
+}
+
+type mockTaskMetaMgr struct {
+	taskMetaMgr
+}
+
+func (mockTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(tasks []taskMeta) ([]taskMeta, error)) error {
+	_, err := action([]taskMeta{{
+		taskID: 1,
+		pdCfgs: "",
+		status: taskMetaStatusInitial,
+		state:  taskStateNormal,
+	}})
+	return err
+}
+
+func (s *tableRestoreSuite) TestCheckClusterRegion(c *C) {
+	type testCase struct {
+		stores         api.StoresInfo
+		emptyRegions   api.RegionsInfo
+		expectMsgs     []string
+		expectResult   bool
+		expectErrorCnt int
+	}
+
+	makeRegions := func(regionCnt int, storeID uint64) []api.RegionInfo {
+		var regions []api.RegionInfo
+		for i := 0; i < regionCnt; i++ {
+			regions = append(regions, api.RegionInfo{Peers: []api.MetaPeer{{Peer: &metapb.Peer{StoreId: storeID}}}})
+		}
+		return regions
+	}
+
+	testCases := []testCase{
+		{
+			stores: api.StoresInfo{Stores: []*api.StoreInfo{
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 200}},
+			}},
+			emptyRegions: api.RegionsInfo{
+				Regions: append([]api.RegionInfo(nil), makeRegions(100, 1)...),
+			},
+			expectMsgs:     []string{".*Cluster doesn't have too many empty regions.*", ".*Cluster region distribution is balanced.*"},
+			expectResult:   true,
+			expectErrorCnt: 0,
+		},
+		{
+			stores: api.StoresInfo{Stores: []*api.StoreInfo{
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 2000}},
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &api.StoreStatus{RegionCount: 3100}},
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &api.StoreStatus{RegionCount: 2500}},
+			}},
+			emptyRegions: api.RegionsInfo{
+				Regions: append(append(append([]api.RegionInfo(nil),
+					makeRegions(600, 1)...),
+					makeRegions(300, 2)...),
+					makeRegions(1200, 3)...),
+			},
+			expectMsgs: []string{
+				".*TiKV stores \\(3\\) contains more than 1000 empty regions respectively.*",
+				".*TiKV stores \\(1\\) contains more than 500 empty regions respectively.*",
+				".*Region distribution is unbalanced.*but we expect it should not be less than 0.75.*",
+			},
+			expectResult:   false,
+			expectErrorCnt: 1,
+		},
+		{
+			stores: api.StoresInfo{Stores: []*api.StoreInfo{
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 1200}},
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &api.StoreStatus{RegionCount: 3000}},
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &api.StoreStatus{RegionCount: 2500}},
+			}},
+			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
+			expectResult:   false,
+			expectErrorCnt: 1,
+		},
+		{
+			stores: api.StoresInfo{Stores: []*api.StoreInfo{
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &api.StoreStatus{RegionCount: 0}},
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &api.StoreStatus{RegionCount: 2800}},
+				{Store: &api.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &api.StoreStatus{RegionCount: 2500}},
+			}},
+			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
+			expectResult:   false,
+			expectErrorCnt: 1,
+		},
+	}
+
+	mustMarshal := func(v interface{}) []byte {
+		data, err := json.Marshal(v)
+		c.Assert(err, IsNil)
+		return data
+	}
+
+	for _, ca := range testCases {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			var err error
+			if req.URL.Path == pdStores {
+				_, err = w.Write(mustMarshal(ca.stores))
+			} else if req.URL.Path == pdEmptyRegions {
+				_, err = w.Write(mustMarshal(ca.emptyRegions))
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
+			c.Assert(err, IsNil)
+		}))
+
+		tls := common.NewTLSFromMockServer(server)
+		template := NewSimpleTemplate()
+
+		url := strings.TrimPrefix(server.URL, "https://")
+		cfg := &config.Config{TiDB: config.DBStore{PdAddr: url}}
+		rc := &Controller{cfg: cfg, tls: tls, taskMgr: mockTaskMetaMgr{}, checkTemplate: template}
+
+		err := rc.CheckClusterRegion(context.Background())
+		c.Assert(err, IsNil)
+		c.Assert(template.FailedCount(Critical), Equals, ca.expectErrorCnt)
+		c.Assert(template.Success(), Equals, ca.expectResult)
+
+		for _, expectMsg := range ca.expectMsgs {
+			c.Assert(strings.ReplaceAll(template.Output(), "\n", ""), Matches, expectMsg)
+		}
 
 		server.Close()
 	}
@@ -2072,6 +2239,65 @@ func (s *tableRestoreSuite) TestSchemaIsValid(c *C) {
 							FileSize: 1 * units.TiB,
 							Path:     case2File,
 							Type:     mydump.SourceTypeCSV,
+						},
+					},
+				},
+			},
+		},
+		// Case 4:
+		// table4 has two datafiles for table. we only check the first file.
+		// we expect the check success.
+		{
+			[]*config.IgnoreColumns{
+				{
+					DB:      "db1",
+					Table:   "table2",
+					Columns: []string{"cola"},
+				},
+			},
+			"",
+			0,
+			true,
+			map[string]*checkpoints.TidbDBInfo{
+				"db1": {
+					Name: "db1",
+					Tables: map[string]*checkpoints.TidbTableInfo{
+						"table2": {
+							ID:   1,
+							DB:   "db1",
+							Name: "table2",
+							Core: &model.TableInfo{
+								Columns: []*model.ColumnInfo{
+									{
+										// colB has the default value
+										Name:          model.NewCIStr("colB"),
+										DefaultIsExpr: true,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			&mydump.MDTableMeta{
+				DB:   "db1",
+				Name: "table2",
+				DataFiles: []mydump.FileInfo{
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							Type:     mydump.SourceTypeCSV,
+						},
+					},
+					{
+						FileMeta: mydump.SourceFileMeta{
+							FileSize: 1 * units.TiB,
+							Path:     case2File,
+							// This type will make the check failed.
+							// but it's the second file for table.
+							// so it's unreachable so this case will success.
+							Type: mydump.SourceTypeIgnore,
 						},
 					},
 				},

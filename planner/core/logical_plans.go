@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -338,6 +339,16 @@ func (la *LogicalAggregation) HasDistinct() bool {
 	return false
 }
 
+// HasOrderBy shows whether LogicalAggregation has functions with order-by items.
+func (la *LogicalAggregation) HasOrderBy() bool {
+	for _, aggFunc := range la.AggFuncs {
+		if len(aggFunc.OrderByItems) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // CopyAggHints copies the aggHints from another LogicalAggregation.
 func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
 	// TODO: Copy the hint may make the un-applicable hint throw the
@@ -397,6 +408,9 @@ func (la *LogicalAggregation) ExtractCorrelatedCols() []*expression.CorrelatedCo
 		for _, arg := range fun.Args {
 			corCols = append(corCols, expression.ExtractCorColumns(arg)...)
 		}
+		for _, arg := range fun.OrderByItems {
+			corCols = append(corCols, expression.ExtractCorColumns(arg.Expr)...)
+		}
 	}
 	return corCols
 }
@@ -410,6 +424,9 @@ func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
 		for _, expr := range aggDesc.Args {
 			usedCols = append(usedCols, expression.ExtractColumns(expr)...)
 		}
+		for _, expr := range aggDesc.OrderByItems {
+			usedCols = append(usedCols, expression.ExtractColumns(expr.Expr)...)
+		}
 	}
 	return usedCols
 }
@@ -422,6 +439,9 @@ type LogicalSelection struct {
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
+
+	// having selection can't be pushed down, because it must above the aggregation.
+	buildByHaving bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
