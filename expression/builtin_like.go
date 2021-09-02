@@ -56,6 +56,21 @@ func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	return sig, nil
 }
 
+func (c *likeFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	if args[0].GetType().EvalType() == types.ETString && args[1].GetType().EvalType() == types.ETString {
+		return CheckAndDeriveCollationFromExprsWithCoer(ctx, c.funcName, types.ETInt, args[0], args[1])
+	}
+
+	var expr Expression
+	if args[0].GetType().EvalType() == types.ETString {
+		expr = args[0]
+	} else {
+		expr = args[1]
+	}
+
+	return expr.GetType().Charset, expr.GetType().Collate, expr.Coercibility(), nil
+}
+
 type builtinLikeSig struct {
 	baseBuiltinFunc
 	// pattern and isMemorizedPattern is not serialized with builtinLikeSig, treat them as a cache to accelerate

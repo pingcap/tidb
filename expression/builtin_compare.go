@@ -1530,6 +1530,13 @@ func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Exp
 	return sig, err
 }
 
+func (c *compareFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	if args[0].GetType().EvalType() == types.ETString && args[1].GetType().EvalType() == types.ETString {
+		return CheckAndDeriveCollationFromExprsWithCoer(ctx, c.funcName, types.ETInt, args...)
+	}
+	return c.baseFunctionClass.deriveCollation(ctx, args)
+}
+
 // generateCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, tp, tp)
