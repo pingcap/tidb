@@ -32,7 +32,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const splitBatchRegionLimit = 16
+const splitBatchRegionLimit = 2048
 
 func equalRegionStartKey(key, regionStartKey []byte) bool {
 	return bytes.Equal(key, regionStartKey)
@@ -122,7 +122,7 @@ func (s *KVStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bool
 	})
 
 	sender := NewRegionRequestSender(s.regionCache, s.client)
-	resp, err := sender.SendReq(bo, req, batch.regionID, readTimeoutShort)
+	resp, err := sender.SendReq(bo, req, batch.regionID, ReadTimeoutShort)
 
 	batchResp := singleBatchResp{resp: resp}
 	if err != nil {

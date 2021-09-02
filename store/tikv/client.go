@@ -47,16 +47,17 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/metadata"
 )
 
 // MaxRecvMsgSize set max gRPC receive message size received from server. If any message size is larger than
 // current value, an error will be reported from gRPC.
-var MaxRecvMsgSize = math.MaxInt64
+var MaxRecvMsgSize = math.MaxInt64 - 1
 
 // Timeout durations.
 var (
 	dialTimeout               = 5 * time.Second
-	readTimeoutShort          = 20 * time.Second   // For requests that read/write several key-values.
+	ReadTimeoutShort          = 20 * time.Second   // For requests that read/write several key-values.
 	ReadTimeoutMedium         = 60 * time.Second   // For requests that may need scan region.
 	ReadTimeoutLong           = 150 * time.Second  // For requests that may need scan region multiple times.
 	ReadTimeoutUltraLong      = 3600 * time.Second // For requests that may scan many regions for tiflash.
@@ -69,6 +70,9 @@ const (
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
 )
+
+// forwardMetadataKey is the key of gRPC metadata which represents a forwarded request.
+const forwardMetadataKey = "tikv-forwarded-host"
 
 // Client is a client that sends RPC.
 // It should not be used after calling Close().
@@ -178,14 +182,16 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 
 		if allowBatch {
 			batchClient := &batchCommandsClient{
-				target:        a.target,
-				conn:          conn,
-				batched:       sync.Map{},
-				idAlloc:       0,
-				closed:        0,
-				tikvClientCfg: cfg.TiKVClient,
-				tikvLoad:      &a.tikvTransportLayerLoad,
-				dialTimeout:   a.dialTimeout,
+				target:           a.target,
+				conn:             conn,
+				forwardedClients: make(map[string]*batchCommandsStream),
+				batched:          sync.Map{},
+				epoch:            0,
+				closed:           0,
+				tikvClientCfg:    cfg.TiKVClient,
+				tikvLoad:         &a.tikvTransportLayerLoad,
+				dialTimeout:      a.dialTimeout,
+				tryLock:          tryLock{sync.NewCond(new(sync.Mutex)), false},
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 		}
@@ -368,7 +374,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			defer trace.StartRegion(ctx, req.Type.String()).End()
-			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
+			return sendBatchRequest(ctx, addr, req.ForwardedHost, connArray.batchConn, batchReq, timeout)
 		}
 	}
 
@@ -387,6 +393,10 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	client := tikvpb.NewTikvClient(clientConn)
 
+	// Set metadata for request forwarding. Needn't forward DebugReq.
+	if req.ForwardedHost != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, forwardMetadataKey, req.ForwardedHost)
+	}
 	switch req.Type {
 	case tikvrpc.CmdBatchCop:
 		return c.getBatchCopStreamResponse(ctx, client, req, timeout, connArray)

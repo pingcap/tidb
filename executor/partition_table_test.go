@@ -15,6 +15,8 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -174,6 +176,86 @@ PRIMARY KEY (pk1,pk2)) partition by hash(pk2) partitions 4;`)
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustQuery("select /*+ INL_JOIN(dt, rr) */ * from coverage_dt dt join coverage_rr rr on (dt.pk1 = rr.pk1 and dt.pk2 = rr.pk2);").Sort().Check(testkit.Rows("ios 3 ios 3 2", "linux 5 linux 5 1"))
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(dt, rr) */ * from coverage_dt dt join coverage_rr rr on (dt.pk1 = rr.pk1 and dt.pk2 = rr.pk2);").Sort().Check(testkit.Rows("ios 3 ios 3 2", "linux 5 linux 5 1"))
+}
+
+func (s *partitionTableSuite) TestPartitionInfoDisable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_info_null")
+	tk.MustExec(`CREATE TABLE t_info_null (
+  id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  date date NOT NULL,
+  media varchar(32) NOT NULL DEFAULT '0',
+  app varchar(32) NOT NULL DEFAULT '',
+  xxx bigint(20) NOT NULL DEFAULT '0',
+  PRIMARY KEY (id, date),
+  UNIQUE KEY idx_media_id (media, date, app)
+) PARTITION BY RANGE COLUMNS(date) (
+  PARTITION p201912 VALUES LESS THAN ("2020-01-01"),
+  PARTITION p202001 VALUES LESS THAN ("2020-02-01"),
+  PARTITION p202002 VALUES LESS THAN ("2020-03-01"),
+  PARTITION p202003 VALUES LESS THAN ("2020-04-01"),
+  PARTITION p202004 VALUES LESS THAN ("2020-05-01"),
+  PARTITION p202005 VALUES LESS THAN ("2020-06-01"),
+  PARTITION p202006 VALUES LESS THAN ("2020-07-01"),
+  PARTITION p202007 VALUES LESS THAN ("2020-08-01"),
+  PARTITION p202008 VALUES LESS THAN ("2020-09-01"),
+  PARTITION p202009 VALUES LESS THAN ("2020-10-01"),
+  PARTITION p202010 VALUES LESS THAN ("2020-11-01"),
+  PARTITION p202011 VALUES LESS THAN ("2020-12-01")
+)`)
+	is := infoschema.GetInfoSchema(tk.Se)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t_info_null"))
+	c.Assert(err, IsNil)
+
+	tbInfo := tbl.Meta()
+	// Mock for a case that the tableInfo.Partition is not nil, but tableInfo.Partition.Enable is false.
+	// That may happen when upgrading from a old version TiDB.
+	tbInfo.Partition.Enable = false
+	tbInfo.Partition.Num = 0
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustQuery("explain select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows("Batch_Point_Get_5 2.00 root table:t_info_null, index:idx_media_id(media, date, app) keep order:false, desc:false"))
+	tk.MustQuery("explain select * from t_info_null").Check(testkit.Rows("TableReader_5 10000.00 root  data:TableFullScan_4",
+		"└─TableFullScan_4 10000.00 cop[tikv] table:t_info_null keep order:false, stats:pseudo"))
+	// No panic.
+	tk.MustQuery("select * from t_info_null where (date = '2020-10-02' or date = '2020-10-06') and app = 'xxx' and media = '19003006'").Check(testkit.Rows())
+}
+
+func (s *partitionTableSuite) TestIssue24636(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_issue_24636")
+	tk.MustExec("use test_issue_24636")
+
+	tk.MustExec(`CREATE TABLE t (a int, b date, c int, PRIMARY KEY (a,b))
+		PARTITION BY RANGE ( TO_DAYS(b) ) (
+		  PARTITION p0 VALUES LESS THAN (737821),
+		  PARTITION p1 VALUES LESS THAN (738289)
+		)`)
+	tk.MustExec(`INSERT INTO t (a, b, c) VALUES(0, '2021-05-05', 0)`)
+	tk.MustQuery(`select c from t use index(primary) where a=0 limit 1`).Check(testkit.Rows("0"))
+
+	tk.MustExec(`
+		CREATE TABLE test_partition (
+		  a varchar(100) NOT NULL,
+		  b date NOT NULL,
+		  c varchar(100) NOT NULL,
+		  d datetime DEFAULT NULL,
+		  e datetime DEFAULT NULL,
+		  f bigint(20) DEFAULT NULL,
+		  g bigint(20) DEFAULT NULL,
+		  h bigint(20) DEFAULT NULL,
+		  i bigint(20) DEFAULT NULL,
+		  j bigint(20) DEFAULT NULL,
+		  k bigint(20) DEFAULT NULL,
+		  l bigint(20) DEFAULT NULL,
+		  PRIMARY KEY (a,b,c) /*T![clustered_index] NONCLUSTERED */
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+		PARTITION BY RANGE ( TO_DAYS(b) ) (
+		  PARTITION pmin VALUES LESS THAN (737821),
+		  PARTITION p20200601 VALUES LESS THAN (738289))`)
+	tk.MustExec(`INSERT INTO test_partition (a, b, c, d, e, f, g, h, i, j, k, l) VALUES('aaa', '2021-05-05', '428ff6a1-bb37-42ac-9883-33d7a29961e6', '2021-05-06 08:13:38', '2021-05-06 13:28:08', 0, 8, 3, 0, 9, 1, 0)`)
+	tk.MustQuery(`select c,j,l from test_partition where c='428ff6a1-bb37-42ac-9883-33d7a29961e6' and a='aaa' limit 0, 200`).Check(testkit.Rows("428ff6a1-bb37-42ac-9883-33d7a29961e6 9 0"))
 }
 
 func (s *globalIndexSuite) TestGlobalIndexScan(c *C) {

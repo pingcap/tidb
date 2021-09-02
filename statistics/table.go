@@ -62,6 +62,12 @@ type Table struct {
 	Version       uint64
 	Name          string
 	ExtendedStats *ExtendedStatsColl
+	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
+	// It is the schema version of the corresponding table. It is used to skip redundant
+	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
+	// and the schema of the table does not change, we don't need to load the stats for this
+	// table again.
+	TblInfoUpdateTS uint64
 }
 
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.
@@ -136,9 +142,10 @@ func (t *Table) Copy() *Table {
 		newHistColl.Indices[id] = idx
 	}
 	nt := &Table{
-		HistColl: newHistColl,
-		Version:  t.Version,
-		Name:     t.Name,
+		HistColl:        newHistColl,
+		Version:         t.Version,
+		Name:            t.Name,
+		TblInfoUpdateTS: t.TblInfoUpdateTS,
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
@@ -207,6 +214,18 @@ func (t *Table) GetStatsInfo(ID int64, isIndex bool) (int64, *Histogram, *CMSket
 	return int64(colStatsInfo.TotalRowCount()), colStatsInfo.Histogram.Copy(), colStatsInfo.CMSketch.Copy(), colStatsInfo.TopN.Copy(), colStatsInfo.FMSketch.Copy()
 }
 
+// GetColRowCount tries to get the row count of the a column if possible.
+// This method is useful because this row count doesn't consider the modify count.
+func (t *Table) GetColRowCount() float64 {
+	for _, col := range t.Columns {
+		// need to make sure stats on this column is loaded.
+		if col != nil && !(col.Histogram.NDV > 0 && col.notNullCount() == 0) && col.TotalRowCount() != 0 {
+			return col.TotalRowCount()
+		}
+	}
+	return -1
+}
+
 type tableColumnID struct {
 	TableID  int64
 	ColumnID int64
@@ -245,7 +264,11 @@ var RatioOfPseudoEstimate = atomic.NewFloat64(0.7)
 
 // IsOutdated returns true if the table stats is outdated.
 func (t *Table) IsOutdated() bool {
-	if t.Count > 0 && float64(t.ModifyCount)/float64(t.Count) > RatioOfPseudoEstimate.Load() {
+	rowcount := t.GetColRowCount()
+	if rowcount < 0 {
+		rowcount = float64(t.Count)
+	}
+	if rowcount > 0 && float64(t.ModifyCount)/rowcount > RatioOfPseudoEstimate.Load() {
 		return true
 	}
 	return false

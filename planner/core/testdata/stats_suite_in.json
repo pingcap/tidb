@@ -55,7 +55,7 @@
     ]
   },
   {
-    "name": "TestCardinalityGroupCols",
+    "name": "TestNDVGroupCols",
     "cases": [
       // DataSource -> Aggregation.
       "select count(1) from t1 group by a, b",

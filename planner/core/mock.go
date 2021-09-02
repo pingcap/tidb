@@ -334,6 +334,34 @@ func MockUnsignedTable() *model.TableInfo {
 	return table
 }
 
+// MockNoPKTable is only used for plan related tests.
+func MockNoPKTable() *model.TableInfo {
+	// column: a, b
+	col0 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    1,
+		Name:      model.NewCIStr("a"),
+		FieldType: newLongType(),
+		ID:        2,
+	}
+	col1 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    2,
+		Name:      model.NewCIStr("b"),
+		FieldType: newLongType(),
+		ID:        3,
+	}
+	// Column 'a', 'b' is not null.
+	col0.Flag = mysql.NotNullFlag
+	col1.Flag = mysql.UnsignedFlag
+	table := &model.TableInfo{
+		Columns:    []*model.ColumnInfo{col0, col1},
+		Name:       model.NewCIStr("t3"),
+		PKIsHandle: true,
+	}
+	return table
+}
+
 // MockView is only used for plan related tests.
 func MockView() *model.TableInfo {
 	selectStmt := "select b,c,d from t"

@@ -126,7 +126,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
 	}
-	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
 	if NDV <= 1 {
 		return nil
 	}
@@ -167,7 +167,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 			partitionBy = append(partitionBy, col)
 		}
 	}
-	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
 	if NDV <= 1 {
 		return nil
 	}
@@ -301,6 +301,9 @@ type LogicalPlan interface {
 
 	// rollBackTaskMap roll back all taskMap's logs after TimeStamp TS.
 	rollBackTaskMap(TS uint64)
+
+	// canPushToCop check if we might push this plan to a specific store.
+	canPushToCop(store kv.StoreType) bool
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -388,6 +391,9 @@ func (p *basePhysicalPlan) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalPla
 		base.children = append(base.children, cloned)
 	}
 	for _, prop := range p.childrenReqProps {
+		if prop == nil {
+			continue
+		}
 		base.childrenReqProps = append(base.childrenReqProps, prop.CloneEssentialFields())
 	}
 	return base, nil

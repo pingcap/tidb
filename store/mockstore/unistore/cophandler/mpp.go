@@ -207,6 +207,11 @@ func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 		}
 		e.probeKey = probeExpr.(*expression.Column)
 	}
+	e.comKeyTp = types.AggFieldType([]*types.FieldType{e.probeKey.RetType, e.buildKey.RetType})
+	if e.comKeyTp.Tp == mysql.TypeNewDecimal {
+		e.comKeyTp.Flen = mysql.MaxDecimalWidth
+		e.comKeyTp.Decimal = mysql.MaxDecimalScale
+	}
 	return e, nil
 }
 
@@ -275,6 +280,7 @@ func (b *mppExecBuilder) buildMPPAgg(agg *tipb.Aggregation) (*aggExec, error) {
 		}
 		e.aggExprs = append(e.aggExprs, aggExpr)
 	}
+	e.sc = b.sc
 
 	for _, gby := range agg.GroupBy {
 		ft := expression.PbTypeToFieldType(gby.FieldType)

@@ -248,12 +248,7 @@ func (txn *KVTxn) Commit(ctx context.Context) error {
 		}
 		txn.committer = committer
 	}
-	defer func() {
-		// For async commit transactions, the ttl manager will be closed in the asynchronous commit goroutine.
-		if !committer.isAsyncCommit() {
-			committer.ttlManager.close()
-		}
-	}()
+	defer committer.ttlManager.close()
 
 	initRegion := trace.StartRegion(ctx, "InitKeys")
 	err = committer.initKeysAndMutations()
@@ -359,7 +354,24 @@ func (txn *KVTxn) collectLockedKeys() [][]byte {
 
 func (txn *KVTxn) onCommitted(err error) {
 	if txn.commitCallback != nil {
-		info := kv.TxnInfo{TxnScope: txn.GetUnionStore().GetOption(kv.TxnScope).(string), StartTS: txn.startTS, CommitTS: txn.commitTS}
+		isAsyncCommit := txn.committer.isAsyncCommit()
+		isOnePC := txn.committer.isOnePC()
+
+		commitMode := "2pc"
+		if isOnePC {
+			commitMode = "1pc"
+		} else if isAsyncCommit {
+			commitMode = "async_commit"
+		}
+
+		info := kv.TxnInfo{
+			TxnScope:            txn.GetUnionStore().GetOption(kv.TxnScope).(string),
+			StartTS:             txn.startTS,
+			CommitTS:            txn.commitTS,
+			TxnCommitMode:       commitMode,
+			AsyncCommitFallback: txn.committer.hasTriedAsyncCommit && !isAsyncCommit,
+			OnePCFallback:       txn.committer.hasTriedOnePC && !isOnePC,
+		}
 		if err != nil {
 			info.ErrMsg = err.Error()
 		}
@@ -474,7 +486,7 @@ func (txn *KVTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput .
 					txn.us.UnmarkPresumeKeyNotExists(key)
 				}
 			}
-			keyMayBeLocked := terror.ErrorNotEqual(kv.ErrWriteConflict, err) && terror.ErrorNotEqual(kv.ErrKeyExists, err)
+			keyMayBeLocked := terror.ErrorNotEqual(kv.ErrWriteConflict, err) && !IsErrKeyExist(err)
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
 			if len(keys) > 1 || keyMayBeLocked {
 				wg := txn.asyncPessimisticRollback(ctx, keys)
@@ -556,7 +568,6 @@ func (txn *KVTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte) *
 				}
 			}
 		})
-
 		err := committer.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), &PlainMutations{keys: keys})
 		if err != nil {
 			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))

@@ -212,7 +212,7 @@ func (ds *testDumpStatsSuite) checkCorrelation(c *C) {
 func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 	db, err := sql.Open("mysql", ds.getDSN(func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Params = map[string]string{"sql_mode": "''"}
+		config.Params["sql_mode"] = "''"
 	}))
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	dbt := &DBTest{c, db}

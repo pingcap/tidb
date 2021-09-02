@@ -220,6 +220,14 @@ var (
 			Name:      "status",
 			Help:      "Status of the TiDB server configurations.",
 		}, []string{LblType})
+
+	TiFlashQueryTotalCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "tiflash_query_total",
+			Help:      "Counter of TiFlash queries.",
+		}, []string{LblType, LblResult})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.

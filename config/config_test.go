@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 
@@ -199,6 +200,7 @@ skip-register-to-dashboard = true
 deprecate-integer-display-length = true
 enable-enum-length-limit = false
 stores-refresh-interval = 30
+enable-forwarding = true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -278,6 +280,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
 	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
 	c.Assert(conf.EnableEnumLengthLimit, Equals, false)
+	c.Assert(conf.EnableForwarding, Equals, true)
 	c.Assert(conf.StoresRefreshInterval, Equals, uint64(30))
 
 	_, err = f.WriteString(`
@@ -419,6 +422,14 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	// is recycled when the reference count drops to 0.
 	c.Assert(os.Remove(certFile), IsNil)
 	c.Assert(os.Remove(keyFile), IsNil)
+
+	// test for config `toml` and `json` tag names
+	c1 := Config{}
+	st := reflect.TypeOf(c1)
+	for i := 0; i < st.NumField(); i++ {
+		field := st.Field(i)
+		c.Assert(field.Tag.Get("toml"), Equals, field.Tag.Get("json"))
+	}
 }
 
 func (s *testConfigSuite) TestOOMActionValid(c *C) {

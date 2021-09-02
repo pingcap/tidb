@@ -227,6 +227,7 @@ func createSession(store kv.Storage) session.Session {
 		}
 		// Disable privilege check for gc worker session.
 		privilege.BindPrivilegeManager(se, nil)
+		se.GetSessionVars().CommonGlobalLoaded = true
 		se.GetSessionVars().InRestrictedSQL = true
 		return se
 	}
@@ -407,12 +408,21 @@ func (w *GCWorker) calcSafePointByMinStartTS(ctx context.Context, safePoint uint
 		return safePoint
 	}
 
-	if globalMinStartTS < safePoint {
+	// If the lock.ts <= max_ts(safePoint), it will be collected and resolved by the gc worker,
+	// the locks of ongoing pessimistic transactions could be resolved by the gc worker and then
+	// the transaction is aborted, decrement the value by 1 to avoid this.
+	globalMinStartAllowedTS := globalMinStartTS
+	if globalMinStartTS > 0 {
+		globalMinStartAllowedTS = globalMinStartTS - 1
+	}
+
+	if globalMinStartAllowedTS < safePoint {
 		logutil.Logger(ctx).Info("[gc worker] gc safepoint blocked by a running session",
 			zap.String("uuid", w.uuid),
 			zap.Uint64("globalMinStartTS", globalMinStartTS),
+			zap.Uint64("globalMinStartAllowedTS", globalMinStartAllowedTS),
 			zap.Uint64("safePoint", safePoint))
-		safePoint = globalMinStartTS
+		safePoint = globalMinStartAllowedTS
 	}
 	return safePoint
 }
@@ -636,16 +646,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency i
 		return errors.Trace(err)
 	}
 
-	useDistributedGC, err := w.checkUseDistributedGC()
-	if err != nil {
-		logutil.Logger(ctx).Error("[gc worker] failed to load gc mode, fall back to central mode.",
-			zap.String("uuid", w.uuid),
-			zap.Error(err))
-		metrics.GCJobFailureCounter.WithLabelValues("check_gc_mode").Inc()
-		useDistributedGC = false
-	}
-
-	if useDistributedGC {
+	if w.checkUseDistributedGC() {
 		err = w.uploadSafePointToPD(ctx, safePoint)
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] failed to upload safe point to PD",
@@ -949,27 +950,24 @@ func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
 	return jobConcurrency, nil
 }
 
-func (w *GCWorker) checkUseDistributedGC() (bool, error) {
-	str, err := w.loadValueFromSysTable(gcModeKey)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if str == "" {
+// Central mode is deprecated in v5.0. This function will always return true.
+func (w *GCWorker) checkUseDistributedGC() bool {
+	mode, err := w.loadValueFromSysTable(gcModeKey)
+	if err == nil && mode == "" {
 		err = w.saveValueToSysTable(gcModeKey, gcModeDefault)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		str = gcModeDefault
 	}
-	if strings.EqualFold(str, gcModeDistributed) {
-		return true, nil
+	if err != nil {
+		logutil.BgLogger().Error("[gc worker] failed to load gc mode, fall back to distributed mode",
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		metrics.GCJobFailureCounter.WithLabelValues("check_gc_mode").Inc()
+	} else if strings.EqualFold(mode, gcModeCentral) {
+		logutil.BgLogger().Warn("[gc worker] distributed mode will be used as central mode is deprecated")
+	} else if !strings.EqualFold(mode, gcModeDistributed) {
+		logutil.BgLogger().Warn("[gc worker] distributed mode will be used",
+			zap.String("invalid gc mode", mode))
 	}
-	if strings.EqualFold(str, gcModeCentral) {
-		return false, nil
-	}
-	logutil.BgLogger().Warn("[gc worker] distributed mode will be used",
-		zap.String("invalid gc mode", str))
-	return true, nil
+	return true
 }
 
 func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {

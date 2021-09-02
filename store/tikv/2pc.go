@@ -99,6 +99,9 @@ type twoPhaseCommitter struct {
 	useOnePC          uint32
 	onePCCommitTS     uint64
 
+	hasTriedAsyncCommit bool
+	hasTriedOnePC       bool
+
 	// doingAmend means the amend prewrite is ongoing.
 	doingAmend bool
 
@@ -728,15 +731,11 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 				return
 			}
 			bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, c.txn.vars)
-			now, err := c.store.GetOracle().GetTimestamp(bo.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+			now, err := c.store.getTimestampWithRetry(bo, oracle.GlobalTxnScope)
 			if err != nil {
-				err1 := bo.Backoff(BoPDRPC, err)
-				if err1 != nil {
-					logutil.Logger(bo.ctx).Warn("keepAlive get tso fail",
-						zap.Error(err))
-					return
-				}
-				continue
+				logutil.Logger(bo.GetCtx()).Warn("keepAlive get tso fail",
+					zap.Error(err))
+				return
 			}
 
 			uptime := uint64(oracle.ExtractPhysical(now) - oracle.ExtractPhysical(c.startTS))
@@ -784,7 +783,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *KVStore, primary []byte, startTS, tt
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		resp, err := store.SendReq(bo, req, loc.Region, readTimeoutShort)
+		resp, err := store.SendReq(bo, req, loc.Region, ReadTimeoutShort)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -899,15 +898,21 @@ func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 		})
 
 		cleanupKeysCtx := context.WithValue(context.Background(), TxnStartKey, ctx.Value(TxnStartKey))
-		err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+		var err error
+		if !c.isOnePC() {
+			err = c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+		} else if c.isPessimistic {
+			err = c.pessimisticRollbackMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+		}
+
 		if err != nil {
 			metrics.SecondaryLockCleanupFailureCounterRollback.Inc()
-			logutil.Logger(ctx).Info("2PC cleanup failed",
-				zap.Error(err),
-				zap.Uint64("txnStartTS", c.startTS))
+			logutil.Logger(ctx).Info("2PC cleanup failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS),
+				zap.Bool("isPessimistic", c.isPessimistic), zap.Bool("isOnePC", c.isOnePC()))
 		} else {
 			logutil.Logger(ctx).Info("2PC clean up done",
-				zap.Uint64("txnStartTS", c.startTS))
+				zap.Uint64("txnStartTS", c.startTS), zap.Bool("isPessimistic", c.isPessimistic),
+				zap.Bool("isOnePC", c.isOnePC()))
 		}
 		c.cleanWg.Done()
 	}()
@@ -920,6 +925,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		if c.isOnePC() {
 			// The error means the 1PC transaction failed.
 			if err != nil {
+				if c.getUndeterminedErr() == nil {
+					c.cleanup(ctx)
+				}
 				metrics.OnePCTxnCounterError.Inc()
 			} else {
 				metrics.OnePCTxnCounterOk.Inc()
@@ -942,6 +950,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			c.mu.RUnlock()
 			if !committed && !undetermined {
 				c.cleanup(ctx)
+				metrics.TwoPCTxnCounterError.Inc()
+			} else {
+				metrics.TwoPCTxnCounterOk.Inc()
 			}
 			c.txn.commitTS = c.commitTS
 			if binlogSkipped {
@@ -964,11 +975,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	if c.checkAsyncCommit() {
 		commitTSMayBeCalculated = true
 		c.setAsyncCommit(true)
+		c.hasTriedAsyncCommit = true
 	}
 	// Check if 1PC is enabled.
 	if c.checkOnePC() {
 		commitTSMayBeCalculated = true
 		c.setOnePC(true)
+		c.hasTriedOnePC = true
 	}
 	// If we want to use async commit or 1PC and also want linearizability across
 	// all nodes, we have to make sure the commit TS of this transaction is greater
@@ -976,7 +989,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	// from PD as our MinCommitTS.
 	if commitTSMayBeCalculated && c.needLinearizability() {
 		failpoint.Inject("getMinCommitTSFromTSO", nil)
-		minCommitTS, err := c.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		minCommitTS, err := c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetUnionStore().GetOption(kv.TxnScope).(string))
 		// If we fail to get a timestamp from PD, we just propagate the failure
 		// instead of falling back to the normal 2PC because a normal 2PC will
 		// also be likely to fail due to the same timestamp issue.
@@ -992,7 +1005,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		}
 	}
 
-	failpoint.Inject("beforePrewrite", nil)
+	if c.sessionID > 0 {
+		failpoint.Inject("beforePrewrite", nil)
+	}
 
 	c.prewriteStarted = true
 	var binlogChan <-chan BinlogWriteResult
@@ -1087,13 +1102,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		logutil.SetTag(ctx, "commitTs", commitTS)
 	}
 
-	if c.sessionID > 0 {
-		failpoint.Inject("beforeSchemaCheck", func() {
-			c.ttlManager.close()
-			failpoint.Return()
-		})
-	}
-
 	if !c.isAsyncCommit() {
 		tryAmend := c.isPessimistic && c.sessionID > 0 && c.txn.schemaAmender != nil
 		if !tryAmend {
@@ -1117,7 +1125,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 				if err != nil {
 					logutil.Logger(ctx).Info("schema check after amend failed, it means the schema version changed again",
 						zap.Uint64("startTS", c.startTS),
-						zap.Uint64("amendTS", c.commitTS),
+						zap.Uint64("amendTS", commitTS),
 						zap.Int64("amendedSchemaVersion", relatedSchemaChange.LatestInfoSchema.SchemaMetaVersion()),
 						zap.Uint64("newCommitTS", newCommitTS))
 					return errors.Trace(err)
@@ -1162,7 +1170,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", c.commitTS),
 			zap.Uint64("sessionID", c.sessionID))
 		go func() {
-			defer c.ttlManager.close()
 			failpoint.Inject("asyncCommitDoNothing", func() {
 				failpoint.Return()
 			})
@@ -1376,6 +1383,12 @@ func (c *twoPhaseCommitter) getCommitTS(ctx context.Context, commitDetail *execd
 // this transaction using the related schema changes.
 func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64, startInfoSchema SchemaVer,
 	tryAmend bool) (*RelatedSchemaChange, bool, error) {
+	failpoint.Inject("failCheckSchemaValid", func() {
+		logutil.Logger(ctx).Info("[failpoint] injected fail schema check",
+			zap.Uint64("txnStartTS", c.startTS))
+		err := errors.Errorf("mock check schema valid failure")
+		failpoint.Return(nil, false, err)
+	})
 	checker, ok := c.txn.us.GetOption(kv.SchemaChecker).(schemaLeaseChecker)
 	if !ok {
 		if c.sessionID > 0 {
@@ -1411,7 +1424,7 @@ func (c *twoPhaseCommitter) calculateMaxCommitTS(ctx context.Context) error {
 	currentTS := oracle.EncodeTSO(int64(time.Since(c.txn.startTime)/time.Millisecond)) + c.startTS
 	_, _, err := c.checkSchemaValid(ctx, currentTS, c.txn.txnInfoSchema, true)
 	if err != nil {
-		logutil.Logger(ctx).Error("Schema changed for async commit txn",
+		logutil.Logger(ctx).Info("Schema changed for async commit txn",
 			zap.Error(err),
 			zap.Uint64("startTS", c.startTS))
 		return errors.Trace(err)
@@ -1623,7 +1636,7 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 		}
 	}
 	close(exitCh)
-	metrics.TiKVTokenWaitDuration.Observe(batchExe.tokenWaitDuration.Seconds())
+	metrics.TiKVTokenWaitDuration.Observe(float64(batchExe.tokenWaitDuration.Nanoseconds()))
 	return err
 }
 

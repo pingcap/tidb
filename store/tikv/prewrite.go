@@ -125,27 +125,25 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	// checked there.
 
 	if c.sessionID > 0 {
-		failpoint.Inject("prewritePrimaryFail", func() {
-			if batch.isPrimary {
+		if batch.isPrimary {
+			failpoint.Inject("prewritePrimaryFail", func() {
 				// Delay to avoid cancelling other normally ongoing prewrite requests.
 				time.Sleep(time.Millisecond * 50)
 				logutil.Logger(bo.ctx).Info("[failpoint] injected error on prewriting primary batch",
 					zap.Uint64("txnStartTS", c.startTS))
 				failpoint.Return(errors.New("injected error on prewriting primary batch"))
-			}
-		})
-	}
-
-	if c.sessionID > 0 {
-		failpoint.Inject("prewriteSecondaryFail", func() {
-			if !batch.isPrimary {
+			})
+			failpoint.Inject("prewritePrimary", nil) // for other failures like sleep or pause
+		} else {
+			failpoint.Inject("prewriteSecondaryFail", func() {
 				// Delay to avoid cancelling other normally ongoing prewrite requests.
 				time.Sleep(time.Millisecond * 50)
 				logutil.Logger(bo.ctx).Info("[failpoint] injected error on prewriting secondary batch",
 					zap.Uint64("txnStartTS", c.startTS))
 				failpoint.Return(errors.New("injected error on prewriting secondary batch"))
-			}
-		})
+			})
+			failpoint.Inject("prewriteSecondary", nil) // for other failures like sleep or pause
+		}
 	}
 
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
@@ -158,7 +156,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	req := c.buildPrewriteRequest(batch, txnSize)
 	for {
 		sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
-		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
+		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutShort)
 
 		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
 		// transaction has been successfully committed.
@@ -263,7 +261,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			locks = append(locks, lock)
 		}
 		start := time.Now()
-		msBeforeExpired, err := c.store.lockResolver.resolveLocksForWrite(bo, c.startTS, locks)
+		msBeforeExpired, err := c.store.lockResolver.resolveLocksForWrite(bo, c.startTS, c.forUpdateTS, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}

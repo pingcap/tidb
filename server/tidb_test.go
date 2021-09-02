@@ -260,6 +260,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
+	c.Assert(server.isUnixSocket(), IsFalse) // If listening on tcp-only, return FALSE
 
 	// https connection should work.
 	ts.runTestStatusAPI(c)
@@ -360,6 +361,7 @@ func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
+	c.Assert(server.isUnixSocket(), IsFalse) // If listening on both, return FALSE
 	defer server.Close()
 
 	cli.runTestRegression(c, func(config *mysql.Config) {
@@ -383,6 +385,7 @@ func (ts *tidbTestSuite) TestSocket(c *C) {
 	c.Assert(err, IsNil)
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
+	c.Assert(server.isUnixSocket(), IsTrue) // If listening on socket-only, return TRUE
 	defer server.Close()
 
 	// a fake server client, config is override, just used to run tests
@@ -947,6 +950,10 @@ func (ts *tidbTestSuite) TestFieldList(c *C) {
 
 func (ts *tidbTestSuite) TestClientErrors(c *C) {
 	ts.runTestInfoschemaClientErrors(c)
+}
+
+func (ts *tidbTestSuite) TestInitConnect(c *C) {
+	ts.runTestInitConnect(c)
 }
 
 func (ts *tidbTestSuite) TestSumAvg(c *C) {

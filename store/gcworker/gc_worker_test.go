@@ -261,7 +261,7 @@ func (s *testGCWorkerSuite) TestMinStartTS(c *C) {
 		strconv.FormatUint(now-oracle.EncodeTSO(20000), 10))
 	c.Assert(err, IsNil)
 	sp = s.gcWorker.calcSafePointByMinStartTS(ctx, now-oracle.EncodeTSO(10000))
-	c.Assert(sp, Equals, now-oracle.EncodeTSO(20000))
+	c.Assert(sp, Equals, now-oracle.EncodeTSO(20000)-1)
 }
 
 func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
@@ -487,30 +487,28 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
-	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
+	useDistributedGC := s.gcWorker.checkUseDistributedGC()
 	c.Assert(useDistributedGC, Equals, true)
 	// Now the row must be set to the default value.
 	str, err := s.gcWorker.loadValueFromSysTable(gcModeKey)
 	c.Assert(err, IsNil)
 	c.Assert(str, Equals, gcModeDistributed)
 
+	// Central mode is deprecated in v5.0.
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
 	c.Assert(err, IsNil)
-	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	useDistributedGC = s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)
-	c.Assert(useDistributedGC, Equals, false)
+	c.Assert(useDistributedGC, Equals, true)
 
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeDistributed)
 	c.Assert(err, IsNil)
-	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
+	useDistributedGC = s.gcWorker.checkUseDistributedGC()
 	c.Assert(useDistributedGC, Equals, true)
 
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, "invalid_mode")
 	c.Assert(err, IsNil)
-	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
+	useDistributedGC = s.gcWorker.checkUseDistributedGC()
 	c.Assert(useDistributedGC, Equals, true)
 }
 
@@ -987,11 +985,10 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	gcSafePointCacheInterval = 0
 
 	// Test distributed mode
-	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
+	useDistributedGC := s.gcWorker.checkUseDistributedGC()
 	c.Assert(useDistributedGC, IsTrue)
 	safePoint := s.mustAllocTs(c)
-	err = s.gcWorker.runGCJob(context.Background(), safePoint, 1)
+	err := s.gcWorker.runGCJob(context.Background(), safePoint, 1)
 	c.Assert(err, IsNil)
 
 	pdSafePoint := s.mustGetSafePointFromPd(c)
@@ -1004,12 +1001,11 @@ func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	err = s.gcWorker.runGCJob(context.Background(), safePoint-1, 1)
 	c.Assert(err, NotNil)
 
-	// Test central mode
+	// Central mode is deprecated in v5.0, fallback to distributed mode if it's set.
 	err = s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
 	c.Assert(err, IsNil)
-	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
-	c.Assert(err, IsNil)
-	c.Assert(useDistributedGC, IsFalse)
+	useDistributedGC = s.gcWorker.checkUseDistributedGC()
+	c.Assert(useDistributedGC, IsTrue)
 
 	p := s.createGCProbe(c, "k1")
 	safePoint = s.mustAllocTs(c)
@@ -1590,5 +1586,54 @@ func (s *testGCWorkerSuite) TestGCPlacementRules(c *C) {
 	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
 	pid, err := s.gcWorker.doGCPlacementRules(dr)
 	c.Assert(pid, Equals, int64(1))
+	c.Assert(err, IsNil)
+}
+
+func (s *testGCWorkerSuite) TestGCWithPendingTxn(c *C) {
+	ctx := context.Background()
+	gcSafePointCacheInterval = 0
+	err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
+	c.Assert(err, IsNil)
+
+	k1 := []byte("tk1")
+	v1 := []byte("v1")
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.SetOption(kv.Pessimistic, true)
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
+
+	// Lock the key.
+	err = txn.Set(k1, v1)
+	c.Assert(err, IsNil)
+	err = txn.LockKeys(ctx, lockCtx, k1)
+	c.Assert(err, IsNil)
+
+	// Prepare to run gc with txn's startTS as the safepoint ts.
+	spkv := s.tikvStore.GetSafePointKV()
+	err = spkv.Put(fmt.Sprintf("%s/%s", infosync.ServerMinStartTSPath, "a"), strconv.FormatUint(txn.StartTS(), 10))
+	c.Assert(err, IsNil)
+	s.mustSetTiDBServiceSafePoint(c, txn.StartTS(), txn.StartTS())
+	veryLong := gcDefaultLifeTime * 100
+	err = s.gcWorker.saveTime(gcLastRunTimeKey, oracle.GetTimeFromTS(s.mustAllocTs(c)).Add(-veryLong))
+	c.Assert(err, IsNil)
+	s.gcWorker.lastFinish = time.Now().Add(-veryLong)
+	s.oracle.AddOffset(time.Minute * 10)
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue)
+	c.Assert(err, IsNil)
+
+	// Trigger the tick let the gc job start.
+	err = s.gcWorker.leaderTick(ctx)
+	c.Assert(err, IsNil)
+	// Wait for GC finish
+	select {
+	case err = <-s.gcWorker.done:
+		s.gcWorker.gcIsRunning = false
+		break
+	case <-time.After(time.Second * 10):
+		err = errors.New("receive from s.gcWorker.done timeout")
+	}
+	c.Assert(err, IsNil)
+
+	err = txn.Commit(ctx)
 	c.Assert(err, IsNil)
 }

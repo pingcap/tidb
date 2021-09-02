@@ -530,7 +530,19 @@ create table log_message_1 (
 		},
 		{
 			"create table t1 (a bigint unsigned) partition by list (a) (partition p0 values in (10, 20, 30, -1));",
-			ddl.ErrWrongTypeColumnValue,
+			ddl.ErrPartitionConstDomain,
+		},
+		{
+			"create table t1 (a bigint unsigned) partition by range (a) (partition p0 values less than (-1));",
+			ddl.ErrPartitionConstDomain,
+		},
+		{
+			"create table t1 (a int unsigned) partition by range (a) (partition p0 values less than (-1));",
+			ddl.ErrPartitionConstDomain,
+		},
+		{
+			"create table t1 (a tinyint(20) unsigned) partition by range (a) (partition p0 values less than (-1));",
+			ddl.ErrPartitionConstDomain,
 		},
 		{
 			"CREATE TABLE new (a TIMESTAMP NOT NULL PRIMARY KEY) PARTITION BY RANGE (a % 2) (PARTITION p VALUES LESS THAN (20080819));",
@@ -568,6 +580,9 @@ create table log_message_1 (
 	tk.MustExec(`create table t(a int) partition by range columns (a) (
     	partition p0 values less than (10),
     	partition p1 values less than (20));`)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t(a int) partition by range (a) (partition p0 values less than (18446744073709551615));`)
 }
 
 func (s *testIntegrationSuite1) TestDisableTablePartition(c *C) {
@@ -3362,4 +3377,37 @@ func (s *testIntegrationSuite7) TestPartitionListWithNewCollation(c *C) {
 	tk.MustQuery(`select * from t11 partition (p1);`).Check(testkit.Rows("c", "C", "d"))
 	str := tk.MustQuery(`desc select * from t11 where a = 'b';`).Rows()[0][3].(string)
 	c.Assert(strings.Contains(str, "partition:p0"), IsTrue)
+}
+
+func (s *testIntegrationSuite7) TestTruncatePartitionMultipleTimes(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists test.t;")
+	tk.MustExec(`create table test.t (a int primary key) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (maxvalue));`)
+	d := domain.GetDomain(tk.Se).DDL()
+	originHook := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originHook)
+	hook := &ddl.TestDDLCallback{}
+	d.(ddl.DDLForTest).SetHook(hook)
+	injected := false
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionTruncateTablePartition && job.SnapshotVer == 0 && !injected {
+			injected = true
+			time.Sleep(30 * time.Millisecond)
+		}
+	}
+	var errCount int32
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if job.Type == model.ActionTruncateTablePartition && job.Error != nil {
+			atomic.AddInt32(&errCount, 1)
+		}
+	}
+	done1 := make(chan error, 1)
+	go backgroundExec(s.store, "alter table test.t truncate partition p0;", done1)
+	done2 := make(chan error, 1)
+	go backgroundExec(s.store, "alter table test.t truncate partition p0;", done2)
+	<-done1
+	<-done2
+	c.Assert(errCount, LessEqual, int32(1))
 }

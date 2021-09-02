@@ -74,6 +74,7 @@ const (
 	CmdMPPTask
 	CmdMPPConn
 	CmdMPPCancel
+	CmdMPPAlive
 
 	CmdMvccGetByKey CmdType = 1024 + iota
 	CmdMvccGetByStartTs
@@ -150,6 +151,8 @@ func (t CmdType) String() string {
 		return "EstablishMPPConnection"
 	case CmdMPPCancel:
 		return "CancelMPPTask"
+	case CmdMPPAlive:
+		return "MPPAlive"
 	case CmdMvccGetByKey:
 		return "MvccGetByKey"
 	case CmdMvccGetByStartTs:
@@ -176,6 +179,11 @@ type Request struct {
 	ReplicaReadType kv.ReplicaReadType // different from `kvrpcpb.Context.ReplicaRead`
 	ReplicaReadSeed *uint32            // pointer to follower read seed in snapshot/coprocessor
 	StoreTp         kv.StoreType
+	// ForwardedHost is the address of a store which will handle the request. It's different from
+	// the address the request sent to.
+	// If it's not empty, the store which receive the request will forward it to
+	// the forwarded host. It's useful when network partition occurs.
+	ForwardedHost string
 }
 
 // NewRequest returns new kv rpc request.
@@ -200,6 +208,22 @@ func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.
 	req.ReplicaReadType = replicaReadType
 	req.ReplicaReadSeed = replicaReadSeed
 	return req
+}
+
+// EnableStaleRead enables stale read
+func (req *Request) EnableStaleRead() {
+	req.StaleRead = true
+	req.ReplicaReadType = kv.ReplicaReadMixed
+	req.ReplicaRead = false
+}
+
+// IsDebugReq check whether the req is debug req.
+func (req *Request) IsDebugReq() bool {
+	switch req.Type {
+	case CmdDebugGetRegionProperties:
+		return true
+	}
+	return false
 }
 
 // Get returns GetRequest in request.
@@ -347,6 +371,11 @@ func (req *Request) CancelMPPTask() *mpp.CancelTaskRequest {
 	return req.Req.(*mpp.CancelTaskRequest)
 }
 
+// IsMPPAlive returns IsAlive task in request
+func (req *Request) IsMPPAlive() *mpp.IsAliveRequest {
+	return req.Req.(*mpp.IsAliveRequest)
+}
+
 // MvccGetByKey returns MvccGetByKeyRequest in request.
 func (req *Request) MvccGetByKey() *kvrpcpb.MvccGetByKeyRequest {
 	return req.Req.(*kvrpcpb.MvccGetByKeyRequest)
@@ -395,13 +424,6 @@ func (req *Request) CheckSecondaryLocks() *kvrpcpb.CheckSecondaryLocksRequest {
 // TxnHeartBeat returns TxnHeartBeatRequest in request.
 func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
 	return req.Req.(*kvrpcpb.TxnHeartBeatRequest)
-}
-
-// EnableStaleRead enables stale read
-func (req *Request) EnableStaleRead() {
-	req.StaleRead = true
-	req.ReplicaReadType = kv.ReplicaReadMixed
-	req.ReplicaRead = false
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.
@@ -461,15 +483,6 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_TxnHeartBeat{TxnHeartBeat: req.TxnHeartBeat()}}
 	}
 	return nil
-}
-
-// IsDebugReq check whether the req is debug req.
-func (req *Request) IsDebugReq() bool {
-	switch req.Type {
-	case CmdDebugGetRegionProperties:
-		return true
-	}
-	return false
 }
 
 // Response wraps all kv/coprocessor responses.
@@ -882,6 +895,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 	case CmdMPPCancel:
 		// it cannot use the ctx with cancel(), otherwise this cmd will fail.
 		resp.Resp, err = client.CancelMPPTask(ctx, req.CancelMPPTask())
+	case CmdMPPAlive:
+		resp.Resp, err = client.IsAlive(ctx, req.IsMPPAlive())
 	case CmdCopStream:
 		var streamClient tikvpb.Tikv_CoprocessorStreamClient
 		streamClient, err = client.CoprocessorStream(ctx, req.Cop())
