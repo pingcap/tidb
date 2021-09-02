@@ -91,31 +91,6 @@ func (s *testEvaluatorSuite) TestSetFlenDecimal4RealOrDecimal(c *C) {
 	c.Assert(ret.Flen, Equals, types.UnspecifiedLength)
 }
 
-func (s *testEvaluatorSuite) TestSetFlenDecimal4Int(c *C) {
-	ret := &types.FieldType{}
-	a := &types.FieldType{
-		Decimal: 1,
-		Flen:    3,
-	}
-	b := &types.FieldType{
-		Decimal: 0,
-		Flen:    2,
-	}
-	setFlenDecimal4Int(ret, a, b)
-	c.Assert(ret.Decimal, Equals, 0)
-	c.Assert(ret.Flen, Equals, mysql.MaxIntWidth)
-
-	b.Flen = mysql.MaxIntWidth + 1
-	setFlenDecimal4Int(ret, a, b)
-	c.Assert(ret.Decimal, Equals, 0)
-	c.Assert(ret.Flen, Equals, mysql.MaxIntWidth)
-
-	b.Flen = types.UnspecifiedLength
-	setFlenDecimal4Int(ret, a, b)
-	c.Assert(ret.Decimal, Equals, 0)
-	c.Assert(ret.Flen, Equals, mysql.MaxIntWidth)
-}
-
 func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	// case: 1
 	args := []interface{}{int64(12), int64(1)}
