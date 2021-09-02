@@ -4218,6 +4218,41 @@ func (s *testIntegrationSuite) TestOutputSkylinePruningInfo(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestPreferRangeScanForUnsignedIntHandle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int unsigned primary key, b int, c int, index idx_b(b))")
+	tk.MustExec("insert into t values (1,2,3), (4,5,6), (7,8,9), (10,11,12), (13,14,15)")
+	do, _ := session.GetDomain(s.store)
+	c.Assert(do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	tk.MustExec("analyze table t")
+
+	var input []string
+	var output []struct {
+		SQL      string
+		Plan     []string
+		Warnings []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		if strings.HasPrefix(tt, "set") {
+			tk.MustExec(tt)
+			continue
+		}
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warnings = s.testData.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warnings...))
+	}
+}
+
 func (s *testIntegrationSuite) TestIssue27083(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
