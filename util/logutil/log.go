@@ -99,17 +99,19 @@ var SlowQueryLogger = log.L()
 // GeneralLogLogger is used to log general log
 var GeneralLogLogger = log.L()
 
-var generalLog *GeneralLog
+var generalLogMgr *GeneralLogManager
 
+// PutGeneralLogOrDrop sends the general log entry to the logging goroutine
+// The entry will be dropped once the channel is full
 func PutGeneralLogOrDrop(entry *GeneralLogEntry) {
 	select {
-	case generalLog.logEntryChan <- entry:
+	case generalLogMgr.logEntryChan <- entry:
 	default:
 		// When logEntryChan is full, the system resource is under so much pressure that the logging system capacity
 		// is reduced. We should NOT output another warning log saying that we are dropping a general log, which will
 		// add more pressure on the system load.
 		// TODO(dragonly): add prometheus counter for dropped log count?
-		generalLog.droppedLogCount++
+		generalLogMgr.droppedLogCount++
 	}
 }
 
@@ -132,7 +134,7 @@ func InitLogger(cfg *LogConfig) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	generalLog = newGeneralLog(GeneralLogLogger)
+	generalLogMgr = newGeneralLog(GeneralLogLogger)
 
 	// init logger for grpc debugging
 	_, _, err = initGRPCLogger(cfg)

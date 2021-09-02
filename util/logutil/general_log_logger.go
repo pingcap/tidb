@@ -7,15 +7,15 @@ import (
 
 	"github.com/natefinch/lumberjack"
 	"go.uber.org/zap"
-	"go.uber.org/zap/buffer"
 	"go.uber.org/zap/zapcore"
 )
 
 const (
-	generalLogBatchSize = 102400
+	generalLogBatchSize = 1024
 	flushTimeout        = 1000 * time.Millisecond
 )
 
+// GeneralLogEntry represents the fields in a general query log
 type GeneralLogEntry struct {
 	ConnID                 uint64
 	FnGetUser              func() string
@@ -27,7 +27,6 @@ type GeneralLogEntry struct {
 	TxnMode                string
 	FnGetQuery             func(*strings.Builder) string
 
-	buf *buffer.Buffer
 	// following fields are for benchmark testing
 	user              string
 	schemaMetaVersion int64
@@ -40,16 +39,15 @@ var fnGetQueryPool = sync.Pool{New: func() interface{} {
 	return &ret
 }}
 
-type GeneralLog struct {
-	bufPool         buffer.Pool
+// GeneralLogManager receives general log entry from channel, and log or drop them as needed
+type GeneralLogManager struct {
 	logger          *zap.Logger
 	logEntryChan    chan *GeneralLogEntry
 	droppedLogCount uint64
 }
 
-func newGeneralLog(logger *zap.Logger) *GeneralLog {
-	gl := &GeneralLog{
-		bufPool:         buffer.NewPool(),
+func newGeneralLog(logger *zap.Logger) *GeneralLogManager {
+	gl := &GeneralLogManager{
 		logger:          logger,
 		logEntryChan:    make(chan *GeneralLogEntry, generalLogBatchSize),
 		droppedLogCount: 0,
@@ -59,7 +57,7 @@ func newGeneralLog(logger *zap.Logger) *GeneralLog {
 }
 
 // startFormatWorker starts a log flushing worker that flushes log periodically or when batch is full
-func (gl *GeneralLog) startFormatWorker() {
+func (gl *GeneralLogManager) startFormatWorker() {
 	for {
 		e := <-gl.logEntryChan
 		fnGetQueryBuf := fnGetQueryPool.Get().(*strings.Builder)
