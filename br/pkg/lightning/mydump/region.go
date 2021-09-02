@@ -268,7 +268,7 @@ func makeSourceFileRegion(
 	}
 	// If a csv file is overlarge, we need to split it into multiple regions.
 	// Note: We can only split a csv file whose format is strict.
-	if isCsvFile && dataFileSize > int64(cfg.Mydumper.MaxRegionSize) && cfg.Mydumper.StrictFormat {
+	if isCsvFile && cfg.Mydumper.StrictFormat && dataFileSize > int64(cfg.Mydumper.MaxRegionSize)*11/10 {
 		_, regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, divisor, 0, ioWorkers, store)
 		return regions, subFileSizes, err
 	}
@@ -359,6 +359,9 @@ func SplitLargeFile(
 		columns = parser.Columns()
 		startOffset, _ = parser.Pos()
 		endOffset = startOffset + maxRegionSize
+		if endOffset > dataFile.FileMeta.FileSize {
+			endOffset = dataFile.FileMeta.FileSize
+		}
 	}
 	for {
 		curRowsCnt := (endOffset - startOffset) / divisor

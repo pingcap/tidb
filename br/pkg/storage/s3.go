@@ -648,6 +648,17 @@ func (r *s3ObjectReader) Close() error {
 	return r.reader.Close()
 }
 
+// eofReader is a io.ReaderClose Reader that always return io.EOF
+type eofReader struct{}
+
+func (r eofReader) Read([]byte) (n int, err error) {
+	return 0, io.EOF
+}
+
+func (r eofReader) Close() error {
+	return nil
+}
+
 // Seek implement the io.Seeker interface.
 //
 // Currently, tidb-lightning depends on this method to read parquet file for s3 storage.
@@ -666,6 +677,18 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 
 	if realOffset == r.pos {
 		return realOffset, nil
+	} else if realOffset >= r.rangeInfo.Size {
+		// See: https://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.35
+		// because s3's GetObject interface doesn't all a range that matches zero lenghth data,
+		// so if the position is out of range, we need to always return io.EOF after the seek operation.
+
+		// close current read and open a new one which target offset
+		if err := r.reader.Close(); err != nil {
+			log.L().Warn("close s3 reader failed, will ignore this error", logutil.ShortError(err))
+		}
+
+		r.reader = eofReader{}
+		return r.rangeInfo.Size, nil
 	}
 
 	// if seek ahead no more than 64k, we discard these data
