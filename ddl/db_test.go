@@ -7325,7 +7325,7 @@ func testDropIndexes(c *C, store kv.Storage, lease time.Duration, createSQL, dro
 	}
 	c.Assert(idxs, NotNil)
 
-	testddlutil.SessionExecInGoroutine(c, store, dropIdxSQL, done)
+	testddlutil.SessionExecInGoroutine(store, dropIdxSQL, done)
 
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
