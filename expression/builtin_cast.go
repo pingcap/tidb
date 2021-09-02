@@ -109,7 +109,6 @@ var (
 )
 
 type castBaseFunctionClass struct {
-
 }
 
 type castAsIntFunctionClass struct {
