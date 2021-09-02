@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -511,7 +512,7 @@ func (*testSuite) TestLocalTemporaryTables(c *C) {
 	}
 
 	for _, p := range prepareTables {
-		err = sc.AddTable(p.db, p.tb)
+		err = sc.AddTable(p.db.Name, p.tb)
 		c.Assert(err, IsNil)
 	}
 
@@ -543,16 +544,16 @@ func (*testSuite) TestLocalTemporaryTables(c *C) {
 	}
 
 	// test add dup table
-	err = sc.AddTable(db1, tb11)
+	err = sc.AddTable(db1.Name, tb11)
 	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
-	err = sc.AddTable(db1b, tb15)
+	err = sc.AddTable(db1b.Name, tb15)
 	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
-	err = sc.AddTable(db1b, tb11)
+	err = sc.AddTable(db1b.Name, tb11)
 	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
 	db1c := createNewSchemaInfo("db1")
-	err = sc.AddTable(db1c, createNewTable(db1c.ID, "tb1", model.TempTableLocal))
+	err = sc.AddTable(db1c.Name, createNewTable(db1c.ID, "tb1", model.TempTableLocal))
 	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
-	err = sc.AddTable(db1b, tb11)
+	err = sc.AddTable(db1b.Name, tb11)
 	c.Assert(infoschema.ErrTableExists.Equal(err), IsTrue)
 
 	// failed add has no effect
@@ -598,7 +599,7 @@ func (*testSuite) TestLocalTemporaryTables(c *C) {
 		LocalTemporaryTables: sc,
 	}
 
-	err = sc.AddTable(dbTest, tmpTbTestA)
+	err = sc.AddTable(dbTest.Name, tmpTbTestA)
 	c.Assert(err, IsNil)
 
 	// test TableByName

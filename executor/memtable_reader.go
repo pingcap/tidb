@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -293,6 +294,17 @@ type clusterServerInfoRetriever struct {
 
 // retrieve implements the memTableRetriever interface
 func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	switch e.serverInfoType {
+	case diagnosticspb.ServerInfoType_LoadInfo,
+		diagnosticspb.ServerInfoType_SystemInfo:
+		if !hasPriv(sctx, mysql.ProcessPriv) {
+			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		}
+	case diagnosticspb.ServerInfoType_HardwareInfo:
+		if !hasPriv(sctx, mysql.ConfigPriv) {
+			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+		}
+	}
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
@@ -485,6 +497,9 @@ func (h *logResponseHeap) Pop() interface{} {
 }
 
 func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
+	if !hasPriv(sctx, mysql.ProcessPriv) {
+		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
 		// erase the error

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -92,7 +93,7 @@ func updateCurrentSQB(ctx sessionctx.Context) (err error) {
 	pQueryCtx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 	defer cancel()
 	pQueryTs := time.Now().Add(-time.Minute)
-	promQL := "tidb_server_slow_query_process_duration_seconds_bucket{sql_type=\"general\"}"
+	promQL := "avg(tidb_server_slow_query_process_duration_seconds_bucket{sql_type=\"general\"}) by (le)"
 	value, err := querySQLMetric(pQueryCtx, pQueryTs, promQL)
 
 	if err != nil && err != infosync.ErrPrometheusAddrIsNotSet {

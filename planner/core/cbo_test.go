@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -861,6 +862,7 @@ func (s *testAnalyzeSuite) TestLowSelIndexGreedySearch(c *C) {
 		store.Close()
 	}()
 	testKit.MustExec("use test")
+	testKit.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t (a varchar(32) default null, b varchar(10) default null, c varchar(12) default null, d varchar(32) default null, e bigint(10) default null, key idx1 (d,a), key idx2 (a,c), key idx3 (c,b), key idx4 (e))")
 	err = s.loadTableStats("analyzeSuiteTestLowSelIndexGreedySearchT.json", dom)

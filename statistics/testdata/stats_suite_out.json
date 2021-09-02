@@ -160,8 +160,8 @@
         "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
       ],
       [
-        "TableReader_7 0.75 root  data:Selection_6",
-        "└─Selection_6 0.75 cop[tikv]  eq(test.tint.a, 4)",
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tint.a, 4)",
         "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
       ],
       [
@@ -175,9 +175,9 @@
         "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdouble keep order:false"
       ],
       [
-        "IndexLookUp_10 0.75 root  ",
-        "├─IndexRangeScan_8(Build) 0.75 cop[tikv] table:tdouble, index:singular(a) range:[4,4], keep order:false",
-        "└─TableRowIDScan_9(Probe) 0.75 cop[tikv] table:tdouble keep order:false"
+        "IndexLookUp_10 1.00 root  ",
+        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdouble, index:singular(a) range:[4,4], keep order:false",
+        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdouble keep order:false"
       ],
       [
         "IndexLookUp_10 1.00 root  ",
@@ -190,9 +190,9 @@
         "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdecimal keep order:false"
       ],
       [
-        "IndexLookUp_10 0.75 root  ",
-        "├─IndexRangeScan_8(Build) 0.75 cop[tikv] table:tdecimal, index:singular(a) range:[4.00000000000000000000,4.00000000000000000000], keep order:false",
-        "└─TableRowIDScan_9(Probe) 0.75 cop[tikv] table:tdecimal keep order:false"
+        "IndexLookUp_10 1.00 root  ",
+        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdecimal, index:singular(a) range:[4.00000000000000000000,4.00000000000000000000], keep order:false",
+        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdecimal keep order:false"
       ],
       [
         "IndexLookUp_10 1.00 root  ",
@@ -205,8 +205,8 @@
         "  └─TableFullScan_5 8.00 cop[tikv] table:tstring keep order:false"
       ],
       [
-        "TableReader_7 0.75 root  data:Selection_6",
-        "└─Selection_6 0.75 cop[tikv]  eq(test.tstring.a, \"4\")",
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tstring.a, \"4\")",
         "  └─TableFullScan_5 8.00 cop[tikv] table:tstring keep order:false"
       ],
       [
@@ -240,10 +240,9 @@
         "  └─TableFullScan_5 6.00 cop[tikv] table:tprefix keep order:false"
       ],
       [
-        "IndexLookUp_11 0.00 root  ",
-        "├─IndexRangeScan_8(Build) 0.00 cop[tikv] table:tprefix, index:prefixa(a) range:[\"88\",\"88\"], keep order:false",
-        "└─Selection_10(Probe) 0.00 cop[tikv]  eq(test.tprefix.a, \"888\")",
-        "  └─TableRowIDScan_9 0.00 cop[tikv] table:tprefix keep order:false"
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tprefix.a, \"888\")",
+        "  └─TableFullScan_5 6.00 cop[tikv] table:tprefix keep order:false"
       ],
       [
         "TableReader_7 1.00 root  data:Selection_6",
@@ -251,8 +250,8 @@
         "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
       ],
       [
-        "TableReader_7 0.75 root  data:Selection_6",
-        "└─Selection_6 0.75 cop[tikv]  eq(test.tint.b, 4), eq(test.tint.c, 4)",
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tint.b, 4), eq(test.tint.c, 4)",
         "  └─TableFullScan_5 8.00 cop[tikv] table:tint keep order:false"
       ],
       [
@@ -266,9 +265,9 @@
         "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdouble keep order:false"
       ],
       [
-        "IndexLookUp_10 0.75 root  ",
-        "├─IndexRangeScan_8(Build) 0.75 cop[tikv] table:tdouble, index:multi(b, c) range:[4 4,4 4], keep order:false",
-        "└─TableRowIDScan_9(Probe) 0.75 cop[tikv] table:tdouble keep order:false"
+        "IndexLookUp_10 1.00 root  ",
+        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdouble, index:multi(b, c) range:[4 4,4 4], keep order:false",
+        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdouble keep order:false"
       ],
       [
         "IndexLookUp_10 1.00 root  ",
@@ -281,9 +280,9 @@
         "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdecimal keep order:false"
       ],
       [
-        "IndexLookUp_10 0.75 root  ",
-        "├─IndexRangeScan_8(Build) 0.75 cop[tikv] table:tdecimal, index:multi(b, c) range:[4.00000000000000000000 4.00000000000000000000,4.00000000000000000000 4.00000000000000000000], keep order:false",
-        "└─TableRowIDScan_9(Probe) 0.75 cop[tikv] table:tdecimal keep order:false"
+        "IndexLookUp_10 1.00 root  ",
+        "├─IndexRangeScan_8(Build) 1.00 cop[tikv] table:tdecimal, index:multi(b, c) range:[4.00000000000000000000 4.00000000000000000000,4.00000000000000000000 4.00000000000000000000], keep order:false",
+        "└─TableRowIDScan_9(Probe) 1.00 cop[tikv] table:tdecimal keep order:false"
       ],
       [
         "IndexLookUp_10 1.00 root  ",
@@ -296,8 +295,8 @@
         "  └─TableFullScan_5 8.00 cop[tikv] table:tstring keep order:false"
       ],
       [
-        "TableReader_7 0.75 root  data:Selection_6",
-        "└─Selection_6 0.75 cop[tikv]  eq(test.tstring.b, \"4\"), eq(test.tstring.c, \"4\")",
+        "TableReader_7 1.00 root  data:Selection_6",
+        "└─Selection_6 1.00 cop[tikv]  eq(test.tstring.b, \"4\"), eq(test.tstring.c, \"4\")",
         "  └─TableFullScan_5 8.00 cop[tikv] table:tstring keep order:false"
       ],
       [
@@ -457,16 +456,16 @@
         "└─IndexRangeScan_5 4.00 cop[tikv] table:topn_before_hist, index:idx(a) range:[1,1], keep order:false"
       ],
       [
-        "IndexReader_6 0.00 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 0.00 cop[tikv] table:topn_before_hist, index:idx(a) range:[2,2], keep order:false"
+        "IndexReader_6 1.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 1.00 cop[tikv] table:topn_before_hist, index:idx(a) range:[2,2], keep order:false"
       ],
       [
         "IndexReader_6 4.00 root  index:IndexRangeScan_5",
         "└─IndexRangeScan_5 4.00 cop[tikv] table:topn_after_hist, index:idx(a) range:[7,7], keep order:false"
       ],
       [
-        "IndexReader_6 0.00 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 0.00 cop[tikv] table:topn_after_hist, index:idx(a) range:[6,6], keep order:false"
+        "IndexReader_6 1.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 1.00 cop[tikv] table:topn_after_hist, index:idx(a) range:[6,6], keep order:false"
       ],
       [
         "TableReader_7 4.00 root  data:Selection_6",
@@ -607,7 +606,157 @@
       },
       {
         "SQL": "select * from t where a < 8 and (b > 10 or c < 3 or b > 4) and a > 2",
-        "Selectivity": 0
+        "Selectivity": 0.3125
+      }
+    ]
+  },
+  {
+    "Name": "TestSmallRangeEstimation",
+    "Cases": [
+      {
+        "Start": 5,
+        "End": 5,
+        "Count": 3
+      },
+      {
+        "Start": 5,
+        "End": 6,
+        "Count": 6
+      },
+      {
+        "Start": 5,
+        "End": 10,
+        "Count": 18
+      },
+      {
+        "Start": 5,
+        "End": 15,
+        "Count": 33
+      },
+      {
+        "Start": 10,
+        "End": 15,
+        "Count": 18
+      },
+      {
+        "Start": 5,
+        "End": 25,
+        "Count": 63
+      },
+      {
+        "Start": 25,
+        "End": 25,
+        "Count": 3
+      }
+    ]
+  },
+  {
+    "Name": "TestOutOfRangeEstimation",
+    "Cases": [
+      {
+        "Start": 800,
+        "End": 900,
+        "Count": 761.004166655054
+      },
+      {
+        "Start": 900,
+        "End": 950,
+        "Count": 247.04782734719248
+      },
+      {
+        "Start": 950,
+        "End": 1000,
+        "Count": 226.14487557169574
+      },
+      {
+        "Start": 1000,
+        "End": 1050,
+        "Count": 205.24192379619902
+      },
+      {
+        "Start": 1050,
+        "End": 1100,
+        "Count": 184.33897202070227
+      },
+      {
+        "Start": 1150,
+        "End": 1200,
+        "Count": 142.53306846970884
+      },
+      {
+        "Start": 1200,
+        "End": 1300,
+        "Count": 214.85728161292752
+      },
+      {
+        "Start": 1300,
+        "End": 1400,
+        "Count": 131.2454745109406
+      },
+      {
+        "Start": 1400,
+        "End": 1500,
+        "Count": 47.650389770374105
+      },
+      {
+        "Start": 1500,
+        "End": 1600,
+        "Count": 7.5
+      },
+      {
+        "Start": 300,
+        "End": 899,
+        "Count": 4500
+      },
+      {
+        "Start": 800,
+        "End": 1000,
+        "Count": 1219.196869573942
+      },
+      {
+        "Start": 900,
+        "End": 1500,
+        "Count": 1502.495833344946
+      },
+      {
+        "Start": 300,
+        "End": 1500,
+        "Count": 4500
+      },
+      {
+        "Start": 200,
+        "End": 300,
+        "Count": 466.52882098990807
+      },
+      {
+        "Start": 100,
+        "End": 200,
+        "Count": 382.91701388792114
+      },
+      {
+        "Start": 200,
+        "End": 400,
+        "Count": 1186.5288209899081
+      },
+      {
+        "Start": 200,
+        "End": 1000,
+        "Count": 4500
+      },
+      {
+        "Start": 0,
+        "End": 100,
+        "Count": 299.3052067859343
+      },
+      {
+        "Start": -100,
+        "End": 100,
+        "Count": 299.3052067859343
+      },
+      {
+        "Start": -100,
+        "End": 0,
+        "Count": 7.5
       }
     ]
   }

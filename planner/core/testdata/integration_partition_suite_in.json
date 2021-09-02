@@ -1,0 +1,153 @@
+[
+  {
+    "name": "TestListColVariousTypes",
+    "cases": [
+      "explain format = 'brief' select * from tint where a<=1",
+      "explain format = 'brief' select * from tint where a in (0, 1)",
+      "select * from tint where a<=1 order by a",
+      "select * from tint where a in (0, 1) order by a",
+      "explain format = 'brief' select * from tdate where a<='2000-01-01'",
+      "explain format = 'brief' select * from tdate where a in ('2000-01-01', '2000-01-02')",
+      "select * from tdate where a<='2000-01-01' order by a",
+      "select * from tdate where a in ('2000-01-01', '2000-01-02') order by a",
+      "explain format = 'brief' select * from tstring where a<='b'",
+      "explain format = 'brief' select * from tstring where a in ('a', 'b')",
+      "select * from tstring where a<='b' order by a",
+      "select * from tstring where a in ('a', 'b') order by a"
+    ]
+  },
+  {
+    "name": "TestListPartitionPruning",
+    "cases": [
+      // in
+      "explain format = 'brief' select * from tlist where a in (2)",
+      "explain format = 'brief' select * from tlist where a in (7)",
+      "explain format = 'brief' select * from tlist where a in (0,5)",
+      "explain format = 'brief' select * from tcollist where a in (2)",
+      "explain format = 'brief' select * from tcollist where a in (7)",
+      "explain format = 'brief' select * from tcollist where a in (0,5)",
+      // not in: not support
+      "explain format = 'brief' select * from tlist where a not in (0, 1, 2, 3, 4, 5, 6, 7, 8)",
+      "explain format = 'brief' select * from tcollist where a not in (0, 1, 2, 3, 4, 5, 6, 7, 8)",
+      // GE: not support
+      "explain format = 'brief' select * from tlist where a >= 7",
+      "explain format = 'brief' select * from tcollist where a >= 7",
+      // LE: not support
+      "explain format = 'brief' select * from tlist where a <= 7",
+      "explain format = 'brief' select * from tcollist where a <= 7",
+      // or
+      "explain format = 'brief' select * from tlist where a=0 or a=7",
+      "explain format = 'brief' select * from tlist where a=0 or a=1 or a=6 or a=11",
+      "explain format = 'brief' select * from tcollist where a=0 or a=7",
+      "explain format = 'brief' select * from tcollist where a=0 or a=1 or a=6 or a=11",
+      // and 
+      "explain format = 'brief' select * from tlist where a in (0, 1, 2) and mod(a, 2)=0",
+      "explain format = 'brief' select * from tlist where a in (0, 3, 6) and a+1>3",
+      "explain format = 'brief' select * from tcollist where a in (0, 1, 2) and mod(a, 2)=0",
+      "explain format = 'brief' select * from tcollist where a in (0, 3, 6) and a+1>3",
+      // delete
+      "explain format = 'brief' delete from tlist where a in (2)",
+      "explain format = 'brief' delete from tlist where a in (0, 5)",
+      "explain format = 'brief' delete from tcollist where a in (2)",
+      "explain format = 'brief' delete from tcollist where a in (0, 5)",
+      // update
+      "explain format = 'brief' update tlist set a=3 where a in (2)",
+      "explain format = 'brief' update tlist set a=3 where a in (0, 5)",
+      "explain format = 'brief' update tcollist set a=3 where a in (2)",
+      "explain format = 'brief' update tcollist set a=3 where a in (0, 5)",
+      // insert
+      "explain format = 'brief' insert into tlist select * from tlist where a in (2)",
+      "explain format = 'brief' insert into tlist select * from tlist where a in (0, 5)",
+      "explain format = 'brief' insert into tcollist select * from tcollist where a in (2)",
+      "explain format = 'brief' insert into tcollist select * from tcollist where a in (0, 5)",
+      // replace
+      "explain format = 'brief' replace tlist select * from tlist where a in (2)",
+      "explain format = 'brief' replace tlist select * from tlist where a in (0, 5)",
+      "explain format = 'brief' replace tcollist select * from tcollist where a in (2)",
+      "explain format = 'brief' replace tcollist select * from tcollist where a in (0, 5)"
+    ]
+  },
+  {
+    "name": "TestListPartitionFunctions",
+    "cases": [
+      // abs
+      "create table tabs (a int, b int) partition by list (ABS(a - b)) (partition p0 values in (0, 1, 2, 3), partition p1 values in (4, 5, 6, 7))",
+      "insert into tabs values (1, 1), (2, 2), (2, 1), (1, 2), (4, 8), (8, 4), (5, 10), (10, 5)",
+      "select * from tabs",
+      "select * from tabs partition(p0)",
+      // ceiling
+      "create table tceil (a int, b int) partition by list (CEILING(a)) (partition p0 values in (0, 1, 2, 3), partition p1 values in (4, 5, 6, 7))",
+      "insert into tceil values (0.23, 1), (3.14, 4.33), (1.2, 30), (5.1, 4.23)",
+      "select * from tceil",
+      "select * from tceil partition(p0)",
+      // datediff
+      "create table tdatediff (a date, b datetime) partition by list (DATEDIFF(a, b)) (partition p0 values in (0, 10, 20), partition p1 values in (30, 40, 50))",
+      "insert into tdatediff values ('2019-02-01', '2019-02-01 18:00:00'), ('2019-03-30', '2019-03-20 23:59:59'), ('2020-06-01', '2020-04-12 18:00:00')",
+      "select * from tdatediff",
+      "select * from tdatediff partition(p0)",
+      // day
+      "create table tday (a date, b datetime) partition by list (DAY(a)) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5))",
+      "insert into tday values ('2008-01-01', '1990-01-01 22:00:01'), ('2008-01-03', '2008-01-03 23:59:30'), ('2019-02-01', '2017-03-30 23:59:30'), ('2019-04-05', '2019-04-01 23:59:59'), ('2020-07-01', '2020-04-15 18:00:00')",
+      "select * from tday",
+      "select * from tday partition(p0)",
+      // dayofmonth
+      "create table tdayofmonth (a date, b datetime) partition by list (DAYOFMONTH(a)) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5))",
+      "insert into tdayofmonth values ('2008-01-01', '1990-01-01 22:00:01'), ('2008-01-03', '2008-01-03 23:59:30'), ('2019-02-01', '2017-03-30 23:59:30'), ('2019-04-05', '2019-04-01 23:59:59'), ('2020-07-01', '2020-04-15 18:00:00')",
+      "select * from tdayofmonth",
+      "select * from tdayofmonth partition(p0)",
+      // dayofweek
+      "create table tdayofweek (a date, b datetime) partition by list (DAYOFWEEK(a)) (partition p0 values in (0, 1, 2, 3), partition p1 values in (4, 5, 6, 7))",
+      "insert into tdayofweek values ('2008-01-01', '1990-01-01 22:00:01'), ('2008-01-03', '2008-01-03 23:59:30'), ('2019-02-01', '2017-03-30 23:59:30'), ('2019-04-05', '2019-04-01 23:59:59'), ('2020-07-01', '2020-04-15 18:00:00')",
+      "select * from tdayofweek",
+      "select * from tdayofweek partition(p0)",
+      // floor
+      "create table tfloor (a int, b int) partition by list (FLOOR(a)) (partition p0 values in (0, 1, 2, 3), partition p1 values in (4, 5, 6, 7))",
+      "insert into tfloor values (0.23, 1), (3.14, 4.33), (6.2, 30), (7.1, 4.23)",
+      "select * from tfloor",
+      "select * from tfloor partition(p0)",
+      // hour
+      "create table thour (a time, b time) partition by list (HOUR(a)) (partition p0 values in (0, 1, 2, 3, 4), partition p1 values in (5, 6, 7, 8))",
+      "insert into thour values ('03:09:34', '00:00:00'), ('01:23:34', '32:03:34'), ('08:39:20', '23:09:43'), ('03:00:00', '20:00:00')",
+      "select * from thour",
+      "select * from thour partition(p0)",
+      // minute
+      "create table tminute (a datetime, b datetime) partition by list (MINUTE(a)) (partition p0 values in (0, 1, 2, 3), partition p1 values in (4, 5, 6, 7))",
+      "insert into tminute values ('2019-12-31 12:00:00', '2019-12-31 23:59:59'), ('2019-12-31 23:06:59', '2019-12-31 12:00:00')",
+      "select * from tminute",
+      "select * from tminute partition(p0)",
+      // mod
+      "create table tmod (a int, b int) partition by list (MOD(a, b)) (partition p0 values in (0, 1, 2, 3), partition p1 values in (4, 5, 6, 7))",
+      "insert into tmod values (3, 1), (10, 3), (4, 4), (13, 7)",
+      "select * from tmod",
+      "select * from tmod partition(p0)",
+      // month
+      "create table tmonth (a date, b date) partition by list (MONTH(a)) (partition p0 values in (0, 1, 2, 3), partition p1 values in (4, 5, 6, 7))",
+      "insert into tmonth values ('2000-02-23', '2008-02-01'), ('2019-01-01', '2018-03-10'), ('2020-06-12', '2021-04-05'), ('2019-05-20', '2017-02-21')",
+      "select * from tmonth",
+      "select * from tmonth partition(p0)",
+      // quarter
+      "create table tquarter (a date, b date) partition by list (QUARTER(a)) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5))",
+      "insert into tquarter values ('2019-02-01', '2008-01-02'), ('2019-01-01', '2018-03-10'), ('2020-11-12', '2021-04-05'), ('2019-05-20', '2017-02-21')",
+      "select * from tquarter",
+      "select * from tquarter partition(p0)",
+      // to_seconds
+      "create table tto_seconds (a date, b datetime) partition by list (TO_SECONDS(a)) (partition p0 values in (0, 1, 2, 3, 63740649600), partition p1 values in (4, 5, 6, 7, 63744969600))",
+      "insert into tto_seconds values ('2019-12-31 12:00:00', '2019-12-31 23:59:59'), ('2019-11-11 23:06:59', '2019-12-31 12:00:00')",
+      "select * from tto_seconds",
+      "select * from tto_seconds partition(p0)"
+    ]
+  },
+  {
+    "name": "TestListPartitionPushDown",
+    "cases": [
+      "explain format='brief' select a from tlist where a>=0 and a<=10",
+      "explain format='brief' select avg(a) from tlist",
+      "explain format='brief' select a from tlist limit 10",
+      "explain format='brief' select a from tlist order by a limit 10",
+      "explain format='brief' select a from tcollist where a>=0 and a<=10",
+      "explain format='brief' select avg(a) from tcollist",
+      "explain format='brief' select a from tcollist limit 10",
+      "explain format='brief' select a from tcollist order by a limit 10"
+    ]
+  }
+]

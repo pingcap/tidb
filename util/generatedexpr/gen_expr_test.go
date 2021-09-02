@@ -8,35 +8,25 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package generatedexpr
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/parser/ast"
+	"github.com/stretchr/testify/require"
+
+	_ "github.com/pingcap/tidb/types/parser_driver"
 )
 
-var _ = Suite(&testGenExprSuite{})
+func TestParseExpression(t *testing.T) {
+	t.Parallel()
 
-type testGenExprSuite struct{}
-
-func (s *testGenExprSuite) TestParseExpression(c *C) {
-	tests := []struct {
-		input   string
-		output  string
-		success bool
-	}{
-		{"json_extract(a, '$.a')", "json_extract", true},
-	}
-	for _, tt := range tests {
-		node, err := ParseExpression(tt.input)
-		if tt.success {
-			fc := node.(*ast.FuncCallExpr)
-			c.Assert(fc.FnName.L, Equals, tt.output)
-		} else {
-			c.Assert(err, NotNil)
-		}
-	}
+	node, err := ParseExpression("json_extract(a, '$.a')")
+	require.NoError(t, err)
+	require.Equal(t, "json_extract", node.(*ast.FuncCallExpr).FnName.L)
 }

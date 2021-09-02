@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
@@ -81,6 +83,16 @@ func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet,
 // ExecuteStmt implements sqlexec.SQLExecutor ExecuteStmt interface.
 func (c *Context) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Supported.")
+}
+
+// SetDiskFullOpt sets allowed options of current operation in each TiKV disk usage level.
+func (c *Context) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	c.txn.Transaction.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+}
+
+// ClearDiskFullOpt clears allowed options of current operation in each TiKV disk usage level.
+func (c *Context) ClearDiskFullOpt() {
+	c.txn.Transaction.ClearDiskFullOpt()
 }
 
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
@@ -156,6 +168,11 @@ func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 		}
 	}
 	return nil
+}
+
+// GetBuiltinFunctionUsage implements sessionctx.Context GetBuiltinFunctionUsage interface.
+func (c *Context) GetBuiltinFunctionUsage() map[string]uint32 {
+	return make(map[string]uint32)
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -46,6 +47,10 @@ type Manager interface {
 	// RequestVerificationWithUser verifies specific user privilege for the request.
 	RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool
 
+	// HasExplicitlyGrantedDynamicPrivilege verifies is a user has a dynamic privilege granted
+	// without using the SUPER privilege as a fallback.
+	HasExplicitlyGrantedDynamicPrivilege(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool
+
 	// RequestDynamicVerification verifies user privilege for a DYNAMIC privilege.
 	// Dynamic privileges are only assignable globally, and have their own grantable attribute.
 	RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool
@@ -63,7 +68,7 @@ type Manager interface {
 	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool
 
 	// UserPrivilegesTable provide data for INFORMATION_SCHEMA.USER_PRIVILEGES table.
-	UserPrivilegesTable() [][]types.Datum
+	UserPrivilegesTable(activeRoles []*auth.RoleIdentity, user, host string) [][]types.Datum
 
 	// ActiveRoles active roles for current session.
 	// The first illegal role will be returned.

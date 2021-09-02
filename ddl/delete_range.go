@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,6 +23,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
@@ -202,6 +204,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 			}
 			defer iter.Close()
 
+			txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 			for i := 0; i < delBatchSize; i++ {
 				if !iter.Valid() {
 					break
@@ -272,7 +275,8 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
 		var startKey kv.Key
 		var physicalTableIDs []int64
-		if err := job.DecodeArgs(&startKey, &physicalTableIDs); err != nil {
+		var ruleIDs []string
+		if err := job.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
 			return errors.Trace(err)
 		}
 		if len(physicalTableIDs) > 0 {
@@ -424,7 +428,12 @@ func doInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID int64, elementID
 	logutil.BgLogger().Info("[ddl] insert into delete-range table", zap.Int64("jobID", jobID), zap.Int64("elementID", elementID))
 	startKeyEncoded := hex.EncodeToString(startKey)
 	endKeyEncoded := hex.EncodeToString(endKey)
+	// set session disk full opt
+	// TODO ddl txn func including an session pool txn, there may be a problem?
+	s.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := s.ExecuteInternal(ctx, insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
+	// clear session disk full opt
+	s.ClearDiskFullOpt()
 	return errors.Trace(err)
 }
 
@@ -444,7 +453,11 @@ func doBatchInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID int64, tabl
 		}
 		paramsList = append(paramsList, jobID, tableID, startKeyEncoded, endKeyEncoded, ts)
 	}
+	// set session disk full opt
+	s.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := s.ExecuteInternal(ctx, buf.String(), paramsList...)
+	// clear session disk full opt
+	s.ClearDiskFullOpt()
 	return errors.Trace(err)
 }
 

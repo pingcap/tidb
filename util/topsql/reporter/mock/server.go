@@ -140,21 +140,14 @@ func (svr *mockAgentServer) WaitCollectCnt(cnt int, timeout time.Duration) {
 	}
 }
 
-func (svr *mockAgentServer) GetSQLMetaByDigest(digest []byte) (tipb.SQLMeta, bool) {
-	svr.Lock()
-	sqlMeta, exist := svr.sqlMetas[string(digest)]
-	svr.Unlock()
-	return sqlMeta, exist
-}
-
-func (svr *mockAgentServer) GetSQLMetaByDigestBlocking(digest []byte, timeout time.Duration) (normalizedSQL string, exist bool) {
+func (svr *mockAgentServer) GetSQLMetaByDigestBlocking(digest []byte, timeout time.Duration) (meta tipb.SQLMeta, exist bool) {
 	start := time.Now()
 	for {
 		svr.Lock()
 		sqlMeta, exist := svr.sqlMetas[string(digest)]
 		svr.Unlock()
 		if exist || time.Since(start) > timeout {
-			return sqlMeta.NormalizedSql, exist
+			return sqlMeta, exist
 		}
 		time.Sleep(time.Millisecond)
 	}
