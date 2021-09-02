@@ -3118,50 +3118,6 @@ func (s *testIntegrationSuite) TestIssue23846(c *C) {
 	tk.MustQuery("select count(*) from t where a=0x00A4EEF4FA55D6706ED5").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t where a=0x00A4EEF4FA55D6706ED5").Check(testkit.Rows("\x00\xa4\xee\xf4\xfaU\xd6pn\xd5")) // not empty
 }
-<<<<<<< HEAD
-=======
-
-func (s *testIntegrationSuite) TestIssue23839(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists BB")
-	tk.MustExec("CREATE TABLE `BB` (\n" +
-		"	`col_int` int(11) DEFAULT NULL,\n" +
-		"	`col_varchar_10` varchar(10) DEFAULT NULL,\n" +
-		"	`pk` int(11) NOT NULL AUTO_INCREMENT,\n" +
-		"	`col_int_not_null` int(11) NOT NULL,\n" +
-		"	`col_decimal` decimal(10,0) DEFAULT NULL,\n" +
-		"	`col_datetime` datetime DEFAULT NULL,\n" +
-		"	`col_decimal_not_null` decimal(10,0) NOT NULL,\n" +
-		"	`col_datetime_not_null` datetime NOT NULL,\n" +
-		"	`col_varchar_10_not_null` varchar(10) NOT NULL,\n" +
-		"	PRIMARY KEY (`pk`) /*T![clustered_index] CLUSTERED */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=2000001")
-	tk.Exec("explain SELECT OUTR . col2 AS X FROM (SELECT INNR . col1 as col1, SUM( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR2 INNER JOIN (SELECT INNR . col1 as col1, MAX( INNR . col2 ) as col2 FROM (SELECT INNR . `col_int_not_null` + 1 as col1, INNR . `pk` as col2 FROM BB AS INNR) AS INNR GROUP BY col1) AS OUTR ON OUTR2.col1 = OUTR.col1 GROUP BY OUTR . col1, OUTR2 . col1 HAVING X <> 'b'")
-}
-
-// https://github.com/pingcap/tidb/issues/24095
-func (s *testIntegrationSuite) TestIssue24095(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (id int, value decimal(10,5));")
-	tk.MustExec("desc format = 'brief' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-	}
-}
 
 func (s *testIntegrationSuite) TestConflictReadFromStorage(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -3193,4 +3149,3 @@ func (s *testIntegrationSuite) TestConflictReadFromStorage(c *C) {
 	tk.MustQuery(`explain select /*+ read_from_storage(tikv[t], tiflash[t]) */ * from t`)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Storage hints are conflict, you can only specify one storage type of table test.t"))
 }
->>>>>>> 257ce7d93... planner: filter conflict read_from_storage hints (#24313)
