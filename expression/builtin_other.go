@@ -156,6 +156,14 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	return sig, nil
 }
 
+func (c *inFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	if args[0].GetType().EvalType() == types.ETString {
+		return CheckAndDeriveCollationFromExprsWithCoer(ctx, c.funcName, types.ETInt, args...)
+	}
+
+	return c.baseFunctionClass.deriveCollation(ctx, args)
+}
+
 // nolint:structcheck
 type baseInSig struct {
 	baseBuiltinFunc

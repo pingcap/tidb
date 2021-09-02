@@ -5138,7 +5138,7 @@ func getFsp4TimeAddSub(s string) int8 {
 
 // getBf4TimeAddSub parses input types, generates baseBuiltinFunc and set related attributes for
 // builtin function 'ADDTIME' and 'SUBTIME'
-func getBf4TimeAddSub(ctx sessionctx.Context, funcName string, args []Expression) (tp1, tp2 *types.FieldType, bf baseBuiltinFunc, err error) {
+func getBf4TimeAddSub(ctx sessionctx.Context, c functionClass, args []Expression) (tp1, tp2 *types.FieldType, bf baseBuiltinFunc, err error) {
 	tp1, tp2 = args[0].GetType(), args[1].GetType()
 	var argTp1, argTp2, retTp types.EvalType
 	switch tp1.Tp {
@@ -5166,7 +5166,7 @@ func getBf4TimeAddSub(ctx sessionctx.Context, funcName string, args []Expression
 		return
 	}
 
-	bf, err = newBaseBuiltinFuncWithTp(ctx, funcName, args, retTp, argTp1, argTp2)
+	bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, retTp, argTp1, argTp2)
 	if err != nil {
 		return
 	}
@@ -5278,7 +5278,7 @@ func (c *addTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp1, tp2, bf, err := getBf4TimeAddSub(ctx, c.funcName, args)
+	tp1, tp2, bf, err := getBf4TimeAddSub(ctx, c, args)
 	if err != nil {
 		return nil, err
 	}
@@ -6237,7 +6237,7 @@ func (c *subTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp1, tp2, bf, err := getBf4TimeAddSub(ctx, c.funcName, args)
+	tp1, tp2, bf, err := getBf4TimeAddSub(ctx, c, args)
 	if err != nil {
 		return nil, err
 	}
