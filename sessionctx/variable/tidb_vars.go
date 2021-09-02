@@ -584,6 +584,9 @@ const (
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
+
+	// TiDBEnableCETrace indicates if Cardinality Estimation module need to trace its internal progress.
+	TiDBEnableCETrace = "tidb_enable_ce_trace"
 )
 
 // TiDB vars that have only global scope
@@ -745,6 +748,7 @@ const (
 	DefTMPTableSize                       = 16777216
 	DefTiDBEnableLocalTxn                 = false
 	DefTiDBEnableOrderedResultMode        = false
+	DefTiDBEnableCETrace                  = false
 )
 
 // Process global variables.

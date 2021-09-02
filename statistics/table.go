@@ -16,6 +16,8 @@ package statistics
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"math"
 	"sort"
 	"strings"
@@ -342,6 +344,13 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count)), nil
 	}
 	result, err := c.GetColumnRowCount(sc, intRanges, coll.Count, true)
+	if sc.EnableCETrace {
+		strs := make([]string, 0, len(intRanges))
+		for _, r := range intRanges {
+			strs = append(strs, r.String())
+		}
+		logutil.BgLogger().Info(">>> CE Trace: GetRowCountByIntColumnRanges", zap.Strings("ranges", strs), zap.Float64("selectivity", result/float64(coll.Count)))
+	}
 	return result, errors.Trace(err)
 }
 
@@ -352,6 +361,13 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 		return GetPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 	}
 	result, err := c.GetColumnRowCount(sc, colRanges, coll.Count, false)
+	if sc.EnableCETrace {
+		strs := make([]string, 0, len(colRanges))
+		for _, r := range colRanges {
+			strs = append(strs, r.String())
+		}
+		logutil.BgLogger().Info(">>> CE Trace: GetRowCountByColumnRanges", zap.Strings("ranges", strs), zap.Float64("selectivity", result/float64(coll.Count)))
+	}
 	return result, errors.Trace(err)
 }
 
@@ -371,6 +387,13 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 		result, err = coll.getIndexRowCount(sc, idxID, indexRanges)
 	} else {
 		result, err = idx.GetRowCount(sc, coll, indexRanges, coll.Count)
+	}
+	if sc.EnableCETrace {
+		strs := make([]string, 0, len(indexRanges))
+		for _, r := range indexRanges {
+			strs = append(strs, r.String())
+		}
+		logutil.BgLogger().Info(">>> CE Trace: GetRowCountByIndexRanges", zap.Strings("ranges", strs), zap.Float64("selectivity", result/float64(coll.Count)))
 	}
 	return result, errors.Trace(err)
 }

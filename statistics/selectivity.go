@@ -358,6 +358,10 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	if mask > 0 {
 		ret *= selectionFactor
 	}
+	if ctx.GetSessionVars().EnableCETrace {
+		totalExpr := expression.ComposeCNFCondition(ctx, exprs...)
+		logutil.BgLogger().Info(">>> CE Trace: Selectivity", zap.Stringer("expr", totalExpr), zap.Float64("selectivity", ret))
+	}
 	return ret, nodes, nil
 }
 

@@ -1833,6 +1833,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableStableResultMode = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeSession, Name: TiDBEnableCETrace, Value: BoolToOnOff(DefTiDBEnableCETrace), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableCETrace = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

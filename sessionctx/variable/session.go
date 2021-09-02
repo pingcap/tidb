@@ -952,6 +952,9 @@ type SessionVars struct {
 		curr int8
 		data [2]stmtctx.StatementContext
 	}
+
+	// EnableCETrace indicate if Cardinality Estimation module need to trace its internal progress.
+	EnableCETrace bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
