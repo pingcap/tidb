@@ -645,7 +645,6 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			CMSketch:   cms,
 			TopN:       topN,
 			FMSketch:   fms,
-			Count:      int64(hg.TotalRowCount()),
 			IsHandle:   c.IsHandle,
 			StatsVer:   rows[0].GetInt64(0),
 		}
@@ -831,7 +830,6 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				CMSketch:   cms,
 				TopN:       topN,
 				FMSketch:   fmSketch,
-				Count:      int64(hg.TotalRowCount()),
 				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 				Flag:       flag,
