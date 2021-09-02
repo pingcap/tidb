@@ -39,7 +39,7 @@ type testUtilSuite struct{}
 
 func (s *testUtilSuite) TestBaseBuiltin(c *check.C) {
 	ctx := mock.NewContext()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, &baseFunctionClass{}, nil, types.ETTimestamp)
 	c.Assert(err, check.IsNil)
 	_, _, err = bf.evalInt(chunk.Row{})
 	c.Assert(err, check.NotNil)
