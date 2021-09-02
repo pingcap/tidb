@@ -2465,7 +2465,7 @@ func TestPlacementPolicyStmt(t *testing.T) {
 
 }
 
-func TestIssue27710(t *testing.T) {
+func TestDBNameCaseSensitivityInTableLevel(t *testing.T) {
 	store, clean := newStore(t)
 	defer clean()
 	se := newSession(t, store, dbName)
