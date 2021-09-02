@@ -92,7 +92,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	for i := range args {
 		argTps[i] = args[0].GetType().EvalType()
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -671,7 +671,7 @@ func (c *rowFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	for i := range argTps {
 		argTps[i] = args[i].GetType().EvalType()
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -706,7 +706,7 @@ func (c *setVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if argTp == types.ETTimestamp || argTp == types.ETDuration || argTp == types.ETJson {
 		argTp = types.ETString
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, types.ETString, argTp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, argTp, types.ETString, argTp)
 	if err != nil {
 		return nil, err
 	}
@@ -920,7 +920,7 @@ func (c *getStringVarFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -977,7 +977,7 @@ func (c *getIntVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1020,7 +1020,7 @@ func (c *getRealVarFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1062,7 +1062,7 @@ func (c *getDecimalVarFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDecimal, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1104,7 +1104,7 @@ func (c *getTimeVarFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1403,7 +1403,7 @@ func (c *bitCountFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -1446,7 +1446,7 @@ func (c *getParamFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETInt)
 	if err != nil {
 		return nil, err
 	}

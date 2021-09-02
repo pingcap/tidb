@@ -46,7 +46,7 @@ func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 	argTp := []types.EvalType{types.ETString, types.ETString, types.ETInt}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argTp...)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +117,7 @@ func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}

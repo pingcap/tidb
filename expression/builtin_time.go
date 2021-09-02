@@ -272,7 +272,7 @@ func (c *dateFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +333,7 @@ func (c *dateLiteralFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, []Expression{}, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, []Expression{}, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +374,7 @@ func (c *dateDiffFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDatetime, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDatetime, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -436,7 +436,7 @@ func (c *timeDiffFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 	arg0FieldTp, arg1FieldTp := args[0].GetType(), args[1].GetType()
 	arg0Tp, arg1Tp := c.getArgEvalTp(arg0FieldTp), c.getArgEvalTp(arg1FieldTp)
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration, arg0Tp, arg1Tp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDuration, arg0Tp, arg1Tp)
 	if err != nil {
 		return nil, err
 	}
@@ -794,7 +794,7 @@ func (c *dateFormatFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETDatetime, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETDatetime, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -857,7 +857,7 @@ func (c *fromDaysFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -896,7 +896,7 @@ func (c *hourFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDuration)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDuration)
 	if err != nil {
 		return nil, err
 	}
@@ -935,7 +935,7 @@ func (c *minuteFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDuration)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDuration)
 	if err != nil {
 		return nil, err
 	}
@@ -974,7 +974,7 @@ func (c *secondFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDuration)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDuration)
 	if err != nil {
 		return nil, err
 	}
@@ -1013,7 +1013,7 @@ func (c *microSecondFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDuration)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDuration)
 	if err != nil {
 		return nil, err
 	}
@@ -1052,7 +1052,7 @@ func (c *monthFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -1101,7 +1101,7 @@ func (c *monthNameFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -1144,7 +1144,7 @@ func (c *dayNameFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -1214,7 +1214,7 @@ func (c *dayOfMonthFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -1259,7 +1259,7 @@ func (c *dayOfWeekFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -1302,7 +1302,7 @@ func (c *dayOfYearFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -1351,7 +1351,7 @@ func (c *weekFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		argTps = append(argTps, types.ETInt)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1446,7 +1446,7 @@ func (c *weekDayFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -1489,7 +1489,7 @@ func (c *weekOfYearFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -1534,7 +1534,7 @@ func (c *yearFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -1586,7 +1586,7 @@ func (c *yearWeekFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		argTps = append(argTps, types.ETInt)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1688,7 +1688,7 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 
 	isArg0Str := args[0].GetType().EvalType() == types.ETString
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retTp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, retTp, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1814,7 +1814,7 @@ func (c *getFormatFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1885,7 +1885,7 @@ func (c *strToDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	retTp, fsp := c.getRetTp(ctx, args[1])
 	switch retTp {
 	case mysql.TypeDate:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETString, types.ETString)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime, types.ETString, types.ETString)
 		if err != nil {
 			return nil, err
 		}
@@ -1893,7 +1893,7 @@ func (c *strToDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		sig = &builtinStrToDateDateSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_StrToDateDate)
 	case mysql.TypeDatetime:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETString, types.ETString)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime, types.ETString, types.ETString)
 		if err != nil {
 			return nil, err
 		}
@@ -1905,7 +1905,7 @@ func (c *strToDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		sig = &builtinStrToDateDatetimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_StrToDateDatetime)
 	case mysql.TypeDuration:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration, types.ETString, types.ETString)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDuration, types.ETString, types.ETString)
 		if err != nil {
 			return nil, err
 		}
@@ -2031,7 +2031,7 @@ func (c *sysDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if len(args) == 1 {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -2105,7 +2105,7 @@ func (c *currentDateFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -2148,7 +2148,7 @@ func (c *currentTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 
 	if len(args) == 0 {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDuration)
 		if err != nil {
 			return nil, err
 		}
@@ -2171,7 +2171,7 @@ func (c *currentTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 			return nil, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
 		}
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDuration, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -2242,7 +2242,7 @@ func (c *timeFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDuration, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -2316,7 +2316,7 @@ func (c *timeLiteralFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, []Expression{}, types.ETDuration)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, []Expression{}, types.ETDuration)
 	if err != nil {
 		return nil, err
 	}
@@ -2353,7 +2353,7 @@ func (c *utcDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -2415,7 +2415,7 @@ func (c *utcTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if len(args) == 1 {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -2507,7 +2507,7 @@ func (c *nowFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if len(args) == 1 {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -2641,14 +2641,14 @@ func (c *extractFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	var bf baseBuiltinFunc
 	if isDatetimeUnit {
 		if args[1].GetType().EvalType() != types.ETString {
-			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDatetime)
+			bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString, types.ETDatetime)
 			if err != nil {
 				return nil, err
 			}
 			sig = &builtinExtractDatetimeSig{bf}
 			sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetime)
 		} else {
-			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
+			bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString, types.ETString)
 			if err != nil {
 				return nil, err
 			}
@@ -2657,7 +2657,7 @@ func (c *extractFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			sig.setPbCode(tipb.ScalarFuncSig_ExtractDatetimeFromString)
 		}
 	} else {
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDuration)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString, types.ETDuration)
 		if err != nil {
 			return nil, err
 		}
@@ -3342,7 +3342,7 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			}
 			// Otherwise, the fsp should be 0.
 		}
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration, argTps...)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDuration, argTps...)
 		if err != nil {
 			return nil, err
 		}
@@ -3352,7 +3352,7 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		}
 		bf.tp.Flen, bf.tp.Decimal = mysql.MaxDurationWidthWithFsp, mathutil.Max(arg0Dec, internalFsp)
 	} else {
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, argTps...)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime, argTps...)
 		if err != nil {
 			return nil, err
 		}
@@ -4026,7 +4026,7 @@ func (c *subDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			}
 			// Otherwise, the fsp should be 0.
 		}
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration, argTps...)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDuration, argTps...)
 		if err != nil {
 			return nil, err
 		}
@@ -4036,7 +4036,7 @@ func (c *subDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		}
 		bf.tp.Flen, bf.tp.Decimal = mysql.MaxDurationWidthWithFsp, mathutil.Max(arg0Dec, internalFsp)
 	} else {
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, argTps...)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime, argTps...)
 		if err != nil {
 			return nil, err
 		}
@@ -4679,7 +4679,7 @@ func (c *timestampDiffFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETDatetime, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString, types.ETDatetime, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -4778,7 +4778,7 @@ func (c *unixTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []
 		panic("Unexpected retTp")
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retTp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, retTp, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -4962,7 +4962,7 @@ func (c *timestampFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal, mysql.TypeLonglong:
 		isFloat = true
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, evalTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime, evalTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -5092,7 +5092,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx sessionctx.Context, args
 	if err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, []Expression{}, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, []Expression{}, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -5709,7 +5709,7 @@ func (c *convertTzFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 
 	decimal := c.getDecimal(ctx, args[0])
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime, types.ETDatetime, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -5799,7 +5799,7 @@ func (c *makeDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -5876,7 +5876,7 @@ func (c *makeTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		flen, decimal = 17, 6
 	}
 	// MySQL will cast the first and second arguments to INT, and the third argument to DECIMAL.
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration, types.ETInt, types.ETInt, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDuration, types.ETInt, types.ETInt, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -5961,7 +5961,7 @@ func (c *periodAddFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -6048,7 +6048,7 @@ func (c *periodDiffFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -6100,7 +6100,7 @@ func (c *quarterFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -6162,7 +6162,7 @@ func (c *secToTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if retFsp > 0 {
 		retFlen += 1 + retFsp
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDuration, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -6651,7 +6651,7 @@ func (c *timeFormatFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETDuration, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETDuration, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -6704,7 +6704,7 @@ func (c *timeToSecFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDuration)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDuration)
 	if err != nil {
 		return nil, err
 	}
@@ -6748,7 +6748,7 @@ func (c *timestampAddFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETInt, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -6846,7 +6846,7 @@ func (c *toDaysFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -6888,7 +6888,7 @@ func (c *toSecondsFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -6956,7 +6956,7 @@ func (c *utcTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if len(args) == 1 {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDuration, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -7033,7 +7033,7 @@ func (c *lastDayFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}
@@ -7093,7 +7093,7 @@ func (c *tidbParseTsoFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		return nil, err
 	}
 	argTp := args[0].GetType().EvalType()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, argTp, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -7152,7 +7152,7 @@ func (c *tidbBoundedStalenessFunctionClass) getFunction(ctx sessionctx.Context, 
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETDatetime)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDatetime, types.ETDatetime, types.ETDatetime)
 	if err != nil {
 		return nil, err
 	}

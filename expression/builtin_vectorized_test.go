@@ -85,7 +85,7 @@ func genMockVecPlusIntBuiltinFunc() (*mockVecPlusIntBuiltinFunc, *chunk.Chunk, *
 	col1.Index, col1.RetType = 0, tp
 	col2 := newColumn(1)
 	col2.Index, col2.RetType = 1, tp
-	bf, err := newBaseBuiltinFuncWithTp(mock.NewContext(), "", []Expression{col1, col2}, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(mock.NewContext(), &baseFunctionClass{}, []Expression{col1, col2}, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		panic(err)
 	}
@@ -433,7 +433,7 @@ func genMockRowDouble(eType types.EvalType, enableVec bool) (builtinFunc, *chunk
 	col1 := newColumn(1)
 	col1.Index = 0
 	col1.RetType = tp
-	bf, err := newBaseBuiltinFuncWithTp(mock.NewContext(), "", []Expression{col1}, eType, eType)
+	bf, err := newBaseBuiltinFuncWithTp(mock.NewContext(), &baseFunctionClass{}, []Expression{col1}, eType, eType)
 	if err != nil {
 		return nil, nil, nil, err
 	}

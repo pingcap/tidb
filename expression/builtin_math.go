@@ -127,7 +127,7 @@ func (c *absFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if argTp != types.ETInt && argTp != types.ETDecimal {
 		argTp = types.ETReal
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, argTp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, argTp, argTp)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if len(args) > 1 {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, argTp, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +482,7 @@ func (c *ceilFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	}
 
 	retTp, argTp := getEvalTp4FloorAndCeil(args[0])
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retTp, argTp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, retTp, argTp)
 	if err != nil {
 		return nil, err
 	}
@@ -670,7 +670,7 @@ func (c *floorFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 
 	retTp, argTp := getEvalTp4FloorAndCeil(args[0])
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retTp, argTp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, retTp, argTp)
 	if err != nil {
 		return nil, err
 	}
@@ -836,12 +836,12 @@ func (c *logFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 
 	var err error
 	if argsLen == 1 {
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
 			return nil, err
 		}
@@ -921,7 +921,7 @@ func (c *log2FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -962,7 +962,7 @@ func (c *log10FunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -1008,7 +1008,7 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if len(args) > 0 {
 		argTps = []types.EvalType{types.ETInt}
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1097,7 +1097,7 @@ func (c *powFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -1147,7 +1147,7 @@ func (c *convFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -1283,7 +1283,7 @@ func (c *crc32FunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1323,7 +1323,7 @@ func (c *signFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -1366,7 +1366,7 @@ func (c *sqrtFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -1406,7 +1406,7 @@ func (c *acosFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -1447,7 +1447,7 @@ func (c *asinFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -1497,12 +1497,12 @@ func (c *atanFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 	var err error
 	if argsLen == 1 {
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal, types.ETReal)
 		if err != nil {
 			return nil, err
 		}
@@ -1574,7 +1574,7 @@ func (c *cosFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -1611,7 +1611,7 @@ func (c *cotFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -1656,7 +1656,7 @@ func (c *degreesFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -1694,7 +1694,7 @@ func (c *expFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -1742,7 +1742,7 @@ func (c *piFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	)
 
 	var err error
-	bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal)
+	bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -1777,7 +1777,7 @@ func (c *radiansFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -1814,7 +1814,7 @@ func (c *sinFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -1851,7 +1851,7 @@ func (c *tanFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -1894,7 +1894,7 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		argTp = types.ETReal
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, argTp, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, argTp, argTp, types.ETInt)
 	if err != nil {
 		return nil, err
 	}

@@ -101,7 +101,7 @@ func (c *jsonTypeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETJson)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETJson)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +144,7 @@ func (c *jsonExtractFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	for range args[1:] {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +206,7 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +258,7 @@ func (c *jsonSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	for i := 1; i < len(args)-1; i += 2 {
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +301,7 @@ func (c *jsonInsertFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	for i := 1; i < len(args)-1; i += 2 {
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +344,7 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	for i := 1; i < len(args)-1; i += 2 {
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -384,7 +384,7 @@ func (c *jsonRemoveFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	for range args[1:] {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +441,7 @@ func (c *jsonMergeFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	for range args {
 		argTps = append(argTps, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -494,7 +494,7 @@ func (c *jsonObjectFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	for i := 0; i < len(args)-1; i += 2 {
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -560,7 +560,7 @@ func (c *jsonArrayFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	for range args {
 		argTps = append(argTps, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -609,7 +609,7 @@ func (c *jsonContainsPathFunctionClass) getFunction(ctx sessionctx.Context, args
 	for i := 3; i <= len(args); i++ {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -729,7 +729,7 @@ func (c *jsonContainsFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if len(args) == 3 {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -786,21 +786,21 @@ func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	argType := args[0].GetType().EvalType()
 	switch argType {
 	case types.ETJson:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETJson)
 		if err != nil {
 			return nil, err
 		}
 		sig = &builtinJSONValidJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JsonValidJsonSig)
 	case types.ETString:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 		if err != nil {
 			return nil, err
 		}
 		sig = &builtinJSONValidStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JsonValidStringSig)
 	default:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argType)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argType)
 		if err != nil {
 			return nil, err
 		}
@@ -894,7 +894,7 @@ func (c *jsonArrayAppendFunctionClass) getFunction(ctx sessionctx.Context, args 
 	for i := 1; i < len(args)-1; i += 2 {
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -988,7 +988,7 @@ func (c *jsonArrayInsertFunctionClass) getFunction(ctx sessionctx.Context, args 
 	for i := 1; i < len(args)-1; i += 2 {
 		argTps = append(argTps, types.ETString, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1056,7 +1056,7 @@ func (c *jsonMergePatchFunctionClass) getFunction(ctx sessionctx.Context, args [
 	for range args {
 		argTps = append(argTps, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1113,7 +1113,7 @@ func (c *jsonMergePreserveFunctionClass) getFunction(ctx sessionctx.Context, arg
 	for range args {
 		argTps = append(argTps, types.ETJson)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1141,7 +1141,7 @@ func (c *jsonPrettyFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETJson)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETJson)
 	if err != nil {
 		return nil, err
 	}
@@ -1195,7 +1195,7 @@ func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1237,7 +1237,7 @@ func (c *jsonSearchFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	for range args[1:] {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1325,7 +1325,7 @@ func (c *jsonStorageSizeFunctionClass) getFunction(ctx sessionctx.Context, args 
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETJson)
 	if err != nil {
 		return nil, err
 	}
@@ -1367,7 +1367,7 @@ func (c *jsonDepthFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETJson)
 	if err != nil {
 		return nil, err
 	}
@@ -1397,7 +1397,7 @@ func (c *jsonKeysFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if len(args) == 2 {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETJson, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1499,7 +1499,7 @@ func (c *jsonLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		argTps = append(argTps, types.ETString)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}

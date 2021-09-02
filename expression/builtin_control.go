@@ -223,7 +223,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if l%2 == 1 {
 		argTps = append(argTps, tp)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, tp, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -522,7 +522,7 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, types.ETInt, evalTps, evalTps)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, evalTps, types.ETInt, evalTps, evalTps)
 	if err != nil {
 		return nil, err
 	}
@@ -718,7 +718,7 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		types.SetBinChsClnFlag(retTp)
 	}
 	evalTps := retTp.EvalType()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, evalTps, evalTps)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, evalTps, evalTps, evalTps)
 	if err != nil {
 		return nil, err
 	}

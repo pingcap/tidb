@@ -127,7 +127,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retEvalTp, fieldEvalTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, retEvalTp, fieldEvalTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +467,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	for i := range args {
 		argTps[i] = tp
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, tp, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -698,7 +698,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	for i := range args {
 		argTps[i] = tp
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, tp, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -926,7 +926,7 @@ func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	for range args {
 		argTps = append(argTps, argTp)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1532,7 +1532,7 @@ func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Exp
 
 // generateCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, tp, tp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, tp, tp)
 	if err != nil {
 		return nil, err
 	}

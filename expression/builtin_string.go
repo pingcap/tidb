@@ -186,6 +186,14 @@ func addBinFlag(tp *types.FieldType) {
 	SetBinFlagOrBinStr(tp, tp)
 }
 
+type stringResultFuncClass struct {
+	baseFunctionClass
+}
+
+func (s *stringResultFuncClass) deriveCollation(args []Expression) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	return "", "", 0, nil
+}
+
 type lengthFunctionClass struct {
 	baseFunctionClass
 }
@@ -194,7 +202,7 @@ func (c *lengthFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +240,7 @@ func (c *asciiFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +274,7 @@ func (b *builtinASCIISig) evalInt(row chunk.Row) (int64, bool, error) {
 }
 
 type concatFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -277,7 +285,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	for i := 0; i < len(args); i++ {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +293,6 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf.tp.Flen = 0
 	for i := range args {
 		argType := args[i].GetType()
-
 		if argType.Flen < 0 {
 			bf.tp.Flen = mysql.MaxBlobWidth
 			logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
@@ -338,7 +345,7 @@ func (b *builtinConcatSig) evalString(row chunk.Row) (d string, isNull bool, err
 }
 
 type concatWSFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -350,7 +357,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		argTps = append(argTps, types.ETString)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -449,14 +456,14 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 }
 
 type leftFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *leftFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -534,14 +541,14 @@ func (b *builtinLeftUTF8Sig) evalString(row chunk.Row) (string, bool, error) {
 }
 
 type rightFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *rightFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -620,14 +627,14 @@ func (b *builtinRightUTF8Sig) evalString(row chunk.Row) (string, bool, error) {
 }
 
 type repeatFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *repeatFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -686,14 +693,14 @@ func (b *builtinRepeatSig) evalString(row chunk.Row) (d string, isNull bool, err
 }
 
 type lowerFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -731,14 +738,14 @@ func (b *builtinLowerSig) evalString(row chunk.Row) (d string, isNull bool, err 
 }
 
 type reverseFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *reverseFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -807,7 +814,7 @@ func (c *spaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -858,14 +865,14 @@ func (b *builtinSpaceSig) evalString(row chunk.Row) (d string, isNull bool, err 
 }
 
 type upperFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -933,7 +940,7 @@ func (c *strcmpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -976,14 +983,14 @@ func (b *builtinStrcmpSig) evalInt(row chunk.Row) (int64, bool, error) {
 }
 
 type replaceFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *replaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1048,7 +1055,7 @@ func (c *convertFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1117,7 +1124,7 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 }
 
 type substringFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *substringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -1128,7 +1135,7 @@ func (c *substringFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if len(args) == 3 {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1313,14 +1320,14 @@ func (b *builtinSubstring3ArgsUTF8Sig) evalString(row chunk.Row) (string, bool, 
 }
 
 type substringIndexFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *substringIndexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETString, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -1389,7 +1396,7 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 }
 
 type locateFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *locateFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -1400,7 +1407,7 @@ func (c *locateFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if hasStartPos {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1583,7 +1590,7 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
 	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 		if err != nil {
 			return nil, err
 		}
@@ -1594,7 +1601,7 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		sig.setPbCode(tipb.ScalarFuncSig_HexStrArg)
 		return sig, nil
 	case types.ETInt, types.ETReal, types.ETDecimal:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETInt)
 		if err != nil {
 			return nil, err
 		}
@@ -1674,7 +1681,7 @@ func (c *unhexFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		return nil, errors.Errorf("Unhex invalid args, need int or string but get %s", argType)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1718,7 +1725,7 @@ func (b *builtinUnHexSig) evalString(row chunk.Row) (string, bool, error) {
 const spaceChars = " "
 
 type trimFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 // getFunction sets trim built-in function signature.
@@ -1731,7 +1738,7 @@ func (c *trimFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 	switch len(args) {
 	case 1:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 		if err != nil {
 			return nil, err
 		}
@@ -1743,7 +1750,7 @@ func (c *trimFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return sig, nil
 
 	case 2:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETString)
 		if err != nil {
 			return nil, err
 		}
@@ -1754,7 +1761,7 @@ func (c *trimFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return sig, nil
 
 	case 3:
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString, types.ETInt)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETString, types.ETInt)
 		if err != nil {
 			return nil, err
 		}
@@ -1881,7 +1888,7 @@ func (c *lTrimFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1921,7 +1928,7 @@ func (c *rTrimFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1988,14 +1995,14 @@ func getFlen4LpadAndRpad(ctx sessionctx.Context, arg Expression) int {
 }
 
 type lpadFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *lpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -2120,14 +2127,14 @@ func (b *builtinLpadUTF8Sig) evalString(row chunk.Row) (string, bool, error) {
 }
 
 type rpadFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *rpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -2258,7 +2265,7 @@ func (c *bitLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -2302,7 +2309,7 @@ func (c *charFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		argTps = append(argTps, types.ETInt)
 	}
 	argTps = append(argTps, types.ETString)
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -2385,7 +2392,7 @@ func (c *charLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if argsErr := c.verifyArgs(args); argsErr != nil {
 		return nil, argsErr
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -2447,7 +2454,7 @@ func (c *findInSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -2495,7 +2502,7 @@ func (b *builtinFindInSetSig) evalInt(row chunk.Row) (int64, bool, error) {
 }
 
 type fieldFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *fieldFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -2520,7 +2527,7 @@ func (c *fieldFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	for i, length := 0, len(args); i < length; i++ {
 		argTps[i] = argTp
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -2627,7 +2634,7 @@ func (b *builtinFieldStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 }
 
 type makeSetFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *makeSetFunctionClass) getFlen(ctx sessionctx.Context, args []Expression) int {
@@ -2662,7 +2669,7 @@ func (c *makeSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	for i, length := 1, len(args); i < length; i++ {
 		argTps[i] = types.ETString
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -2721,7 +2728,7 @@ func (c *octFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	}
 	var sig builtinFunc
 	if IsBinaryLiteral(args[0]) || args[0].GetType().EvalType() == types.ETInt {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETInt)
 		if err != nil {
 			return nil, err
 		}
@@ -2730,7 +2737,7 @@ func (c *octFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		sig = &builtinOctIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_OctInt)
 	} else {
-		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 		if err != nil {
 			return nil, err
 		}
@@ -2813,7 +2820,7 @@ func (c *ordFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -2893,7 +2900,7 @@ func (c *quoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -2964,7 +2971,7 @@ func (c *binFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -2996,7 +3003,7 @@ func (b *builtinBinSig) evalString(row chunk.Row) (string, bool, error) {
 }
 
 type eltFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *eltFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -3008,7 +3015,7 @@ func (c *eltFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	for i := 1; i < len(args); i++ {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -3054,7 +3061,7 @@ func (b *builtinEltSig) evalString(row chunk.Row) (string, bool, error) {
 }
 
 type exportSetFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *exportSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
@@ -3069,7 +3076,7 @@ func (c *exportSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if len(args) > 4 {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -3244,7 +3251,7 @@ func (c *formatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if len(args) == 3 {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -3412,7 +3419,7 @@ func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -3496,7 +3503,7 @@ func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -3592,14 +3599,14 @@ func splitToSubN(s string, n int) []string {
 }
 
 type insertFunctionClass struct {
-	baseFunctionClass
+	stringResultFuncClass
 }
 
 func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETInt, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -3734,7 +3741,7 @@ func (c *instrFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -3889,7 +3896,7 @@ func (c *weightStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		argTps[2] = types.ETInt
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -4004,7 +4011,7 @@ func (c *translateFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}

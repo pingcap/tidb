@@ -113,7 +113,7 @@ func (c *aesDecryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	for range args {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +247,7 @@ func (c *aesEncryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	for range args {
 		argTps = append(argTps, types.ETString)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +378,7 @@ func (c *decodeFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +441,7 @@ func (c *encodeFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -503,7 +503,7 @@ func (c *passwordFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -550,7 +550,7 @@ func (c *randomBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -597,7 +597,7 @@ func (c *md5FunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -638,7 +638,7 @@ func (c *sha1FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -683,7 +683,7 @@ func (c *sha2FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -783,7 +783,7 @@ func (c *compressFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -854,7 +854,7 @@ func (c *uncompressFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -912,7 +912,7 @@ func (c *uncompressedLengthFunctionClass) getFunction(ctx sessionctx.Context, ar
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}

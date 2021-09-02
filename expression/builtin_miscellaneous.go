@@ -99,7 +99,7 @@ func (c *sleepFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func (c *lockFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +190,7 @@ func (c *releaseLockFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +226,7 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	argTp := args[0].GetType().EvalType()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, argTp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, argTp, argTp)
 	if err != nil {
 		return nil, err
 	}
@@ -393,7 +393,7 @@ func (c *inetAtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -470,7 +470,7 @@ func (c *inetNtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -523,7 +523,7 @@ func (c *inet6AtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -596,7 +596,7 @@ func (c *inet6NtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -653,7 +653,7 @@ func (c *isIPv4FunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -721,7 +721,7 @@ func (c *isIPv4CompatFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -770,7 +770,7 @@ func (c *isIPv4MappedFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -819,7 +819,7 @@ func (c *isIPv6FunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -878,7 +878,7 @@ func (c *nameConstFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, err
 	}
 	argTp := args[1].GetType().EvalType()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, argTp, types.ETString, argTp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, argTp, types.ETString, argTp)
 	if err != nil {
 		return nil, err
 	}
@@ -1022,7 +1022,7 @@ func (c *uuidFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1071,7 +1071,7 @@ func (c *vitessHashFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -1120,7 +1120,7 @@ func (c *uuidToBinFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if len(args) == 2 {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -1187,7 +1187,7 @@ func (c *binToUUIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if len(args) == 2 {
 		argTps = append(argTps, types.ETInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}

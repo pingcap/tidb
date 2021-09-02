@@ -78,7 +78,7 @@ func (c *logicAndFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, errors.Trace(err)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func (c *logicOrFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, errors.Trace(err)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +190,7 @@ func (c *logicXorFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, errors.Trace(err)
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +234,7 @@ func (c *bitAndFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +275,7 @@ func (c *bitOrFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +316,7 @@ func (c *bitXorFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +357,7 @@ func (c *leftShiftFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -398,7 +398,7 @@ func (c *rightShiftFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +456,7 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 		argTp = types.ETReal
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argTp)
 	if err != nil {
 		return nil, err
 	}
@@ -678,7 +678,7 @@ func (c *bitNegFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -722,7 +722,7 @@ func (c *unaryNotFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		argTp = types.ETReal
 	}
 
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argTp)
 	if err != nil {
 		return nil, err
 	}
@@ -862,14 +862,14 @@ func (c *unaryMinusFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	switch argExprTp.EvalType() {
 	case types.ETInt:
 		if intOverflow {
-			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETDecimal)
+			bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDecimal, types.ETDecimal)
 			if err != nil {
 				return nil, err
 			}
 			sig = &builtinUnaryMinusDecimalSig{bf, true}
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusDecimal)
 		} else {
-			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
+			bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETInt)
 			if err != nil {
 				return nil, err
 			}
@@ -878,7 +878,7 @@ func (c *unaryMinusFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		}
 		bf.tp.Decimal = 0
 	case types.ETDecimal:
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETDecimal)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDecimal, types.ETDecimal)
 		if err != nil {
 			return nil, err
 		}
@@ -886,7 +886,7 @@ func (c *unaryMinusFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		sig = &builtinUnaryMinusDecimalSig{bf, false}
 		sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusDecimal)
 	case types.ETReal:
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 		if err != nil {
 			return nil, err
 		}
@@ -895,14 +895,14 @@ func (c *unaryMinusFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	default:
 		tp := argExpr.GetType().Tp
 		if types.IsTypeTime(tp) || tp == mysql.TypeDuration {
-			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDecimal, types.ETDecimal)
+			bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETDecimal, types.ETDecimal)
 			if err != nil {
 				return nil, err
 			}
 			sig = &builtinUnaryMinusDecimalSig{bf, false}
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusDecimal)
 		} else {
-			bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal)
+			bf, err = newBaseBuiltinFuncWithTp(ctx, c, args, types.ETReal, types.ETReal)
 			if err != nil {
 				return nil, err
 			}
@@ -993,7 +993,7 @@ func (c *isNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	} else if argTp == types.ETJson {
 		argTp = types.ETString
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argTp)
 	if err != nil {
 		return nil, err
 	}

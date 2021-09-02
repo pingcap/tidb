@@ -92,7 +92,7 @@ func (c *databaseFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +128,7 @@ func (c *foundRowsFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +166,7 @@ func (c *currentUserFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +205,7 @@ func (c *currentRoleFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +258,7 @@ func (c *userFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +298,7 @@ func (c *connectionIDFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -338,7 +338,7 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if len(args) == 1 {
 		argsTp = append(argsTp, types.ETInt)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argsTp...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argsTp...)
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +401,7 @@ func (c *versionFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -436,7 +436,7 @@ func (c *tidbVersionFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -470,7 +470,7 @@ func (c *tidbIsDDLOwnerFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -519,7 +519,7 @@ func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 			constLoopCount = lc
 		}
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, sameEvalType)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETInt, sameEvalType)
 	if err != nil {
 		return nil, err
 	}
@@ -640,7 +640,7 @@ func (c *coercibilityFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		return nil, err
 	}
 	args[0].SetSkip()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, args[0].GetType().EvalType())
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, args[0].GetType().EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -675,7 +675,7 @@ func (c *collationFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	for _, arg := range args {
 		argsTps = append(argsTps, arg.GetType().EvalType())
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argsTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argsTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -707,7 +707,7 @@ func (c *rowCountFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -741,7 +741,7 @@ func (c *tidbDecodeKeyFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -803,7 +803,7 @@ func (c *tidbDecodeSQLDigestsFunctionClass) getFunction(ctx sessionctx.Context, 
 	} else {
 		argTps = []types.EvalType{types.ETString}
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, argTps...)
 	if err != nil {
 		return nil, err
 	}
@@ -916,7 +916,7 @@ func (c *tidbDecodePlanFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -954,7 +954,7 @@ func (c *nextValFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1010,7 +1010,7 @@ func (c *lastValFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
@@ -1060,7 +1060,7 @@ func (c *setValFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, types.ETString, types.ETInt)
 	if err != nil {
 		return nil, err
 	}
@@ -1122,7 +1122,7 @@ func (c *formatBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -1159,7 +1159,7 @@ func (c *formatNanoTimeFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETString, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
