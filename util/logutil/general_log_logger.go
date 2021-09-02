@@ -26,7 +26,6 @@ import (
 
 const (
 	generalLogBatchSize = 1024
-	flushTimeout        = 1000 * time.Millisecond
 )
 
 // GeneralLogEntry represents the fields in a general query log
