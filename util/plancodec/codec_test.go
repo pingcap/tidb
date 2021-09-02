@@ -50,3 +50,9 @@ func (s *testPlanCodecSuite) TestEncodeTaskType(c *C) {
 	_, err = decodeTaskType("1_x")
 	c.Assert(err, NotNil)
 }
+
+func (s *testPlanCodecSuite) TestDecodeDiscardPlan(c *C) {
+	plan, err := DecodePlan(PlanDiscardedEncoded)
+	c.Assert(err, IsNil)
+	c.Assert(plan, DeepEquals, planDiscardedDecoded)
+}
