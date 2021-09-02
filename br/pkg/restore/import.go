@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"sync"
 	"time"
 
@@ -229,6 +230,9 @@ func (importer *FileImporter) CheckMultiIngestSupport(ctx context.Context, pdCli
 	}
 	storeIDs := make([]uint64, 0, len(allStores))
 	for _, s := range allStores {
+		if s.State != metapb.StoreState_Up {
+			continue
+		}
 		storeIDs = append(storeIDs, s.Id)
 	}
 
