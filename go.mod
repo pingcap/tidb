@@ -3,7 +3,7 @@ module github.com/pingcap/tidb
 go 1.16
 
 require (
-	cloud.google.com/go/storage v1.16.1-0.20210826124857-08169baa564d
+	cloud.google.com/go/storage v1.16.1
 	github.com/BurntSushi/toml v0.3.1
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/HdrHistogram/hdrhistogram-go v1.1.0 // indirect
