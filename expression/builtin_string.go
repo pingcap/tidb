@@ -1436,7 +1436,7 @@ func (c *locateFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 }
 
 func (c *locateFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, _ types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
-	return CheckAndDeriveCollationFromExprsWithCoer(ctx, c.funcName, types.ETInt, args[0], args[1])
+	return args[1].GetType().Charset, args[1].GetType().Collate, CoercibilityCoercible, nil
 }
 
 type builtinLocate2ArgsSig struct {
@@ -3789,6 +3789,10 @@ func (c *instrFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	sig := &builtinInstrUTF8Sig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_InstrUTF8)
 	return sig, nil
+}
+
+func (c *instrFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, _ types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	return args[1].GetType().Charset, args[1].GetType().Collate, CoercibilityCoercible, nil
 }
 
 type builtinInstrUTF8Sig struct{ baseBuiltinFunc }
