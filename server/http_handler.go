@@ -1739,7 +1739,7 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 	respValue := resp.Value
 	var result interface{} = resp
 	if respValue.Info != nil {
-		datas := make(map[string][]map[string]string)
+		datas := make(map[string]map[string]string)
 		for _, w := range respValue.Info.Writes {
 			if len(w.ShortValue) > 0 {
 				datas[strconv.FormatUint(w.StartTs, 10)], err = h.decodeMvccData(w.ShortValue, colMap, tb.Meta())
@@ -1768,16 +1768,16 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 	return result, nil
 }
 
-func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) ([]map[string]string, error) {
+func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) (map[string]string, error) {
 	rs, err := tablecodec.DecodeRowToDatumMap(bs, colMap, time.UTC)
-	var record []map[string]string
+	record := make(map[string]string, len(tb.Columns))
 	for _, col := range tb.Columns {
 		if c, ok := rs[col.ID]; ok {
 			data := "nil"
 			if !c.IsNull() {
 				data, err = c.ToString()
 			}
-			record = append(record, map[string]string{col.Name.O: data})
+			record[col.Name.O] = data
 		}
 	}
 	return record, err

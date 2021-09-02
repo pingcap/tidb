@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil/inconsist"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
@@ -300,8 +301,22 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if len(val) == 0 {
 		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
-			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
-				e.idxInfo.Name.O, e.handle)
+			return (&inconsist.Reporter{
+				HandleEncode: func(handle kv.Handle) kv.Key {
+					return key
+				},
+				IndexEncode: func(idxRow *inconsist.RecordData) kv.Key {
+					return e.idxKey
+				},
+				Tbl:  e.tblInfo,
+				Idx:  e.idxInfo,
+				Sctx: e.ctx,
+			}).ReportLookupInconsistent(ctx,
+				1, 0,
+				[]kv.Handle{e.handle},
+				[]kv.Handle{e.handle},
+				[]inconsist.RecordData{{}},
+			)
 		}
 		return nil
 	}
