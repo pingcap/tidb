@@ -112,6 +112,7 @@ var (
 	coerString = []string{"EXPLICIT", "NONE", "IMPLICIT", "SYSCONST", "COERCIBLE", "NUMERIC", "IGNORABLE"}
 )
 
+// CheckIllegalMixCollation check the if the aggregate expression is legal.
 func CheckIllegalMixCollation(funcName string, args []Expression, evalType types.EvalType) error {
 	if len(args) < 2 {
 		return nil
