@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -75,7 +76,10 @@ func TestPreview(t *testing.T) {
 	jsonParsed, err := gabs.ParseJSON([]byte(r))
 	require.NoError(t, err)
 	require.Equal(t, trackingID, jsonParsed.Path("trackingId").Data().(string))
-	require.True(t, jsonParsed.ExistsP("hostExtra.cpuFlags"))
+	// Apple M1 doesn't contain cpuFlags
+	if !(runtime.GOARCH == "arm" && runtime.GOOS == "darwin") {
+		require.True(t, jsonParsed.ExistsP("hostExtra.cpuFlags"))
+	}
 	require.True(t, jsonParsed.ExistsP("hostExtra.os"))
 	require.Len(t, jsonParsed.Path("instances").Children(), 2)
 	require.Equal(t, "tidb", jsonParsed.Path("instances.0.instanceType").Data().(string))

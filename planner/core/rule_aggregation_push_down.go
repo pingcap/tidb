@@ -7,6 +7,7 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 // // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -38,7 +39,7 @@ func (a *aggregationPushDownSolver) isDecomposableWithJoin(fun *aggregation.AggF
 		return false
 	}
 	switch fun.Name {
-	case ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncVarPop, ast.AggFuncJsonObjectAgg, ast.AggFuncStddevPop, ast.AggFuncVarSamp, ast.AggFuncStddevSamp, ast.AggFuncApproxPercentile:
+	case ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncVarPop, ast.AggFuncJsonArrayagg, ast.AggFuncJsonObjectAgg, ast.AggFuncStddevPop, ast.AggFuncVarSamp, ast.AggFuncApproxPercentile, ast.AggFuncStddevSamp:
 		// TODO: Support avg push down.
 		return false
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
@@ -55,7 +56,7 @@ func (a *aggregationPushDownSolver) isDecomposableWithUnion(fun *aggregation.Agg
 		return false
 	}
 	switch fun.Name {
-	case ast.AggFuncGroupConcat, ast.AggFuncVarPop, ast.AggFuncJsonObjectAgg, ast.AggFuncApproxPercentile:
+	case ast.AggFuncGroupConcat, ast.AggFuncVarPop, ast.AggFuncJsonArrayagg, ast.AggFuncApproxPercentile, ast.AggFuncJsonObjectAgg:
 		return false
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
 		return true
@@ -302,6 +303,10 @@ func (a *aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (pu
 		GroupByItems: agg.GroupByItems,
 		Schema:       agg.schema,
 	}, false, false)
+	if partial == nil {
+		pushedAgg = nil
+		return
+	}
 	agg.SetSchema(final.Schema)
 	agg.AggFuncs = final.AggFuncs
 	agg.GroupByItems = final.GroupByItems
@@ -372,6 +377,9 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 		}
 	}
 	pushedAgg := a.splitPartialAgg(agg)
+	if pushedAgg == nil {
+		return nil
+	}
 	newChildren := make([]LogicalPlan, 0, len(union.Children()))
 	for _, child := range union.Children() {
 		newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
@@ -427,22 +435,41 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 			} else if proj, ok1 := child.(*LogicalProjection); ok1 {
 				// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
 				// so we must do this optimization.
-				for i, gbyItem := range agg.GroupByItems {
-					agg.GroupByItems[i] = expression.ColumnSubstitute(gbyItem, proj.schema, proj.Exprs)
-				}
-				for _, aggFunc := range agg.AggFuncs {
-					newArgs := make([]expression.Expression, 0, len(aggFunc.Args))
-					for _, arg := range aggFunc.Args {
-						newArgs = append(newArgs, expression.ColumnSubstitute(arg, proj.schema, proj.Exprs))
+				noSideEffects := true
+				newGbyItems := make([]expression.Expression, 0, len(agg.GroupByItems))
+				for _, gbyItem := range agg.GroupByItems {
+					newGbyItems = append(newGbyItems, expression.ColumnSubstitute(gbyItem, proj.schema, proj.Exprs))
+					if ExprsHasSideEffects(newGbyItems) {
+						noSideEffects = false
+						break
 					}
-					aggFunc.Args = newArgs
 				}
-				projChild := proj.children[0]
-				agg.SetChildren(projChild)
-				// When the origin plan tree is `Aggregation->Projection->Union All->X`, we need to merge 'Aggregation' and 'Projection' first.
-				// And then push the new 'Aggregation' below the 'Union All' .
-				// The final plan tree should be 'Aggregation->Union All->Aggregation->X'.
-				child = projChild
+				newAggFuncsArgs := make([][]expression.Expression, 0, len(agg.AggFuncs))
+				if noSideEffects {
+					for _, aggFunc := range agg.AggFuncs {
+						newArgs := make([]expression.Expression, 0, len(aggFunc.Args))
+						for _, arg := range aggFunc.Args {
+							newArgs = append(newArgs, expression.ColumnSubstitute(arg, proj.schema, proj.Exprs))
+						}
+						if ExprsHasSideEffects(newArgs) {
+							noSideEffects = false
+							break
+						}
+						newAggFuncsArgs = append(newAggFuncsArgs, newArgs)
+					}
+				}
+				if noSideEffects {
+					agg.GroupByItems = newGbyItems
+					for i, aggFunc := range agg.AggFuncs {
+						aggFunc.Args = newAggFuncsArgs[i]
+					}
+					projChild := proj.children[0]
+					agg.SetChildren(projChild)
+					// When the origin plan tree is `Aggregation->Projection->Union All->X`, we need to merge 'Aggregation' and 'Projection' first.
+					// And then push the new 'Aggregation' below the 'Union All' .
+					// The final plan tree should be 'Aggregation->Union All->Aggregation->X'.
+					child = projChild
+				}
 			}
 			if union, ok1 := child.(*LogicalUnionAll); ok1 && p.SCtx().GetSessionVars().AllowAggPushDown {
 				err := a.tryAggPushDownForUnion(union, agg)

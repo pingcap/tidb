@@ -35,7 +35,7 @@ CREATE TEMPORARY TABLE tbl_name (create_definition)
 DROP [TEMPORARY] TABLE tbl_name;
 ```
 
-In the following sectionsn session temporary tables and local temporary tables are used interchangeably.
+In the following sections, session temporary tables and local temporary tables are used interchangeably.
 
 ## Visibility of table definition
 
@@ -80,7 +80,7 @@ Since the metadata of global temporary tables are persistent on TiKV, it's strai
 
 Local temporary tables don’t support altering table operations because few users will do that. TiDB should report errors when users try to do that.
 
-As all DDL statements do, any DDL on a global temporary table will cause an implicit commit. However, creating and dropping a local temporary table doesn’t cause an implicit  commit, according to [the MySQL documentation](https://dev.mysql.com/doc/refman/8.0/en/implicit-commit.html).
+As all DDL statements do, any DDL on a global temporary table will cause an implicit commit. However, creating and dropping a local temporary table doesn’t cause an implicit commit, according to [the MySQL documentation](https://dev.mysql.com/doc/refman/8.0/en/implicit-commit.html).
 
 Each temporary table belongs to its own database. Local temporary tables have a very loose relationship with databases. Dropping a database does not automatically drop any local temporary tables created within that database. The local temporary tables still stay in a virtual database with the same name.
 
@@ -138,7 +138,7 @@ Before going further to the executor, we need to determine the storage form of t
 Basically, there are a few alternatives to store the data of in-memory temporary tables, and the most promising ones are:
 
 - Unistore. Unistore is a module that simulates TiKV on a standalone TiDB instance.
-- UnionScan. UnionScan is a module that unit's membuffer and TiKV data. Membuffer buffers the dirty data a transaction writ's. Query operators read UnionScan and UnionScan will read both buffered data and persistent data. Thus, if the persistent part is always empty, then the UnionScan itself is a temporary table.
+- UnionScan. UnionScan is a module that unit's membuffer and TiKV data. Membuffer buffers the dirty data written by a transaction. Query operators read UnionScan and UnionScan will read both buffered data and persistent data. Thus, if the persistent part is always empty, then the UnionScan itself is a temporary table.
 
 |                  | Unistore        | UnionScan |
 | -------------    | :-------------: | -----:    |
@@ -151,14 +151,14 @@ Basically, there are a few alternatives to store the data of in-memory temporary
 TiDB uses UnionScan to store the data of temporary tables for the following reasons:
 
 - The performance should be better. It can cut down the marshal/unmarshal cost and a lot of the coprocessor code path, which is inevitable in the Unistore as a standalone storage engine.
-- The implementation is easier. As long as we don’t take the spilling to disk feature into consideration for now, the global temporary table is almost handly. And we do not bother by the tons of background goroutines of the Unistore engine when dealing with resource releasing. How to keep the atomicity is another headache if we choose the Unistore, imaging that a transaction would write to both temporary tables and normal tables at the same time.
+- The implementation is easier. As long as we don’t take the spilling to disk feature into consideration for now, the global temporary table is almost handy. And we do not bother by the tons of background goroutines of the Unistore engine when dealing with resource releasing. How to keep the atomicity is another headache if we choose the Unistore, imagine that a transaction would write to both temporary tables and normal tables at the same time.
 - A lower risk of introducing bugs. Although we implement the coprocessor in the Unistore, we just use it for the testing purpose, and we also have some experimental features first implemented in the Unistore, so its behavior may slightly differ from the real TiKV, and that difference would introduce bugs.
 
-Nothing needs to be changed for the KV encoding, the temporary table uses the same strategy with the normal table.
+Nothing needs to be changed for the KV encoding, the temporary table uses the same strategy as the normal table.
 
 When the memory consumed by a temporary table exceeds a threshold, the data should be spilled to the local disk to avoid OOM. The threshold is defined by the system variable `temptable_max_ram`, which is 1G by default. Membuffer does not support disk storage for now, so we need to implement it.
 
-A possible implementation is to use the AOF (append-only file) persistent storage, the membuffer is implemented as a red-black tree and its node is allocated from a customized allocator. That allocator manages the memory in an arena manner.  A continuous block of memory becomes an arena block and an arena consists of several arena blocks. We can dump those blocks into the disk and maintain some LRU records for them. A precondition of the AOF implementation is that once a block is dumped, it is never modified. Currently, the value of a node is append-only, but the key is modified in-place, so some changes are necessary. We can keep all the red-black tree nodes in memory, while keeping part of the key-value data in the disk.
+A possible implementation is to use the AOF (append-only file) persistent storage, the membuffer is implemented as a red-black tree and its node is allocated from a customized allocator. That allocator manages the memory in an arena manner. A continuous block of memory becomes an arena block and an arena consists of several arena blocks. We can dump those blocks into the disk and maintain some LRU records for them. A precondition of the AOF implementation is that once a block is dumped, it is never modified. Currently, the value of a node is append-only, but the key is modified in-place, so some changes are necessary. We can keep all the red-black tree nodes in memory, while keeping part of the key-value data in the disk.
 
 Another option is changing the red-black tree to a B+ tree, this option is more disk friendly but the change takes more effort.
 
@@ -223,7 +223,8 @@ Writing to a global temporary table checks the privileges like the normal table.
 
 Privileges can not be granted to local temporary tables, because the tables are invisible to other users. Granting privileges to global temporary tables is possible.
 
-Ecosystem Tools
+## Ecosystem Tools
+
 As mentioned above, DDL binlog of global temporary tables needs to be recorded, but not for local temporary tables. DML binlog is always skipped for temporary tables. DDL of global temporary tables should be supported by all data migration tools whose upstream is TiDB, such as Dumpling, TiDB-binlog, and TiCDC.
 
 Since `information_schema.tables` lists global temporary tables, these tables will be processed by tools like Dumpling. Fortunately, querying global temporary tables in a new session just returns empty results, so nothing needs to be handled.
@@ -232,10 +233,11 @@ When backup tools read TiKV data, the data of temporary tables should never be r
 
 Telemetry is used to report the usage information of various features in TiDB. Global and local temporary tables will be reported by telemetry separately, because the scenarios of them are different.
 
-Internal temporary tables
+## Internal temporary tables
+
 In MySQL, temporary tables will be used internally as infrastructures of other features, such as CTE, derived tables, and UNION statements. These temporary tables are called [internal temporary tables](https://dev.mysql.com/doc/refman/8.0/en/internal-temporary-tables.html).
 
-In the future, temporary tables will probably be used internally for some new features, such as CTE. So TiDB should be capable of creating a local temporary table when it's given a list of columns. Internal temporary tables might be in-memory or on-disk, depending on the optimizer. Physical plans that don’t apply MPP should use in-memory temporary tables, otherwise they will use on-disk temporary tables
+In the future, temporary tables will probably be used internally for some new features, such as CTE. So TiDB should be capable of creating a local temporary table when it's given a list of columns. Internal temporary tables might be in-memory or on-disk, depending on the optimizer. Physical plans that don’t apply MPP should use in-memory temporary tables, otherwise they will use on-disk temporary tables.
 
 Transactions that apply internal temporary tables might be read-only, but there are some steps which write to TiKV:
 
@@ -251,8 +253,7 @@ The data of the temporary table is all in the membuffer of UnionScan. Writing to
 
 The data writing path in TiDB is typically through the `table.Table` interface, rows data are converted into key-values, and then written to TiKV via 2PC. For normal transactions, the data is cached in the membuffer until the transaction commits. The temporary table should never be written to the real TiKV.
 
-A transaction can write to both the temporary table and the normal table. Should the temporary table share the  membuffer with the normal table, or use a separate one?
-it's better to share the membuffer so the commit/rollback operation can be atomic. The risk is that in case of a bug, the temporary table data may be written to the real table.
+A transaction can write to both the temporary table and the normal table. Should the temporary table share the membuffer with the normal table, or use a separate one? It's better to share the membuffer so the commit/rollback operation can be atomic. The risk is that in case of a bug, the temporary table data may be written to the real table.
 
 For global temporary tables, since the transaction commits automatically clears the temporary table, we can filter out and discard the transaction cache data from the temporary table when committing, and the implementation is relatively simple.
 
@@ -301,7 +302,7 @@ it's used to ensure the basic feature function works as expected. Both the integ
 
 ## Scenario Tests
 
-it's used to ensure this feature works as expected in some common scenarios.
+It's used to ensure this feature works as expected in some common scenarios.
 
 Before we implement the spilling to disk feature, we have to know the memory usage for some scenarios. For example, 100M for each temporary table, and 500-600 concurrent connections, how much memory does TiDB use.
 
@@ -319,8 +320,8 @@ Before we implement the spilling to disk feature, we have to know the memory usa
 | view                                                 | Report error: not support  | local                | Views are meaningless after session ends & Tables are different among sessions     |
 | copr cache                                           | Ignore this setting        | in-memory            | No need to cache                                                                   |
 | point get cache                                      | Ignore this setting        | in-memory            | No need to cache                                                                   |
-| follower read                                        | Ignore this setting        | in-memory            | Data is neither on TiKV nor  on TiFlash                                            |
-| read engine                                          | Ignore this setting        | in-memory            | Data is neither on TiKV nor  on TiFlash                                            |
+| follower read                                        | Ignore this setting        | in-memory            | Data is neither on TiKV nor on TiFlash                                            |
+| read engine                                          | Ignore this setting        | in-memory            | Data is neither on TiKV nor on TiFlash                                            |
 | GC                                                   | Ignore this setting        |                      | No need to GC data                                                                 |
 | select for update / lock in share mode               | Ignore this setting        |                      | No lock is needed                                                                  |
 | broadcast join / shuffle hash join                   | Ignore this setting        |                      | Data is not on TiFlash                                                             |

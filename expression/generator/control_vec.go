@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -36,6 +37,7 @@ const header = `// Copyright 2019 PingCAP, Inc.
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -51,7 +53,7 @@ import (
 )
 
 // NOTE: Control expressions optionally evaluate some branches depending on conditions, but vectorization executes all
-// branches, during which the unnecessary branches may return errors or warnings. To avoid this case, when branches 
+// branches, during which the unnecessary branches may return errors or warnings. To avoid this case, when branches
 // meet errors or warnings, the vectorization falls back the scalar execution.
 
 `
@@ -168,13 +170,13 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.
 		eLseSlice = bufElse.{{ .TypeNameInColumn }}s()
 		{{- end }}
 	}
-	
+
 	{{- if .Fixed }}
 	result.Resize{{ .TypeNameInColumn }}(n, false)
 	resultSlice := result.{{ .TypeNameInColumn }}s()
 	{{- else }}
 	result.Reserve{{ .TypeNameInColumn }}(n)
-	{{- end }}		
+	{{- end }}
 ROW:
 	for i := 0; i < n; i++ {
 		for j := 0; j < l/2; j++ {
@@ -202,7 +204,7 @@ ROW:
 				result.AppendNull()
 			} else {
 				result.Append{{ .TypeNameInColumn }}(eLse.Get{{ .TypeNameInColumn }}(i))
-			}	
+			}
 			{{- end }}
 		} else {
 			{{- if .Fixed }}
@@ -406,7 +408,7 @@ func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(input *chunk.Chunk,
 		}
       	return b.fallbackEval{{ .TypeName }}(input, result)
    	}
-	
+
 	buf2, err := b.bufAllocator.get()
 	if err != nil {
 		return err
@@ -478,6 +480,7 @@ var testFile = template.Must(template.New("testFile").Parse(`// Copyright 2019 P
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 

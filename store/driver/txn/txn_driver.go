@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,6 +20,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
@@ -50,6 +52,10 @@ func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 
 func (txn *tikvTxn) GetTableInfo(id int64) *model.TableInfo {
 	return txn.idxNameCache[id]
+}
+
+func (txn *tikvTxn) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	txn.KVTxn.SetDiskFullOpt(level)
 }
 
 func (txn *tikvTxn) CacheTableInfo(id int64, info *model.TableInfo) {

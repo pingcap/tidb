@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,7 +21,6 @@ import (
 	"time"
 
 	"github.com/google/pprof/profile"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/topsql"
@@ -28,29 +28,14 @@ import (
 	mockServer "github.com/pingcap/tidb/util/topsql/reporter/mock"
 	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tidb/util/topsql/tracecpu/mock"
+	"github.com/stretchr/testify/require"
 )
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-var _ = SerialSuites(&testSuite{})
-
-type testSuite struct{}
 
 type collectorWrapper struct {
 	reporter.TopSQLReporter
 }
 
-func (s *testSuite) SetUpSuite(c *C) {
-	variable.TopSQLVariable.Enable.Store(true)
-	variable.TopSQLVariable.AgentAddress.Store("mock")
-	variable.TopSQLVariable.PrecisionSeconds.Store(1)
-	tracecpu.GlobalSQLCPUProfiler.Run()
-}
-
-func (s *testSuite) TestTopSQLCPUProfile(c *C) {
+func TestTopSQLCPUProfile(t *testing.T) {
 	collector := mock.NewTopSQLCollector()
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
 	reqs := []struct {
@@ -71,7 +56,7 @@ func (s *testSuite) TestTopSQLCPUProfile(c *C) {
 				case <-ctx.Done():
 					return
 				default:
-					s.mockExecuteSQL(sql, plan)
+					mockExecuteSQL(sql, plan)
 				}
 			}
 		}(req.sql, req.plan)
@@ -80,49 +65,49 @@ func (s *testSuite) TestTopSQLCPUProfile(c *C) {
 	// test for StartCPUProfile.
 	buf := bytes.NewBuffer(nil)
 	err := tracecpu.StartCPUProfile(buf)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	collector.WaitCollectCnt(2)
 	err = tracecpu.StopCPUProfile()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = profile.Parse(buf)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	for _, req := range reqs {
 		stats := collector.GetSQLStatsBySQLWithRetry(req.sql, len(req.plan) > 0)
-		c.Assert(len(stats), Equals, 1)
+		require.Equal(t, 1, len(stats))
 		sql := collector.GetSQL(stats[0].SQLDigest)
 		plan := collector.GetPlan(stats[0].PlanDigest)
-		c.Assert(sql, Equals, req.sql)
-		c.Assert(plan, Equals, req.plan)
+		require.Equal(t, req.sql, sql)
+		require.Equal(t, req.plan, plan)
 	}
 }
 
-func (s *testSuite) TestIsEnabled(c *C) {
-	s.setTopSQLEnable(false)
-	c.Assert(tracecpu.GlobalSQLCPUProfiler.IsEnabled(), IsFalse)
+func TestIsEnabled(t *testing.T) {
+	setTopSQLEnable(false)
+	require.False(t, tracecpu.GlobalSQLCPUProfiler.IsEnabled())
 
-	s.setTopSQLEnable(true)
+	setTopSQLEnable(true)
 	err := tracecpu.StartCPUProfile(bytes.NewBuffer(nil))
-	c.Assert(err, IsNil)
-	c.Assert(tracecpu.GlobalSQLCPUProfiler.IsEnabled(), IsTrue)
-	s.setTopSQLEnable(false)
-	c.Assert(tracecpu.GlobalSQLCPUProfiler.IsEnabled(), IsTrue)
+	require.NoError(t, err)
+	require.True(t, tracecpu.GlobalSQLCPUProfiler.IsEnabled())
+	setTopSQLEnable(false)
+	require.True(t, tracecpu.GlobalSQLCPUProfiler.IsEnabled())
 	err = tracecpu.StopCPUProfile()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	s.setTopSQLEnable(false)
-	c.Assert(tracecpu.GlobalSQLCPUProfiler.IsEnabled(), IsFalse)
-	s.setTopSQLEnable(true)
-	c.Assert(tracecpu.GlobalSQLCPUProfiler.IsEnabled(), IsTrue)
+	setTopSQLEnable(false)
+	require.False(t, tracecpu.GlobalSQLCPUProfiler.IsEnabled())
+	setTopSQLEnable(true)
+	require.True(t, tracecpu.GlobalSQLCPUProfiler.IsEnabled())
 }
 
 func mockPlanBinaryDecoderFunc(plan string) (string, error) {
 	return plan, nil
 }
 
-func (s *testSuite) TestTopSQLReporter(c *C) {
+func TestTopSQLReporter(t *testing.T) {
 	server, err := mockServer.StartMockAgentServer()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	variable.TopSQLVariable.MaxStatementCount.Store(200)
 	variable.TopSQLVariable.ReportIntervalSeconds.Store(1)
 	variable.TopSQLVariable.AgentAddress.Store(server.Address())
@@ -157,7 +142,7 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 				case <-ctx.Done():
 					return
 				default:
-					s.mockExecuteSQL(sql, plan)
+					mockExecuteSQL(sql, plan)
 				}
 			}
 		}(req.sql, req.plan)
@@ -167,29 +152,28 @@ func (s *testSuite) TestTopSQLReporter(c *C) {
 	records := server.GetLatestRecords()
 	checkSQLPlanMap := map[string]struct{}{}
 	for _, req := range records {
-		c.Assert(len(req.RecordListCpuTimeMs) > 0, IsTrue)
-		c.Assert(req.RecordListCpuTimeMs[0] > 0, IsTrue)
-		c.Assert(req.RecordListCpuTimeMs[0] > 0, IsTrue)
+		require.Greater(t, len(req.RecordListCpuTimeMs), 0)
+		require.Greater(t, req.RecordListCpuTimeMs[0], uint32(0))
 		sqlMeta, exist := server.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
-		c.Assert(exist, IsTrue)
+		require.True(t, exist)
 		expectedNormalizedSQL, exist := sqlMap[string(req.SqlDigest)]
-		c.Assert(exist, IsTrue)
-		c.Assert(sqlMeta.NormalizedSql, Equals, expectedNormalizedSQL)
+		require.True(t, exist)
+		require.Equal(t, expectedNormalizedSQL, sqlMeta.NormalizedSql)
 
 		expectedNormalizedPlan := sql2plan[expectedNormalizedSQL]
 		if expectedNormalizedPlan == "" || len(req.PlanDigest) == 0 {
-			c.Assert(len(req.PlanDigest), Equals, 0)
+			require.Equal(t, len(req.PlanDigest), 0)
 			continue
 		}
 		normalizedPlan, exist := server.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
-		c.Assert(exist, IsTrue)
-		c.Assert(normalizedPlan, Equals, expectedNormalizedPlan)
+		require.True(t, exist)
+		require.Equal(t, expectedNormalizedPlan, normalizedPlan)
 		checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}
 	}
-	c.Assert(len(checkSQLPlanMap) == 2, IsTrue)
+	require.Equal(t, 2, len(checkSQLPlanMap))
 }
 
-func (s *testSuite) TestMaxSQLAndPlanTest(c *C) {
+func TestMaxSQLAndPlanTest(t *testing.T) {
 	collector := mock.NewTopSQLCollector()
 	tracecpu.GlobalSQLCPUProfiler.SetCollector(&collectorWrapper{collector})
 
@@ -204,9 +188,9 @@ func (s *testSuite) TestMaxSQLAndPlanTest(c *C) {
 	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
 
 	cSQL := collector.GetSQL(sqlDigest.Bytes())
-	c.Assert(cSQL, Equals, sql)
+	require.Equal(t, sql, cSQL)
 	cPlan := collector.GetPlan(planDigest.Bytes())
-	c.Assert(cPlan, Equals, plan)
+	require.Equal(t, plan, cPlan)
 
 	// Test for huge sql and plan
 	sql = genStr(topsql.MaxSQLTextSize + 10)
@@ -217,26 +201,26 @@ func (s *testSuite) TestMaxSQLAndPlanTest(c *C) {
 	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
 
 	cSQL = collector.GetSQL(sqlDigest.Bytes())
-	c.Assert(cSQL, Equals, sql[:topsql.MaxSQLTextSize])
+	require.Equal(t, sql[:topsql.MaxSQLTextSize], cSQL)
 	cPlan = collector.GetPlan(planDigest.Bytes())
-	c.Assert(cPlan, Equals, "")
+	require.Empty(t, cPlan)
 }
 
-func (s *testSuite) setTopSQLEnable(enabled bool) {
+func setTopSQLEnable(enabled bool) {
 	variable.TopSQLVariable.Enable.Store(enabled)
 }
 
-func (s *testSuite) mockExecuteSQL(sql, plan string) {
+func mockExecuteSQL(sql, plan string) {
 	ctx := context.Background()
 	sqlDigest := mock.GenSQLDigest(sql)
 	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false)
-	s.mockExecute(time.Millisecond * 100)
+	mockExecute(time.Millisecond * 100)
 	planDigest := genDigest(plan)
 	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
-	s.mockExecute(time.Millisecond * 300)
+	mockExecute(time.Millisecond * 300)
 }
 
-func (s *testSuite) mockExecute(d time.Duration) {
+func mockExecute(d time.Duration) {
 	start := time.Now()
 	for {
 		for i := 0; i < 10e5; i++ {
