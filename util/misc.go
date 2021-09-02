@@ -591,7 +591,7 @@ func QueryStrForLog(query string) string {
 }
 
 func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
-	privkey, err := rsa.GenerateKey(rand.Reader, 4096)
+	privkey, err := rsa.GenerateKey(rand.Reader, rsaKeySize)
 	if err != nil {
 		return err
 	}
