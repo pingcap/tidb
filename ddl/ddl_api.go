@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +11,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package ddl
 
@@ -2411,6 +2411,10 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 func isSameTypeMultiSpecs(specs []*ast.AlterTableSpec) bool {
 	specType := specs[0].Tp
 	for _, spec := range specs {
+		// We think AlterTableDropPrimaryKey and AlterTableDropIndex are the same types.
+		if spec.Tp == ast.AlterTableDropPrimaryKey || spec.Tp == ast.AlterTableDropIndex {
+			continue
+		}
 		if spec.Tp != specType {
 			return false
 		}
@@ -2433,12 +2437,15 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		if !sctx.GetSessionVars().EnableChangeMultiSchema {
 			return errRunMultiSchemaChanges
 		}
+
 		if isSameTypeMultiSpecs(validSpecs) {
 			switch validSpecs[0].Tp {
 			case ast.AlterTableAddColumns:
 				err = d.AddColumns(sctx, ident, validSpecs)
 			case ast.AlterTableDropColumn:
 				err = d.DropColumns(sctx, ident, validSpecs)
+			case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
+				err = d.DropIndexes(sctx, ident, validSpecs)
 			default:
 				return errRunMultiSchemaChanges
 			}
@@ -2447,6 +2454,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			}
 			return nil
 		}
+
 		return errRunMultiSchemaChanges
 	}
 
@@ -4833,7 +4841,7 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 		SchemaName: schemas[1].Name.L,
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{schemas[0].ID, newIdent.Name},
+		Args:       []interface{}{schemas[0].ID, newIdent.Name, schemas[0].Name},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -4847,6 +4855,7 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 	oldSchemaIDs := make([]int64, 0, len(oldIdents))
 	newSchemaIDs := make([]int64, 0, len(oldIdents))
 	tableIDs := make([]int64, 0, len(oldIdents))
+	oldSchemaNames := make([]*model.CIStr, 0, len(oldIdents))
 
 	var schemas []*model.DBInfo
 	var tableID int64
@@ -4862,6 +4871,7 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 		tableNames = append(tableNames, &newIdents[i].Name)
 		oldSchemaIDs = append(oldSchemaIDs, schemas[0].ID)
 		newSchemaIDs = append(newSchemaIDs, schemas[1].ID)
+		oldSchemaNames = append(oldSchemaNames, &schemas[0].Name)
 	}
 
 	job := &model.Job{
@@ -4870,7 +4880,7 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 		SchemaName: schemas[1].Name.L,
 		Type:       model.ActionRenameTables,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs},
+		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs, oldSchemaNames},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -5377,7 +5387,6 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
-
 }
 
 func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.CIStr) error {
@@ -5418,24 +5427,12 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
-	var isPK bool
-	if indexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
-		// Before we fixed #14243, there might be a general index named `primary` but not a primary key.
-		(indexInfo == nil || indexInfo.Primary) {
-		isPK = true
+
+	isPK, err := checkIsDropPrimaryKey(indexName, indexInfo, t)
+	if err != nil {
+		return err
 	}
-	if isPK {
-		// If the table's PKIsHandle is true, we can't find the index from the table. So we check the value of PKIsHandle.
-		if indexInfo == nil && !t.Meta().PKIsHandle {
-			return ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
-		}
-		if t.Meta().PKIsHandle {
-			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table's pkIsHandle is true")
-		}
-		if t.Meta().IsCommonHandle {
-			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table is using clustered index")
-		}
-	}
+
 	if indexInfo == nil {
 		err = ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 		if ifExists {
@@ -5473,6 +5470,74 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.AlterTableSpec) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return err
+	}
+
+	indexNames := make([]model.CIStr, 0, len(specs))
+	ifExists := make([]bool, 0, len(specs))
+	for _, spec := range specs {
+		var indexName model.CIStr
+		if spec.Tp == ast.AlterTableDropPrimaryKey {
+			indexName = model.NewCIStr(mysql.PrimaryKeyName)
+		} else {
+			indexName = model.NewCIStr(spec.Name)
+		}
+
+		indexInfo := t.Meta().FindIndexByName(indexName.L)
+		if indexInfo != nil {
+			_, err := checkIsDropPrimaryKey(indexName, indexInfo, t)
+			if err != nil {
+				return err
+			}
+			if err := checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		indexNames = append(indexNames, indexName)
+		ifExists = append(ifExists, spec.IfExists)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionDropIndexes,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{indexNames, ifExists},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func checkIsDropPrimaryKey(indexName model.CIStr, indexInfo *model.IndexInfo, t table.Table) (bool, error) {
+	var isPK bool
+	if indexName.L == strings.ToLower(mysql.PrimaryKeyName) &&
+		// Before we fixed #14243, there might be a general index named `primary` but not a primary key.
+		(indexInfo == nil || indexInfo.Primary) {
+		isPK = true
+	}
+	if isPK {
+		// If the table's PKIsHandle is true, we can't find the index from the table. So we check the value of PKIsHandle.
+		if indexInfo == nil && !t.Meta().PKIsHandle {
+			return isPK, ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
+		}
+		if t.Meta().PKIsHandle {
+			return isPK, ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table's pkIsHandle is true")
+		}
+		if t.Meta().IsCommonHandle {
+			return isPK, ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table is using clustered index")
+		}
+	}
+
+	return isPK, nil
 }
 
 func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
