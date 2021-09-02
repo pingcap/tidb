@@ -679,7 +679,7 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 		return realOffset, nil
 	} else if realOffset >= r.rangeInfo.Size {
 		// See: https://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.35
-		// because s3's GetObject interface doesn't all a range that matches zero lenghth data,
+		// because s3's GetObject interface doesn't allow get a range that matches zero length data,
 		// so if the position is out of range, we need to always return io.EOF after the seek operation.
 
 		// close current read and open a new one which target offset
