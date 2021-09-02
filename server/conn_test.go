@@ -101,20 +101,6 @@ func TestParseHandshakeResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "pam", p.User)
 	require.Equal(t, "test", p.DBName)
-
-	// Test for compatibility of Protocol::HandshakeResponse320
-	data = []byte{
-		0x00, 0x80, 0x00, 0x00, 0x01, 0x72, 0x6f, 0x6f, 0x74, 0x00, 0x00,
-	}
-	p = handshakeResponse41{}
-	offset, err = parseOldHandshakeResponseHeader(context.Background(), &p, data)
-	require.NoError(t, err)
-	capability = mysql.ClientProtocol41 |
-		mysql.ClientSecureConnection
-	require.Equal(t, capability, p.Capability&capability)
-	err = parseOldHandshakeResponseBody(context.Background(), &p, data, offset)
-	require.NoError(t, err)
-	require.Equal(t, "root", p.User)
 }
 
 func TestIssue1768(t *testing.T) {

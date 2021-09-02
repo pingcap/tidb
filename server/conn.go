@@ -429,61 +429,6 @@ type handshakeResponse41 struct {
 	Attrs      map[string]string
 }
 
-// parseOldHandshakeResponseHeader parses the old version handshake header HandshakeResponse320
-func parseOldHandshakeResponseHeader(ctx context.Context, packet *handshakeResponse41, data []byte) (parsedBytes int, err error) {
-	// Ensure there are enough data to read:
-	// https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse320
-	logutil.Logger(ctx).Debug("try to parse hanshake response as Protocol::HandshakeResponse320", zap.ByteString("packetData", data))
-	if len(data) < 2+3 {
-		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
-		return 0, mysql.ErrMalformPacket
-	}
-	offset := 0
-	// capability
-	capability := binary.LittleEndian.Uint16(data[:2])
-	packet.Capability = uint32(capability)
-
-	// be compatible with Protocol::HandshakeResponse41
-	packet.Capability |= mysql.ClientProtocol41
-
-	offset += 2
-	// skip max packet size
-	offset += 3
-	// usa default CharsetID
-	packet.Collation = mysql.CollationNames["utf8mb4_general_ci"]
-
-	return offset, nil
-}
-
-// parseOldHandshakeResponseBody parse the HandshakeResponse for Protocol::HandshakeResponse320 (except the common header part).
-func parseOldHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41, data []byte, offset int) (err error) {
-	defer func() {
-		// Check malformat packet cause out of range is disgusting, but don't panic!
-		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data), zap.Stack("stack"))
-			err = mysql.ErrMalformPacket
-		}
-	}()
-	// user name
-	packet.User = string(data[offset : offset+bytes.IndexByte(data[offset:], 0)])
-	offset += len(packet.User) + 1
-
-	if packet.Capability&mysql.ClientConnectWithDB > 0 {
-		if len(data[offset:]) > 0 {
-			idx := bytes.IndexByte(data[offset:], 0)
-			packet.DBName = string(data[offset : offset+idx])
-			offset = offset + idx + 1
-		}
-		if len(data[offset:]) > 0 {
-			packet.Auth = data[offset : offset+bytes.IndexByte(data[offset:], 0)]
-		}
-	} else {
-		packet.Auth = data[offset : offset+bytes.IndexByte(data[offset:], 0)]
-	}
-
-	return nil
-}
-
 // parseHandshakeResponseHeader parses the common header of SSLRequest and HandshakeResponse41.
 func parseHandshakeResponseHeader(ctx context.Context, packet *handshakeResponse41, data []byte) (parsedBytes int, err error) {
 	// Ensure there are enough data to read:
@@ -618,8 +563,6 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return err
 	}
 
-	isOldVersion := false
-
 	var resp handshakeResponse41
 	var pos int
 
@@ -632,8 +575,8 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	if capability&mysql.ClientProtocol41 > 0 {
 		pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
 	} else {
-		pos, err = parseOldHandshakeResponseHeader(ctx, &resp, data)
-		isOldVersion = true
+		logutil.Logger(ctx).Error("ClientProtocol41 flag is not set, please upgrade client")
+		return errNotSupportedAuthMode
 	}
 
 	if err != nil {
@@ -654,11 +597,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 				logutil.Logger(ctx).Warn("read handshake response failure after upgrade to TLS", zap.Error(err))
 				return err
 			}
-			if isOldVersion {
-				pos, err = parseOldHandshakeResponseHeader(ctx, &resp, data)
-			} else {
-				pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
-			}
+			pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
 			if err != nil {
 				terror.Log(err)
 				return err
@@ -671,11 +610,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	}
 
 	// Read the remaining part of the packet.
-	if isOldVersion {
-		err = parseOldHandshakeResponseBody(ctx, &resp, data, pos)
-	} else {
-		err = parseHandshakeResponseBody(ctx, &resp, data, pos)
-	}
+	err = parseHandshakeResponseBody(ctx, &resp, data, pos)
 	if err != nil {
 		terror.Log(err)
 		return err
