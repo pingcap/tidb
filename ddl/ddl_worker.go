@@ -228,7 +228,7 @@ func asyncNotify(ch chan struct{}) {
 func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
 	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
-	jobs, err := t.GetAllDDLJobsInQueue(resolveJobListKeyNeg(curJob.Type))
+	jobs, err := t.GetAllDDLJobsInQueue(resolveOtherJobListKey(curJob.Type))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -314,7 +314,7 @@ func resolveJobListKey(tp model.ActionType) meta.JobListKeyType {
 	return meta.DefaultJobListKey
 }
 
-func resolveJobListKeyNeg(tp model.ActionType) meta.JobListKeyType {
+func resolveOtherJobListKey(tp model.ActionType) meta.JobListKeyType {
 	if tp == model.ActionAddIndex ||
 		tp == model.ActionAddPrimaryKey ||
 		tp == model.ActionModifyColumn {
@@ -541,7 +541,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			d.mu.hook.OnJobRunBefore(job)
 			d.mu.RUnlock()
 
-			// Meta releated txn default is DiskFullOpt_AllowedOnAlmostFull to support
+			// Meta related txn default is DiskFullOpt_AllowedOnAlmostFull to support
 			// all the ddl job queue operations or other meta change. But we only want
 			// to support the Drop Table like ddls to be executed when TiKV is disk full.
 			switch job.Type {
