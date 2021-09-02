@@ -3792,7 +3792,7 @@ func (c *instrFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 }
 
 func (c *instrFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, _ types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
-	return args[1].GetType().Charset, args[1].GetType().Collate, CoercibilityCoercible, nil
+	return args[0].GetType().Charset, args[0].GetType().Collate, CoercibilityCoercible, nil
 }
 
 type builtinInstrUTF8Sig struct{ baseBuiltinFunc }

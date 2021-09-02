@@ -148,6 +148,10 @@ func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	return sig, nil
 }
 
+func (c *regexpFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, _ types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	return CheckAndDeriveCollationFromExprsWithCoer(ctx, c.funcName, types.ETInt, args...)
+}
+
 type builtinRegexpSharedSig struct {
 	baseBuiltinFunc
 	compile         func(string) (*regexp.Regexp, error)
