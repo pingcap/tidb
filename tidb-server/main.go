@@ -187,7 +187,6 @@ func main() {
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
-	// runtime.SetMutexProfileFraction(5)
 
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
