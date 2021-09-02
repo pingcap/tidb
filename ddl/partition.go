@@ -1380,14 +1380,8 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return 0, errors.Wrapf(err, "failed to get PD the label rules")
 	}
 
-	var ntr, ptr *label.Rule
-	if r, ok := rules[ntrID]; ok {
-		ntr = r
-	}
-
-	if r, ok := rules[ptrID]; ok {
-		ptr = r
-	}
+	ntr := rules[ntrID]
+	ptr := rules[ptrID]
 
 	var setRules []*label.Rule
 	var deleteRules []string
