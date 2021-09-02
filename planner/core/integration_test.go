@@ -16,7 +16,6 @@ package core_test
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/statistics/handle"
 	"strings"
 
 	. "github.com/pingcap/check"
