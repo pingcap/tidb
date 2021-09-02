@@ -228,14 +228,7 @@ func asyncNotify(ch chan struct{}) {
 func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
 	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
-	var jobs []*model.Job
-	var err error
-	switch curJob.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		jobs, err = t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
-	default:
-		jobs, err = t.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
-	}
+	jobs, err := t.GetAllDDLJobsInQueue(resolveJobListKeyNeg(curJob.Type))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -296,14 +289,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			if err = buildJobDependence(t, job); err != nil {
 				return errors.Trace(err)
 			}
-
-			if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
-				jobKey := meta.AddIndexJobListKey
-				err = t.EnQueueDDLJob(job, jobKey)
-			} else {
-				err = t.EnQueueDDLJob(job)
-			}
-			if err != nil {
+			if err = t.EnQueueDDLJob(job, resolveJobListKey(job.Type)); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -317,6 +303,24 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}
 	logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
+}
+
+func resolveJobListKey(tp model.ActionType) meta.JobListKeyType {
+	if tp == model.ActionAddIndex ||
+		tp == model.ActionAddPrimaryKey ||
+		tp == model.ActionModifyColumn {
+		return meta.AddIndexJobListKey
+	}
+	return meta.DefaultJobListKey
+}
+
+func resolveJobListKeyNeg(tp model.ActionType) meta.JobListKeyType {
+	if tp == model.ActionAddIndex ||
+		tp == model.ActionAddPrimaryKey ||
+		tp == model.ActionModifyColumn {
+		return meta.DefaultJobListKey
+	}
+	return meta.AddIndexJobListKey
 }
 
 // getHistoryDDLJob gets a DDL job with job's ID from history queue.
