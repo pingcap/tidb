@@ -28,14 +28,17 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
+// TemporaryTableManager provides operations for temporary tables
 type TemporaryTableManager struct {
 	sctx sessionctx.Context
 }
 
+// GetTemporaryTableManager get the temporary table manager from session context.
 func GetTemporaryTableManager(sctx sessionctx.Context) *TemporaryTableManager {
 	return &TemporaryTableManager{sctx: sctx}
 }
 
+// AddLocalTemporaryTable adds a local temporary table
 func (m *TemporaryTableManager) AddLocalTemporaryTable(schema model.CIStr, tbl table.Table) error {
 	if _, err := m.ensureSessionData(); err != nil {
 		return err
@@ -44,6 +47,7 @@ func (m *TemporaryTableManager) AddLocalTemporaryTable(schema model.CIStr, tbl t
 	return m.ensureLocalTemporaryTables().AddTable(schema, tbl)
 }
 
+// RemoveLocalTemporaryTable removes a local temporary table
 func (m *TemporaryTableManager) RemoveLocalTemporaryTable(tableIdent ast.Ident) error {
 	tbl, err := m.checkLocalTemporaryExistsAndReturn(tableIdent)
 	if err != nil {
@@ -54,6 +58,7 @@ func (m *TemporaryTableManager) RemoveLocalTemporaryTable(tableIdent ast.Ident) 
 	return m.clearTemporaryTableRecords(tbl.Meta().ID)
 }
 
+// ReplaceAndTruncateLocalTemporaryTable replace a local temporary table with a one and clear the old data
 func (m *TemporaryTableManager) ReplaceAndTruncateLocalTemporaryTable(tableIdent ast.Ident, newTbl table.Table) error {
 	oldTbl, err := m.checkLocalTemporaryExistsAndReturn(tableIdent)
 	if err != nil {
