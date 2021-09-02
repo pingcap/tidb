@@ -731,15 +731,11 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 				return
 			}
 			bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, c.txn.vars)
-			now, err := c.store.GetOracle().GetTimestamp(bo.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+			now, err := c.store.getTimestampWithRetry(bo, oracle.GlobalTxnScope)
 			if err != nil {
-				err1 := bo.Backoff(BoPDRPC, err)
-				if err1 != nil {
-					logutil.Logger(bo.ctx).Warn("keepAlive get tso fail",
-						zap.Error(err))
-					return
-				}
-				continue
+				logutil.Logger(bo.GetCtx()).Warn("keepAlive get tso fail",
+					zap.Error(err))
+				return
 			}
 
 			uptime := uint64(oracle.ExtractPhysical(now) - oracle.ExtractPhysical(c.startTS))
@@ -993,7 +989,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	// from PD as our MinCommitTS.
 	if commitTSMayBeCalculated && c.needLinearizability() {
 		failpoint.Inject("getMinCommitTSFromTSO", nil)
-		minCommitTS, err := c.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		minCommitTS, err := c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars), c.txn.GetUnionStore().GetOption(kv.TxnScope).(string))
 		// If we fail to get a timestamp from PD, we just propagate the failure
 		// instead of falling back to the normal 2PC because a normal 2PC will
 		// also be likely to fail due to the same timestamp issue.
