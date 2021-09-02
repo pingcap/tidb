@@ -40,11 +40,6 @@ type GeneralLogEntry struct {
 	CurrentDB              string
 	TxnMode                string
 	FnGetQuery             func(*strings.Builder) string
-
-	// following fields are for benchmark testing
-	user              string
-	schemaMetaVersion int64
-	query             string
 }
 
 var fnGetQueryPool = sync.Pool{New: func() interface{} {
