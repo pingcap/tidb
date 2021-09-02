@@ -56,7 +56,7 @@ func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	return sig, nil
 }
 
-func (c *likeFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+func (c *likeFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, _ types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
 	if args[0].GetType().EvalType() == types.ETString && args[1].GetType().EvalType() == types.ETString {
 		return CheckAndDeriveCollationFromExprsWithCoer(ctx, c.funcName, types.ETInt, args[0], args[1])
 	}

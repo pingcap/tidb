@@ -215,6 +215,10 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	return sig, nil
 }
 
+func (c *coalesceFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, retTp types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	return CheckAndDeriveCollationFromExprsWithCoer(ctx, c.funcName, retTp, args...)
+}
+
 // builtinCoalesceIntSig is builtin function coalesce signature which return type int
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceIntSig struct {
@@ -1530,11 +1534,11 @@ func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Exp
 	return sig, err
 }
 
-func (c *compareFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+func (c *compareFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, _ types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
 	if args[0].GetType().EvalType() == types.ETString && args[1].GetType().EvalType() == types.ETString {
 		return CheckAndDeriveCollationFromExprsWithCoer(ctx, c.funcName, types.ETInt, args...)
 	}
-	return c.baseFunctionClass.deriveCollation(ctx, args)
+	return c.baseFunctionClass.deriveCollation(ctx, args, 0)
 }
 
 // generateCmpSigs generates compare function signatures.

@@ -190,7 +190,7 @@ type stringResultFuncClass struct {
 	baseFunctionClass
 }
 
-func (s *stringResultFuncClass) deriveCollation(ctx sessionctx.Context, args []Expression) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+func (s *stringResultFuncClass) deriveCollation(ctx sessionctx.Context, args []Expression, _ types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
 	return CheckAndDeriveCollationFromExprsWithCoer(ctx, s.funcName, types.ETString, args...)
 }
 

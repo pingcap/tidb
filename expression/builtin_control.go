@@ -554,6 +554,10 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	return sig, nil
 }
 
+func (c *ifFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, retTp types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	return CheckAndDeriveCollationFromExprsWithCoer(ctx, c.funcName, retTp, args[1], args[2])
+}
+
 type builtinIfIntSig struct {
 	baseBuiltinFunc
 }

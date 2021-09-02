@@ -128,7 +128,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, f functionClass, args []Ex
 
 	// derive collation information for string function, and we must do it
 	// before doing implicit cast.
-	derivedCharset, derivedCollate, coer, err := f.deriveCollation(ctx, args)
+	derivedCharset, derivedCollate, coer, err := f.deriveCollation(ctx, args, retType)
 	if err != nil {
 		return
 	}
@@ -550,7 +550,7 @@ func (b *baseFunctionClass) name() string {
 	return b.funcName
 }
 
-func (b *baseFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+func (b *baseFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, retTp types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
 	return charset.CharsetBinary, charset.CollationBin, CoercibilityNumeric, nil
 }
 
@@ -573,7 +573,7 @@ type functionClass interface {
 
 	name() string
 
-	deriveCollation(ctx sessionctx.Context, args []Expression) (dstCharset, dstCollation string, coercibility Coercibility, err error)
+	deriveCollation(ctx sessionctx.Context, args []Expression, retTp types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error)
 }
 
 // functionClassWithName is the interface for a function with a display name extended from functionClass
