@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -66,6 +67,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 	ranges []Range,
 	tableInfo *checkpoints.TidbTableInfo,
 	needSplit bool,
+	regionSplitSize int64,
 ) error {
 	if len(ranges) == 0 {
 		return nil
@@ -269,7 +271,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 			if !ok {
 				log.L().Warn("region stats not found", zap.Uint64("region", regionID))
 			}
-			if len(keys) == 1 && regionSize < local.regionSplitSize {
+			if len(keys) == 1 && regionSize < regionSplitSize {
 				skippedKeys++
 			}
 			select {

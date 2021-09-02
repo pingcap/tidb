@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -489,7 +490,7 @@ func NewConfig() *Config {
 			OnDuplicate:     ReplaceOnDup,
 			MaxKVPairs:      4096,
 			SendKVPairs:     32768,
-			RegionSplitSize: SplitRegionSize,
+			RegionSplitSize: 0,
 			DiskQuota:       ByteSize(math.MaxInt64),
 		},
 		PostRestore: PostRestore{
@@ -792,9 +793,6 @@ func (cfg *Config) DefaultVarsForImporterAndLocalBackend(ctx context.Context) {
 	}
 	if cfg.TikvImporter.RangeConcurrency == 0 {
 		cfg.TikvImporter.RangeConcurrency = 16
-	}
-	if cfg.TikvImporter.RegionSplitSize == 0 {
-		cfg.TikvImporter.RegionSplitSize = SplitRegionSize
 	}
 	if cfg.TiDB.BuildStatsConcurrency == 0 {
 		cfg.TiDB.BuildStatsConcurrency = defaultBuildStatsConcurrency

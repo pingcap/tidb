@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -804,9 +805,7 @@ type local struct {
 	pdAddr   string
 	g        glue.Glue
 
-	localStoreDir   string
-	regionSplitSize int64
-	regionSplitKeys int64
+	localStoreDir string
 
 	rangeConcurrency  *worker.Pool
 	ingestConcurrency *worker.Pool
@@ -938,12 +937,6 @@ func NewLocalBackend(
 		}
 	}
 
-	regionSplitSize := int64(cfg.RegionSplitSize)
-	regionSplitKeys := int64(regionMaxKeyCount)
-	if regionSplitSize > defaultRegionSplitSize {
-		regionSplitKeys = int64(float64(regionSplitSize) / float64(defaultRegionSplitSize) * float64(regionMaxKeyCount))
-	}
-
 	local := &local{
 		engines:  sync.Map{},
 		pdCtl:    pdCtl,
@@ -952,10 +945,7 @@ func NewLocalBackend(
 		pdAddr:   pdAddr,
 		g:        g,
 
-		localStoreDir:   localFile,
-		regionSplitSize: regionSplitSize,
-		regionSplitKeys: regionSplitKeys,
-
+		localStoreDir:     localFile,
 		rangeConcurrency:  worker.NewPool(ctx, rangeConcurrency, "range"),
 		ingestConcurrency: worker.NewPool(ctx, rangeConcurrency*2, "ingest"),
 		tcpConcurrency:    rangeConcurrency,
@@ -1185,11 +1175,6 @@ func (local *local) RetryImportDelay() time.Duration {
 	return defaultRetryBackoffTime
 }
 
-func (local *local) MaxChunkSize() int {
-	// a batch size write to leveldb
-	return int(local.regionSplitSize)
-}
-
 func (local *local) ShouldPostProcess() bool {
 	return true
 }
@@ -1289,9 +1274,7 @@ func (local *local) allocateTSIfNotExists(ctx context.Context, engine *File) err
 	return engine.saveEngineMeta()
 }
 
-// CloseEngine closes backend engine by uuid
-// NOTE: we will return nil if engine is not exist. This will happen if engine import&cleanup successfully
-// but exit before update checkpoint. Thus after restart, we will try to import this engine again.
+// CloseEngine closes backend engine by uuid.
 func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
 	// flush mem table to storage, to free memory,
 	// ask others' advise, looks like unnecessary, but with this we can control memory precisely.
@@ -1300,10 +1283,6 @@ func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, 
 		// recovery mode, we should reopen this engine file
 		db, err := local.openEngineDB(engineUUID, true)
 		if err != nil {
-			// if engine db does not exist, just skip
-			if os.IsNotExist(errors.Cause(err)) {
-				return nil
-			}
 			return err
 		}
 		engineFile := &File{
@@ -1366,6 +1345,8 @@ func (local *local) WriteToTiKV(
 	engineFile *File,
 	region *split.RegionInfo,
 	start, end []byte,
+	regionSplitSize int64,
+	regionSplitKeys int64,
 ) ([]*sst.SSTMeta, Range, rangeStats, error) {
 	for _, peer := range region.Region.GetPeers() {
 		var e error
@@ -1464,7 +1445,7 @@ func (local *local) WriteToTiKV(
 	size := int64(0)
 	totalCount := int64(0)
 	firstLoop := true
-	regionMaxSize := local.regionSplitSize * 4 / 3
+	regionMaxSize := regionSplitSize * 4 / 3
 
 	for iter.First(); iter.Valid(); iter.Next() {
 		size += int64(len(iter.Key()) + len(iter.Value()))
@@ -1493,7 +1474,7 @@ func (local *local) WriteToTiKV(
 			bytesBuf.Reset()
 			firstLoop = false
 		}
-		if size >= regionMaxSize || totalCount >= local.regionSplitKeys {
+		if size >= regionMaxSize || totalCount >= regionSplitKeys {
 			break
 		}
 	}
@@ -1625,7 +1606,7 @@ func splitRangeBySizeProps(fullRange Range, sizeProps *sizeProperties, sizeLimit
 	return ranges
 }
 
-func (local *local) readAndSplitIntoRange(ctx context.Context, engineFile *File) ([]Range, error) {
+func (local *local) readAndSplitIntoRange(ctx context.Context, engineFile *File, regionSplitSize int64, regionSplitKeys int64) ([]Range, error) {
 	iter := newKeyIter(ctx, engineFile, &pebble.IterOptions{})
 	defer iter.Close()
 
@@ -1654,7 +1635,7 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engineFile *File)
 	engineFileLength := engineFile.Length.Load()
 
 	// <= 96MB no need to split into range
-	if engineFileTotalSize <= local.regionSplitSize && engineFileLength <= local.regionSplitKeys {
+	if engineFileTotalSize <= regionSplitSize && engineFileLength <= regionSplitKeys {
 		ranges := []Range{{start: firstKey, end: endKey}}
 		return ranges, nil
 	}
@@ -1665,7 +1646,7 @@ func (local *local) readAndSplitIntoRange(ctx context.Context, engineFile *File)
 	}
 
 	ranges := splitRangeBySizeProps(Range{start: firstKey, end: endKey}, sizeProps,
-		local.regionSplitSize, local.regionSplitKeys)
+		regionSplitSize, regionSplitKeys)
 
 	log.L().Info("split engine key ranges", zap.Stringer("engine", engineFile.UUID),
 		zap.Int64("totalSize", engineFileTotalSize), zap.Int64("totalCount", engineFileLength),
@@ -1679,6 +1660,8 @@ func (local *local) writeAndIngestByRange(
 	ctxt context.Context,
 	engineFile *File,
 	start, end []byte,
+	regionSplitSize int64,
+	regionSplitKeys int64,
 ) error {
 	ito := &pebble.IterOptions{
 		LowerBound: start,
@@ -1737,7 +1720,7 @@ WriteAndIngest:
 				zap.Binary("end", region.Region.GetEndKey()), zap.Reflect("peers", region.Region.GetPeers()))
 
 			w := local.ingestConcurrency.Apply()
-			err = local.writeAndIngestPairs(ctx, engineFile, region, pairStart, end)
+			err = local.writeAndIngestPairs(ctx, engineFile, region, pairStart, end, regionSplitSize, regionSplitKeys)
 			local.ingestConcurrency.Recycle(w)
 			if err != nil {
 				if common.IsContextCanceledError(err) {
@@ -1775,6 +1758,8 @@ func (local *local) writeAndIngestPairs(
 	engineFile *File,
 	region *split.RegionInfo,
 	start, end []byte,
+	regionSplitSize int64,
+	regionSplitKeys int64,
 ) error {
 	var err error
 
@@ -1783,7 +1768,7 @@ loopWrite:
 		var metas []*sst.SSTMeta
 		var finishedRange Range
 		var rangeStats rangeStats
-		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engineFile, region, start, end)
+		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engineFile, region, start, end, regionSplitSize, regionSplitKeys)
 		if err != nil {
 			if common.IsContextCanceledError(err) {
 				return err
@@ -1890,7 +1875,7 @@ loopWrite:
 	return errors.Trace(err)
 }
 
-func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *File, ranges []Range) error {
+func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *File, ranges []Range, regionSplitSize int64, regionSplitKeys int64) error {
 	if engineFile.Length.Load() == 0 {
 		// engine is empty, this is likes because it's a index engine but the table contains no index
 		log.L().Info("engine contains no data", zap.Stringer("uuid", engineFile.UUID))
@@ -1922,7 +1907,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *File
 			// max retry backoff time: 2+4+8+16=30s
 			backOffTime := time.Second
 			for i := 0; i < maxRetryTimes; i++ {
-				err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey)
+				err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey, regionSplitSize, regionSplitKeys)
 				if err == nil || common.IsContextCanceledError(err) {
 					return
 				}
@@ -1968,7 +1953,7 @@ func (r *syncedRanges) reset() {
 	r.Unlock()
 }
 
-func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize int64) error {
 	lf := local.lockEngine(engineUUID, importMutexStateImport)
 	if lf == nil {
 		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
@@ -1982,9 +1967,13 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		log.L().Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
+	regionSplitKeys := int64(regionMaxKeyCount)
+	if regionSplitSize > defaultRegionSplitSize {
+		regionSplitKeys = int64(float64(regionSplitSize) / float64(defaultRegionSplitSize) * float64(regionMaxKeyCount))
+	}
 
 	// split sorted file into range by 96MB size per file
-	ranges, err := local.readAndSplitIntoRange(ctx, lf)
+	ranges, err := local.readAndSplitIntoRange(ctx, lf, regionSplitSize, regionSplitKeys)
 	if err != nil {
 		return err
 	}
@@ -2000,10 +1989,10 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 
 		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 		// the table when table is created.
-		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > local.regionSplitSize || lfLength > local.regionSplitKeys
+		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
 		// split region by given ranges
 		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionByRanges(ctx, unfinishedRanges, lf.tableInfo, needSplit)
+			err = local.SplitAndScatterRegionByRanges(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize)
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
@@ -2017,7 +2006,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID) erro
 		}
 
 		// start to write to kv and ingest
-		err = local.writeAndIngestByRanges(ctx, lf, unfinishedRanges)
+		err = local.writeAndIngestByRanges(ctx, lf, unfinishedRanges, regionSplitSize, regionSplitKeys)
 		if err != nil {
 			log.L().Error("write and ingest engine failed", log.ShortError(err))
 			return err
@@ -2691,8 +2680,8 @@ func (w *Writer) appendRowsUnsorted(ctx context.Context, kvs []common.KvPair) er
 	l := len(w.writeBatch)
 	cnt := w.batchCount
 	var lastKey []byte
-	if len(w.writeBatch) > 0 {
-		lastKey = w.writeBatch[len(w.writeBatch)-1].Key
+	if cnt > 0 {
+		lastKey = w.writeBatch[cnt-1].Key
 	}
 	for _, pair := range kvs {
 		if w.isWriteBatchSorted && bytes.Compare(lastKey, pair.Key) > 0 {
@@ -3078,7 +3067,10 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 	for {
 		if bytes.Equal(lastKey, key) {
 			log.L().Warn("duplicated key found, skipped", zap.Binary("key", lastKey))
-			continue
+			newMeta.totalCount--
+			newMeta.totalSize -= int64(len(key) + len(val))
+
+			goto nextKey
 		}
 		internalKey.UserKey = key
 		err = writer.Add(internalKey, val)
@@ -3086,6 +3078,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 			return nil, err
 		}
 		lastKey = append(lastKey[:0], key...)
+	nextKey:
 		key, val, err = mergeIter.Next()
 		if err != nil {
 			return nil, err

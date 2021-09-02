@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -184,7 +185,7 @@ func (p *PhysicalIndexScan) isFullScan() bool {
 		return false
 	}
 	for _, ran := range p.Ranges {
-		if !ran.IsFullRange() {
+		if !ran.IsFullRange(false) {
 			return false
 		}
 	}
@@ -321,8 +322,14 @@ func (p *PhysicalTableScan) isFullScan() bool {
 	if len(p.rangeDecidedBy) > 0 || p.haveCorCol() {
 		return false
 	}
+	var unsignedIntHandle bool
+	if p.Table.PKIsHandle {
+		if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.Flag)
+		}
+	}
 	for _, ran := range p.Ranges {
-		if !ran.IsFullRange() {
+		if !ran.IsFullRange(unsignedIntHandle) {
 			return false
 		}
 	}

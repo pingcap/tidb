@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -157,6 +158,7 @@ func (t *testLabelsSuite) TestRestore(c *C) {
 	input2 := NewLabel("somethingelse")
 	input3 := NewLabel("db")
 	input4 := NewLabel("table")
+	input5 := NewLabel("partition")
 
 	tests := []TestCase{
 		{
@@ -171,7 +173,7 @@ func (t *testLabelsSuite) TestRestore(c *C) {
 		},
 		{
 			"normal3",
-			Labels{input3, input4},
+			Labels{input3, input4, input5},
 			"",
 		},
 		{

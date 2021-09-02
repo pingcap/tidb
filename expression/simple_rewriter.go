@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -128,6 +129,12 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 			if idx == -1 {
 				idx = i
 			} else {
+				if names[idx].Redundant || name.Redundant {
+					if !name.Redundant {
+						idx = i
+					}
+					continue
+				}
 				return -1, errNonUniq.GenWithStackByArgs(astCol.String(), "field list")
 			}
 		}

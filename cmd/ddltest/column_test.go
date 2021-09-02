@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -224,4 +225,13 @@ func (s *TestDDLSuite) TestCommitWhenSchemaChanged(c *C) {
 	s1.Execute(ctx, "insert into test_commit values (4, 4)")
 	_, err = s1.Execute(ctx, "commit")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
+}
+
+func (s *TestDDLSuite) TestForIssue24621(c *C) {
+	s.mustExec(c, "use test")
+	s.mustExec(c, "drop table if exists t")
+	s.mustExec(c, "create table t(a char(250));")
+	s.mustExec(c, "insert into t values('0123456789abc');")
+	_, err := s.exec("alter table t modify a char(12) null;")
+	c.Assert(err.Error(), Equals, "[types:1265]Data truncated for column 'a', value is '0123456789abc'")
 }

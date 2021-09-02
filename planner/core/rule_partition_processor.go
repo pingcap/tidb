@@ -7,6 +7,7 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 // // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -327,7 +328,8 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	}
 	used, err := s.pruneHashPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols, names)
 	if err != nil {
-		return nil, err
+		// Just report warning and generate the tableDual
+		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(err)
 	}
 	if used != nil {
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi))
