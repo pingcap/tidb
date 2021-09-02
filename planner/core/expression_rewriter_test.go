@@ -437,4 +437,3 @@ func (s *testExpressionRewriterSuiteSerial) TestBetweenExprCollation(c *C) {
 
 	tk.MustGetErrMsg("select * from t1 where a between 'B' collate utf8mb4_general_ci and c collate utf8mb4_unicode_ci;", "[expression:1270]Illegal mix of collations (latin1_bin,IMPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT) for operation 'between'")
 }
-
