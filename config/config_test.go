@@ -190,7 +190,6 @@ split-region-max-num=10000
 enable-batch-dml = true
 server-version = "test_version"
 repair-mode = true
-resolve-lock-lite-threshold = 16
 max-server-connections = 200
 mem-quota-query = 10000
 max-index-length = 3080
@@ -210,6 +209,7 @@ max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
 ttl-refreshed-txn-size=8192
+resolve-lock-lite-threshold = 16
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
@@ -269,7 +269,7 @@ deadlock-history-collect-retryable = true
 	require.Equal(t, 100, conf.StmtSummary.HistorySize)
 	require.True(t, conf.EnableBatchDML)
 	require.True(t, conf.RepairMode)
-	require.Equal(t, uint64(16), conf.ResolveLockLiteThreshold)
+	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
 	require.Equal(t, uint32(200), conf.MaxServerConnections)
 	require.Equal(t, int64(10000), conf.MemQuotaQuery)
 	require.Equal(t, []string{"tiflash"}, conf.IsolationRead.Engines)
