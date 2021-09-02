@@ -108,6 +108,10 @@ var (
 	_ builtinFunc = &builtinCastJSONAsJSONSig{}
 )
 
+type castBaseFunctionClass struct {
+
+}
+
 type castAsIntFunctionClass struct {
 	baseFunctionClass
 

@@ -186,12 +186,16 @@ func addBinFlag(tp *types.FieldType) {
 	SetBinFlagOrBinStr(tp, tp)
 }
 
-type stringResultFuncClass struct {
+type stringFuncClass struct {
 	baseFunctionClass
 }
 
-func (s *stringResultFuncClass) deriveCollation(ctx sessionctx.Context, args []Expression, _ types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
-	return CheckAndDeriveCollationFromExprsWithCoer(ctx, s.funcName, types.ETString, args...)
+func (s *stringFuncClass) deriveCollation(ctx sessionctx.Context, args []Expression, retType types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	if retType == types.ETString {
+		return CheckAndDeriveCollationFromExprsWithCoer(ctx, s.funcName, types.ETString, args...)
+	}
+
+	return charset.CharsetBin, charset.CollationBin, CoercibilityCoercible, nil
 }
 
 type lengthFunctionClass struct {
@@ -274,7 +278,7 @@ func (b *builtinASCIISig) evalInt(row chunk.Row) (int64, bool, error) {
 }
 
 type concatFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -345,7 +349,7 @@ func (b *builtinConcatSig) evalString(row chunk.Row) (d string, isNull bool, err
 }
 
 type concatWSFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -456,7 +460,7 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 }
 
 type leftFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *leftFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -541,7 +545,7 @@ func (b *builtinLeftUTF8Sig) evalString(row chunk.Row) (string, bool, error) {
 }
 
 type rightFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *rightFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -627,7 +631,7 @@ func (b *builtinRightUTF8Sig) evalString(row chunk.Row) (string, bool, error) {
 }
 
 type repeatFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *repeatFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -693,7 +697,7 @@ func (b *builtinRepeatSig) evalString(row chunk.Row) (d string, isNull bool, err
 }
 
 type lowerFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -738,7 +742,7 @@ func (b *builtinLowerSig) evalString(row chunk.Row) (d string, isNull bool, err 
 }
 
 type reverseFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *reverseFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -865,7 +869,7 @@ func (b *builtinSpaceSig) evalString(row chunk.Row) (d string, isNull bool, err 
 }
 
 type upperFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -983,7 +987,7 @@ func (b *builtinStrcmpSig) evalInt(row chunk.Row) (int64, bool, error) {
 }
 
 type replaceFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *replaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -1124,7 +1128,7 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 }
 
 type substringFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *substringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -1320,7 +1324,7 @@ func (b *builtinSubstring3ArgsUTF8Sig) evalString(row chunk.Row) (string, bool, 
 }
 
 type substringIndexFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *substringIndexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -1396,7 +1400,7 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 }
 
 type locateFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *locateFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -1429,6 +1433,10 @@ func (c *locateFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		sig.setPbCode(tipb.ScalarFuncSig_Locate2ArgsUTF8)
 	}
 	return sig, nil
+}
+
+func (c *locateFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, _ types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	return CheckAndDeriveCollationFromExprsWithCoer(ctx, c.funcName, types.ETInt, args[0], args[1])
 }
 
 type builtinLocate2ArgsSig struct {
@@ -1725,7 +1733,7 @@ func (b *builtinUnHexSig) evalString(row chunk.Row) (string, bool, error) {
 const spaceChars = " "
 
 type trimFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 // getFunction sets trim built-in function signature.
@@ -1775,6 +1783,10 @@ func (c *trimFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	default:
 		return nil, c.verifyArgs(args)
 	}
+}
+
+func (c *trimFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, _ types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	return args[0].GetType().Charset, args[0].GetType().Collate, args[0].Coercibility(), nil
 }
 
 type builtinTrim1ArgSig struct {
@@ -1900,6 +1912,10 @@ func (c *lTrimFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	return sig, nil
 }
 
+func (c *lTrimFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, _ types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	return args[0].GetType().Charset, args[0].GetType().Collate, args[0].Coercibility(), nil
+}
+
 type builtinLTrimSig struct {
 	baseBuiltinFunc
 }
@@ -1938,6 +1954,10 @@ func (c *rTrimFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	sig := &builtinRTrimSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_RTrim)
 	return sig, nil
+}
+
+func (c *rTrimFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, _ types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	return args[0].GetType().Charset, args[0].GetType().Collate, args[0].Coercibility(), nil
 }
 
 type builtinRTrimSig struct {
@@ -1995,7 +2015,7 @@ func getFlen4LpadAndRpad(ctx sessionctx.Context, arg Expression) int {
 }
 
 type lpadFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *lpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -2127,7 +2147,7 @@ func (b *builtinLpadUTF8Sig) evalString(row chunk.Row) (string, bool, error) {
 }
 
 type rpadFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *rpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -2464,6 +2484,10 @@ func (c *findInSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	return sig, nil
 }
 
+func (c *findInSetFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, _ types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	return CheckAndDeriveCollationFromExprsWithCoer(ctx, c.funcName, types.ETInt, args...)
+}
+
 type builtinFindInSetSig struct {
 	baseBuiltinFunc
 }
@@ -2502,7 +2526,9 @@ func (b *builtinFindInSetSig) evalInt(row chunk.Row) (int64, bool, error) {
 }
 
 type fieldFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
+
+	cmpType types.EvalType
 }
 
 func (c *fieldFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -2527,6 +2553,7 @@ func (c *fieldFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	for i, length := 0, len(args); i < length; i++ {
 		argTps[i] = argTp
 	}
+	c.cmpType = argTp
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c, args, types.ETInt, argTps...)
 	if err != nil {
 		return nil, err
@@ -2544,6 +2571,14 @@ func (c *fieldFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig.setPbCode(tipb.ScalarFuncSig_FieldString)
 	}
 	return sig, nil
+}
+
+func (c *fieldFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, ret types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	if c.cmpType == types.ETString {
+		return args[0].GetType().Charset, args[0].GetType().Collate, args[0].Coercibility(), nil
+	}
+
+	return c.stringFuncClass.deriveCollation(ctx, args, ret)
 }
 
 type builtinFieldIntSig struct {
@@ -2634,7 +2669,7 @@ func (b *builtinFieldStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 }
 
 type makeSetFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *makeSetFunctionClass) getFlen(ctx sessionctx.Context, args []Expression) int {
@@ -3003,7 +3038,7 @@ func (b *builtinBinSig) evalString(row chunk.Row) (string, bool, error) {
 }
 
 type eltFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *eltFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -3061,7 +3096,7 @@ func (b *builtinEltSig) evalString(row chunk.Row) (string, bool, error) {
 }
 
 type exportSetFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *exportSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
@@ -3599,7 +3634,7 @@ func splitToSubN(s string, n int) []string {
 }
 
 type insertFunctionClass struct {
-	stringResultFuncClass
+	stringFuncClass
 }
 
 func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
