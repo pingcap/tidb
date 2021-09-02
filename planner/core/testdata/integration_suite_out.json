@@ -1805,22 +1805,6 @@
         ]
       }
     ]
-<<<<<<< HEAD
-=======
-  },
-  {
-    "Name": "TestIssue27083",
-    "Cases": [
-      {
-        "SQL": "select * from t use index (idx_b) where b = 2 limit 1",
-        "Plan": [
-          "IndexLookUp 1.00 root  limit embedded(offset:0, count:1)",
-          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:1",
-          "│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:idx_b(b) range:[2,2], keep order:false",
-          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false"
-        ]
-      }
-    ]
   },
   {
     "Name": "TestGroupBySetVar",
@@ -1897,6 +1881,5 @@
         ]
       }
     ]
->>>>>>> 8dcebd123... planner, expression: avoid exprs with side effects in column pruning and agg pushdown (#27370)
   }
 ]

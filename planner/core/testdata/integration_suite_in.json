@@ -341,14 +341,6 @@
       "select * from t where g = 5 order by f",
       "select * from t where d = 3 order by c, e"
     ]
-<<<<<<< HEAD
-=======
-  },
-  {
-    "name": "TestIssue27083",
-    "cases": [
-      "select * from t use index (idx_b) where b = 2 limit 1"
-    ]
   },
   {
     "name": "TestGroupBySetVar",
@@ -362,6 +354,5 @@
       "select a from ta group by @n:=@n+1",
       "select a from ta group by @n:=@n+a"
     ]
->>>>>>> 8dcebd123... planner, expression: avoid exprs with side effects in column pruning and agg pushdown (#27370)
   }
 ]
