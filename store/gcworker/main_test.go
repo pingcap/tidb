@@ -16,18 +16,25 @@ package gcworker
 
 import (
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/util/testbridge"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
+	tikv.EnableFailpoints()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-		goleak.IgnoreTopFunction("github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain"),
-		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/oracle/oracles.(*pdOracle).updateTS"),
 	}
-	goleak.VerifyTestMain(m, opts...)
+	callback := func(i int) int {
+		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
+		time.Sleep(time.Second)
+		return i
+	}
+	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
