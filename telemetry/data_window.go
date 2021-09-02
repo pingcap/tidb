@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,12 +20,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
-	"github.com/tikv/client-go/v2/logutil"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 var (
@@ -62,17 +62,18 @@ const (
 )
 
 type windowData struct {
-	BeginAt        time.Time          `json:"beginAt"`
-	ExecuteCount   uint64             `json:"executeCount"`
-	TiFlashUsage   tiFlashUsageData   `json:"tiFlashUsage"`
-	CoprCacheUsage coprCacheUsageData `json:"coprCacheUsage"`
-	SQLUsage       sqlUsageData       `json:"SQLUsage"`
+	BeginAt               time.Time          `json:"beginAt"`
+	ExecuteCount          uint64             `json:"executeCount"`
+	TiFlashUsage          tiFlashUsageData   `json:"tiFlashUsage"`
+	CoprCacheUsage        coprCacheUsageData `json:"coprCacheUsage"`
+	SQLUsage              sqlUsageData       `json:"SQLUsage"`
+	BuiltinFunctionsUsage map[string]uint32  `json:"builtinFunctionsUsage"`
 }
 
-type sqlType map[string]int64
+type sqlType map[string]uint64
 
 type sqlUsageData struct {
-	SQLTotal int64   `json:"total"`
+	SQLTotal uint64  `json:"total"`
 	SQLType  sqlType `json:"type"`
 }
 
@@ -91,13 +92,67 @@ type tiFlashUsageData struct {
 	ExchangePushDown uint64 `json:"exchangePushDown"`
 }
 
+// builtinFunctionsUsageCollector collects builtin functions usage information and dump it into windowData.
+type builtinFunctionsUsageCollector struct {
+	sync.Mutex
+
+	// Should acquire lock to access this
+	usageData BuiltinFunctionsUsage
+}
+
+// Merge BuiltinFunctionsUsage data
+func (b *builtinFunctionsUsageCollector) Collect(usageData BuiltinFunctionsUsage) {
+	// TODO(leiysky): use multi-worker to collect the usage information so we can make this asynchronous
+	b.Lock()
+	defer b.Unlock()
+	b.usageData.Merge(usageData)
+}
+
+// Dump BuiltinFunctionsUsage data
+func (b *builtinFunctionsUsageCollector) Dump() map[string]uint32 {
+	b.Lock()
+	ret := b.usageData
+	b.usageData = make(map[string]uint32)
+	b.Unlock()
+
+	return ret
+}
+
+// BuiltinFunctionsUsage is a map from ScalarFuncSig_name(string) to usage count(uint32)
+type BuiltinFunctionsUsage map[string]uint32
+
+// Inc will increase the usage count of scalar function by 1
+func (b BuiltinFunctionsUsage) Inc(scalarFuncSigName string) {
+	v, ok := b[scalarFuncSigName]
+	if !ok {
+		b[scalarFuncSigName] = 1
+	} else {
+		b[scalarFuncSigName] = v + 1
+	}
+}
+
+// Merge BuiltinFunctionsUsage data
+func (b BuiltinFunctionsUsage) Merge(usageData BuiltinFunctionsUsage) {
+	for k, v := range usageData {
+		prev, ok := b[k]
+		if !ok {
+			b[k] = v
+		} else {
+			b[k] = prev + v
+		}
+	}
+}
+
+// GlobalBuiltinFunctionsUsage is used to collect builtin functions usage information
+var GlobalBuiltinFunctionsUsage = &builtinFunctionsUsageCollector{usageData: make(BuiltinFunctionsUsage)}
+
 var (
 	rotatedSubWindows []*windowData
 	subWindowsLock    = sync.RWMutex{}
 )
 
-func getSQLSum(sqlTypeData *sqlType) int64 {
-	result := int64(0)
+func getSQLSum(sqlTypeData *sqlType) uint64 {
+	result := uint64(0)
 	for _, v := range *sqlTypeData {
 		result += v
 	}
@@ -106,12 +161,13 @@ func getSQLSum(sqlTypeData *sqlType) int64 {
 
 func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
 	ctx := context.TODO()
-	promQL := "sum(tidb_executor_statement_total{}) by (instance,type)"
+	promQL := "avg(tidb_executor_statement_total{}) by (type)"
 	result, err := querySQLMetric(ctx, timepoint, promQL)
 	if err != nil {
-		logutil.BgLogger().Warn("querySQLMetric got error")
+		analysisSQLUsage(result, SQLResult)
+	} else {
+		analysisSQLUsage(result, SQLResult)
 	}
-	anylisSQLUsage(result, SQLResult)
 	return nil
 }
 
@@ -149,7 +205,7 @@ func querySQLMetric(ctx context.Context, queryTime time.Time, promQL string) (re
 	return result, err
 }
 
-func anylisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
+func analysisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
 	if promResult == nil {
 		return
 	}
@@ -159,7 +215,7 @@ func anylisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
 		for _, m := range matrix {
 			v := m.Value
 			promLable := string(m.Metric[pmodel.LabelName("type")])
-			SQLResult.SQLType[promLable] = int64(float64(v))
+			SQLResult.SQLType[promLable] = uint64(v)
 		}
 	}
 }
@@ -186,12 +242,14 @@ func RotateSubWindow() {
 			SQLTotal: 0,
 			SQLType:  make(sqlType),
 		},
+		BuiltinFunctionsUsage: GlobalBuiltinFunctionsUsage.Dump(),
 	}
 
-	if err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage); err != nil {
-		logutil.BgLogger().Error("Error exists when calling prometheus", zap.Error(err))
-
+	err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage)
+	if err != nil {
+		logutil.BgLogger().Info("Error exists when getting the SQL Metric.")
 	}
+
 	thisSubWindow.SQLUsage.SQLTotal = getSQLSum(&thisSubWindow.SQLUsage.SQLType)
 
 	subWindowsLock.Lock()
@@ -242,6 +300,10 @@ func getWindowData() []*windowData {
 			thisWindow.CoprCacheUsage.GTE100 += rotatedSubWindows[i].CoprCacheUsage.GTE100
 			thisWindow.SQLUsage.SQLTotal = rotatedSubWindows[i].SQLUsage.SQLTotal - startWindow.SQLUsage.SQLTotal
 			thisWindow.SQLUsage.SQLType = calDeltaSQLTypeMap(rotatedSubWindows[i].SQLUsage.SQLType, startWindow.SQLUsage.SQLType)
+
+			mergedBuiltinFunctionsUsage := BuiltinFunctionsUsage(thisWindow.BuiltinFunctionsUsage)
+			mergedBuiltinFunctionsUsage.Merge(BuiltinFunctionsUsage(rotatedSubWindows[i].BuiltinFunctionsUsage))
+			thisWindow.BuiltinFunctionsUsage = mergedBuiltinFunctionsUsage
 			aggregatedSubWindows++
 			i++
 		}

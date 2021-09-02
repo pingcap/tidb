@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -210,35 +211,6 @@ func (ssMap *stmtSummaryByDigestMap) ToEvictedCountDatum() [][]types.Datum {
 	return ssMap.other.ToEvictedCountDatum()
 }
 
-func (ssbde *stmtSummaryByDigestEvicted) toCurrentDatum() []types.Datum {
-	var seElement *stmtSummaryByDigestEvictedElement
-
-	ssbde.Lock()
-	if ssbde.history.Len() > 0 {
-		seElement = ssbde.history.Back().Value.(*stmtSummaryByDigestEvictedElement)
-	}
-	ssbde.Unlock()
-
-	if seElement == nil {
-		return nil
-	}
-
-	return seElement.toDatum()
-}
-
-func (ssbde *stmtSummaryByDigestEvicted) toHistoryDatum(historySize int) [][]types.Datum {
-	// Collect all history summaries to an array.
-	ssbde.Lock()
-	seElements := ssbde.collectHistorySummaries(historySize)
-	ssbde.Unlock()
-	rows := make([][]types.Datum, 0, len(seElements))
-
-	for _, seElement := range seElements {
-		rows = append(rows, seElement.toDatum())
-	}
-	return rows
-}
-
 func (ssbde *stmtSummaryByDigestEvicted) collectHistorySummaries(historySize int) []*stmtSummaryByDigestEvictedElement {
 	lst := make([]*stmtSummaryByDigestEvictedElement, 0, ssbde.history.Len())
 	for element := ssbde.history.Front(); element != nil && len(lst) < historySize; element = element.Next() {
@@ -246,10 +218,6 @@ func (ssbde *stmtSummaryByDigestEvicted) collectHistorySummaries(historySize int
 		lst = append(lst, seElement)
 	}
 	return lst
-}
-
-func (seElement *stmtSummaryByDigestEvictedElement) toDatum() []types.Datum {
-	return seElement.otherSummary.toDatum(new(stmtSummaryByDigest))
 }
 
 // addInfo adds information in addWith into addTo.

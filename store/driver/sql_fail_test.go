@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -29,33 +30,24 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/tikv/client-go/v2/mockstore"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-var _ = Suite(&testSQLSuite{})
-var _ = SerialSuites(&testSQLSerialSuite{})
+var _ = SerialSuites(&testSQLSuite{})
 
 type testSQLSuite struct {
 	testSQLSuiteBase
 }
 
-type testSQLSerialSuite struct {
-	testSQLSuiteBase
-}
-
 type testSQLSuiteBase struct {
-	OneByOneSuite
 	store kv.Storage
 	dom   *domain.Domain
 }
 
 func (s *testSQLSuiteBase) SetUpSuite(c *C) {
-	s.OneByOneSuite.SetUpSuite(c)
 	var err error
 	s.store = NewTestStore(c)
-	// actual this is better done in `OneByOneSuite.SetUpSuite`, but this would cause circle dependency
-	if *mockstore.WithTiKV {
+	if *withTiKV {
 		session.ResetStoreForWithTiKVTest(s.store)
 	}
 
@@ -66,10 +58,9 @@ func (s *testSQLSuiteBase) SetUpSuite(c *C) {
 func (s *testSQLSuiteBase) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
-	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testSQLSerialSuite) TestFailBusyServerCop(c *C) {
+func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 

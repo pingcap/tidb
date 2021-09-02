@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -339,11 +340,11 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 		return statistics.PseudoRowCount
 	}
 	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
-	stmt, err := executor.ParseWithParams(context.Background(), sql, tblInfo.ID)
+	stmt, err := executor.ParseWithParams(w.ddlJobCtx, sql, tblInfo.ID)
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
-	rows, _, err := executor.ExecRestrictedStmt(context.Background(), stmt)
+	rows, _, err := executor.ExecRestrictedStmt(w.ddlJobCtx, stmt)
 	if err != nil {
 		return statistics.PseudoRowCount
 	}

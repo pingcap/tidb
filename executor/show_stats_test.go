@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -220,10 +221,25 @@ func (s *testShowStatsSuite) TestShowAnalyzeStatus(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, primary key(a), index idx(b))")
 	tk.MustExec(`insert into t values (1, 1), (2, 2)`)
+
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("analyze table t")
+	result := tk.MustQuery("show analyze status").Sort()
+	c.Assert(len(result.Rows()), Equals, 1)
+	c.Assert(result.Rows()[0][0], Equals, "test")
+	c.Assert(result.Rows()[0][1], Equals, "t")
+	c.Assert(result.Rows()[0][2], Equals, "")
+	c.Assert(result.Rows()[0][3], Equals, "analyze table")
+	c.Assert(result.Rows()[0][4], Equals, "2")
+	c.Assert(result.Rows()[0][5], NotNil)
+	c.Assert(result.Rows()[0][6], NotNil)
+	c.Assert(result.Rows()[0][7], Equals, "finished")
+
+	statistics.ClearHistoryJobs()
+
 	tk.MustExec("set @@tidb_analyze_version=1")
 	tk.MustExec("analyze table t")
-
-	result := tk.MustQuery("show analyze status").Sort()
+	result = tk.MustQuery("show analyze status").Sort()
 	c.Assert(len(result.Rows()), Equals, 2)
 	c.Assert(result.Rows()[0][0], Equals, "test")
 	c.Assert(result.Rows()[0][1], Equals, "t")
@@ -243,20 +259,6 @@ func (s *testShowStatsSuite) TestShowAnalyzeStatus(c *C) {
 	c.Assert(result.Rows()[1][5], NotNil)
 	c.Assert(result.Rows()[1][6], NotNil)
 	c.Assert(result.Rows()[1][7], Equals, "finished")
-
-	statistics.ClearHistoryJobs()
-	tk.MustExec("set @@tidb_analyze_version=2")
-	tk.MustExec("analyze table t")
-	result = tk.MustQuery("show analyze status").Sort()
-	c.Assert(len(result.Rows()), Equals, 1)
-	c.Assert(result.Rows()[0][0], Equals, "test")
-	c.Assert(result.Rows()[0][1], Equals, "t")
-	c.Assert(result.Rows()[0][2], Equals, "")
-	c.Assert(result.Rows()[0][3], Equals, "analyze table")
-	c.Assert(result.Rows()[0][4], Equals, "2")
-	c.Assert(result.Rows()[0][5], NotNil)
-	c.Assert(result.Rows()[0][6], NotNil)
-	c.Assert(result.Rows()[0][7], Equals, "finished")
 }
 
 func (s *testShowStatsSuite) TestShowStatusSnapshot(c *C) {

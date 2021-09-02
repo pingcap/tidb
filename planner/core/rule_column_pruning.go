@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/util"
 )
 
@@ -94,7 +96,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 		if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
 			allFirstRow = false
 		}
-		if !used[i] {
+		if !used[i] && !ExprsHasSideEffects(la.AggFuncs[i].Args) {
 			la.schema.Columns = append(la.schema.Columns[:i], la.schema.Columns[i+1:]...)
 			la.AggFuncs = append(la.AggFuncs[:i], la.AggFuncs[i+1:]...)
 		} else if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
@@ -135,7 +137,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	if len(la.GroupByItems) > 0 {
 		for i := len(la.GroupByItems) - 1; i >= 0; i-- {
 			cols := expression.ExtractColumns(la.GroupByItems[i])
-			if len(cols) == 0 {
+			if len(cols) == 0 && !exprHasSetVarOrSleep(la.GroupByItems[i]) {
 				la.GroupByItems = append(la.GroupByItems[:i], la.GroupByItems[i+1:]...)
 			} else {
 				selfUsedCols = append(selfUsedCols, cols...)
@@ -277,6 +279,33 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 	if ds.handleCols != nil && ds.handleCols.IsInt() && ds.schema.ColumnIndex(ds.handleCols.GetCol(0)) == -1 {
 		ds.handleCols = nil
+	}
+	return nil
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) error {
+	switch p.TableInfo.Name.O {
+	case infoschema.TableStatementsSummary,
+		infoschema.TableStatementsSummaryHistory,
+		infoschema.TableSlowQuery,
+		infoschema.ClusterTableStatementsSummary,
+		infoschema.ClusterTableStatementsSummaryHistory,
+		infoschema.ClusterTableSlowLog,
+		infoschema.TableTiDBTrx,
+		infoschema.ClusterTableTiDBTrx,
+		infoschema.TableDataLockWaits,
+		infoschema.TableDeadlocks,
+		infoschema.ClusterTableDeadlocks:
+	default:
+		return nil
+	}
+	used := expression.GetUsedList(parentUsedCols, p.schema)
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] && p.schema.Len() > 1 {
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
+		}
 	}
 	return nil
 }

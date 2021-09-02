@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -28,12 +29,9 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/tikv/client-go/v2/mockstore/mocktikv"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/peer"
@@ -53,13 +51,6 @@ func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionMana
 		DiagnosticsServer: sysutil.NewDiagnosticsServer(config.Log.File.Filename),
 		dom:               dom,
 		sm:                sm,
-	}
-	// For redirection the cop task.
-	mocktikv.GRPCClientFactory = func() mocktikv.Client {
-		return tikv.NewTestRPCClient(config.Security.ClusterSecurity())
-	}
-	unistore.GRPCClientFactory = func() unistore.Client {
-		return tikv.NewTestRPCClient(config.Security.ClusterSecurity())
 	}
 	diagnosticspb.RegisterDiagnosticsServer(s, rpcSrv)
 	tikvpb.RegisterTikvServer(s, rpcSrv)

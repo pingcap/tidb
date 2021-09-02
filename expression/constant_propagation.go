@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -147,7 +148,7 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 			sf.FuncName.L == ast.If ||
 			sf.FuncName.L == ast.Case ||
 			sf.FuncName.L == ast.NullEQ) {
-		return false, false, cond
+		return false, true, cond
 	}
 	for idx, expr := range sf.GetArgs() {
 		if src.Equal(nil, expr) {

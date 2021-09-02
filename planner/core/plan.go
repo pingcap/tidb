@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -126,7 +127,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
 	}
-	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
 	if NDV <= 1 {
 		return nil
 	}
@@ -167,7 +168,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 			partitionBy = append(partitionBy, col)
 		}
 	}
-	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	NDV := int(getColsNDV(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
 	if NDV <= 1 {
 		return nil
 	}

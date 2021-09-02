@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -100,7 +101,10 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d.Stop()
+	defer func() {
+		err := d.Stop()
+		c.Assert(err, IsNil)
+	}()
 	getFirstNotificationAfterStartDDL(d)
 	// Ensure that the notification is not handled in workers `start` function.
 	d.cancel()
@@ -141,7 +145,10 @@ func (s *testDDLSuite) TestNotifyDDLJob(c *C) {
 		WithStore(store),
 		WithLease(testLease),
 	)
-	defer d1.Stop()
+	defer func() {
+		err := d1.Stop()
+		c.Assert(err, IsNil)
+	}()
 	getFirstNotificationAfterStartDDL(d1)
 	// Ensure that the notification is not handled by worker's "start".
 	d1.cancel()
@@ -649,6 +656,11 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 67}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
 		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 68}, cancelRetErrs: noErrs, cancelState: model.StateWriteReorganization},
 		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 69}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
+
+		// for drop indexes
+		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 72}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 72)}, cancelState: model.StateWriteOnly},
+		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 73}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 73)}, cancelState: model.StateDeleteOnly},
+		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 74}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 74)}, cancelState: model.StateWriteReorganization},
 	}
 
 	return tests
@@ -984,7 +996,7 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 
 	// test rename table failed caused by canceled.
 	test = &tests[21]
-	renameTableArgs := []interface{}{dbInfo.ID, model.NewCIStr("t2")}
+	renameTableArgs := []interface{}{dbInfo.ID, model.NewCIStr("t2"), dbInfo.Name}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, renameTableArgs, &test.cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
@@ -1279,6 +1291,27 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	c.Assert(baseTable.Meta().Columns[0].FieldType.Tp, Equals, mysql.TypeTiny)
 	c.Assert(baseTable.Meta().Columns[0].FieldType.Flag&mysql.NotNullFlag, Equals, uint(1))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/skipMockContextDoExec"), IsNil)
+
+	// for drop indexes
+	updateTest(&tests[54])
+	ifExists := make([]bool, 2)
+	idxNames := []model.CIStr{model.NewCIStr("i1"), model.NewCIStr("i2")}
+	dropIndexesArgs := []interface{}{idxNames, ifExists}
+	tableInfo := createTestTableForDropIndexes(c, ctx, d, dbInfo, "test-drop-indexes", 6)
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tableInfo.ID, test.act, dropIndexesArgs)
+	s.checkDropIndexes(c, d, dbInfo.ID, tableInfo.ID, idxNames, true)
+
+	updateTest(&tests[55])
+	idxNames = []model.CIStr{model.NewCIStr("i3"), model.NewCIStr("i4")}
+	dropIndexesArgs = []interface{}{idxNames, ifExists}
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tableInfo.ID, test.act, dropIndexesArgs)
+	s.checkDropIndexes(c, d, dbInfo.ID, tableInfo.ID, idxNames, true)
+
+	updateTest(&tests[56])
+	idxNames = []model.CIStr{model.NewCIStr("i5"), model.NewCIStr("i6")}
+	dropIndexesArgs = []interface{}{idxNames, ifExists}
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tableInfo.ID, test.act, dropIndexesArgs)
+	s.checkDropIndexes(c, d, dbInfo.ID, tableInfo.ID, idxNames, true)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
@@ -1624,4 +1657,10 @@ func (s *testDDLSuite) TestDDLPackageExecuteSQL(c *C) {
 	defer worker.sessPool.put(sess)
 	se := sess.(sqlexec.SQLExecutor)
 	_, _ = se.Execute(context.Background(), "create table t(a int);")
+}
+
+func (s *testDDLSerialSuite) checkDropIndexes(c *C, d *ddl, schemaID int64, tableID int64, idxNames []model.CIStr, success bool) {
+	for _, idxName := range idxNames {
+		checkIdxExist(c, d, schemaID, tableID, idxName.O, !success)
+	}
 }

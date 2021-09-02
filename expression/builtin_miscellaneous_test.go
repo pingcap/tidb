@@ -7,6 +7,7 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 // // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -357,4 +358,172 @@ func (s *testEvaluatorSuite) TestNameConst(c *C) {
 		c.Assert(err, IsNil)
 		t.asserts(d)
 	}
+}
+
+func (s *testEvaluatorSuite) TestUUIDToBin(c *C) {
+	tests := []struct {
+		args       []interface{}
+		expect     interface{}
+		isNil      bool
+		getWarning bool
+		getError   bool
+	}{
+		{
+			[]interface{}{"6ccd780c-baba-1026-9564-5b8c656024db"},
+			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
+			false,
+			false,
+			false,
+		},
+		{
+			[]interface{}{"6CCD780C-BABA-1026-9564-5B8C656024DB"},
+			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
+			false,
+			false,
+			false,
+		},
+		{
+			[]interface{}{"6ccd780cbaba102695645b8c656024db"},
+			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
+			false,
+			false,
+			false,
+		},
+		{
+			[]interface{}{"{6ccd780c-baba-1026-9564-5b8c656024db}"},
+			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
+			false,
+			false,
+			false,
+		},
+		{
+			[]interface{}{"6ccd780c-baba-1026-9564-5b8c656024db", 0},
+			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
+			false,
+			false,
+			false,
+		},
+		{
+			[]interface{}{"6ccd780c-baba-1026-9564-5b8c656024db", 1},
+			[]byte{0x10, 0x26, 0xBA, 0xBA, 0x6C, 0xCD, 0x78, 0x0C, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
+			false,
+			false,
+			false,
+		},
+		{
+			[]interface{}{"6ccd780c-baba-1026-9564-5b8c656024db", "a"},
+			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
+			false,
+			true,
+			false,
+		},
+		{
+			[]interface{}{"6ccd780c-baba-1026-9564-5b8c6560"},
+			[]byte{},
+			false,
+			false,
+			true,
+		},
+		{
+			[]interface{}{nil},
+			[]byte{},
+			true,
+			false,
+			false,
+		},
+	}
+
+	for _, test := range tests {
+		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
+		f, err := newFunctionForTest(s.ctx, ast.UUIDToBin, s.primitiveValsToConstants(test.args)...)
+		c.Assert(err, IsNil)
+
+		result, err := f.Eval(chunk.Row{})
+		if test.getError {
+			c.Assert(err, NotNil)
+		} else if test.getWarning {
+			c.Assert(err, IsNil)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
+			}
+		}
+	}
+
+	_, err := funcs[ast.UUIDToBin].getFunction(s.ctx, []Expression{NewZero()})
+	c.Assert(err, IsNil)
+}
+
+func (s *testEvaluatorSuite) TestBinToUUID(c *C) {
+	tests := []struct {
+		args       []interface{}
+		expect     string
+		isNil      bool
+		getWarning bool
+		getError   bool
+	}{
+		{
+			[]interface{}{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB}},
+			"6ccd780c-baba-1026-9564-5b8c656024db",
+			false,
+			false,
+			false,
+		},
+		{
+			[]interface{}{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB}, 1},
+			"baba1026-780c-6ccd-9564-5b8c656024db",
+			false,
+			false,
+			false,
+		},
+		{
+			[]interface{}{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB}, "a"},
+			"6ccd780c-baba-1026-9564-5b8c656024db",
+			false,
+			true,
+			false,
+		},
+		{
+			[]interface{}{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60}},
+			"",
+			false,
+			false,
+			true,
+		},
+		{
+			[]interface{}{nil},
+			"",
+			true,
+			false,
+			false,
+		},
+	}
+
+	for _, test := range tests {
+		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
+		f, err := newFunctionForTest(s.ctx, ast.BinToUUID, s.primitiveValsToConstants(test.args)...)
+		c.Assert(err, IsNil)
+
+		result, err := f.Eval(chunk.Row{})
+		if test.getError {
+			c.Assert(err, NotNil)
+		} else if test.getWarning {
+			c.Assert(err, IsNil)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
+		} else {
+			c.Assert(err, IsNil)
+			if test.isNil {
+				c.Assert(result.Kind(), Equals, types.KindNull)
+			} else {
+				c.Assert(result.GetString(), Equals, test.expect)
+			}
+		}
+	}
+
+	_, err := funcs[ast.BinToUUID].getFunction(s.ctx, []Expression{NewZero()})
+	c.Assert(err, IsNil)
 }

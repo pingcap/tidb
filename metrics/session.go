@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -117,6 +118,14 @@ var (
 			Name:      "statement_lock_keys_count",
 			Help:      "Keys locking for a single statement",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 21), // 1 ~ 1048576
+		})
+
+	ValidateReadTSFromPDCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "validate_read_ts_from_pd_count",
+			Help:      "Counter of validating read ts by getting a timestamp from PD",
 		})
 )
 

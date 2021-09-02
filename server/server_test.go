@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -40,8 +41,10 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -56,12 +59,17 @@ func TestT(t *testing.T) {
 	if !reflect.DeepEqual(defaultConfig, globalConfig) {
 		t.Fatalf("%#v != %#v\n", defaultConfig, globalConfig)
 	}
+
+	// AsyncCommit will make DDL wait 2.5s before changing to the next state.
+	// Set schema lease to avoid it from making CI slow.
+	session.SetSchemaLease(0)
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
 	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	if err != nil {
 		t.Fatal(err)
 	}
+	tikv.EnableFailpoints()
 	TestingT(t)
 }
 
@@ -129,14 +137,9 @@ func (cli *testServerClient) runTests(c *C, overrider configOverrider, tests ...
 		c.Assert(err, IsNil)
 	}()
 
-	_, err = db.Exec("DROP TABLE IF EXISTS test")
-	c.Assert(err, IsNil)
-
 	dbt := &DBTest{c, db}
 	for _, test := range tests {
 		test(dbt)
-		// fixed query error
-		_, _ = dbt.db.Exec("DROP TABLE IF EXISTS test")
 	}
 }
 
@@ -1819,6 +1822,25 @@ func (cli *testServerClient) runTestMultiStatements(c *C) {
 		} else {
 			dbt.Error("no data")
 		}
+
+		// Test issue #26688
+		// First we "reset" the CurrentDB by using a database and then dropping it.
+		dbt.mustExec("CREATE DATABASE dropme")
+		dbt.mustExec("USE dropme")
+		dbt.mustExec("DROP DATABASE dropme")
+		var usedb string
+		rows = dbt.mustQuery("SELECT IFNULL(DATABASE(),'success')")
+		if rows.Next() {
+			err = rows.Scan(&usedb)
+			c.Assert(err, IsNil)
+			c.Assert(usedb, Equals, "success")
+		} else {
+			dbt.Error("no database() result")
+		}
+		// Because no DB is selected, if the use multistmtuse is not successful, then
+		// the create table + drop table statements will return errors.
+		dbt.mustExec("CREATE DATABASE multistmtuse")
+		dbt.mustExec("use multistmtuse; create table if not exists t1 (id int); drop table t1;")
 	})
 }
 
@@ -2009,6 +2031,13 @@ func (cli *testServerClient) runTestInitConnect(c *C) {
 		// change the init-connect to invalid.
 		dbt.mustExec(`SET GLOBAL init_connect="invalidstring"`)
 	})
+	// set global init_connect to empty to avoid fail other tests
+	defer cli.runTests(c, func(config *mysql.Config) {
+		config.User = "init_super"
+	}, func(dbt *DBTest) {
+		// set init_connect to empty to avoid fail other tests
+		dbt.mustExec(`SET GLOBAL init_connect=""`)
+	})
 
 	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
 		config.User = "init_nonsuper"
@@ -2082,7 +2111,7 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *C) {
 				}
 				rows.Close()
 				dbt.Check(newErrors, Equals, errors)
-				dbt.Check(newWarnings, Equals, warnings)
+				dbt.Check(newWarnings, Equals, warnings, Commentf("source=information_schema.%s code=%d statement=%s", tbl, test.errCode, test.stmt))
 			}
 		}
 

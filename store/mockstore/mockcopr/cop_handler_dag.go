@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -41,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/mockstore/mocktikv"
+	"github.com/tikv/client-go/v2/testutils"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -592,7 +593,7 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	chunk, finish, ran, counts, warnings, err := mock.readBlockFromExecutor()
 	resp.Range = ran
 	if err != nil {
-		if locked, ok := errors.Cause(err).(*mocktikv.ErrLocked); ok {
+		if locked, ok := errors.Cause(err).(*testutils.ErrLocked); ok {
 			resp.Locked = &kvrpcpb.LockInfo{
 				Key:         locked.Key,
 				PrimaryLock: locked.Primary,
@@ -784,7 +785,7 @@ func buildResp(selResp *tipb.SelectResponse, execDetails []*execDetail, err erro
 	}
 
 	// Select errors have been contained in `SelectResponse.Error`
-	if locked, ok := errors.Cause(err).(*mocktikv.ErrLocked); ok {
+	if locked, ok := errors.Cause(err).(*testutils.ErrLocked); ok {
 		resp.Locked = &kvrpcpb.LockInfo{
 			Key:         locked.Key,
 			PrimaryLock: locked.Primary,

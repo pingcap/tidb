@@ -12,6 +12,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -326,7 +327,7 @@ func (c *dateLiteralFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 	str := dt.GetString()
 	if !datePattern.MatchString(str) {
-		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, str)
+		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, str)
 	}
 	tm, err := types.ParseDate(ctx.GetSessionVars().StmtCtx, str)
 	if err != nil {
@@ -357,10 +358,10 @@ func (b *builtinDateLiteralSig) Clone() builtinFunc {
 func (b *builtinDateLiteralSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	mode := b.ctx.GetSessionVars().SQLMode
 	if mode.HasNoZeroDateMode() && b.literal.IsZero() {
-		return b.literal, true, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, b.literal.String())
+		return b.literal, true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, b.literal.String())
 	}
 	if mode.HasNoZeroInDateMode() && (b.literal.InvalidZero() && !b.literal.IsZero()) {
-		return b.literal, true, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, b.literal.String())
+		return b.literal, true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, b.literal.String())
 	}
 	return b.literal, false, nil
 }
@@ -2309,7 +2310,7 @@ func (c *timeLiteralFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 	str := dt.GetString()
 	if !isDuration(str) {
-		return nil, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, str)
+		return nil, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, str)
 	}
 	duration, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx, str, types.GetFsp(str))
 	if err != nil {
@@ -2533,6 +2534,10 @@ func evalNowWithFsp(ctx sessionctx.Context, fsp int8) (types.Time, bool, error) 
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
+
+	failpoint.Inject("injectNow", func(val failpoint.Value) {
+		nowTs = time.Unix(int64(val.(int)), 0)
+	})
 
 	// In MySQL's implementation, now() will truncate the result instead of rounding it.
 	// Results below are from MySQL 5.7, which can prove it.
@@ -3008,7 +3013,7 @@ func (du *baseDateArithmetical) sub(ctx sessionctx.Context, date types.Time, int
 
 func (du *baseDateArithmetical) vecGetDateFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -3050,7 +3055,7 @@ func (du *baseDateArithmetical) vecGetDateFromInt(b *baseBuiltinFunc, input *chu
 
 func (du *baseDateArithmetical) vecGetDateFromString(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -3115,7 +3120,7 @@ func (du *baseDateArithmetical) vecGetDateFromDatetime(b *baseBuiltinFunc, input
 
 func (du *baseDateArithmetical) vecGetIntervalFromString(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETString, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -3152,7 +3157,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromString(b *baseBuiltinFunc, inp
 
 func (du *baseDateArithmetical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETDecimal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -3253,7 +3258,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromDecimal(b *baseBuiltinFunc, in
 
 func (du *baseDateArithmetical) vecGetIntervalFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETInt, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -3276,7 +3281,7 @@ func (du *baseDateArithmetical) vecGetIntervalFromInt(b *baseBuiltinFunc, input 
 
 func (du *baseDateArithmetical) vecGetIntervalFromReal(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
 	n := input.NumRows()
-	buf, err := b.bufAllocator.get(types.ETReal, n)
+	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
@@ -3350,6 +3355,16 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, argTps...)
 		if err != nil {
 			return nil, err
+		}
+		if dateEvalTp == types.ETDatetime && args[0].GetType().Tp == mysql.TypeTimestamp {
+			tp := types.NewFieldType(mysql.TypeDatetime)
+			tp.Decimal = args[0].GetType().Decimal
+			tp.Flen = mysql.MaxDatetimeWidthNoFsp
+			if tp.Decimal > 0 {
+				tp.Flen = tp.Flen + 1 + tp.Decimal
+			}
+			types.SetBinChsClnFlag(tp)
+			args[0] = BuildCastFunction(ctx, args[0], tp)
 		}
 		bf.tp.Flen, bf.tp.Decimal = mysql.MaxDatetimeFullWidth, types.UnspecifiedLength
 	}
@@ -4024,6 +4039,16 @@ func (c *subDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, argTps...)
 		if err != nil {
 			return nil, err
+		}
+		if dateEvalTp == types.ETDatetime && args[0].GetType().Tp == mysql.TypeTimestamp {
+			tp := types.NewFieldType(mysql.TypeDatetime)
+			tp.Decimal = args[0].GetType().Decimal
+			tp.Flen = mysql.MaxDatetimeWidthNoFsp
+			if tp.Decimal > 0 {
+				tp.Flen = tp.Flen + 1 + tp.Decimal
+			}
+			types.SetBinChsClnFlag(tp)
+			args[0] = BuildCastFunction(ctx, args[0], tp)
 		}
 		bf.tp.Flen, bf.tp.Decimal = mysql.MaxDatetimeFullWidth, types.UnspecifiedLength
 	}
@@ -5153,7 +5178,7 @@ func getBf4TimeAddSub(ctx sessionctx.Context, funcName string, args []Expression
 }
 
 func getTimeZone(ctx sessionctx.Context) *time.Location {
-	ret := ctx.GetSessionVars().TimeZone
+	ret := ctx.GetSessionVars().Location()
 	if ret == nil {
 		ret = time.Local
 	}
@@ -7037,7 +7062,7 @@ func (b *builtinLastDaySig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	}
 	tm := arg
 	year, month := tm.Year(), tm.Month()
-	if arg.InvalidZero() {
+	if tm.Month() == 0 || (tm.Day() == 0 && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()) {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, arg.String()))
 	}
 	lastDay := types.GetLastDay(year, month)
@@ -7181,7 +7206,7 @@ func (b *builtinTiDBBoundedStalenessSig) evalTime(row chunk.Row) (types.Time, bo
 
 func getMinSafeTime(sessionCtx sessionctx.Context, timeZone *time.Location) time.Time {
 	var minSafeTS uint64
-	_, txnScope := config.GetTxnScopeFromConfig()
+	txnScope := config.GetTxnScopeFromConfig()
 	if store := sessionCtx.GetStore(); store != nil {
 		minSafeTS = store.GetMinSafeTS(txnScope)
 	}
