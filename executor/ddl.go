@@ -15,7 +15,6 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -33,16 +32,15 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session/temptable"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -51,9 +49,10 @@ import (
 type DDLExec struct {
 	baseExecutor
 
-	stmt ast.StmtNode
-	is   infoschema.InfoSchema
-	done bool
+	stmt             ast.StmtNode
+	is               infoschema.InfoSchema
+	tempTableManager *temptable.TemporaryTableManager
+	done             bool
 }
 
 // toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
@@ -71,47 +70,6 @@ func (e *DDLExec) toErr(err error) error {
 		return errors.Trace(schemaInfoErr)
 	}
 	return err
-}
-
-// deleteTemporaryTableRecords delete temporary table data.
-func deleteTemporaryTableRecords(sessionData variable.TemporaryTableData, tblID int64) error {
-	if sessionData == nil {
-		return kv.ErrNotExist
-	}
-
-	tblPrefix := tablecodec.EncodeTablePrefix(tblID)
-	endKey := tablecodec.EncodeTablePrefix(tblID + 1)
-
-	iter, err := sessionData.Iter(tblPrefix, endKey)
-	if err != nil {
-		return err
-	}
-	for iter.Valid() {
-		key := iter.Key()
-		if !bytes.HasPrefix(key, tblPrefix) {
-			break
-		}
-
-		err = sessionData.DeleteTableKey(tblID, key)
-		if err != nil {
-			return err
-		}
-
-		err = iter.Next()
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (e *DDLExec) getLocalTemporaryTables() *infoschema.LocalTemporaryTables {
-	tempTables := e.ctx.GetSessionVars().LocalTemporaryTables
-	if tempTables != nil {
-		return tempTables.(*infoschema.LocalTemporaryTables)
-	}
-	return nil
 }
 
 func (e *DDLExec) getLocalTemporaryTable(schema model.CIStr, table model.CIStr) (table.Table, bool) {
@@ -146,14 +104,9 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		if s.IsView {
 			break
 		}
-		sessVars := e.ctx.GetSessionVars()
-		sessVarsTempTable := sessVars.LocalTemporaryTables
-		if sessVarsTempTable == nil {
-			break
-		}
-		localTemporaryTables := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
+
 		for tbIdx := len(s.Tables) - 1; tbIdx >= 0; tbIdx-- {
-			if _, ok := localTemporaryTables.TableByName(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name); ok {
+			if _, ok := e.getLocalTemporaryTable(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name); ok {
 				localTempTablesToDrop = append(localTempTablesToDrop, s.Tables[tbIdx])
 				s.Tables = append(s.Tables[:tbIdx], s.Tables[tbIdx+1:]...)
 			}
@@ -268,30 +221,18 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 }
 
 func (e *DDLExec) executeTruncateLocalTemporaryTable(s *ast.TruncateTableStmt) error {
+	tableIdent := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	tbl, exists := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
 	if !exists {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(s.Table.Schema, s.Table.Name)
 	}
 
-	tblInfo := tbl.Meta()
-
-	newTbl, err := e.newTemporaryTableFromTableInfo(tblInfo.Clone())
+	newTbl, err := e.newTemporaryTableFromTableInfo(tbl.Meta().Clone())
 	if err != nil {
 		return err
 	}
 
-	localTempTables := e.getLocalTemporaryTables()
-	localTempTables.RemoveTable(s.Table.Schema, s.Table.Name)
-	if err := localTempTables.AddTable(s.Table.Schema, newTbl); err != nil {
-		return err
-	}
-
-	err = deleteTemporaryTableRecords(e.ctx.GetSessionVars().TemporaryTableData, tblInfo.ID)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return e.tempTableManager.ReplaceAndTruncateLocalTemporaryTable(tableIdent, newTbl)
 }
 
 func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
@@ -369,26 +310,7 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		return err
 	}
 
-	// Store this temporary table to the session.
-	sessVars := e.ctx.GetSessionVars()
-	if sessVars.LocalTemporaryTables == nil {
-		sessVars.LocalTemporaryTables = infoschema.NewLocalTemporaryTables()
-	}
-	localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
-
-	// Init MemBuffer in session
-	if sessVars.TemporaryTableData == nil {
-		// Create this txn just for getting a MemBuffer. It's a little tricky
-		bufferTxn, err := e.ctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
-		if err != nil {
-			return err
-		}
-
-		sessVars.TemporaryTableData = variable.NewTemporaryTableData(bufferTxn.GetMemBuffer())
-	}
-
-	err = localTempTables.AddTable(dbInfo.Name, tbl)
-
+	err = e.tempTableManager.AddLocalTemporaryTable(dbInfo.Name, tbl)
 	if err != nil && s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
 		e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
@@ -602,21 +524,14 @@ func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*ast.TableName) err
 	if len(localTempTables) == 0 {
 		return nil
 	}
-	sessVars := e.ctx.GetSessionVars()
-	sessVarsTempTable := sessVars.LocalTemporaryTables
-	if sessVarsTempTable == nil {
-		return nil
-	}
-	localTemporaryTables := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
-	// if all tables are local temporary, directly drop those tables.
+
 	for _, tb := range localTempTables {
-		tableInfo, _ := localTemporaryTables.TableByName(tb.Schema, tb.Name)
-		localTemporaryTables.RemoveTable(tb.Schema, tb.Name)
-		err := deleteTemporaryTableRecords(sessVars.TemporaryTableData, tableInfo.Meta().ID)
+		err := e.tempTableManager.RemoveLocalTemporaryTable(ast.Ident{Schema: tb.Schema, Name: tb.Name})
 		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 

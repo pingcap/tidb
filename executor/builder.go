@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	plannerutil "github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/session/temptable"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -947,9 +948,10 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 
 func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 	e := &DDLExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		stmt:         v.Statement,
-		is:           b.is,
+		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		stmt:             v.Statement,
+		is:               b.is,
+		tempTableManager: temptable.GetTemporaryTableManager(b.ctx),
 	}
 	return e
 }
