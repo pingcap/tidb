@@ -28,6 +28,7 @@ func init() {
 		"testSerialDBSuite.TestCommitTxnWithIndexChange",
 		"testSerialDBSuite.TestDuplicateErrorMessage",
 		"TestAddIndexFailed",
+		"TestAddIndexWorkerNum",
 		"TestAddIndexWorkerNum/EnableClusteredIndex",
 		"TestAddIndexWorkerNum/DisableClusteredIndex",
 		"pkgTestSuite.TestAggPartialResultMapperB",
