@@ -26,7 +26,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -41,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 // MemTablePredicateExtractor is used to extract some predicates from `WHERE` clause
@@ -466,7 +464,6 @@ func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 
 		v, err := strconv.ParseFloat(k, 64)
 		if err != nil {
 			// ignore the parse error won't affect result.
-			log.Info("faild to parse float64 from string", zap.String("string:", k))
 			continue
 		}
 		quantiles = append(quantiles, v)
@@ -475,13 +472,12 @@ func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 
 	return quantiles
 }
 
-func (helper extractHelper) parseQuantilesUint64(quantileSet set.StringSet) []uint64 {
+func (helper extractHelper) parseUint64(quantileSet set.StringSet) []uint64 {
 	quantiles := make([]uint64, 0, len(quantileSet))
 	for k := range quantileSet {
 		v, err := strconv.ParseUint(k, 10, 64)
 		if err != nil {
 			// ignore the parse error won't affect result.
-			log.Info("faild to parse uint64 from string", zap.String("string:", k))
 			continue
 		}
 		quantiles = append(quantiles, v)
@@ -728,7 +724,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	remained, regionIDSkipRequest, regionIDs := e.extractCol(schema, names, predicates, "region_id", false)
 	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false)
 	remained, peerIDSkipRequest, peerIDs := e.extractCol(schema, names, remained, "peer_id", false)
-	e.RegionIDs, e.StoreIDs, e.PeerIDs = e.parseQuantilesUint64(regionIDs), e.parseQuantilesUint64(storeIDs), e.parseQuantilesUint64(peerIDs)
+	e.RegionIDs, e.StoreIDs, e.PeerIDs = e.parseUint64(regionIDs), e.parseUint64(storeIDs), e.parseUint64(peerIDs)
 	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest || peerIDSkipRequest
 	if e.SkipRequest {
 		return nil
@@ -737,7 +733,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 	// Extract the is_learner/is_leader columns.
 	remained, isLearnerSkipRequest, isLearners := e.extractCol(schema, names, remained, "is_learner", false)
 	remained, isLeaderSkipRequest, isLeaders := e.extractCol(schema, names, remained, "is_leader", false)
-	e.IsLearners, e.IsLeaders = e.parseQuantilesUint64(isLearners), e.parseQuantilesUint64(isLeaders)
+	e.IsLearners, e.IsLeaders = e.parseUint64(isLearners), e.parseUint64(isLeaders)
 	e.SkipRequest = isLearnerSkipRequest || isLeaderSkipRequest
 	if e.SkipRequest {
 		return nil
