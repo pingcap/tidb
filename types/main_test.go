@@ -12,39 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package types
 
 import (
-	"flag"
-	"fmt"
+	"testing"
 
-	"github.com/phayes/freeport"
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-var (
-	count uint
-)
-
-func init() {
-	flag.UintVar(&count, "count", 1, "number of generated ports")
-}
-
-func generatePorts(count int) []int {
-	var (
-		err   error
-		ports []int
-	)
-	if ports, err = freeport.GetFreePorts(count); err != nil {
-		log.Fatal("no more free ports", zap.Error(err))
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	return ports
-}
-
-func main() {
-	flag.Parse()
-	for _, port := range generatePorts(int(count)) {
-		fmt.Println(port)
-	}
+	goleak.VerifyTestMain(m, opts...)
 }
