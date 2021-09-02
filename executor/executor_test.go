@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -7637,8 +7638,6 @@ func (s *testSuite) TestZeroDateTimeCompatibility(c *C) {
 	}
 }
 
-<<<<<<< HEAD
-=======
 // https://github.com/pingcap/tidb/issues/24165.
 func (s *testSuite) TestInvalidDateValueInCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -7688,7 +7687,6 @@ func (s *testSuite) TestInvalidDateValueInCreateTable(c *C) {
 	tk.MustExec("drop table if exists t;")
 }
 
->>>>>>> 0c7283418... executor: make NO_ZERO_IN_DATE affect the default values (#26828)
 func (s *testSuite) TestOOMActionPriority(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
