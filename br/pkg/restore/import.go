@@ -329,7 +329,7 @@ func (importer *FileImporter) Import(
 				}
 
 				return nil
-			}, newDownloadSSTBackoffer())
+			}, utils.NewDownloadSSTBackoffer())
 			if errDownload != nil {
 				for _, e := range multierr.Errors(errDownload) {
 					switch errors.Cause(e) { // nolint:errorlint
@@ -430,7 +430,7 @@ func (importer *FileImporter) Import(
 		}
 
 		return nil
-	}, newImportSSTBackoffer())
+	}, utils.NewImportSSTBackoffer())
 	return errors.Trace(err)
 }
 
