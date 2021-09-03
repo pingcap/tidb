@@ -1157,7 +1157,7 @@ func (c *valuesFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	bf, err := newBaseBuiltinFunc(ctx, c, args, c.tp.EvalType())
 	if err != nil {
 		return nil, err
 	}

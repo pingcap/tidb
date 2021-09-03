@@ -513,6 +513,11 @@ func (c *passwordFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	return sig, nil
 }
 
+func (c *passwordFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, retTp types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	charsetInfo, collation := ctx.GetSessionVars().GetCharsetInfo()
+	return charsetInfo, collation, CoercibilityCoercible, nil
+}
+
 type builtinPasswordSig struct {
 	baseBuiltinFunc
 }

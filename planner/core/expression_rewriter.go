@@ -1105,6 +1105,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		castFunction := expression.BuildCastFunction(er.sctx, arg, v.Tp)
 		if v.Tp.EvalType() == types.ETString {
 			castFunction.SetCoercibility(expression.CoercibilityImplicit)
+		} else {
+			castFunction.SetCoercibility(expression.CoercibilityNumeric)
 		}
 
 		er.ctxStack[len(er.ctxStack)-1] = castFunction

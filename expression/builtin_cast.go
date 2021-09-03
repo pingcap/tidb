@@ -23,6 +23,7 @@
 package expression
 
 import (
+	"github.com/pingcap/parser/charset"
 	"math"
 	"strconv"
 	"strings"
@@ -108,11 +109,21 @@ var (
 	_ builtinFunc = &builtinCastJSONAsJSONSig{}
 )
 
-type castBaseFunctionClass struct {
+type baseCastFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *baseCastFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, retTp types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	if retTp == types.ETString {
+		charsetInfo, collation := ctx.GetSessionVars().GetCharsetInfo()
+		return charsetInfo, collation, args[0].Coercibility(), nil
+	}
+
+	return charset.CharsetBin, charset.CollationBin, args[0].Coercibility(), nil
 }
 
 type castAsIntFunctionClass struct {
-	baseFunctionClass
+	baseCastFunctionClass
 
 	tp *types.FieldType
 }
@@ -121,7 +132,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	b, err := newBaseBuiltinFunc(ctx, c, args, c.tp.EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +173,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 }
 
 type castAsRealFunctionClass struct {
-	baseFunctionClass
+	baseCastFunctionClass
 
 	tp *types.FieldType
 }
@@ -171,7 +182,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	b, err := newBaseBuiltinFunc(ctx, c, args, c.tp.EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +229,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 }
 
 type castAsDecimalFunctionClass struct {
-	baseFunctionClass
+	baseCastFunctionClass
 
 	tp *types.FieldType
 }
@@ -227,7 +238,7 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	b, err := newBaseBuiltinFunc(ctx, c, args, c.tp.EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +284,7 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx sessionctx.Context, args []
 }
 
 type castAsStringFunctionClass struct {
-	baseFunctionClass
+	baseCastFunctionClass
 
 	tp *types.FieldType
 }
@@ -282,7 +293,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	bf, err := newBaseBuiltinFunc(ctx, c, args, c.tp.EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +333,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 }
 
 type castAsTimeFunctionClass struct {
-	baseFunctionClass
+	baseCastFunctionClass
 
 	tp *types.FieldType
 }
@@ -331,7 +342,7 @@ func (c *castAsTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	bf, err := newBaseBuiltinFunc(ctx, c, args, c.tp.EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -366,7 +377,7 @@ func (c *castAsTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 }
 
 type castAsDurationFunctionClass struct {
-	baseFunctionClass
+	baseCastFunctionClass
 
 	tp *types.FieldType
 }
@@ -375,7 +386,7 @@ func (c *castAsDurationFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	bf, err := newBaseBuiltinFunc(ctx, c, args, c.tp.EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -410,7 +421,7 @@ func (c *castAsDurationFunctionClass) getFunction(ctx sessionctx.Context, args [
 }
 
 type castAsJSONFunctionClass struct {
-	baseFunctionClass
+	baseCastFunctionClass
 
 	tp *types.FieldType
 }
@@ -419,7 +430,7 @@ func (c *castAsJSONFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
+	bf, err := newBaseBuiltinFunc(ctx, c, args, c.tp.EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -1827,19 +1838,19 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:
-		fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsIntFunctionClass{baseCastFunctionClass{baseFunctionClass{ast.Cast, 1, 1}}, tp}
 	case types.ETDecimal:
-		fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsDecimalFunctionClass{baseCastFunctionClass{baseFunctionClass{ast.Cast, 1, 1}}, tp}
 	case types.ETReal:
-		fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsRealFunctionClass{baseCastFunctionClass{baseFunctionClass{ast.Cast, 1, 1}}, tp}
 	case types.ETDatetime, types.ETTimestamp:
-		fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsTimeFunctionClass{baseCastFunctionClass{baseFunctionClass{ast.Cast, 1, 1}}, tp}
 	case types.ETDuration:
-		fc = &castAsDurationFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsDurationFunctionClass{baseCastFunctionClass{baseFunctionClass{ast.Cast, 1, 1}}, tp}
 	case types.ETJson:
-		fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsJSONFunctionClass{baseCastFunctionClass{baseFunctionClass{ast.Cast, 1, 1}}, tp}
 	case types.ETString:
-		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		fc = &castAsStringFunctionClass{baseCastFunctionClass{baseFunctionClass{ast.Cast, 1, 1}}, tp}
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	terror.Log(err)

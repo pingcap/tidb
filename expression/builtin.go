@@ -87,17 +87,13 @@ func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
 }
 
-func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType) (baseBuiltinFunc, error) {
+func newBaseBuiltinFunc(ctx sessionctx.Context, f functionClass, args []Expression, retType types.EvalType) (baseBuiltinFunc, error) {
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
-	derivedCharset, derivedCollate, coer, err := CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, retType, args...)
+	derivedCharset, derivedCollate, coercibility, err := f.deriveCollation(ctx, args, retType)
 	if err != nil {
 		return baseBuiltinFunc{}, err
-	}
-
-	if retType != types.ETString {
-		coer = CoercibilityNumeric
 	}
 
 	bf := baseBuiltinFunc{
@@ -111,7 +107,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	}
 	bf.SetCharsetAndCollation(derivedCharset, derivedCollate)
 	bf.setCollator(collate.GetCollator(derivedCollate))
-	bf.SetCoercibility(coer)
+	bf.SetCoercibility(coercibility)
 	return bf, nil
 }
 

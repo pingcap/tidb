@@ -159,7 +159,7 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinCastFunc(c *C) {
 
 func (s *testEvaluatorSuite) TestVectorizedCastRealAsTime(c *C) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}
-	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
+	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), &baseCastFunctionClass{}, []Expression{col}, 0)
 	if err != nil {
 		panic(err)
 	}
@@ -201,7 +201,7 @@ func genCastRealAsTime() *chunk.Chunk {
 // for issue https://github.com/pingcap/tidb/issues/16825
 func (s *testEvaluatorSuite) TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(c *C) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
-	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
+	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), &baseCastFunctionClass{}, []Expression{col}, 0)
 	if err != nil {
 		panic(err)
 	}

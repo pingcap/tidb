@@ -805,6 +805,11 @@ func (c *dateFormatFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	return sig, nil
 }
 
+func (c *dateFormatFunctionClass) deriveCollation(ctx sessionctx.Context, args []Expression, retTp types.EvalType) (dstCharset, dstCollation string, coercibility Coercibility, err error) {
+	charsetInfo, collation := ctx.GetSessionVars().GetCharsetInfo()
+	return charsetInfo, collation, args[1].Coercibility(), nil
+}
+
 type builtinDateFormatSig struct {
 	baseBuiltinFunc
 }
