@@ -1132,15 +1132,15 @@ func (e *Explain) explainPlanInRowFormatScalarSubquery() (err error) {
 		operatorInfo := fmt.Sprintf("output:%s", subquery.expr.ExplainInfo())
 		var row []string
 		switch {
-			case (format == types.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == types.ExplainFormatBrief):
-				// "id", "estRows", "task", "access object", "operator info"
-				row = []string{id, "1.00", "root", "", operatorInfo}
-			case format == types.ExplainFormatVerbose:
-				// "id", "estRows", "estCost", "task", "access object", "operator info"
-				row = []string{id, "1.00", "", "root", "", operatorInfo}
-			case format == types.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
-				// "id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"
-				row = []string{id, "1.00", "1", "root", "", "", operatorInfo, "", ""}
+		case (format == types.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil)) || (format == types.ExplainFormatBrief):
+			// "id", "estRows", "task", "access object", "operator info"
+			row = []string{id, "1.00", "root", "", operatorInfo}
+		case format == types.ExplainFormatVerbose:
+			// "id", "estRows", "estCost", "task", "access object", "operator info"
+			row = []string{id, "1.00", "", "root", "", operatorInfo}
+		case format == types.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
+			// "id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"
+			row = []string{id, "1.00", "1", "root", "", "", operatorInfo, "", ""}
 		}
 		e.Rows = append(e.Rows, row)
 		childIndent := texttree.Indent4Child("", true)

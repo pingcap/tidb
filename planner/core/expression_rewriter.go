@@ -974,7 +974,7 @@ type ScalarSubquery struct {
 	// The result expression for the subquery.
 	// For `explain` statement, this is a special expression as a placeholder.
 	// For `explain analyze` statement, this is the real result of the subquery.
-	expr 	 expression.Expression
+	expr expression.Expression
 }
 
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.SubqueryExpr) (ast.Node, bool) {
@@ -1052,7 +1052,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 				newExprs = append(newExprs, &expression.ScalarFunction{
 					FuncName: model.NewCIStr(exprName),
 					Function: expression.NewScalarSubqueryResult(),
-					RetType: np.Schema().Columns[i].GetType(),
+					RetType:  np.Schema().Columns[i].GetType(),
 				})
 			}
 			var err1 error
@@ -1065,7 +1065,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 			expr = &expression.ScalarFunction{
 				FuncName: model.NewCIStr(fmt.Sprintf("ScalarSubquery%d-0", numSubqueries)),
 				Function: expression.NewScalarSubqueryResult(),
-				RetType: np.Schema().Columns[0].GetType(),
+				RetType:  np.Schema().Columns[0].GetType(),
 			}
 		}
 	}

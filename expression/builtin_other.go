@@ -1494,6 +1494,7 @@ func (b *builtinScalarSubqueryResult) vectorized() bool {
 	return false
 }
 
+// NewScalarSubqueryResult creates a new ScalarSubqueryResult func.
 func NewScalarSubqueryResult() builtinFunc {
 	return &builtinScalarSubqueryResult{}
 }
