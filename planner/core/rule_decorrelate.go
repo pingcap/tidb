@@ -189,22 +189,28 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 				resetNotNullFlag(apply.schema, outerPlan.Schema().Len(), apply.schema.Len())
 
 				for i, aggFunc := range agg.AggFuncs {
-					switch expr := aggFunc.Args[0].(type) {
-					case *expression.Column:
-						if idx := apply.schema.ColumnIndex(expr); idx != -1 {
-							desc, err := aggregation.NewAggFuncDesc(agg.ctx, agg.AggFuncs[i].Name, []expression.Expression{apply.schema.Columns[idx]}, false)
-							if err != nil {
-								return nil, err
+					aggArgs := make([]expression.Expression, 0, len(aggFunc.Args))
+					for _, arg := range aggFunc.Args {
+						switch expr := arg.(type) {
+						case *expression.Column:
+							if idx := apply.schema.ColumnIndex(expr); idx != -1 {
+								aggArgs = append(aggArgs, apply.schema.Columns[idx])
+							} else {
+								aggArgs = append(aggArgs, expr)
 							}
-							newAggFuncs = append(newAggFuncs, desc)
+						case *expression.ScalarFunction:
+							expr.RetType = expr.RetType.Clone()
+							expr.RetType.Flag &= ^mysql.NotNullFlag
+							aggArgs = append(aggArgs, expr)
+						default:
+							aggArgs = append(aggArgs, expr)
 						}
-					case *expression.ScalarFunction:
-						expr.RetType = expr.RetType.Clone()
-						expr.RetType.Flag &= ^mysql.NotNullFlag
-						newAggFuncs = append(newAggFuncs, aggFunc)
-					default:
-						newAggFuncs = append(newAggFuncs, aggFunc)
 					}
+					desc, err := aggregation.NewAggFuncDesc(agg.ctx, agg.AggFuncs[i].Name, aggArgs, agg.AggFuncs[i].HasDistinct)
+					if err != nil {
+						return nil, err
+					}
+					newAggFuncs = append(newAggFuncs, desc)
 				}
 				agg.AggFuncs = newAggFuncs
 				np, err := s.optimize(ctx, p)
