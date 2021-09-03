@@ -3505,7 +3505,7 @@ func (s *testIntegrationSuite) TestConflictReadFromStorage(c *C) {
 					partition p1 values less than(11),
 					partition p2 values less than(16));`)
 	tk.MustExec(`insert into t values (1,1,"1"), (2,2,"2"), (8,8,"8"), (11,11,"11"), (15,15,"15")`)
-  // Create virtual tiflash replica info.
+	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
