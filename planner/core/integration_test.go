@@ -4408,3 +4408,18 @@ func (s *testIntegrationSerialSuite) TestPushDownGroupConcatToTiFlash(c *C) {
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func (s *testIntegrationSuite) TestIssue27797(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t27797")
+	tk.MustExec("create table t27797(a int, b int, c int, d int) " +
+		"partition by range columns(d) (" +
+		"partition p0 values less than (20)," +
+		"partition p1 values less than(40)," +
+		"partition p2 values less than(60));")
+	tk.MustExec("insert into t27797 values(1,1,1,1), (2,2,2,2), (22,22,22,22), (44,44,44,44);")
+	tk.MustExec("set sql_mode='';")
+	result := tk.MustQuery("select count(*) from (select a, b from t27797 where d > 1 and d < 60 and b > 0 group by b, c) tt;")
+	result.Check(testkit.Rows("3"))
+}
