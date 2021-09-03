@@ -100,4 +100,4 @@ require (
 // FIXME the official repo has some bug makes br_gcs test failed. https://github.com/googleapis/google-cloud-go/pull/3509
 // replace cloud.google.com/go/storage => github.com/3pointer/google-cloud-go/storage v1.6.1-0.20210108125931-b59bfa0720b2
 
-replace github.com/pingcap/parser => github.com/xuyifangreeneyes/parser analyze-column-option
+replace github.com/pingcap/parser => github.com/xuyifangreeneyes/parser v0.0.0-20210903103653-03daf53fd6cb
