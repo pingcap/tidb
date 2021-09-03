@@ -122,11 +122,6 @@ func (d *temporaryTableDDL) clearTemporaryTableRecords(tblID int64) error {
 	return nil
 }
 
-// TemporaryTableManager provides operations for temporary tables
-type TemporaryTableManager struct {
-	sctx sessionctx.Context
-}
-
 func checkLocalTemporaryExistsAndReturn(sctx sessionctx.Context, schema model.CIStr, tblName model.CIStr) (table.Table, error) {
 	ident := ast.Ident{Schema: schema, Name: tblName}
 	localTemporaryTables := getLocalTemporaryTables(sctx)
