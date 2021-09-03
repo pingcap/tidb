@@ -43,6 +43,10 @@ const (
 	// of a Selection or a JoinCondition, we can use this default value.
 	SelectionFactor = 0.8
 	distinctFactor  = 0.8
+
+	// If the actual row count is much more than the limit count, the unordered scan may cost much more than keep order.
+	// So when a limit exists, we don't apply the DescScanFactor.
+	smallScanThreshold = 10000
 )
 
 var aggFuncFactor = map[string]float64{
@@ -320,8 +324,8 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		// try to get the task with an enforced sort.
 		newProp.SortItems = []property.SortItem{}
 		newProp.ExpectedCnt = math.MaxFloat64
-		newProp.PartitionCols = nil
-		newProp.PartitionTp = property.AnyType
+		newProp.MPPPartitionCols = nil
+		newProp.MPPPartitionTp = property.AnyType
 		var hintCanWork bool
 		plansNeedEnforce, hintCanWork = p.self.exhaustPhysicalPlans(newProp)
 		if hintCanWork && !hintWorksWithProp {
@@ -633,8 +637,8 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 		// Next, get the bestTask with enforced prop
 		prop.SortItems = []property.SortItem{}
-		prop.PartitionTp = property.AnyType
-	} else if prop.PartitionTp != property.AnyType {
+		prop.MPPPartitionTp = property.AnyType
+	} else if prop.MPPPartitionTp != property.AnyType {
 		return invalidTask, 0, nil
 	}
 	defer func() {
@@ -864,10 +868,28 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 	return indexPlan, partialCost
 }
 
+func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool {
+	for _, col := range cols {
+		if schema.ColumnIndex(col) == -1 {
+			return false
+		}
+	}
+	return true
+}
+
 func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty, path *util.AccessPath) (
 	tablePlan PhysicalPlan, partialCost float64) {
 	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
 	overwritePartialTableScanSchema(ds, ts)
+	// remove ineffetive filter condition after overwriting physicalscan schema
+	newFilterConds := make([]expression.Expression, 0, len(path.TableFilters))
+	for _, cond := range ts.filterCondition {
+		cols := expression.ExtractColumns(cond)
+		if checkColinSchema(cols, ts.schema) {
+			newFilterConds = append(newFilterConds, cond)
+		}
+	}
+	ts.filterCondition = newFilterConds
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.ctx, ts.schema.Columns, false, false)
 	sessVars := ds.ctx.GetSessionVars()
 	if len(ts.filterCondition) > 0 {
@@ -1521,12 +1543,14 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		if ts.KeepOrder {
 			return &mppTask{}, nil
 		}
-		if prop.PartitionTp != property.AnyType || ts.isPartition {
+		if prop.MPPPartitionTp != property.AnyType || ts.isPartition {
 			// If ts is a single partition, then this partition table is in static-only prune, then we should not choose mpp execution.
+			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because table `" + ds.tableInfo.Name.O + "`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`.")
 			return &mppTask{}, nil
 		}
 		for _, col := range ts.schema.Columns {
 			if col.VirtualExpr != nil {
+				ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because column `" + col.OrigName + "` is a virtual column which is not supported now.")
 				return &mppTask{}, nil
 			}
 		}
@@ -1583,6 +1607,12 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty, cand
 	}
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
+	}
+	if candidate.isMatchProp {
+		// TableSample on partition table can't keep order.
+		if ds.tableInfo.GetPartitionInfo() != nil {
+			return invalidTask, nil
+		}
 	}
 	p := PhysicalTableSample{
 		TableSampleInfo: ds.SampleInfo,
@@ -1843,8 +1873,8 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		cost += rowCount * sessVars.NetworkFactor * rowSize
 	}
 	if isMatchProp {
-		if prop.SortItems[0].Desc {
-			ts.Desc = true
+		ts.Desc = prop.SortItems[0].Desc
+		if prop.SortItems[0].Desc && prop.ExpectedCnt >= smallScanThreshold {
 			cost = rowCount * rowSize * sessVars.DescScanFactor
 		}
 		ts.KeepOrder = true
@@ -1895,8 +1925,8 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor
 	if isMatchProp {
-		if prop.SortItems[0].Desc {
-			is.Desc = true
+		is.Desc = prop.SortItems[0].Desc
+		if prop.SortItems[0].Desc && prop.ExpectedCnt >= smallScanThreshold {
 			cost = rowCount * rowSize * sessVars.DescScanFactor
 		}
 		is.KeepOrder = true
