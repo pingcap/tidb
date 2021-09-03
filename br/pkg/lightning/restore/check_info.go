@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/types"
 	"io"
 	"path/filepath"
 	"reflect"
@@ -62,6 +63,19 @@ const (
 	// We only check RegionCntMaxMinRatio when the maximum region count of all stores is larger than this threshold.
 	checkRegionCntRatioThreshold = 1000
 )
+
+type checkResultLevel int
+
+const (
+	checkResultOK checkResultLevel = iota
+	checkResultWarning
+	checkResultError
+)
+
+type checkResult struct {
+	level checkResultLevel
+	msg   string
+}
 
 func (rc *Controller) isSourceInLocal() bool {
 	return strings.HasPrefix(rc.store.URI(), storage.LocalURIPrefix)
@@ -522,7 +536,7 @@ func hasDefault(col *model.ColumnInfo) bool {
 		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.Flag)
 }
 
-func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydump.SourceFileMeta) (cols []string, colCnt int, err error) {
+func (rc *Controller) readFirstRow(ctx context.Context, dataFileMeta mydump.SourceFileMeta) (cols []string, row []types.Datum, err error) {
 	var reader storage.ReadSeekCloser
 	if dataFileMeta.Type == mydump.SourceTypeParquet {
 		reader, err = mydump.OpenParquetReader(ctx, rc.store, dataFileMeta.Path, dataFileMeta.FileSize)
@@ -530,7 +544,7 @@ func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydu
 		reader, err = rc.store.Open(ctx, dataFileMeta.Path)
 	}
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	var parser mydump.Parser
@@ -540,14 +554,14 @@ func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydu
 		hasHeader := rc.cfg.Mydumper.CSV.Header
 		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, nil)
 		if err != nil {
-			return nil, 0, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
 	case mydump.SourceTypeParquet:
 		parser, err = mydump.NewParquetParser(ctx, rc.store, reader, dataFileMeta.Path)
 		if err != nil {
-			return nil, 0, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 	default:
 		panic(fmt.Sprintf("unknown file type '%s'", dataFileMeta.Type))
@@ -556,13 +570,18 @@ func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydu
 
 	err = parser.ReadRow()
 	if err != nil && errors.Cause(err) != io.EOF {
-		return nil, 0, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
-	return parser.Columns(), len(parser.LastRow().Row), nil
+	return parser.Columns(), parser.LastRow().Row, nil
 }
 
 // SchemaIsValid checks the import file and cluster schema is match.
 func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, error) {
+	if len(tableInfo.DataFiles) == 0 {
+		log.L().Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
+		return nil, nil
+	}
+
 	msgs := make([]string, 0)
 	info, ok := rc.dbInfos[tableInfo.DB].Tables[tableInfo.Name]
 	if !ok {
@@ -580,11 +599,6 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 		igCols[col] = struct{}{}
 	}
 
-	if len(tableInfo.DataFiles) == 0 {
-		log.L().Info("no data files detected", zap.String("db", tableInfo.DB), zap.String("table", tableInfo.Name))
-		return nil, nil
-	}
-
 	colCountFromTiDB := len(info.Core.Columns)
 	core := info.Core
 	defaultCols := make(map[string]struct{})
@@ -598,86 +612,217 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 	defaultCols[model.ExtraHandleName.String()] = struct{}{}
 
 	// only check the first file of this table.
-	if len(tableInfo.DataFiles) > 0 {
-		dataFile := tableInfo.DataFiles[0]
-		log.L().Info("datafile to check", zap.String("db", tableInfo.DB),
-			zap.String("table", tableInfo.Name), zap.String("path", dataFile.FileMeta.Path))
-		// get columns name from data file.
-		dataFileMeta := dataFile.FileMeta
+	dataFile := tableInfo.DataFiles[0]
+	log.L().Info("datafile to check", zap.String("db", tableInfo.DB),
+		zap.String("table", tableInfo.Name), zap.String("path", dataFile.FileMeta.Path))
+	// get columns name from data file.
+	dataFileMeta := dataFile.FileMeta
 
-		if tp := dataFileMeta.Type; tp != mydump.SourceTypeCSV && tp != mydump.SourceTypeSQL && tp != mydump.SourceTypeParquet {
-			msgs = append(msgs, fmt.Sprintf("file '%s' with unknown source type '%s'", dataFileMeta.Path, dataFileMeta.Type.String()))
-			return msgs, nil
-		}
-		colsFromDataFile, colCountFromDataFile, err := rc.readColumnsAndCount(ctx, dataFileMeta)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if colsFromDataFile == nil && colCountFromDataFile == 0 {
-			log.L().Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
-			return msgs, nil
-		}
+	if tp := dataFileMeta.Type; tp != mydump.SourceTypeCSV && tp != mydump.SourceTypeSQL && tp != mydump.SourceTypeParquet {
+		msgs = append(msgs, fmt.Sprintf("file '%s' with unknown source type '%s'", dataFileMeta.Path, dataFileMeta.Type.String()))
+		return msgs, nil
+	}
+	colsFromDataFile, row, err := rc.readFirstRow(ctx, dataFileMeta)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if colsFromDataFile == nil && len(row) == 0 {
+		log.L().Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
+		return msgs, nil
+	}
 
-		if colsFromDataFile == nil {
-			// when there is no columns name in data file. we must insert data in order.
-			// so the last several columns either can be ignored or has a default value.
-			for i := colCountFromDataFile; i < colCountFromTiDB; i++ {
-				if _, ok := defaultCols[core.Columns[i].Name.L]; !ok {
-					msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` has %d columns,"+
-						"and data file has %d columns, but column %s are missing the default value,"+
-						"please give column a default value to skip this check",
-						tableInfo.DB, tableInfo.Name, colCountFromTiDB, colCountFromDataFile, core.Columns[i].Name.L))
-				}
+	if colsFromDataFile == nil {
+		// when there is no columns name in data file. we must insert data in order.
+		// so the last several columns either can be ignored or has a default value.
+		for i := len(row); i < colCountFromTiDB; i++ {
+			if _, ok := defaultCols[core.Columns[i].Name.L]; !ok {
+				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` has %d columns,"+
+					"and data file has %d columns, but column %s are missing the default value,"+
+					"please give column a default value to skip this check",
+					tableInfo.DB, tableInfo.Name, colCountFromTiDB, len(row), core.Columns[i].Name.L))
+			}
+		}
+		return msgs, nil
+	}
+
+	// compare column names and make sure
+	// 1. TiDB table info has data file's all columns(besides ignore columns)
+	// 2. Those columns not introduced in data file always have a default value.
+	colMap := make(map[string]struct{})
+	for col := range igCols {
+		colMap[col] = struct{}{}
+	}
+	for _, col := range core.Columns {
+		if _, ok := colMap[col.Name.L]; ok {
+			// tidb's column is ignored
+			// we need ensure this column has the default value.
+			if _, hasDefault := defaultCols[col.Name.L]; !hasDefault {
+				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s`'s column %s cannot be ignored,"+
+					"because it doesn't hava a default value, please set tables.ignoreColumns properly",
+					tableInfo.DB, tableInfo.Name, col.Name.L))
 			}
 		} else {
-			// compare column names and make sure
-			// 1. TiDB table info has data file's all columns(besides ignore columns)
-			// 2. Those columns not introduced in data file always have a default value.
-			colMap := make(map[string]struct{})
-			for col := range igCols {
-				colMap[col] = struct{}{}
+			colMap[col.Name.L] = struct{}{}
+		}
+	}
+	// tidb_rowid can be ignored in check
+	colMap[model.ExtraHandleName.String()] = struct{}{}
+	for _, col := range colsFromDataFile {
+		if _, ok := colMap[col]; !ok {
+			checkMsg := "please check table schema"
+			if dataFileMeta.Type == mydump.SourceTypeCSV && rc.cfg.Mydumper.CSV.Header {
+				checkMsg += " and csv file header"
 			}
-			for _, col := range core.Columns {
-				if _, ok := colMap[col.Name.L]; ok {
-					// tidb's column is ignored
-					// we need ensure this column has the default value.
-					if _, hasDefault := defaultCols[col.Name.L]; !hasDefault {
-						msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s`'s column %s cannot be ignored,"+
-							"because it doesn't hava a default value, please set tables.ignoreColumns properly",
-							tableInfo.DB, tableInfo.Name, col.Name.L))
+			msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have column %s, "+
+				"%s or use tables.ignoreColumns to ignore %s",
+				tableInfo.DB, tableInfo.Name, col, checkMsg, col))
+		} else {
+			// remove column for next iteration
+			delete(colMap, col)
+		}
+	}
+	// if theses rest columns don't have a default value.
+	for col := range colMap {
+		if _, ok := defaultCols[col]; ok {
+			continue
+		}
+		msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have the default value for %s"+
+			"please give a default value for %s or choose another column to ignore or add this column in data file",
+			tableInfo.DB, tableInfo.Name, col, col))
+	}
+	return msgs, nil
+}
+
+// CheckCSVHeader try to check whether the source csv files are valid
+func (rc *Controller) checkCSVHeader(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta) error {
+	// if cfg set header = ture but source files actually contain not header, former SchemaCheck should
+	// return error in this situation, so we need do it again.
+	if rc.cfg.Mydumper.CSV.Header {
+		return nil
+	}
+	var (
+		tableMeta *mydump.MDTableMeta
+		csvCount int
+		hasUniqueIdx bool
+	)
+	// only check one table source files for better performance. The checked table is choosed based on following two factor:
+	// 1. contains at least 1 csv source file, 2 is preferable
+	// 2. table schema contains primary key or unique key
+	// if the two factors can't be both satisfied, the first one has a higher priority
+outer:
+	for _, dbMeta := range dbMetas {
+		for _, tblMeta := range dbMeta.Tables {
+			if len(tblMeta.DataFiles) == 0 {
+				continue
+			}
+			tableHasUniQueIdx := false
+			csvCnt := 0
+			for _, f := range tblMeta.DataFiles {
+				if f.FileMeta.Type == mydump.SourceTypeCSV {
+					csvCnt++
+					if csvCnt >= 2 {
+						break
 					}
-				} else {
-					colMap[col.Name.L] = struct{}{}
 				}
 			}
-			// tidb_rowid can be ignored in check
-			colMap[model.ExtraHandleName.String()] = struct{}{}
-			for _, col := range colsFromDataFile {
-				if _, ok := colMap[col]; !ok {
-					checkMsg := "please check table schema"
-					if dataFileMeta.Type == mydump.SourceTypeCSV && rc.cfg.Mydumper.CSV.Header {
-						checkMsg += " and csv file header"
-					}
-					msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have column %s, "+
-						"%s or use tables.ignoreColumns to ignore %s",
-						tableInfo.DB, tableInfo.Name, col, checkMsg, col))
-				} else {
-					// remove column for next iteration
-					delete(colMap, col)
+			if csvCnt == 0 {
+				continue
+			}
+
+			info := rc.dbInfos[tblMeta.DB].Tables[tblMeta.Name]
+			for _, idx := range info.Core.Indices {
+				if idx.Primary || idx.Unique {
+					tableHasUniQueIdx = true
 				}
 			}
-			// if theses rest columns don't have a default value.
-			for col := range colMap {
-				if _, ok := defaultCols[col]; ok {
-					continue
-				}
-				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have the default value for %s"+
-					"please give a default value for %s or choose another column to ignore or add this column in data file",
-					tableInfo.DB, tableInfo.Name, col, col))
+
+			if csvCnt >= 2 && hasUniqueIdx {
+				tableMeta = tblMeta
+				csvCount = csvCnt
+				hasUniqueIdx = tableHasUniQueIdx
+				break outer
+			}
+			if csvCnt > csvCount || (csvCnt == csvCount && !hasUniqueIdx && tableHasUniQueIdx) {
+				tableMeta = tblMeta
+				csvCount = csvCnt
+				hasUniqueIdx = tableHasUniQueIdx
 			}
 		}
 	}
-	return msgs, nil
+
+	if tableMeta == nil {
+		return nil
+	}
+
+	var rows [][]types.Datum
+	for _, f := range tableMeta.DataFiles {
+		_, row, err := rc.readFirstRow(ctx, f.FileMeta)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(row) > 0 {
+			rows = append(rows, row)
+		}
+		if len(rows) >= 2 {
+			break
+		}
+	}
+	// if the first row in two source files are the same
+	if len(rows) >= 2 {
+		if len(rows[0]) != len(rows[1]) {
+			return nil
+		}
+		for i := 0; i < len(rows[0]); i++ {
+			if rows[0][i].GetString() != rows[1][i].GetString() {
+				return nil
+			}
+		}
+	}
+
+	tableInfo := rc.dbInfos[tableMeta.DB].Tables[tableMeta.Name]
+	tableFields := make(map[string]struct{})
+	uniqueIdxFields := make(map[string]struct{})
+	ignoreColumns, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(tableMeta.DB, tableMeta.Name, rc.cfg.Mydumper.CaseSensitive)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ignoreColsSet := make(map[string]struct{})
+	for _, col := range ignoreColumns.Columns {
+		ignoreColsSet[col] = struct{}{}
+	}
+	for _, idx := range tableInfo.Core.Indices {
+		for _, col := range idx.Columns {
+			if _, ok := ignoreColsSet[col.Name.L]; !ok {
+				uniqueIdxFields[col.Name.L] = struct{}{}
+			}
+		}
+	}
+	for _, f := range tableInfo.Core.Columns {
+		tableFields[f.Name.L] = struct{}{}
+	}
+	if common.TableHasAutoRowID(tableInfo.Core) {
+		tableFields[model.ExtraHandleName.L] = struct{}{}
+	}
+	hasUniqueField := false
+	for _, d := range rows[0] {
+		val := strings.ToLower(d.GetString())
+		if _, ok := tableFields[val]; !ok {
+			return nil
+		}
+		if _, ok := uniqueIdxFields[val]; ok {
+			hasUniqueField = true
+		}
+	}
+
+	msg := fmt.Sprintf("source csv files contains header row but `mydumper.csv.header` is false, checked table is `%s`.`%s`",
+		tableMeta.DB, tableMeta.Name)
+	level := Warn
+	if hasUniqueField && len(rows) > 1 {
+		level = Critical
+	}
+	rc.checkTemplate.Collect(level, false, msg)
+
+	return nil
 }
 
 func (rc *Controller) SampleDataFromTable(ctx context.Context, dbName string, tableMeta *mydump.MDTableMeta, tableInfo *model.TableInfo) error {
