@@ -15,6 +15,7 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -337,6 +338,9 @@ type TableInfo struct {
 	IsColumnar bool `json:"is_columnar"`
 
 	TempTableType `json:"temp_table_type"`
+
+	PlacementPolicyRef  *PolicyRefInfo     `json:"policy_ref_info"`
+	DirectPlacementOpts *PlacementSettings `json:"placement_settings"`
 }
 
 type TempTableType byte
@@ -1105,4 +1109,89 @@ func (cis *CIStr) UnmarshalJSON(b []byte) error {
 type TableColumnID struct {
 	TableID  int64
 	ColumnID int64
+}
+
+// PolicyRefInfo is the struct to refer the placement policy.
+type PolicyRefInfo struct {
+	ID   int64 `json:"id"`
+	Name CIStr `json:"name"`
+}
+
+// PlacementSettings is the settings of the placement
+type PlacementSettings struct {
+	PrimaryRegion       string `json:"primary_region"`
+	Regions             string `json:"regions"`
+	Learners            uint64 `json:"learners"`
+	Followers           uint64 `json:"followers"`
+	Voters              uint64 `json:"voters"`
+	Schedule            string `json:"schedule"`
+	Constraints         string `json:"constraints"`
+	LeaderConstraints   string `json:"leader_constraints"`
+	LearnerConstraints  string `json:"learner_constraints"`
+	FollowerConstraints string `json:"follower_constraints"`
+	VoterConstraints    string `json:"voter_constraints"`
+}
+
+// PolicyInfo is the struct to store the placement policy.
+type PolicyInfo struct {
+	*PlacementSettings
+	ID    int64       `json:"id"`
+	Name  CIStr       `json:"name"`
+	State SchemaState `json:"state"`
+}
+
+func writeSettingItemToBuilder(sb *strings.Builder, item string) {
+	if sb.Len() != 0 {
+		sb.WriteString(" ")
+	}
+	sb.WriteString(item)
+}
+
+func (p *PlacementSettings) String() string {
+	sb := new(strings.Builder)
+	if len(p.PrimaryRegion) > 0 {
+		writeSettingItemToBuilder(sb, fmt.Sprintf("PRIMARY_REGION=\"%s\"", p.PrimaryRegion))
+	}
+
+	if len(p.Regions) > 0 {
+		writeSettingItemToBuilder(sb, fmt.Sprintf("REGIONS=\"%s\"", p.Regions))
+	}
+
+	if len(p.Schedule) > 0 {
+		writeSettingItemToBuilder(sb, fmt.Sprintf("SCHEDULE=\"%s\"", p.Schedule))
+	}
+
+	if len(p.Constraints) > 0 {
+		writeSettingItemToBuilder(sb, fmt.Sprintf("CONSTRAINTS=\"%s\"", p.Constraints))
+	}
+
+	if len(p.LeaderConstraints) > 0 {
+		writeSettingItemToBuilder(sb, fmt.Sprintf("LEADER_CONSTRAINTS=\"%s\"", p.LeaderConstraints))
+	}
+
+	if p.Voters > 0 {
+		writeSettingItemToBuilder(sb, fmt.Sprintf("VOTERS=%d", p.Voters))
+	}
+
+	if len(p.VoterConstraints) > 0 {
+		writeSettingItemToBuilder(sb, fmt.Sprintf("VOTER_CONSTRAINTS=\"%s\"", p.VoterConstraints))
+	}
+
+	if p.Followers > 0 {
+		writeSettingItemToBuilder(sb, fmt.Sprintf("FOLLOWERS=%d", p.Followers))
+	}
+
+	if len(p.FollowerConstraints) > 0 {
+		writeSettingItemToBuilder(sb, fmt.Sprintf("FOLLOWER_CONSTRAINTS=\"%s\"", p.FollowerConstraints))
+	}
+
+	if p.Learners > 0 {
+		writeSettingItemToBuilder(sb, fmt.Sprintf("LEARNERS=%d", p.Learners))
+	}
+
+	if len(p.LearnerConstraints) > 0 {
+		writeSettingItemToBuilder(sb, fmt.Sprintf("LEARNER_CONSTRAINTS=\"%s\"", p.LearnerConstraints))
+	}
+
+	return sb.String()
 }
