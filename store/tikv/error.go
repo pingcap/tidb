@@ -86,3 +86,9 @@ type ErrKeyExist struct {
 func (k *ErrKeyExist) Error() string {
 	return k.AlreadyExist.String()
 }
+
+// IsErrKeyExist returns true if it is ErrKeyExist.
+func IsErrKeyExist(err error) bool {
+	_, ok := errors.Cause(err).(*ErrKeyExist)
+	return ok
+}

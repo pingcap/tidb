@@ -197,6 +197,19 @@ func (s *testPointGetSuite) TestPointGetForUpdate(c *C) {
 	tk.MustExec("rollback")
 }
 
+func (s *testPointGetSuite) TestPointGetForUpdateWithSubquery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE users (id bigint(20) unsigned NOT NULL primary key, name longtext DEFAULT NULL, company_id bigint(20) DEFAULT NULL)")
+	tk.MustExec("create table companies(id bigint primary key, name longtext default null)")
+	tk.MustExec("insert into companies values(14, 'Company14')")
+	tk.MustExec("insert into companies values(15, 'Company15')")
+	tk.MustExec("insert into users(id, company_id, name) values(239, 15, 'xxxx')")
+	tk.MustExec("UPDATE users SET name=(SELECT name FROM companies WHERE companies.id = users.company_id)  WHERE id = 239")
+
+	tk.MustQuery("select * from users").Check(testkit.Rows("239 Company15 15"))
+}
+
 func checkUseForUpdate(tk *testkit.TestKit, c *C, expectLock bool) {
 	res := tk.MustQuery("explain format = 'brief' select * from fu where id = 6 for update")
 	// Point_Get_1	1.00	root	table:fu, handle:6
@@ -598,6 +611,27 @@ func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 		plan.Check(testkit.Rows(output[i].Plan...))
 		res.Check(testkit.Rows(output[i].Res...))
 	}
+}
+
+func (s *testPointGetSuite) TestIssue23511(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("CREATE TABLE `t1`  (`COL1` bit(11) NOT NULL,PRIMARY KEY (`COL1`));")
+	tk.MustExec("CREATE TABLE `t2`  (`COL1` bit(11) NOT NULL);")
+	tk.MustExec("insert into t1 values(b'00000111001'), (b'00000000000');")
+	tk.MustExec("insert into t2 values(b'00000111001');")
+	tk.MustQuery("select * from t1 where col1 = 0x39;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t2 where col1 = 0x39;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t1 where col1 = 0x00;").Check(testkit.Rows("\x00\x00"))
+	tk.MustQuery("select * from t1 where col1 = 0x0000;").Check(testkit.Rows("\x00\x00"))
+	tk.MustQuery("explain format = 'brief' select * from t1 where col1 = 0x39;").
+		Check(testkit.Rows("Point_Get 1.00 root table:t1, index:PRIMARY(COL1) "))
+	tk.MustQuery("select * from t1 where col1 = 0x0039;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t2 where col1 = 0x0039;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t1 where col1 = 0x000039;").Check(testkit.Rows("\x009"))
+	tk.MustQuery("select * from t2 where col1 = 0x000039;").Check(testkit.Rows("\x009"))
+	tk.MustExec("drop table t1, t2;")
 }
 
 func (s *testPointGetSuite) TestPointGetWithIndexHints(c *C) {

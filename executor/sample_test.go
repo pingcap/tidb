@@ -119,6 +119,20 @@ func (s *testTableSampleSuite) TestTableSampleMultiRegions(c *C) {
 	tk.MustExec("drop table t2;")
 }
 
+func (s *testTableSampleSuite) TestTableSampleNoSplitTable(c *C) {
+	tk := s.initSampleTest(c)
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t1 (id int primary key);")
+	tk.MustExec("create table t2 (id int primary key);")
+	tk.MustExec("insert into t2 values(1);")
+	rows := tk.MustQuery("select * from t1 tablesample regions();").Rows()
+	rows2 := tk.MustQuery("select * from t2 tablesample regions();").Rows()
+	c.Assert(len(rows), Equals, 0)
+	c.Assert(len(rows2), Equals, 1)
+}
+
 func (s *testTableSampleSuite) TestTableSampleSchema(c *C) {
 	tk := s.initSampleTest(c)
 	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
@@ -186,6 +200,17 @@ func (s *testTableSampleSuite) TestTableSampleWithPartition(c *C) {
 	c.Assert(len(rows), Equals, 0)
 	rows = tk.MustQuery("select * from t partition (p1) tablesample regions();").Rows()
 	c.Assert(len(rows), Equals, 1)
+
+	// Test https://github.com/pingcap/tidb/issues/27349.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (a int, b int, unique key idx(a)) partition by range (a) (
+        partition p0 values less than (0),
+        partition p1 values less than (10),
+        partition p2 values less than (30),
+        partition p3 values less than (maxvalue));`)
+	tk.MustExec("insert into t values (2, 2), (31, 31), (12, 12);")
+	tk.MustQuery("select _tidb_rowid from t tablesample regions() order by _tidb_rowid;").
+		Check(testkit.Rows("1", "2", "3")) // The order of _tidb_rowid should be correct.
 }
 
 func (s *testTableSampleSuite) TestTableSampleGeneratedColumns(c *C) {

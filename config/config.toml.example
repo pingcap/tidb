@@ -286,7 +286,7 @@ txn-total-size-limit = 104857600
 txn-entry-size-limit = 6291456
 
 # The max number of running concurrency two phase committer request for an SQL.
-committer-concurrency = 16
+committer-concurrency = 128
 
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 3600000
@@ -448,7 +448,7 @@ enable = true
 enable-internal-query = false
 
 # max number of statements kept in memory.
-max-stmt-count = 200
+max-stmt-count = 3000
 
 # max length of displayed normalized sql and sample sql.
 max-sql-length = 4096

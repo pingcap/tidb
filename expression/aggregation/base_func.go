@@ -208,7 +208,12 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeNewDecimal:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
+		a.RetTp.Decimal = types.DivFracIncr
+		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(a.Args[0].GetType().Tp)
+		a.RetTp.Flen = flen + types.DivFracIncr
+	case mysql.TypeYear, mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		if a.Args[0].GetType().Decimal < 0 {
 			a.RetTp.Decimal = mysql.MaxDecimalScale
@@ -406,6 +411,9 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		if i == 1 && (a.Name == ast.WindowFuncLead || a.Name == ast.WindowFuncLag || a.Name == ast.WindowFuncNthValue) {
 			continue
 		}
+		if a.Args[i].GetType().Tp == mysql.TypeNull {
+			continue
+		}
 		a.Args[i] = castFunc(ctx, a.Args[i])
 		if a.Name != ast.AggFuncAvg && a.Name != ast.AggFuncSum {
 			continue
@@ -423,7 +431,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		if col, ok := a.Args[i].(*expression.Column); ok {
 			col.RetType = types.NewFieldType(col.RetType.Tp)
 		}
-		// originTp is used when the the `Tp` of column is TypeFloat32 while
+		// originTp is used when the `Tp` of column is TypeFloat32 while
 		// the type of the aggregation function is TypeFloat64.
 		originTp := a.Args[i].GetType().Tp
 		*(a.Args[i].GetType()) = *(a.RetTp)

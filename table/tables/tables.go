@@ -27,6 +27,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -1449,16 +1450,18 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 
 // CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore check whether recordID key or unique index key exists. if not exists, return nil,
 // otherwise return kv.ErrKeyExists error.
-func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, data []types.Datum) error {
+func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.Context, sctx sessionctx.Context, t table.Table, recordID kv.Handle, newRow []types.Datum, oldRow []types.Datum, modified []bool) error {
 	physicalTableID := t.Meta().ID
+	idxs := t.Indices()
 	if pt, ok := t.(*partitionedTable); ok {
 		info := t.Meta().GetPartitionInfo()
-		pid, err := pt.locatePartition(sctx, info, data)
+		pid, err := pt.locatePartition(sctx, info, newRow)
 		if err != nil {
 			return err
 		}
 		partition := pt.GetPartition(pid)
 		physicalTableID = partition.GetPhysicalID()
+		idxs = partition.Indices()
 	}
 	txn, err := sctx.Txn(true)
 	if err != nil {
@@ -1471,7 +1474,7 @@ func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.C
 		recordKey := tablecodec.EncodeRecordKey(prefix, recordID)
 		_, err = txn.Get(ctx, recordKey)
 		if err == nil {
-			handleStr := getDuplicateErrorHandleString(t, recordID, data)
+			handleStr := getDuplicateErrorHandleString(t, recordID, newRow)
 			return kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
 		} else if !kv.ErrNotExist.Equal(err) {
 			return err
@@ -1480,18 +1483,46 @@ func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.C
 
 	// Check unique key exists.
 	{
-		for _, idx := range t.Indices() {
-			if !IsIndexWritable(idx) {
-				continue
+		shouldSkipIgnoreCheck := func(idx table.Index) (bool, error) {
+			if !IsIndexWritable(idx) || !idx.Meta().Unique || (t.Meta().IsCommonHandle && idx.Meta().Primary) {
+				return true, nil
 			}
-			if !idx.Meta().Unique {
-				continue
+			for _, c := range idx.Meta().Columns {
+				if modified[c.Offset] {
+					if c.Length != types.UnspecifiedLength && (newRow[c.Offset].Kind() == types.KindString || newRow[c.Offset].Kind() == types.KindBytes) {
+						newCol := newRow[c.Offset].Clone()
+						tablecodec.TruncateIndexValue(newCol, c, t.Meta().Columns[c.Offset])
+						oldCol := oldRow[c.Offset].Clone()
+						tablecodec.TruncateIndexValue(oldCol, c, t.Meta().Columns[c.Offset])
+						// We should use binary collation to compare datum, otherwise the result will be incorrect.
+						newCol.SetCollation(charset.CollationBin)
+						cmp, err := newCol.CompareDatum(sctx.GetSessionVars().StmtCtx, oldCol)
+						if err != nil {
+							return false, errors.Trace(err)
+						}
+						if cmp == 0 {
+							continue
+						}
+					}
+					return false, nil
+				}
 			}
-			vals, err := idx.FetchValues(data, nil)
+			return true, nil
+		}
+
+		for _, idx := range idxs {
+			skip, err := shouldSkipIgnoreCheck(idx)
 			if err != nil {
 				return err
 			}
-			key, _, err := idx.GenIndexKey(sctx.GetSessionVars().StmtCtx, vals, recordID, nil)
+			if skip {
+				continue
+			}
+			newVals, err := idx.FetchValues(newRow, nil)
+			if err != nil {
+				return err
+			}
+			key, _, err := idx.GenIndexKey(sctx.GetSessionVars().StmtCtx, newVals, recordID, nil)
 			if err != nil {
 				return err
 			}
@@ -1502,7 +1533,7 @@ func CheckHandleOrUniqueKeyExistForUpdateIgnoreOrInsertOnDupIgnore(ctx context.C
 			if err != nil {
 				return err
 			}
-			entryKey, err := genIndexKeyStr(vals)
+			entryKey, err := genIndexKeyStr(newVals)
 			if err != nil {
 				return err
 			}

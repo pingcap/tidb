@@ -930,6 +930,152 @@ func IsBinaryLiteral(expr Expression) bool {
 	return ok && con.Value.Kind() == types.KindBinaryLiteral
 }
 
+func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
+	switch sf.FuncName.L {
+	case
+		// op functions.
+		ast.LogicAnd, ast.LogicOr, ast.LogicXor, ast.UnaryNot, ast.And, ast.Or, ast.Xor, ast.BitNeg, ast.LeftShift, ast.RightShift, ast.UnaryMinus,
+
+		// compare functions.
+		ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT, ast.NullEQ, ast.In, ast.IsNull, ast.Like, ast.IsTruthWithoutNull, ast.IsTruthWithNull, ast.IsFalsity,
+
+		// arithmetical functions.
+		ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Abs, /*ast.Mod,*/
+
+		// math functions.
+		ast.Ceil, ast.Ceiling, ast.Floor, ast.Sqrt, ast.Sign, ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Exp, ast.Pow,
+
+		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
+		// open the following switchers if we implement them in coprocessor via `cmath`
+		// ast.Sin, ast.Asin, ast.Cos, ast.Acos, ast.Tan, ast.Atan, ast.Atan2, ast.Cot,
+		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
+
+		// control flow functions.
+		ast.Case, ast.If, ast.Ifnull, ast.Coalesce,
+
+		// string functions.
+		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS /*ast.Locate,*/, ast.Replace, ast.ASCII, ast.Hex,
+		ast.Reverse, ast.LTrim, ast.RTrim /*ast.Left,*/, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
+
+		// json functions.
+		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
+		ast.JSONInsert /*ast.JSONReplace,*/, ast.JSONRemove, ast.JSONLength,
+		// FIXME: JSONUnquote is incompatible with Coprocessor
+		ast.JSONUnquote,
+
+		// date functions.
+		ast.DateFormat, ast.FromDays /*ast.ToDays,*/, ast.DayOfYear, ast.DayOfMonth, ast.Year, ast.Month,
+		// FIXME: the coprocessor cannot keep the same behavior with TiDB in current compute framework
+		// ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.DayName,
+		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
+
+		// encryption functions.
+		ast.MD5, ast.SHA1, ast.UncompressedLength,
+
+		ast.Cast,
+
+		// misc functions.
+		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6, ast.UUID:
+
+		return true
+
+	// A special case: Only push down Round by signature
+	case ast.Round:
+		switch sf.Function.PbCode() {
+		case tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundDec:
+			return true
+		}
+	case ast.Rand:
+		switch sf.Function.PbCode() {
+		case tipb.ScalarFuncSig_RandWithSeedFirstGen:
+			return true
+		}
+	}
+	return false
+}
+
+func scalarExprSupportedByFlash(function *ScalarFunction) bool {
+	switch function.FuncName.L {
+	case
+		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or,
+		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like,
+		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, /*ast.Mod,*/
+		ast.If, ast.Ifnull, ast.Case,
+		ast.Concat, ast.ConcatWS,
+		ast.Year, ast.Month, ast.Day,
+		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
+		ast.JSONLength:
+		return true
+	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength:
+		switch function.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_LeftUTF8,
+			tipb.ScalarFuncSig_RightUTF8,
+			tipb.ScalarFuncSig_CharLengthUTF8,
+			tipb.ScalarFuncSig_Substring2ArgsUTF8,
+			tipb.ScalarFuncSig_Substring3ArgsUTF8:
+			return true
+		}
+	case ast.Cast:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_CastIntAsTime:
+			// ban the function of casting year type as time type pushing down to tiflash because of https://github.com/pingcap/tidb/issues/26215
+			return function.GetArgs()[0].GetType().Tp != mysql.TypeYear
+		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastIntAsString,
+			tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastRealAsReal, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastRealAsTime,
+			tipb.ScalarFuncSig_CastStringAsInt, tipb.ScalarFuncSig_CastStringAsReal, tipb.ScalarFuncSig_CastStringAsDecimal, tipb.ScalarFuncSig_CastStringAsString, tipb.ScalarFuncSig_CastStringAsTime,
+			tipb.ScalarFuncSig_CastDecimalAsInt /*, tipb.ScalarFuncSig_CastDecimalAsReal*/, tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastDecimalAsTime,
+			tipb.ScalarFuncSig_CastTimeAsInt /*, tipb.ScalarFuncSig_CastTimeAsReal*/, tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastTimeAsTime, tipb.ScalarFuncSig_CastTimeAsString:
+			return true
+		}
+	case ast.DateAdd, ast.AddDate:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
+			return true
+		}
+	case ast.DateSub, ast.SubDate:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_SubDateDatetimeInt, tipb.ScalarFuncSig_SubDateStringInt:
+			return true
+		}
+	case ast.UnixTimestamp:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_UnixTimestampInt, tipb.ScalarFuncSig_UnixTimestampDec:
+			return true
+		}
+	case ast.Round:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal:
+			return true
+		}
+	case ast.Extract:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_ExtractDatetime:
+			return true
+		}
+	case ast.Replace:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_Replace:
+			return true
+		}
+	case ast.StrToDate:
+		switch function.Function.PbCode() {
+		case
+			tipb.ScalarFuncSig_StrToDateDate,
+			tipb.ScalarFuncSig_StrToDateDatetime:
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
+	// TiDB can support all functions, but TiPB may not include some functions.
+	return scalarExprSupportedByTiKV(function) || scalarExprSupportedByFlash(function)
+}
+
 func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 	// Use the failpoint to control whether to push down an expression in the integration test.
 	// Push down all expression if the `failpoint expression` is `all`, otherwise, check
@@ -949,183 +1095,18 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 	})
 
 	ret := false
-	switch sf.FuncName.L {
-	case
-		// op functions.
-		ast.LogicAnd,
-		ast.LogicOr,
-		ast.LogicXor,
-		ast.UnaryNot,
-		ast.And,
-		ast.Or,
-		ast.Xor,
-		ast.BitNeg,
-		ast.LeftShift,
-		ast.RightShift,
-		ast.UnaryMinus,
 
-		// compare functions.
-		ast.LT,
-		ast.LE,
-		ast.EQ,
-		ast.NE,
-		ast.GE,
-		ast.GT,
-		ast.NullEQ,
-		ast.In,
-		ast.IsNull,
-		ast.Like,
-		ast.IsTruthWithoutNull,
-		ast.IsTruthWithNull,
-		ast.IsFalsity,
-
-		// arithmetical functions.
-		ast.Plus,
-		ast.Minus,
-		ast.Mul,
-		ast.Div,
-		ast.Abs,
-
-		// math functions.
-		ast.Ceil,
-		ast.Ceiling,
-		ast.Floor,
-		ast.Sqrt,
-		ast.Sign,
-		ast.Ln,
-		ast.Log,
-		ast.Log2,
-		ast.Log10,
-		ast.Exp,
-		ast.Pow,
-		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
-		// open the following switchers if we implement them in coprocessor via `cmath`
-		// ast.Sin,
-		// ast.Asin,
-		// ast.Cos,
-		// ast.Acos,
-		// ast.Tan,
-		// ast.Atan,
-		// ast.Atan2,
-		// ast.Cot,
-		ast.Radians,
-		ast.Degrees,
-		ast.Conv,
-		ast.CRC32,
-
-		// control flow functions.
-		ast.Case,
-		ast.If,
-		ast.Ifnull,
-		ast.Coalesce,
-
-		// string functions.
-		ast.Length,
-		ast.BitLength,
-		ast.Concat,
-		ast.ConcatWS,
-		// ast.Locate,
-		ast.Replace,
-		ast.ASCII,
-		ast.Hex,
-		ast.Reverse,
-		ast.LTrim,
-		ast.RTrim,
-		// ast.Left,
-		ast.Strcmp,
-		ast.Space,
-		ast.Elt,
-		ast.Field,
-
-		// json functions.
-		ast.JSONType,
-		ast.JSONExtract,
-		// FIXME: JSONUnquote is incompatible with Coprocessor
-		// ast.JSONUnquote,
-		ast.JSONObject,
-		ast.JSONArray,
-		ast.JSONMerge,
-		ast.JSONSet,
-		ast.JSONInsert,
-		// ast.JSONReplace,
-		ast.JSONRemove,
-		ast.JSONLength,
-
-		// date functions.
-		ast.DateFormat,
-		ast.FromDays,
-		// ast.ToDays,
-		ast.DayOfYear,
-		ast.DayOfMonth,
-		ast.Year,
-		ast.Month,
-		// FIXME: the coprocessor cannot keep the same behavior with TiDB in current compute framework
-		// ast.Hour,
-		// ast.Minute,
-		// ast.Second,
-		// ast.MicroSecond,
-		// ast.DayName,
-		ast.PeriodAdd,
-		ast.PeriodDiff,
-		ast.TimestampDiff,
-		ast.DateAdd,
-		ast.FromUnixTime,
-		ast.Extract,
-
-		// encryption functions.
-		ast.MD5,
-		ast.SHA1,
-		ast.UncompressedLength,
-
-		ast.Cast,
-
-		// misc functions.
-		ast.InetNtoa,
-		ast.InetAton,
-		ast.Inet6Ntoa,
-		ast.Inet6Aton,
-		ast.IsIPv4,
-		ast.IsIPv4Compat,
-		ast.IsIPv4Mapped,
-		ast.IsIPv6,
-		ast.UUID:
-		ret = true
-
-	// A special case: Only push down Round by signature
-	case ast.Round:
-		switch sf.Function.PbCode() {
-		case
-			tipb.ScalarFuncSig_RoundReal,
-			tipb.ScalarFuncSig_RoundInt,
-			tipb.ScalarFuncSig_RoundDec:
-			ret = true
-		}
-	case
-		ast.Substring,
-		ast.Substr:
-		switch sf.Function.PbCode() {
-		case
-			tipb.ScalarFuncSig_Substring2ArgsUTF8,
-			tipb.ScalarFuncSig_Substring3ArgsUTF8:
-			ret = true
-		}
-	case ast.Rand:
-		switch sf.Function.PbCode() {
-		case
-			tipb.ScalarFuncSig_RandWithSeedFirstGen:
-			ret = true
-		}
+	switch storeType {
+	case kv.TiFlash:
+		ret = scalarExprSupportedByFlash(sf)
+	case kv.TiKV:
+		ret = scalarExprSupportedByTiKV(sf)
+	case kv.TiDB:
+		ret = scalarExprSupportedByTiDB(sf)
+	case kv.UnSpecified:
+		ret = scalarExprSupportedByTiDB(sf) || scalarExprSupportedByTiKV(sf) || scalarExprSupportedByFlash(sf)
 	}
-	if ret {
-		switch storeType {
-		case kv.TiFlash:
-			ret = scalarExprSupportedByFlash(sf)
-		case kv.TiKV:
-			ret = scalarExprSupportedByTiKV(sf)
-		case kv.TiDB:
-			ret = scalarExprSupportedByTiDB(sf)
-		}
-	}
+
 	if ret {
 		ret = IsPushDownEnabled(sf.FuncName.L, storeType)
 	}
@@ -1239,73 +1220,6 @@ func PushDownExprs(sc *stmtctx.StatementContext, exprs []Expression, client kv.C
 func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
 	_, remained := PushDownExprs(sc, exprs, client, storeType)
 	return len(remained) == 0
-}
-
-func scalarExprSupportedByTiKV(function *ScalarFunction) bool {
-	switch function.FuncName.L {
-	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
-		ast.FromUnixTime, ast.Extract:
-		return false
-	default:
-		return true
-	}
-}
-
-func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
-	switch function.FuncName.L {
-	case ast.Substr, ast.Substring, ast.DateAdd, ast.TimestampDiff,
-		ast.FromUnixTime:
-		return false
-	default:
-		return true
-	}
-}
-
-func scalarExprSupportedByFlash(function *ScalarFunction) bool {
-	switch function.FuncName.L {
-	case ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.GE, ast.LE,
-		ast.EQ, ast.NE, ast.LT, ast.GT, ast.Ifnull, ast.IsNull,
-		ast.Or, ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
-		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
-		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
-		ast.JSONLength, ast.If, ast.BitNeg, ast.Xor:
-		return true
-	case ast.Cast:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastIntAsTime,
-			tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastRealAsTime,
-			tipb.ScalarFuncSig_CastStringAsInt, tipb.ScalarFuncSig_CastStringAsDecimal, tipb.ScalarFuncSig_CastStringAsString, tipb.ScalarFuncSig_CastStringAsTime,
-			tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastDecimalAsTime,
-			tipb.ScalarFuncSig_CastTimeAsInt, tipb.ScalarFuncSig_CastTimeAsDecimal, tipb.ScalarFuncSig_CastTimeAsTime:
-			return true
-		default:
-			return false
-		}
-	case ast.DateAdd:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
-			return true
-		default:
-			return false
-		}
-	case ast.Round:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal,
-			tipb.ScalarFuncSig_RoundDec:
-			return true
-		default:
-			return false
-		}
-	case ast.Extract:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_ExtractDatetime:
-			return true
-		default:
-			return false
-		}
-	default:
-		return false
-	}
 }
 
 // wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not

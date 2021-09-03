@@ -466,6 +466,28 @@ func (s *testPrivilegeSuite) TestSetPasswdStmt(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testPrivilegeSuite) TestAlterUserStmt(c *C) {
+	se := newSession(c, s.store, s.dbName)
+
+	// high privileged user setting password for other user (passes)
+	mustExec(c, se, "CREATE USER 'superuser2'")
+	mustExec(c, se, "CREATE USER 'nobodyuser2'")
+	mustExec(c, se, "CREATE USER 'nobodyuser3'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'superuser2'")
+	mustExec(c, se, "GRANT CREATE USER ON *.* TO 'nobodyuser2'")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser2", Hostname: "localhost", AuthUsername: "superuser2", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+
+	// low privileged user trying to set password for other user (fails)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser2", Hostname: "localhost", AuthUsername: "nobodyuser2", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	mustExec(c, se, "ALTER USER 'nobodyuser2' IDENTIFIED BY ''")
+	_, err := se.ExecuteInternal(context.Background(), "ALTER USER 'superuser2' IDENTIFIED BY 'newpassword'")
+	c.Assert(err, NotNil)
+}
+
 func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(sessionctx.Context)
@@ -916,6 +938,45 @@ func (s *testPrivilegeSuite) TestShowCreateTable(c *C) {
 	mustExec(c, se, `SHOW CREATE TABLE mysql.user`)
 }
 
+func (s *testPrivilegeSuite) TestReplaceAndInsertOnDuplicate(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER tr_insert`)
+	mustExec(c, se, `CREATE USER tr_update`)
+	mustExec(c, se, `CREATE USER tr_delete`)
+	mustExec(c, se, `CREATE TABLE t1 (a int primary key, b int)`)
+	mustExec(c, se, `GRANT INSERT ON t1 TO tr_insert`)
+	mustExec(c, se, `GRANT UPDATE ON t1 TO tr_update`)
+	mustExec(c, se, `GRANT DELETE ON t1 TO tr_delete`)
+
+	// Restrict the permission to INSERT only.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tr_insert", Hostname: "localhost", AuthUsername: "tr_insert", AuthHostname: "%"}, nil, nil), IsTrue)
+
+	// REPLACE requires INSERT + DELETE privileges, having INSERT alone is insufficient.
+	_, err := se.ExecuteInternal(context.Background(), `REPLACE INTO t1 VALUES (1, 2)`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]DELETE command denied to user 'tr_insert'@'%' for table 't1'")
+
+	// INSERT ON DUPLICATE requires INSERT + UPDATE privileges, having INSERT alone is insufficient.
+	_, err = se.ExecuteInternal(context.Background(), `INSERT INTO t1 VALUES (3, 4) ON DUPLICATE KEY UPDATE b = 5`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]UPDATE command denied to user 'tr_insert'@'%' for table 't1'")
+
+	// Plain INSERT should work.
+	mustExec(c, se, `INSERT INTO t1 VALUES (6, 7)`)
+
+	// Also check that having DELETE alone is insufficient for REPLACE.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tr_delete", Hostname: "localhost", AuthUsername: "tr_delete", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), `REPLACE INTO t1 VALUES (8, 9)`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'tr_delete'@'%' for table 't1'")
+
+	// Also check that having UPDATE alone is insufficient for INSERT ON DUPLICATE.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tr_update", Hostname: "localhost", AuthUsername: "tr_update", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err = se.ExecuteInternal(context.Background(), `INSERT INTO t1 VALUES (10, 11) ON DUPLICATE KEY UPDATE b = 12`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'tr_update'@'%' for table 't1'")
+}
+
 func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 
 	se := newSession(c, s.store, s.dbName)
@@ -1195,4 +1256,32 @@ func newSession(c *C, store kv.Storage, dbName string) session.Session {
 	mustExec(c, se, "create database if not exists "+dbName)
 	mustExec(c, se, "use "+dbName)
 	return se
+}
+
+// TestViewDefiner tests that default roles are correctly applied in the algorithm definer
+// See: https://github.com/pingcap/tidb/issues/24414
+func (s *testPrivilegeSuite) TestViewDefiner(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE DATABASE issue24414")
+	tk.MustExec("USE issue24414")
+	tk.MustExec(`create table table1(
+		col1 int,
+		col2 int,
+		col3 int
+		)`)
+	tk.MustExec(`insert into table1 values (1,1,1),(2,2,2)`)
+	tk.MustExec(`CREATE ROLE 'ACL-mobius-admin'`)
+	tk.MustExec(`CREATE USER 'mobius-admin'`)
+	tk.MustExec(`CREATE USER 'mobius-admin-no-role'`)
+	tk.MustExec(`GRANT Select,Insert,Update,Delete,Create,Drop,Alter,Index,Create View,Show View ON issue24414.* TO 'ACL-mobius-admin'@'%'`)
+	tk.MustExec(`GRANT Select,Insert,Update,Delete,Create,Drop,Alter,Index,Create View,Show View ON issue24414.* TO 'mobius-admin-no-role'@'%'`)
+	tk.MustExec(`GRANT 'ACL-mobius-admin'@'%' to 'mobius-admin'@'%'`)
+	tk.MustExec(`SET DEFAULT ROLE ALL TO 'mobius-admin'`)
+	// create tables
+	tk.MustExec(`CREATE ALGORITHM = UNDEFINED DEFINER = 'mobius-admin'@'127.0.0.1' SQL SECURITY DEFINER VIEW test_view (col1 , col2 , col3) AS SELECT * from table1`)
+	tk.MustExec(`CREATE ALGORITHM = UNDEFINED DEFINER = 'mobius-admin-no-role'@'127.0.0.1' SQL SECURITY DEFINER VIEW test_view2 (col1 , col2 , col3) AS SELECT * from table1`)
+
+	// all examples should work
+	tk.MustExec("select * from test_view")
+	tk.MustExec("select * from test_view2")
 }
