@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
@@ -153,7 +155,7 @@ type mvccKV struct {
 func (t *tikvHandlerTool) getRegionIDByKey(encodedKey []byte) (uint64, error) {
 	keyLocation, err := t.RegionCache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 500, nil), encodedKey)
 	if err != nil {
-		return 0, err
+		return 0, derr.ToTiDBErr(err)
 	}
 	return keyLocation.Region.GetID(), nil
 }

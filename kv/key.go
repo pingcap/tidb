@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -124,6 +125,12 @@ func (r *KeyRange) IsPoint() bool {
 	diffOneIdx := i
 	return r.StartKey[diffOneIdx]+1 == r.EndKey[diffOneIdx] &&
 		bytes.Equal(r.StartKey[:diffOneIdx], r.EndKey[:diffOneIdx])
+}
+
+// Entry is the entry for key and value
+type Entry struct {
+	Key   Key
+	Value []byte
 }
 
 // Handle is the ID of a row.

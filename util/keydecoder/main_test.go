@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,6 +22,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	}
 	testbridge.WorkaroundGoCheckFlags()
-	goleak.VerifyTestMain(m)
+	goleak.VerifyTestMain(m, opts...)
 }

@@ -1,0 +1,1 @@
+INSERT INTO `ı` VALUES ('🤪');

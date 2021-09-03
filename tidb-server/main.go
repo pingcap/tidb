@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -69,6 +70,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
@@ -548,6 +550,7 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
 	variable.SetSysVar(variable.Socket, cfg.Socket)
 	variable.SetSysVar(variable.DataDir, cfg.Path)
+	variable.SetSysVar(variable.Version, cfg.ServerVersion)
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
 	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
@@ -576,7 +579,7 @@ func setGlobalVars() {
 		}
 	}
 
-	atomic.StoreUint64(&tikv.CommitMaxBackoff, uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds()*1000))
+	atomic.StoreUint64(&transaction.CommitMaxBackoff, uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds()*1000))
 	tikv.SetRegionCacheTTLSec(int64(cfg.TiKVClient.RegionCacheTTL))
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)

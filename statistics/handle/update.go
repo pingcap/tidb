@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -879,10 +880,14 @@ func NeedAnalyzeTable(tbl *statistics.Table, limit time.Duration, autoAnalyzeRat
 		return false, ""
 	}
 	// No need to analyze it.
-	if float64(tbl.ModifyCount)/float64(tbl.Count) <= autoAnalyzeRatio {
+	tblCnt := float64(tbl.Count)
+	if histCnt := tbl.GetColRowCount(); histCnt > 0 {
+		tblCnt = histCnt
+	}
+	if float64(tbl.ModifyCount)/tblCnt <= autoAnalyzeRatio {
 		return false, ""
 	}
-	return true, fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tbl.Count, autoAnalyzeRatio)
+	return true, fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tblCnt, autoAnalyzeRatio)
 }
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
@@ -1250,12 +1255,10 @@ func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	expected := 0.0
 	if isIndex {
 		idx := t.Indices[id]
-		expected, err = idx.GetRowCount(sc, nil, ranges, t.ModifyCount)
-		expected *= idx.GetIncreaseFactor(t.Count)
+		expected, err = idx.GetRowCount(sc, nil, ranges, t.Count)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.GetColumnRowCount(sc, ranges, t.ModifyCount, true)
-		expected *= c.GetIncreaseFactor(t.Count)
+		expected, err = c.GetColumnRowCount(sc, ranges, t.Count, true)
 	}
 	q.Expected = int64(expected)
 	return err

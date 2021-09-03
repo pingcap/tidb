@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -120,11 +121,11 @@ func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 	if normalizedValue == "" {
 		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
 	}
-	cht, _, err := charset.GetCharsetInfo(normalizedValue)
+	cs, err := charset.GetCharsetInfo(normalizedValue)
 	if err != nil {
 		return normalizedValue, errors.Trace(err)
 	}
-	return cht, nil
+	return cs.Name, nil
 }
 
 // checkReadOnly requires TiDBEnableNoopFuncs=1 for the same scope otherwise an error will be returned.
@@ -218,13 +219,48 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	name = strings.ToLower(name)
 	sysVar := GetSysVar(name)
 	if sysVar == nil {
-		return ErrUnknownSystemVar
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	sVal, err := sysVar.Validate(vars, value, ScopeSession)
 	if err != nil {
 		return err
 	}
 	return vars.SetStmtVar(name, sVal)
+}
+
+func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, error) {
+	val, err := vars.GlobalVarsAccessor.GetTiDBTableValue(name)
+	if err != nil { // handle empty result or other errors
+		return defaultVal, nil
+	}
+	return trueFalseToOnOff(val), nil
+}
+
+func setTiDBTableValue(vars *SessionVars, name, value, comment string) error {
+	value = onOffToTrueFalse(value)
+	return vars.GlobalVarsAccessor.SetTiDBTableValue(name, value, comment)
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func trueFalseToOnOff(str string) string {
+	if strings.EqualFold("true", str) {
+		return On
+	} else if strings.EqualFold("false", str) {
+		return Off
+	}
+	return str
+}
+
+// In mysql.tidb the convention has been to store the string value "true"/"false",
+// but sysvars use the convention ON/OFF.
+func onOffToTrueFalse(str string) string {
+	if strings.EqualFold("ON", str) {
+		return "true"
+	} else if strings.EqualFold("OFF", str) {
+		return "false"
+	}
+	return str
 }
 
 const (

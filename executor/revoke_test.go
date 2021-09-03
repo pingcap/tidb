@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -84,7 +85,7 @@ func (s *testSuite1) TestRevokeTableScope(c *C) {
 
 	// Make sure all the table privs for new user is Y.
 	res := tk.MustQuery(`SELECT Table_priv FROM mysql.tables_priv WHERE User="testTblRevoke" and host="localhost" and db="test" and Table_name="test1"`)
-	res.Check(testkit.Rows("Select,Insert,Update,Delete,Create,Drop,Index,Alter,Create View,Show View"))
+	res.Check(testkit.Rows("Select,Insert,Update,Delete,Create,Drop,Index,Alter,Create View,Show View,References"))
 
 	// Revoke each priv from the user.
 	for _, v := range mysql.AllTablePrivs {

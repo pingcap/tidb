@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -218,6 +219,17 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	if res != nil {
 		tk.c.Assert(res.Close(), check.IsNil)
 	}
+}
+
+// HasPseudoStats checks if the plan for this SQL used pseudo stats.
+func (tk *TestKit) HasPseudoStats(sql string, args ...interface{}) bool {
+	rs := tk.MustQuery("explain "+sql, args...)
+	for i := range rs.rows {
+		if strings.Contains(rs.rows[i][4], "stats:pseudo") {
+			return true
+		}
+	}
+	return false
 }
 
 // HasPlan checks if the result execution plan contains specific plan.

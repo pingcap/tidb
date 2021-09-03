@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -193,6 +194,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsReal)
 	case types.ETDecimal:
 		sig = &builtinCastDecimalAsRealSig{bf}
+		PropagateType(types.ETReal, sig.getArgs()...)
 		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsReal)
 	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCastTimeAsRealSig{bf}
@@ -1009,6 +1011,20 @@ func (b *builtinCastDecimalAsStringSig) evalString(row chunk.Row) (res string, i
 
 type builtinCastDecimalAsRealSig struct {
 	baseBuiltinCastFunc
+}
+
+func setDataTypeDouble(srcDecimal int) (flen, decimal int) {
+	decimal = mysql.NotFixedDec
+	flen = floatLength(srcDecimal, decimal)
+	return
+}
+
+func floatLength(srcDecimal int, decimalPar int) int {
+	const dblDIG = 15
+	if srcDecimal != mysql.NotFixedDec {
+		return dblDIG + 2 + decimalPar
+	}
+	return dblDIG + 8
 }
 
 func (b *builtinCastDecimalAsRealSig) Clone() builtinFunc {

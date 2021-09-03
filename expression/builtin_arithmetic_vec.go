@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -920,7 +921,7 @@ func (b *builtinArithmeticPlusIntSig) plusUS(result *chunk.Column, lhi64s, rhi64
 			}
 			return types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", b.args[0].String(), b.args[1].String()))
 		}
-		if rh > 0 && uint64(lh) > math.MaxUint64-uint64(lh) {
+		if rh > 0 && uint64(lh) > math.MaxUint64-uint64(rh) {
 			if result.IsNull(i) {
 				continue
 			}

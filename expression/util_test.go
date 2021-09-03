@@ -8,12 +8,14 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
+	"context"
 	"reflect"
 	"testing"
 	"time"
@@ -413,6 +415,68 @@ func (s *testUtilSuite) TestDisableParseJSONFlag4Expr(c *check.C) {
 	c.Assert(mysql.HasParseToJSONFlag(ft.Flag), check.IsFalse)
 }
 
+func (s *testUtilSuite) TestSQLDigestTextRetriever(c *check.C) {
+	// Create a fake session as the argument to the retriever, though it's actually not used when mock data is set.
+
+	r := NewSQLDigestTextRetriever()
+	clearResult := func() {
+		r.SQLDigestsMap = map[string]string{
+			"digest1": "",
+			"digest2": "",
+			"digest3": "",
+			"digest4": "",
+			"digest5": "",
+		}
+	}
+	clearResult()
+	r.mockLocalData = map[string]string{
+		"digest1": "text1",
+		"digest2": "text2",
+		"digest6": "text6",
+	}
+	r.mockGlobalData = map[string]string{
+		"digest2": "text2",
+		"digest3": "text3",
+		"digest4": "text4",
+		"digest7": "text7",
+	}
+
+	expectedLocalResult := map[string]string{
+		"digest1": "text1",
+		"digest2": "text2",
+		"digest3": "",
+		"digest4": "",
+		"digest5": "",
+	}
+	expectedGlobalResult := map[string]string{
+		"digest1": "text1",
+		"digest2": "text2",
+		"digest3": "text3",
+		"digest4": "text4",
+		"digest5": "",
+	}
+
+	err := r.RetrieveLocal(context.Background(), nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(r.SQLDigestsMap, check.DeepEquals, expectedLocalResult)
+	clearResult()
+
+	err = r.RetrieveGlobal(context.Background(), nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(r.SQLDigestsMap, check.DeepEquals, expectedGlobalResult)
+	clearResult()
+
+	r.fetchAllLimit = 1
+	err = r.RetrieveLocal(context.Background(), nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(r.SQLDigestsMap, check.DeepEquals, expectedLocalResult)
+	clearResult()
+
+	err = r.RetrieveGlobal(context.Background(), nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(r.SQLDigestsMap, check.DeepEquals, expectedGlobalResult)
+}
+
 func BenchmarkExtractColumns(b *testing.B) {
 	conditions := []Expression{
 		newFunction(ast.EQ, newColumn(0), newColumn(1)),
@@ -525,22 +589,24 @@ func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.Bin
 func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
 	return types.Datum{}, m.err
 }
-func (m *MockExpr) GetType() *types.FieldType                         { return m.t }
-func (m *MockExpr) Clone() Expression                                 { return nil }
-func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool   { return false }
-func (m *MockExpr) IsCorrelated() bool                                { return false }
-func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool        { return false }
-func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
-func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
-func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
-func (m *MockExpr) ExplainInfo() string                               { return "" }
-func (m *MockExpr) ExplainNormalizedInfo() string                     { return "" }
-func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte      { return nil }
-func (m *MockExpr) Vectorized() bool                                  { return false }
-func (m *MockExpr) SupportReverseEval() bool                          { return false }
-func (m *MockExpr) HasCoercibility() bool                             { return false }
-func (m *MockExpr) Coercibility() Coercibility                        { return 0 }
-func (m *MockExpr) SetCoercibility(Coercibility)                      {}
+func (m *MockExpr) GetType() *types.FieldType                                     { return m.t }
+func (m *MockExpr) Clone() Expression                                             { return nil }
+func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool               { return false }
+func (m *MockExpr) IsCorrelated() bool                                            { return false }
+func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool                    { return false }
+func (m *MockExpr) Decorrelate(schema *Schema) Expression                         { return m }
+func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error)             { return m, nil }
+func (m *MockExpr) resolveIndices(schema *Schema) error                           { return nil }
+func (m *MockExpr) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) { return m, true }
+func (m *MockExpr) resolveIndicesByVirtualExpr(schema *Schema) bool               { return true }
+func (m *MockExpr) ExplainInfo() string                                           { return "" }
+func (m *MockExpr) ExplainNormalizedInfo() string                                 { return "" }
+func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte                  { return nil }
+func (m *MockExpr) Vectorized() bool                                              { return false }
+func (m *MockExpr) SupportReverseEval() bool                                      { return false }
+func (m *MockExpr) HasCoercibility() bool                                         { return false }
+func (m *MockExpr) Coercibility() Coercibility                                    { return 0 }
+func (m *MockExpr) SetCoercibility(Coercibility)                                  {}
 
 func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
 	return "", ""

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -2926,4 +2927,152 @@ func formatReal(sctx sessionctx.Context, xBuf *chunk.Column, dInt64s []int64, re
 		result.AppendString(formatString)
 	}
 	return nil
+}
+
+func (b *builtinTranslateBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	buf1, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	buf2, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	if err := b.args[2].VecEvalString(b.ctx, input, buf2); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	var (
+		mp           map[byte]uint16
+		useCommonMap = false
+	)
+	_, isFromConst := b.args[1].(*Constant)
+	_, isToConst := b.args[2].(*Constant)
+	if isFromConst && isToConst {
+		if ExprNotNull(b.args[1]) && ExprNotNull(b.args[2]) {
+			useCommonMap = true
+			fromBytes, toBytes := []byte(buf1.GetString(0)), []byte(buf2.GetString(0))
+			mp = buildTranslateMap4Binary(fromBytes, toBytes)
+		} else {
+			for i := 0; i < n; i++ {
+				result.AppendNull()
+			}
+			return nil
+		}
+	}
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		srcStr := buf0.GetString(i)
+		var tgt []byte
+		if !useCommonMap {
+			fromBytes, toBytes := []byte(buf1.GetString(i)), []byte(buf2.GetString(i))
+			mp = buildTranslateMap4Binary(fromBytes, toBytes)
+		}
+		for _, charSrc := range []byte(srcStr) {
+			if charTo, ok := mp[charSrc]; ok {
+				if charTo != invalidByte {
+					tgt = append(tgt, byte(charTo))
+				}
+			} else {
+				tgt = append(tgt, charSrc)
+			}
+		}
+		result.AppendString(string(tgt))
+	}
+	return nil
+}
+
+func (b *builtinTranslateBinarySig) vectorized() bool {
+	return true
+}
+
+func (b *builtinTranslateUTF8Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	buf1, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	buf2, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	if err := b.args[1].VecEvalString(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	if err := b.args[2].VecEvalString(b.ctx, input, buf2); err != nil {
+		return err
+	}
+	result.ReserveString(n)
+	var (
+		mp           map[rune]rune
+		useCommonMap = false
+	)
+	_, isFromConst := b.args[1].(*Constant)
+	_, isToConst := b.args[2].(*Constant)
+	if isFromConst && isToConst {
+		if ExprNotNull(b.args[1]) && ExprNotNull(b.args[2]) {
+			useCommonMap = true
+			fromRunes, toRunes := []rune(buf1.GetString(0)), []rune(buf2.GetString(0))
+			mp = buildTranslateMap4UTF8(fromRunes, toRunes)
+		} else {
+			for i := 0; i < n; i++ {
+				result.AppendNull()
+			}
+			return nil
+		}
+	}
+	for i := 0; i < n; i++ {
+		if buf0.IsNull(i) || buf1.IsNull(i) || buf2.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		srcStr := buf0.GetString(i)
+		var tgt strings.Builder
+		if !useCommonMap {
+			fromRunes, toRunes := []rune(buf1.GetString(i)), []rune(buf2.GetString(i))
+			mp = buildTranslateMap4UTF8(fromRunes, toRunes)
+		}
+		for _, charSrc := range srcStr {
+			if charTo, ok := mp[charSrc]; ok {
+				if charTo != invalidRune {
+					tgt.WriteRune(charTo)
+				}
+			} else {
+				tgt.WriteRune(charSrc)
+			}
+		}
+		result.AppendString(tgt.String())
+	}
+	return nil
+}
+
+func (b *builtinTranslateUTF8Sig) vectorized() bool {
+	return true
 }

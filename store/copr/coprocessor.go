@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -46,6 +47,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -276,7 +278,7 @@ type copIteratorWorker struct {
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
 	vars     *tikv.Variables
-	kvclient *tikv.ClientHelper
+	kvclient *txnsnapshot.ClientHelper
 
 	memTracker *memory.Tracker
 
@@ -405,7 +407,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
 			respChan:        it.respChan,
 			finishCh:        it.finishCh,
 			vars:            it.vars,
-			kvclient:        tikv.NewClientHelper(it.store.store, &it.resolvedLocks, false),
+			kvclient:        txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, false),
 			memTracker:      it.memTracker,
 			replicaReadSeed: it.replicaReadSeed,
 			actionOnExceed:  it.actionOnExceed,

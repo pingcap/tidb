@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,11 +19,13 @@ import (
 	"container/list"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
@@ -254,6 +257,18 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	// All times are counted in seconds.
 	now := time.Now().Unix()
 
+	failpoint.Inject("mockTimeForStatementsSummary", func(val failpoint.Value) {
+		// mockTimeForStatementsSummary takes string of Unix timestamp
+		if unixTimeStr, ok := val.(string); ok {
+			unixTime, err := strconv.ParseInt(unixTimeStr, 10, 64)
+			if err != nil {
+				panic(err.Error())
+			} else {
+				now = unixTime
+			}
+		}
+	})
+
 	intervalSeconds := ssMap.refreshInterval()
 	historySize := ssMap.historySize()
 
@@ -340,8 +355,8 @@ type BindableStmt struct {
 	Collation string
 }
 
-// GetMoreThanOnceBindableStmt gets users' select/update/delete SQLs that occurred more than once.
-func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceBindableStmt() []*BindableStmt {
+// GetMoreThanOnceBindableStmt gets users' select/update/delete SQLs that occurred more than the specified count.
+func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*BindableStmt {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	ssMap.Unlock()
@@ -358,7 +373,7 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceBindableStmt() []*BindableSt
 					ssElement.Lock()
 
 					// Empty auth users means that it is an internal queries.
-					if len(ssElement.authUsers) > 0 && (ssbd.history.Len() > 1 || ssElement.execCount > 1) {
+					if len(ssElement.authUsers) > 0 && (int64(ssbd.history.Len()) > cnt || ssElement.execCount > cnt) {
 						stmt := &BindableStmt{
 							Schema:    ssbd.schemaName,
 							Query:     ssElement.sampleSQL,
