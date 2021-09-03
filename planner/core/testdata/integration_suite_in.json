@@ -287,5 +287,18 @@
       "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)",
       "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a)"
     ]
+  },
+  {
+    "name": "TestGroupBySetVar",
+    "cases": [
+      "select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;",
+      // TODO: fix these two cases
+      "select @n:=@n+1 as e from ta group by e",
+      "select @n:=@n+a as e from ta group by e",
+      "select * from (select @n:=@n+1 as e from ta) tt group by e",
+      "select * from (select @n:=@n+a as e from ta) tt group by e",
+      "select a from ta group by @n:=@n+1",
+      "select a from ta group by @n:=@n+a"
+    ]
   }
 ]
