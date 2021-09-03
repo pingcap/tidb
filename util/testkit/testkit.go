@@ -119,7 +119,7 @@ func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 		c:     c,
 		store: store,
 	}
-	tk.MustExec("set tidb_general_log=off")
+	variable.ProcessGeneralLog.Store(true)
 	return tk
 }
 
