@@ -5652,7 +5652,7 @@ func (s *testSerialSuite2) TestUnsignedFeedback(c *C) {
 	tk.MustQuery("select count(distinct b) from t").Check(testkit.Rows("2"))
 	result := tk.MustQuery("explain analyze select count(distinct b) from t")
 	c.Assert(result.Rows()[2][4], Equals, "table:t")
-	c.Assert(result.Rows()[2][6], Equals, "range:[0,+inf], keep order:false")
+	c.Assert(result.Rows()[2][6], Equals, "keep order:false")
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
