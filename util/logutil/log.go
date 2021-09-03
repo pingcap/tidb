@@ -115,6 +115,13 @@ func PutGeneralLogOrDrop(entry *GeneralLogEntry) {
 	}
 }
 
+// InitGeneralQueryLog initialize general query logger, which will starts a format & logging worker goroutine
+// General query logs are sent to the worker through a channel, which is asynchronously flushed to logging files.
+func InitGeneralQueryLog() {
+	GeneralLogLogger := newGeneralLogLogger()
+	generalLogMgr = newGeneralLog(GeneralLogLogger)
+}
+
 // InitLogger initializes a logger with cfg.
 func InitLogger(cfg *LogConfig) error {
 	gl, props, err := log.InitLogger(&cfg.Config, zap.AddStacktrace(zapcore.FatalLevel))
@@ -128,13 +135,6 @@ func InitLogger(cfg *LogConfig) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	// initialize general log logger
-	GeneralLogLogger, err = newGeneralLogLogger()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	generalLogMgr = newGeneralLog(GeneralLogLogger)
 
 	// init logger for grpc debugging
 	_, _, err = initGRPCLogger(cfg)

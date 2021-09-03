@@ -85,7 +85,7 @@ func (gl *GeneralLogManager) startFormatWorker() {
 	}
 }
 
-func newGeneralLogLogger() (*zap.Logger, error) {
+func newGeneralLogLogger() *zap.Logger {
 	// create the general query logger
 	encCfg := zap.NewProductionEncoderConfig()
 	encCfg.LevelKey = zapcore.OmitKey
@@ -104,5 +104,5 @@ func newGeneralLogLogger() (*zap.Logger, error) {
 	ioCore := zapcore.NewCore(jsonEncoder, &wsBuffered, level)
 	logger := zap.New(ioCore)
 
-	return logger, nil
+	return logger
 }

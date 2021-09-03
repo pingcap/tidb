@@ -606,6 +606,8 @@ func setupLog() {
 	err := logutil.InitLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
 
+	logutil.InitGeneralQueryLog()
+
 	// trigger internal http(s) client init.
 	util.InternalHTTPClient()
 }
