@@ -404,7 +404,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			err = w.deleteRange(w.ddlJobCtx, job)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn:
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
 			err = w.deleteRange(w.ddlJobCtx, job)
 		}
 	}
@@ -786,6 +786,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = w.onCreateIndex(d, t, job, true)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = onDropIndex(t, job)
+	case model.ActionDropIndexes:
+		ver, err = onDropIndexes(t, job)
 	case model.ActionRenameIndex:
 		ver, err = onRenameIndex(t, job)
 	case model.ActionAddForeignKey:
@@ -834,6 +836,10 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onAlterTableAttributes(t, job)
 	case model.ActionAlterTablePartitionAttributes:
 		ver, err = onAlterTablePartitionAttributes(t, job)
+	case model.ActionCreatePlacementPolicy:
+		ver, err = onCreatePlacementPolicy(d, t, job)
+	case model.ActionDropPlacementPolicy:
+		ver, err = onDropPlacementPolicy(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -1004,7 +1010,8 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		newSchemaIDs := []int64{}
 		tableNames := []*model.CIStr{}
 		tableIDs := []int64{}
-		err = job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs)
+		oldSchemaNames := []*model.CIStr{}
+		err = job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
