@@ -1855,7 +1855,15 @@ func newChunkRestore(
 	switch chunk.FileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := cfg.Mydumper.CSV.Header && chunk.Chunk.Offset == 0
-		parser = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader)
+		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
+		charsetConvertor, err := mydump.NewCharsetConvertor(cfg.Mydumper.DataCharacterSet, cfg.Mydumper.DataInvalidCharReplace)
+		if err != nil {
+			return nil, err
+		}
+		parser, err = mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, blockBufSize, ioWorkers, hasHeader, charsetConvertor)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
