@@ -1136,11 +1136,9 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 
 	oldRules := make([]string, 0, len(oldIDs))
 	newRules := make([]*label.Rule, 0, len(oldIDs))
-	oldRuleMap := make(map[string]struct{})
 	for _, newPartition := range newPartitions {
 		oldRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, newPartition.Name.L)
 		oldRules = append(oldRules, oldRuleID)
-		oldRuleMap[oldRuleID] = struct{}{}
 	}
 
 	rules, err := infosync.GetLabelRules(context.TODO(), oldRules)
@@ -1149,11 +1147,9 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		return ver, errors.Wrapf(err, "failed to get label rules from PD")
 	}
 
-	for _, r := range rules {
-		for _, newPartition := range newPartitions {
-			if _, ok := oldRuleMap[r.ID]; ok {
-				newRules = append(newRules, r.Clone().Reset(newPartition.ID, job.SchemaName, tblInfo.Name.L, newPartition.Name.L))
-			}
+	for idx, newPartition := range newPartitions {
+		if r, ok := rules[oldRules[idx]]; ok {
+			newRules = append(newRules, r.Clone().Reset(newPartition.ID, job.SchemaName, tblInfo.Name.L, newPartition.Name.L))
 		}
 	}
 

@@ -16,22 +16,27 @@ package ddl_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
 func (s *testDBSuite8) TestAlterTableAttributes(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
 	defer func() {
-		tk.MustExec(`alter table t1 attributes="";`)
-		tk.MustExec("drop table if exists t1")
+		dom.Close()
+		err := store.Close()
+		c.Assert(err, IsNil)
 	}()
-
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
 	tk.MustExec(`create table t1 (c int);`)
 
 	// normal cases
-	_, err := tk.Exec(`alter table t1 attributes="nomerge";`)
+	_, err = tk.Exec(`alter table t1 attributes="nomerge";`)
 	c.Assert(err, IsNil)
 	_, err = tk.Exec(`alter table t1 attributes="nomerge,somethingelse";`)
 	c.Assert(err, IsNil)
@@ -50,17 +55,17 @@ func (s *testDBSuite8) TestAlterTableAttributes(c *C) {
 }
 
 func (s *testDBSuite8) TestAlterTablePartitionAttributes(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
 	defer func() {
-		tk.MustExec(`alter table t1 partition p0 attributes="";`)
-		tk.MustExec(`alter table t1 partition p1 attributes="";`)
-		tk.MustExec(`alter table t1 partition p2 attributes="";`)
-		tk.MustExec(`alter table t1 partition p3 attributes="";`)
-		tk.MustExec("drop table if exists t1")
+		dom.Close()
+		err := store.Close()
+		c.Assert(err, IsNil)
 	}()
-
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
 	tk.MustExec(`create table t1 (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
@@ -70,7 +75,7 @@ PARTITION BY RANGE (c) (
 );`)
 
 	// normal cases
-	_, err := tk.Exec(`alter table t1 partition p0 attributes="nomerge";`)
+	_, err = tk.Exec(`alter table t1 partition p0 attributes="nomerge";`)
 	c.Assert(err, IsNil)
 	_, err = tk.Exec(`alter table t1 partition p1 attributes="nomerge,somethingelse";`)
 	c.Assert(err, IsNil)
@@ -89,15 +94,17 @@ PARTITION BY RANGE (c) (
 }
 
 func (s *testDBSuite8) TestTruncateTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
 	defer func() {
-		tk.MustExec(`alter table t1 attributes="";`)
-		tk.MustExec(`alter table t1 partition p0 attributes="";`)
-		tk.MustExec("drop table if exists t1")
+		dom.Close()
+		err := store.Close()
+		c.Assert(err, IsNil)
 	}()
-
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
 	tk.MustExec(`create table t1 (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
@@ -105,7 +112,7 @@ PARTITION BY RANGE (c) (
 );`)
 
 	// add rules
-	_, err := tk.Exec(`alter table t1 attributes="attr";`)
+	_, err = tk.Exec(`alter table t1 attributes="attr";`)
 	c.Assert(err, IsNil)
 	_, err = tk.Exec(`alter table t1 partition p0 attributes="attr1";`)
 	c.Assert(err, IsNil)
@@ -129,15 +136,17 @@ PARTITION BY RANGE (c) (
 }
 
 func (s *testDBSuite8) TestRenameTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
 	defer func() {
-		tk.MustExec(`alter table t2 attributes="";`)
-		tk.MustExec(`alter table t2 partition p0 attributes="";`)
-		tk.MustExec("drop table if exists t2")
+		dom.Close()
+		err := store.Close()
+		c.Assert(err, IsNil)
 	}()
-
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
 	tk.MustExec(`create table t1 (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
@@ -145,7 +154,7 @@ PARTITION BY RANGE (c) (
 );`)
 
 	// add rules
-	_, err := tk.Exec(`alter table t1 attributes="attr";`)
+	_, err = tk.Exec(`alter table t1 attributes="attr";`)
 	c.Assert(err, IsNil)
 	_, err = tk.Exec(`alter table t1 partition p0 attributes="attr1";`)
 	c.Assert(err, IsNil)
@@ -169,17 +178,17 @@ PARTITION BY RANGE (c) (
 }
 
 func (s *testDBSuite8) TestPartition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
 	defer func() {
-		tk.MustExec(`alter table t1 attributes="";`)
-		tk.MustExec(`alter table t2 attributes="";`)
-		tk.MustExec("drop table if exists t1")
-		tk.MustExec("drop table if exists t2")
+		dom.Close()
+		err := store.Close()
+		c.Assert(err, IsNil)
 	}()
-
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
 	tk.MustExec(`create table t1 (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
@@ -189,7 +198,7 @@ PARTITION BY RANGE (c) (
 	tk.MustExec(`create table t2 (c int);`)
 
 	// add rules
-	_, err := tk.Exec(`alter table t1 attributes="attr";`)
+	_, err = tk.Exec(`alter table t1 attributes="attr";`)
 	c.Assert(err, IsNil)
 	_, err = tk.Exec(`alter table t1 partition p0 attributes="attr1";`)
 	c.Assert(err, IsNil)
@@ -238,11 +247,17 @@ PARTITION BY RANGE (c) (
 }
 
 func (s *testDBSuite8) TestDefaultKeyword(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
+	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	defer tk.MustExec("drop table if exists t1")
-
 	tk.MustExec(`create table t1 (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
@@ -250,7 +265,7 @@ PARTITION BY RANGE (c) (
 );`)
 
 	// add rules
-	_, err := tk.Exec(`alter table t1 attributes="attr";`)
+	_, err = tk.Exec(`alter table t1 attributes="attr";`)
 	c.Assert(err, IsNil)
 	_, err = tk.Exec(`alter table t1 partition p0 attributes="attr1";`)
 	c.Assert(err, IsNil)
