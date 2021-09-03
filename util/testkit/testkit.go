@@ -115,10 +115,12 @@ func (res *Result) Sort() *Result {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(c *check.C, store kv.Storage) *TestKit {
-	return &TestKit{
+	tk := &TestKit{
 		c:     c,
 		store: store,
 	}
+	tk.MustExec("set tidb_general_log=off")
+	return tk
 }
 
 // NewTestKitWithSession returns a new *TestKit with a session.
