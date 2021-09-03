@@ -607,6 +607,8 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
 			warning := ErrInternal.GenWithStack(errMsg)
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		} else {
+			ds.ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have set a hint to read table `" + hintTbl.tblName.O + "` from TiKV.")
 		}
 	}
 	if hintTbl := hintInfo.ifPreferTiFlash(alias); hintTbl != nil {
@@ -1290,6 +1292,12 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 // unionJoinFieldType finds the type which can carry the given types in Union.
 // Note that unionJoinFieldType doesn't handle charset and collation, caller need to handle it by itself.
 func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
+	// We ignore the pure NULL type.
+	if a.Tp == mysql.TypeNull {
+		return b
+	} else if b.Tp == mysql.TypeNull {
+		return a
+	}
 	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
 	// This logic will be intelligible when it is associated with the buildProjection4Union logic.
 	if resultTp.Tp == mysql.TypeNewDecimal {
@@ -4822,7 +4830,7 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPla
 		p = np
 		switch newArg.(type) {
 		case *expression.Column, *expression.Constant:
-			newArgList = append(newArgList, newArg)
+			newArgList = append(newArgList, newArg.Clone())
 			continue
 		}
 		proj.Exprs = append(proj.Exprs, newArg)
@@ -4854,7 +4862,7 @@ func (b *PlanBuilder) buildArgs4WindowFunc(ctx context.Context, p LogicalPlan, a
 		p = np
 		switch newArg.(type) {
 		case *expression.Column, *expression.Constant:
-			newArgList = append(newArgList, newArg)
+			newArgList = append(newArgList, newArg.Clone())
 			continue
 		}
 		col := &expression.Column{
