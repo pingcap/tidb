@@ -982,7 +982,7 @@ func (local *local) checkMultiIngestSupport(ctx context.Context, pdCtl *pdutil.P
 
 	for _, s := range stores {
 		// skip stores that are not online
-		if s.State != metapb.StoreState_Offline {
+		if s.State != metapb.StoreState_Up || version.IsTiFlash(s) {
 			continue
 		}
 		var err error
@@ -1011,15 +1011,15 @@ func (local *local) checkMultiIngestSupport(ctx context.Context, pdCtl *pdutil.P
 					return nil
 				}
 			}
+			log.L().Warn("check multi ingest support failed", zap.Error(err), zap.String("store", s.Address),
+				zap.Int("retry", i))
+		}
+		if err != nil {
 			// if the cluster contains no TiFlash store, we don't need the multi-ingest feature,
 			// so in this condition, downgrade the logic instead of return an error.
 			if hasTiFlash {
 				return errors.Trace(err)
 			}
-			log.L().Warn("check multi ingest support failed", zap.Error(err), zap.String("store", s.Address),
-				zap.Int("retry", i))
-		}
-		if err != nil {
 			log.L().Warn("check multi failed all retry, fallback to false", log.ShortError(err))
 			local.supportMultiIngest = false
 			return nil
