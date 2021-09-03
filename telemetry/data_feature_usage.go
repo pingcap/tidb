@@ -33,9 +33,10 @@ type featureUsage struct {
 	Txn *TxnUsage `json:"txn"`
 	// cluster index usage information
 	// key is the first 6 characters of sha2(TABLE_NAME, 256)
-	ClusterIndex   *ClusterIndexUsage `json:"clusterIndex"`
-	TemporaryTable bool               `json:"temporaryTable"`
-	CTE            *m.CTEUsageCounter `json:"cte"`
+	ClusterIndex   *ClusterIndexUsage  `json:"clusterIndex"`
+	TemporaryTable bool                `json:"temporaryTable"`
+	CTE            *m.CTEUsageCounter  `json:"cte"`
+	AuthType       *m.AuthUsageCounter `json:"authType"`
 }
 
 func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
@@ -53,7 +54,9 @@ func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 
 	cteUsage := getCTEUsageInfo()
 
-	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage}, nil
+	authType := getAuthTypeUsageInfo()
+
+	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage, authType}, nil
 }
 
 // ClusterIndexUsage records the usage info of all the tables, no more than 10k tables
@@ -154,6 +157,7 @@ type TxnUsage struct {
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
 var initialCTECounter m.CTEUsageCounter
+var initialAuthUsageCounter m.AuthUsageCounter
 
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
@@ -184,4 +188,14 @@ func getCTEUsageInfo() *m.CTEUsageCounter {
 	curr := m.GetCTECounter()
 	diff := curr.Sub(initialCTECounter)
 	return &diff
+}
+
+func getAuthTypeUsageInfo() *m.AuthUsageCounter {
+	curr := m.GetAuthUsageCounter()
+	diff := curr.Sub(initialAuthUsageCounter)
+	return &diff
+}
+
+func postReportAuthTypeUsage() {
+	initialAuthUsageCounter = m.GetAuthUsageCounter()
 }

@@ -28,6 +28,13 @@ var (
 			Name:      "non_recursive_cte_usage",
 			Help:      "Counter of usage of CTE",
 		}, []string{LblCTEType})
+	TelemetryAuthUsageCnt = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "telemetry",
+			Name:      "auth_usage",
+			Help:      "Counter of usage of Authentication",
+		}, []string{LblAuthType})
 )
 
 // readCounter reads the value of a prometheus.Counter.
@@ -59,11 +66,39 @@ func (c CTEUsageCounter) Sub(rhs CTEUsageCounter) CTEUsageCounter {
 	return new
 }
 
-// GetCTECounter gets the TxnCommitCounter.
+// GetCTECounter gets the CTEUsageCounter.
 func GetCTECounter() CTEUsageCounter {
 	return CTEUsageCounter{
 		NonRecursiveCTEUsed: readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "nonRecurCTE"})),
 		RecursiveUsed:       readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "recurCTE"})),
 		NonCTEUsed:          readCounter(TelemetrySQLCTECnt.With(prometheus.Labels{LblCTEType: "notCTE"})),
+	}
+}
+
+// AuthUsageCounter records the authenticaiton and handhake type usage.
+type AuthUsageCounter struct {
+	HandshakeV9     int64 `json:"handshakeV9"`
+	HandshakeV10    int64 `json:"handshakeV10"`
+	NativeAuth      int64 `json:"mysql_native_password"`
+	CachingSha2Auth int64 `json:"caching_sha2_password"`
+}
+
+// Sub returns the difference of two counters.
+func (c AuthUsageCounter) Sub(rhs AuthUsageCounter) AuthUsageCounter {
+	new := AuthUsageCounter{}
+	new.HandshakeV9 = c.HandshakeV9 - rhs.HandshakeV9
+	new.HandshakeV10 = c.HandshakeV10 - rhs.HandshakeV10
+	new.NativeAuth = c.NativeAuth - rhs.NativeAuth
+	new.CachingSha2Auth = c.CachingSha2Auth - rhs.CachingSha2Auth
+	return new
+}
+
+// GetAuthUsageCounter gets the AuthUsageCounter.
+func GetAuthUsageCounter() AuthUsageCounter {
+	return AuthUsageCounter{
+		HandshakeV9:     readCounter(TelemetryAuthUsageCnt.With(prometheus.Labels{LblAuthType: "HandshakeV9"})),
+		HandshakeV10:    readCounter(TelemetryAuthUsageCnt.With(prometheus.Labels{LblAuthType: "HandshakeV10"})),
+		NativeAuth:      readCounter(TelemetryAuthUsageCnt.With(prometheus.Labels{LblAuthType: "mysql_native_password"})),
+		CachingSha2Auth: readCounter(TelemetryAuthUsageCnt.With(prometheus.Labels{LblAuthType: "caching_sha2_password"})),
 	}
 }

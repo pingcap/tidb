@@ -148,6 +148,8 @@ var (
 
 	connIdleDurationHistogramNotInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("0")
 	connIdleDurationHistogramInTxn    = metrics.ConnIdleDurationHistogram.WithLabelValues("1")
+
+	telemetryAuthTypeUsage = metrics.TelemetryAuthUsageCnt
 )
 
 // newClientConn creates a *clientConn object.
@@ -624,9 +626,11 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	capability := uint32(binary.LittleEndian.Uint16(data[:2]))
 	if capability&mysql.ClientProtocol41 > 0 {
 		pos, err = parseHandshakeResponseHeader(ctx, &resp, data)
+		telemetryAuthTypeUsage.WithLabelValues("HandshakeV10").Inc()
 	} else {
 		pos, err = parseOldHandshakeResponseHeader(ctx, &resp, data)
 		isOldVersion = true
+		telemetryAuthTypeUsage.WithLabelValues("HandshakeV9").Inc()
 	}
 
 	if err != nil {
@@ -690,11 +694,13 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 
 	switch resp.AuthPlugin {
 	case mysql.AuthCachingSha2Password:
+		telemetryAuthTypeUsage.WithLabelValues("caching_sha2_password").Inc()
 		resp.Auth, err = cc.authSha(ctx)
 		if err != nil {
 			return err
 		}
 	case mysql.AuthNativePassword:
+		telemetryAuthTypeUsage.WithLabelValues("mysql_native_password").Inc()
 	default:
 		return errors.New("Unknown auth plugin")
 	}

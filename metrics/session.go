@@ -156,4 +156,5 @@ const (
 	LblVersion     = "version"
 	LblHash        = "hash"
 	LblCTEType     = "cte_type"
+	LblAuthType    = "auth_type"
 )
