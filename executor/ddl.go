@@ -282,18 +282,23 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema.O)
 	}
+
+	_, exists := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	if exists {
+		err := infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name})
+		if s.IfNotExists {
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
+	}
+
 	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.ctx, is, s, dbInfo.Charset, dbInfo.Collate)
 	if err != nil {
 		return err
 	}
 
-	err = e.tempTableDDL.CreateLocalTemporaryTable(dbInfo.Name, tbInfo)
-	if err != nil && s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
-		e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
-
-	return err
+	return e.tempTableDDL.CreateLocalTemporaryTable(dbInfo.Name, tbInfo)
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
