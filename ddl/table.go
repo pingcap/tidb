@@ -68,6 +68,21 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
+	if tbInfo.DirectPlacementOpts != nil {
+		if tbInfo.PlacementPolicyRef == nil {
+			// check the direct placement option compatibility.
+			if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
+				return ver, errors.Trace(err)
+			}
+		} else {
+			// placement policy reference will override the direct placement options.
+			_, err = checkPlacementPolicyExistAndCancelNonExistJob(t, job, tbInfo.PlacementPolicyRef.ID)
+			if err != nil {
+				return ver, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
+			}
+		}
+	}
+
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)

@@ -57,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/placementpolicy"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 )
@@ -1609,6 +1608,21 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 			}
 		}
 	}
+	if tbInfo.DirectPlacementOpts != nil {
+		if tbInfo.PlacementPolicyRef == nil {
+			// check the direct placement option compatibility.
+			if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			// placement policy reference will override the direct placement options.
+			policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(tbInfo.PlacementPolicyRef.Name)
+			if !ok {
+				return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
+			}
+			tbInfo.PlacementPolicyRef.ID = policy.ID
+		}
+	}
 	return nil
 }
 
@@ -2275,6 +2289,65 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 					return errors.Trace(errUnsupportedEngineTemporary)
 				}
 			}
+		case ast.TableOptionPlacementPolicy:
+			tbInfo.PlacementPolicyRef = &model.PolicyRefInfo{
+				Name: model.NewCIStr(op.StrValue),
+			}
+		case ast.TableOptionPlacementPrimaryRegion:
+			if tbInfo.DirectPlacementOpts == nil {
+				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
+			}
+			tbInfo.DirectPlacementOpts.PrimaryRegion = op.StrValue
+		case ast.TableOptionPlacementRegions:
+			if tbInfo.DirectPlacementOpts == nil {
+				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
+			}
+			tbInfo.DirectPlacementOpts.Regions = op.StrValue
+		case ast.TableOptionPlacementFollowerCount:
+			if tbInfo.DirectPlacementOpts == nil {
+				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
+			}
+			tbInfo.DirectPlacementOpts.Followers = op.UintValue
+		case ast.TableOptionPlacementVoterCount:
+			if tbInfo.DirectPlacementOpts == nil {
+				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
+			}
+			tbInfo.DirectPlacementOpts.Voters = op.UintValue
+		case ast.TableOptionPlacementLearnerCount:
+			if tbInfo.DirectPlacementOpts == nil {
+				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
+			}
+			tbInfo.DirectPlacementOpts.Learners = op.UintValue
+		case ast.TableOptionPlacementSchedule:
+			if tbInfo.DirectPlacementOpts == nil {
+				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
+			}
+			tbInfo.DirectPlacementOpts.Schedule = op.StrValue
+		case ast.TableOptionPlacementConstraints:
+			if tbInfo.DirectPlacementOpts == nil {
+				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
+			}
+			tbInfo.DirectPlacementOpts.Constraints = op.StrValue
+		case ast.TableOptionPlacementLeaderConstraints:
+			if tbInfo.DirectPlacementOpts == nil {
+				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
+			}
+			tbInfo.DirectPlacementOpts.LeaderConstraints = op.StrValue
+		case ast.TableOptionPlacementLearnerConstraints:
+			if tbInfo.DirectPlacementOpts == nil {
+				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
+			}
+			tbInfo.DirectPlacementOpts.LearnerConstraints = op.StrValue
+		case ast.TableOptionPlacementFollowerConstraints:
+			if tbInfo.DirectPlacementOpts == nil {
+				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
+			}
+			tbInfo.DirectPlacementOpts.FollowerConstraints = op.StrValue
+		case ast.TableOptionPlacementVoterConstraints:
+			if tbInfo.DirectPlacementOpts == nil {
+				tbInfo.DirectPlacementOpts = &model.PlacementSettings{}
+			}
+			tbInfo.DirectPlacementOpts.VoterConstraints = op.StrValue
 		}
 	}
 	shardingBits := shardingBits(tbInfo)
@@ -6222,8 +6295,8 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 	return errors.Trace(err)
 }
 
-func buildPolicyInfo(name model.CIStr, options []*ast.PlacementOption) (*placementpolicy.PolicyInfo, error) {
-	policyInfo := &placementpolicy.PolicyInfo{}
+func buildPolicyInfo(name model.CIStr, options []*ast.PlacementOption) (*model.PolicyInfo, error) {
+	policyInfo := &model.PolicyInfo{}
 	policyInfo.Name = name
 	for _, opt := range options {
 		switch opt.Tp {
@@ -6275,7 +6348,7 @@ func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlac
 		return errors.Trace(err)
 	}
 
-	err = checkPolicyValidation(policyInfo)
+	err = checkPolicyValidation(policyInfo.PlacementSettings)
 	if err != nil {
 		return err
 	}
@@ -6331,7 +6404,7 @@ func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacem
 		return errors.Trace(err)
 	}
 
-	err = checkPolicyValidation(newPolicyInfo)
+	err = checkPolicyValidation(newPolicyInfo.PlacementSettings)
 	if err != nil {
 		return err
 	}
