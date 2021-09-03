@@ -550,6 +550,7 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
 	variable.SetSysVar(variable.Socket, cfg.Socket)
 	variable.SetSysVar(variable.DataDir, cfg.Path)
+	variable.SetSysVar(variable.Version, cfg.ServerVersion)
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
 	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
