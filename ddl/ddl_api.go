@@ -6315,6 +6315,11 @@ func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacem
 		return errors.Trace(err)
 	}
 
+	err = checkPolicyValidation(newPolicyInfo)
+	if err != nil {
+		return err
+	}
+
 	job := &model.Job{
 		SchemaID:   policy.ID,
 		SchemaName: policy.Name.L,
