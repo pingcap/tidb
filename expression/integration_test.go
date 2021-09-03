@@ -8678,7 +8678,7 @@ func (s *testIntegrationSerialSuite) TestLikeWithCollation(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 
 	tk.MustQuery(`select 'a' like 'A' collate utf8mb4_unicode_ci;`).Check(testkit.Rows("1"))
-	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin like 'A' collate utf8mb4_unicode_ci;`, "[expression:1270]Illegal mix of collations (utf8mb4_bin,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT), (utf8mb4_bin,NUMERIC) for operation 'like'")
+	tk.MustGetErrMsg(`select 'a' collate utf8mb4_bin like 'A' collate utf8mb4_unicode_ci;`, "[expression:1270]Illegal mix of collations (utf8mb4_bin,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT), (binary,NUMERIC) for operation 'like'")
 	tk.MustQuery(`select '😛' collate utf8mb4_general_ci like '😋';`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select '😛' collate utf8mb4_general_ci = '😋';`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select '😛' collate utf8mb4_unicode_ci like '😋';`).Check(testkit.Rows("0"))
@@ -8949,6 +8949,16 @@ func (s *testIntegrationSuite) Test22717(c *C) {
 	tk.MustQuery("select d from t where d").Check(testkit.Rows("0", "1", "0,1"))
 }
 
+func (s *testIntegrationSuite) Test23262(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a year)")
+	tk.MustExec("insert into t values(2002)")
+	tk.MustQuery("select * from t where a=2").Check(testkit.Rows("2002"))
+	tk.MustQuery("select * from t where a='2'").Check(testkit.Rows("2002"))
+}
+
 func (s *testIntegrationSerialSuite) TestPartitionPruningRelaxOP(c *C) {
 	// Discovered while looking at issue 19941 (not completely related)
 	// relaxOP relax the op > to >= and < to <=
@@ -9170,6 +9180,19 @@ func (s *testIntegrationSuite2) TestIssue25591(c *C) {
 	rows.Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite) TestIssue27236(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	row := tk.MustQuery(`select extract(hour_second from "-838:59:59.00");`)
+	row.Check(testkit.Rows("-8385959"))
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(c1 varchar(100));`)
+	tk.MustExec(`insert into t values('-838:59:59.00'), ('700:59:59.00');`)
+	row = tk.MustQuery(`select extract(hour_second from c1) from t order by c1;`)
+	row.Check(testkit.Rows("-8385959", "7005959"))
+}
+
 func (s *testIntegrationSuite) TestRefineArgNullValues(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
@@ -9182,6 +9205,18 @@ func (s *testIntegrationSuite) TestRefineArgNullValues(c *C) {
 		"<nil>",
 		"<nil>",
 	))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue26662(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a varchar(36) NOT NULL) ENGINE = InnoDB DEFAULT CHARSET = utf8 COLLATE = utf8_general_ci;")
+	tk.MustExec("set names utf8;")
+	tk.MustQuery("select t2.b from (select t1.a as b from t1 union all select t1.a as b from t1) t2 where case when (t2.b is not null) then t2.b else '' end > '1234567';").
+		Check(testkit.Rows())
 }
 
 func (s *testIntegrationSuite) TestConstPropNullFunctions(c *C) {
