@@ -28,14 +28,11 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/session/temptable"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -49,10 +46,10 @@ import (
 type DDLExec struct {
 	baseExecutor
 
-	stmt             ast.StmtNode
-	is               infoschema.InfoSchema
-	tempTableManager *temptable.TemporaryTableManager
-	done             bool
+	stmt         ast.StmtNode
+	is           infoschema.InfoSchema
+	tempTableDDL temptable.TemporaryTableDDL
+	done         bool
 }
 
 // toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
@@ -214,25 +211,10 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	if _, exist := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); exist {
-		return e.executeTruncateLocalTemporaryTable(s)
+		return e.tempTableDDL.TruncateLocalTemporaryTable(s.Table.Schema, s.Table.Name)
 	}
 	err := domain.GetDomain(e.ctx).DDL().TruncateTable(e.ctx, ident)
 	return err
-}
-
-func (e *DDLExec) executeTruncateLocalTemporaryTable(s *ast.TruncateTableStmt) error {
-	tableIdent := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	tbl, exists := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
-	if !exists {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(s.Table.Schema, s.Table.Name)
-	}
-
-	newTbl, err := e.newTemporaryTableFromTableInfo(tbl.Meta().Clone())
-	if err != nil {
-		return err
-	}
-
-	return e.tempTableManager.ReplaceAndTruncateLocalTemporaryTable(tableIdent, newTbl)
 }
 
 func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
@@ -305,46 +287,13 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		return err
 	}
 
-	tbl, err := e.newTemporaryTableFromTableInfo(tbInfo)
-	if err != nil {
-		return err
-	}
-
-	err = e.tempTableManager.AddLocalTemporaryTable(dbInfo.Name, tbl)
+	err = e.tempTableDDL.CreateLocalTemporaryTable(dbInfo.Name, tbInfo)
 	if err != nil && s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
 		e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
 
 	return err
-}
-
-func (e *DDLExec) newTemporaryTableFromTableInfo(tbInfo *model.TableInfo) (table.Table, error) {
-	dom := domain.GetDomain(e.ctx)
-	// Local temporary table uses a real table ID.
-	// We could mock a table ID, but the mocked ID might be identical to an existing
-	// real table, and then we'll get into trouble.
-	err := kv.RunInNewTxn(context.Background(), dom.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		tblID, err := m.GenGlobalID()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		tbInfo.ID = tblID
-		tbInfo.State = model.StatePublic
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// AutoID is allocated in mocked..
-	alloc := autoid.NewAllocatorFromTempTblInfo(tbInfo)
-	allocs := make([]autoid.Allocator, 0, 1)
-	if alloc != nil {
-		allocs = append(allocs, alloc)
-	}
-	return tables.TableFromMeta(allocs, tbInfo)
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
@@ -526,7 +475,7 @@ func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*ast.TableName) err
 	}
 
 	for _, tb := range localTempTables {
-		err := e.tempTableManager.RemoveLocalTemporaryTable(ast.Ident{Schema: tb.Schema, Name: tb.Name})
+		err := e.tempTableDDL.DropLocalTemporaryTable(tb.Schema, tb.Name)
 		if err != nil {
 			return err
 		}
