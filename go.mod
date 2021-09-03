@@ -44,17 +44,17 @@ require (
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
-	github.com/pingcap/badger v1.5.1-0.20200908111422-2e78ee155d19
+	github.com/pingcap/badger v1.5.1-0.20210828064554-21c3176422cb
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20210425183316-da1aaba5fb63
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20210806074406-317f69fb54b4
-	github.com/pingcap/log v0.0.0-20210625125904-98ed8e2eb1c7
-	github.com/pingcap/parser v0.0.0-20210817054159-11374803a2c2
+	github.com/pingcap/log v0.0.0-20210818144256-6455d4a4c6f9
+	github.com/pingcap/parser v0.0.0-20210823071803-562fed23b4fb
 	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
-	github.com/pingcap/tipb v0.0.0-20210708040514-0f154bb0dc0f
+	github.com/pingcap/tipb v0.0.0-20210802080519-94b831c6db55
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
@@ -66,7 +66,7 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210816071108-df2119f51be1
+	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210902062307-4fc565e203a9
 	github.com/tikv/pd v1.1.0-beta.0.20210818082359-acba1da0018d
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.4.0
@@ -77,16 +77,16 @@ require (
 	github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b
 	go.opencensus.io v0.22.5 // indirect
-	go.uber.org/atomic v1.8.0
+	go.uber.org/atomic v1.9.0
 	go.uber.org/automaxprocs v1.4.0
 	go.uber.org/goleak v1.1.10
 	go.uber.org/multierr v1.7.0
-	go.uber.org/zap v1.18.1
+	go.uber.org/zap v1.19.0
 	golang.org/x/net v0.0.0-20210503060351-7fd8e65b6420
 	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
 	golang.org/x/sys v0.0.0-20210630005230-0f9fa26af87c
-	golang.org/x/text v0.3.6
+	golang.org/x/text v0.3.7
 	golang.org/x/tools v0.1.5
 	google.golang.org/api v0.22.0
 	google.golang.org/grpc v1.29.1

@@ -1071,6 +1071,10 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 				}
 			}
 		}
+		// We set `StatsVersion` here and fill other fields in `(*copTask).finishIndexPlan`. Since `copTask.indexPlan` may
+		// change before calling `(*copTask).finishIndexPlan`, we don't know the stats information of `ts` currently and on
+		// the other hand, it may be hard to identify `StatsVersion` of `ts` in `(*copTask).finishIndexPlan`.
+		ts.stats = &property.StatsInfo{StatsVersion: ds.tableStats.StatsVersion}
 		// If inner cop task need keep order, the extraHandleCol should be set.
 		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
 			var needExtraProj bool
@@ -2416,7 +2420,7 @@ func (la *LogicalAggregation) checkCanPushDownToMPP() bool {
 	for _, agg := range la.AggFuncs {
 		// MPP does not support distinct except count distinct now
 		if agg.HasDistinct {
-			if agg.Name != ast.AggFuncCount {
+			if agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncGroupConcat {
 				hasUnsupportedDistinct = true
 			}
 		}
@@ -2488,7 +2492,7 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64}
 		agg := NewPhysicalHashAgg(la, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.schema.Clone())
-		if la.HasDistinct() {
+		if la.HasDistinct() || la.HasOrderBy() {
 			agg.MppRunMode = MppScalar
 		} else {
 			agg.MppRunMode = MppTiDB
