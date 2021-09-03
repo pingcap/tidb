@@ -38,17 +38,17 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
-type TemporaryTableManagerSuite struct {
+type TemporaryTableDDLSuite struct {
 	suite.Suite
 	sctx sessionctx.Context
 	ddl  *temporaryTableDDL
 }
 
-func TestTemporaryTableManagerSuit(t *testing.T) {
-	suite.Run(t, new(TemporaryTableManagerSuite))
+func TestTemporaryTableDDLSuit(t *testing.T) {
+	suite.Run(t, new(TemporaryTableDDLSuite))
 }
 
-func (s *TemporaryTableManagerSuite) SetupTest() {
+func (s *TemporaryTableDDLSuite) SetupTest() {
 	store, err := mockstore.NewMockStore()
 	assert.Nil(s.T(), err)
 
@@ -59,11 +59,11 @@ func (s *TemporaryTableManagerSuite) SetupTest() {
 	s.ddl = GetTemporaryTableDDL(sctx).(*temporaryTableDDL)
 }
 
-func (s *TemporaryTableManagerSuite) TearDownTest() {
+func (s *TemporaryTableDDLSuite) TearDownTest() {
 	assert.Nil(s.T(), s.sctx.GetStore().Close())
 }
 
-func (s *TemporaryTableManagerSuite) TestAddLocalTemporaryTable() {
+func (s *TemporaryTableDDLSuite) TestAddLocalTemporaryTable() {
 	assert := assert.New(s.T())
 	sessVars := s.sctx.GetSessionVars()
 
@@ -122,7 +122,7 @@ func (s *TemporaryTableManagerSuite) TestAddLocalTemporaryTable() {
 	assert.Equal(got.Meta(), tbl1)
 }
 
-func (s *TemporaryTableManagerSuite) TestRemoveLocalTemporaryTable() {
+func (s *TemporaryTableDDLSuite) TestRemoveLocalTemporaryTable() {
 	assert := assert.New(s.T())
 	sessVars := s.sctx.GetSessionVars()
 
@@ -166,7 +166,7 @@ func (s *TemporaryTableManagerSuite) TestRemoveLocalTemporaryTable() {
 	assert.Equal([]byte{}, val)
 }
 
-func (s *TemporaryTableManagerSuite) TestTruncateLocalTemporaryTable() {
+func (s *TemporaryTableDDLSuite) TestTruncateLocalTemporaryTable() {
 	assert := assert.New(s.T())
 	sessVars := s.sctx.GetSessionVars()
 
@@ -201,7 +201,7 @@ func (s *TemporaryTableManagerSuite) TestTruncateLocalTemporaryTable() {
 
 	// insert a new tbl
 	tbl2 := newMockTable("t2")
-	err = s.ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl1)
+	err = s.ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl2)
 	assert.Equal(int64(2), tbl2.ID)
 	assert.Nil(err)
 	k2 := tablecodec.EncodeRowKeyWithHandle(2, kv.IntHandle(1))
@@ -214,7 +214,7 @@ func (s *TemporaryTableManagerSuite) TestTruncateLocalTemporaryTable() {
 	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
 	assert.True(exists)
 	assert.NotEqual(got.Meta(), tbl1)
-	assert.Equal(3, got.Meta().ID)
+	assert.Equal(int64(3), got.Meta().ID)
 	val, err = sessVars.TemporaryTableData.Get(context.Background(), k)
 	assert.Nil(err)
 	assert.Equal([]byte{}, val)
