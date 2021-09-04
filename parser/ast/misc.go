@@ -1211,6 +1211,7 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 		if len(opt.HashString) != (mysql.PWDHashLen+1) || !strings.HasPrefix(opt.HashString, "*") {
 			return "", false
 		}
+	case mysql.AuthSocket:
 	default:
 		return "", false
 	}
