@@ -166,6 +166,7 @@ const (
 const (
 	AuthNativePassword      = "mysql_native_password"
 	AuthCachingSha2Password = "caching_sha2_password"
+	AuthSocket              = "auth_socket"
 )
 
 // MySQL database and tables.
