@@ -30,8 +30,10 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -170,10 +172,18 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 ) ([]*metapb.Store, error) {
 	stores := make([]*metapb.Store, 0)
 	var err error
+
 	errRetry := utils.WithRetry(
 		ctx,
 		func() error {
 			stores, err = GetAllTiKVStores(ctx, pdClient, storeBehavior)
+			failpoint.Inject("hint-GetAllTiKVStores-error", func(val failpoint.Value) {
+				if val.(bool) {
+					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-error injected.")
+					err = status.Error(codes.Unknown, "Retryable error")
+				}
+			}
+
 			return errors.Trace(err)
 		},
 		utils.NewPDReqBackoffer(),
