@@ -6264,6 +6264,11 @@ func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlac
 		return errors.Trace(err)
 	}
 
+	err = checkPolicyValidation(policyInfo)
+	if err != nil {
+		return err
+	}
+
 	job := &model.Job{
 		SchemaName: policyInfo.Name.L,
 		Type:       model.ActionCreatePlacementPolicy,
