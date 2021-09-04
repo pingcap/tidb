@@ -5559,7 +5559,7 @@ func testModifyColumnTime(c *C, store kv.Storage, tests []testModifyColumnTimeCa
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
-	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", limit))
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
 
 	// Set time zone to UTC.
 	originalTz := tk.Se.GetSessionVars().TimeZone
