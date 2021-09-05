@@ -947,6 +947,23 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("create table t(a int) " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+		"CONSTRAINTS=\"[+disk=ssd]\"")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL,\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"/*T![placement] PRIMARY_REGION=\"cn-east=1\" */ " +
+			"/*T![placement] REGIONS=\"cn-east-1, cn-east-2\" */ " +
+			"/*T![placement] FOLLOWERS=2 */ " +
+			"/*T![placement] FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" */ " +
+			"/*T![placement] CONSTRAINTS=\"[+disk=ssd]\") */ ",
+			))
 }
 
 

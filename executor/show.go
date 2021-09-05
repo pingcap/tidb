@@ -1154,6 +1154,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		e.appendRow([]interface{}{tableInfo.Name.O, buf.String(), tableInfo.Charset, tableInfo.Collate})
 		return nil
 	}
+	// TODO: ADD tableInfo.DirectPlacementOpts
 
 	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
 	return nil
