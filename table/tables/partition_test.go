@@ -31,6 +31,7 @@ import (
 )
 
 func TestPartitionBasic(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -63,6 +64,7 @@ PARTITION BY RANGE COLUMNS ( id ) (
 }
 
 func TestPartitionAddRecord(t *testing.T) {
+	t.Parallel()
 	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
 PARTITION BY RANGE ( id ) (
 		PARTITION p0 VALUES LESS THAN (6),
@@ -165,6 +167,7 @@ PARTITION BY RANGE ( id ) (
 }
 
 func TestHashPartitionAddRecord(t *testing.T) {
+	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -234,6 +237,7 @@ func TestHashPartitionAddRecord(t *testing.T) {
 
 // TestPartitionGetPhysicalID tests partition.GetPhysicalID().
 func TestPartitionGetPhysicalID(t *testing.T) {
+	t.Parallel()
 	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
 PARTITION BY RANGE ( id ) (
 		PARTITION p0 VALUES LESS THAN (6),
@@ -261,6 +265,7 @@ PARTITION BY RANGE ( id ) (
 }
 
 func TestGeneratePartitionExpr(t *testing.T) {
+	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -295,6 +300,7 @@ func TestGeneratePartitionExpr(t *testing.T) {
 }
 
 func TestLocateRangeColumnPartitionErr(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -313,6 +319,7 @@ func TestLocateRangeColumnPartitionErr(t *testing.T) {
 }
 
 func TestLocateRangePartitionErr(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -331,6 +338,7 @@ func TestLocateRangePartitionErr(t *testing.T) {
 }
 
 func TestLocatePartitionWithExtraHandle(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -350,6 +358,7 @@ func TestLocatePartitionWithExtraHandle(t *testing.T) {
 }
 
 func TestMultiTableUpdate(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -373,6 +382,7 @@ func TestMultiTableUpdate(t *testing.T) {
 }
 
 func TestLocatePartitionSingleColumn(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -403,6 +413,7 @@ func TestLocatePartitionSingleColumn(t *testing.T) {
 }
 
 func TestTimeZoneChange(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -462,6 +473,7 @@ func TestTimeZoneChange(t *testing.T) {
 }
 
 func TestCreatePartitionTableNotSupport(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -477,6 +489,7 @@ func TestCreatePartitionTableNotSupport(t *testing.T) {
 }
 
 func TestRangePartitionUnderNoUnsigned(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -502,6 +515,7 @@ func TestRangePartitionUnderNoUnsigned(t *testing.T) {
 }
 
 func TestIntUint(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -538,6 +552,7 @@ partition p4 values less than (9223372036854775806))`)
 }
 
 func TestHashPartitionAndConditionConflict(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -563,6 +578,7 @@ func TestHashPartitionAndConditionConflict(t *testing.T) {
 }
 
 func TestHashPartitionInsertValue(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -581,6 +597,7 @@ func TestHashPartitionInsertValue(t *testing.T) {
 }
 
 func TestIssue21574(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -594,6 +611,7 @@ func TestIssue21574(t *testing.T) {
 }
 
 func TestIssue24746(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
