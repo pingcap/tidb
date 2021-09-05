@@ -237,6 +237,8 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeCreatePlacementPolicy(x)
 	case *ast.DropPlacementPolicyStmt:
 		err = e.executeDropPlacementPolicy(x)
+	case *ast.AlterPlacementPolicyStmt:
+		err = e.executeAlterPlacementPolicy(x)
 	}
 	if err != nil {
 		// If the owner return ErrTableNotExists error when running this DDL, it may be caused by schema changed,
@@ -911,6 +913,11 @@ func (e *DDLExec) executeAlterSequence(s *ast.AlterSequenceStmt) error {
 func (e *DDLExec) executeCreatePlacementPolicy(s *ast.CreatePlacementPolicyStmt) error {
 	return domain.GetDomain(e.ctx).DDL().CreatePlacementPolicy(e.ctx, s)
 }
+
 func (e *DDLExec) executeDropPlacementPolicy(s *ast.DropPlacementPolicyStmt) error {
 	return domain.GetDomain(e.ctx).DDL().DropPlacementPolicy(e.ctx, s)
+}
+
+func (e *DDLExec) executeAlterPlacementPolicy(s *ast.AlterPlacementPolicyStmt) error {
+	return domain.GetDomain(e.ctx).DDL().AlterPlacementPolicy(e.ctx, s)
 }
