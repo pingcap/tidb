@@ -1010,6 +1010,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *tikvstore.L
 
 	// Skip the temporary table keys.
 	keys = filterTemporaryTableKeys(sessVars, keys)
+	keys = filterLockTableKeys(sessVars.StmtCtx, keys)
 
 	var lockKeyStats *tikvutil.LockKeysDetails
 	ctx = context.WithValue(ctx, tikvutil.LockKeysDetailCtxKey, &lockKeyStats)
@@ -1030,6 +1031,20 @@ func filterTemporaryTableKeys(vars *variable.SessionVars, keys []kv.Key) []kv.Ke
 	for _, key := range keys {
 		tblID := tablecodec.DecodeTableID(key)
 		if _, ok := txnCtx.GlobalTemporaryTables[tblID]; !ok {
+			newKeys = append(newKeys, key)
+		}
+	}
+	return newKeys
+}
+
+func filterLockTableKeys(stmtCtx *stmtctx.StatementContext, keys []kv.Key) []kv.Key {
+	if len(stmtCtx.LockTableIDs) == 0 {
+		return keys
+	}
+	newKeys := keys[:0:len(keys)]
+	for _, key := range keys {
+		tblID := tablecodec.DecodeTableID(key)
+		if _, ok := stmtCtx.LockTableIDs[tblID]; ok {
 			newKeys = append(newKeys, key)
 		}
 	}
@@ -1661,6 +1676,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		TaskID:        stmtctx.AllocateTaskID(),
 		CTEStorageMap: map[int]*CTEStorages{},
 		IsStaleness:   false,
+		LockTableIDs:  make(map[int64]struct{}),
 	}
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
