@@ -26,7 +26,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 	zaplog "github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -239,8 +238,6 @@ deadlock-history-collect-retryable = true
 
 	require.NoError(t, conf.Load(configFile))
 
-	require.Equal(t, "test_version", conf.ServerVersion)
-	require.Equal(t, conf.ServerVersion, mysql.ServerVersion)
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	require.True(t, conf.Binlog.Enable)
 	require.Equal(t, "hash", conf.Binlog.Strategy)
