@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
@@ -1123,6 +1124,7 @@ func TestSystemSchema(t *testing.T) {
 	// This test tests no privilege check for INFORMATION_SCHEMA database.
 	se := newSession(t, store, dbName)
 	mustExec(t, se, `CREATE USER 'u1'@'localhost';`)
+	mustExec(t, se, `GRANT SELECT ON *.* TO 'u1'@'localhost';`)
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, `select * from information_schema.tables`)
 	mustExec(t, se, `select * from information_schema.key_column_usage`)
@@ -1165,6 +1167,118 @@ func TestSystemSchema(t *testing.T) {
 	_, err = se.ExecuteInternal(context.Background(), "create table metric_schema.t(a int)")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+}
+
+func TestMetricsSchema(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER nobody, msprocess, msselect")
+	tk.MustExec("GRANT Process ON *.* TO msprocess")
+	tk.MustExec("GRANT SELECT ON metrics_schema.* TO msselect")
+
+	tests := []struct {
+		stmt     string
+		user     string
+		checkErr func(err error)
+	}{
+		{
+			"SHOW CREATE DATABASE metrics_schema",
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, executor.ErrDBaccessDenied))
+			},
+		},
+		{
+			"SHOW CREATE DATABASE metrics_schema",
+			"msprocess",
+			func(err error) {
+				require.NoError(t, err)
+			},
+		},
+		{
+			"SHOW CREATE DATABASE metrics_schema",
+			"msselect",
+			func(err error) {
+				require.NoError(t, err)
+			},
+		},
+		{
+			"SELECT * FROM metrics_schema.up",
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+			},
+		},
+		{
+			"SELECT * FROM metrics_schema.up",
+			"msprocess",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, strings.Contains(err.Error(), "pd unavailable"))
+			},
+		},
+		{
+			"SELECT * FROM metrics_schema.up",
+			"msselect",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, strings.Contains(err.Error(), "pd unavailable"))
+			},
+		},
+		{
+			"SELECT * FROM information_schema.metrics_summary",
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, core.ErrSpecificAccessDenied))
+			},
+		},
+		{
+			"SELECT * FROM information_schema.metrics_summary",
+			"msprocess",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, strings.Contains(err.Error(), "pd unavailable"))
+			},
+		},
+		{
+			"SELECT * FROM information_schema.metrics_summary_by_label",
+			"nobody",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, terror.ErrorEqual(err, core.ErrSpecificAccessDenied))
+			},
+		},
+		{
+			"SELECT * FROM information_schema.metrics_summary_by_label",
+			"msprocess",
+			func(err error) {
+				require.Error(t, err)
+				require.True(t, strings.Contains(err.Error(), "pd unavailable"))
+			},
+		},
+	}
+
+	for _, test := range tests {
+		tk.Session().Auth(&auth.UserIdentity{
+			Username: test.user,
+			Hostname: "localhost",
+		}, nil, nil)
+
+		rs, err := tk.Session().ExecuteInternal(context.Background(), test.stmt)
+		if err == nil {
+			_, err = session.GetRows4Test(context.Background(), tk.Session(), rs)
+		}
+		if rs != nil {
+			require.NoError(t, rs.Close())
+		}
+		test.checkErr(err)
+	}
 }
 
 func TestAdminCommand(t *testing.T) {
@@ -2084,4 +2198,269 @@ func TestGrantReferences(t *testing.T) {
 		`GRANT REFERENCES ON reftestdb.reftest TO 'referencesUser'@'%'`))
 	tk.MustExec("DROP USER referencesUser")
 	tk.MustExec("DROP SCHEMA reftestdb")
+}
+
+func TestDashboardClientDynamicPriv(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE ROLE dc_r1")
+	tk.MustExec("CREATE USER dc_u1")
+	tk.MustExec("GRANT dc_r1 TO dc_u1")
+	tk.MustExec("SET DEFAULT ROLE dc_r1 TO dc_u1")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.Session().Auth(&auth.UserIdentity{
+		Username: "dc_u1",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("GRANT DASHBOARD_CLIENT ON *.* TO dc_r1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+		"GRANT DASHBOARD_CLIENT ON *.* TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("REVOKE DASHBOARD_CLIENT ON *.* FROM dc_r1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("GRANT DASHBOARD_CLIENT ON *.* TO dc_u1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+		"GRANT DASHBOARD_CLIENT ON *.* TO 'dc_u1'@'%'",
+	))
+	tk.MustExec("REVOKE DASHBOARD_CLIENT ON *.* FROM dc_u1")
+	tk1.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'dc_u1'@'%'",
+		"GRANT 'dc_r1'@'%' TO 'dc_u1'@'%'",
+	))
+}
+
+// https://github.com/pingcap/tidb/issues/27213
+func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
+	t.Parallel()
+
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE ROLE tsg_r1")
+	tk.MustExec("CREATE USER tsg_u1, tsg_u2")
+	tk.MustExec("GRANT CONNECTION_ADMIN, ROLE_ADMIN, SYSTEM_VARIABLES_ADMIN, PROCESS ON *.* TO tsg_r1")
+	tk.MustExec("GRANT CONNECTION_ADMIN ON *.* TO tsg_u1 WITH GRANT OPTION") // grant a superior privilege to the user
+	tk.MustExec("GRANT CONNECTION_ADMIN ON *.* TO tsg_u2 WITH GRANT OPTION") // grant a superior privilege to the user
+	tk.MustExec("GRANT ROLE_ADMIN ON *.* TO tsg_u1")
+	tk.MustExec("GRANT ROLE_ADMIN ON *.* TO tsg_u2")
+	tk.MustExec("GRANT ROLE_ADMIN ON *.* TO tsg_r1 WITH GRANT OPTION") // grant a superior privilege to the role
+	tk.MustExec("GRANT CONFIG ON *.* TO tsg_r1")                       // grant a static privilege to the role
+
+	tk.MustExec("GRANT tsg_r1 TO tsg_u1, tsg_u2")    // grant the role to both users
+	tk.MustExec("SET DEFAULT ROLE tsg_r1 TO tsg_u1") // u1 has the role by default, but results should be identical.
+
+	// login as tsg_u1
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "tsg_u1",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows(
+		"GRANT PROCESS,CONFIG ON *.* TO 'tsg_u1'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'",
+		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u1'@'%'",
+		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION",
+	))
+	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT PROCESS,CONFIG ON *.* TO 'tsg_u1'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'",
+		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u1'@'%'",
+		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION",
+	))
+	tk.MustQuery("SHOW GRANTS FOR 'tsg_u1'").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'tsg_u1'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'",
+		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u1'@'%'",
+		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION",
+	))
+
+	// login as tsg_u2 + SET ROLE
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "tsg_u2",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
+	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
+	// This should not show the privileges gained from (default) roles
+	tk.MustQuery("SHOW GRANTS FOR 'tsg_u2'").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
+	tk.MustExec("SET ROLE tsg_r1")
+	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows(
+		"GRANT PROCESS,CONFIG ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
+	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER()").Check(testkit.Rows(
+		"GRANT PROCESS,CONFIG ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
+	// This should not show the privileges gained from SET ROLE tsg_r1.
+	tk.MustQuery("SHOW GRANTS FOR 'tsg_u2'").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'tsg_u2'@'%'",
+		"GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'",
+		"GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'",
+		"GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION",
+	))
+}
+
+func TestGrantLockTables(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE lock_tables_db")
+	tk.MustExec("USE lock_tables_db")
+	tk.MustExec("CREATE TABLE lock_tables_table (a int)")
+	tk.MustExec("CREATE USER lock_tables_user")
+	tk.MustExec("GRANT LOCK TABLES ON *.* TO lock_tables_user")
+	tk.MustExec("GRANT LOCK TABLES ON lock_tables_db.* TO lock_tables_user")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR lock_tables_user").Check(testkit.Rows(
+		`GRANT LOCK TABLES ON *.* TO 'lock_tables_user'@'%'`,
+		`GRANT LOCK TABLES ON lock_tables_db.* TO 'lock_tables_user'@'%'`))
+	tk.MustExec("DROP USER lock_tables_user")
+	tk.MustExec("DROP DATABASE lock_tables_db")
+}
+
+// https://github.com/pingcap/tidb/issues/27560
+func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
+	t.Parallel()
+
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("DROP USER IF EXISTS joe, engineering, notgranted, otherrole, delete_stuff_privilege")
+	tk.MustExec("CREATE USER joe;")
+	tk.MustExec("CREATE ROLE engineering;")
+	tk.MustExec("CREATE ROLE admins;")
+	tk.MustExec("CREATE ROLE notgranted;")
+	tk.MustExec("CREATE ROLE otherrole;")
+	tk.MustExec("GRANT INSERT ON test.* TO engineering;")
+	tk.MustExec("GRANT DELETE ON test.* TO admins;")
+	tk.MustExec("GRANT SELECT on test.* to joe;")
+	tk.MustExec("GRANT engineering TO joe;")
+	tk.MustExec("GRANT admins TO joe;")
+	tk.MustExec("SET DEFAULT ROLE admins TO joe;")
+	tk.MustExec("GRANT otherrole TO joe;")
+	tk.MustExec("GRANT UPDATE ON role.* TO otherrole;")
+	tk.MustExec("GRANT SELECT ON mysql.user TO otherrole;")
+	tk.MustExec("CREATE ROLE delete_stuff_privilege;")
+	tk.MustExec("GRANT DELETE ON mysql.user TO delete_stuff_privilege;")
+	tk.MustExec("GRANT delete_stuff_privilege TO otherrole;")
+
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "joe",
+		Hostname: "%",
+	}, nil, nil)
+
+	err := tk.QueryToErr("SHOW GRANTS FOR CURRENT_USER() USING notgranted")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, executor.ErrRoleNotGranted))
+
+	tk.MustQuery("SHOW GRANTS FOR current_user() USING otherrole;").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'joe'@'%'",
+		"GRANT SELECT ON test.* TO 'joe'@'%'",
+		"GRANT UPDATE ON role.* TO 'joe'@'%'",
+		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
+	))
+	tk.MustQuery("SHOW GRANTS FOR joe USING otherrole;").Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'joe'@'%'",
+		"GRANT SELECT ON test.* TO 'joe'@'%'",
+		"GRANT UPDATE ON role.* TO 'joe'@'%'",
+		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
+	))
+
+}
+
+func TestGrantPlacementAdminDynamicPriv(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE placement_db")
+	tk.MustExec("USE placement_db")
+	tk.MustExec("CREATE TABLE placement_table (a int)")
+	tk.MustExec("CREATE USER placement_user")
+	tk.MustExec("GRANT PLACEMENT_ADMIN ON *.* TO placement_user")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR placement_user").Check(testkit.Rows(
+		`GRANT USAGE ON *.* TO 'placement_user'@'%'`,
+		`GRANT PLACEMENT_ADMIN ON *.* TO 'placement_user'@'%'`))
+	tk.MustExec("DROP USER placement_user")
+	tk.MustExec("DROP DATABASE placement_db")
+}
+
+func TestPlacementPolicyStmt(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+	se := newSession(t, store, dbName)
+	mustExec(t, se, "drop placement policy if exists x")
+	createStmt := "create placement policy x PRIMARY_REGION=\"cn-east-1\" "
+	dropStmt := "drop placement policy if exists x"
+
+	// high privileged user setting password for other user (passes)
+	mustExec(t, se, "CREATE USER super_user, placement_user, empty_user")
+	mustExec(t, se, "GRANT ALL ON *.* TO super_user")
+	mustExec(t, se, "GRANT PLACEMENT_ADMIN ON *.* TO placement_user")
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "empty_user", Hostname: "localhost"}, nil, nil))
+	_, err := se.ExecuteInternal(context.Background(), createStmt)
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or PLACEMENT_ADMIN privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), dropStmt)
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or PLACEMENT_ADMIN privilege(s) for this operation")
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "super_user", Hostname: "localhost"}, nil, nil))
+	mustExec(t, se, createStmt)
+	mustExec(t, se, dropStmt)
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "placement_user", Hostname: "localhost"}, nil, nil))
+	mustExec(t, se, createStmt)
+	mustExec(t, se, dropStmt)
+
 }
