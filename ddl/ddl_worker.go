@@ -840,6 +840,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onCreatePlacementPolicy(d, t, job)
 	case model.ActionDropPlacementPolicy:
 		ver, err = onDropPlacementPolicy(t, job)
+	case model.ActionAlterPlacementPolicy:
+		ver, err = onAlterPlacementPolicy(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
