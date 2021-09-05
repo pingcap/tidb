@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -439,7 +440,7 @@ type SequenceTable interface {
 }
 
 // LoadTLSCertificates loads CA/KEY/CERT for special paths.
-func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Config, autoReload bool, err error) {
+func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tlsConfig *tls.Config, autoReload bool, err error) {
 	autoReload = false
 	if len(cert) == 0 || len(key) == 0 {
 		if !autoTLS {
@@ -450,7 +451,7 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Con
 		tempStoragePath := config.GetGlobalConfig().TempStoragePath
 		cert = filepath.Join(tempStoragePath, "/cert.pem")
 		key = filepath.Join(tempStoragePath, "/key.pem")
-		err = createTLSCertificates(cert, key)
+		err = createTLSCertificates(cert, key, rsaKeySize)
 		if err != nil {
 			logutil.BgLogger().Warn("TLS Certificate creation failed", zap.Error(err))
 			return
@@ -466,6 +467,28 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Con
 	}
 
 	requireTLS := config.GetGlobalConfig().Security.RequireSecureTransport
+	var minTLSVersion uint16 = tls.VersionTLS11
+	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
+	case "TLSv1.0":
+		minTLSVersion = tls.VersionTLS10
+	case "TLSv1.1":
+		minTLSVersion = tls.VersionTLS11
+	case "TLSv1.2":
+		minTLSVersion = tls.VersionTLS12
+	case "TLSv1.3":
+		minTLSVersion = tls.VersionTLS13
+	case "":
+	default:
+		logutil.BgLogger().Warn(
+			"Invalid TLS version, using default instead",
+			zap.String("tls-version", tlsver),
+		)
+	}
+	if minTLSVersion < tls.VersionTLS12 {
+		logutil.BgLogger().Warn(
+			"Minimum TLS version allows pre-TLSv1.2 protocols, this is not recommended",
+		)
+	}
 
 	// Try loading CA cert.
 	clientAuthPolicy := tls.NoClientCert
@@ -490,10 +513,29 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Con
 			}
 		}
 	}
+
+	// This excludes ciphers listed in tls.InsecureCipherSuites() and can be used to filter out more
+	var cipherSuites []uint16
+	var cipherNames []string
+	for _, sc := range tls.CipherSuites() {
+		switch sc.ID {
+		case tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:
+			logutil.BgLogger().Info("Disabling weak cipherSuite", zap.String("cipherSuite", sc.Name))
+		default:
+			cipherNames = append(cipherNames, sc.Name)
+			cipherSuites = append(cipherSuites, sc.ID)
+		}
+
+	}
+	logutil.BgLogger().Info("Enabled ciphersuites", zap.Strings("cipherNames", cipherNames))
+
+	/* #nosec G402 */
 	tlsConfig = &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 		ClientCAs:    certPool,
 		ClientAuth:   clientAuthPolicy,
+		MinVersion:   minTLSVersion,
+		CipherSuites: cipherSuites,
 	}
 	return
 }
@@ -565,8 +607,8 @@ func QueryStrForLog(query string) string {
 	return query
 }
 
-func createTLSCertificates(certpath string, keypath string) error {
-	privkey, err := rsa.GenerateKey(rand.Reader, 4096)
+func createTLSCertificates(certpath string, keypath string, rsaKeySize int) error {
+	privkey, err := rsa.GenerateKey(rand.Reader, rsaKeySize)
 	if err != nil {
 		return err
 	}
@@ -580,6 +622,9 @@ func createTLSCertificates(certpath string, keypath string) error {
 	}
 
 	template := x509.Certificate{
+		Subject: pkix.Name{
+			CommonName: "TiDB_Server_Auto_Generated_Server_Certificate",
+		},
 		SerialNumber: big.NewInt(1),
 		NotBefore:    notBefore,
 		NotAfter:     notAfter,
@@ -621,6 +666,7 @@ func createTLSCertificates(certpath string, keypath string) error {
 		return err
 	}
 
-	logutil.BgLogger().Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath), zap.Duration("validity", certValidity))
+	logutil.BgLogger().Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath),
+		zap.Duration("validity", certValidity), zap.Int("rsaKeySize", rsaKeySize))
 	return nil
 }

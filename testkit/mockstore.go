@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,6 +19,7 @@ package testkit
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -25,22 +27,28 @@ import (
 )
 
 // CreateMockStore return a new mock kv.Storage.
-func CreateMockStore(t *testing.T) (store kv.Storage, clean func()) {
-	store, err := mockstore.NewMockStore()
+func CreateMockStore(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (store kv.Storage, clean func()) {
+	store, _, clean = CreateMockStoreAndDomain(t, opts...)
+	return
+}
+
+// CreateMockStoreAndDomain return a new mock kv.Storage and *domain.Domain.
+func CreateMockStoreAndDomain(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, *domain.Domain, func()) {
+	store, err := mockstore.NewMockStore(opts...)
 	require.NoError(t, err)
 
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
-	d, err := session.BootstrapSession(store)
+	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 
-	d.SetStatsUpdating(true)
+	dom.SetStatsUpdating(true)
 
-	clean = func() {
-		d.Close()
+	clean := func() {
+		dom.Close()
 		err := store.Close()
 		require.NoError(t, err)
 	}
 
-	return
+	return store, dom, clean
 }
