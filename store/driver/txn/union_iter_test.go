@@ -12,33 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package txn
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/executor"
+	"testing"
+
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/assert"
 )
 
-var _ = Suite(&testUnionIterSuit{})
-
-type testUnionIterSuit struct {
-}
-
-func r(key, value string) *kv.Entry {
-	bKey := []byte(key)
-	bValue := []byte(value)
-	if value == "nil" {
-		bValue = nil
-	}
-
-	return &kv.Entry{Key: bKey, Value: bValue}
-}
-
-func (s *testUnionIterSuit) TestUnionIter(c *C) {
+func TestUnionIter(t *testing.T) {
 	// test iter normal cases, snap iter become invalid before dirty iter
 	snapRecords := []*kv.Entry{
+		r("k00", "v0"),
 		r("k01", "v1"),
 		r("k03", "v3"),
 		r("k06", "v6"),
@@ -49,13 +36,14 @@ func (s *testUnionIterSuit) TestUnionIter(c *C) {
 	}
 
 	dirtyRecords := []*kv.Entry{
+		r("k00", ""),
 		r("k03", "x3"),
 		r("k05", "x5"),
 		r("k07", "x7"),
 		r("k08", "x8"),
 	}
 
-	assertUnionIter(c, dirtyRecords, snapRecords, []*kv.Entry{
+	assertUnionIter(t, dirtyRecords, snapRecords, []*kv.Entry{
 		r("k01", "v1"),
 		r("k03", "x3"),
 		r("k05", "x5"),
@@ -78,7 +66,8 @@ func (s *testUnionIterSuit) TestUnionIter(c *C) {
 		r("k18", "x18"),
 	}
 
-	assertUnionIter(c, dirtyRecords, snapRecords, []*kv.Entry{
+	assertUnionIter(t, dirtyRecords, snapRecords, []*kv.Entry{
+		r("k00", "v0"),
 		r("k01", "v1"),
 		r("k03", "x3"),
 		r("k05", "x5"),
@@ -94,28 +83,28 @@ func (s *testUnionIterSuit) TestUnionIter(c *C) {
 	})
 }
 
-func assertUnionIter(c *C, dirtyRecords, snapRecords, expected []*kv.Entry) {
-	iter, err := executor.NewUnionIter(mock.NewSliceIter(dirtyRecords), mock.NewSliceIter(snapRecords), false)
-	c.Assert(err, IsNil)
-	assertIter(c, iter, expected)
+func assertUnionIter(t *testing.T, dirtyRecords, snapRecords, expected []*kv.Entry) {
+	iter, err := NewUnionIter(mock.NewSliceIter(dirtyRecords), mock.NewSliceIter(snapRecords), false)
+	assert.Nil(t, err)
+	assertIter(t, iter, expected)
 
 	// assert reverse is true
-	iter, err = executor.NewUnionIter(mock.NewSliceIter(reverseRecords(dirtyRecords)), mock.NewSliceIter(reverseRecords(snapRecords)), true)
-	c.Assert(err, IsNil)
-	assertIter(c, iter, reverseRecords(expected))
+	iter, err = NewUnionIter(mock.NewSliceIter(reverseRecords(dirtyRecords)), mock.NewSliceIter(reverseRecords(snapRecords)), true)
+	assert.Nil(t, err)
+	assertIter(t, iter, reverseRecords(expected))
 }
 
-func assertIter(c *C, iter kv.Iterator, expected []*kv.Entry) {
+func assertIter(t *testing.T, iter kv.Iterator, expected []*kv.Entry) {
 	records := make([]*kv.Entry, 0, len(expected))
 	for iter.Valid() {
 		records = append(records, &kv.Entry{Key: iter.Key(), Value: iter.Value()})
 		err := iter.Next()
-		c.Assert(err, IsNil)
+		assert.Nil(t, err)
 	}
-	c.Assert(len(records), Equals, len(expected))
+	assert.Equal(t, len(expected), len(records))
 	for idx, record := range records {
-		c.Assert([]byte(record.Key), BytesEquals, []byte(expected[idx].Key))
-		c.Assert(record.Value, BytesEquals, expected[idx].Value)
+		assert.Equal(t, record.Key, expected[idx].Key)
+		assert.Equal(t, record.Value, expected[idx].Value)
 	}
 }
 

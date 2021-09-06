@@ -12,12 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package txn
 
 import (
 	"bytes"
+	"encoding/hex"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // UnionIter implements kv.Iterator
@@ -78,6 +81,13 @@ func (iter *UnionIter) updateCur() error {
 
 		if !iter.snapshotValid {
 			iter.curIsDirty = true
+			// if delete it
+			if len(iter.dirtyIt.Value()) == 0 {
+				if err := iter.dirtyNext(); err != nil {
+					return err
+				}
+				continue
+			}
 			break
 		}
 
@@ -91,6 +101,18 @@ func (iter *UnionIter) updateCur() error {
 			}
 			// if equal, means both have value
 			if cmp == 0 {
+				if len(iter.dirtyIt.Value()) == 0 {
+					// snapshot has a record, but txn says we have deleted it
+					// just go next
+					if err := iter.dirtyNext(); err != nil {
+						return err
+					}
+					if err := iter.snapshotNext(); err != nil {
+						return err
+					}
+					continue
+				}
+				// both go next
 				if err := iter.snapshotNext(); err != nil {
 					return err
 				}
@@ -102,6 +124,15 @@ func (iter *UnionIter) updateCur() error {
 				break
 			} else {
 				// record from dirty comes first
+				if len(iter.dirtyIt.Value()) == 0 {
+					logutil.BgLogger().Warn("delete a record not exists?",
+						zap.String("key", hex.EncodeToString(iter.dirtyIt.Key())))
+					// jump over this deletion
+					if err := iter.dirtyNext(); err != nil {
+						return err
+					}
+					continue
+				}
 				iter.curIsDirty = true
 				break
 			}

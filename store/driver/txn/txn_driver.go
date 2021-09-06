@@ -36,7 +36,8 @@ import (
 
 type tikvTxn struct {
 	*tikv.KVTxn
-	idxNameCache map[int64]*model.TableInfo
+	idxNameCache     map[int64]*model.TableInfo
+	customRetrievers sortedRetrievers
 }
 
 // NewTiKVTxn returns a new Transaction.
@@ -47,7 +48,7 @@ func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	totalLimit := atomic.LoadUint64(&kv.TxnTotalSizeLimit)
 	txn.GetUnionStore().SetEntrySizeLimit(entryLimit, totalLimit)
 
-	return &tikvTxn{txn, make(map[int64]*model.TableInfo)}
+	return &tikvTxn{txn, make(map[int64]*model.TableInfo), nil}
 }
 
 func (txn *tikvTxn) GetTableInfo(id int64) *model.TableInfo {
@@ -75,25 +76,43 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 // GetSnapshot returns the Snapshot binding to this transaction.
 func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
-	return &tikvSnapshot{txn.KVTxn.GetSnapshot(), nil}
+	return &tikvSnapshot{txn.KVTxn.GetSnapshot(), txn.customRetrievers}
 }
 
 // Iter creates an Iterator positioned on the first entry that k <= entry's key.
 // If such entry is not found, it returns an invalid Iterator with no error.
 // It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
 // The Iterator must be Closed after use.
-func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	it, err := txn.KVTxn.Iter(k, upperBound)
-	return newKVIterator(it), derr.ToTiDBErr(err)
+func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (iter kv.Iterator, err error) {
+	var dirtyIter, snapIter kv.Iterator
+
+	if dirtyIter, err = txn.GetMemBuffer().Iter(k, upperBound); err != nil {
+		return
+	}
+
+	if snapIter, err = txn.GetSnapshot().Iter(k, upperBound); err != nil {
+		return
+	}
+
+	return NewUnionIter(dirtyIter, snapIter, false)
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 // The returned iterator will iterate from greater key to smaller key.
 // If k is nil, the returned iterator will be positioned at the last key.
 // TODO: Add lower bound limit
-func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
-	it, err := txn.KVTxn.IterReverse(k)
-	return newKVIterator(it), derr.ToTiDBErr(err)
+func (txn *tikvTxn) IterReverse(k kv.Key) (iter kv.Iterator, err error) {
+	var dirtyIter, snapIter kv.Iterator
+
+	if dirtyIter, err = txn.GetMemBuffer().IterReverse(k); err != nil {
+		return
+	}
+
+	if snapIter, err = txn.GetSnapshot().IterReverse(k); err != nil {
+		return
+	}
+
+	return NewUnionIter(dirtyIter, snapIter, true)
 }
 
 // BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
@@ -114,8 +133,16 @@ func (txn *tikvTxn) Delete(k kv.Key) error {
 }
 
 func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	data, err := txn.KVTxn.Get(ctx, k)
-	return data, derr.ToTiDBErr(err)
+	val, err := txn.GetMemBuffer().Get(ctx, k)
+	if kv.ErrNotExist.Equal(err) {
+		val, err = txn.GetSnapshot().Get(ctx, k)
+	}
+
+	if len(val) == 0 {
+		return nil, kv.ErrNotExist
+	}
+
+	return val, err
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
@@ -184,6 +211,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetResourceGroupTag(val.([]byte))
 	case kv.KVFilter:
 		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
+	case kv.SortedCustomRetrievers:
+		txn.customRetrievers = val.([]*RangedKVRetriever)
 	}
 }
 

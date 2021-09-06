@@ -14,68 +14,34 @@
 package driver
 
 import (
-	"bytes"
 	"context"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
 	txn2 "github.com/pingcap/tidb/store/driver/txn"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
 
 type testCustomRetrieverSuite struct {
-	store  kv.Storage
-	dom    *domain.Domain
-	prefix kv.Key
+	store kv.Storage
 }
 
 var _ = SerialSuites(&testCustomRetrieverSuite{})
 
-func (s *testCustomRetrieverSuite) SetUpSuite(c *C) {
+func (s *testCustomRetrieverSuite) SetUpTest(c *C) {
 	var err error
-	s.prefix = kv.Key("t_c_retriever_")
-	s.store = NewTestStore(c)
-	if *withTiKV {
-		session.ResetStoreForWithTiKVTest(s.store)
-	}
-
-	s.dom, err = session.BootstrapSession(s.store)
+	s.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 }
 
-func (s *testCustomRetrieverSuite) TearDownSuite(c *C) {
-	s.clearData(c)
-	s.dom.Close()
-	s.store.Close()
-}
-
-func (s *testCustomRetrieverSuite) clearData(c *C) {
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	defer func() {
-		if txn.Valid() {
-			txn.Rollback()
-		}
-	}()
-
-	iter, err := txn.Iter(s.prefix, nil)
-	c.Assert(err, IsNil)
-	defer iter.Close()
-	for iter.Valid() && bytes.HasPrefix(iter.Key(), s.prefix) {
-		err = txn.Delete(iter.Key())
-		c.Assert(err, IsNil)
-		err = iter.Next()
-		c.Assert(err, IsNil)
-	}
-	err = txn.Commit(context.Background())
+func (s *testCustomRetrieverSuite) TearDownTest(c *C) {
+	err := s.store.Close()
 	c.Assert(err, IsNil)
 }
 
 func (s *testCustomRetrieverSuite) TestSnapshotGetWithCustomRetrievers(c *C) {
-	s.clearData(c)
 	snap := s.prepareSnapshot(c, [][]interface{}{
 		{"a0", "s0"},
 		{"a01", "s01"},
@@ -111,7 +77,7 @@ func (s *testCustomRetrieverSuite) TestSnapshotGetWithCustomRetrievers(c *C) {
 
 	ctx := context.Background()
 	for _, ca := range cases {
-		val, err := snap.Get(ctx, s.k(ca[0]))
+		val, err := snap.Get(ctx, makeBytes(ca[0]))
 		if expectedErr, ok := ca[1].(error); ok {
 			c.Assert(errors.ErrorEqual(expectedErr, err), IsTrue)
 			c.Assert(val, IsNil)
@@ -123,7 +89,6 @@ func (s *testCustomRetrieverSuite) TestSnapshotGetWithCustomRetrievers(c *C) {
 }
 
 func (s *testCustomRetrieverSuite) TestSnapshotBatchGetWithCustomRetrievers(c *C) {
-	s.clearData(c)
 	snap := s.prepareSnapshot(c, [][]interface{}{
 		{"a0", "s0"},
 		{"a01", "s01"},
@@ -175,7 +140,7 @@ func (s *testCustomRetrieverSuite) TestSnapshotBatchGetWithCustomRetrievers(c *C
 	for _, ca := range cases {
 		keys := make([]kv.Key, 0)
 		for _, k := range ca.keys {
-			keys = append(keys, s.k(k))
+			keys = append(keys, makeBytes(k))
 		}
 
 		m, err := snap.BatchGet(ctx, keys)
@@ -183,7 +148,7 @@ func (s *testCustomRetrieverSuite) TestSnapshotBatchGetWithCustomRetrievers(c *C
 		c.Assert(m, NotNil)
 		c.Assert(len(m), Equals, len(ca.result))
 		for k, expectedVal := range ca.result {
-			val, ok := m[string(s.k(k))]
+			val, ok := m[k]
 			c.Assert(ok, IsTrue)
 			c.Assert(val, BytesEquals, makeBytes(expectedVal))
 		}
@@ -191,7 +156,6 @@ func (s *testCustomRetrieverSuite) TestSnapshotBatchGetWithCustomRetrievers(c *C
 }
 
 func (s *testCustomRetrieverSuite) TestSnapshotIterWithCustomRetrievers(c *C) {
-	s.clearData(c)
 	snap := s.prepareSnapshot(c, [][]interface{}{
 		{"a0", "s0"},
 		{"a01", "s01"},
@@ -215,7 +179,7 @@ func (s *testCustomRetrieverSuite) TestSnapshotIterWithCustomRetrievers(c *C) {
 			{"a1", "vx"},
 			{"a31", "v31"},
 		}),
-		txn2.NewRangeRetriever(&kv.EmptyRetriever{}, s.k("a5"), s.k("a6")),
+		txn2.NewRangeRetriever(&kv.EmptyRetriever{}, makeBytes("a5"), makeBytes("a6")),
 	})
 
 	cases := []struct {
@@ -269,10 +233,10 @@ func (s *testCustomRetrieverSuite) TestSnapshotIterWithCustomRetrievers(c *C) {
 		var iter kv.Iterator
 		var err error
 		if ca.reverse {
-			iter, err = snap.IterReverse(s.k(ca.query[0]))
+			iter, err = snap.IterReverse(makeBytes(ca.query[0]))
 			c.Assert(err, IsNil)
 		} else {
-			iter, err = snap.Iter(s.k(ca.query[0]), s.k(ca.query[1]))
+			iter, err = snap.Iter(makeBytes(ca.query[0]), makeBytes(ca.query[1]))
 			c.Assert(err, IsNil)
 		}
 
@@ -280,7 +244,7 @@ func (s *testCustomRetrieverSuite) TestSnapshotIterWithCustomRetrievers(c *C) {
 			c.Assert(iter.Valid(), IsTrue)
 			gotKey := iter.Key()
 			gotValue := iter.Value()
-			expectedKey := s.k(ca.result[i][0])
+			expectedKey := makeBytes(ca.result[i][0])
 			expectedValue := makeBytes(ca.result[i][1])
 			c.Assert([]byte(gotKey), BytesEquals, []byte(expectedKey))
 			c.Assert(gotValue, BytesEquals, expectedValue)
@@ -288,12 +252,7 @@ func (s *testCustomRetrieverSuite) TestSnapshotIterWithCustomRetrievers(c *C) {
 			c.Assert(err, IsNil)
 		}
 
-		if ca.reverse && iter.Valid() {
-			k := iter.Key()
-			c.Assert(bytes.HasPrefix(k, s.prefix), IsFalse)
-		} else {
-			c.Assert(iter.Valid(), IsFalse)
-		}
+		c.Assert(iter.Valid(), IsFalse)
 	}
 }
 
@@ -307,7 +266,7 @@ func (s *testCustomRetrieverSuite) prepareSnapshot(c *C, data [][]interface{}) k
 	}()
 
 	for _, d := range data {
-		err = txn.Set(s.k(d[0]), makeBytes(d[1]))
+		err = txn.Set(makeBytes(d[0]), makeBytes(d[1]))
 		c.Assert(err, IsNil)
 	}
 
@@ -317,23 +276,12 @@ func (s *testCustomRetrieverSuite) prepareSnapshot(c *C, data [][]interface{}) k
 	return s.store.GetSnapshot(kv.MaxVersion)
 }
 
-func (s *testCustomRetrieverSuite) k(k interface{}) kv.Key {
-	key := makeBytes(k)
-	if len(key) == 0 {
-		return s.prefix
-	}
-
-	ret := make([]byte, 0)
-	ret = append(ret, s.prefix...)
-	return append(ret, key...)
-}
-
 func (s *testCustomRetrieverSuite) newMemBufferRetriever(c *C, start interface{}, end interface{}, data [][]interface{}) *txn2.RangedKVRetriever {
 	tmpTxn, err := transaction.NewTiKVTxn(nil, nil, 0, "")
 	c.Assert(err, IsNil)
 	memBuffer := txn2.NewTiKVTxn(tmpTxn).GetMemBuffer()
 	for _, d := range data {
-		k := s.k(d[0])
+		k := makeBytes(d[0])
 		val := makeBytes(d[1])
 		if len(val) == 0 {
 			// to test delete case
@@ -347,7 +295,7 @@ func (s *testCustomRetrieverSuite) newMemBufferRetriever(c *C, start interface{}
 		}
 	}
 
-	return txn2.NewRangeRetriever(memBuffer, s.k(start), s.k(end))
+	return txn2.NewRangeRetriever(memBuffer, makeBytes(start), makeBytes(end))
 }
 
 func makeBytes(s interface{}) []byte {
