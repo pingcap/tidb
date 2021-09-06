@@ -25,10 +25,12 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/testleak"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTiDBOptOn(t *testing.T) {
+	defer testleak.AfterTestT(t)()
 	table := []struct {
 		val string
 		on  bool
@@ -50,6 +52,7 @@ func TestTiDBOptOn(t *testing.T) {
 }
 
 func TestNewSessionVars(t *testing.T) {
+	defer testleak.AfterTestT(t)()
 	vars := NewSessionVars()
 
 	require.Equal(t, DefIndexJoinBatchSize, vars.IndexJoinBatchSize)
@@ -112,6 +115,7 @@ func assertFieldsGreaterThanZero(t *testing.T, val reflect.Value) {
 }
 
 func TestVarsutil(t *testing.T) {
+	defer testleak.AfterTestT(t)()
 	v := NewSessionVars()
 	v.GlobalVarsAccessor = NewMockGlobalAccessor()
 
@@ -182,15 +186,15 @@ func TestVarsutil(t *testing.T) {
 			continue
 		}
 
-		require.NoError(t, err)
+			require.NoError(t, err)
 		require.Equal(t, tt.expect, v.TimeZone.String())
 		if tt.compareValue {
 			err = SetSessionSystemVar(v, TimeZone, tt.input)
 			require.NoError(t, err)
 			t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 			t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
-			require.Equal(t, tt.diff, t2.Sub(t1))
-		}
+				require.Equal(t, tt.diff, t2.Sub(t1))
+			}
 	}
 	err = SetSessionSystemVar(v, TimeZone, "6:00")
 	require.Error(t, err)
@@ -475,19 +479,19 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "10", val)
 	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, "a")
-	require.Regexp(t, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_sql_length'", err)
+	require.Regexp(t, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_sql_length'", err.Error())
 
 	err = SetSessionSystemVar(v, TiDBFoundInPlanCache, "1")
-	require.Regexp(t, ".*]Variable 'last_plan_from_cache' is a read only variable", err)
+	require.Regexp(t, ".*]Variable 'last_plan_from_cache' is a read only variable", err.Error())
 
 	err = SetSessionSystemVar(v, TiDBFoundInBinding, "1")
-	require.Regexp(t, ".*]Variable 'last_plan_from_binding' is a read only variable", err)
+	require.Regexp(t, ".*]Variable 'last_plan_from_binding' is a read only variable", err.Error())
 
 	err = SetSessionSystemVar(v, "UnknownVariable", "on")
-	require.Regexp(t, ".*]Unknown system variable 'UnknownVariable'", err)
+	require.Regexp(t, ".*]Unknown system variable 'UnknownVariable'", err.Error())
 
 	err = SetSessionSystemVar(v, TiDBAnalyzeVersion, "4")
-	require.Regexp(t, ".*Variable 'tidb_analyze_version' can't be set to the value of '4'", err)
+	require.Regexp(t, ".*Variable 'tidb_analyze_version' can't be set to the value of '4'", err.Error())
 }
 
 func TestSetOverflowBehave(t *testing.T) {
@@ -513,7 +517,7 @@ func TestValidate(t *testing.T) {
 	v.GlobalVarsAccessor = NewMockGlobalAccessor()
 	v.TimeZone = time.UTC
 
-	tests := []struct {
+	testCases := []struct {
 		key   string
 		value string
 		error bool
@@ -597,19 +601,22 @@ func TestValidate(t *testing.T) {
 		{TiDBAllowFallbackToTiKV, "tiflash,tikv,tidb", true},
 	}
 
-	for _, test := range tests {
-		_, err := GetSysVar(test.key).Validate(v, test.value, ScopeGlobal)
-		if test.error {
-			require.Error(t, err)
-			t.Logf("%v got err=%v", test, err)
-		} else {
-			require.NoError(t, err)
-			t.Logf("%v got err=%v", test, err)
-		}
+	for _, tc := range testCases {
+		t.Run(tc.key, func(t *testing.T) {
+			t.Parallel()
+			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeGlobal)
+			if tc.error {
+				require.Error(t, err)
+				t.Logf("%v got err=%v", tc, err)
+			} else {
+				require.NoError(t, err)
+				t.Logf("%v got err=%v", tc, err)
+			}
+		})
 	}
 
 	// Test session scoped vars.
-	tests = []struct {
+	testCases = []struct {
 		key   string
 		value string
 		error bool
@@ -623,14 +630,14 @@ func TestValidate(t *testing.T) {
 		{TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
 	}
 
-	for _, test := range tests {
-		_, err := GetSysVar(test.key).Validate(v, test.value, ScopeSession)
-		if test.error {
+	for _, tc := range testCases {
+		_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeSession)
+		if tc.error {
 			require.Error(t, err)
-			t.Logf("%v got err=%v", t, err)
+			t.Logf("%v got err=%v", tc, err)
 		} else {
 			require.NoError(t, err)
-			t.Logf("%v got err=%v", t, err)
+			t.Logf("%v got err=%v", tc, err)
 		}
 	}
 
@@ -641,7 +648,7 @@ func TestValidateStmtSummary(t *testing.T) {
 	v.GlobalVarsAccessor = NewMockGlobalAccessor()
 	v.TimeZone = time.UTC
 
-	tests := []struct {
+	testCases := []struct {
 		key   string
 		value string
 		error bool
@@ -679,19 +686,23 @@ func TestValidateStmtSummary(t *testing.T) {
 		{TiDBStmtSummaryMaxSQLLength, "99999999999", true, ScopeGlobal},
 	}
 
-	for _, test := range tests {
-		_, err := GetSysVar(test.key).Validate(v, test.value, test.scope)
-		if test.error {
-			require.Error(t, err)
-			t.Logf("%v got err=%v", t, err)
-		} else {
-			require.NoError(t, err)
-			t.Logf("%v got err=%v", t, err)
-		}
+	for _, tc := range testCases {
+		t.Run(tc.key, func(t *testing.T) {
+			t.Parallel()
+			_, err := GetSysVar(tc.key).Validate(v, tc.value, tc.scope)
+			if tc.error {
+				require.Error(t, err)
+				t.Logf("%v got err=%v", tc, err)
+			} else {
+				require.NoError(t, err)
+				t.Logf("%v got err=%v", tc, err)
+			}
+		})
 	}
 }
 
 func TestConcurrencyVariables(t *testing.T) {
+	defer testleak.AfterTestT(t)()
 	vars := NewSessionVars()
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor()
 
