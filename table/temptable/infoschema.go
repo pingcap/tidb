@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
+// AttachLocalTemporaryTableInfoSchema attach local temporary table information schema to is
 func AttachLocalTemporaryTableInfoSchema(sctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
 	if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
 		return is
@@ -35,6 +36,7 @@ func AttachLocalTemporaryTableInfoSchema(sctx sessionctx.Context, is infoschema.
 	}
 }
 
+// DetachLocalTemporaryTableInfoSchema detach local temporary table information schema from is
 func DetachLocalTemporaryTableInfoSchema(is infoschema.InfoSchema) infoschema.InfoSchema {
 	if attachedInfoSchema, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
 		return attachedInfoSchema.InfoSchema
