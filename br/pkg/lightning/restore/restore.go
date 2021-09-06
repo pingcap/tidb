@@ -307,6 +307,9 @@ func NewRestoreControllerWithPauser(
 		return nil, errors.Trace(err)
 	}
 	errorMgr := errormanager.New(db, cfg)
+	if err := errorMgr.Init(ctx); err != nil {
+		return nil, errors.Annotate(err, "failed to init error manager")
+	}
 
 	var backend backend.Backend
 	switch cfg.TikvImporter.Backend {

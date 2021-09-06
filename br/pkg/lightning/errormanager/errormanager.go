@@ -42,7 +42,7 @@ const (
 			path        varchar(2048) NOT NULL,
 			offset      bigint NOT NULL,
 			error       text NOT NULL,
-			row         text NOT NULL
+			row_data    text NOT NULL
 		);
 	`
 
@@ -53,7 +53,7 @@ const (
 			table_name  varchar(261) NOT NULL,
 			index_name  varchar(128) NOT NULL,
 			key_data    text NOT NULL,  -- decoded from raw_key, human readable only, not for machine use
-			row         text NOT NULL,  -- decoded from raw_row, human readable only, not for machine use
+			row_data    text NOT NULL,  -- decoded from raw_row, human readable only, not for machine use
 			raw_key     mediumblob NOT NULL,  -- the conflicted key
 			raw_value   mediumblob NOT NULL,  -- the value of the conflicted key
 			raw_handle  mediumblob NOT NULL,  -- the data handle derived from the conflicted key or value
@@ -64,19 +64,19 @@ const (
 
 	insertIntoTypeError = `
 		INSERT INTO %s.` + typeErrorTableName + `
-		(task_id, table_name, path, offset, error, row)
+		(task_id, table_name, path, offset, error, row_data)
 		VALUES (?, ?, ?, ?, ?, ?);
 	`
 
 	insertIntoConflictErrorData = `
 		INSERT INTO %s.` + conflictErrorTableName + `
-		(task_id, table_name, index_name, key_data, row, raw_key, raw_value, raw_handle, raw_row)
+		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row)
 		VALUES (?, ?, 'PRIMARY', ?, ?, ?, ?, raw_key, raw_value);
 	`
 
 	insertIntoConflictErrorIndex = `
 		INSERT INTO %s.` + conflictErrorTableName + `
-		(task_id, table_name, index_name, key_data, row, raw_key, raw_value, raw_handle, raw_row)
+		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 )
