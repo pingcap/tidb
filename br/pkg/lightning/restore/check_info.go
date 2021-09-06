@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"io"
 	"path/filepath"
@@ -693,7 +694,7 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 	return msgs, nil
 }
 
-// CheckCSVHeader try to check whether the source csv files are valid
+// checkCSVHeader try to check whether the csv header config is consistent with the source csv files
 func (rc *Controller) checkCSVHeader(ctx context.Context, dbMetas []*mydump.MDDatabaseMeta) error {
 	// if cfg set header = ture but source files actually contain not header, former SchemaCheck should
 	// return error in this situation, so we need do it again.
@@ -701,8 +702,8 @@ func (rc *Controller) checkCSVHeader(ctx context.Context, dbMetas []*mydump.MDDa
 		return nil
 	}
 	var (
-		tableMeta *mydump.MDTableMeta
-		csvCount int
+		tableMeta    *mydump.MDTableMeta
+		csvCount     int
 		hasUniqueIdx bool
 	)
 	// only check one table source files for better performance. The checked table is choosed based on following two factor:
@@ -740,6 +741,7 @@ outer:
 				tableMeta = tblMeta
 				csvCount = csvCnt
 				hasUniqueIdx = tableHasUniQueIdx
+				// if a perfect table source is found, we can stop check more tables
 				break outer
 			}
 			if csvCnt > csvCount || (csvCnt == csvCount && !hasUniqueIdx && tableHasUniQueIdx) {
@@ -756,6 +758,9 @@ outer:
 
 	var rows [][]types.Datum
 	for _, f := range tableMeta.DataFiles {
+		if f.FileMeta.Type != mydump.SourceTypeCSV {
+			continue
+		}
 		_, row, err := rc.readFirstRow(ctx, f.FileMeta)
 		if err != nil {
 			return errors.Trace(err)
@@ -763,15 +768,21 @@ outer:
 		if len(row) > 0 {
 			rows = append(rows, row)
 		}
+		// only check at most two of all the files
 		if len(rows) >= 2 {
 			break
 		}
 	}
-	// if the first row in two source files are the same
-	if len(rows) >= 2 {
+	if len(rows) == 0 {
+		return nil
+	} else if len(rows) >= 2 {
+		// if the first row in two source files are not the same, they should not be the header line
+		// NOTE: though lightning's logic allows different source files contains different columns or the
+		// order is difference, here we only check if they are exactly the same because this is the common case.
 		if len(rows[0]) != len(rows[1]) {
 			return nil
 		}
+
 		for i := 0; i < len(rows[0]); i++ {
 			if rows[0][i].GetString() != rows[1][i].GetString() {
 				return nil
@@ -779,6 +790,9 @@ outer:
 		}
 	}
 
+	// check if some fields are unique and not ignored
+	// if at least one field appears in a unique key, we can sure there is something wrong,
+	// they should be either the header line or the data is duplicated.
 	tableInfo := rc.dbInfos[tableMeta.DB].Tables[tableMeta.Name]
 	tableFields := make(map[string]struct{})
 	uniqueIdxFields := make(map[string]struct{})
@@ -791,6 +805,9 @@ outer:
 		ignoreColsSet[col] = struct{}{}
 	}
 	for _, idx := range tableInfo.Core.Indices {
+		if !idx.Unique && !idx.Primary {
+			continue
+		}
 		for _, col := range idx.Columns {
 			if _, ok := ignoreColsSet[col.Name.L]; !ok {
 				uniqueIdxFields[col.Name.L] = struct{}{}
@@ -811,6 +828,7 @@ outer:
 		}
 		if _, ok := uniqueIdxFields[val]; ok {
 			hasUniqueField = true
+			break
 		}
 	}
 
@@ -820,9 +838,32 @@ outer:
 	if hasUniqueField && len(rows) > 1 {
 		level = Critical
 	}
+	// if there are only 1 csv file or there is not unique key, try to check if all columns are compatible with string value
+	if !checkFieldCompatibility(tableInfo.Core, rows[0]) {
+		level = Critical
+	}
 	rc.checkTemplate.Collect(level, false, msg)
 
 	return nil
+}
+
+func checkFieldCompatibility(tbl *model.TableInfo, values []types.Datum) bool {
+	se := kv.NewSession(&kv.SessionOptions{
+		SQLMode: mysql.ModeStrictTransTables,
+	})
+	for i, col := range tbl.Columns {
+		if i >= len(values) {
+			break
+		}
+		_, err := table.CastValue(se, values[i], col, true, false)
+		if err != nil {
+			log.L().Error("field value is not consistent with column type", zap.String("value", values[i].GetString()),
+				zap.Any("column_info", col), zap.Error(err))
+			return false
+		}
+	}
+
+	return true
 }
 
 func (rc *Controller) SampleDataFromTable(ctx context.Context, dbName string, tableMeta *mydump.MDTableMeta, tableInfo *model.TableInfo) error {
