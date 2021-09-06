@@ -87,11 +87,11 @@ func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (iter kv.Iterator, err err
 	var dirtyIter, snapIter kv.Iterator
 
 	if dirtyIter, err = txn.GetMemBuffer().Iter(k, upperBound); err != nil {
-		return
+		return nil, err
 	}
 
 	if snapIter, err = txn.GetSnapshot().Iter(k, upperBound); err != nil {
-		return
+		return nil, err
 	}
 
 	return NewUnionIter(dirtyIter, snapIter, false)
@@ -105,11 +105,11 @@ func (txn *tikvTxn) IterReverse(k kv.Key) (iter kv.Iterator, err error) {
 	var dirtyIter, snapIter kv.Iterator
 
 	if dirtyIter, err = txn.GetMemBuffer().IterReverse(k); err != nil {
-		return
+		return nil, err
 	}
 
 	if snapIter, err = txn.GetSnapshot().IterReverse(k); err != nil {
-		return
+		return nil, err
 	}
 
 	return NewUnionIter(dirtyIter, snapIter, true)
