@@ -197,3 +197,39 @@ func onDropPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	return ver, errors.Trace(err)
 }
+
+func onAlterPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	alterPolicy := &placementpolicy.PolicyInfo{}
+	if err := job.DecodeArgs(alterPolicy); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	oldPolicy, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	newPolicyInfo := *oldPolicy
+	newPolicyInfo.PlacementSettings = alterPolicy.PlacementSettings
+
+	err = checkPolicyValidation(&newPolicyInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	err = t.UpdatePolicy(&newPolicyInfo)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Finish this job.
+	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, nil)
+	return ver, nil
+}
