@@ -30,7 +30,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const tableRegionSizeWarningThreshold int64 = 1024 * 1024 * 1024
+const (
+	tableRegionSizeWarningThreshold int64 = 1024 * 1024 * 1024
+	// the increment ration of large CSV file size threshold by `region-split-size`
+	largeCSVLowerThresholdRation = 10
+)
 
 type TableRegion struct {
 	EngineID int32
@@ -271,7 +275,7 @@ func makeSourceFileRegion(
 	// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
 	// like dumpling might be slight exceed the threshold when it is equal `max-region-size`, so we can
 	// avoid split a lot of small chunks.
-	if isCsvFile && cfg.Mydumper.StrictFormat && dataFileSize > int64(cfg.Mydumper.MaxRegionSize)*11/10 {
+	if isCsvFile && cfg.Mydumper.StrictFormat && dataFileSize > int64(cfg.Mydumper.MaxRegionSize + cfg.Mydumper.MaxRegionSize / largeCSVLowerThresholdRation) {
 		_, regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, divisor, 0, ioWorkers, store)
 		return regions, subFileSizes, err
 	}
