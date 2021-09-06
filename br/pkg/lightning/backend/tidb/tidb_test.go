@@ -17,12 +17,12 @@ package tidb_test
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -389,38 +389,51 @@ func (s *mysqlSuite) TestFetchRemoteTableModels_4_x_auto_random(c *C) {
 }
 
 func (s *mysqlSuite) TestWriteRowsErrorDowngrading(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/tidb/mockNonRetryableError", "return"), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/tidb/mockNonRetryableError")
+	nonRetryableError := sql.ErrNoRows
 
 	// First, batch insert, fail and rollback.
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1),(2),(3),(4),(5)\\E").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnError(nonRetryableError)
 	// Then, insert row-by-row due to the non-retryable error.
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
-		WillReturnResult(sqlmock.NewResult(0, 0))
+		WillReturnError(nonRetryableError)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "7.csv", int64(0), nonRetryableError.Error(), "(1)").
+		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
-		WillReturnResult(sqlmock.NewResult(1, 1))
+		WillReturnError(nonRetryableError)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), nonRetryableError.Error(), "(2)").
+		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(3)\\E").
-		WillReturnResult(sqlmock.NewResult(1, 1))
+		WillReturnError(nonRetryableError)
+	s.mockDB.
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "9.csv", int64(0), nonRetryableError.Error(), "(3)").
+		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(4)\\E").
-		WillReturnResult(sqlmock.NewResult(1, 1))
+		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(5)\\E").
-		WillReturnResult(sqlmock.NewResult(1, 1))
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "10.csv", int64(0), nonRetryableError.Error(), "(4)").
+		WillReturnResult(driver.ResultNoRows)
 
 	ctx := context.Background()
 	logger := log.L()
 
 	ignoreBackend := tidb.NewTiDBBackend(s.dbHandle, config.ErrorOnDup,
-		errormanager.New(nil, &config.Config{
+		errormanager.New(s.dbHandle, &config.Config{
 			App: config.Lightning{
+				TaskInfoSchemaName: "tidb_lightning_errors",
 				MaxError: config.MaxError{
-					Type: *atomic.NewInt64(4),
+					Type: *atomic.NewInt64(3),
 				},
 			},
 		}),

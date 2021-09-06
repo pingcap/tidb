@@ -18,7 +18,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
-	stderrors "errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -424,7 +423,6 @@ rowLoop:
 				if err = be.WriteRowsToDB(ctx, tableName, columnNames, r); err != nil {
 					// If the error is not nil, it means we reach the max error count in the non-batch mode.
 					// For now, we will treat like maxErrorCount is always 0. So we will just return if any error occurs.
-					// TODO: implement the max error count.
 					return errors.Annotatef(err, "[%s] write rows reach max error count %d", tableName, 0)
 				}
 			}
@@ -520,12 +518,6 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 		for i := 0; i < writeRowsMaxRetryTimes; i++ {
 			stmt := stmtTask.stmt
 			_, err := be.db.ExecContext(ctx, stmt)
-
-			failpoint.Inject("mockNonRetryableError", func() {
-				// To mock the non-retryable error for TestWriteRowsErrorDowngrading test
-				err = stderrors.New("mock non-retryable error")
-			})
-
 			if err != nil {
 				if !common.IsContextCanceledError(err) {
 					log.L().Error("execute statement failed",
@@ -542,7 +534,8 @@ func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tabl
 				firstRow := stmtTask.rows[0]
 				err = be.errorMgr.RecordTypeError(ctx, log.L(), tableName, firstRow.path, firstRow.offset, firstRow.insertStmt, err)
 				if err == nil {
-					continue
+					// max-error not yet reached (error consumed by errorMgr), proceed to next stmtTask.
+					break
 				}
 				return errors.Trace(err)
 			}
