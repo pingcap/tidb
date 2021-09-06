@@ -29,7 +29,6 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
@@ -810,9 +809,6 @@ func (c *Config) Load(confFile string) error {
 	}
 	if metaData.IsDefined("oom-action") {
 		IsOOMActionSetByUser = true
-	}
-	if len(c.ServerVersion) > 0 {
-		mysql.ServerVersion = c.ServerVersion
 	}
 	// If any items in confFile file are not mapped into the Config struct, issue
 	// an error and stop the server from starting.
