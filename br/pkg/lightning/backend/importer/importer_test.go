@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -218,7 +219,7 @@ func (s *importerSuite) TestCloseImportCleanupEngine(c *C) {
 
 	engine, err := s.engine.Close(s.ctx, nil)
 	c.Assert(err, IsNil)
-	err = engine.Import(s.ctx)
+	err = engine.Import(s.ctx, 1)
 	c.Assert(err, IsNil)
 	err = engine.Cleanup(s.ctx)
 	c.Assert(err, IsNil)

@@ -23,6 +23,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -196,7 +197,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	setTxnScope()
 	setSystemTimeZoneVariable()
 
-	tlsConfig, autoReload, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert, s.cfg.Security.AutoTLS)
+	tlsConfig, autoReload, err := util.LoadTLSCertificates(
+		s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
+		s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
 
 	// Automatically reload auto-generated certificates.
 	// The certificates are re-created every 30 days and are valid for 90 days.
@@ -204,7 +207,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		go func() {
 			for range time.Tick(time.Hour * 24 * 30) { // 30 days
 				logutil.BgLogger().Info("Rotating automatically created TLS Certificates")
-				tlsConfig, _, err = util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert, s.cfg.Security.AutoTLS)
+				tlsConfig, _, err = util.LoadTLSCertificates(
+					s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
+					s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
 				if err != nil {
 					logutil.BgLogger().Warn("TLS Certificate rotation failed", zap.Error(err))
 				}

@@ -148,7 +148,7 @@ func (s *testRestoreUtilSuite) TestValidateFileRewriteRule(c *C) {
 		},
 		rules,
 	)
-	c.Assert(err, ErrorMatches, ".*restore table ID mismatch")
+	c.Assert(err, ErrorMatches, ".*rewrite rule mismatch.*")
 
 	// Add a bad rule for end key, after rewrite start key > end key.
 	rules.Data = append(rules.Data[:1], &import_sstpb.RewriteRule{
@@ -163,7 +163,7 @@ func (s *testRestoreUtilSuite) TestValidateFileRewriteRule(c *C) {
 		},
 		rules,
 	)
-	c.Assert(err, ErrorMatches, ".*unexpected rewrite rules.*")
+	c.Assert(err, ErrorMatches, ".*rewrite rule mismatch.*")
 }
 
 func (s *testRestoreUtilSuite) TestPaginateScanRegion(c *C) {
@@ -225,8 +225,7 @@ func (s *testRestoreUtilSuite) TestPaginateScanRegion(c *C) {
 	regionMap := make(map[uint64]*restore.RegionInfo)
 	regions := []*restore.RegionInfo{}
 	batch, err := restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
-	c.Assert(err, IsNil)
-	c.Assert(batch, DeepEquals, regions)
+	c.Assert(err, ErrorMatches, ".*scan region return empty result.*")
 
 	regionMap, regions = makeRegions(1)
 	batch, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
@@ -266,4 +265,11 @@ func (s *testRestoreUtilSuite) TestPaginateScanRegion(c *C) {
 
 	_, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{2}, []byte{1}, 3)
 	c.Assert(err, ErrorMatches, ".*startKey >= endKey.*")
+
+	// make the regionMap losing some region, this will cause scan region check fails
+	delete(regionMap, uint64(3))
+	_, err = restore.PaginateScanRegion(
+		ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
+	c.Assert(err, ErrorMatches, ".*region endKey not equal to next region startKey.*")
+
 }

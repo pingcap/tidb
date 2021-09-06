@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -44,6 +45,7 @@ func TestAdminCheckTable(t *testing.T) {
 	tk.MustExec("ALTER TABLE t1 ADD COLUMN cc2 VARCHAR(36) NULL DEFAULT ''")
 	tk.MustExec("ALTER TABLE t1 ADD INDEX idx1 (cc1);")
 	tk.MustExec("ALTER TABLE t1 ADD INDEX idx2 (cc2);")
+	tk.MustExec("ALTER TABLE t1 engine=innodb;")
 	tk.MustExec("admin check table t1;")
 
 	// For add index on virtual column

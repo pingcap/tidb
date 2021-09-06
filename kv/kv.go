@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,6 +19,7 @@ import (
 	"crypto/tls"
 	"time"
 
+	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -69,6 +71,40 @@ type Retriever interface {
 	IterReverse(k Key) (Iterator, error)
 }
 
+// EmptyIterator is an iterator without any entry
+type EmptyIterator struct{}
+
+// Valid returns true if the current iterator is valid.
+func (i *EmptyIterator) Valid() bool { return false }
+
+// Key returns the current key. Always return nil for this iterator
+func (i *EmptyIterator) Key() Key { return nil }
+
+// Value returns the current value. Always return nil for this iterator
+func (i *EmptyIterator) Value() []byte { return nil }
+
+// Next goes the next position. Always return error for this iterator
+func (i *EmptyIterator) Next() error { return errors.New("iterator is invalid") }
+
+// Close closes the iterator.
+func (i *EmptyIterator) Close() {}
+
+// EmptyRetriever is a retriever without any entry
+type EmptyRetriever struct{}
+
+// Get gets the value for key k from kv store. Always return nil for this retriever
+func (r *EmptyRetriever) Get(_ context.Context, _ Key) ([]byte, error) {
+	return nil, ErrNotExist
+}
+
+// Iter creates an Iterator. Always return EmptyIterator for this retriever
+func (r *EmptyRetriever) Iter(_ Key, _ Key) (Iterator, error) { return &EmptyIterator{}, nil }
+
+// IterReverse creates a reversed Iterator. Always return EmptyIterator for this retriever
+func (r *EmptyRetriever) IterReverse(_ Key) (Iterator, error) {
+	return &EmptyIterator{}, nil
+}
+
 // Mutator is the interface wraps the basic Set and Delete methods.
 type Mutator interface {
 	// Set sets the value for key k as v into kv store.
@@ -92,8 +128,6 @@ var (
 type RetrieverMutator interface {
 	Retriever
 	Mutator
-	// set allowed options of current operation in each TiKV disk usage level.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 }
 
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
@@ -135,8 +169,8 @@ type MemBuffer interface {
 	// Len returns the number of entries in the DB.
 	Len() int
 
-	// set allowed options of current operation in each TiKV disk usage level.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
+	// Size returns sum of keys and values length.
+	Size() int
 }
 
 // LockCtx contains information for LockKeys method.
