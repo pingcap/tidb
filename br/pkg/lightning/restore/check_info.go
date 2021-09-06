@@ -65,19 +65,6 @@ const (
 	checkRegionCntRatioThreshold = 1000
 )
 
-type checkResultLevel int
-
-const (
-	checkResultOK checkResultLevel = iota
-	checkResultWarning
-	checkResultError
-)
-
-type checkResult struct {
-	level checkResultLevel
-	msg   string
-}
-
 func (rc *Controller) isSourceInLocal() bool {
 	return strings.HasPrefix(rc.store.URI(), storage.LocalURIPrefix)
 }
