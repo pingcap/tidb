@@ -63,7 +63,7 @@ In the above example, the optimizer may choose `TableFullScan` which takes much 
 
 ## Rationale
 
-[Rule Based index selection in OceanBase](https://www.oceanbase.com/docs/oceanbase-database/oceanbase-database/V3.1.2/rule-based-path-selection-2)
+Rules such as heuristics and skyline pruning can prevent the optimizer from choosing some obviously wrong index, which are implemented in many other databases.
 
 ## Compatibility
 
