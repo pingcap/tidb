@@ -1643,7 +1643,15 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	if er.err != nil {
 		return
 	}
+<<<<<<< HEAD
 	function, err := er.newFunction(op, &v.Type, l, r)
+=======
+	l.SetCharsetAndCollation(dstCharset, dstCollation)
+	r.SetCharsetAndCollation(dstCharset, dstCollation)
+	l = expression.FoldConstant(l)
+	r = expression.FoldConstant(r)
+	function, err := er.newFunction(ast.LogicAnd, &v.Type, l, r)
+>>>>>>> 7abf5ae08... expression: fold const after rewrite between (#27834)
 	if err != nil {
 		er.err = err
 		return
