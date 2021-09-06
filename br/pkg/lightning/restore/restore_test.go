@@ -1295,7 +1295,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit(c *C) {
 	reader, err := store.Open(ctx, fileName)
 	c.Assert(err, IsNil)
 	w := worker.NewPool(ctx, 1, "io")
-	p := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, false)
+	p, err := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, false, nil)
+	c.Assert(err, IsNil)
 	s.cr.parser = p
 
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
@@ -1363,7 +1364,8 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 	reader, err := store.Open(ctx, fileName)
 	c.Assert(err, IsNil)
 	w := worker.NewPool(ctx, 5, "io")
-	p := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, false)
+	p, err := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, false, nil)
+	c.Assert(err, IsNil)
 
 	err = s.cr.parser.Close()
 	c.Assert(err, IsNil)
