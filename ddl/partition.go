@@ -335,7 +335,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	if !enable {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
 	}
 
