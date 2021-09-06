@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -50,9 +51,26 @@ func NewBundle(id int64) *Bundle {
 }
 
 // NewBundleFromConstraintsOptions will transform constraints options into the bundle.
-func NewBundleFromConstraintsOptions(constraints string, leaderConstraints string, learnerConstraints string, followerConstraints string, voterConstraints string, followerCount uint64, voterCount uint64, learnerCount uint64) (*Bundle, error) {
+func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle, error) {
+	if options == nil {
+		return nil, fmt.Errorf("%w: options can not be nil", ErrInvalidPlacementOptions)
+	}
+
+	if len(options.PrimaryRegion) > 0 || len(options.Regions) > 0 || len(options.Schedule) > 0 {
+		return nil, fmt.Errorf("%w: should be [LEADER/VOTER/LEARNER/FOLLOWER]_CONSTRAINTS=.. [VOTERS/FOLLOWERS/LEARNERS]=.., mixed other sugar options %s", ErrInvalidPlacementOptions, options)
+	}
+
+	constraints := options.Constraints
+	leaderConstraints := options.LeaderConstraints
+	learnerConstraints := options.LearnerConstraints
+	followerConstraints := options.FollowerConstraints
+	voterConstraints := options.VoterConstraints
+	followerCount := options.Followers
+	voterCount := options.Voters
+	learnerCount := options.Learners
+
 	if voterCount+followerCount == 0 {
-		return nil, fmt.Errorf("%w: not enough voter, please specify voter or follower count", ErrInvalidPlacemeOptions)
+		return nil, fmt.Errorf("%w: not enough voter, please specify voter or follower count", ErrInvalidPlacementOptions)
 	}
 
 	CommonConstraints, err := NewConstraintsFromYaml([]byte(constraints))
@@ -124,16 +142,33 @@ func NewBundleFromConstraintsOptions(constraints string, leaderConstraints strin
 }
 
 // NewBundleFromSugarOptions will transform syntax sugar options into the bundle.
-func NewBundleFromSugarOptions(primaryRegion string, regions []string, followers uint64, schedule string) (*Bundle, error) {
+func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error) {
+	if options == nil {
+		return nil, fmt.Errorf("%w: options can not be nil", ErrInvalidPlacementOptions)
+	}
+
+	if len(options.LeaderConstraints) > 0 || len(options.LearnerConstraints) > 0 || len(options.FollowerConstraints) > 0 || len(options.VoterConstraints) > 0 || options.Learners > 0 || options.Voters > 0 {
+		return nil, fmt.Errorf("%w: should be PRIMARY_REGION=.. REGIONS=.. FOLLOWERS=.. SCHEDULE=.., mixed other constraints into options %s", ErrInvalidPlacementOptions, options)
+	}
+
+	primaryRegion := strings.TrimSpace(options.PrimaryRegion)
+	if len(primaryRegion) == 0 {
+		return nil, fmt.Errorf("%w: empty primary region", ErrInvalidPlacementOptions)
+	}
+
+	regions := strings.Split(options.Regions, ",")
+	for i, r := range regions {
+		regions[i] = strings.TrimSpace(r)
+	}
+
+	followers := options.Followers
 	if followers == 0 {
 		followers = 2
 	}
+	schedule := options.Schedule
+
 	var constraints Constraints
 	var err error
-
-	if len(primaryRegion) == 0 {
-		return nil, fmt.Errorf("%w: empty primary region", ErrInvalidPlacemeOptions)
-	}
 
 	Rules := []*Rule{}
 	switch strings.ToLower(schedule) {
@@ -155,11 +190,11 @@ func NewBundleFromSugarOptions(primaryRegion string, regions []string, followers
 		// even split the remaining followers
 		followers = followers - primary
 	default:
-		return nil, fmt.Errorf("%w: unsupported schedule %s", ErrInvalidPlacemeOptions, schedule)
+		return nil, fmt.Errorf("%w: unsupported schedule %s", ErrInvalidPlacementOptions, schedule)
 	}
 
 	if uint64(len(regions)) > followers {
-		return nil, fmt.Errorf("%w: remain %d region to schedule, only %d follower left", ErrInvalidPlacemeOptions, uint64(len(regions)), followers)
+		return nil, fmt.Errorf("%w: remain %d region to schedule, only %d follower left", ErrInvalidPlacementOptions, uint64(len(regions)), followers)
 	}
 
 	if len(regions) == 0 {
@@ -189,82 +224,21 @@ func NewBundleFromSugarOptions(primaryRegion string, regions []string, followers
 }
 
 // NewBundleFromOptions will transform options into the bundle.
-func NewBundleFromOptions(options []*ast.PlacementOption) (*Bundle, error) {
+func NewBundleFromOptions(options *model.PlacementSettings) (*Bundle, error) {
 	var isSyntaxSugar bool
-	if len(options) == 0 {
-		return nil, fmt.Errorf("%w: empty options", ErrInvalidPlacemeOptions)
+
+	if options == nil {
+		return nil, fmt.Errorf("%w: options can not be nil", ErrInvalidPlacementOptions)
 	}
-detect:
-	for _, opt := range options {
-		switch opt.Tp {
-		case ast.PlacementOptionFollowerCount:
-			// both sugar and non-sugar syntax could contain this option
-		case ast.PlacementOptionPolicy:
-			// not a direct placement option
-			return nil, fmt.Errorf("%w: it is a placement policy reference, not direct options", ErrInvalidPlacemeOptions)
-		case ast.PlacementOptionPrimaryRegion, ast.PlacementOptionRegions, ast.PlacementOptionSchedule:
-			isSyntaxSugar = true
-			break detect
-		case ast.PlacementOptionConstraints, ast.PlacementOptionLeaderConstraints, ast.PlacementOptionLearnerConstraints, ast.PlacementOptionFollowerConstraints, ast.PlacementOptionVoterConstraints, ast.PlacementOptionVoterCount, ast.PlacementOptionLearnerCount:
-			isSyntaxSugar = false
-			break detect
-		}
+
+	if len(options.PrimaryRegion) > 0 || len(options.Regions) > 0 || len(options.Schedule) > 0 {
+		isSyntaxSugar = true
 	}
+
 	if isSyntaxSugar {
-		var primaryRegion string
-		var regions []string
-		var schedule string
-		var followerCount uint64
-		for _, opt := range options {
-			switch opt.Tp {
-			case ast.PlacementOptionPrimaryRegion:
-				primaryRegion = strings.TrimSpace(opt.StrValue)
-			case ast.PlacementOptionRegions:
-				regions = strings.Split(opt.StrValue, ",")
-				for i, r := range regions {
-					regions[i] = strings.TrimSpace(r)
-				}
-			case ast.PlacementOptionFollowerCount:
-				followerCount = opt.UintValue
-			case ast.PlacementOptionSchedule:
-				schedule = strings.ToLower(opt.StrValue)
-			default:
-				return nil, fmt.Errorf("%w: unsupported option %+v", ErrInvalidPlacemeOptions, opt)
-			}
-		}
-		return NewBundleFromSugarOptions(primaryRegion, regions, followerCount, schedule)
+		return NewBundleFromSugarOptions(options)
 	} else {
-		var constraints string
-		var leaderConstraints string
-		var learnerConstraints string
-		var followerConstraints string
-		var voterConstraints string
-		var learnerCount uint64
-		var followerCount uint64
-		var voterCount uint64
-		for _, opt := range options {
-			switch opt.Tp {
-			case ast.PlacementOptionConstraints:
-				constraints = opt.StrValue
-			case ast.PlacementOptionLeaderConstraints:
-				leaderConstraints = opt.StrValue
-			case ast.PlacementOptionLearnerConstraints:
-				learnerConstraints = opt.StrValue
-			case ast.PlacementOptionFollowerConstraints:
-				followerConstraints = opt.StrValue
-			case ast.PlacementOptionVoterConstraints:
-				voterConstraints = opt.StrValue
-			case ast.PlacementOptionFollowerCount:
-				followerCount = opt.UintValue
-			case ast.PlacementOptionVoterCount:
-				voterCount = opt.UintValue
-			case ast.PlacementOptionLearnerCount:
-				learnerCount = opt.UintValue
-			default:
-				return nil, fmt.Errorf("%w: unsupported option %+v", ErrInvalidPlacemeOptions, opt)
-			}
-		}
-		return NewBundleFromConstraintsOptions(constraints, leaderConstraints, learnerConstraints, followerConstraints, voterConstraints, followerCount, voterCount, learnerCount)
+		return NewBundleFromConstraintsOptions(options)
 	}
 }
 

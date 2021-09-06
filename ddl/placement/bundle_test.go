@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -351,6 +352,12 @@ func (s *testBundleSuite) TestApplyPlacmentSpec(c *C) {
 	var tests []TestCase
 
 	tests = append(tests, TestCase{
+		name:  "empty",
+		input: nil,
+		err:   ErrInvalidPlacementOptions,
+	})
+
+	tests = append(tests, TestCase{
 		name:   "empty",
 		input:  []*ast.PlacementSpec{},
 		output: []*Rule{},
@@ -546,12 +553,18 @@ func (s *testBundleSuite) TestString(c *C) {
 func (s *testBundleSuite) TestNew(c *C) {
 	c.Assert(NewBundle(3), DeepEquals, &Bundle{ID: GroupID(3)})
 	c.Assert(NewBundle(-1), DeepEquals, &Bundle{ID: GroupID(-1)})
+	_, err := NewBundleFromConstraintsOptions(nil)
+	c.Assert(err, NotNil)
+	_, err = NewBundleFromSugarOptions(nil)
+	c.Assert(err, NotNil)
+	_, err = NewBundleFromOptions(nil)
+	c.Assert(err, NotNil)
 }
 
 func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	type TestCase struct {
 		name   string
-		input  []*ast.PlacementOption
+		input  *model.PlacementSettings
 		output []*Rule
 		err    error
 	}
@@ -559,53 +572,14 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 
 	tests = append(tests, TestCase{
 		name:  "empty",
-		input: nil,
-		err:   ErrInvalidPlacemeOptions,
-	})
-
-	tests = append(tests, TestCase{
-		name:  "policy",
-		input: []*ast.PlacementOption{{Tp: ast.PlacementOptionPolicy}},
-		err:   ErrInvalidPlacemeOptions,
-	})
-
-	tests = append(tests, TestCase{
-		name:  "policy",
-		input: []*ast.PlacementOption{{Tp: ast.PlacementOptionPolicy}},
-		err:   ErrInvalidPlacemeOptions,
-	})
-
-	tests = append(tests, TestCase{
-		name: "mixed branch 1",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionPrimaryRegion},
-			{Tp: ast.PlacementOptionPolicy},
-		},
-		err: ErrInvalidPlacemeOptions,
-	})
-
-	tests = append(tests, TestCase{
-		name: "mixed branch 2",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionLeaderConstraints},
-			{Tp: ast.PlacementOptionPolicy},
-		},
-		err: ErrInvalidPlacemeOptions,
-	})
-
-	tests = append(tests, TestCase{
-		name: "mixed branch 3",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionFollowerCount},
-			{Tp: ast.PlacementOptionPolicy},
-		},
-		err: ErrInvalidPlacemeOptions,
+		input: &model.PlacementSettings{},
+		err:   ErrInvalidPlacementOptions,
 	})
 
 	tests = append(tests, TestCase{
 		name: "sugar syntax: normal case 1",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionPrimaryRegion, StrValue: "us"},
+		input: &model.PlacementSettings{
+			PrimaryRegion: "us",
 		},
 		output: []*Rule{
 			{
@@ -629,63 +603,63 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 
 	tests = append(tests, TestCase{
 		name: "sugar syntax: invalid followers",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionPrimaryRegion, StrValue: "us"},
-			{Tp: ast.PlacementOptionRegions, StrValue: "us,sh,bj"},
+		input: &model.PlacementSettings{
+			PrimaryRegion: "us",
+			Regions:       "us,sh,bj",
 		},
-		err: ErrInvalidPlacemeOptions,
+		err: ErrInvalidPlacementOptions,
 	})
 
 	tests = append(tests, TestCase{
 		name: "sugar syntax: wrong schedule prop",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionPrimaryRegion, StrValue: "us"},
-			{Tp: ast.PlacementOptionSchedule, StrValue: "wrong"},
+		input: &model.PlacementSettings{
+			PrimaryRegion: "us",
+			Schedule:      "wrong",
 		},
-		err: ErrInvalidPlacemeOptions,
+		err: ErrInvalidPlacementOptions,
 	})
 
 	tests = append(tests, TestCase{
 		name: "sugar syntax: invalid region name 1",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionPrimaryRegion, StrValue: ",=,"},
+		input: &model.PlacementSettings{
+			PrimaryRegion: ",=,",
 		},
 		err: ErrInvalidConstraintFormat,
 	})
 
 	tests = append(tests, TestCase{
 		name: "sugar syntax: invalid region name 2",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionPrimaryRegion, StrValue: "f"},
-			{Tp: ast.PlacementOptionRegions, StrValue: ",="},
+		input: &model.PlacementSettings{
+			PrimaryRegion: "f",
+			Regions:       ",=",
 		},
 		err: ErrInvalidConstraintFormat,
 	})
 
 	tests = append(tests, TestCase{
 		name: "sugar syntax: invalid region name 3",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionPrimaryRegion, StrValue: ",="},
-			{Tp: ast.PlacementOptionFollowerCount, UintValue: 5},
-			{Tp: ast.PlacementOptionSchedule, StrValue: "majority_in_primary"},
+		input: &model.PlacementSettings{
+			PrimaryRegion: ",=",
+			Followers:     5,
+			Schedule:      "majority_in_primary",
 		},
 		err: ErrInvalidConstraintFormat,
 	})
 
 	tests = append(tests, TestCase{
 		name: "sugar syntax: invalid region name 4",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionPrimaryRegion, StrValue: ""},
+		input: &model.PlacementSettings{
+			PrimaryRegion: "",
 		},
-		err: ErrInvalidPlacemeOptions,
+		err: ErrInvalidPlacementOptions,
 	})
 
 	tests = append(tests, TestCase{
 		name: "sugar syntax: normal case 2",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionPrimaryRegion, StrValue: "us"},
-			{Tp: ast.PlacementOptionRegions, StrValue: "us,sh"},
-			{Tp: ast.PlacementOptionFollowerCount, UintValue: 5},
+		input: &model.PlacementSettings{
+			PrimaryRegion: "us",
+			Regions:       "us,sh",
+			Followers:     5,
 		},
 		output: []*Rule{
 			{
@@ -725,15 +699,15 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	})
 	tests = append(tests, tests[len(tests)-1])
 	tests[len(tests)-1].name = "sugar syntax: explicit schedule"
-	tests[len(tests)-1].input = append(tests[len(tests)-1].input, &ast.PlacementOption{Tp: ast.PlacementOptionSchedule, StrValue: "Even"})
+	tests[len(tests)-1].input.Schedule = "even"
 
 	tests = append(tests, TestCase{
 		name: "sugar syntax: majority schedule",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionPrimaryRegion, StrValue: "us"},
-			{Tp: ast.PlacementOptionRegions, StrValue: "bj,sh"},
-			{Tp: ast.PlacementOptionFollowerCount, UintValue: 5},
-			{Tp: ast.PlacementOptionSchedule, StrValue: "majority_in_primary"},
+		input: &model.PlacementSettings{
+			PrimaryRegion: "us",
+			Regions:       "bj,sh",
+			Followers:     5,
+			Schedule:      "majority_in_primary",
 		},
 		output: []*Rule{
 			{
@@ -785,9 +759,9 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 
 	tests = append(tests, TestCase{
 		name: "direct syntax: normal case 1",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionConstraints, StrValue: "[+region=us]"},
-			{Tp: ast.PlacementOptionFollowerCount, UintValue: 2},
+		input: &model.PlacementSettings{
+			Constraints: "[+region=us]",
+			Followers:   2,
 		},
 		output: []*Rule{
 			{
@@ -817,9 +791,9 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 
 	tests = append(tests, TestCase{
 		name: "direct syntax: normal case 2",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionConstraints, StrValue: "[+region=us]"},
-			{Tp: ast.PlacementOptionVoterCount, UintValue: 2},
+		input: &model.PlacementSettings{
+			Constraints: "[+region=us]",
+			Voters:      2,
 		},
 		output: []*Rule{
 			{
@@ -849,10 +823,10 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 
 	tests = append(tests, TestCase{
 		name: "direct syntax: normal case 3",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionConstraints, StrValue: "[+region=us]"},
-			{Tp: ast.PlacementOptionFollowerCount, UintValue: 2},
-			{Tp: ast.PlacementOptionLearnerCount, UintValue: 2},
+		input: &model.PlacementSettings{
+			Constraints: "[+region=us]",
+			Followers:   2,
+			Learners:    2,
 		},
 		output: []*Rule{
 			{
@@ -893,100 +867,100 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 
 	tests = append(tests, TestCase{
 		name: "direct syntax: conflicts 1",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionConstraints, StrValue: "[+region=us]"},
-			{Tp: ast.PlacementOptionLeaderConstraints, StrValue: "[-region=us]"},
-			{Tp: ast.PlacementOptionFollowerCount, UintValue: 2},
+		input: &model.PlacementSettings{
+			Constraints:       "[+region=us]",
+			LeaderConstraints: "[-region=us]",
+			Followers:         2,
 		},
 		err: ErrConflictingConstraints,
 	})
 
 	tests = append(tests, TestCase{
 		name: "direct syntax: not enough replicas",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionConstraints, StrValue: "[+region=us]"},
+		input: &model.PlacementSettings{
+			Constraints: "[+region=us]",
 		},
-		err: ErrInvalidPlacemeOptions,
+		err: ErrInvalidPlacementOptions,
 	})
 
 	tests = append(tests, TestCase{
 		name: "direct syntax: conflicts 2",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionConstraints, StrValue: "[+region=us]"},
-			{Tp: ast.PlacementOptionVoterConstraints, StrValue: "[-region=us]"},
-			{Tp: ast.PlacementOptionVoterCount, UintValue: 2},
+		input: &model.PlacementSettings{
+			Constraints:      "[+region=us]",
+			VoterConstraints: "[-region=us]",
+			Voters:           2,
 		},
 		err: ErrConflictingConstraints,
 	})
 
 	tests = append(tests, TestCase{
 		name: "direct syntax: conflicts 3",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionConstraints, StrValue: "[+region=us]"},
-			{Tp: ast.PlacementOptionFollowerConstraints, StrValue: "[-region=us]"},
-			{Tp: ast.PlacementOptionFollowerCount, UintValue: 2},
+		input: &model.PlacementSettings{
+			Constraints:         "[+region=us]",
+			FollowerConstraints: "[-region=us]",
+			Followers:           2,
 		},
 		err: ErrConflictingConstraints,
 	})
 
 	tests = append(tests, TestCase{
 		name: "direct syntax: conflicts 4",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionConstraints, StrValue: "[+region=us]"},
-			{Tp: ast.PlacementOptionLearnerConstraints, StrValue: "[-region=us]"},
-			{Tp: ast.PlacementOptionFollowerCount, UintValue: 2},
-			{Tp: ast.PlacementOptionLearnerCount, UintValue: 2},
+		input: &model.PlacementSettings{
+			Constraints:        "[+region=us]",
+			LearnerConstraints: "[-region=us]",
+			Followers:          2,
+			Learners:           2,
 		},
 		err: ErrConflictingConstraints,
 	})
 
 	tests = append(tests, TestCase{
 		name: "direct syntax: invalid format 1",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionConstraints, StrValue: "[+region=us]"},
-			{Tp: ast.PlacementOptionLeaderConstraints, StrValue: "-region=us]"},
-			{Tp: ast.PlacementOptionFollowerCount, UintValue: 2},
+		input: &model.PlacementSettings{
+			Constraints:       "[+region=us]",
+			LeaderConstraints: "-region=us]",
+			Followers:         2,
 		},
 		err: ErrInvalidConstraintsFormat,
 	})
 
 	tests = append(tests, TestCase{
 		name: "direct syntax: invalid format 2",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionConstraints, StrValue: "+region=us]"},
-			{Tp: ast.PlacementOptionLeaderConstraints, StrValue: "[-region=us]"},
-			{Tp: ast.PlacementOptionFollowerCount, UintValue: 2},
+		input: &model.PlacementSettings{
+			Constraints:       "+region=us]",
+			LeaderConstraints: "[-region=us]",
+			Followers:         2,
 		},
 		err: ErrInvalidConstraintsFormat,
 	})
 
 	tests = append(tests, TestCase{
 		name: "direct syntax: invalid format 3",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionConstraints, StrValue: "[+region=us]"},
-			{Tp: ast.PlacementOptionVoterConstraints, StrValue: "-region=us]"},
-			{Tp: ast.PlacementOptionVoterCount, UintValue: 2},
+		input: &model.PlacementSettings{
+			Constraints:      "[+region=us]",
+			VoterConstraints: "-region=us]",
+			Voters:           2,
 		},
 		err: ErrInvalidConstraintsFormat,
 	})
 
 	tests = append(tests, TestCase{
 		name: "direct syntax: invalid format 4",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionConstraints, StrValue: "[+region=us]"},
-			{Tp: ast.PlacementOptionFollowerConstraints, StrValue: "-region=us]"},
-			{Tp: ast.PlacementOptionFollowerCount, UintValue: 2},
+		input: &model.PlacementSettings{
+			Constraints:         "[+region=us]",
+			FollowerConstraints: "-region=us]",
+			Followers:           2,
 		},
 		err: ErrInvalidConstraintsFormat,
 	})
 
 	tests = append(tests, TestCase{
 		name: "direct syntax: invalid format 5",
-		input: []*ast.PlacementOption{
-			{Tp: ast.PlacementOptionConstraints, StrValue: "[+region=us]"},
-			{Tp: ast.PlacementOptionLearnerConstraints, StrValue: "-region=us]"},
-			{Tp: ast.PlacementOptionLearnerCount, UintValue: 2},
-			{Tp: ast.PlacementOptionFollowerCount, UintValue: 2},
+		input: &model.PlacementSettings{
+			Constraints:       "[+region=us]",
+			LeaderConstraints: "-region=us]",
+			Learners:          2,
+			Followers:         2,
 		},
 		err: ErrInvalidConstraintsFormat,
 	})
