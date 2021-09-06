@@ -417,6 +417,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
 	sessVars := e.ctx.GetSessionVars()
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML
 	batchSize := sessVars.DMLBatchSize
 	memUsageOfRows := int64(0)
 	memTracker := e.memTracker
