@@ -742,9 +742,9 @@ var FeatureSwitchVariables = []string{
 }
 
 // FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.
-func FilterImplicitFeatureSwitch(sysVar *SysVar) bool {
+func FilterImplicitFeatureSwitch(varName string) bool {
 	for _, one := range FeatureSwitchVariables {
-		if one == sysVar.Name {
+		if one == varName {
 			return true
 		}
 	}
