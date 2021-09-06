@@ -173,7 +173,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(rows1[0][2], Equals, `"attr"`)
 	c.Assert(rows1[0][3], Equals, rows[0][3])
 	c.Assert(rows1[0][4], Equals, rows[0][4])
-	// // check partition p0's rule
+	// check partition p0's rule
 	c.Assert(rows1[1][0], Equals, "schema/test/t2/p0")
 	c.Assert(rows1[1][2], Equals, `"attr1"`)
 	c.Assert(rows1[1][3], Equals, rows[1][3])
@@ -227,7 +227,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(rows1[0][2], Equals, `"attr"`)
 	c.Assert(rows1[0][3], Equals, rows[0][3])
 	c.Assert(rows1[0][4], Equals, rows[0][4])
-	// // check partition p0's rule
+	// check partition p0's rule
 	c.Assert(rows1[1][0], Equals, "schema/test/t1/p0")
 	c.Assert(rows1[1][2], Equals, `"attr1"`)
 	c.Assert(rows1[1][3], Equals, rows[1][3])
@@ -281,7 +281,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(rows1[0][2], Equals, `"attr"`)
 	c.Assert(rows1[0][3], Equals, rows[0][3])
 	c.Assert(rows1[0][4], Equals, rows[0][4])
-	// // check partition p0's rule
+	// check partition p0's rule
 	c.Assert(rows1[1][0], Equals, "schema/test/t2/p0")
 	c.Assert(rows1[1][2], Equals, `"attr1"`)
 	c.Assert(rows1[1][3], Equals, rows[1][3])
@@ -290,6 +290,7 @@ PARTITION BY RANGE (c) (
 	// truncate table
 	_, err = tk.Exec(`truncate table t2;`)
 	c.Assert(err, IsNil)
+	// flashback table
 	_, err = tk.Exec(`flashback table t2 to t3;`)
 	c.Assert(err, IsNil)
 	rows2 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
@@ -299,7 +300,7 @@ PARTITION BY RANGE (c) (
 	c.Assert(rows2[0][2], Equals, `"attr"`)
 	c.Assert(rows2[0][3], Equals, rows[0][3])
 	c.Assert(rows2[0][4], Equals, rows[0][4])
-	// // check partition p0's rule
+	// check partition p0's rule
 	c.Assert(rows2[1][0], Equals, "schema/test/t3/p0")
 	c.Assert(rows2[1][2], Equals, `"attr1"`)
 	c.Assert(rows2[1][3], Equals, rows[1][3])
