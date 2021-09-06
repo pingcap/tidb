@@ -270,6 +270,6 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(snapshotTS uint64) error {
 		return err
 	}
 
-	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTables(e.ctx, snapInfo)
+	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(e.ctx, snapInfo)
 	return nil
 }

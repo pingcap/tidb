@@ -3004,7 +3004,7 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	}
 
 	// Override the infoschema if the session has temporary table.
-	return temptable.AttachLocalTemporaryTables(s, is)
+	return temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 }
 
 func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
@@ -3014,7 +3014,7 @@ func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.
 	}
 	// Set snapshot does not affect the witness of the local temporary table.
 	// The session always see the latest temporary tables.
-	return temptable.AttachLocalTemporaryTables(s, is), nil
+	return temptable.AttachLocalTemporaryTableInfoSchema(s, is), nil
 }
 
 func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {

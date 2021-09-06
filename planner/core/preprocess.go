@@ -376,7 +376,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 
 	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
 	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence) {
-		is = temptable.DetachLocalTemporaryTables(is)
+		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 
 	tbl, err := is.TableByName(sName, tn.Name)
@@ -1592,7 +1592,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.err = fmt.Errorf("can not get any information schema based on snapshotTS: %d", p.LastSnapshotTS)
 			return
 		}
-		p.InfoSchema = temptable.AttachLocalTemporaryTables(p.ctx, is)
+		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.ctx, is)
 	}
 	if p.flag&inPrepare == 0 {
 		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness

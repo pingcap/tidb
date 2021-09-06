@@ -1005,7 +1005,7 @@ func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[i
 	if dom == nil {
 		return nil, false, errors.New("domain not found for ctx")
 	}
-	is := temptable.AttachLocalTemporaryTables(ctx, dom.InfoSchema())
+	is := temptable.AttachLocalTemporaryTableInfoSchema(ctx, dom.InfoSchema())
 	if is.SchemaMetaVersion() == startVer {
 		return nil, false, nil
 	}
