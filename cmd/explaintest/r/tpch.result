@@ -1322,6 +1322,6 @@ ScalarSubquery_0	1.00	root		output:scalarsubquery0-0()
 └─MaxOneRow	1.00	root		
   └─StreamAgg	1.00	root		funcs:avg(tpch.customer.c_acctbal)->Column#17
     └─Selection	5473531.00	root		in(substring(tpch.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
-      └─TableReader	5473531.00	root		data:Selection
-        └─Selection	5473531.00	cop[tikv]		gt(tpch.customer.c_acctbal, 0.00)
+      └─TableReader	6841913.75	root		data:Selection
+        └─Selection	6841913.75	cop[tikv]		gt(tpch.customer.c_acctbal, 0.00)
           └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false

@@ -50,55 +50,55 @@ drop table if exists t;
 create table t(a int primary key, b int, c int, d int);
 explain select b from t where t.c = (select t2.d from t t2 limit 1);
 id	estRows	task	access object	operator info
-Projection_20	8000.00	root		test.t.b
-└─Selection_21	8000.00	root		eq(test.t.c, scalarsubquery0-0())
-  └─TableReader_23	10000.00	root		data:TableFullScan_22
-    └─TableFullScan_22	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection_17	8000.00	root		test.t.b
+└─Selection_18	8000.00	root		eq(test.t.c, scalarsubquery0-0())
+  └─TableReader_20	10000.00	root		data:TableFullScan_19
+    └─TableFullScan_19	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 ScalarSubquery_0	1.00	root		output:scalarsubquery0-0()
 └─MaxOneRow_9	1.00	root		
   └─Limit_11	1.00	root		offset:0, count:1
-    └─TableReader_16	1.00	root		data:Limit_15
-      └─Limit_15	1.00	cop[tikv]		offset:0, count:1
-        └─TableFullScan_14	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader_15	1.00	root		data:Limit_14
+      └─Limit_14	1.00	cop[tikv]		offset:0, count:1
+        └─TableFullScan_13	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain analyze select b from t where t.c = (select t2.d from t t2 limit 1);
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-TableDual_21	8000.00	0	root		time:1.14µs, loops:1	rows:0	N/A	N/A
+TableDual_18	8000.00	0	root		time:1.12µs, loops:1	rows:0	N/A	N/A
 ScalarSubquery_0	1.00	1	root			output:NULL		
-└─MaxOneRow_9	1.00	1	root		time:3.99ms, loops:1		N/A	N/A
-  └─Limit_11	1.00	0	root		time:3.98ms, loops:1	offset:0, count:1	N/A	N/A
-    └─TableReader_16	1.00	0	root		time:3.98ms, loops:1, cop_task: {num: 1, max: 194µs, proc_keys: 0, rpc_num: 2, rpc_time: 219.8µs, copr_cache_hit_ratio: 0.00}	data:Limit_15	159 Bytes	N/A
-      └─Limit_15	1.00	0	cop[tikv]		tikv_task:{time:0s, loops:1}	offset:0, count:1	N/A	N/A
-        └─TableFullScan_14	1.00	0	cop[tikv]	table:t2	tikv_task:{time:0s, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+└─MaxOneRow_9	1.00	1	root		time:3.67ms, loops:1		N/A	N/A
+  └─Limit_11	1.00	0	root		time:3.66ms, loops:1	offset:0, count:1	N/A	N/A
+    └─TableReader_15	1.00	0	root		time:3.66ms, loops:1, cop_task: {num: 1, max: 210.9µs, proc_keys: 0, rpc_num: 2, rpc_time: 235µs, copr_cache_hit_ratio: 0.00}	data:Limit_14	159 Bytes	N/A
+      └─Limit_14	1.00	0	cop[tikv]		tikv_task:{time:0s, loops:1}	offset:0, count:1	N/A	N/A
+        └─TableFullScan_13	1.00	0	cop[tikv]	table:t2	tikv_task:{time:0s, loops:0}	keep order:false, stats:pseudo	N/A	N/A
 explain select b from t where t.c = (select t2.d from t t2 limit 1) and t.d = (select t2.c from t t2 limit 1);
 id	estRows	task	access object	operator info
-Projection_36	8000.00	root		test.t.b
-└─Selection_37	8000.00	root		eq(test.t.c, scalarsubquery0-0()), eq(test.t.d, scalarsubquery1-0())
-  └─TableReader_39	10000.00	root		data:TableFullScan_38
-    └─TableFullScan_38	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection_30	8000.00	root		test.t.b
+└─Selection_31	8000.00	root		eq(test.t.c, scalarsubquery0-0()), eq(test.t.d, scalarsubquery1-0())
+  └─TableReader_33	10000.00	root		data:TableFullScan_32
+    └─TableFullScan_32	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 ScalarSubquery_0	1.00	root		output:scalarsubquery0-0()
 └─MaxOneRow_9	1.00	root		
   └─Limit_11	1.00	root		offset:0, count:1
-    └─TableReader_16	1.00	root		data:Limit_15
-      └─Limit_15	1.00	cop[tikv]		offset:0, count:1
-        └─TableFullScan_14	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader_15	1.00	root		data:Limit_14
+      └─Limit_14	1.00	cop[tikv]		offset:0, count:1
+        └─TableFullScan_13	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 ScalarSubquery_1	1.00	root		output:scalarsubquery1-0()
-└─MaxOneRow_25	1.00	root		
-  └─Limit_27	1.00	root		offset:0, count:1
-    └─TableReader_32	1.00	root		data:Limit_31
-      └─Limit_31	1.00	cop[tikv]		offset:0, count:1
-        └─TableFullScan_30	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─MaxOneRow_22	1.00	root		
+  └─Limit_24	1.00	root		offset:0, count:1
+    └─TableReader_28	1.00	root		data:Limit_27
+      └─Limit_27	1.00	cop[tikv]		offset:0, count:1
+        └─TableFullScan_26	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain analyze select b from t where t.c = (select t2.d from t t2 limit 1) and t.d = (select t2.c from t t2 limit 1);
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-TableDual_37	8000.00	0	root		time:1.11µs, loops:1	rows:0	N/A	N/A
+TableDual_31	8000.00	0	root		time:1.08µs, loops:1	rows:0	N/A	N/A
 ScalarSubquery_0	1.00	1	root			output:NULL		
-└─MaxOneRow_9	1.00	1	root		time:466.7µs, loops:1		N/A	N/A
-  └─Limit_11	1.00	0	root		time:463.1µs, loops:1	offset:0, count:1	N/A	N/A
-    └─TableReader_16	1.00	0	root		time:460.3µs, loops:1, cop_task: {num: 1, max: 293.7µs, proc_keys: 0, rpc_num: 1, rpc_time: 253.8µs, copr_cache_hit_ratio: 0.00}	data:Limit_15	159 Bytes	N/A
-      └─Limit_15	1.00	0	cop[tikv]		tikv_task:{time:0s, loops:1}	offset:0, count:1	N/A	N/A
-        └─TableFullScan_14	1.00	0	cop[tikv]	table:t2	tikv_task:{time:0s, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+└─MaxOneRow_9	1.00	1	root		time:388.3µs, loops:1		N/A	N/A
+  └─Limit_11	1.00	0	root		time:384.5µs, loops:1	offset:0, count:1	N/A	N/A
+    └─TableReader_15	1.00	0	root		time:381µs, loops:1, cop_task: {num: 1, max: 240.3µs, proc_keys: 0, rpc_num: 1, rpc_time: 193.9µs, copr_cache_hit_ratio: 0.00}	data:Limit_14	159 Bytes	N/A
+      └─Limit_14	1.00	0	cop[tikv]		tikv_task:{time:0s, loops:1}	offset:0, count:1	N/A	N/A
+        └─TableFullScan_13	1.00	0	cop[tikv]	table:t2	tikv_task:{time:0s, loops:0}	keep order:false, stats:pseudo	N/A	N/A
 ScalarSubquery_1	1.00	1	root			output:NULL		
-└─MaxOneRow_25	1.00	1	root		time:367.9µs, loops:1		N/A	N/A
-  └─Limit_27	1.00	0	root		time:364.6µs, loops:1	offset:0, count:1	N/A	N/A
-    └─TableReader_32	1.00	0	root		time:362µs, loops:1, cop_task: {num: 1, max: 207.4µs, proc_keys: 0, rpc_num: 1, rpc_time: 169.5µs, copr_cache_hit_ratio: 0.00}	data:Limit_31	159 Bytes	N/A
-      └─Limit_31	1.00	0	cop[tikv]		tikv_task:{time:0s, loops:1}	offset:0, count:1	N/A	N/A
-        └─TableFullScan_30	1.00	0	cop[tikv]	table:t2	tikv_task:{time:0s, loops:0}	keep order:false, stats:pseudo	N/A	N/A
+└─MaxOneRow_22	1.00	1	root		time:368.5µs, loops:1		N/A	N/A
+  └─Limit_24	1.00	0	root		time:365.5µs, loops:1	offset:0, count:1	N/A	N/A
+    └─TableReader_28	1.00	0	root		time:362.6µs, loops:1, cop_task: {num: 1, max: 219.2µs, proc_keys: 0, rpc_num: 1, rpc_time: 171.2µs, copr_cache_hit_ratio: 0.00}	data:Limit_27	159 Bytes	N/A
+      └─Limit_27	1.00	0	cop[tikv]		tikv_task:{time:0s, loops:1}	offset:0, count:1	N/A	N/A
+        └─TableFullScan_26	1.00	0	cop[tikv]	table:t2	tikv_task:{time:0s, loops:0}	keep order:false, stats:pseudo	N/A	N/A
