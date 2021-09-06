@@ -198,7 +198,7 @@ func onDropPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 }
 
 func onAlterPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	alterPolicy := &placementpolicy.PolicyInfo{}
+	alterPolicy := &model.PolicyInfo{}
 	if err := job.DecodeArgs(alterPolicy); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -212,7 +212,7 @@ func onAlterPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newPolicyInfo := *oldPolicy
 	newPolicyInfo.PlacementSettings = alterPolicy.PlacementSettings
 
-	err = checkPolicyValidation(&newPolicyInfo)
+	err = checkPolicyValidation(newPolicyInfo.PlacementSettings)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
