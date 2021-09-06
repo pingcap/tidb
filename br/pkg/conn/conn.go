@@ -182,7 +182,7 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-error injected.")
 					err = status.Error(codes.Unknown, "Retryable error")
 				}
-			}
+			})
 
 			return errors.Trace(err)
 		},
