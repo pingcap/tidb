@@ -78,7 +78,7 @@ func TestCoprocessorStreamRecvTimeout(t *testing.T) {
 	tk.Session().GetSessionVars().EnableStreaming = true
 
 	tests := []struct {
-		name string
+		name    string
 		timeout time.Duration
 	}{
 		{"timeout", tikv.ReadTimeoutMedium + 100*time.Second},
