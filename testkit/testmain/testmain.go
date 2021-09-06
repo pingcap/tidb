@@ -12,39 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+// +build !codes
 
-import (
-	"flag"
-	"fmt"
+package testmain
 
-	"github.com/phayes/freeport"
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
-)
+import "go.uber.org/goleak"
 
-var (
-	count uint
-)
-
-func init() {
-	flag.UintVar(&count, "count", 1, "number of generated ports")
+type testingM struct {
+	goleak.TestingM
+	callback func(int) int
 }
 
-func generatePorts(count int) []int {
-	var (
-		err   error
-		ports []int
-	)
-	if ports, err = freeport.GetFreePorts(count); err != nil {
-		log.Fatal("no more free ports", zap.Error(err))
+func (m *testingM) Run() int {
+	return m.callback(m.TestingM.Run())
+}
+
+// WrapTestingM returns a TestingM wrapped with callback on m.Run returning
+func WrapTestingM(m goleak.TestingM, callback func(int) int) *testingM {
+	if callback == nil {
+		callback = func(i int) int {
+			return i
+		}
 	}
-	return ports
-}
 
-func main() {
-	flag.Parse()
-	for _, port := range generatePorts(int(count)) {
-		fmt.Println(port)
+	return &testingM{
+		TestingM: m,
+		callback: callback,
 	}
 }
