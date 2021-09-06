@@ -17,7 +17,6 @@ package copr
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/br/pkg/redact"
 	"io"
 	"strconv"
 	"strings"
@@ -886,9 +885,10 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		return buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.diagInfo)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
+		// Be care that we didn't redact the SQL statement because the log is DEBUG level.
 		logutil.Logger(bo.GetCtx()).Debug("coprocessor encounters lock",
 			zap.Stringer("lock", lockErr),
-			zap.String("stmt", redact.String(task.diagInfo.Stmt)))
+			zap.String("stmt", task.diagInfo.Stmt))
 		msBeforeExpired, err1 := worker.kvclient.ResolveLocks(bo.TiKVBackoffer(), worker.req.StartTs, []*txnlock.Lock{txnlock.NewLock(lockErr)})
 		err1 = derr.ToTiDBErr(err1)
 		if err1 != nil {
@@ -907,7 +907,6 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			zap.Uint64("txnStartTS", worker.req.StartTs),
 			zap.Uint64("regionID", task.region.GetID()),
 			zap.String("storeAddr", task.storeAddr),
-			zap.String("stmt", redact.String(task.diagInfo.Stmt)),
 			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
