@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -122,8 +123,10 @@ const (
 	TypeIndexRangeScan = "IndexRangeScan"
 	// TypeCTETable is the type of TypeCTETable.
 	TypeCTETable = "CTETable"
-	// TypeCTE is the type of TypeCTE.
-	TypeCTE = "CTE"
+	// TypeCTE is the type of CTEFullScan.
+	TypeCTE = "CTEFullScan"
+	// TypeCTEDefinition is the type of CTE definition
+	TypeCTEDefinition = "CTE"
 )
 
 // plan id.
@@ -178,6 +181,9 @@ const (
 	typeIndexRangeScan        int = 47
 	typeExchangeReceiver      int = 48
 	typeExchangeSender        int = 49
+	typeCTE                   int = 50
+	typeCTEDefinition         int = 51
+	typeCTETable              int = 52
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -281,6 +287,12 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeExchangeReceiver
 	case TypeExchangeSender:
 		return typeExchangeSender
+	case TypeCTE:
+		return typeCTE
+	case TypeCTEDefinition:
+		return typeCTEDefinition
+	case TypeCTETable:
+		return typeCTETable
 	}
 	// Should never reach here.
 	return 0
@@ -385,6 +397,12 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeExchangeReceiver
 	case typeExchangeSender:
 		return TypeExchangeSender
+	case typeCTE:
+		return TypeCTE
+	case typeCTEDefinition:
+		return TypeCTEDefinition
+	case typeCTETable:
+		return TypeCTETable
 	}
 
 	// Should never reach here.

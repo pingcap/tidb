@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,12 +17,11 @@ package copr
 import (
 	"bytes"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/logutil"
-	"github.com/pingcap/tidb/store/tikv/metrics"
-	"go.uber.org/zap"
+	derr "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/metrics"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 // RegionCache wraps tikv.RegionCache.
@@ -40,7 +40,7 @@ func (c *RegionCache) SplitRegionRanges(bo *Backoffer, keyRanges []kv.KeyRange) 
 
 	locations, err := c.SplitKeyRangesByLocations(bo, ranges)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, derr.ToTiDBErr(err)
 	}
 	var ret []kv.KeyRange
 	for _, loc := range locations {
@@ -65,7 +65,7 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 	for ranges.Len() > 0 {
 		loc, err := c.LocateKey(bo.TiKVBackoffer(), ranges.At(0).StartKey)
 		if err != nil {
-			return res, errors.Trace(err)
+			return res, derr.ToTiDBErr(err)
 		}
 
 		// Iterate to the first range that is not complete in the region.
@@ -119,20 +119,6 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *tikv.Store
 		if ri.Meta == nil {
 			continue
 		}
-		r := c.GetCachedRegionWithRLock(ri.Region)
-		if r == nil {
-			return
-		}
-		peersNum := len(r.GetMeta().Peers)
-		if len(ri.Meta.Peers) != peersNum {
-			logutil.Logger(bo.GetCtx()).Info("retry and refresh current region after send request fail and up/down stores length changed",
-				zap.Stringer("region", &ri.Region),
-				zap.Bool("needReload", scheduleReload),
-				zap.Reflect("oldPeers", ri.Meta.Peers),
-				zap.Reflect("newPeers", r.GetMeta().Peers),
-				zap.Error(err))
-			continue
-		}
-		c.OnSendFailForRegion(bo.TiKVBackoffer(), store, ri.Region, r, scheduleReload, err)
+		c.OnSendFailForTiFlash(bo.TiKVBackoffer(), store, ri.Region, ri.Meta, scheduleReload, err)
 	}
 }

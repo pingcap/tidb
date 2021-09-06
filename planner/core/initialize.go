@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -419,7 +420,7 @@ func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalT
 	if p.tablePlan != nil {
 		p.TablePlans = flattenPushDownPlan(p.tablePlan)
 		p.schema = p.tablePlan.Schema()
-		if p.StoreType == kv.TiFlash && !p.GetTableScan().KeepOrder {
+		if p.StoreType == kv.TiFlash && p.GetTableScan() != nil && !p.GetTableScan().KeepOrder {
 			// When allow batch cop is 1, only agg / topN uses batch cop.
 			// When allow batch cop is 2, every query uses batch cop.
 			switch ctx.GetSessionVars().AllowBatchCop {

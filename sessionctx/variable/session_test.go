@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/tikv/client-go/v2/util"
 )
 
 var _ = SerialSuites(&testSessionSuite{})
@@ -46,13 +47,13 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 		{variable.TimeZone, "xyz", true},
 		{variable.TiDBOptAggPushDown, "1", false},
 		{variable.TiDBOptDistinctAggPushDown, "1", false},
-		{variable.TIDBMemQuotaQuery, "1024", false},
-		{variable.TIDBMemQuotaHashJoin, "1024", false},
-		{variable.TIDBMemQuotaMergeJoin, "1024", false},
-		{variable.TIDBMemQuotaSort, "1024", false},
-		{variable.TIDBMemQuotaTopn, "1024", false},
-		{variable.TIDBMemQuotaIndexLookupReader, "1024", false},
-		{variable.TIDBMemQuotaIndexLookupJoin, "1024", false},
+		{variable.TiDBMemQuotaQuery, "1024", false},
+		{variable.TiDBMemQuotaHashJoin, "1024", false},
+		{variable.TiDBMemQuotaMergeJoin, "1024", false},
+		{variable.TiDBMemQuotaSort, "1024", false},
+		{variable.TiDBMemQuotaTopn, "1024", false},
+		{variable.TiDBMemQuotaIndexLookupReader, "1024", false},
+		{variable.TiDBMemQuotaIndexLookupJoin, "1024", false},
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
 		{variable.TiDBEnableStmtSummary, "1", false},
 	}

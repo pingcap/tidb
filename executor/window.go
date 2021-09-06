@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -319,7 +320,9 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 			for i, windowFunc := range p.windowFuncs {
 				slidingWindowAggFunc := slidingWindowAggFuncs[i]
 				if slidingWindowAggFunc != nil && initializedSlidingWindow {
-					err = slidingWindowAggFunc.Slide(ctx, rows, lastStart, lastEnd, shiftStart, shiftEnd, p.partialResults[i])
+					err = slidingWindowAggFunc.Slide(ctx, func(u uint64) chunk.Row {
+						return rows[u]
+					}, lastStart, lastEnd, shiftStart, shiftEnd, p.partialResults[i])
 					if err != nil {
 						return nil, err
 					}
@@ -335,7 +338,9 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 		for i, windowFunc := range p.windowFuncs {
 			slidingWindowAggFunc := slidingWindowAggFuncs[i]
 			if slidingWindowAggFunc != nil && initializedSlidingWindow {
-				err = slidingWindowAggFunc.Slide(ctx, rows, lastStart, lastEnd, shiftStart, shiftEnd, p.partialResults[i])
+				err = slidingWindowAggFunc.Slide(ctx, func(u uint64) chunk.Row {
+					return rows[u]
+				}, lastStart, lastEnd, shiftStart, shiftEnd, p.partialResults[i])
 			} else {
 				// For MinMaxSlidingWindowAggFuncs, it needs the absolute value of each start of window, to compare
 				// whether elements inside deque are out of current window.
@@ -469,7 +474,9 @@ func (p *rangeFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, r
 			for i, windowFunc := range p.windowFuncs {
 				slidingWindowAggFunc := slidingWindowAggFuncs[i]
 				if slidingWindowAggFunc != nil && initializedSlidingWindow {
-					err = slidingWindowAggFunc.Slide(ctx, rows, lastStart, lastEnd, shiftStart, shiftEnd, p.partialResults[i])
+					err = slidingWindowAggFunc.Slide(ctx, func(u uint64) chunk.Row {
+						return rows[u]
+					}, lastStart, lastEnd, shiftStart, shiftEnd, p.partialResults[i])
 					if err != nil {
 						return nil, err
 					}
@@ -485,7 +492,9 @@ func (p *rangeFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, r
 		for i, windowFunc := range p.windowFuncs {
 			slidingWindowAggFunc := slidingWindowAggFuncs[i]
 			if slidingWindowAggFunc != nil && initializedSlidingWindow {
-				err = slidingWindowAggFunc.Slide(ctx, rows, lastStart, lastEnd, shiftStart, shiftEnd, p.partialResults[i])
+				err = slidingWindowAggFunc.Slide(ctx, func(u uint64) chunk.Row {
+					return rows[u]
+				}, lastStart, lastEnd, shiftStart, shiftEnd, p.partialResults[i])
 			} else {
 				if minMaxSlidingWindowAggFunc, ok := windowFunc.(aggfuncs.MaxMinSlidingWindowAggFunc); ok {
 					minMaxSlidingWindowAggFunc.SetWindowStart(start)

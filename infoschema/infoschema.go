@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/placementpolicy"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -37,6 +39,7 @@ type InfoSchema interface {
 	TableExists(schema, table model.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
+	PolicyByName(name model.CIStr) (*placementpolicy.PolicyInfo, bool)
 	TableByID(id int64) (table.Table, bool)
 	AllocByID(id int64) (autoid.Allocators, bool)
 	AllSchemaNames() []string
@@ -55,6 +58,8 @@ type InfoSchema interface {
 	SetBundle(*placement.Bundle)
 	// RuleBundles will return a copy of all rule bundles.
 	RuleBundles() []*placement.Bundle
+	// AllPlacementPolicies returns all placement policies
+	AllPlacementPolicies() []*placementpolicy.PolicyInfo
 }
 
 type sortedTables []table.Table
@@ -93,6 +98,10 @@ type infoSchema struct {
 	ruleBundleMutex sync.RWMutex
 	ruleBundleMap   map[string]*placement.Bundle
 
+	// policyMap stores all placement policies.
+	policyMutex sync.RWMutex
+	policyMap   map[string]*placementpolicy.PolicyInfo
+
 	schemaMap map[string]*schemaTables
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
@@ -106,6 +115,7 @@ type infoSchema struct {
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
+	result.policyMap = make(map[string]*placementpolicy.PolicyInfo)
 	result.ruleBundleMap = make(map[string]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
@@ -130,6 +140,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
 	result := &infoSchema{}
 	result.schemaMap = make(map[string]*schemaTables)
+	result.policyMap = make(map[string]*placementpolicy.PolicyInfo)
 	result.ruleBundleMap = make(map[string]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
@@ -204,6 +215,16 @@ func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
 		}
 	}
 	return false
+}
+
+func (is *infoSchema) PolicyByID(id int64) (val *placementpolicy.PolicyInfo, ok bool) {
+	// TODO: use another hash map to avoid traveling on the policy map
+	for _, v := range is.policyMap {
+		if v.ID == id {
+			return v, true
+		}
+	}
+	return nil, false
 }
 
 func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
@@ -346,6 +367,25 @@ func HasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 	return false, ""
 }
 
+// PolicyByName is used to find the policy.
+func (is *infoSchema) PolicyByName(name model.CIStr) (*placementpolicy.PolicyInfo, bool) {
+	is.policyMutex.RLock()
+	defer is.policyMutex.RUnlock()
+	t, r := is.policyMap[name.L]
+	return t, r
+}
+
+// AllPlacementPolicies returns all placement policies
+func (is *infoSchema) AllPlacementPolicies() []*placementpolicy.PolicyInfo {
+	is.policyMutex.RLock()
+	defer is.policyMutex.RUnlock()
+	policies := make([]*placementpolicy.PolicyInfo, 0, len(is.policyMap))
+	for _, policy := range is.policyMap {
+		policies = append(policies, policy)
+	}
+	return policies
+}
+
 func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
 	is.ruleBundleMutex.RLock()
 	defer is.ruleBundleMutex.RUnlock()
@@ -375,7 +415,7 @@ func (is *infoSchema) deleteBundle(id string) {
 	delete(is.ruleBundleMap, id)
 }
 
-// GetBundle get the first available bundle by array of IDs, possibbly fallback to the default.
+// GetBundle get the first available bundle by array of IDs, possibly fallback to the default.
 // If fallback to the default, only rules applied to all regions(empty keyrange) will be returned.
 // If the default bundle is unavailable, an empty bundle with an GroupID(ids[0]) is returned.
 func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
@@ -402,4 +442,159 @@ func GetBundle(h InfoSchema, ids []int64) *placement.Bundle {
 		id = ids[0]
 	}
 	return &placement.Bundle{ID: placement.GroupID(id), Rules: newRules}
+}
+
+type schemaLocalTempSchemaTables struct {
+	tables map[string]table.Table
+}
+
+// LocalTemporaryTables store local temporary tables
+type LocalTemporaryTables struct {
+	schemaMap map[string]*schemaLocalTempSchemaTables
+	idx2table map[int64]table.Table
+}
+
+// NewLocalTemporaryTables creates a new NewLocalTemporaryTables object
+func NewLocalTemporaryTables() *LocalTemporaryTables {
+	return &LocalTemporaryTables{
+		schemaMap: make(map[string]*schemaLocalTempSchemaTables),
+		idx2table: make(map[int64]table.Table),
+	}
+}
+
+// TableByName get table by name
+func (is *LocalTemporaryTables) TableByName(schema, table model.CIStr) (table.Table, bool) {
+	if tbNames, ok := is.schemaMap[schema.L]; ok {
+		if t, ok := tbNames.tables[table.L]; ok {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
+// TableExists check if table with the name exists
+func (is *LocalTemporaryTables) TableExists(schema, table model.CIStr) (ok bool) {
+	_, ok = is.TableByName(schema, table)
+	return
+}
+
+// TableByID get table by table id
+func (is *LocalTemporaryTables) TableByID(id int64) (tbl table.Table, ok bool) {
+	tbl, ok = is.idx2table[id]
+	return
+}
+
+// AddTable add a table
+func (is *LocalTemporaryTables) AddTable(schema model.CIStr, tbl table.Table) error {
+	schemaTables := is.ensureSchema(schema)
+
+	tblMeta := tbl.Meta()
+	if _, ok := schemaTables.tables[tblMeta.Name.L]; ok {
+		return ErrTableExists.GenWithStackByArgs(tblMeta.Name)
+	}
+
+	if _, ok := is.idx2table[tblMeta.ID]; ok {
+		return ErrTableExists.GenWithStackByArgs(tblMeta.Name)
+	}
+
+	schemaTables.tables[tblMeta.Name.L] = tbl
+	is.idx2table[tblMeta.ID] = tbl
+
+	return nil
+}
+
+// RemoveTable remove a table
+func (is *LocalTemporaryTables) RemoveTable(schema, table model.CIStr) (exist bool) {
+	tbls := is.schemaTables(schema)
+	if tbls == nil {
+		return false
+	}
+
+	oldTable, exist := tbls.tables[table.L]
+	if !exist {
+		return false
+	}
+
+	delete(tbls.tables, table.L)
+	delete(is.idx2table, oldTable.Meta().ID)
+	return true
+}
+
+// SchemaByTable get a table's schema name
+func (is *LocalTemporaryTables) SchemaByTable(tableInfo *model.TableInfo) (string, bool) {
+	if tableInfo == nil {
+		return "", false
+	}
+
+	for schema, v := range is.schemaMap {
+		if tbl, ok := v.tables[tableInfo.Name.L]; ok {
+			if tbl.Meta().ID == tableInfo.ID {
+				return schema, true
+			}
+		}
+	}
+
+	return "", false
+}
+
+func (is *LocalTemporaryTables) ensureSchema(schema model.CIStr) *schemaLocalTempSchemaTables {
+	if tbls, ok := is.schemaMap[schema.L]; ok {
+		return tbls
+	}
+
+	tbls := &schemaLocalTempSchemaTables{tables: make(map[string]table.Table)}
+	is.schemaMap[schema.L] = tbls
+	return tbls
+}
+
+func (is *LocalTemporaryTables) schemaTables(schema model.CIStr) *schemaLocalTempSchemaTables {
+	if is.schemaMap == nil {
+		return nil
+	}
+
+	if tbls, ok := is.schemaMap[schema.L]; ok {
+		return tbls
+	}
+
+	return nil
+}
+
+// TemporaryTableAttachedInfoSchema implements InfoSchema
+// Local temporary table has a loose relationship with database.
+// So when a database is dropped, its temporary tables still exist and can be return by TableByName/TableByID.
+// However SchemaByTable will return nil if database is dropped.
+type TemporaryTableAttachedInfoSchema struct {
+	InfoSchema
+	LocalTemporaryTables *LocalTemporaryTables
+}
+
+// TableByName implements InfoSchema.TableByName
+func (ts *TemporaryTableAttachedInfoSchema) TableByName(schema, table model.CIStr) (table.Table, error) {
+	if tbl, ok := ts.LocalTemporaryTables.TableByName(schema, table); ok {
+		return tbl, nil
+	}
+
+	return ts.InfoSchema.TableByName(schema, table)
+}
+
+// TableByID implements InfoSchema.TableByID
+func (ts *TemporaryTableAttachedInfoSchema) TableByID(id int64) (table.Table, bool) {
+	if tbl, ok := ts.LocalTemporaryTables.TableByID(id); ok {
+		return tbl, true
+	}
+
+	return ts.InfoSchema.TableByID(id)
+}
+
+// SchemaByTable implements InfoSchema.SchemaByTable
+func (ts *TemporaryTableAttachedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
+	if tableInfo == nil {
+		return nil, false
+	}
+
+	if schemaName, ok := ts.LocalTemporaryTables.SchemaByTable(tableInfo); ok {
+		return ts.SchemaByName(model.NewCIStr(schemaName))
+	}
+
+	return ts.InfoSchema.SchemaByTable(tableInfo)
 }

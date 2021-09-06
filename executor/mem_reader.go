@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -129,7 +130,7 @@ func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.Fie
 
 	ds := make([]types.Datum, 0, len(m.outputOffset))
 	for _, offset := range m.outputOffset {
-		d, err := tablecodec.DecodeColumnValue(values[offset], tps[offset], m.ctx.GetSessionVars().TimeZone)
+		d, err := tablecodec.DecodeColumnValue(values[offset], tps[offset], m.ctx.GetSessionVars().Location())
 		if err != nil {
 			return nil, err
 		}
@@ -178,7 +179,7 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 	if len(pkColIDs) == 0 {
 		pkColIDs = []int64{-1}
 	}
-	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, nil, us.ctx.GetSessionVars().TimeZone)
+	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, nil, us.ctx.GetSessionVars().Location())
 	return &memTableReader{
 		ctx:           us.ctx,
 		table:         us.table.Meta(),
@@ -241,7 +242,7 @@ func (m *memTableReader) decodeRowData(handle kv.Handle, value []byte) ([]types.
 	ds := make([]types.Datum, 0, len(m.columns))
 	for _, col := range m.columns {
 		offset := m.colIDs[col.ID]
-		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldType, m.ctx.GetSessionVars().TimeZone)
+		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldType, m.ctx.GetSessionVars().Location())
 		if err != nil {
 			return nil, err
 		}
@@ -322,8 +323,22 @@ func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn process
 	if err != nil {
 		return err
 	}
+
+	tempTableData := ctx.GetSessionVars().TemporaryTableData
 	for _, rg := range kvRanges {
 		iter := txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
+		if tempTableData != nil {
+			snapIter, err := tempTableData.Iter(rg.StartKey, rg.EndKey)
+			if err != nil {
+				return err
+			}
+
+			iter, err = NewUnionIter(iter, snapIter, false)
+			if err != nil {
+				return err
+			}
+		}
+
 		for ; iter.Valid(); err = iter.Next() {
 			if err != nil {
 				return err

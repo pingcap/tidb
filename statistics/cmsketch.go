@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -767,7 +768,7 @@ func MergePartTopN2GlobalTopN(sc *stmtctx.StatementContext, version int, topNs [
 					datum = d
 				}
 				// Get the row count which the value is equal to the encodedVal from histogram.
-				count := hists[j].equalRowCount(datum, isIndex)
+				count, _ := hists[j].equalRowCount(datum, isIndex)
 				if count != 0 {
 					counter[encodedVal] += count
 					// Remove the value corresponding to encodedVal from the histogram.

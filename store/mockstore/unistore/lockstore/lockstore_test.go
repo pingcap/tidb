@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -89,6 +90,8 @@ func deleteMemStore(c *C, ls *MemStore, prefix string, n int) {
 }
 
 func (ts testSuite) TestIterator(c *C) {
+	_ = checkKey
+	c.Skip("Skip this unstable test(#26235) and bring it back before 2021-07-29.")
 	ls := NewMemStore(1 << 10)
 	hint := new(Hint)
 	for i := 10; i < 1000; i += 10 {

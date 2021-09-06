@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -36,12 +37,12 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/mockstore/cluster"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	. "github.com/pingcap/tidb/util/testutil"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 func TestT(t *testing.T) {
@@ -63,7 +64,7 @@ func TestT(t *testing.T) {
 var _ = SerialSuites(&testFailDBSuite{})
 
 type testFailDBSuite struct {
-	cluster cluster.Cluster
+	cluster testutils.Cluster
 	lease   time.Duration
 	store   kv.Storage
 	dom     *domain.Domain
@@ -78,7 +79,7 @@ func (s *testFailDBSuite) SetUpSuite(c *C) {
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 	var err error
 	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			s.cluster = c
 		}),
@@ -380,7 +381,7 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
 	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), splitCount)
 
-	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
 	c.Assert(err, IsNil)
 	originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
 	lastSetWorkerCnt := originDDLAddIndexWorkerCnt
@@ -460,16 +461,10 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 
-	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-	}()
-
 	tk.MustExec("create table t (a int not null default 1, b int default 2, c int not null default 0, primary key(c), index idx(b), index idx1(a), index idx2(b, c))")
 	tk.MustExec("insert into t values(1, 2, 3), (11, 22, 33)")
 	_, err := tk.Exec("alter table t change column c cc mediumint")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true and this column has primary key flag")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: this column has primary key flag")
 	tk.MustExec("alter table t change column b bb mediumint first")
 	dom := domain.GetDomain(tk.Se)
 	is := dom.InfoSchema()
@@ -516,16 +511,16 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	// Test unsupport statements.
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 2")
 	_, err = tk.Exec("alter table t1 modify column a mediumint")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true, table is partition table")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: table is partition table")
 	tk.MustExec("create table t2(id int, a int, b int generated always as (abs(a)) virtual, c int generated always as (a+1) stored)")
 	_, err = tk.Exec("alter table t2 modify column b mediumint")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true, newCol IsGenerated false, oldCol IsGenerated true")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
 	_, err = tk.Exec("alter table t2 modify column c mediumint")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true, newCol IsGenerated false, oldCol IsGenerated true")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
 	_, err = tk.Exec("alter table t2 modify column a mediumint generated always as(id+1) stored")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true, newCol IsGenerated true, oldCol IsGenerated false")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: newCol IsGenerated true, oldCol IsGenerated false")
 	_, err = tk.Exec("alter table t2 modify column a mediumint")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true, oldCol is a dependent column 'a' for generated column")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
 
 	// Test multiple rows of data.
 	tk.MustExec("create table t3(a int not null default 1, b int default 2, c int not null default 0, primary key(c), index idx(b), index idx1(a), index idx2(b, c))")

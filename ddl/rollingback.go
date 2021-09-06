@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -66,8 +67,6 @@ func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 	// So the next state is delete only state.
 	originalState := indexInfo.State
 	indexInfo.State = model.StateDeleteOnly
-	// Change dependent hidden columns if necessary.
-	updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteOnly)
 	job.SchemaState = model.StateDeleteOnly
 	ver, err1 := updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	if err1 != nil {
@@ -110,7 +109,15 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 // Since modifying column job has two types: normal-type and reorg-type, we should handle it respectively.
 // normal-type has only two states:    None -> Public
 // reorg-type has five states:         None -> Delete-only -> Write-only -> Write-org -> Public
-func rollingbackModifyColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
+func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	// If the value of SnapshotVer isn't zero, it means the reorg workers have been started.
+	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
+		// column type change workers are started. we have to ask them to exit.
+		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
+		w.reorgCtx.notifyReorgCancel()
+		// Give the this kind of ddl one more round to run, the errCancelledDDLJob should be fetched from the bottom up.
+		return w.onModifyColumn(d, t, job)
+	}
 	_, tblInfo, oldCol, jp, err := getModifyColumnInfo(t, job)
 	if err != nil {
 		return ver, err
@@ -138,7 +145,7 @@ func rollingbackModifyColumn(t *meta.Meta, job *model.Job) (ver int64, err error
 		job.State = model.JobStateCancelled
 		return ver, errCancelledDDLJob
 	}
-	// The job has been in it's middle state and we roll it back.
+	// The job has been in its middle state (but the reorg worker hasn't started) and we roll it back here.
 	job.State = model.JobStateRollingback
 	return ver, errCancelledDDLJob
 }
@@ -279,6 +286,43 @@ func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	}
 }
 
+func rollingbackDropIndexes(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	tblInfo, indexNames, ifExists, err := getSchemaInfos(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	indexInfos, err := checkDropIndexes(tblInfo, job, indexNames, ifExists)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	indexInfo := indexInfos[0]
+	originalState := indexInfo.State
+	switch indexInfo.State {
+	case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
+		// We can not rollback now, so just continue to drop index.
+		// Normally won't fetch here, because there is a check when canceling DDL jobs. See function: IsJobRollbackable.
+		job.State = model.JobStateRunning
+		return ver, nil
+	case model.StatePublic:
+		job.State = model.JobStateRollbackDone
+		for _, indexInfo := range indexInfos {
+			indexInfo.State = model.StatePublic
+		}
+	default:
+		return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+	}
+
+	job.SchemaState = indexInfo.State
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateRollbackDone, model.StatePublic, ver, tblInfo)
+	return ver, errCancelledDDLJob
+}
+
 func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
 	// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
@@ -413,6 +457,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackDropColumns(t, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = rollingbackDropIndex(t, job)
+	case model.ActionDropIndexes:
+		ver, err = rollingbackDropIndexes(t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		err = rollingbackDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
@@ -424,7 +470,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	case model.ActionTruncateTable:
 		ver, err = rollingbackTruncateTable(t, job)
 	case model.ActionModifyColumn:
-		ver, err = rollingbackModifyColumn(t, job)
+		ver, err = rollingbackModifyColumn(w, d, t, job)
 	case model.ActionRebaseAutoID, model.ActionShardRowID, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable, model.ActionRenameTables,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,

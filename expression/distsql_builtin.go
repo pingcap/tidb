@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -1268,9 +1269,13 @@ func convertEnum(val []byte, tp *tipb.FieldType) (*Constant, error) {
 	if err != nil {
 		return nil, errors.Errorf("invalid enum % x", val)
 	}
-	e, err := types.ParseEnumValue(tp.Elems, uVal)
-	if err != nil {
-		return nil, err
+	// If uVal is 0, it should return Enum{}
+	var e = types.Enum{}
+	if uVal != 0 {
+		e, err = types.ParseEnumValue(tp.Elems, uVal)
+		if err != nil {
+			return nil, err
+		}
 	}
 	d := types.NewMysqlEnumDatum(e)
 	return &Constant{Value: d, RetType: FieldTypeFromPB(tp)}, nil

@@ -8,13 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package chunk
 
 import (
-	"errors"
 	"io"
 	"os"
 	"strconv"
@@ -132,7 +132,7 @@ func (l *ListInDisk) flush() (err error) {
 // Warning: do not mix Add and GetRow (always use GetRow after you have added all the chunks), and do not use Add concurrently.
 func (l *ListInDisk) Add(chk *Chunk) (err error) {
 	if chk.NumRows() == 0 {
-		return errors.New("chunk appended to List should have at least 1 row")
+		return errors2.New("chunk appended to List should have at least 1 row")
 	}
 	if l.disk == nil {
 		err = l.initDiskFile()

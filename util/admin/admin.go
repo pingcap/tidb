@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -91,7 +92,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 // IsJobRollbackable checks whether the job can be rollback.
 func IsJobRollbackable(job *model.Job) bool {
 	switch job.Type {
-	case model.ActionDropIndex, model.ActionDropPrimaryKey:
+	case model.ActionDropIndex, model.ActionDropPrimaryKey, model.ActionDropIndexes:
 		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization or StateWriteOnly, otherwise there will be an inconsistent issue between record and index.
 		// In WriteOnly state, we can rollback for normal index but can't rollback for expression index(need to drop hidden column). Since we can't
 		// know the type of index here, we consider all indices except primary index as non-rollbackable.
@@ -316,6 +317,9 @@ const (
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Here we need check all indexes, includes invisible index
 	ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
+	defer func() {
+		ctx.GetSessionVars().OptimizerUseInvisibleIndexes = false
+	}()
 	// Add `` for some names like `table name`.
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	stmt, err := exec.ParseWithParams(context.Background(), "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
@@ -393,14 +397,14 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
-			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record2, record1)
+			return false, ErrDataInConsistent.GenWithStackByArgs(record2, record1)
 		}
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if !isExist {
 			record := &RecordData{Handle: h1, Values: vals1}
-			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", nil, record)
+			return false, ErrDataInConsistent.GenWithStackByArgs(nil, record)
 		}
 
 		return true, nil

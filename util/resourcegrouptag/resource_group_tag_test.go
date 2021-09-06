@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,47 +19,78 @@ import (
 	"math/rand"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/stretchr/testify/require"
 )
 
-type testUtilsSuite struct{}
+func TestResourceGroupTagEncoding(t *testing.T) {
+	t.Parallel()
 
-var _ = Suite(&testUtilsSuite{})
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-func (s *testUtilsSuite) TestResourceGroupTagEncoding(c *C) {
 	sqlDigest := parser.NewDigest(nil)
 	tag := EncodeResourceGroupTag(sqlDigest, nil)
-	c.Assert(len(tag), Equals, 0)
+	require.Len(t, tag, 0)
+
 	decodedSQLDigest, err := DecodeResourceGroupTag(tag)
-	c.Assert(err, IsNil)
-	c.Assert(len(decodedSQLDigest), Equals, 0)
+	require.NoError(t, err)
+	require.Len(t, decodedSQLDigest, 0)
 
 	sqlDigest = parser.NewDigest([]byte{'a', 'a'})
 	tag = EncodeResourceGroupTag(sqlDigest, nil)
 	// version(1) + prefix(1) + length(1) + content(2hex -> 1byte)
-	c.Assert(len(tag), Equals, 4)
+	require.Len(t, tag, 4)
+
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, IsNil)
-	c.Assert(decodedSQLDigest, DeepEquals, sqlDigest.Bytes())
+	require.NoError(t, err)
+	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
 
 	sqlDigest = parser.NewDigest(genRandHex(64))
 	tag = EncodeResourceGroupTag(sqlDigest, nil)
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, IsNil)
-	c.Assert(decodedSQLDigest, DeepEquals, sqlDigest.Bytes())
+	require.NoError(t, err)
+	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
 
 	sqlDigest = parser.NewDigest(genRandHex(510))
 	tag = EncodeResourceGroupTag(sqlDigest, nil)
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
-	c.Assert(err, IsNil)
-	c.Assert(decodedSQLDigest, DeepEquals, sqlDigest.Bytes())
+	require.NoError(t, err)
+	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
+}
+
+func TestResourceGroupTagEncodingPB(t *testing.T) {
+	t.Parallel()
+
+	digest1 := genDigest("abc")
+	digest2 := genDigest("abcdefg")
+	// Test for protobuf
+	resourceTag := &tipb.ResourceGroupTag{
+		SqlDigest:  digest1,
+		PlanDigest: digest2,
+	}
+	buf, err := resourceTag.Marshal()
+	require.NoError(t, err)
+	require.Len(t, buf, 68)
+
+	tag := &tipb.ResourceGroupTag{}
+	err = tag.Unmarshal(buf)
+	require.NoError(t, err)
+	require.Equal(t, digest1, tag.SqlDigest)
+	require.Equal(t, digest2, tag.PlanDigest)
+
+	// Test for protobuf sql_digest only
+	resourceTag = &tipb.ResourceGroupTag{
+		SqlDigest: digest1,
+	}
+	buf, err = resourceTag.Marshal()
+	require.NoError(t, err)
+	require.Len(t, buf, 34)
+
+	tag = &tipb.ResourceGroupTag{}
+	err = tag.Unmarshal(buf)
+	require.NoError(t, err)
+	require.Equal(t, digest1, tag.SqlDigest)
+	require.Nil(t, tag.PlanDigest)
 }
 
 func genRandHex(length int) []byte {
@@ -74,35 +106,4 @@ func genDigest(str string) []byte {
 	hasher := sha256.New()
 	hasher.Write(hack.Slice(str))
 	return hasher.Sum(nil)
-}
-
-func (s *testUtilsSuite) TestResourceGroupTagEncodingPB(c *C) {
-	digest1 := genDigest("abc")
-	digest2 := genDigest("abcdefg")
-	// Test for protobuf
-	resourceTag := &tipb.ResourceGroupTag{
-		SqlDigest:  digest1,
-		PlanDigest: digest2,
-	}
-	buf, err := resourceTag.Marshal()
-	c.Assert(err, IsNil)
-	c.Assert(len(buf), Equals, 68)
-	tag := &tipb.ResourceGroupTag{}
-	err = tag.Unmarshal(buf)
-	c.Assert(err, IsNil)
-	c.Assert(tag.SqlDigest, DeepEquals, digest1)
-	c.Assert(tag.PlanDigest, DeepEquals, digest2)
-
-	// Test for protobuf sql_digest only
-	resourceTag = &tipb.ResourceGroupTag{
-		SqlDigest: digest1,
-	}
-	buf, err = resourceTag.Marshal()
-	c.Assert(err, IsNil)
-	c.Assert(len(buf), Equals, 34)
-	tag = &tipb.ResourceGroupTag{}
-	err = tag.Unmarshal(buf)
-	c.Assert(err, IsNil)
-	c.Assert(tag.SqlDigest, DeepEquals, digest1)
-	c.Assert(tag.PlanDigest, IsNil)
 }

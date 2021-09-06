@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,15 +21,15 @@ import (
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 // UpdateExec represents a new update executor.
@@ -264,7 +265,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			}
 		}
-		if config.TopSQLEnabled() {
+		if variable.TopSQLEnabled() {
 			txn, err := e.ctx.Txn(true)
 			if err == nil {
 				txn.SetOption(kv.ResourceGroupTag, e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTag())
@@ -441,7 +442,7 @@ func (e *UpdateExec) setMessage() {
 func (e *UpdateExec) collectRuntimeStatsEnabled() bool {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
-			snapshotStats := &tikv.SnapshotRuntimeStats{}
+			snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 			e.stats = &runtimeStatsWithSnapshot{
 				SnapshotRuntimeStats: snapshotStats,
 			}
