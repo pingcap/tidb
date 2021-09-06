@@ -6211,10 +6211,10 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 	return errors.Trace(err)
 }
 
-func buildPolicyInfo(stmt *ast.CreatePlacementPolicyStmt) (*placementpolicy.PolicyInfo, error) {
+func buildPolicyInfo(name model.CIStr, options []*ast.PlacementOption) (*placementpolicy.PolicyInfo, error) {
 	policyInfo := &placementpolicy.PolicyInfo{}
-	policyInfo.Name = stmt.PolicyName
-	for _, opt := range stmt.PlacementOptions {
+	policyInfo.Name = name
+	for _, opt := range options {
 		switch opt.Tp {
 		case ast.PlacementOptionPrimaryRegion:
 			policyInfo.PrimaryRegion = opt.StrValue
@@ -6259,9 +6259,14 @@ func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlac
 		return err
 	}
 	// Auto fill the policyID when it is inserted.
-	policyInfo, err := buildPolicyInfo(stmt)
+	policyInfo, err := buildPolicyInfo(stmt.PolicyName, stmt.PlacementOptions)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	err = checkPolicyValidation(policyInfo)
+	if err != nil {
+		return err
 	}
 
 	job := &model.Job{
@@ -6295,6 +6300,37 @@ func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacemen
 		Type:       model.ActionDropPlacementPolicy,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{policyName},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) (err error) {
+	policyName := stmt.PolicyName
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	// Check policy existence.
+	policy, ok := is.PolicyByName(policyName)
+	if !ok {
+		return infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(policyName)
+	}
+
+	newPolicyInfo, err := buildPolicyInfo(policy.Name, stmt.PlacementOptions)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = checkPolicyValidation(newPolicyInfo)
+	if err != nil {
+		return err
+	}
+
+	job := &model.Job{
+		SchemaID:   policy.ID,
+		SchemaName: policy.Name.L,
+		Type:       model.ActionAlterPlacementPolicy,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newPolicyInfo},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
