@@ -1735,6 +1735,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 
+		// PdController will be closed when `taskMetaMgr` closes.
 		rc.taskMgr = rc.metaMgrBuilder.TaskMetaMgr(pdController)
 		taskExist, err = rc.taskMgr.CheckTaskExist(ctx)
 		if err != nil {
@@ -1754,7 +1755,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				rc.taskMgr.CleanupTask(ctx)
 				return errors.Trace(err)
 			}
-			if err := rc.CheckClusterRegion(ctx); err != nil {
+			if err := rc.CheckClusterRegion(ctx, pdController); err != nil {
 				return errors.Trace(err)
 			}
 		}

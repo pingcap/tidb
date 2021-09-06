@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"modernc.org/mathutil"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -28,6 +29,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -38,7 +40,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/tikv/pd/server/api"
 	pdconfig "github.com/tikv/pd/server/config"
@@ -184,27 +188,56 @@ func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 	defer func() {
 		rc.checkTemplate.Collect(Critical, passed, message)
 	}()
+	storeInfo := &api.StoresInfo{}
+	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, storeInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(storeInfo.Stores) <= 1 {
+		return nil
+	}
 
 	var result api.RegionsInfo
 	if err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
 		return errors.Trace(err)
 	}
 	regions := make(map[uint64]int)
+	stores := make(map[uint64]*api.StoreInfo)
 	for _, region := range result.Regions {
 		for _, peer := range region.Peers {
 			regions[peer.StoreId]++
 		}
 	}
-
+	for _, store := range storeInfo.Stores {
+		stores[store.Store.Id] = store
+	}
+	tableCount := 0
+	for _, db := range rc.dbMetas {
+		info, ok := rc.dbInfos[db.Name]
+		if !ok {
+			continue
+		}
+		tableCount += len(info.Tables)
+	}
+	errorThrehold := mathutil.Max(errorEmptyRegionCntPerStore, tableCount*3)
+	warnThrehold := mathutil.Max(warnEmptyRegionCntPerStore, tableCount)
 	var (
 		errStores  []string
 		warnStores []string
 	)
 	for storeID, regionCnt := range regions {
-		if regionCnt > errorEmptyRegionCntPerStore {
-			errStores = append(errStores, strconv.Itoa(int(storeID)))
-		} else if regionCnt > warnEmptyRegionCntPerStore {
-			warnStores = append(warnStores, strconv.Itoa(int(storeID)))
+		if store, ok := stores[storeID]; ok {
+			if store.Store.State != metapb.StoreState_Up {
+				continue
+			}
+			if version.IsTiFlash(store.Store.Store) {
+				continue
+			}
+			if regionCnt > errorThrehold {
+				errStores = append(errStores, strconv.Itoa(int(storeID)))
+			} else if regionCnt > warnThrehold {
+				warnStores = append(warnStores, strconv.Itoa(int(storeID)))
+			}
 		}
 	}
 
@@ -237,15 +270,34 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(result.Stores) <= 1 {
+	stores := make([]*api.StoreInfo, 0, len(result.Stores))
+	for _, store := range result.Stores {
+		if store.Store.State != metapb.StoreState_Up {
+			continue
+		}
+		if version.IsTiFlash(store.Store.Store) {
+			continue
+		}
+		stores = append(stores, store)
+	}
+	if len(stores) <= 1 {
 		return nil
 	}
-	sort.Slice(result.Stores, func(i, j int) bool {
-		return result.Stores[i].Status.RegionCount < result.Stores[j].Status.RegionCount
+	sort.Slice(stores, func(i, j int) bool {
+		return stores[i].Status.RegionCount < stores[j].Status.RegionCount
 	})
-	minStore := result.Stores[0]
-	maxStore := result.Stores[len(result.Stores)-1]
-	if maxStore.Status.RegionCount <= checkRegionCntRatioThreshold {
+	minStore := stores[0]
+	maxStore := result.Stores[len(stores)-1]
+	tableCount := 0
+	for _, db := range rc.dbMetas {
+		info, ok := rc.dbInfos[db.Name]
+		if !ok {
+			continue
+		}
+		tableCount += len(info.Tables)
+	}
+	threhold := mathutil.Max(checkRegionCntRatioThreshold, tableCount)
+	if maxStore.Status.RegionCount <= threhold {
 		return nil
 	}
 	ratio := float64(minStore.Status.RegionCount) / float64(maxStore.Status.RegionCount)
@@ -263,7 +315,7 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 }
 
 // CheckClusterRegion checks cluster if there are too many empty regions or region distribution is unbalanced.
-func (rc *Controller) CheckClusterRegion(ctx context.Context) error {
+func (rc *Controller) CheckClusterRegion(ctx context.Context, controller *pdutil.PdController) error {
 	err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 		restoreStarted := false
 		for _, task := range tasks {
