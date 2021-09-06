@@ -2057,8 +2057,6 @@ func (local *local) CollectRemoteDuplicateRows(ctx context.Context, tbl table.Ta
 	}
 	ts := oracle.ComposeTS(physicalTS, logicalTS)
 
-	// TODO: Here we use the temp created db to store the duplicate rows. We shall remove this parameter and store the
-	//  result in a TiDB table.
 	duplicateManager, err := NewDuplicateManager(local.errorMgr, local.splitCli, ts, local.tls, local.tcpConcurrency)
 	if err != nil {
 		return errors.Annotate(err, "open duplicatemanager failed")

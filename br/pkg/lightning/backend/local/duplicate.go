@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -49,7 +50,6 @@ import (
 )
 
 const (
-	maxWriteBatchCount    = 128
 	maxGetRequestKeyCount = 1024
 )
 
@@ -157,8 +157,12 @@ func NewDuplicateManager(
 	}, nil
 }
 
-func (manager *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Context, tbl table.Table) error {
-	log.L().Info("Begin collect duplicate data from remote TiKV")
+func (manager *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Context, tbl table.Table) (err error) {
+	logTask := log.L().Begin(zapcore.InfoLevel, "collect duplicate data from remote TiKV")
+	defer func() {
+		logTask.End(zapcore.InfoLevel, err)
+	}()
+
 	reqs, err := buildDuplicateRequests(tbl.Meta())
 	if err != nil {
 		return err
@@ -181,9 +185,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Contex
 			return err
 		})
 	}
-	err = g.Wait()
-	log.L().Info("End collect duplicate data from remote TiKV")
-	return err
+	return errors.Trace(g.Wait())
 }
 
 func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
@@ -198,10 +200,7 @@ func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
 	}
 	tryTimes := 0
 	indexHandles := makePendingIndexHandlesWithCapacity(0)
-	for {
-		if len(regions) == 0 {
-			break
-		}
+	for len(regions) > 0 {
 		if tryTimes > maxRetryTimes {
 			return errors.Errorf("retry time exceed limit")
 		}
@@ -302,7 +301,7 @@ func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
 			}
 		}
 
-		// it means that all of region send to TiKV fail, so we must sleep some time to avoid retry too frequency
+		// it means that all the region send to TiKV fail, so we must sleep some time to avoid retry too frequency
 		if len(unfinishedRegions) == len(regions) {
 			tryTimes += 1
 			time.Sleep(defaultRetryBackoffTime)
@@ -365,7 +364,7 @@ func (manager *DuplicateManager) storeDuplicateData(
 	return manager.getValues(ctx, decoder, indexHandles), nil
 }
 
-// Collect rows by read the index in db.
+// CollectDuplicateRowsFromLocalIndex collects rows by read the index in db.
 func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 	ctx context.Context,
 	tbl table.Table,
@@ -375,10 +374,62 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 		SQLMode: mysql.ModeStrictAllTables,
 	})
 	if err != nil {
-		return err
+		return errors.Trace(err)
+	}
+
+	allRanges := make([]tidbkv.KeyRange, 0)
+	{
+		// Collect row handle duplicates.
+		var dataConflictInfos []errormanager.DataConflictInfo
+		ranges := ranger.FullIntRange(false)
+		if tbl.Meta().IsCommonHandle {
+			ranges = ranger.FullRange()
+		}
+		keyRanges, err := distsql.TableHandleRangesToKVRanges(nil, []int64{tbl.Meta().ID}, tbl.Meta().IsCommonHandle, ranges, nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		allRanges = append(allRanges, keyRanges...)
+		for _, r := range keyRanges {
+			startKey := codec.EncodeBytes([]byte{}, r.StartKey)
+			endKey := codec.EncodeBytes([]byte{}, r.EndKey)
+			opts := &pebble.IterOptions{
+				LowerBound: startKey,
+				UpperBound: endKey,
+			}
+
+			if err := func() error {
+				iter := db.NewIter(opts)
+				defer iter.Close()
+
+				for iter.First(); iter.Valid(); iter.Next() {
+					rawKey, _, _, err := manager.keyAdapter.Decode(nil, iter.Key())
+					if err != nil {
+						return err
+					}
+					rawValue := make([]byte, len(iter.Value()))
+					copy(rawValue, iter.Value())
+
+					h, err := decoder.DecodeHandleFromTable(rawKey)
+					if err != nil {
+						return err
+					}
+					conflictInfo := errormanager.DataConflictInfo{
+						RawKey:   rawKey,
+						RawValue: rawValue,
+						KeyData:  h.String(),
+						Row:      decoder.DecodeRawRowDataAsStr(h, rawValue),
+					}
+					dataConflictInfos = append(dataConflictInfos, conflictInfo)
+				}
+				return manager.errorMgr.RecordDataConflictError(ctx, log.L(), decoder.Name(), dataConflictInfos)
+			}(); err != nil {
+				return errors.Trace(err)
+			}
+			db.DeleteRange(startKey, endKey, &pebble.WriteOptions{Sync: false})
+		}
 	}
 	handles := makePendingIndexHandlesWithCapacity(0)
-	allRanges := make([]tidbkv.KeyRange, 0)
 	for _, indexInfo := range tbl.Meta().Indices {
 		if indexInfo.State != model.StatePublic {
 			continue
@@ -396,64 +447,71 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 				LowerBound: startKey,
 				UpperBound: endKey,
 			}
-			log.L().Warn("collect index from db",
+			log.L().Info("collect index from db",
 				logutil.Key("start", startKey),
 				logutil.Key("end", endKey),
 			)
 
-			iter := db.NewIter(opts)
-			for iter.SeekGE(startKey); iter.Valid(); iter.Next() {
-				rawKey, _, _, err := manager.keyAdapter.Decode(nil, iter.Key())
-				if err != nil {
-					log.L().Warn(
-						"decode key error when query handle for duplicate index",
-						zap.Binary("key", iter.Key()),
-					)
-					continue
+			if err := func() error {
+				iter := db.NewIter(opts)
+				defer iter.Close()
+
+				for iter.First(); iter.Valid(); iter.Next() {
+					rawKey, _, _, err := manager.keyAdapter.Decode(nil, iter.Key())
+					if err != nil {
+						log.L().Error(
+							"decode key error when query handle for duplicate index",
+							zap.Binary("key", iter.Key()),
+						)
+						return err
+					}
+					rawValue := make([]byte, len(iter.Value()))
+					copy(rawValue, iter.Value())
+					h, err := decoder.DecodeHandleFromIndex(indexInfo, rawKey, rawValue)
+					if err != nil {
+						log.L().Error("decode handle error from index for duplicatedb",
+							zap.Error(err), logutil.Key("rawKey", rawKey),
+							logutil.Key("value", rawValue))
+						return err
+					}
+					handles.append(
+						errormanager.DataConflictInfo{
+							RawKey:   rawKey,
+							RawValue: rawValue,
+							KeyData:  h.String(),
+						},
+						indexInfo.Name.O,
+						h,
+						decoder.EncodeHandleKey(h))
+					if handles.Len() > maxGetRequestKeyCount {
+						handles = manager.getValues(ctx, decoder, handles)
+					}
 				}
-				value := iter.Value()
-				h, err := decoder.DecodeHandleFromIndex(indexInfo, rawKey, value)
-				if err != nil {
-					log.L().Error("decode handle error from index for duplicatedb",
-						zap.Error(err), logutil.Key("rawKey", rawKey),
-						logutil.Key("value", value))
-					continue
-				}
-				handles.append(
-					errormanager.DataConflictInfo{
-						RawKey:   rawKey,
-						RawValue: value,
-						KeyData:  h.String(),
-					},
-					indexInfo.Name.O,
-					h,
-					decoder.EncodeHandleKey(h))
-				if handles.Len() > maxGetRequestKeyCount {
+				if handles.Len() > 0 {
 					handles = manager.getValues(ctx, decoder, handles)
 				}
+				if handles.Len() == 0 {
+					db.DeleteRange(startKey, endKey, &pebble.WriteOptions{Sync: false})
+				}
+				return nil
+			}(); err != nil {
+				return errors.Trace(err)
 			}
-			if handles.Len() > 0 {
-				handles = manager.getValues(ctx, decoder, handles)
-			}
-			if handles.Len() == 0 {
-				db.DeleteRange(r.StartKey, r.EndKey, &pebble.WriteOptions{Sync: false})
-			}
-			iter.Close()
 		}
-	}
-	if handles.Len() == 0 {
-		return nil
 	}
 
-	for i := 0; i < maxRetryTimes; i++ {
+	for i := 0; i < maxRetryTimes && handles.Len() > 0; i++ {
 		handles = manager.getValues(ctx, decoder, handles)
-		if handles.Len() == 0 {
-			for _, r := range allRanges {
-				db.DeleteRange(r.StartKey, r.EndKey, &pebble.WriteOptions{Sync: false})
-			}
-		}
 	}
-	return errors.Errorf("retry getValues time exceed limit")
+	if handles.Len() > 0 {
+		return errors.Errorf("retry getValues time exceed limit")
+	}
+	for _, r := range allRanges {
+		startKey := codec.EncodeBytes([]byte{}, r.StartKey)
+		endKey := codec.EncodeBytes([]byte{}, r.EndKey)
+		db.DeleteRange(startKey, endKey, &pebble.WriteOptions{Sync: false})
+	}
+	return nil
 }
 
 func (manager *DuplicateManager) getValues(
@@ -638,53 +696,60 @@ func (manager *DuplicateManager) makeConn(ctx context.Context, storeID uint64) (
 }
 
 func buildDuplicateRequests(tableInfo *model.TableInfo) ([]*DuplicateRequest, error) {
-	reqs := make([]*DuplicateRequest, 0)
-	req := buildTableRequest(tableInfo.ID)
-	reqs = append(reqs, req...)
+	reqs, err := buildTableRequests(tableInfo.ID, tableInfo.IsCommonHandle)
+	if err != nil {
+		errors.Trace(err)
+	}
 	for _, indexInfo := range tableInfo.Indices {
 		if indexInfo.State != model.StatePublic {
 			continue
 		}
-		req, err := buildIndexRequest(tableInfo.ID, indexInfo)
+		indexReqs, err := buildIndexRequests(tableInfo.ID, indexInfo)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
-		reqs = append(reqs, req...)
+		reqs = append(reqs, indexReqs...)
 	}
 	return reqs, nil
 }
 
-func buildTableRequest(tableID int64) []*DuplicateRequest {
+func buildTableRequests(tableID int64, isCommonHandle bool) ([]*DuplicateRequest, error) {
 	ranges := ranger.FullIntRange(false)
-	keysRanges := distsql.TableRangesToKVRanges(tableID, ranges, nil)
+	if isCommonHandle {
+		ranges = ranger.FullRange()
+	}
+	keysRanges, err := distsql.TableHandleRangesToKVRanges(nil, []int64{tableID}, isCommonHandle, ranges, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	reqs := make([]*DuplicateRequest, 0)
 	for _, r := range keysRanges {
-		r := &DuplicateRequest{
+		req := &DuplicateRequest{
 			start:     r.StartKey,
 			end:       r.EndKey,
 			tableID:   tableID,
 			indexInfo: nil,
 		}
-		reqs = append(reqs, r)
+		reqs = append(reqs, req)
 	}
-	return reqs
+	return reqs, nil
 }
 
-func buildIndexRequest(tableID int64, indexInfo *model.IndexInfo) ([]*DuplicateRequest, error) {
+func buildIndexRequests(tableID int64, indexInfo *model.IndexInfo) ([]*DuplicateRequest, error) {
 	ranges := ranger.FullRange()
 	keysRanges, err := distsql.IndexRangesToKVRanges(nil, tableID, indexInfo.ID, ranges, nil)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	reqs := make([]*DuplicateRequest, 0)
 	for _, r := range keysRanges {
-		r := &DuplicateRequest{
+		req := &DuplicateRequest{
 			start:     r.StartKey,
 			end:       r.EndKey,
 			tableID:   tableID,
 			indexInfo: indexInfo,
 		}
-		reqs = append(reqs, r)
+		reqs = append(reqs, req)
 	}
 	return reqs, nil
 }

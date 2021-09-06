@@ -201,7 +201,7 @@ type AbstractBackend interface {
 	//  may be repeated with other keys in local data source.
 	CollectLocalDuplicateRows(ctx context.Context, tbl table.Table) error
 
-	// CollectLocalDuplicateRows collect duplicate keys from remote TiKV storage. This keys may be duplicate with
+	// CollectRemoteDuplicateRows collect duplicate keys from remote TiKV storage. This keys may be duplicate with
 	//  the data import by other lightning.
 	CollectRemoteDuplicateRows(ctx context.Context, tbl table.Table) error
 }
