@@ -311,9 +311,9 @@ func (s *checkInfoSuite) TestCheckCSVHeader(c *C) {
 		},
 	}
 	rc := &Controller{
-		cfg:           cfg,
-		store:         mockStore,
-		ioWorkers:     worker.NewPool(context.Background(), 1, "io"),
+		cfg:       cfg,
+		store:     mockStore,
+		ioWorkers: worker.NewPool(context.Background(), 1, "io"),
 	}
 
 	p := parser.New()
