@@ -6299,7 +6299,7 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 }
 
 func buildPolicyInfo(name model.CIStr, options []*ast.PlacementOption) (*model.PolicyInfo, error) {
-	policyInfo := &model.PolicyInfo{}
+	policyInfo := &model.PolicyInfo{PlacementSettings:&model.PlacementSettings{}}
 	policyInfo.Name = name
 	for _, opt := range options {
 		switch opt.Tp {
