@@ -434,6 +434,7 @@ func (s *testExpressionRewriterSuiteSerial) TestBetweenExprCollation(c *C) {
 	tk.MustExec("insert into t1 values ('a', 'B');")
 	tk.MustExec("insert into t1 values ('c', 'D');")
 	tk.MustQuery("select * from t1 where a between 'B' and c;").Check(testkit.Rows("c D"))
+	tk.MustQuery("explain select * from t1 where 'a' between 'g' and 'f';").Check(testkit.Rows("TableDual_6 0.00 root  rows:0"))
 
 	tk.MustGetErrMsg("select * from t1 where a between 'B' collate utf8mb4_general_ci and c collate utf8mb4_unicode_ci;", "[expression:1270]Illegal mix of collations (latin1_bin,IMPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_unicode_ci,EXPLICIT) for operation 'between'")
 }
