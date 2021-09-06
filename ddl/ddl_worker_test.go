@@ -1599,14 +1599,14 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 				c.Assert(finishedJobs[2].ID, Equals, job3.ID)
 				c.Assert(finishedJobs[4].ID, Equals, job5.ID)
 				c.Assert(finishedJobs[11].ID, Equals, job12.ID)
-				// check the jobs are ordered in the adding-index-job queue or general-job queue.
-				addIdxJobID := int64(0)
+				// check the jobs are ordered in the backfill-job queue or general-job queue.
+				backfillJobID := int64(0)
 				generalJobID := int64(0)
 				for _, job := range finishedJobs {
 					// check jobs' order.
 					if admin.MayNeedBackfill(job.Type) {
-						c.Assert(job.ID, Greater, addIdxJobID)
-						addIdxJobID = job.ID
+						c.Assert(job.ID, Greater, backfillJobID)
+						backfillJobID = job.ID
 					} else {
 						c.Assert(job.ID, Greater, generalJobID)
 						generalJobID = job.ID
