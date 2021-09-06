@@ -322,13 +322,14 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 		tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, oldSchemaName, oldTableName)
 		oldRuleIDs := []string{tableRuleID}
-		if pi := tblInfo.GetPartitionInfo(); pi != nil {
-			if len(pi.Definitions) != 0 {
-				for _, def := range pi.Definitions {
-					oldRuleIDs = append(oldRuleIDs, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName, oldTableName, def.Name.L))
-				}
+		var partRuleIDs []string
+		if tblInfo.GetPartitionInfo() != nil {
+			for _, def := range tblInfo.GetPartitionInfo().Definitions {
+				partRuleIDs = append(partRuleIDs, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName, oldTableName, def.Name.L))
 			}
 		}
+
+		oldRuleIDs = append(oldRuleIDs, partRuleIDs...)
 		oldRules, err := infosync.GetLabelRules(context.TODO(), oldRuleIDs)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -354,18 +355,14 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		})
 
 		var newRules []*label.Rule
-		for _, r := range oldRules {
-			if r.ID == tableRuleID {
-				newRules = append(newRules, r.Clone().Reset(tblInfo.ID, job.SchemaName, tblInfo.Name.L))
-			}
+		if r, ok := oldRules[tableRuleID]; ok {
+			newRules = append(newRules, r.Clone().Reset(tblInfo.ID, job.SchemaName, tblInfo.Name.L))
 		}
 
 		if tblInfo.GetPartitionInfo() != nil {
-			for _, r := range oldRules {
-				for _, def := range tblInfo.GetPartitionInfo().Definitions {
-					if r.ID == fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName, oldTableName, def.Name.L) {
-						newRules = append(newRules, r.Clone().Reset(def.ID, job.SchemaName, tblInfo.Name.L, def.Name.L))
-					}
+			for idx, def := range tblInfo.GetPartitionInfo().Definitions {
+				if r, ok := oldRules[partRuleIDs[idx]]; ok {
+					newRules = append(newRules, r.Clone().Reset(def.ID, job.SchemaName, tblInfo.Name.L, def.Name.L))
 				}
 			}
 		}
