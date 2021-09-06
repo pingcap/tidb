@@ -1755,7 +1755,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				rc.taskMgr.CleanupTask(ctx)
 				return errors.Trace(err)
 			}
-			if err := rc.CheckClusterRegion(ctx, pdController); err != nil {
+			if err := rc.CheckClusterRegion(ctx); err != nil {
 				return errors.Trace(err)
 			}
 		}

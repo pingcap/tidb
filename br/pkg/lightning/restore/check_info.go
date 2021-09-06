@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"modernc.org/mathutil"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -40,13 +39,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/tikv/pd/server/api"
 	pdconfig "github.com/tikv/pd/server/config"
+
 	"go.uber.org/zap"
+	"modernc.org/mathutil"
 )
 
 const (
@@ -315,7 +315,7 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 }
 
 // CheckClusterRegion checks cluster if there are too many empty regions or region distribution is unbalanced.
-func (rc *Controller) CheckClusterRegion(ctx context.Context, controller *pdutil.PdController) error {
+func (rc *Controller) CheckClusterRegion(ctx context.Context) error {
 	err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 		restoreStarted := false
 		for _, task := range tasks {
