@@ -10,6 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package telemetry_test
 
 import (
@@ -21,7 +22,9 @@ import (
 )
 
 func TestBuiltinFunctionsUsage(t *testing.T) {
-	store, clean := newMockStore(t)
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
