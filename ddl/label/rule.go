@@ -133,7 +133,7 @@ func (r *Rule) Reset(id int64, dbName, tableName string, partName ...string) *Ru
 		"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id))),
 		"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id+1))),
 	}
-	// We may support more types in the later.
+	// We may support more types later.
 	r.Index = util.RuleIndexTable
 	if isPartition {
 		r.Index = util.RuleIndexPartition
