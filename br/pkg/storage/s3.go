@@ -677,7 +677,8 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 		}
 
 		r.reader = io.NopCloser(bytes.NewReader(nil))
-		return r.rangeInfo.Size, nil
+		r.pos = r.rangeInfo.Size
+		return r.pos, nil
 	}
 
 	// if seek ahead no more than 64k, we discard these data
