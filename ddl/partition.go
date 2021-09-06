@@ -1305,7 +1305,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	// both pt and nt set the maximum auto_id between ntBaseID and ptBaseID
-	newAutoIDs := meta.AutoIDs{
+	newAutoIDs := meta.AutoIDGroup{
 		RowID:    mathutil.MaxInt64(ptAutoIDs.RowID, ntAutoIDs.RowID),
 		RandomID: mathutil.MaxInt64(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
 	}

@@ -80,23 +80,24 @@ var _ AutoIDAccessors = autoIDAccessors{}
 
 // AutoIDAccessors represents all the auto IDs of a table.
 type AutoIDAccessors interface {
-	Get() (AutoIDs, error)
-	Put(autoIDs AutoIDs) error
+	Get() (AutoIDGroup, error)
+	Put(autoIDs AutoIDGroup) error
 	Del() error
 }
 
 type autoIDAccessors struct {
-	rowIDAcc  AutoIDAccessor
-	randIDAcc AutoIDAccessor
+	autoIDAccessor
 }
 
 // Get implements the interface AutoIDAccessors.
-func (a autoIDAccessors) Get() (autoIDs AutoIDs, err error) {
-	autoIDs.RowID, err = a.rowIDAcc.Get()
+func (a autoIDAccessors) Get() (autoIDs AutoIDGroup, err error) {
+	a.tableIDEncFn = a.m.autoTableIDKey
+	autoIDs.RowID, err = a.autoIDAccessor.Get()
 	if err != nil {
 		return
 	}
-	autoIDs.RandomID, err = a.randIDAcc.Get()
+	a.tableIDEncFn = a.m.autoRandomTableIDKey
+	autoIDs.RandomID, err = a.autoIDAccessor.Get()
 	if err != nil {
 		return
 	}
@@ -104,19 +105,23 @@ func (a autoIDAccessors) Get() (autoIDs AutoIDs, err error) {
 }
 
 // Put implements the interface AutoIDAccessors.
-func (a autoIDAccessors) Put(autoIDs AutoIDs) error {
-	if err := a.rowIDAcc.Put(autoIDs.RowID); err != nil {
+func (a autoIDAccessors) Put(autoIDs AutoIDGroup) error {
+	a.tableIDEncFn = a.m.autoTableIDKey
+	if err := a.autoIDAccessor.Put(autoIDs.RowID); err != nil {
 		return err
 	}
-	return a.randIDAcc.Put(autoIDs.RandomID)
+	a.tableIDEncFn = a.m.autoRandomTableIDKey
+	return a.autoIDAccessor.Put(autoIDs.RandomID)
 }
 
 // Del implements the interface AutoIDAccessors.
 func (a autoIDAccessors) Del() error {
-	if err := a.rowIDAcc.Del(); err != nil {
+	a.tableIDEncFn = a.m.autoTableIDKey
+	if err := a.autoIDAccessor.Del(); err != nil {
 		return err
 	}
-	return a.randIDAcc.Del()
+	a.tableIDEncFn = a.m.autoRandomTableIDKey
+	return a.autoIDAccessor.Del()
 }
 
 // AutoIDCtrl can be changed into rowid/auto_increment/auto_random ID accessor.
@@ -144,17 +149,12 @@ func (a *AutoIDCtrl) RandomID() AutoIDAccessor {
 
 // All is used to get all auto IDs meta key-value accessor.
 func (a *AutoIDCtrl) All() AutoIDAccessors {
-	acc := autoIDAccessor{
-		m:          a.access.m,
-		databaseID: a.access.databaseID,
-		tableID:    a.access.tableID,
-	}
-	randAcc := acc
-	acc.tableIDEncFn = a.access.m.autoTableIDKey
-	randAcc.tableIDEncFn = a.access.m.autoRandomTableIDKey
 	return autoIDAccessors{
-		rowIDAcc:  acc,
-		randIDAcc: randAcc,
+		autoIDAccessor{
+			m:          a.access.m,
+			databaseID: a.access.databaseID,
+			tableID:    a.access.tableID,
+		},
 	}
 }
 
@@ -169,8 +169,8 @@ func NewAutoIDCtrl(m *Meta, databaseID, tableID int64) *AutoIDCtrl {
 	}
 }
 
-// AutoIDs represents all auto IDs of a table.
-type AutoIDs struct {
+// AutoIDGroup represents a group of auto IDs of a specific table.
+type AutoIDGroup struct {
 	RowID    int64
 	RandomID int64
 }
@@ -178,7 +178,7 @@ type AutoIDs struct {
 // BackupAndRestoreAutoIDs changes the meta key-values to fetch & delete
 // all the auto IDs from a old table, and set them to a new table.
 func BackupAndRestoreAutoIDs(m *Meta, databaseID, tableID int64,
-	newDatabaseID, newTableID int64, transform func(AutoIDs) (AutoIDs, error)) (err error) {
+	newDatabaseID, newTableID int64, transform func(AutoIDGroup) (AutoIDGroup, error)) (err error) {
 	ctrl := NewAutoIDCtrl(m, databaseID, tableID).All()
 	autoIDs, err := ctrl.Get()
 	if err != nil {

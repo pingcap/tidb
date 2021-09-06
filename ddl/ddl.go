@@ -684,7 +684,7 @@ type RecoverInfo struct {
 	TableInfo  *model.TableInfo
 	DropJobID  int64
 	SnapshotTS uint64
-	AutoIDs    meta.AutoIDs
+	AutoIDs    meta.AutoIDGroup
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.
