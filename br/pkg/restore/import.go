@@ -15,6 +15,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/pkg/codec"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -230,6 +230,9 @@ func (importer *FileImporter) CheckMultiIngestSupport(ctx context.Context, pdCli
 	}
 	storeIDs := make([]uint64, 0, len(allStores))
 	for _, s := range allStores {
+		if s.State != metapb.StoreState_Up {
+			continue
+		}
 		storeIDs = append(storeIDs, s.Id)
 	}
 
@@ -259,6 +262,7 @@ func (importer *FileImporter) Import(
 	files []*backuppb.File,
 	rewriteRules *RewriteRules,
 ) error {
+	start := time.Now()
 	log.Debug("import file", logutil.Files(files))
 	// Rewrite the start key and end key of file to scan regions
 	var startKey, endKey []byte
@@ -340,6 +344,8 @@ func (importer *FileImporter) Import(
 							logutil.Region(info.Region),
 							logutil.Key("startKey", startKey),
 							logutil.Key("endKey", endKey),
+							logutil.Key("file-simple-start", files[0].StartKey),
+							logutil.Key("file-simple-end", files[0].EndKey),
 							logutil.ShortError(e))
 						continue regionLoop
 					}
@@ -352,7 +358,10 @@ func (importer *FileImporter) Import(
 					logutil.ShortError(errDownload))
 				return errors.Trace(errDownload)
 			}
-
+			log.Debug("download file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)),
+				logutil.Key("start", files[0].StartKey),
+				logutil.Key("end", files[0].EndKey),
+			)
 			ingestResp, errIngest := importer.ingestSSTs(ctx, downloadMetas, info)
 		ingestRetry:
 			for errIngest == nil {
@@ -418,6 +427,7 @@ func (importer *FileImporter) Import(
 				return errors.Trace(errIngest)
 			}
 		}
+		log.Debug("ingest file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)))
 		for _, f := range files {
 			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
 			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
@@ -444,18 +454,14 @@ func (importer *FileImporter) downloadSST(
 ) (*import_sstpb.SSTMeta, error) {
 	uid := uuid.New()
 	id := uid[:]
-	// Assume one region reflects to one rewrite rule
-	_, key, err := codec.DecodeBytes(regionInfo.Region.GetStartKey())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	regionRule := matchNewPrefix(key, rewriteRules)
-	if regionRule == nil {
+	// Get the rewrite rule for the file.
+	fileRule := findMatchedRewriteRule(file, rewriteRules)
+	if fileRule == nil {
 		return nil, errors.Trace(berrors.ErrKVRewriteRuleNotFound)
 	}
 	rule := import_sstpb.RewriteRule{
-		OldKeyPrefix: encodeKeyPrefix(regionRule.GetOldKeyPrefix()),
-		NewKeyPrefix: encodeKeyPrefix(regionRule.GetNewKeyPrefix()),
+		OldKeyPrefix: encodeKeyPrefix(fileRule.GetOldKeyPrefix()),
+		NewKeyPrefix: encodeKeyPrefix(fileRule.GetNewKeyPrefix()),
 	}
 	sstMeta := GetSSTMetaFromFile(id, file, regionInfo.Region, &rule)
 
@@ -472,6 +478,7 @@ func (importer *FileImporter) downloadSST(
 	)
 	var resp *import_sstpb.DownloadResponse
 	for _, peer := range regionInfo.Region.GetPeers() {
+		var err error
 		resp, err = importer.importClient.DownloadSST(ctx, peer.GetStoreId(), req)
 		if err != nil {
 			return nil, errors.Trace(err)
