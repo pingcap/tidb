@@ -306,8 +306,9 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		c.Assert(policySetting.Schedule, Equals, "")
 	}
 	checkFunc(tbl.Meta().DirectPlacementOpts)
+	tk.MustExec("drop table if exists t")
 
-	// Direct placement option: special constraints may be incompatible with common constraint.
+	// Direct placement option and placement policy can't co-exist.
 	_, err = tk.Exec("create table t(a int) " +
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
@@ -316,41 +317,58 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 		"CONSTRAINTS=\"[+disk=ssd]\" " +
 		"PLACEMENT POLICY=\"x\"")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:8239]Unknown placement policy 'x'")
-	tk.MustExec("drop table if exists t")
+	c.Assert(err.Error(), Equals, "[ddl:8240]Placement policy 'x' can't co-exist with direct placement options")
 
+	// Only placement policy should check the policy existence.
+	tk.MustGetErrCode("create table t(a int)"+
+		"PLACEMENT POLICY=\"x\"", mysql.ErrPlacementPolicyNotExists)
 	tk.MustExec("create placement policy x " +
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +
 		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
 		"CONSTRAINTS=\"[+disk=ssd]\" ")
-	// The direct placement option is conflict with the named policy.
-	// But the named policy is prior to the direct placement option.
-	tk.MustExec("create table t(a int) " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[-zone=cn-east-1]\" " +
-		"CONSTRAINTS=\"[-disk=ssd]\" " +
+	tk.MustExec("create table t(a int)" +
 		"PLACEMENT POLICY=\"x\"")
 
 	tbl = testGetTableByName(c, tk.Se, "test", "t")
 	c.Assert(tbl, NotNil)
 	c.Assert(tbl.Meta().PlacementPolicyRef, NotNil)
 	c.Assert(tbl.Meta().PlacementPolicyRef.Name.L, Equals, "x")
+	c.Assert(tbl.Meta().PlacementPolicyRef.ID != 0, Equals, true)
+	tk.MustExec("drop table if exists t")
+
+	// Only direct placement options should check the compatibility itself.
+	_, err = tk.Exec("create table t(a int)" +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+		"CONSTRAINTS=\"[+disk=ssd, -zone=cn-east-1]\" ")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "conflicting label constraints: '-zone=cn-east-1' and '+zone=cn-east-1'")
+
+	tk.MustExec("create table t(a int)" +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+		"CONSTRAINTS=\"[+disk=ssd]\" ")
+
+	tbl = testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(tbl, NotNil)
 	c.Assert(tbl.Meta().DirectPlacementOpts, NotNil)
 
 	checkFunc = func(policySetting *model.PlacementSettings) {
 		c.Assert(policySetting.PrimaryRegion, Equals, "cn-east-1")
 		c.Assert(policySetting.Regions, Equals, "cn-east-1, cn-east-2")
 		c.Assert(policySetting.Followers, Equals, uint64(2))
-		c.Assert(policySetting.FollowerConstraints, Equals, "[-zone=cn-east-1]")
+		c.Assert(policySetting.FollowerConstraints, Equals, "[+zone=cn-east-1]")
 		c.Assert(policySetting.Voters, Equals, uint64(0))
 		c.Assert(policySetting.VoterConstraints, Equals, "")
 		c.Assert(policySetting.Learners, Equals, uint64(0))
 		c.Assert(policySetting.LearnerConstraints, Equals, "")
-		c.Assert(policySetting.Constraints, Equals, "[-disk=ssd]")
+		c.Assert(policySetting.Constraints, Equals, "[+disk=ssd]")
 		c.Assert(policySetting.Schedule, Equals, "")
 	}
 	checkFunc(tbl.Meta().DirectPlacementOpts)
