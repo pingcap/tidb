@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -140,57 +141,128 @@ func (s *testDBSuite6) TestConstraintCompatibility(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
 
-	// Dict is not allowed for common constraint.
-	_, err := tk.Exec("create placement policy x " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1,cn-east-2\" " +
-		"LEARNERS=1 " +
-		"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1]\" " +
-		"CONSTRAINTS=\"{'+disk=ssd':2}\"")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]invalid label constraints format: should be [constraint1, ...] (error yaml: unmarshal errors:\n  line 1: cannot unmarshal !!map into []string)")
+	cases := []struct {
+		settings string
+		success  bool
+		errmsg   string
+	}{
+		// Dict is not allowed for common constraint.
+		{
+			settings: "PRIMARY_REGION=\"cn-east-1\" " +
+				"REGIONS=\"cn-east-1,cn-east-2\" " +
+				"LEARNERS=1 " +
+				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1]\" " +
+				"CONSTRAINTS=\"{'+disk=ssd':2}\"",
+			errmsg: "invalid label constraints format: should be [constraint1, ...] (error yaml: unmarshal errors:\n  line 1: cannot unmarshal !!map into []string)",
+		},
+		// Special constraints may be incompatible with itself.
+		{
+			settings: "PRIMARY_REGION=\"cn-east-1\" " +
+				"REGIONS=\"cn-east-1,cn-east-2\" " +
+				"LEARNERS=1 " +
+				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-2]\"",
+			errmsg: "conflicting label constraints: '+zone=cn-west-2' and '+zone=cn-west-1'",
+		},
+		{
+			settings: "PRIMARY_REGION=\"cn-east-1\" " +
+				"REGIONS=\"cn-east-1,cn-east-2\" " +
+				"LEARNERS=1 " +
+				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, -zone=cn-west-1]\"",
+			errmsg: "conflicting label constraints: '-zone=cn-west-1' and '+zone=cn-west-1'",
+		},
+		{
+			settings: "PRIMARY_REGION=\"cn-east-1\" " +
+				"REGIONS=\"cn-east-1,cn-east-2\" " +
+				"LEARNERS=1 " +
+				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-1]\"",
+			success: true,
+		},
+		// Special constraints may be incompatible with common constraint.
+		{
+			settings: "PRIMARY_REGION=\"cn-east-1\" " +
+				"REGIONS=\"cn-east-1, cn-east-2\" " +
+				"FOLLOWERS=2 " +
+				"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+				"CONSTRAINTS=\"[+zone=cn-east-2]\"",
+			errmsg: "conflicting label constraints: '+zone=cn-east-2' and '+zone=cn-east-1'",
+		},
+		{
+			settings: "PRIMARY_REGION=\"cn-east-1\" " +
+				"REGIONS=\"cn-east-1, cn-east-2\" " +
+				"FOLLOWERS=2 " +
+				"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+				"CONSTRAINTS=\"[+disk=ssd,-zone=cn-east-1]\"",
+			errmsg: "conflicting label constraints: '-zone=cn-east-1' and '+zone=cn-east-1'",
+		},
+	}
 
-	// Special constraints may be incompatible with itself.
-	_, err = tk.Exec("create placement policy x " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1,cn-east-2\" " +
-		"LEARNERS=1 " +
-		"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-2]\"")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]conflicting label constraints: '+zone=cn-west-2' and '+zone=cn-west-1'")
+	// test for create
+	for _, ca := range cases {
+		sql := fmt.Sprintf("%s %s", "create placement policy x", ca.settings)
+		if ca.success {
+			tk.MustExec(sql)
+			tk.MustExec("drop placement policy if exists x")
+		} else {
+			err := tk.ExecToErr(sql)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, ca.errmsg)
+		}
+	}
 
-	_, err = tk.Exec("create placement policy x " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1,cn-east-2\" " +
-		"LEARNERS=1 " +
-		"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, -zone=cn-west-1]\"")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]conflicting label constraints: '-zone=cn-west-1' and '+zone=cn-west-1'")
+	// test for alter
+	tk.MustExec("create placement policy x regions=\"cn-east1,cn-east\"")
+	for _, ca := range cases {
+		sql := fmt.Sprintf("%s %s", "alter placement policy x", ca.settings)
+		if ca.success {
+			tk.MustExec(sql)
+			tk.MustExec("alter placement policy x regions=\"cn-east1,cn-east\"")
+		} else {
+			err := tk.ExecToErr(sql)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, ca.errmsg)
+			tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x REGIONS=\"cn-east1,cn-east\" SCHEDULED"))
+		}
+	}
+	tk.MustExec("drop placement policy x")
+}
 
-	_, err = tk.Exec("create placement policy x " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1,cn-east-2\" " +
-		"LEARNERS=1 " +
-		"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1, +zone=cn-west-1]\"")
-	c.Assert(err, IsNil)
-
-	// Special constraints may be incompatible with common constraint.
+func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
-	_, err = tk.Exec("create placement policy x " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
-		"CONSTRAINTS=\"[+zone=cn-east-2]\"")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]conflicting label constraints: '+zone=cn-east-2' and '+zone=cn-east-1'")
+	tk.MustExec("create placement policy x primary_region=\"cn-east-1\" regions=\"cn-east1,cn-east\"")
+	defer tk.MustExec("drop placement policy if exists x")
 
-	_, err = tk.Exec("create placement policy x " +
-		"PRIMARY_REGION=\"cn-east-1\" " +
-		"REGIONS=\"cn-east-1, cn-east-2\" " +
-		"FOLLOWERS=2 " +
-		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
-		"CONSTRAINTS=\"[+disk=ssd,-zone=cn-east-1]\"")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]conflicting label constraints: '-zone=cn-east-1' and '+zone=cn-east-1'")
+	// test for normal cases
+	tk.MustExec("alter placement policy x REGIONS=\"bj,sh\"")
+	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x REGIONS=\"bj,sh\" SCHEDULED"))
+
+	tk.MustExec("alter placement policy x " +
+		"PRIMARY_REGION=\"bj\" " +
+		"REGIONS=\"sh\" " +
+		"SCHEDULE=\"EVEN\"")
+	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"sh\" SCHEDULE=\"EVEN\" SCHEDULED"))
+
+	tk.MustExec("alter placement policy x " +
+		"LEADER_CONSTRAINTS=\"[+region=us-east-1]\" " +
+		"FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" " +
+		"FOLLOWERS=3")
+	tk.MustQuery("show placement where target='POLICY x'").Check(
+		testkit.Rows("POLICY x LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" SCHEDULED"),
+	)
+
+	tk.MustExec("alter placement policy x " +
+		"VOTER_CONSTRAINTS=\"[+region=bj]\" " +
+		"LEARNER_CONSTRAINTS=\"[+region=sh]\" " +
+		"CONSTRAINTS=\"[+disk=ssd]\"" +
+		"VOTERS=5 " +
+		"LEARNERS=3")
+	tk.MustQuery("show placement where target='POLICY x'").Check(
+		testkit.Rows("POLICY x CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" SCHEDULED"),
+	)
+
+	// test alter not exist policies
+	tk.MustExec("drop placement policy x")
+	tk.MustGetErrCode("alter placement policy x REGIONS=\"bj,sh\"", mysql.ErrPlacementPolicyNotExists)
+	tk.MustGetErrCode("alter placement policy x2 REGIONS=\"bj,sh\"", mysql.ErrPlacementPolicyNotExists)
 }
