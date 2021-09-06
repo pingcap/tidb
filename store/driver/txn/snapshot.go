@@ -40,15 +40,15 @@ func NewSnapshot(snapshot *txnsnapshot.KVSnapshot) kv.Snapshot {
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
-	var customData map[string][]byte
+	var result map[string][]byte
 	if len(s.customRetrievers) > 0 {
-		leftKeys, err := s.customRetrievers.TryBatchGet(ctx, keys, func(k kv.Key, v []byte) {
-			if customData == nil {
-				customData = make(map[string][]byte)
+		snapKeys, err := s.customRetrievers.TryBatchGet(ctx, keys, func(k kv.Key, v []byte) {
+			if result == nil {
+				result = make(map[string][]byte)
 			}
 
 			if len(v) > 0 {
-				customData[string(k)] = v
+				result[string(k)] = v
 			}
 		})
 
@@ -56,25 +56,30 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 			return nil, err
 		}
 
-		if len(leftKeys) == 0 {
-			return customData, err
-		}
-
-		keys = leftKeys
+		keys = snapKeys
 	}
 
-	data, err := s.KVSnapshot.BatchGet(ctx, toTiKVKeys(keys))
-	if err == nil {
-		if len(data) == 0 {
-			return customData, nil
+	if len(keys) > 0 {
+		data, err := s.KVSnapshot.BatchGet(ctx, toTiKVKeys(keys))
+		if err != nil {
+			return nil, extractKeyErr(err)
 		}
 
-		for k, v := range customData {
-			data[k] = v
+		if len(result) == 0 {
+			result = data
+		} else {
+			for k, v := range data {
+				result[k] = v
+			}
 		}
 	}
 
-	return data, extractKeyErr(err)
+	if result == nil {
+		// make sure to return an empty map instead of nil
+		result = make(map[string][]byte)
+	}
+
+	return result, nil
 }
 
 // Get gets the value for key k from snapshot.

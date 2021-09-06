@@ -180,6 +180,7 @@ func (s *testCustomRetrieverSuite) TestSnapshotBatchGetWithCustomRetrievers(c *C
 
 		m, err := snap.BatchGet(ctx, keys)
 		c.Assert(err, IsNil)
+		c.Assert(m, NotNil)
 		c.Assert(len(m), Equals, len(ca.result))
 		for k, expectedVal := range ca.result {
 			val, ok := m[string(s.k(k))]
