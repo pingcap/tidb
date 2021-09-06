@@ -56,6 +56,8 @@ type UnionScanExec struct {
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
 	// to make sure we can compute the virtual column in right order.
 	virtualColumnIndex []int
+	// kvRanges is the filter for checks of duplicate data between added rows and snap rows
+	kvRanges []kv.KeyRange
 }
 
 // Open implements the Executor Open interface.
@@ -94,10 +96,13 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
 		us.addedRows, err = buildMemTableReader(us, x).getMemRows()
+		us.kvRanges = x.kvRanges
 	case *IndexReaderExecutor:
 		us.addedRows, err = buildMemIndexReader(us, x).getMemRows()
+		us.kvRanges = x.kvRanges
 	case *IndexLookUpExecutor:
 		us.addedRows, err = buildMemIndexLookUpReader(us, x).getMemRows()
+		us.kvRanges = x.kvRanges
 	default:
 		err = fmt.Errorf("unexpected union scan children:%T", reader)
 	}
@@ -231,7 +236,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 				continue
 			}
 			// Though the handle does not appear in added rows,
-			// there may be still some conflicts on primary indexes when common handle is not enabled.
+			// there may be still some conflicts on unique indexes when common handle is not enabled.
 			// UnionScan with two records which have same primary index is weird which should be handled here.
 			// The newly added rows will overwrite the snapshot rows.
 			// FIXME: For optimistic transaction, it's better to handle the conflict on unique indexes when execute the DMLs instead of handling here.
@@ -262,7 +267,6 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 					indexDatums := make([]types.Datum, len(index.Columns))
 					for i, uniqueCol := range index.Columns {
 						if col, ok := datumCols[cols[uniqueCol.Offset].ID]; ok {
-							// check when column exist
 							indexDatums[i] = row.GetDatum(col.offset, &col.FieldType)
 						} else {
 							// Skip this index check since there is not a full row.
@@ -275,9 +279,17 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 					if err != nil {
 						return nil, err
 					}
+					inRange := false
+					for _, rg := range us.kvRanges {
+						if rg.StartKey.Cmp(checkKey)+rg.EndKey.Cmp(checkKey) == 0 {
+							inRange = true
+						}
+					}
+					if !inRange {
+						// skip checks for keys out of range
+						continue
+					}
 					if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
-						// duplicate unique indexes
-						// skip the snapshot iter row
 						continue ITER
 					}
 				}
