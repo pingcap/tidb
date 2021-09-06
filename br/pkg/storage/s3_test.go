@@ -746,8 +746,9 @@ func (s *s3Suite) TestOpenSeek(c *C) {
 		offset, err = reader.Seek(p, io.SeekStart)
 		c.Assert(offset, Equals, int64(1000000))
 		c.Assert(err, IsNil)
-		_, err = reader.Read(slice)
+		pos, err := reader.Read(slice)
 		c.Assert(err, Equals, io.EOF)
+		c.Assert(pos, Equals, int64(1000000))
 	}
 }
 
