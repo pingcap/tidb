@@ -3383,6 +3383,10 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	if err != nil {
 		return err
 	}
+	var multiSchemaInfo *model.MultiSchemaInfo
+	if ctx.GetSessionVars().EnableChangeMultiSchema {
+		multiSchemaInfo = &model.MultiSchemaInfo{}
+	}
 
 	job := &model.Job{
 		SchemaID:        schema.ID,
@@ -3390,7 +3394,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		SchemaName:      schema.Name.L,
 		Type:            model.ActionDropColumn,
 		BinlogInfo:      &model.HistoryInfo{},
-		MultiSchemaInfo: &model.MultiSchemaInfo{},
+		MultiSchemaInfo: multiSchemaInfo,
 		Args:            []interface{}{colName},
 	}
 
@@ -3456,6 +3460,10 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	if err != nil {
 		return err
 	}
+	var multiSchemaInfo *model.MultiSchemaInfo
+	if ctx.GetSessionVars().EnableChangeMultiSchema {
+		multiSchemaInfo = &model.MultiSchemaInfo{}
+	}
 
 	job := &model.Job{
 		SchemaID:        schema.ID,
@@ -3463,7 +3471,7 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		SchemaName:      schema.Name.L,
 		Type:            model.ActionDropColumns,
 		BinlogInfo:      &model.HistoryInfo{},
-		MultiSchemaInfo: &model.MultiSchemaInfo{},
+		MultiSchemaInfo: multiSchemaInfo,
 		Args:            []interface{}{colNames, ifExists},
 	}
 

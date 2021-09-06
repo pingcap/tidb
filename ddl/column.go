@@ -1734,18 +1734,8 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 }
 
 func isColumnCanDropWithIndex(isMultiSchemaChange bool, colName string, indices []*model.IndexInfo) bool {
-	var condition func(info *model.IndexInfo) bool
-	if isMultiSchemaChange {
-		condition = func(idx *model.IndexInfo) bool {
-			return len(idx.Columns) > 1
-		}
-	} else {
-		condition = func(idx *model.IndexInfo) bool {
-			return len(idx.Columns) >= 1
-		}
-	}
 	for _, indexInfo := range indices {
-		if indexInfo.Primary || condition(indexInfo) {
+		if indexInfo.Primary || len(indexInfo.Columns) > 1 || (!isMultiSchemaChange && len(indexInfo.Columns) == 1) {
 			for _, col := range indexInfo.Columns {
 				if col.Name.L == colName {
 					return false

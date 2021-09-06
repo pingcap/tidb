@@ -2040,3 +2040,16 @@ func (s *testStateChangeSuite) TestExpressionIndexDDLError(c *C) {
 	tk.MustGetErrCode("alter table t drop column b", errno.ErrDependentByFunctionalIndex)
 	tk.MustExec("drop table t")
 }
+
+func (s *serialTestStateChangeSuite) TestRestrainDropColumnWithIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, index(a));")
+	tk.MustExec("set @@GLOBAL.tidb_enable_change_multi_schema=0")
+	tk.MustQuery("select @@tidb_enable_change_multi_schema").Check(testkit.Rows("0"))
+	tk.MustGetErrCode("alter table t drop column a;", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("set @@GLOBAL.tidb_enable_change_multi_schema=1")
+	tk.MustExec("alter table t drop column a;")
+	tk.MustExec("drop table if exists t;")
+}
