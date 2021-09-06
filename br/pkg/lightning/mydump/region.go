@@ -32,7 +32,7 @@ import (
 
 const (
 	tableRegionSizeWarningThreshold int64 = 1024 * 1024 * 1024
-	// the increment ration of large CSV file size threshold by `region-split-size`
+	// the increment ratio of large CSV file size threshold by `region-split-size`
 	largeCSVLowerThresholdRation = 10
 )
 
