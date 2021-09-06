@@ -186,15 +186,15 @@ func TestVarsutil(t *testing.T) {
 			continue
 		}
 
-			require.NoError(t, err)
+		require.NoError(t, err)
 		require.Equal(t, tt.expect, v.TimeZone.String())
 		if tt.compareValue {
 			err = SetSessionSystemVar(v, TimeZone, tt.input)
 			require.NoError(t, err)
 			t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 			t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
-				require.Equal(t, tt.diff, t2.Sub(t1))
-			}
+			require.Equal(t, tt.diff, t2.Sub(t1))
+		}
 	}
 	err = SetSessionSystemVar(v, TimeZone, "6:00")
 	require.Error(t, err)
