@@ -417,11 +417,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 	rows := make([][]types.Datum, 0, chk.Capacity())
 
 	sessVars := e.ctx.GetSessionVars()
-
-	if !sessVars.StrictSQLMode {
-		// If StrictSQLMode is disabled and it is a insert-select statement, it also handle BadNullAsWarning.
-		sessVars.StmtCtx.BadNullAsWarning = true
-	}
 	batchSize := sessVars.DMLBatchSize
 	memUsageOfRows := int64(0)
 	memTracker := e.memTracker
