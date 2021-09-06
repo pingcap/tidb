@@ -172,8 +172,10 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 	switch funcName {
 	case ast.Concat, ast.ConcatWS, ast.Lower, ast.Reverse, ast.Upper, ast.Quote, ast.Coalesce:
 		return CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, retType, args...)
-	case ast.Left, ast.Right, ast.Repeat, ast.Trim, ast.LTrim, ast.RTrim, ast.Instr, ast.Substr, ast.SubstringIndex, ast.Replace, ast.InsertFunc:
+	case ast.Left, ast.Right, ast.Repeat, ast.Trim, ast.LTrim, ast.RTrim, ast.Substr, ast.SubstringIndex, ast.Replace:
 		return CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, retType, args[0])
+	case ast.InsertFunc:
+		return CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, retType, args[0], args[3])
 	case ast.Lpad, ast.Rpad:
 		return CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, retType, args[0], args[2])
 	case ast.Elt, ast.ExportSet, ast.MakeSet:
@@ -182,10 +184,10 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		return CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, types.ETInt, args...)
 	case ast.Field:
 		if argTps[0] == types.ETString {
-			return args[0].GetType().Charset, args[0].GetType().Collate, args[0].Coercibility(), nil
+			return CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, retType, args...)
 		}
-	case ast.Locate:
-		return args[1].GetType().Charset, args[1].GetType().Collate, args[1].Coercibility(), nil
+	case ast.Locate, ast.Instr:
+		return CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, retType, args...)
 	case ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ:
 		// if compare type is string, we should determine which collation should be used.
 		if argTps[0] == types.ETString {
