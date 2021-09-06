@@ -883,8 +883,8 @@ func (c *Config) Valid() error {
 		return err
 	}
 
-	if c.Performance.TxnTotalSizeLimit > 10<<30 {
-		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
+	if c.Performance.TxnTotalSizeLimit > 1<<40 {
+		return fmt.Errorf("txn-total-size-limit should be less than %d", 1<<40)
 	}
 
 	if c.Performance.MemoryUsageAlarmRatio > 1 || c.Performance.MemoryUsageAlarmRatio < 0 {
