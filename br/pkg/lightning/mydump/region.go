@@ -268,6 +268,9 @@ func makeSourceFileRegion(
 	}
 	// If a csv file is overlarge, we need to split it into multiple regions.
 	// Note: We can only split a csv file whose format is strict.
+	// We increase the check threshold by 1/10 of the `max-region-size` because the source file size dumped by tools
+	// like dumpling might be slight exceed the threshold when it is equal `max-region-size`, so we can
+	// avoid split a lot of small chunks.
 	if isCsvFile && cfg.Mydumper.StrictFormat && dataFileSize > int64(cfg.Mydumper.MaxRegionSize)*11/10 {
 		_, regions, subFileSizes, err := SplitLargeFile(ctx, meta, cfg, fi, divisor, 0, ioWorkers, store)
 		return regions, subFileSizes, err

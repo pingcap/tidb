@@ -648,17 +648,6 @@ func (r *s3ObjectReader) Close() error {
 	return r.reader.Close()
 }
 
-// eofReader is a io.ReaderClose Reader that always return io.EOF
-type eofReader struct{}
-
-func (r eofReader) Read([]byte) (n int, err error) {
-	return 0, io.EOF
-}
-
-func (r eofReader) Close() error {
-	return nil
-}
-
 // Seek implement the io.Seeker interface.
 //
 // Currently, tidb-lightning depends on this method to read parquet file for s3 storage.
@@ -687,7 +676,7 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 			log.L().Warn("close s3 reader failed, will ignore this error", logutil.ShortError(err))
 		}
 
-		r.reader = eofReader{}
+		r.reader = io.NopCloser(bytes.NewReader(nil))
 		return r.rangeInfo.Size, nil
 	}
 
