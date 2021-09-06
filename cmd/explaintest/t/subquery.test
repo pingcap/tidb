@@ -23,9 +23,5 @@ select count(*) as x from t1 group by a having x not in (select a from t2 where 
 
 drop table if exists t;
 create table t(a int primary key, b int, c int, d int);
-
 explain select b from t where t.c = (select t2.d from t t2 limit 1);
-explain analyze select b from t where t.c = (select t2.d from t t2 limit 1);
-
 explain select b from t where t.c = (select t2.d from t t2 limit 1) and t.d = (select t2.c from t t2 limit 1);
-explain analyze select b from t where t.c = (select t2.d from t t2 limit 1) and t.d = (select t2.c from t t2 limit 1);
