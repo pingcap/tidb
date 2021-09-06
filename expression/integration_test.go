@@ -4905,7 +4905,7 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		ret := &plannercore.PreprocessorReturn{}
 		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
+		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
@@ -6540,6 +6540,8 @@ func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
 	tk.MustExec("INSERT INTO `t1` VALUES ('Ȇ');")
 	tk.MustQuery("select * from t1 where col1 not in (0xc484, 0xe5a4bc, 0xc3b3);").Check(testkit.Rows("Ȇ"))
 	tk.MustQuery("select * from t1 where col1 >= 0xc484 and col1 <= 0xc3b3;").Check(testkit.Rows("Ȇ"))
+
+	tk.MustQuery("select collation(IF('a' < 'B' collate utf8mb4_general_ci, 'smaller', 'greater' collate utf8mb4_unicode_ci));").Check(testkit.Rows("utf8mb4_unicode_ci"))
 }
 
 func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
@@ -9373,6 +9375,12 @@ func (s *testIntegrationSuite) TestEnumPushDown(c *C) {
 		Check(testkit.Rows("c"))
 	tk.MustQuery("select e from t where e > 2").
 		Check(testkit.Rows("a"))
+
+	tk.MustExec("drop table if exists tdm")
+	tk.MustExec("create table tdm(id int, `c12` enum('a','b','c'), PRIMARY KEY (`id`));")
+	tk.MustExec("insert into tdm values (1, 'a');")
+	tk.MustExec("update tdm set c12 = 2 where id = 1;")
+	tk.MustQuery("select * from tdm").Check(testkit.Rows("1 b"))
 }
 
 func (s *testIntegrationSuite) TestJiraSetInnoDBDefaultRowFormat(c *C) {
@@ -10270,4 +10278,14 @@ func (s *testIntegrationSuite) TestIssue26977(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	result := tk.MustQuery("select a + 1 as f from (select cast(0xfffffffffffffff0 as unsigned) as a union select cast(1 as unsigned)) t having f != 2;")
 	result.Check(testkit.Rows("18446744073709551601"))
+}
+
+func (s *testIntegrationSuite) TestIssue27610(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists PK_TCOLLATION3966STROBJSTROBJ;`)
+	tk.MustExec("CREATE TABLE `PK_TCOLLATION3966STROBJSTROBJ` (\n  `COL1` enum('ll','aa','bb','cc','dd','ee') COLLATE utf8_general_ci NOT NULL,\n  `COL2` varchar(20) COLLATE utf8_general_ci DEFAULT NULL,\n  PRIMARY KEY (`COL1`) /*T![clustered_index] CLUSTERED */\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
+	tk.MustExec(`insert into PK_TCOLLATION3966STROBJSTROBJ values("ee", "tttt");`)
+	tk.MustQuery("SELECT col1, COL2 FROM PK_TCOLLATION3966STROBJSTROBJ WHERE COL1 IN ('notexist','6') and col2 not in (\"abcd\");").
+		Check(testkit.Rows())
 }

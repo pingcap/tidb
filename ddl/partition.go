@@ -181,13 +181,15 @@ func updateAddingPartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *mode
 }
 
 // rollbackAddingPartitionInfo remove the `addingDefinitions` in the tableInfo.
-func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) []int64 {
+func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) ([]int64, []string) {
 	physicalTableIDs := make([]int64, 0, len(tblInfo.Partition.AddingDefinitions))
+	partNames := make([]string, 0, len(tblInfo.Partition.AddingDefinitions))
 	for _, one := range tblInfo.Partition.AddingDefinitions {
 		physicalTableIDs = append(physicalTableIDs, one.ID)
+		partNames = append(partNames, one.Name.L)
 	}
 	tblInfo.Partition.AddingDefinitions = nil
-	return physicalTableIDs
+	return physicalTableIDs, partNames
 }
 
 // checkAddPartitionValue values less than value must be strictly increasing for each partition.
@@ -924,6 +926,16 @@ func dropRuleBundles(d *ddlCtx, physicalTableIDs []int64) error {
 	return err
 }
 
+func dropLabelRules(d *ddlCtx, schemaName, tableName string, partNames []string) error {
+	deleteRules := make([]string, 0, len(partNames))
+	for _, partName := range partNames {
+		deleteRules = append(deleteRules, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, schemaName, tableName, partName))
+	}
+	// delete batch rules
+	patch := label.NewRulePatch(nil, deleteRules)
+	return infosync.UpdateLabelRules(context.TODO(), patch)
+}
+
 // onDropTablePartition deletes old partition meta.
 func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partNames []string
@@ -937,12 +949,18 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	}
 	var physicalTableIDs []int64
 	if job.Type == model.ActionAddTablePartition {
+		var pNames []string
 		// It is rollbacked from adding table partition, just remove addingDefinitions from tableInfo.
-		physicalTableIDs = rollbackAddingPartitionInfo(tblInfo)
+		physicalTableIDs, pNames = rollbackAddingPartitionInfo(tblInfo)
 		err = dropRuleBundles(d, physicalTableIDs)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+		err = dropLabelRules(d, job.SchemaName, tblInfo.Name.L, pNames)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
@@ -973,6 +991,11 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+		err = dropLabelRules(d, job.SchemaName, tblInfo.Name.L, partNames)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 		}
 		job.SchemaState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != job.SchemaState)
@@ -1109,6 +1132,32 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
+	oldRules := make([]string, 0, len(oldIDs))
+	newRules := make([]*label.Rule, 0, len(oldIDs))
+	for _, newPartition := range newPartitions {
+		oldRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, newPartition.Name.L)
+		oldRules = append(oldRules, oldRuleID)
+	}
+
+	rules, err := infosync.GetLabelRules(context.TODO(), oldRules)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to get label rules from PD")
+	}
+
+	for idx, newPartition := range newPartitions {
+		if r, ok := rules[oldRules[idx]]; ok {
+			newRules = append(newRules, r.Clone().Reset(newPartition.ID, job.SchemaName, tblInfo.Name.L, newPartition.Name.L))
+		}
+	}
+
+	patch := label.NewRulePatch(newRules, nil)
+	err = infosync.UpdateLabelRules(context.TODO(), patch)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 
 	newIDs := make([]int64, len(oldIDs))
@@ -1316,6 +1365,40 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
+	ntrID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, nt.Name.L)
+	ptrID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, pt.Name.L, partDef.Name.L)
+
+	rules, err := infosync.GetLabelRules(context.TODO(), []string{ntrID, ptrID})
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Wrapf(err, "failed to get PD the label rules")
+	}
+
+	ntr := rules[ntrID]
+	ptr := rules[ptrID]
+
+	var setRules []*label.Rule
+	var deleteRules []string
+	if ntr != nil && ptr != nil {
+		setRules = append(setRules, ntr.Clone().Reset(partDef.ID, job.SchemaName, pt.Name.L, partDef.Name.L))
+		setRules = append(setRules, ptr.Clone().Reset(nt.ID, job.SchemaName, nt.Name.L))
+	} else if ptr != nil {
+		setRules = append(setRules, ptr.Clone().Reset(nt.ID, job.SchemaName, nt.Name.L))
+		// delete ptr
+		deleteRules = append(deleteRules, ptrID)
+	} else if ntr != nil {
+		setRules = append(setRules, ntr.Clone().Reset(partDef.ID, job.SchemaName, pt.Name.L, partDef.Name.L))
+		// delete ntr
+		deleteRules = append(deleteRules, ntrID)
+	}
+
+	patch := label.NewRulePatch(setRules, deleteRules)
+	err = infosync.UpdateLabelRules(context.TODO(), patch)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 
 	ver, err = updateSchemaVersion(t, job)

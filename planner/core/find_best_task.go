@@ -625,14 +625,28 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 	}
 
 	if ds.ctx.GetSessionVars().GetAllowPreferRangeScan() && len(candidates) > 1 {
-		// remove the table/index full scan path
-		for i, c := range candidates {
-			for _, ran := range c.path.Ranges {
-				if ran.IsFullRange() {
-					candidates = append(candidates[:i], candidates[i+1:]...)
-					return candidates
+		// If a candidate path is TiFlash-path or forced-path, we just keep them. For other candidate paths, if there exists
+		// any range scan path, we remove full scan paths and keep range scan paths.
+		preferredPaths := make([]*candidatePath, 0, len(candidates))
+		var hasRangeScanPath bool
+		for _, c := range candidates {
+			if c.path.Forced || c.path.StoreType == kv.TiFlash {
+				preferredPaths = append(preferredPaths, c)
+				continue
+			}
+			var unsignedIntHandle bool
+			if c.path.IsIntHandlePath && ds.tableInfo.PKIsHandle {
+				if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
+					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.Flag)
 				}
 			}
+			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
+				preferredPaths = append(preferredPaths, c)
+				hasRangeScanPath = true
+			}
+		}
+		if hasRangeScanPath {
+			return preferredPaths
 		}
 	}
 
@@ -1194,6 +1208,10 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
 		ts.SetCost(cost)
+		// We set `StatsVersion` here and fill other fields in `(*copTask).finishIndexPlan`. Since `copTask.indexPlan` may
+		// change before calling `(*copTask).finishIndexPlan`, we don't know the stats information of `ts` currently and on
+		// the other hand, it may be hard to identify `StatsVersion` of `ts` in `(*copTask).finishIndexPlan`.
+		ts.stats = &property.StatsInfo{StatsVersion: ds.tableStats.StatsVersion}
 		cop.tablePlan = ts
 	}
 	cop.cst = cost

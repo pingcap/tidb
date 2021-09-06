@@ -8,7 +8,6 @@ header:
     - '.gitignore'
     - '.gitattributes'
     - '.golangci.yml'
-    - '.licenserc.yaml'
     - 'LICENSES/'
     - '**/*.md'
     - '**/*.json'
@@ -29,13 +28,6 @@ header:
     - '.github/'
     # The license checker think the following 68 files do not have valid header licenses, need to be discussed.
     # Ignore them for now.
-    - 'cmd/explaintest/config.toml'
-    - 'cmd/importer/config.toml'
-    - 'cmd/portgenerator/portgenerator.go'
-    - 'ddl/ddl.go'
-    - 'ddl/ddl_api.go'
-    - 'ddl/mock.go'
-    - 'ddl/options.go'
     - 'executor/aggfuncs/func_stddevpop_test.go'
     - 'executor/aggfuncs/func_stddevsamp_test.go'
     - 'executor/aggfuncs/func_varpop_test.go'
