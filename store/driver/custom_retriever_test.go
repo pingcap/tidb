@@ -246,7 +246,7 @@ func (s *testCustomRetrieverSuite) TestSnapshotIterWithCustomRetrievers(c *C) {
 			gotValue := iter.Value()
 			expectedKey := makeBytes(ca.result[i][0])
 			expectedValue := makeBytes(ca.result[i][1])
-			c.Assert([]byte(gotKey), BytesEquals, []byte(expectedKey))
+			c.Assert([]byte(gotKey), BytesEquals, expectedKey)
 			c.Assert(gotValue, BytesEquals, expectedValue)
 			err = iter.Next()
 			c.Assert(err, IsNil)
