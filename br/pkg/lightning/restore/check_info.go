@@ -287,7 +287,7 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 		return stores[i].Status.RegionCount < stores[j].Status.RegionCount
 	})
 	minStore := stores[0]
-	maxStore := result.Stores[len(stores)-1]
+	maxStore := stores[len(stores)-1]
 	tableCount := 0
 	for _, db := range rc.dbMetas {
 		info, ok := rc.dbInfos[db.Name]
