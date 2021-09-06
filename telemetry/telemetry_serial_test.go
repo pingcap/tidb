@@ -37,6 +37,7 @@ func TestReport(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
 	defer se.Close()
 
 	config.GetGlobalConfig().EnableTelemetry = false
