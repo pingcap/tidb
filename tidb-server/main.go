@@ -680,7 +680,8 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 
 func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
 	if graceful {
-		svr.GracefulDown(context.Background(), nil)
+		done := make(chan struct{})
+		svr.GracefulDown(context.Background(), done)
 	} else {
 		svr.TryGracefulDown()
 	}
