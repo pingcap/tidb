@@ -4239,6 +4239,16 @@ func (s *testSessionSerialSuite) TestParseWithParams(c *C) {
 	c.Assert(sb.String(), Equals, "SELECT 3")
 }
 
+func (s *testSessionSuite) TestReadDMLBatchSize(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set global tidb_dml_batch_size=1000")
+	se, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	// `select 1` to load the global variables.
+	_, _ = se.Execute(context.TODO(), "select 1")
+	c.Assert(se.GetSessionVars().DMLBatchSize, Equals, 1000)
+}
+
 func (s *testSessionSuite) TestInTxnPSProtoPointGet(c *C) {
 	ctx := context.Background()
 	tk := testkit.NewTestKit(c, s.store)
