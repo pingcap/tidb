@@ -171,16 +171,17 @@ func NewBundleFromSugarOptions(primaryRegion string, regions []string, followers
 	} else {
 		count := followers / uint64(len(regions))
 		rem := followers - count*uint64(len(regions))
-		for i, region := range regions {
+		for _, region := range regions {
 			constraints, err = NewConstraints([]string{fmt.Sprintf("+region=%s", region)})
 			if err != nil {
 				return nil, fmt.Errorf("%w: invalid region of 'Regions', '%s'", err, region)
 			}
-			if i == 0 && rem > 0 {
-				Rules = append(Rules, NewRule(Follower, count+rem, constraints))
-			} else {
-				Rules = append(Rules, NewRule(Follower, count, constraints))
+			replica := count
+			if rem > 0 {
+				replica += 1
+				rem--
 			}
+			Rules = append(Rules, NewRule(Follower, replica, constraints))
 		}
 	}
 
