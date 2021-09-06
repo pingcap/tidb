@@ -1615,6 +1615,8 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	}
 	l.SetCharsetAndCollation(dstCharset, dstCollation)
 	r.SetCharsetAndCollation(dstCharset, dstCollation)
+	l = expression.FoldConstant(l)
+	r = expression.FoldConstant(r)
 	function, err := er.newFunction(ast.LogicAnd, &v.Type, l, r)
 	if err != nil {
 		er.err = err
