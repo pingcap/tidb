@@ -538,7 +538,10 @@ func (rc *Controller) readColumnsAndCount(ctx context.Context, dataFileMeta mydu
 	switch dataFileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := rc.cfg.Mydumper.CSV.Header
-		parser = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader)
+		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, nil)
+		if err != nil {
+			return nil, 0, errors.Trace(err)
+		}
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
 	case mydump.SourceTypeParquet:
@@ -594,7 +597,11 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 	// tidb_rowid have a default value.
 	defaultCols[model.ExtraHandleName.String()] = struct{}{}
 
-	for _, dataFile := range tableInfo.DataFiles {
+	// only check the first file of this table.
+	if len(tableInfo.DataFiles) > 0 {
+		dataFile := tableInfo.DataFiles[0]
+		log.L().Info("datafile to check", zap.String("db", tableInfo.DB),
+			zap.String("table", tableInfo.Name), zap.String("path", dataFile.FileMeta.Path))
 		// get columns name from data file.
 		dataFileMeta := dataFile.FileMeta
 
@@ -608,7 +615,7 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 		}
 		if colsFromDataFile == nil && colCountFromDataFile == 0 {
 			log.L().Info("file contains no data, skip checking against schema validity", zap.String("path", dataFileMeta.Path))
-			continue
+			return msgs, nil
 		}
 
 		if colsFromDataFile == nil {
@@ -669,9 +676,6 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 					tableInfo.DB, tableInfo.Name, col, col))
 			}
 		}
-		if len(msgs) > 0 {
-			return msgs, nil
-		}
 	}
 	return msgs, nil
 }
@@ -706,7 +710,10 @@ func (rc *Controller) SampleDataFromTable(ctx context.Context, dbName string, ta
 	switch tableMeta.DataFiles[0].FileMeta.Type {
 	case mydump.SourceTypeCSV:
 		hasHeader := rc.cfg.Mydumper.CSV.Header
-		parser = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader)
+		parser, err = mydump.NewCSVParser(&rc.cfg.Mydumper.CSV, reader, blockBufSize, rc.ioWorkers, hasHeader, nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(rc.cfg.TiDB.SQLMode, reader, blockBufSize, rc.ioWorkers)
 	case mydump.SourceTypeParquet:
