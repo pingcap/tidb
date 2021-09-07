@@ -1221,6 +1221,9 @@ func (e *StatementsSummaryExtractor) Extract(
 	// Extract the `digest` column
 	remained, skip, digests := e.extractCol(schema, names, predicates, "digest", false)
 	e.SkipRequest = skip
+	if e.SkipRequest {
+		return nil
+	}
 	if digests.Count() > 0 {
 		e.Enable = true
 		e.Digests = digests
