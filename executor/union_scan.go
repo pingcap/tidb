@@ -56,8 +56,6 @@ type UnionScanExec struct {
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
 	// to make sure we can compute the virtual column in right order.
 	virtualColumnIndex []int
-	// kvRanges is the filter for checks of duplicate data between added rows and snap rows
-	kvRanges []kv.KeyRange
 }
 
 // Open implements the Executor Open interface.
@@ -96,13 +94,10 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
 		us.addedRows, err = buildMemTableReader(us, x).getMemRows()
-		us.kvRanges = x.kvRanges
 	case *IndexReaderExecutor:
 		us.addedRows, err = buildMemIndexReader(us, x).getMemRows()
-		us.kvRanges = x.kvRanges
 	case *IndexLookUpExecutor:
 		us.addedRows, err = buildMemIndexLookUpReader(us, x).getMemRows()
-		us.kvRanges = x.kvRanges
 	default:
 		err = fmt.Errorf("unexpected union scan children:%T", reader)
 	}
@@ -279,18 +274,16 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 					if err != nil {
 						return nil, err
 					}
-					inRange := false
-					for _, rg := range us.kvRanges {
-						if rg.StartKey.Cmp(checkKey)+rg.EndKey.Cmp(checkKey) == 0 {
-							inRange = true
-						}
-					}
-					if !inRange {
-						// skip checks for keys out of range
-						continue
-					}
 					if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
-						continue ITER
+						flag, err := us.memBuf.GetFlags(checkKey)
+						if err != nil {
+							return nil, err
+						}
+						// optimistic transactions: will mark keys as locked but do not actually acquire the lock
+						// pessimistic transactions: will acquire the pessimistic lock when writing rows, so skip locked keys only
+						if flag.HasLocked() == isPessimistic {
+							continue ITER
+						}
 					}
 				}
 			}
