@@ -558,6 +558,7 @@ func processColumnFlags(col *table.Column) {
 
 func adjustBlobTypesFlen(col *table.Column) {
 	cs, err := charset.GetCharsetInfo(col.FieldType.Charset)
+	// when we meet the unsupported charset, we do not adjust.
 	if err != nil {
 		return
 	}
