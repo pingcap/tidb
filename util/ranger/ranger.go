@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -93,7 +94,7 @@ func convertPoint(sc *stmtctx.StatementContext, point *point, tp *types.FieldTyp
 	}
 	casted, err := point.value.ConvertTo(sc, tp)
 	if err != nil {
-		if tp.Tp == mysql.TypeYear && terror.ErrorEqual(err, types.ErrInvalidYear) {
+		if tp.Tp == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 			// see issue #20101: overflow when converting integer to year
 		} else if tp.Tp == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
 			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value

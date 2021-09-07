@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,9 +17,9 @@ package expression
 import (
 	"bytes"
 	"crypto/aes"
-	"crypto/md5"
+	"crypto/md5" // #nosec G501
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
@@ -421,7 +422,7 @@ func (b *builtinMD5Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column) 
 		return err
 	}
 	result.ReserveString(n)
-	digest := md5.New()
+	digest := md5.New() // #nosec G401
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -714,7 +715,7 @@ func (b *builtinSHA1Sig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		return err
 	}
 	result.ReserveString(n)
-	hasher := sha1.New()
+	hasher := sha1.New() // #nosec G401
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()

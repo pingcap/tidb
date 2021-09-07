@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -82,7 +83,7 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft = NewFieldType(mysql.TypeVarchar)
 	ft.Flen = 10
 	ft.Flag |= mysql.BinaryFlag
-	c.Assert(ft.String(), Equals, "varchar(10) BINARY COLLATE utf8mb4_bin")
+	c.Assert(ft.String(), Equals, "varchar(10) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin")
 
 	ft = NewFieldType(mysql.TypeString)
 	ft.Charset = charset.CollationBin

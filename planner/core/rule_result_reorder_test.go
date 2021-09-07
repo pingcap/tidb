@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -41,6 +42,11 @@ func (s *testRuleReorderResultsSerial) SetUpTest(c *C) {
 	var err error
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
+}
+
+func (s *testRuleReorderResultsSerial) TearDownTest(c *C) {
+	s.dom.Close()
+	c.Assert(s.store.Close(), IsNil)
 }
 
 func (s *testRuleReorderResultsSerial) TestPlanCache(c *C) {
@@ -123,6 +129,8 @@ func (s *testRuleReorderResults) SetUpSuite(c *C) {
 }
 
 func (s *testRuleReorderResults) TearDownSuite(c *C) {
+	s.dom.Close()
+	c.Assert(s.store.Close(), IsNil)
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 

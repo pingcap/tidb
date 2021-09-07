@@ -8,13 +8,13 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package executor
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -28,19 +28,16 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -49,9 +46,10 @@ import (
 type DDLExec struct {
 	baseExecutor
 
-	stmt ast.StmtNode
-	is   infoschema.InfoSchema
-	done bool
+	stmt         ast.StmtNode
+	is           infoschema.InfoSchema
+	tempTableDDL temptable.TemporaryTableDDL
+	done         bool
 }
 
 // toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
@@ -71,37 +69,17 @@ func (e *DDLExec) toErr(err error) error {
 	return err
 }
 
-// deleteTemporaryTableRecords delete temporary table data.
-func deleteTemporaryTableRecords(memData kv.MemBuffer, tblID int64) error {
-	if memData == nil {
-		return kv.ErrNotExist
+func (e *DDLExec) getLocalTemporaryTable(schema model.CIStr, table model.CIStr) (table.Table, bool) {
+	tbl, err := e.ctx.GetInfoSchema().(infoschema.InfoSchema).TableByName(schema, table)
+	if infoschema.ErrTableNotExists.Equal(err) {
+		return nil, false
 	}
 
-	tblPrefix := tablecodec.EncodeTablePrefix(tblID)
-	endKey := tablecodec.EncodeTablePrefix(tblID + 1)
-
-	iter, err := memData.Iter(tblPrefix, endKey)
-	if err != nil {
-		return err
-	}
-	for iter.Valid() {
-		key := iter.Key()
-		if !bytes.HasPrefix(key, tblPrefix) {
-			break
-		}
-
-		err = memData.Delete(key)
-		if err != nil {
-			return err
-		}
-
-		err = iter.Next()
-		if err != nil {
-			return err
-		}
+	if tbl.Meta().TempTableType != model.TempTableLocal {
+		return nil, false
 	}
 
-	return nil
+	return tbl, true
 }
 
 // Next implements the Executor Next interface.
@@ -113,7 +91,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	// For each DDL, we should commit the previous transaction and create a new transaction.
 	// Following cases are exceptions
-	var localTempTablesToDrop []*model.TableInfo
+	var localTempTablesToDrop []*ast.TableName
 	switch s := e.stmt.(type) {
 	case *ast.CreateTableStmt:
 		if s.TemporaryKeyword == ast.TemporaryLocal {
@@ -123,20 +101,28 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		if s.IsView {
 			break
 		}
-		sessVars := e.ctx.GetSessionVars()
-		sessVarsTempTable := sessVars.LocalTemporaryTables
-		if sessVarsTempTable == nil {
-			break
-		}
-		localTemporaryTables := sessVarsTempTable.(*infoschema.LocalTemporaryTables)
+
 		for tbIdx := len(s.Tables) - 1; tbIdx >= 0; tbIdx-- {
-			tb := s.Tables[tbIdx]
-			if tableInfo, ok := localTemporaryTables.TableByName(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name); ok {
-				localTempTablesToDrop = append(localTempTablesToDrop, tableInfo.Meta())
-				localTemporaryTables.RemoveTable(tb.Schema, tb.Name)
+			if _, ok := e.getLocalTemporaryTable(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name); ok {
+				localTempTablesToDrop = append(localTempTablesToDrop, s.Tables[tbIdx])
 				s.Tables = append(s.Tables[:tbIdx], s.Tables[tbIdx+1:]...)
 			}
 		}
+
+		// Statement `DROP TEMPORARY TABLE ...` should not have non-local temporary tables
+		if s.TemporaryKeyword == ast.TemporaryLocal && len(s.Tables) > 0 {
+			nonExistsTables := make([]string, 0, len(s.Tables))
+			for _, tn := range s.Tables {
+				nonExistsTables = append(nonExistsTables, ast.Ident{Schema: tn.Schema, Name: tn.Name}.String())
+			}
+			err = infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(nonExistsTables, ","))
+			if s.IfExists {
+				e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
+				return nil
+			}
+			return err
+		}
+
 		// if all tables are local temporary, directly drop those tables.
 		if len(s.Tables) == 0 {
 			return e.dropLocalTemporaryTables(localTempTablesToDrop)
@@ -197,6 +183,12 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeDropSequence(x)
 	case *ast.AlterSequenceStmt:
 		err = e.executeAlterSequence(x)
+	case *ast.CreatePlacementPolicyStmt:
+		err = e.executeCreatePlacementPolicy(x)
+	case *ast.DropPlacementPolicyStmt:
+		err = e.executeDropPlacementPolicy(x)
+	case *ast.AlterPlacementPolicyStmt:
+		err = e.executeAlterPlacementPolicy(x)
 	}
 	if err != nil {
 		// If the owner return ErrTableNotExists error when running this DDL, it may be caused by schema changed,
@@ -220,6 +212,9 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	if _, exist := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); exist {
+		return e.tempTableDDL.TruncateLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	}
 	err := domain.GetDomain(e.ctx).DDL().TruncateTable(e.ctx, ident)
 	return err
 }
@@ -229,6 +224,9 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 	var err error
 	if len(s.TableToTables) == 1 {
 		oldIdent := ast.Ident{Schema: s.TableToTables[0].OldTable.Schema, Name: s.TableToTables[0].OldTable.Name}
+		if _, ok := e.getLocalTemporaryTable(oldIdent.Schema, oldIdent.Name); ok {
+			return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
+		}
 		newIdent := ast.Ident{Schema: s.TableToTables[0].NewTable.Schema, Name: s.TableToTables[0].NewTable.Name}
 		err = domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent, isAlterTable)
 	} else {
@@ -236,6 +234,9 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 		newIdents := make([]ast.Ident, 0, len(s.TableToTables))
 		for _, tables := range s.TableToTables {
 			oldIdent := ast.Ident{Schema: tables.OldTable.Schema, Name: tables.OldTable.Name}
+			if _, ok := e.getLocalTemporaryTable(oldIdent.Schema, oldIdent.Name); ok {
+				return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
+			}
 			newIdent := ast.Ident{Schema: tables.NewTable.Schema, Name: tables.NewTable.Name}
 			oldIdents = append(oldIdents, oldIdent)
 			newIdents = append(newIdents, newIdent)
@@ -283,62 +284,23 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema.O)
 	}
-	tbInfo, err := ddl.BuildTableInfoWithCheck(e.ctx, s, dbInfo.Charset, dbInfo.Collate)
-	if err != nil {
-		return err
-	}
 
-	dom := domain.GetDomain(e.ctx)
-	// Local temporary table uses a real table ID.
-	// We could mock a table ID, but the mocked ID might be identical to an existing
-	// real table, and then we'll get into trouble.
-	err = kv.RunInNewTxn(context.Background(), dom.Store(), true, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		tblID, err := m.GenGlobalID()
-		if err != nil {
-			return errors.Trace(err)
+	_, exists := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	if exists {
+		err := infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name})
+		if s.IfNotExists {
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
 		}
-		tbInfo.ID = tblID
-		tbInfo.State = model.StatePublic
-		return nil
-	})
+		return err
+	}
+
+	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.ctx, is, s, dbInfo.Charset, dbInfo.Collate)
 	if err != nil {
 		return err
 	}
 
-	// AutoID is allocated in mocked..
-	alloc := autoid.NewAllocatorFromTempTblInfo(tbInfo)
-	tbl, err := tables.TableFromMeta([]autoid.Allocator{alloc}, tbInfo)
-	if err != nil {
-		return err
-	}
-
-	// Store this temporary table to the session.
-	sessVars := e.ctx.GetSessionVars()
-	if sessVars.LocalTemporaryTables == nil {
-		sessVars.LocalTemporaryTables = infoschema.NewLocalTemporaryTables()
-	}
-	localTempTables := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
-
-	// Init MemBuffer in session
-	if sessVars.TemporaryTableData == nil {
-		// Create this txn just for getting a MemBuffer. It's a little tricky
-		bufferTxn, err := e.ctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
-		if err != nil {
-			return err
-		}
-
-		sessVars.TemporaryTableData = bufferTxn.GetMemBuffer()
-	}
-
-	err = localTempTables.AddTable(dbInfo, tbl)
-
-	if err != nil && s.IfNotExists && infoschema.ErrTableExists.Equal(err) {
-		e.ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
-
-	return err
+	return e.tempTableDDL.CreateLocalTemporaryTable(dbInfo.Name, tbInfo)
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
@@ -356,6 +318,10 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	if _, ok := e.getLocalTemporaryTable(ident.Schema, ident.Name); ok {
+		return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("CREATE INDEX")
+	}
+
 	err := domain.GetDomain(e.ctx).DDL().CreateIndex(e.ctx, ident, s.KeyType, model.NewCIStr(s.IndexName),
 		s.IndexPartSpecifications, s.IndexOption, s.IfNotExists)
 	return err
@@ -510,22 +476,27 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 	return nil
 }
 
-func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*model.TableInfo) error {
+func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*ast.TableName) error {
 	if len(localTempTables) == 0 {
 		return nil
 	}
-	sessVars := e.ctx.GetSessionVars()
+
 	for _, tb := range localTempTables {
-		err := deleteTemporaryTableRecords(sessVars.TemporaryTableData, tb.ID)
+		err := e.tempTableDDL.DropLocalTemporaryTable(tb.Schema, tb.Name)
 		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
 func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	if _, ok := e.getLocalTemporaryTable(ti.Schema, ti.Name); ok {
+		return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("DROP INDEX")
+	}
+
 	err := domain.GetDomain(e.ctx).DDL().DropIndex(e.ctx, ti, model.NewCIStr(s.IndexName), s.IfExists)
 	if (infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err)) && s.IfExists {
 		err = nil
@@ -535,6 +506,10 @@ func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 
 func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	if _, ok := e.getLocalTemporaryTable(ti.Schema, ti.Name); ok {
+		return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE")
+	}
+
 	err := domain.GetDomain(e.ctx).DDL().AlterTable(ctx, e.ctx, ti, s.Specs)
 	return err
 }
@@ -721,7 +696,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 		return nil, nil, err
 	}
 	if tableInfo == nil || jobInfo == nil {
-		return nil, nil, errors.Errorf("Can't find dropped/truncated table: %v in DDL history jobs", tableName.Name)
+		return nil, nil, errors.Errorf("Can't find localTemporary/dropped/truncated table: %v in DDL history jobs", tableName.Name)
 	}
 	// Dropping local temporary tables won't appear in DDL jobs.
 	if tableInfo.TempTableType == model.TempTableGlobal {
@@ -763,6 +738,12 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 }
 
 func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
+	for _, tb := range s.TableLocks {
+		if _, ok := e.getLocalTemporaryTable(tb.Table.Schema, tb.Table.Name); ok {
+			return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("LOCK TABLES")
+		}
+	}
+
 	if !config.TableLockEnabled() {
 		return nil
 	}
@@ -778,6 +759,11 @@ func (e *DDLExec) executeUnlockTables(_ *ast.UnlockTablesStmt) error {
 }
 
 func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
+	for _, tb := range s.Tables {
+		if _, ok := e.getLocalTemporaryTable(tb.Schema, tb.Name); ok {
+			return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ADMIN CLEANUP TABLE LOCK")
+		}
+	}
 	return domain.GetDomain(e.ctx).DDL().CleanupTableLock(e.ctx, s.Tables)
 }
 
@@ -791,4 +777,16 @@ func (e *DDLExec) executeCreateSequence(s *ast.CreateSequenceStmt) error {
 
 func (e *DDLExec) executeAlterSequence(s *ast.AlterSequenceStmt) error {
 	return domain.GetDomain(e.ctx).DDL().AlterSequence(e.ctx, s)
+}
+
+func (e *DDLExec) executeCreatePlacementPolicy(s *ast.CreatePlacementPolicyStmt) error {
+	return domain.GetDomain(e.ctx).DDL().CreatePlacementPolicy(e.ctx, s)
+}
+
+func (e *DDLExec) executeDropPlacementPolicy(s *ast.DropPlacementPolicyStmt) error {
+	return domain.GetDomain(e.ctx).DDL().DropPlacementPolicy(e.ctx, s)
+}
+
+func (e *DDLExec) executeAlterPlacementPolicy(s *ast.AlterPlacementPolicyStmt) error {
+	return domain.GetDomain(e.ctx).DDL().AlterPlacementPolicy(e.ctx, s)
 }
