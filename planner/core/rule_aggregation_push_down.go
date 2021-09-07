@@ -303,6 +303,10 @@ func (a *aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (pu
 		GroupByItems: agg.GroupByItems,
 		Schema:       agg.schema,
 	}, false, false)
+	if partial == nil {
+		pushedAgg = nil
+		return
+	}
 	agg.SetSchema(final.Schema)
 	agg.AggFuncs = final.AggFuncs
 	agg.GroupByItems = final.GroupByItems
@@ -373,6 +377,9 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 		}
 	}
 	pushedAgg := a.splitPartialAgg(agg)
+	if pushedAgg == nil {
+		return nil
+	}
 	newChildren := make([]LogicalPlan, 0, len(union.Children()))
 	for _, child := range union.Children() {
 		newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
@@ -381,7 +388,7 @@ func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAl
 		}
 		newChildren = append(newChildren, newChild)
 	}
-	union.SetSchema(expression.NewSchema(newChildren[0].Schema().Columns...))
+	union.SetSchema(expression.NewSchema(newChildren[0].Schema().Clone().Columns...))
 	union.SetChildren(newChildren...)
 	return nil
 }
