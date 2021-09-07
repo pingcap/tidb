@@ -23,7 +23,9 @@ import (
 )
 
 func TestBuiltinFunctionsUsage(t *testing.T) {
-	store, clean := newMockStore(t)
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
