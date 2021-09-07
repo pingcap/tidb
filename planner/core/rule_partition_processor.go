@@ -553,17 +553,8 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 	}
 	used := make(map[int]struct{}, len(ranges))
 	for _, r := range ranges {
-		// for example: partition by `col1/col2`, and the where-condition is `col1 is null`;
-		// in this case the pruneExpr needs values of both two columns but the range `[null, null]` only have one,
-		//  which may cause panic.
-		if len(exprCols) != len(r.LowVal) {
-			return l.fullRange, nil
-		}
-
 		if r.IsPointNullable(l.ctx.GetSessionVars().StmtCtx) {
-			if len(r.HighVal) != len(exprCols) && !r.HighVal[0].IsNull() {
-				// For the list partition, if the first argument is null,
-				// then the list partition expression should also be null.
+			if len(r.HighVal) != len(exprCols) {
 				return l.fullRange, nil
 			}
 			value, isNull, err := pruneExpr.EvalInt(l.ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
