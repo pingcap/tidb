@@ -1230,6 +1230,7 @@ func (s *chunkRestoreSuite) TestEncodeLoop(c *C) {
 	c.Assert(kvs, HasLen, 1)
 	c.Assert(kvs[0].rowID, Equals, int64(19))
 	c.Assert(kvs[0].offset, Equals, int64(36))
+	c.Assert(kvs[0].columns, DeepEquals, []string(nil))
 
 	kvs = <-kvsCh
 	c.Assert(len(kvs), Equals, 0)
@@ -1380,10 +1381,112 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch(c *C) {
 			Timestamp: 1234567895,
 		})
 	c.Assert(err, IsNil)
+	defer kvEncoder.Close()
 
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
 	c.Assert(err, ErrorMatches, "in file db.table.2.sql:0 at offset 8: column count mismatch, expected 3, got 4")
 	c.Assert(kvsCh, HasLen, 0)
+}
+
+func (s *chunkRestoreSuite) TestEncodeLoopIgnoreColumnsCSV(c *C) {
+	cases := []struct {
+		s             string
+		ignoreColumns []*config.IgnoreColumns
+		kvs           deliveredKVs
+		header        bool
+	}{
+		{
+			"1,2,3\r\n4,5,6\r\n",
+			[]*config.IgnoreColumns{
+				{
+					DB:      "db",
+					Table:   "table",
+					Columns: []string{"a"},
+				},
+			},
+			deliveredKVs{
+				rowID:   1,
+				offset:  6,
+				columns: []string{"b", "c"},
+			},
+			false,
+		},
+		{
+			"b,c\r\n2,3\r\n5,6\r\n",
+			[]*config.IgnoreColumns{
+				{
+					TableFilter: []string{"db*.tab*"},
+					Columns:     []string{"b"},
+				},
+			},
+			deliveredKVs{
+				rowID:   1,
+				offset:  9,
+				columns: []string{"c"},
+			},
+			true,
+		},
+	}
+
+	for _, cs := range cases {
+		s.testEncodeLoopIgnoreColumnsCSV(c, cs.s, cs.ignoreColumns, cs.kvs, cs.header)
+	}
+}
+
+func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
+	c *C,
+	f string,
+	ignoreColumns []*config.IgnoreColumns,
+	deliverKV deliveredKVs,
+	header bool,
+) {
+	dir := c.MkDir()
+	fileName := "db.table.000.csv"
+	err := os.WriteFile(filepath.Join(dir, fileName), []byte(f), 0o644)
+	c.Assert(err, IsNil)
+
+	store, err := storage.NewLocalStorage(dir)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	cfg := config.NewConfig()
+	cfg.Mydumper.IgnoreColumns = ignoreColumns
+	cfg.Mydumper.CSV.Header = header
+	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
+
+	reader, err := store.Open(ctx, fileName)
+	c.Assert(err, IsNil)
+	w := worker.NewPool(ctx, 5, "io")
+	p, err := mydump.NewCSVParser(&cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header, nil)
+	c.Assert(err, IsNil)
+
+	err = s.cr.parser.Close()
+	c.Assert(err, IsNil)
+	s.cr.parser = p
+
+	kvsCh := make(chan []deliveredKVs, 2)
+	deliverCompleteCh := make(chan deliverResult)
+	kvEncoder, err := tidb.NewTiDBBackend(nil, config.ReplaceOnDup).NewEncoder(
+		s.tr.encTable,
+		&kv.SessionOptions{
+			SQLMode:   s.cfg.TiDB.SQLMode,
+			Timestamp: 1234567895,
+		})
+	c.Assert(err, IsNil)
+	defer kvEncoder.Close()
+
+	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
+	c.Assert(err, IsNil)
+	c.Assert(kvsCh, HasLen, 2)
+
+	kvs := <-kvsCh
+	c.Assert(kvs, HasLen, 2)
+	c.Assert(kvs[0].rowID, Equals, deliverKV.rowID)
+	c.Assert(kvs[0].offset, Equals, deliverKV.offset)
+	c.Assert(kvs[0].columns, DeepEquals, deliverKV.columns)
+
+	kvs = <-kvsCh
+	c.Assert(len(kvs), Equals, 0)
 }
 
 func (s *chunkRestoreSuite) TestRestore(c *C) {
