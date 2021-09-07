@@ -17,6 +17,7 @@ package main
 import (
 	"testing"
 
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testbridge"
@@ -58,4 +59,14 @@ func TestSetGlobalVars(t *testing.T) {
 	require.Equal(t, "tikv,tidb", variable.GetSysVar(variable.TiDBIsolationReadEngines).Value)
 	require.Equal(t, "9999999", variable.GetSysVar(variable.TiDBMemQuotaQuery).Value)
 	require.Equal(t, "test", variable.GetSysVar(variable.Version).Value)
+	require.Equal(t, variable.GetSysVar(variable.Version).Value, mysql.ServerVersion)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.ServerVersion = ""
+	})
+	setGlobalVars()
+
+	// variable.Version won't change when len(conf.ServerVersion) == 0
+	require.Equal(t, "test", variable.GetSysVar(variable.Version).Value)
+	require.Equal(t, variable.GetSysVar(variable.Version).Value, mysql.ServerVersion)
 }
