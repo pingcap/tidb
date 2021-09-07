@@ -406,6 +406,9 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate 
 			// because it has no prefix "+" or "-" character.
 			tp.Flen--
 		}
+	} else {
+		// Adjust the flen for blob types if the flen is set.
+		adjustBlobTypesFlen(tp, colCharset)
 	}
 	if tp.Decimal == types.UnspecifiedLength {
 		tp.Decimal = defaultDecimal
@@ -556,28 +559,28 @@ func processColumnFlags(col *table.Column) {
 	}
 }
 
-func adjustBlobTypesFlen(col *table.Column) {
-	cs, err := charset.GetCharsetInfo(col.FieldType.Charset)
+func adjustBlobTypesFlen(tp *types.FieldType, colCharset string) {
+	cs, err := charset.GetCharsetInfo(colCharset)
 	// when we meet the unsupported charset, we do not adjust.
 	if err != nil {
 		return
 	}
-	l := col.FieldType.Flen * cs.Maxlen
-	if col.FieldType.Tp == mysql.TypeBlob {
+	l := tp.Flen * cs.Maxlen
+	if tp.Tp == mysql.TypeBlob {
 		if l <= tinyBlobMaxLength {
-			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to TINYBLOB", col.FieldType.Flen))
-			col.FieldType.Flen = tinyBlobMaxLength
-			col.FieldType.Tp = mysql.TypeTinyBlob
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to TINYBLOB", tp.Flen))
+			tp.Flen = tinyBlobMaxLength
+			tp.Tp = mysql.TypeTinyBlob
 		} else if l <= blobMaxLength {
-			col.FieldType.Flen = blobMaxLength
+			tp.Flen = blobMaxLength
 		} else if l <= mediumBlobMaxLength {
-			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to MEDIUMBLOB", col.FieldType.Flen))
-			col.FieldType.Flen = mediumBlobMaxLength
-			col.FieldType.Tp = mysql.TypeMediumBlob
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to MEDIUMBLOB", tp.Flen))
+			tp.Flen = mediumBlobMaxLength
+			tp.Tp = mysql.TypeMediumBlob
 		} else if l <= longBlobMaxLength {
-			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to LONGBLOB", col.FieldType.Flen))
-			col.FieldType.Flen = longBlobMaxLength
-			col.FieldType.Tp = mysql.TypeLongBlob
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to LONGBLOB", tp.Flen))
+			tp.Flen = longBlobMaxLength
+			tp.Tp = mysql.TypeLongBlob
 		}
 	}
 }
@@ -593,8 +596,6 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		// TODO: remove this version field after there is no old version.
 		Version: model.CurrLatestColumnInfoVersion,
 	})
-
-	adjustBlobTypesFlen(col)
 
 	if !isExplicitTimeStamp() {
 		// Check and set TimestampFlag, OnUpdateNowFlag and NotNullFlag.
@@ -3952,9 +3953,6 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 			return nil, errFKIncompatibleColumns.GenWithStackByArgs(originalColName, fkInfo.Name)
 		}
 	}
-
-	// Adjust the flen for blob types after the default flen is set.
-	adjustBlobTypesFlen(newCol)
 
 	// Copy index related options to the new spec.
 	indexFlags := col.FieldType.Flag & (mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag)
