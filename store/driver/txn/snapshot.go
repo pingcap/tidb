@@ -128,31 +128,44 @@ func (s *tikvSnapshot) scanWithCustomRetrievers(startKey, endKey kv.Key, reverse
 		return &kv.EmptyIterator{}, nil
 	}
 
-	iters := make([]kv.Iterator, len(scans))
-	for i, retriever := range scans {
-		iter, err := retriever.ScanCurrentRange(reverse)
-		if err != nil {
-			return nil, err
-		}
+	createIterFuncs := make([]createIterFunc, len(scans))
+	for i, r := range scans {
+		var createFunc createIterFunc
+		curRetriever := r
 
-		if retriever.Retriever != snapshotRetriever {
-			if iter, err = filterEmptyValue(iter); err != nil {
-				return nil, err
+		if curRetriever.Retriever == snapshotRetriever {
+			createFunc = func() (kv.Iterator, error) {
+				return curRetriever.ScanCurrentRange(reverse)
+			}
+		} else {
+			createFunc = func() (kv.Iterator, error) {
+				iter, err := curRetriever.ScanCurrentRange(reverse)
+				if err != nil {
+					return nil, err
+				}
+
+				filterEmpty, err := filterEmptyValue(iter)
+				if err != nil {
+					iter.Close()
+					return nil, err
+				}
+
+				return filterEmpty, nil
 			}
 		}
 
 		loc := i
 		if reverse {
-			loc = len(iters) - i - 1
+			loc = len(createIterFuncs) - i - 1
 		}
-		iters[loc] = iter
+		createIterFuncs[loc] = createFunc
 	}
 
-	if len(iters) == 1 {
-		return iters[0], nil
+	if len(createIterFuncs) == 1 {
+		return createIterFuncs[0]()
 	}
 
-	return newOneByOneIter(iters), nil
+	return newOneByOneIter(createIterFuncs)
 }
 
 func (s *tikvSnapshot) SetOption(opt int, val interface{}) {

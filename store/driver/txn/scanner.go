@@ -36,35 +36,51 @@ func (s *tikvScanner) Key() kv.Key {
 	return kv.Key(s.Scanner.Key())
 }
 
+type createIterFunc func() (kv.Iterator, error)
+
 type oneByOneIter struct {
-	iters []kv.Iterator
-	cur   int
+	createFuncs []createIterFunc
+	curIter     kv.Iterator
+	cur         int
 }
 
-func newOneByOneIter(iters []kv.Iterator) *oneByOneIter {
+func newOneByOneIter(createFuncs []createIterFunc) (*oneByOneIter, error) {
 	iter := &oneByOneIter{
-		iters: iters,
-		cur:   0,
+		createFuncs: createFuncs,
+		cur:         0,
 	}
 
-	iter.updateCur()
-	return iter
+	if err := iter.updateCur(); err != nil {
+		return nil, err
+	}
+
+	return iter, nil
 }
 
-func (o *oneByOneIter) updateCur() {
-	for o.cur < len(o.iters) {
-		currentIter := o.iters[o.cur]
-		if currentIter.Valid() {
+func (o *oneByOneIter) updateCur() error {
+	for o.cur < len(o.createFuncs) {
+		if o.curIter == nil {
+			iter, err := o.createFuncs[o.cur]()
+			if err != nil {
+				return err
+			}
+			o.curIter = iter
+		}
+
+		if o.curIter.Valid() {
 			break
 		}
 
-		currentIter.Close()
+		o.curIter.Close()
+		o.curIter = nil
 		o.cur++
 	}
+
+	return nil
 }
 
 func (o *oneByOneIter) Valid() bool {
-	return o.cur < len(o.iters)
+	return o.cur < len(o.createFuncs)
 }
 
 func (o *oneByOneIter) Next() error {
@@ -72,13 +88,16 @@ func (o *oneByOneIter) Next() error {
 		return errors.New("iterator is invalid")
 	}
 
-	err := o.iters[o.cur].Next()
-	if err != nil {
+	if err := o.curIter.Next(); err != nil {
 		o.Close()
 		return err
 	}
 
-	o.updateCur()
+	if err := o.updateCur(); err != nil {
+		o.Close()
+		return err
+	}
+
 	return nil
 }
 
@@ -86,27 +105,29 @@ func (o *oneByOneIter) Key() kv.Key {
 	if !o.Valid() {
 		return nil
 	}
-	return o.iters[o.cur].Key()
+	return o.curIter.Key()
 }
 
 func (o *oneByOneIter) Value() []byte {
 	if !o.Valid() {
 		return nil
 	}
-	return o.iters[o.cur].Value()
+	return o.curIter.Value()
 }
 
 func (o *oneByOneIter) Close() {
-	for o.cur < len(o.iters) {
-		o.iters[o.cur].Close()
-		o.cur++
+	if o.curIter != nil {
+		o.curIter.Close()
+		o.curIter = nil
 	}
+	o.cur = len(o.createFuncs)
 }
 
 type lowerBoundReverseIter struct {
 	iter       kv.Iterator
 	lowerBound kv.Key
 	valid      bool
+	closed     bool
 }
 
 func newLowerBoundReverseIter(iter kv.Iterator, lowerBound kv.Key) kv.Iterator {
@@ -114,6 +135,7 @@ func newLowerBoundReverseIter(iter kv.Iterator, lowerBound kv.Key) kv.Iterator {
 		iter:       iter,
 		lowerBound: lowerBound,
 		valid:      iter.Valid(),
+		closed:     false,
 	}
 	i.update()
 	return i
@@ -125,7 +147,7 @@ func (i *lowerBoundReverseIter) update() {
 	}
 
 	if !i.iter.Valid() || bytes.Compare(i.Key(), i.lowerBound) < 0 {
-		i.Close()
+		i.valid = false
 	}
 }
 
@@ -153,7 +175,7 @@ func (i *lowerBoundReverseIter) Next() error {
 	}
 
 	if err := i.iter.Next(); err != nil {
-		i.Close()
+		i.valid = false
 		return err
 	}
 	i.update()
@@ -161,34 +183,76 @@ func (i *lowerBoundReverseIter) Next() error {
 }
 
 func (i *lowerBoundReverseIter) Close() {
-	if i.valid {
-		i.valid = false
+	i.valid = false
+	if !i.closed {
 		i.iter.Close()
+		i.closed = true
 	}
 }
 
 type filterEmptyValueIter struct {
-	kv.Iterator
+	iter   kv.Iterator
+	valid  bool
+	closed bool
 }
 
 func (i *filterEmptyValueIter) update() error {
-	for i.Iterator.Valid() && len(i.Iterator.Value()) == 0 {
-		if err := i.Iterator.Next(); err != nil {
+	if !i.valid {
+		return nil
+	}
+
+	for i.iter.Valid() && len(i.iter.Value()) == 0 {
+		if err := i.iter.Next(); err != nil {
+			i.valid = false
 			return err
 		}
 	}
+
+	i.valid = i.iter.Valid()
 	return nil
 }
 
+func (i *filterEmptyValueIter) Key() kv.Key {
+	if !i.valid {
+		return nil
+	}
+	return i.iter.Key()
+}
+
+func (i *filterEmptyValueIter) Value() []byte {
+	if !i.valid {
+		return nil
+	}
+	return i.iter.Value()
+}
+
+func (i *filterEmptyValueIter) Valid() bool {
+	return i.valid
+}
+
 func (i *filterEmptyValueIter) Next() error {
-	if err := i.Iterator.Next(); err != nil {
+	if !i.valid {
+		return errors.New("iterator is invalid")
+	}
+
+	if err := i.iter.Next(); err != nil {
+		i.valid = false
 		return err
 	}
+
 	return i.update()
 }
 
+func (i *filterEmptyValueIter) Close() {
+	i.valid = false
+	if !i.closed {
+		i.iter.Close()
+		i.closed = true
+	}
+}
+
 func filterEmptyValue(iter kv.Iterator) (kv.Iterator, error) {
-	i := &filterEmptyValueIter{iter}
+	i := &filterEmptyValueIter{iter: iter, valid: iter.Valid()}
 	if err := i.update(); err != nil {
 		return nil, err
 	}
