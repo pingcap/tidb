@@ -25,12 +25,10 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTiDBOptOn(t *testing.T) {
-	defer testleak.AfterTestT(t)()
 	table := []struct {
 		val string
 		on  bool
@@ -52,7 +50,6 @@ func TestTiDBOptOn(t *testing.T) {
 }
 
 func TestNewSessionVars(t *testing.T) {
-	defer testleak.AfterTestT(t)()
 	vars := NewSessionVars()
 
 	require.Equal(t, DefIndexJoinBatchSize, vars.IndexJoinBatchSize)
@@ -115,7 +112,6 @@ func assertFieldsGreaterThanZero(t *testing.T, val reflect.Value) {
 }
 
 func TestVarsutil(t *testing.T) {
-	defer testleak.AfterTestT(t)()
 	v := NewSessionVars()
 	v.GlobalVarsAccessor = NewMockGlobalAccessor()
 
@@ -161,7 +157,7 @@ func TestVarsutil(t *testing.T) {
 	require.Nil(t, SetSessionSystemVar(v, "character_set_results", ""))
 
 	// Test case for time_zone session variable.
-	tests := []struct {
+	testCases := []struct {
 		input        string
 		expect       string
 		compareValue bool
@@ -179,21 +175,21 @@ func TestVarsutil(t *testing.T) {
 		{"+14:01", "", false, -14 * time.Hour, ErrUnknownTimeZone.GenWithStackByArgs("+14:01")},
 		{"-13:00", "", false, 13 * time.Hour, ErrUnknownTimeZone.GenWithStackByArgs("-13:00")},
 	}
-	for _, tt := range tests {
-		err = SetSessionSystemVar(v, TimeZone, tt.input)
-		if tt.err != nil {
+	for _, tc := range testCases {
+		err = SetSessionSystemVar(v, TimeZone, tc.input)
+		if tc.err != nil {
 			require.Error(t, err)
 			continue
 		}
 
 		require.NoError(t, err)
-		require.Equal(t, tt.expect, v.TimeZone.String())
-		if tt.compareValue {
-			err = SetSessionSystemVar(v, TimeZone, tt.input)
+		require.Equal(t, tc.expect, v.TimeZone.String())
+		if tc.compareValue {
+			err = SetSessionSystemVar(v, TimeZone, tc.input)
 			require.NoError(t, err)
 			t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 			t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
-			require.Equal(t, tt.diff, t2.Sub(t1))
+			require.Equal(t, tc.diff, t2.Sub(t1))
 		}
 	}
 	err = SetSessionSystemVar(v, TimeZone, "6:00")
@@ -606,11 +602,9 @@ func TestValidate(t *testing.T) {
 			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeGlobal)
 			if tc.error {
-				require.Error(t, err)
-				t.Logf("%v got err=%v", tc, err)
+				require.Errorf(t, err, "%v got err=%v", tc, err)
 			} else {
-				require.NoError(t, err)
-				t.Logf("%v got err=%v", tc, err)
+				require.NoErrorf(t, err, "%v got err=%v", tc, err)
 			}
 		})
 	}
@@ -631,14 +625,15 @@ func TestValidate(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeSession)
-		if tc.error {
-			require.Error(t, err)
-			t.Logf("%v got err=%v", tc, err)
-		} else {
-			require.NoError(t, err)
-			t.Logf("%v got err=%v", tc, err)
-		}
+		t.Run(tc.key, func(t *testing.T) {
+			t.Parallel()
+			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeSession)
+			if tc.error {
+				require.Errorf(t, err, "%v got err=%v", tc, err)
+			} else {
+				require.NoErrorf(t, err, "%v got err=%v", tc, err)
+			}
+		})
 	}
 
 }
@@ -691,18 +686,15 @@ func TestValidateStmtSummary(t *testing.T) {
 			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, tc.scope)
 			if tc.error {
-				require.Error(t, err)
-				t.Logf("%v got err=%v", tc, err)
+				require.Errorf(t, err, "%v got err=%v", tc, err)
 			} else {
-				require.NoError(t, err)
-				t.Logf("%v got err=%v", tc, err)
+				require.NoErrorf(t, err, "%v got err=%v", tc, err)
 			}
 		})
 	}
 }
 
 func TestConcurrencyVariables(t *testing.T) {
-	defer testleak.AfterTestT(t)()
 	vars := NewSessionVars()
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor()
 
