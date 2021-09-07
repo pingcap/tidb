@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/types"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestT(t *testing.T) {
@@ -404,4 +405,38 @@ func (testModelSuite) TestDefaultValue(c *C) {
 			c.Assert(col.OriginDefaultValue == newCol.OriginDefaultValue, IsFalse, cmt)
 		}
 	}
+}
+
+func TestPlacementSettingsString(t *testing.T) {
+	assert := assert.New(t)
+
+	settings := &PlacementSettings{
+		PrimaryRegion: "us-east-1",
+		Regions:       "us-east-1,us-east-2",
+		Schedule:      "EVEN",
+	}
+	assert.Equal("PRIMARY_REGION=\"us-east-1\" REGIONS=\"us-east-1,us-east-2\" SCHEDULE=\"EVEN\"", settings.String())
+
+	settings = &PlacementSettings{
+		LeaderConstraints: "[+region=bj]",
+	}
+	assert.Equal("LEADER_CONSTRAINTS=\"[+region=bj]\"", settings.String())
+
+	settings = &PlacementSettings{
+		Voters:              1,
+		VoterConstraints:    "[+region=us-east-1]",
+		Followers:           2,
+		FollowerConstraints: "[+disk=ssd]",
+		Learners:            3,
+		LearnerConstraints:  "[+region=us-east-2]",
+	}
+	assert.Equal("VOTERS=1 VOTER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=2 FOLLOWER_CONSTRAINTS=\"[+disk=ssd]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=us-east-2]\"", settings.String())
+
+	settings = &PlacementSettings{
+		Voters:      3,
+		Followers:   2,
+		Learners:    1,
+		Constraints: "{+us-east-1:1,+us-east-2:1}",
+	}
+	assert.Equal("CONSTRAINTS=\"{+us-east-1:1,+us-east-2:1}\" VOTERS=3 FOLLOWERS=2 LEARNERS=1", settings.String())
 }
