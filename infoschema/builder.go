@@ -59,6 +59,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return nil, b.applyCreatePolicy(m, diff)
 	case model.ActionDropPlacementPolicy:
 		return b.applyDropPolicy(diff.SchemaID), nil
+	case model.ActionAlterPlacementPolicy:
+		return b.applyAlterPolicy(m, diff)
 	}
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
@@ -260,6 +262,23 @@ func (b *Builder) applyCreatePolicy(m *meta.Meta, diff *model.SchemaDiff) error 
 	return nil
 }
 
+func (b *Builder) applyAlterPolicy(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	po, err := m.GetPolicy(diff.SchemaID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if po == nil {
+		return nil, ErrPlacementPolicyExists.GenWithStackByArgs(
+			fmt.Sprintf("(Policy ID %d)", diff.SchemaID),
+		)
+	}
+
+	b.is.policyMap[po.Name.L] = po
+	// TODO: return the policy related table ids
+	return []int64{}, nil
+}
+
 func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
@@ -387,12 +406,13 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	if len(allocs) == 0 {
 		allocs = autoid.NewAllocatorsFromTblInfo(b.store, dbInfo.ID, tblInfo)
 	} else {
+		tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
 		switch tp {
 		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
-			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType)
+			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType, tblVer)
 			allocs = append(allocs, newAlloc)
 		case model.ActionRebaseAutoRandomBase:
-			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
+			newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)
 			allocs = append(allocs, newAlloc)
 		case model.ActionModifyColumn:
 			// Change column attribute from auto_increment to auto_random.
@@ -401,7 +421,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 				allocs = allocs.Filter(func(a autoid.Allocator) bool {
 					return a.GetType() != autoid.AutoIncrementType && a.GetType() != autoid.RowIDAllocType
 				})
-				newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
+				newAlloc := autoid.NewAllocator(b.store, dbInfo.ID, tblInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType, tblVer)
 				allocs = append(allocs, newAlloc)
 			}
 		}
@@ -536,7 +556,7 @@ func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
 	is := b.is
 	is.policyMutex.Lock()
 	defer is.policyMutex.Unlock()
-	for _, v := range oldIS.PlacementPolicies() {
+	for _, v := range oldIS.AllPlacementPolicies() {
 		is.policyMap[v.Name.L] = v
 	}
 }

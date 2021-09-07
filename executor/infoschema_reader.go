@@ -2830,7 +2830,7 @@ func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx 
 	checker := privilege.GetPrivilegeManager(sctx)
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	var rows [][]types.Datum
-	for _, policy := range is.PlacementPolicies() {
+	for _, policy := range is.AllPlacementPolicies() {
 		fmt.Println("Policy %v", policy)
 	}
 	for _, bundle := range is.RuleBundles() {
