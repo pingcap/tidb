@@ -156,26 +156,6 @@ func ensureSessionData(sctx sessionctx.Context) (variable.TemporaryTableData, er
 	return sessVars.TemporaryTableData, nil
 }
 
-func getLocalTemporaryTables(sctx sessionctx.Context) *infoschema.LocalTemporaryTables {
-	localTemporaryTables := sctx.GetSessionVars().LocalTemporaryTables
-	if localTemporaryTables == nil {
-		return nil
-	}
-
-	return localTemporaryTables.(*infoschema.LocalTemporaryTables)
-}
-
-func ensureLocalTemporaryTables(sctx sessionctx.Context) *infoschema.LocalTemporaryTables {
-	sessVars := sctx.GetSessionVars()
-	if sessVars.LocalTemporaryTables == nil {
-		localTempTables := infoschema.NewLocalTemporaryTables()
-		sessVars.LocalTemporaryTables = localTempTables
-		return localTempTables
-	}
-
-	return sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables)
-}
-
 func newTemporaryTableFromTableInfo(sctx sessionctx.Context, tbInfo *model.TableInfo) (table.Table, error) {
 	// Local temporary table uses a real table ID.
 	// We could mock a table ID, but the mocked ID might be identical to an existing
