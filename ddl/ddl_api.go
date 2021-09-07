@@ -557,18 +557,23 @@ func processColumnFlags(col *table.Column) {
 }
 
 func adjustBlobTypesFlen(col *table.Column) {
+	cs, err := charset.GetCharsetInfo(col.FieldType.Charset)
+	if err != nil {
+		return
+	}
+	l := col.FieldType.Flen * cs.Maxlen
 	if col.FieldType.Tp == mysql.TypeBlob {
-		if col.FieldType.Flen <= tinyBlobMaxLength {
+		if l <= tinyBlobMaxLength {
 			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to TINYBLOB", col.FieldType.Flen))
 			col.FieldType.Flen = tinyBlobMaxLength
 			col.FieldType.Tp = mysql.TypeTinyBlob
-		} else if col.FieldType.Flen <= blobMaxLength {
+		} else if l <= blobMaxLength {
 			col.FieldType.Flen = blobMaxLength
-		} else if col.FieldType.Flen <= mediumBlobMaxLength {
+		} else if l <= mediumBlobMaxLength {
 			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to MEDIUMBLOB", col.FieldType.Flen))
 			col.FieldType.Flen = mediumBlobMaxLength
 			col.FieldType.Tp = mysql.TypeMediumBlob
-		} else if col.FieldType.Flen <= longBlobMaxLength {
+		} else if l <= longBlobMaxLength {
 			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to LONGBLOB", col.FieldType.Flen))
 			col.FieldType.Flen = longBlobMaxLength
 			col.FieldType.Tp = mysql.TypeLongBlob
