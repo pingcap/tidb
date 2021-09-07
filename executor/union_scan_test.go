@@ -469,6 +469,16 @@ func (s *testSuite7) TestIssueOptimisticConflictUnionScan(c *C) {
 		tk.MustQuery("select * from t").Check(testkit.Rows("1 11"))
 		err = tk.ExecToErr("commit")
 		c.Assert(err, NotNil)
+		// select twice should got same data
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(c1 varchar(20) key, c2 int, c3 int, unique key k1(c2), key k2(c3))")
+		tk.MustExec("insert into t values (\"1\", 1, 1), (\"2\", 2, 2), (\"3\", 3, 3)")
+		tk.MustExec("begin optimistic")
+		tk.MustQuery("select * from t use index(k1) where c2 in (1, 2, 3) for update").
+			Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
+		tk.MustQuery("select * from t use index(k2) where c2 in (2, 3) for update").
+			Check(testkit.Rows("2 2 2", "3 3 3"))
+		tk.MustExec("commit")
 	}
 }
 
@@ -496,5 +506,15 @@ func (s *testSuite7) TestIssuePessimisticConflictUnionScan(c *C) {
 		tk1.MustExec("commit")
 		tk1.MustQuery("select * from t use index(primary) order by c1, c2").
 			Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
+		// select twice should got same data
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(c1 varchar(20) key, c2 int, c3 int, unique key k1(c2), key k2(c3))")
+		tk.MustExec("insert into t values (\"1\", 1, 1), (\"2\", 2, 2), (\"3\", 3, 3)")
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery("select * from t use index(k1) where c2 in (1, 2, 3) for update").
+			Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
+		tk.MustQuery("select * from t use index(k2) where c2 in (2, 3) for update").
+			Check(testkit.Rows("2 2 2", "3 3 3"))
+		tk.MustExec("commit")
 	}
 }

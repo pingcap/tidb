@@ -279,8 +279,11 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 						if err != nil {
 							return nil, err
 						}
-						// optimistic transactions: will mark keys as locked but do not actually acquire the lock
-						// pessimistic transactions: will acquire the pessimistic lock when writing rows, so skip locked keys only
+						// optimistic: will mark keys as locked but do not actually acquire the lock
+						//             e.g. select for update statement will leave a locked key in membuffer, we should read that row
+						//             only skip the snapshot row when key is not locked,
+						// pessimistic: will acquire the pessimistic lock when writing rows
+						//             so skip locked keys only
 						if flag.HasLocked() == isPessimistic {
 							continue ITER
 						}
