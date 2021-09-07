@@ -606,7 +606,7 @@ func setupLog() {
 	err := logutil.InitLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
 
-	logutil.InitGeneralQueryLog()
+	session.InitGeneralLog()
 
 	// trigger internal http(s) client init.
 	util.InternalHTTPClient()
@@ -685,7 +685,7 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, gracefu
 	closeDomainAndStorage(storage, dom)
 	disk.CleanUp()
 	topsql.Close()
-	logutil.StopGeneralLog()
+	session.StopGeneralLog()
 }
 
 func stringToList(repairString string) []string {

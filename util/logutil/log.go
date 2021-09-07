@@ -26,7 +26,6 @@ import (
 	tlog "github.com/opentracing/opentracing-go/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/metrics"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -96,39 +95,6 @@ const (
 
 // SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
 var SlowQueryLogger = log.L()
-
-// GeneralLogLogger is used to log general log
-var GeneralLogLogger = log.L()
-
-var generalLogger *GeneralLogManager
-
-var generalLogDroppedEntry = metrics.GeneralLogDroppedCount
-
-// PutGeneralLogOrDrop sends the general log entry to the logging goroutine
-// The entry will be dropped once the channel is full
-func PutGeneralLogOrDrop(entry *GeneralLogEntry) {
-	select {
-	case generalLogger.logEntryChan <- entry:
-	default:
-		// When logEntryChan is full, the system resource is under so much pressure that the logging system capacity
-		// is reduced. We should NOT output another warning log saying that we are dropping a general log, which will
-		// add more pressure on the system load.
-		generalLogDroppedEntry.Inc()
-		glEntryPool.Put(entry)
-	}
-}
-
-// StopGeneralLog stops the general log worker goroutine
-func StopGeneralLog() {
-	generalLogger.stopLogWorker()
-}
-
-// InitGeneralQueryLog initialize general query logger, which will starts a format & logging worker goroutine
-// General query logs are sent to the worker through a channel, which is asynchronously flushed to logging files.
-func InitGeneralQueryLog() {
-	GeneralLogLogger := newGeneralLogLogger()
-	generalLogger = newGeneralLogger(GeneralLogLogger)
-}
 
 // InitLogger initializes a logger with cfg.
 func InitLogger(cfg *LogConfig) error {

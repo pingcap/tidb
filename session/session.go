@@ -2890,7 +2890,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			return s.GetInfoSchema().SchemaMetaVersion()
 		}
 
-		logEntry := logutil.GetGeneralLogEntry()
+		logEntry := getGeneralLogEntry()
 		logEntry.ConnID = vars.ConnectionID
 		logEntry.FnGetUser = fnGetUser
 		logEntry.FnGetSchemaMetaVersion = fnGetSMV
@@ -2901,7 +2901,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		logEntry.TxnMode = vars.GetReadableTxnMode()
 		logEntry.FnGetQuery = fnGetQuery
 
-		logutil.PutGeneralLogOrDrop(logEntry)
+		putGeneralLogOrDrop(logEntry)
 	}
 }
 

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package logutil
+package session
 
 import (
 	"strings"
@@ -20,9 +20,52 @@ import (
 	"time"
 
 	"github.com/natefinch/lumberjack"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/metrics"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+var (
+	// GeneralLogLogger is used to log general log
+	GeneralLogLogger       = log.L()
+	globalGeneralLogger    *generalLogger
+	generalLogDroppedEntry = metrics.GeneralLogDroppedCount
+	queryBuilderPool       = sync.Pool{New: func() interface{} {
+		ret := strings.Builder{}
+		ret.Grow(128)
+		return &ret
+	}}
+	glEntryPool = sync.Pool{New: func() interface{} {
+		return &GeneralLogEntry{}
+	}}
+)
+
+// putGeneralLogOrDrop sends the general log entry to the logging goroutine
+// The entry will be dropped once the channel is full
+func putGeneralLogOrDrop(entry *GeneralLogEntry) {
+	select {
+	case globalGeneralLogger.logEntryChan <- entry:
+	default:
+		// When logEntryChan is full, the system resource is under so much pressure that the logging system capacity
+		// is reduced. We should NOT output another warning log saying that we are dropping a general log, which will
+		// add more pressure on the system load.
+		generalLogDroppedEntry.Inc()
+		glEntryPool.Put(entry)
+	}
+}
+
+// InitGeneralLog initialize general query logger, which will starts a format & logging worker goroutine
+// General query logs are sent to the worker through a channel, which is asynchronously flushed to logging files.
+func InitGeneralLog() {
+	GeneralLogLogger := newGeneralLogLogger()
+	globalGeneralLogger = newGeneralLogger(GeneralLogLogger)
+}
+
+// StopGeneralLog stops the general log worker goroutine
+func StopGeneralLog() {
+	globalGeneralLogger.stopLogWorker()
+}
 
 // GeneralLogEntry represents the fields in a general query log
 type GeneralLogEntry struct {
@@ -37,30 +80,20 @@ type GeneralLogEntry struct {
 	FnGetQuery             func(*strings.Builder) string
 }
 
-var queryBuilderPool = sync.Pool{New: func() interface{} {
-	ret := strings.Builder{}
-	ret.Grow(128)
-	return &ret
-}}
-
-var glEntryPool = sync.Pool{New: func() interface{} {
-	return &GeneralLogEntry{}
-}}
-
-// GetGeneralLogEntry get a general log entry from the object pool
-func GetGeneralLogEntry() *GeneralLogEntry {
+// getGeneralLogEntry get a general log entry from the object pool
+func getGeneralLogEntry() *GeneralLogEntry {
 	return glEntryPool.Get().(*GeneralLogEntry)
 }
 
-// GeneralLogManager receives general log entry from channel, and log or drop them as needed
-type GeneralLogManager struct {
+// generalLogger receives general log entry from channel, and log or drop them as needed
+type generalLogger struct {
 	logger       *zap.Logger
 	logEntryChan chan *GeneralLogEntry
 	quit         chan struct{}
 }
 
-func newGeneralLogger(logger *zap.Logger) *GeneralLogManager {
-	gl := &GeneralLogManager{
+func newGeneralLogger(logger *zap.Logger) *generalLogger {
+	gl := &generalLogger{
 		logger:       logger,
 		logEntryChan: make(chan *GeneralLogEntry, 10000),
 		quit:         make(chan struct{}),
@@ -69,7 +102,7 @@ func newGeneralLogger(logger *zap.Logger) *GeneralLogManager {
 	return gl
 }
 
-func (gl *GeneralLogManager) logEntry(e *GeneralLogEntry) {
+func (gl *generalLogger) logEntry(e *GeneralLogEntry) {
 	fnGetQueryBuf := queryBuilderPool.Get().(*strings.Builder)
 	gl.logger.Info("GENERAL_LOG",
 		zap.Uint64("conn", e.ConnID),
@@ -88,7 +121,7 @@ func (gl *GeneralLogManager) logEntry(e *GeneralLogEntry) {
 }
 
 // startLogWorker starts a log flushing worker that flushes log periodically or when batch is full
-func (gl *GeneralLogManager) startLogWorker() {
+func (gl *generalLogger) startLogWorker() {
 	for {
 		select {
 		case e := <-gl.logEntryChan:
@@ -102,7 +135,7 @@ func (gl *GeneralLogManager) startLogWorker() {
 	}
 }
 
-func (gl *GeneralLogManager) stopLogWorker() {
+func (gl *generalLogger) stopLogWorker() {
 	close(gl.quit)
 }
 
@@ -114,7 +147,7 @@ func newGeneralLogLogger() *zap.Logger {
 	jsonEncoder := zapcore.NewJSONEncoder(encCfg)
 	ws := zapcore.AddSync(&lumberjack.Logger{
 		Filename:   "general_log",
-		MaxSize:    1000, // megabytes
+		MaxSize:    1000, // MB
 		MaxBackups: 10,
 	})
 	wsBuffered := zapcore.BufferedWriteSyncer{
