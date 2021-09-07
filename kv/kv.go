@@ -17,7 +17,6 @@ package kv
 import (
 	"context"
 	"crypto/tls"
-	"github.com/pingcap/tidb/util/trxevents"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/trxevents"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"

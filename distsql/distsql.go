@@ -16,9 +16,6 @@ package distsql
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/trxevents"
-	"go.uber.org/zap"
 	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
@@ -28,8 +25,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // DispatchMPPTasks dispatches all tasks and returns an iterator.

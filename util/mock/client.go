@@ -16,10 +16,10 @@ package mock
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util/trxevents"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/trxevents"
 )
 
 // Client implement kv.Client interface, mocked from "CopClient" defined in
