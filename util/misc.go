@@ -490,8 +490,6 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Con
 			}
 		}
 	}
-<<<<<<< HEAD
-=======
 
 	// This excludes ciphers listed in tls.InsecureCipherSuites() and can be used to filter out more
 	var cipherSuites []uint16
@@ -509,16 +507,11 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool) (tlsConfig *tls.Con
 	logutil.BgLogger().Info("Enabled ciphersuites", zap.Strings("cipherNames", cipherNames))
 
 	/* #nosec G402 */
->>>>>>> c85b3e283... util: Disable 3DES ciphers for TLS connections (#27690)
 	tlsConfig = &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 		ClientCAs:    certPool,
 		ClientAuth:   clientAuthPolicy,
-<<<<<<< HEAD
-=======
-		MinVersion:   minTLSVersion,
 		CipherSuites: cipherSuites,
->>>>>>> c85b3e283... util: Disable 3DES ciphers for TLS connections (#27690)
 	}
 	return
 }
