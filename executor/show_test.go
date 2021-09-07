@@ -948,7 +948,7 @@ func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("create table t(a int) " +
+	tk.MustExec("create table t(`id` bigint(20) NOT NULL PRIMARY KEY /*T![auto_rand] AUTO_RANDOM(5) */, a int) " +
 		"PRIMARY_REGION=\"cn-east-1\" " +
 		"REGIONS=\"cn-east-1, cn-east-2\" " +
 		"FOLLOWERS=2 " +

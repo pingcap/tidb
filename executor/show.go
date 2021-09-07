@@ -1065,6 +1065,13 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " ON COMMIT DELETE ROWS")
 	}
 
+	if tableInfo.PolicyRef != nil {
+		appendPlacementPolicy()
+	}
+
+	// TODO: sylzd: add placement info
+	appendPlacementInfo(tableInfo.Partition, buf)
+
 	// add partition info here.
 	appendPartitionInfo(tableInfo.Partition, buf)
 	return nil
@@ -1154,7 +1161,6 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		e.appendRow([]interface{}{tableInfo.Name.O, buf.String(), tableInfo.Charset, tableInfo.Collate})
 		return nil
 	}
-	// TODO: ADD tableInfo.DirectPlacementOpts
 
 	e.appendRow([]interface{}{tableInfo.Name.O, buf.String()})
 	return nil
@@ -1195,6 +1201,11 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 		}
 	}
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
+}
+
+//TODO: sylzd to be completed
+func appendDirectPlacementInfo(placementInfo *DirectPlacementOpts) {
+	// TODO: ADD tableInfo.DirectPlacementOpts&Policy
 }
 
 func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) {
