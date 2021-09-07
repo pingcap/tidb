@@ -187,7 +187,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 			return CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, retType, args...)
 		}
 	case ast.Locate, ast.Instr:
-		return CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, retType, args...)
+		return CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, retType, args[0], args[1])
 	case ast.GE, ast.LE, ast.GT, ast.LT, ast.EQ, ast.NE, ast.NullEQ:
 		// if compare type is string, we should determine which collation should be used.
 		if argTps[0] == types.ETString {
