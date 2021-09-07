@@ -20,9 +20,11 @@ import (
 	"time"
 
 	"github.com/natefinch/lumberjack"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/metrics"
 	"go.uber.org/zap"
+	"go.uber.org/zap/buffer"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -31,6 +33,7 @@ var (
 	GeneralLogLogger       = log.L()
 	globalGeneralLogger    *generalLogger
 	generalLogDroppedEntry = metrics.GeneralLogDroppedCount
+	stringBufferPool       = buffer.NewPool()
 	queryBuilderPool       = sync.Pool{New: func() interface{} {
 		ret := strings.Builder{}
 		ret.Grow(128)
@@ -70,7 +73,7 @@ func StopGeneralLog() {
 // GeneralLogEntry represents the fields in a general query log
 type GeneralLogEntry struct {
 	ConnID                 uint64
-	FnGetUser              func() string
+	User                   auth.UserIdentity
 	FnGetSchemaMetaVersion func() int64
 	TxnStartTS             uint64
 	TxnForUpdateTS         uint64
@@ -102,11 +105,21 @@ func newGeneralLogger(logger *zap.Logger) *generalLogger {
 	return gl
 }
 
+func userToString(user auth.UserIdentity) string {
+	buf := stringBufferPool.Get()
+	buf.WriteString(user.Username)
+	buf.WriteByte('@')
+	buf.WriteString(user.Hostname)
+	ret := buf.String()
+	buf.Free()
+	return ret
+}
+
 func (gl *generalLogger) logEntry(e *GeneralLogEntry) {
 	fnGetQueryBuf := queryBuilderPool.Get().(*strings.Builder)
 	gl.logger.Info("GENERAL_LOG",
 		zap.Uint64("conn", e.ConnID),
-		zap.String("user", e.FnGetUser()),
+		zap.String("user", userToString(e.User)),
 		zap.Int64("schemaVersion", e.FnGetSchemaMetaVersion()),
 		zap.Uint64("txnStartTS", e.TxnStartTS),
 		zap.Uint64("forUpdateTS", e.TxnForUpdateTS),

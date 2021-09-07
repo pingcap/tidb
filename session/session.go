@@ -2867,32 +2867,21 @@ func genFnGetQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) fun
 	}
 }
 
-func genGetUser(user *auth.UserIdentity) func() string {
-	return func() string {
-		if user == nil {
-			return ""
-		}
-		var buf strings.Builder
-		buf.Grow(64)
-		buf.WriteString(user.Username)
-		buf.WriteByte('@')
-		buf.WriteString(user.Hostname)
-		return buf.String()
-	}
-}
-
 func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 	vars := s.GetSessionVars()
 	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
 		fnGetQuery := genFnGetQuery(execStmt, s, isPrepared)
-		fnGetUser := genGetUser(vars.User)
 		fnGetSMV := func() int64 {
 			return s.GetInfoSchema().SchemaMetaVersion()
 		}
 
 		logEntry := getGeneralLogEntry()
 		logEntry.ConnID = vars.ConnectionID
-		logEntry.FnGetUser = fnGetUser
+		var user auth.UserIdentity
+		if vars.User != nil {
+			user = *vars.User
+		}
+		logEntry.User = user
 		logEntry.FnGetSchemaMetaVersion = fnGetSMV
 		logEntry.TxnStartTS = vars.TxnCtx.StartTS
 		logEntry.TxnForUpdateTS = vars.TxnCtx.GetForUpdateTS()
