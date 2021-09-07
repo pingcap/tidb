@@ -240,9 +240,8 @@ func NewBundleFromOptions(options *model.PlacementSettings) (*Bundle, error) {
 
 	if isSyntaxSugar {
 		return NewBundleFromSugarOptions(options)
-	} else {
-		return NewBundleFromConstraintsOptions(options)
 	}
+	return NewBundleFromConstraintsOptions(options)
 }
 
 // ApplyPlacementSpec will apply actions defined in PlacementSpec to the bundle.
