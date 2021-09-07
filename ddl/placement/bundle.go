@@ -78,6 +78,8 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 		return nil, fmt.Errorf("%w: 'Constraints' should be [constraint1, ...] or any yaml compatible array representation", err)
 	}
 
+	Rules := []*Rule{}
+
 	LeaderConstraints, err := NewConstraintsFromYaml([]byte(leaderConstraints))
 	if err != nil {
 		return nil, fmt.Errorf("%w: 'LeaderConstraints' should be [constraint1, ...] or any yaml compatible array representation", err)
@@ -87,8 +89,6 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 			return nil, fmt.Errorf("%w: LeaderConstraints conflicts with Constraints", err)
 		}
 	}
-
-	Rules := []*Rule{}
 	if len(LeaderConstraints) > 0 {
 		Rules = append(Rules, NewRule(Leader, 1, LeaderConstraints))
 	}
@@ -156,9 +156,12 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		return nil, fmt.Errorf("%w: empty primary region", ErrInvalidPlacementOptions)
 	}
 
-	regions := strings.Split(options.Regions, ",")
-	for i, r := range regions {
-		regions[i] = strings.TrimSpace(r)
+	var regions []string
+	if k := strings.TrimSpace(options.Regions); len(k) > 0 {
+		regions = strings.Split(k, ",")
+		for i, r := range regions {
+			regions[i] = strings.TrimSpace(r)
+		}
 	}
 
 	followers := options.Followers
@@ -183,7 +186,7 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		primary := (followers + 1) / 2
 		constraints, err = NewConstraints([]string{fmt.Sprintf("+region=%s", primaryRegion)})
 		if err != nil {
-			return nil, fmt.Errorf("%w: invalid 'PrimaryRegion', '%s'", err, primaryRegion)
+			return nil, fmt.Errorf("%w: invalid PrimaryRegion, '%s'", err, primaryRegion)
 		}
 		Rules = append(Rules, NewRule(Leader, 1, constraints))
 		Rules = append(Rules, NewRule(Follower, primary, constraints))

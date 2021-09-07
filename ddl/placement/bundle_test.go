@@ -352,12 +352,6 @@ func (s *testBundleSuite) TestApplyPlacmentSpec(c *C) {
 	var tests []TestCase
 
 	tests = append(tests, TestCase{
-		name:  "empty",
-		input: nil,
-		err:   ErrInvalidPlacementOptions,
-	})
-
-	tests = append(tests, TestCase{
 		name:   "empty",
 		input:  []*ast.PlacementSpec{},
 		output: []*Rule{},
@@ -571,8 +565,14 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	var tests []TestCase
 
 	tests = append(tests, TestCase{
-		name:  "empty",
+		name:  "empty 1",
 		input: &model.PlacementSettings{},
+		err:   ErrInvalidPlacementOptions,
+	})
+
+	tests = append(tests, TestCase{
+		name:  "empty 2",
+		input: nil,
 		err:   ErrInvalidPlacementOptions,
 	})
 
@@ -967,7 +967,7 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 
 	for _, t := range tests {
 		bundle, err := NewBundleFromOptions(t.input)
-		comment := Commentf("[%s]\n%s\n%s\n%s", t.name, err, t.err, bundle.String())
+		comment := Commentf("[%s]\nerr1 %s\nerr2 %s", t.name, err, t.err)
 		if t.err != nil {
 			c.Assert(errors.Is(err, t.err), IsTrue, comment)
 		} else {
