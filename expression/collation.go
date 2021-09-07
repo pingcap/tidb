@@ -180,7 +180,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 		return CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, retType, args[0], args[2])
 	case ast.Elt, ast.ExportSet, ast.MakeSet:
 		return CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, retType, args[1:]...)
-	case ast.FindInSet:
+	case ast.FindInSet, ast.Regexp:
 		return CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, types.ETInt, args...)
 	case ast.Field:
 		if argTps[0] == types.ETString {
@@ -202,8 +202,6 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 			return
 		}
 		return dstCharset, dstCollation, CoercibilityCoercible, err
-	case ast.Regexp:
-		return CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, types.ETInt, args...)
 	case ast.In:
 		if args[0].GetType().EvalType() == types.ETString {
 			return CheckAndDeriveCollationFromExprsWithCoer(ctx, funcName, types.ETInt, args...)
