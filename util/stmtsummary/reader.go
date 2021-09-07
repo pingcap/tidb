@@ -81,10 +81,10 @@ func (ssr *stmtSummaryReader) GetStmtSummaryCurrentRows() [][]types.Datum {
 	rows := make([][]types.Datum, 0, len(values))
 	for _, value := range values {
 		ssbd := value.(*stmtSummaryByDigest)
-		record := ssr.getStmtByDigestRow(ssbd, beginTime)
 		if ssr.checker != nil && !ssr.checker.isDigestValid(ssbd.digest) {
 			continue
 		}
+		record := ssr.getStmtByDigestRow(ssbd, beginTime)
 		if record != nil {
 			rows = append(rows, record)
 		}

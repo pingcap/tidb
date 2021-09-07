@@ -1233,7 +1233,7 @@ func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 		return "skip_request: true"
 	}
 	if !e.Enable {
-		return "All digest will be scanned"
+		return "All digests will be scanned"
 	}
-	return fmt.Sprintf("digest: [%s]", e.Digests)
+	return fmt.Sprintf("digests: [%s]", extractStringFromStringSet(e.Digests))
 }
