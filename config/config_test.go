@@ -221,6 +221,7 @@ max-sql-length=1024
 refresh-interval=100
 history-size=100
 [experimental]
+allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
 [labels]
@@ -271,6 +272,7 @@ deadlock-history-collect-retryable = true
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
+	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(conf.IndexLimit, Equals, 70)
@@ -337,7 +339,8 @@ spilled-file-encryption-method = "aes128-ctr"
 	configFile = filepath.Join(filepath.Dir(localFile), "config.toml.example")
 	c.Assert(conf.Load(configFile), IsNil)
 
-	// Make sure the example config is the same as default config.
+	// Make sure the example config is the same as default config except `auto_tls`.
+	conf.Security.AutoTLS = false
 	c.Assert(conf, DeepEquals, GetGlobalConfig())
 
 	// Test for log config.

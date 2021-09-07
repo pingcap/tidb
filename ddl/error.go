@@ -234,6 +234,8 @@ var (
 	ErrColumnTypeUnsupportedNextValue = dbterror.ClassDDL.NewStd(mysql.ErrColumnTypeUnsupportedNextValue)
 	// ErrAddColumnWithSequenceAsDefault is returned when the new added column with sequence's nextval as it's default value.
 	ErrAddColumnWithSequenceAsDefault = dbterror.ClassDDL.NewStd(mysql.ErrAddColumnWithSequenceAsDefault)
+	// ErrUnsupportedExpressionIndex is returned when create an expression index without allow-expression-index.
+	ErrUnsupportedExpressionIndex = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "creating expression index containing unsafe functions without allow-expression-index in config"), nil))
 	// ErrPartitionExchangePartTable is returned when exchange table partition with another table is partitioned.
 	ErrPartitionExchangePartTable = dbterror.ClassDDL.NewStd(mysql.ErrPartitionExchangePartTable)
 	// ErrTablesDifferentMetadata is returned when exchanges tables is not compatible.
@@ -294,4 +296,6 @@ var (
 	errFunctionalIndexOnJSONOrGeometryFunction = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnJSONOrGeometryFunction)
 	// errDependentByFunctionalIndex returns when the dropped column depends by expression index.
 	errDependentByFunctionalIndex = dbterror.ClassDDL.NewStd(mysql.ErrDependentByFunctionalIndex)
+	// errFunctionalIndexOnBlob when the expression of expression index returns blob or text.
+	errFunctionalIndexOnBlob = dbterror.ClassDDL.NewStd(mysql.ErrFunctionalIndexOnBlob)
 )

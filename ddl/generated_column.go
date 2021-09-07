@@ -19,9 +19,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 )
 
@@ -264,11 +266,12 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, tbl table.Table, oldCol
 }
 
 type illegalFunctionChecker struct {
-	hasIllegalFunc bool
-	hasAggFunc     bool
-	hasRowVal      bool // hasRowVal checks whether the functional index refers to a row value
-	hasWindowFunc  bool
-	otherErr       error
+	hasIllegalFunc       bool
+	hasAggFunc           bool
+	hasRowVal            bool // hasRowVal checks whether the functional index refers to a row value
+	hasWindowFunc        bool
+	hasNotGAFunc4ExprIdx bool
+	otherErr             error
 }
 
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
@@ -284,6 +287,10 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 		if err != nil {
 			c.otherErr = err
 			return inNode, true
+		}
+		_, isFuncGA := variable.GAFunction4ExpressionIndex[node.FnName.L]
+		if !isFuncGA {
+			c.hasNotGAFunc4ExprIdx = true
 		}
 	case *ast.SubqueryExpr, *ast.ValuesExpr, *ast.VariableExpr:
 		// Subquery & `values(x)` & variable is not allowed
@@ -342,6 +349,9 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 	}
 	if c.otherErr != nil {
 		return c.otherErr
+	}
+	if genType == typeIndex && c.hasNotGAFunc4ExprIdx && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
+		return ErrUnsupportedExpressionIndex
 	}
 	return nil
 }
