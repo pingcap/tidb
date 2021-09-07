@@ -407,7 +407,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate 
 			tp.Flen--
 		}
 	} else {
-		// Adjust the flen for blob types if the flen is set.
+		// Adjust the field type for blob/text types if the flen is set.
 		adjustBlobTypesFlen(tp, colCharset)
 	}
 	if tp.Decimal == types.UnspecifiedLength {
