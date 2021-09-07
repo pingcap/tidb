@@ -15,6 +15,9 @@
 package driver
 
 import (
+	"context"
+	"flag"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/domain"
@@ -28,6 +31,11 @@ import (
 	"go.uber.org/goleak"
 )
 
+var (
+	pdAddrs  = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	withTiKV = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
+)
+
 func TestMain(m *testing.M) {
 	testbridge.WorkaroundGoCheckFlags()
 	tikv.EnableFailpoints()
@@ -39,6 +47,43 @@ func TestMain(m *testing.M) {
 }
 
 func createTestStore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
+	if *withTiKV {
+		return createTiKVStore(t)
+	} else {
+		return createUnistore(t)
+	}
+}
+
+func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
+	var d TiKVDriver
+	store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
+	require.NoError(t, err)
+
+	// clear storage
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	iter, err := txn.Iter(nil, nil)
+	require.NoError(t, err)
+	for iter.Valid() {
+		require.NoError(t, txn.Delete(iter.Key()))
+		require.NoError(t, iter.Next())
+	}
+	require.NoError(t, txn.Commit(context.Background()))
+
+	session.ResetStoreForWithTiKVTest(store)
+
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+
+	clean := func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}
+
+	return store, dom, clean
+}
+
+func createUnistore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	client, pdClient, cluster, err := unistore.New("")
 	require.NoError(t, err)
 
