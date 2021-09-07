@@ -91,7 +91,7 @@ func (s *testClientSuite) TestCheckStoresAlive(c *C) {
 		stores: stores,
 	}
 
-	kvStores, err := GetAllTiKVStores(s.ctx, fpdc, SkipTiFlash)
+	kvStores, err := GetAllTiKVStoresWithRetry(s.ctx, fpdc, SkipTiFlash)
 	c.Assert(err, IsNil)
 	c.Assert(len(kvStores), Equals, 2)
 	c.Assert(kvStores, DeepEquals, stores[2:])
