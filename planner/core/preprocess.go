@@ -1516,8 +1516,102 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 	}
 }
 
-// handleAsOfAndReadTS tries to handle as of closure, or possibly read_ts.
 func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
+	// When statement is during the Txn, we check whether there exists AsOfClause. If exists, we will return error,
+	// otherwise we should directly set the return param from TxnCtx.
+	p.TxnScope = oracle.GlobalTxnScope
+	if p.ctx.GetSessionVars().InTxn() {
+		if node != nil {
+			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+			return
+		}
+		txnCtx := p.ctx.GetSessionVars().TxnCtx
+		p.TxnScope = txnCtx.TxnScope
+		// It means we meet following case:
+		// 1. start transaction read only as of timestamp ts
+		// 2. select statement
+		if txnCtx.IsStaleness {
+			p.LastSnapshotTS = txnCtx.StartTS
+			p.IsStaleness = txnCtx.IsStaleness
+			p.initedLastSnapshotTS = true
+			return
+		}
+	}
+	// If the statement is in auto-commit mode, we will check whether there exists read_ts, if exists,
+	// we will directly use it. The txnScope will be defined by the zone label, if it is not set, we will use
+	// global txnScope directly.
+	ts := p.ctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
+	if ts > 0 {
+		if node != nil {
+			p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
+			return
+		}
+		// it means we meet following case:
+		// 1. set transaction read only as of timestamp ts
+		// 2. select statement
+		if !p.initedLastSnapshotTS {
+			p.SnapshotTSEvaluator = func(sessionctx.Context) (uint64, error) {
+				return ts, nil
+			}
+			p.LastSnapshotTS = ts
+			p.setStalenessReturn()
+		}
+	}
+	if node != nil {
+		ts, p.err = calculateTsExpr(p.ctx, node)
+		if p.err != nil {
+			return
+		}
+		if err := sessionctx.ValidateStaleReadTS(context.Background(), p.ctx, ts); err != nil {
+			p.err = errors.Trace(err)
+			return
+		}
+		// It means we meet following case:
+		// select statement with as of timestamp
+		if !p.initedLastSnapshotTS {
+			p.SnapshotTSEvaluator = func(ctx sessionctx.Context) (uint64, error) {
+				return calculateTsExpr(ctx, node)
+			}
+			p.LastSnapshotTS = ts
+			p.setStalenessReturn()
+		}
+	}
+	if p.LastSnapshotTS != ts {
+		p.err = ErrAsOf.GenWithStack("can not set different time in the as of")
+		return
+	}
+	if p.LastSnapshotTS != 0 {
+		dom := domain.GetDomain(p.ctx)
+		is, err := dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
+		// if infoschema is empty, LastSnapshotTS init failed
+		if err != nil {
+			p.err = err
+			return
+		}
+		if is == nil {
+			p.err = fmt.Errorf("can not get any information schema based on snapshotTS: %d", p.LastSnapshotTS)
+			return
+		}
+		// the same as session.wrapWithTemporaryTable
+		if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); !ok {
+			localTmp := p.ctx.GetSessionVars().LocalTemporaryTables
+			if localTmp != nil {
+				is = &infoschema.TemporaryTableAttachedInfoSchema{
+					InfoSchema:           is,
+					LocalTemporaryTables: localTmp.(*infoschema.LocalTemporaryTables),
+				}
+			}
+		}
+		p.InfoSchema = is
+	}
+	if p.flag&inPrepare == 0 {
+		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
+	}
+	p.initedLastSnapshotTS = true
+}
+
+// handleAsOfAndReadTS tries to handle as of closure, or possibly read_ts.
+func (p *preprocessor) handleAsOfAndReadTS2(node *ast.AsOfClause) {
 	// When statement is during the Txn, we check whether there exists AsOfClause. If exists, we will return error,
 	// otherwise we should directly set the return param from TxnCtx.
 	p.TxnScope = oracle.GlobalTxnScope
