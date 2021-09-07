@@ -24,10 +24,6 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-const (
-	generalLogBatchSize = 1024
-)
-
 // GeneralLogEntry represents the fields in a general query log
 type GeneralLogEntry struct {
 	ConnID                 uint64
@@ -41,11 +37,19 @@ type GeneralLogEntry struct {
 	FnGetQuery             func(*strings.Builder) string
 }
 
-var fnGetQueryPool = sync.Pool{New: func() interface{} {
+var queryBuilderPool = sync.Pool{New: func() interface{} {
 	ret := strings.Builder{}
 	ret.Grow(128)
 	return &ret
 }}
+
+var glEntryPool = sync.Pool{New: func() interface{} {
+	return &GeneralLogEntry{}
+}}
+
+func GetGeneralLogEntry() *GeneralLogEntry {
+	return glEntryPool.Get().(*GeneralLogEntry)
+}
 
 // GeneralLogManager receives general log entry from channel, and log or drop them as needed
 type GeneralLogManager struct {
@@ -57,7 +61,7 @@ type GeneralLogManager struct {
 func newGeneralLogger(logger *zap.Logger) *GeneralLogManager {
 	gl := &GeneralLogManager{
 		logger:       logger,
-		logEntryChan: make(chan *GeneralLogEntry, generalLogBatchSize),
+		logEntryChan: make(chan *GeneralLogEntry, 10000),
 		quit:         make(chan struct{}),
 	}
 	go gl.startLogWorker()
@@ -65,7 +69,7 @@ func newGeneralLogger(logger *zap.Logger) *GeneralLogManager {
 }
 
 func (gl *GeneralLogManager) logEntry(e *GeneralLogEntry) {
-	fnGetQueryBuf := fnGetQueryPool.Get().(*strings.Builder)
+	fnGetQueryBuf := queryBuilderPool.Get().(*strings.Builder)
 	gl.logger.Info("GENERAL_LOG",
 		zap.Uint64("conn", e.ConnID),
 		zap.String("user", e.FnGetUser()),
@@ -78,7 +82,8 @@ func (gl *GeneralLogManager) logEntry(e *GeneralLogEntry) {
 		zap.String("sql", e.FnGetQuery(fnGetQueryBuf)),
 	)
 	fnGetQueryBuf.Reset()
-	fnGetQueryPool.Put(fnGetQueryBuf)
+	queryBuilderPool.Put(fnGetQueryBuf)
+	glEntryPool.Put(e)
 }
 
 // startLogWorker starts a log flushing worker that flushes log periodically or when batch is full

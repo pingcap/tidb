@@ -114,9 +114,11 @@ func PutGeneralLogOrDrop(entry *GeneralLogEntry) {
 		// is reduced. We should NOT output another warning log saying that we are dropping a general log, which will
 		// add more pressure on the system load.
 		generalLogDroppedEntry.Inc()
+		glEntryPool.Put(entry)
 	}
 }
 
+// StopGeneralLog stops the general log worker goroutine
 func StopGeneralLog() {
 	generalLogger.stopLogWorker()
 }

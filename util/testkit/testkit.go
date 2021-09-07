@@ -119,7 +119,7 @@ func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 		c:     c,
 		store: store,
 	}
-	variable.ProcessGeneralLog.Store(true)
+	variable.ProcessGeneralLog.Store(false)
 	return tk
 }
 
