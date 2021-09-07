@@ -1546,6 +1546,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	var ts uint64
 	switch {
 	case readTS > 0:
+		ts = readTS
 		if node != nil {
 			p.err = ErrAsOf.FastGenWithCause("can't use select as of while already set transaction as of")
 			return
