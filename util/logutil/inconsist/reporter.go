@@ -39,7 +39,7 @@ import (
 
 var (
 	// ErrAdminCheckInconsistent returns for data inconsistency for admin check.
-	ErrAdminCheckInconsistent = dbterror.ClassAdmin.NewStd(errno.ErrDataInConsistent)
+	ErrAdminCheckInconsistent = dbterror.ClassAdmin.NewStd(errno.ErrDataInconsistent)
 	// ErrLookupInconsistent returns for data inconsistency for index lookup.
 	ErrLookupInconsistent = dbterror.ClassExecutor.NewStd(errno.ErrDataInconsistentMismatchCount)
 	// ErrAdminCheckInconsistentWithColInfo returns for data inconsistency for admin check but with column info.

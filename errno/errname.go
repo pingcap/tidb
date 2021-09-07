@@ -998,7 +998,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrWriteOnSnapshot:               mysql.Message("write on snapshot", nil),
 	ErrInvalidKey:                    mysql.Message("invalid key", nil),
 	ErrInvalidIndexKey:               mysql.Message("invalid index key", nil),
-	ErrDataInConsistent:              mysql.Message("data inconsistency in table: %s, index: %s, handle: %s, index-values:%#v != record-values:%#v", []int{2, 3, 4}),
+	ErrDataInconsistent:              mysql.Message("data inconsistency in table: %s, index: %s, handle: %s, index-values:%#v != record-values:%#v", []int{2, 3, 4}),
 	ErrDDLReorgElementNotExist:       mysql.Message("DDL reorg element does not exist", nil),
 	ErrDDLJobNotFound:                mysql.Message("DDL Job:%v not found", nil),
 	ErrCancelFinishedDDLJob:          mysql.Message("This job:%v is finished, so can't be cancelled", nil),

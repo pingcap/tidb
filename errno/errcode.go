@@ -1033,7 +1033,7 @@ const (
 	ErrWriteOnSnapshot                    = 8220
 	ErrInvalidKey                         = 8221
 	ErrInvalidIndexKey                    = 8222
-	ErrDataInConsistent                   = 8223
+	ErrDataInconsistent                   = 8223
 	ErrDDLJobNotFound                     = 8224
 	ErrCancelFinishedDDLJob               = 8225
 	ErrCannotCancelDDLJob                 = 8226

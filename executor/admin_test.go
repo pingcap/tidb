@@ -291,7 +291,7 @@ func (s *testSuite5) TestClusteredIndexAdminRecoverIndex(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	tk.MustGetErrCode("admin check table t", mysql.ErrDataInConsistent)
+	tk.MustGetErrCode("admin check table t", mysql.ErrDataInconsistent)
 	tk.MustGetErrCode("admin check index t idx", mysql.ErrAdminCheckTable)
 
 	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx)").Check(testkit.Rows("2"))
