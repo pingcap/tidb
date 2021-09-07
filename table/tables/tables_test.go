@@ -131,7 +131,7 @@ func TestBasic(t *testing.T) {
 
 	indexCnt := func() int {
 		cnt, err1 := countEntriesWithPrefix(ctx, indexPrefix(tb.(table.PhysicalTable)))
-	require.Nil(t, err1)
+		require.Nil(t, err1)
 		return cnt
 	}
 
@@ -291,13 +291,13 @@ func TestRowKeyCodec(t *testing.T) {
 	for _, v := range tableVal {
 		b := tablecodec.EncodeRowKeyWithHandle(v.tableID, kv.IntHandle(v.h))
 		tableID, handle, err := tablecodec.DecodeRecordKey(b)
-	require.NoError(t, err)
-	require.Equal(t, v.tableID, tableID)
-	require.Equal(t, v.h, handle.IntValue())
+		require.NoError(t, err)
+		require.Equal(t, v.tableID, tableID)
+		require.Equal(t, v.h, handle.IntValue())
 
 		handle, err = tablecodec.DecodeRowKey(b)
-	require.NoError(t, err)
-	require.Equal(t, v.h, handle.IntValue())
+		require.NoError(t, err)
+		require.Equal(t, v.h, handle.IntValue())
 	}
 
 	// test error
@@ -313,7 +313,7 @@ func TestRowKeyCodec(t *testing.T) {
 
 	for _, v := range tbl {
 		_, err := tablecodec.DecodeRowKey(kv.Key(v))
-	require.Error(t, err)
+		require.Error(t, err)
 	}
 }
 
@@ -357,7 +357,7 @@ func TestIterRecords(t *testing.T) {
 	totalCount := 0
 	err = tables.IterRecords(tb, tk.Session(), tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 		totalCount++
-	require.False(t, rec[0].IsNull())
+		require.False(t, rec[0].IsNull())
 		return true, nil
 	})
 	require.NoError(t, err)
@@ -434,7 +434,7 @@ func TestShardRowIDBitsStep(t *testing.T) {
 	shards := make(map[int]struct{})
 	for _, row := range rows {
 		id, err := strconv.ParseUint(row[0].(string), 10, 64)
-	require.NoError(t, err)
+		require.NoError(t, err)
 		shards[int(id>>48)] = struct{}{}
 	}
 	require.Equal(t, 4, len(shards))
@@ -619,7 +619,7 @@ func TestAddRecordWithCtx(t *testing.T) {
 	require.NoError(t, err)
 	defer func() {
 		_, err := tk.Session().Execute(context.Background(), "DROP TABLE test.tRecord")
-	require.NoError(t, err)
+		require.NoError(t, err)
 	}()
 
 	require.Nil(t, tk.Session().NewTxn(context.Background()))
@@ -632,11 +632,11 @@ func TestAddRecordWithCtx(t *testing.T) {
 	records := [][]types.Datum{types.MakeDatums(uint64(1), "abc"), types.MakeDatums(uint64(2), "abcd")}
 	for _, r := range records {
 		rid, err := tb.AddRecord(tk.Session(), r)
-	require.NoError(t, err)
+		require.NoError(t, err)
 		row, err := tables.RowWithCols(tb.(table.PhysicalTable), tk.Session(), rid, tb.Cols())
-	require.NoError(t, err)
-	require.Equal(t, len(r), len(row))
-	require.Equal(t, types.KindUint64, row[0].Kind())
+		require.NoError(t, err)
+		require.Equal(t, len(r), len(row))
+		require.Equal(t, types.KindUint64, row[0].Kind())
 	}
 
 	i := 0
@@ -701,7 +701,7 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	go func() {
 		tk2.MustExec("use test")
 		_, err = tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
-	require.NoError(t, err)
+		require.NoError(t, err)
 		ch <- 2
 	}()
 	// Sleep 100ms for tk2 to execute, if it's not blocked, 2 should have been sent to the channel.
