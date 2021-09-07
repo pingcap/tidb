@@ -323,8 +323,13 @@ func (s *testSuite1) TestCheckActRowsWithUnistore(c *C) {
 			expected: []string{"2", "2", "2", "4"},
 		},
 		{
-			sql:      "with cte(a) as (select a from t_unistore_act_rows) select (select 1 from cte limit 1) from cte;",
-			expected: []string{"4", "4", "4", "4", "4"},
+			sql: "with cte(a) as (select a from t_unistore_act_rows) select (select 1 from cte limit 1) from cte;",
+			expected: []string{
+				// for the main part
+				"4", "4", "4", "4", "4",
+				// for the subquery
+				"1", "1", "1", "1", "4",
+			},
 		},
 	}
 
