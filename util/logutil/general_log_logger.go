@@ -54,7 +54,7 @@ type GeneralLogManager struct {
 	quit         chan struct{}
 }
 
-func newGeneralLog(logger *zap.Logger) *GeneralLogManager {
+func newGeneralLogger(logger *zap.Logger) *GeneralLogManager {
 	gl := &GeneralLogManager{
 		logger:       logger,
 		logEntryChan: make(chan *GeneralLogEntry, generalLogBatchSize),

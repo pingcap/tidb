@@ -100,7 +100,7 @@ var SlowQueryLogger = log.L()
 // GeneralLogLogger is used to log general log
 var GeneralLogLogger = log.L()
 
-var generalLogMgr *GeneralLogManager
+var generalLogger *GeneralLogManager
 
 var generalLogDroppedEntry = metrics.GeneralLogDroppedCount
 
@@ -108,7 +108,7 @@ var generalLogDroppedEntry = metrics.GeneralLogDroppedCount
 // The entry will be dropped once the channel is full
 func PutGeneralLogOrDrop(entry *GeneralLogEntry) {
 	select {
-	case generalLogMgr.logEntryChan <- entry:
+	case generalLogger.logEntryChan <- entry:
 	default:
 		// When logEntryChan is full, the system resource is under so much pressure that the logging system capacity
 		// is reduced. We should NOT output another warning log saying that we are dropping a general log, which will
@@ -118,14 +118,14 @@ func PutGeneralLogOrDrop(entry *GeneralLogEntry) {
 }
 
 func StopGeneralLog() {
-	generalLogMgr.stopLogWorker()
+	generalLogger.stopLogWorker()
 }
 
 // InitGeneralQueryLog initialize general query logger, which will starts a format & logging worker goroutine
 // General query logs are sent to the worker through a channel, which is asynchronously flushed to logging files.
 func InitGeneralQueryLog() {
 	GeneralLogLogger := newGeneralLogLogger()
-	generalLogMgr = newGeneralLog(GeneralLogLogger)
+	generalLogger = newGeneralLogger(GeneralLogLogger)
 }
 
 // InitLogger initializes a logger with cfg.
