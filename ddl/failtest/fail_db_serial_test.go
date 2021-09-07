@@ -323,12 +323,10 @@ func TestAddIndexWorkerNum(t *testing.T) {
 
 	tests := []struct {
 		name                   string
-		checkBackfillWorkerNum bool
 		createTable            func(*testkit.TestKit)
 	}{
 		{
 			"EnableClusteredIndex",
-			false,
 			func(tk *testkit.TestKit) {
 				tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 				tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
@@ -336,7 +334,6 @@ func TestAddIndexWorkerNum(t *testing.T) {
 		},
 		{
 			"DisableClusteredIndex",
-			true,
 			func(tk *testkit.TestKit) {
 				tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
 			},
