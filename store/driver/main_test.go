@@ -49,9 +49,8 @@ func TestMain(m *testing.M) {
 func createTestStore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	if *withTiKV {
 		return createTiKVStore(t)
-	} else {
-		return createUnistore(t)
 	}
+	return createUnistore(t)
 }
 
 func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
