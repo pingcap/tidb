@@ -74,13 +74,11 @@ func (l *Label) Restore() string {
 // CompatibleWith will check if two constraints are compatible.
 // Return (compatible, duplicated).
 func (l *Label) CompatibleWith(o *Label) AttributesCompatibility {
-	sameKey := l.Key == o.Key
-	if !sameKey {
+	if l.Key != o.Key {
 		return AttributesCompatible
 	}
 
-	sameVal := l.Value == o.Value
-	if sameVal {
+	if l.Value == o.Value {
 		return AttributesDuplicated
 	}
 
@@ -127,24 +125,19 @@ func (labels *Labels) Restore() string {
 
 // Add will add a new attribute, with validation of all attributes.
 func (labels *Labels) Add(label Label) error {
-	pass := true
-
 	for _, l := range *labels {
 		res := label.CompatibleWith(&l)
 		if res == AttributesCompatible {
 			continue
 		}
 		if res == AttributesDuplicated {
-			pass = false
-			continue
+			return nil
 		}
 		s1 := label.Restore()
 		s2 := l.Restore()
 		return fmt.Errorf("%w: '%s' and '%s'", ErrConflictingAttributes, s1, s2)
 	}
 
-	if pass {
-		*labels = append(*labels, label)
-	}
+	*labels = append(*labels, label)
 	return nil
 }
