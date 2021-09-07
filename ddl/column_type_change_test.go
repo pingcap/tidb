@@ -2226,3 +2226,13 @@ func (s *testColumnTypeChangeSuite) TestChangeFromBitToStringInvalidUtf8ErrMsg(c
 	errMsg := "[table:1366]Incorrect string value '\\xEC\\xBD' for column 'a'"
 	tk.MustGetErrMsg("alter table t modify column a varchar(31) collate utf8mb4_general_ci;", errMsg)
 }
+
+func (s *testColumnTypeChangeSuite) TestDropNoExitsColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	errMsg := "[ddl:1091]: Can't DROP 'not_exist_column'; check that column/key exists"
+	tk.MustGetErrMsg("alter table t drop column not_exist_column;", errMsg)
+}
