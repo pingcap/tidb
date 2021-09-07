@@ -30,6 +30,8 @@ import (
 )
 
 func TestDumpBinaryTime(t *testing.T) {
+	t.Parallel()
+
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	parsedTime, err := types.ParseTimestamp(sc, "0000-00-00 00:00:00.000000")
 	require.NoError(t, err)
@@ -85,6 +87,8 @@ func TestDumpBinaryTime(t *testing.T) {
 }
 
 func TestDumpTextValue(t *testing.T) {
+	t.Parallel()
+
 	columns := []*ColumnInfo{{
 		Type:    mysql.TypeLonglong,
 		Decimal: mysql.NotFixedDec,
@@ -218,6 +222,8 @@ func mustDecodeStr(t *testing.T, b []byte) string {
 }
 
 func TestAppendFormatFloat(t *testing.T) {
+	t.Parallel()
+
 	infVal, _ := strconv.ParseFloat("+Inf", 64)
 	tests := []struct {
 		fVal    float64
@@ -400,6 +406,8 @@ func TestAppendFormatFloat(t *testing.T) {
 }
 
 func TestDumpLengthEncodedInt(t *testing.T) {
+	t.Parallel()
+
 	testCases := []struct {
 		num    uint64
 		buffer []byte
@@ -428,6 +436,8 @@ func TestDumpLengthEncodedInt(t *testing.T) {
 }
 
 func TestParseLengthEncodedInt(t *testing.T) {
+	t.Parallel()
+
 	testCases := []struct {
 		buffer []byte
 		num    uint64
@@ -476,6 +486,8 @@ func TestParseLengthEncodedInt(t *testing.T) {
 }
 
 func TestDumpUint(t *testing.T) {
+	t.Parallel()
+
 	testCases := []uint64{
 		0,
 		1,
@@ -494,6 +506,8 @@ func TestDumpUint(t *testing.T) {
 }
 
 func TestParseLengthEncodedBytes(t *testing.T) {
+	t.Parallel()
+
 	buffer := []byte{'\xfb'}
 	b, isNull, n, err := parseLengthEncodedBytes(buffer)
 	require.Nil(t, b)
@@ -517,6 +531,8 @@ func TestParseLengthEncodedBytes(t *testing.T) {
 }
 
 func TestParseNullTermString(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		input  string
 		str    string
