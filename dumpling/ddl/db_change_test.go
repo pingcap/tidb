@@ -1822,6 +1822,7 @@ func (s *serialTestStateChangeSuite) TestCreateExpressionIndex(c *C) {
 	var checkErr error
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
 	callback.OnJobUpdatedExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -1882,6 +1883,7 @@ func (s *serialTestStateChangeSuite) TestCreateUniqueExpressionIndex(c *C) {
 	var checkErr error
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
 	callback.OnJobUpdatedExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -1989,6 +1991,7 @@ func (s *serialTestStateChangeSuite) TestDropExpressionIndex(c *C) {
 	var checkErr error
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	callback := &ddl.TestDDLCallback{}
 	callback.OnJobUpdatedExported = func(job *model.Job) {
 		if checkErr != nil {
