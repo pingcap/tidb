@@ -18,30 +18,29 @@ import (
 	"context"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-type testCoprocessorSuite struct {
-}
-
-var _ = Suite(&testCoprocessorSuite{})
-
-func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
+func TestBuildTasks(t *testing.T) {
+	t.Parallel()
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
-	_, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
-	c.Assert(err, IsNil)
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
 	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
 	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	defer pdCli.Close()
+
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 
@@ -51,179 +50,197 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	flashReq := &kv.Request{}
 	flashReq.StoreType = kv.TiFlash
 	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "c"), req)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 1)
-	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[0], "a", "c")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "c"), flashReq)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 1)
-	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[0], "a", "c")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n"), req)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 1)
-	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[1], "g", "n")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n"), flashReq)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 1)
-	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[1], "g", "n")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("m", "n"), req)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 1)
-	s.taskEqual(c, tasks[0], regionIDs[1], "m", "n")
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[1], "m", "n")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("m", "n"), flashReq)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 1)
-	s.taskEqual(c, tasks[0], regionIDs[1], "m", "n")
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[1], "m", "n")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "k"), req)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 2)
-	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
-	s.taskEqual(c, tasks[1], regionIDs[1], "g", "k")
+	require.NoError(t, err)
+	require.Len(t, tasks, 2)
+	taskEqual(t, tasks[0], regionIDs[0], "a", "g")
+	taskEqual(t, tasks[1], regionIDs[1], "g", "k")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "k"), flashReq)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 2)
-	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
-	s.taskEqual(c, tasks[1], regionIDs[1], "g", "k")
+	require.NoError(t, err)
+	require.Len(t, tasks, 2)
+	taskEqual(t, tasks[0], regionIDs[0], "a", "g")
+	taskEqual(t, tasks[1], regionIDs[1], "g", "k")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), req)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 4)
-	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
-	s.taskEqual(c, tasks[1], regionIDs[1], "g", "n")
-	s.taskEqual(c, tasks[2], regionIDs[2], "n", "t")
-	s.taskEqual(c, tasks[3], regionIDs[3], "t", "x")
+	require.NoError(t, err)
+	require.Len(t, tasks, 4)
+	taskEqual(t, tasks[0], regionIDs[0], "a", "g")
+	taskEqual(t, tasks[1], regionIDs[1], "g", "n")
+	taskEqual(t, tasks[2], regionIDs[2], "n", "t")
+	taskEqual(t, tasks[3], regionIDs[3], "t", "x")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), flashReq)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 4)
-	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
-	s.taskEqual(c, tasks[1], regionIDs[1], "g", "n")
-	s.taskEqual(c, tasks[2], regionIDs[2], "n", "t")
-	s.taskEqual(c, tasks[3], regionIDs[3], "t", "x")
+	require.NoError(t, err)
+	require.Len(t, tasks, 4)
+	taskEqual(t, tasks[0], regionIDs[0], "a", "g")
+	taskEqual(t, tasks[1], regionIDs[1], "g", "n")
+	taskEqual(t, tasks[2], regionIDs[2], "n", "t")
+	taskEqual(t, tasks[3], regionIDs[3], "t", "x")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), req)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 1)
-	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "b", "c")
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[0], "a", "b", "b", "c")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), flashReq)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 1)
-	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "b", "c")
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[0], "a", "b", "b", "c")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), req)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 1)
-	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "e", "f")
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[0], "a", "b", "e", "f")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), flashReq)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 1)
-	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "e", "f")
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[0], "a", "b", "e", "f")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), req)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 2)
-	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
-	s.taskEqual(c, tasks[1], regionIDs[2], "o", "p")
+	require.NoError(t, err)
+	require.Len(t, tasks, 2)
+	taskEqual(t, tasks[0], regionIDs[1], "g", "n")
+	taskEqual(t, tasks[1], regionIDs[2], "o", "p")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), flashReq)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 2)
-	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
-	s.taskEqual(c, tasks[1], regionIDs[2], "o", "p")
+	require.NoError(t, err)
+	require.Len(t, tasks, 2)
+	taskEqual(t, tasks[0], regionIDs[1], "g", "n")
+	taskEqual(t, tasks[1], regionIDs[2], "o", "p")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), req)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 2)
-	s.taskEqual(c, tasks[0], regionIDs[1], "h", "k", "m", "n")
-	s.taskEqual(c, tasks[1], regionIDs[2], "n", "p")
+	require.NoError(t, err)
+	require.Len(t, tasks, 2)
+	taskEqual(t, tasks[0], regionIDs[1], "h", "k", "m", "n")
+	taskEqual(t, tasks[1], regionIDs[2], "n", "p")
 
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), flashReq)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 2)
-	s.taskEqual(c, tasks[0], regionIDs[1], "h", "k", "m", "n")
-	s.taskEqual(c, tasks[1], regionIDs[2], "n", "p")
+	require.NoError(t, err)
+	require.Len(t, tasks, 2)
+	taskEqual(t, tasks[0], regionIDs[1], "h", "k", "m", "n")
+	taskEqual(t, tasks[1], regionIDs[2], "n", "p")
 }
 
-func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {
+func TestSplitRegionRanges(t *testing.T) {
+	t.Parallel()
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
-	_, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
-	c.Assert(err, IsNil)
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
 	testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
 	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	defer pdCli.Close()
+
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 
 	ranges, err := cache.SplitRegionRanges(bo, buildKeyRanges("a", "c"))
-	c.Assert(err, IsNil)
-	c.Assert(ranges, HasLen, 1)
-	s.rangeEqual(c, ranges, "a", "c")
+	require.NoError(t, err)
+	require.Len(t, ranges, 1)
+	rangeEqual(t, ranges, "a", "c")
 
 	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("h", "y"))
-	c.Assert(err, IsNil)
-	c.Assert(len(ranges), Equals, 3)
-	s.rangeEqual(c, ranges, "h", "n", "n", "t", "t", "y")
+	require.NoError(t, err)
+	require.Len(t, ranges, 3)
+	rangeEqual(t, ranges, "h", "n", "n", "t", "t", "y")
 
 	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("s", "z"))
-	c.Assert(err, IsNil)
-	c.Assert(len(ranges), Equals, 2)
-	s.rangeEqual(c, ranges, "s", "t", "t", "z")
+	require.NoError(t, err)
+	require.Len(t, ranges, 2)
+	rangeEqual(t, ranges, "s", "t", "t", "z")
 
 	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("s", "s"))
-	c.Assert(err, IsNil)
-	c.Assert(len(ranges), Equals, 1)
-	s.rangeEqual(c, ranges, "s", "s")
+	require.NoError(t, err)
+	require.Len(t, ranges, 1)
+	rangeEqual(t, ranges, "s", "s")
 
 	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("t", "t"))
-	c.Assert(err, IsNil)
-	c.Assert(len(ranges), Equals, 1)
-	s.rangeEqual(c, ranges, "t", "t")
+	require.NoError(t, err)
+	require.Len(t, ranges, 1)
+	rangeEqual(t, ranges, "t", "t")
 
 	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("t", "u"))
-	c.Assert(err, IsNil)
-	c.Assert(len(ranges), Equals, 1)
-	s.rangeEqual(c, ranges, "t", "u")
+	require.NoError(t, err)
+	require.Len(t, ranges, 1)
+	rangeEqual(t, ranges, "t", "u")
 
 	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("u", "z"))
-	c.Assert(err, IsNil)
-	c.Assert(len(ranges), Equals, 1)
-	s.rangeEqual(c, ranges, "u", "z")
+	require.NoError(t, err)
+	require.Len(t, ranges, 1)
+	rangeEqual(t, ranges, "u", "z")
 
 	// min --> max
 	ranges, err = cache.SplitRegionRanges(bo, buildKeyRanges("a", "z"))
-	c.Assert(err, IsNil)
-	c.Assert(ranges, HasLen, 4)
-	s.rangeEqual(c, ranges, "a", "g", "g", "n", "n", "t", "t", "z")
+	require.NoError(t, err)
+	require.Len(t, ranges, 4)
+	rangeEqual(t, ranges, "a", "g", "g", "n", "n", "t", "t", "z")
 }
 
-func (s *testCoprocessorSuite) TestRebuild(c *C) {
+func TestRebuild(t *testing.T) {
+	t.Parallel()
 	// nil --- 'm' --- nil
 	// <-  0  -> <- 1 ->
-	_, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
-	c.Assert(err, IsNil)
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
 	storeID, regionIDs, peerIDs := testutils.BootstrapWithMultiRegions(cluster, []byte("m"))
 	pdCli := &tikv.CodecPDClient{Client: pdClient}
+	defer pdCli.Close()
 	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
 	defer cache.Close()
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 
 	req := &kv.Request{}
 	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "z"), req)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 2)
-	s.taskEqual(c, tasks[0], regionIDs[0], "a", "m")
-	s.taskEqual(c, tasks[1], regionIDs[1], "m", "z")
+	require.NoError(t, err)
+	require.Len(t, tasks, 2)
+	taskEqual(t, tasks[0], regionIDs[0], "a", "m")
+	taskEqual(t, tasks[1], regionIDs[1], "m", "z")
 
 	// nil -- 'm' -- 'q' -- nil
 	// <-  0 -> <--1-> <-2-->
@@ -234,11 +251,11 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 
 	req.Desc = true
 	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "z"), req)
-	c.Assert(err, IsNil)
-	c.Assert(tasks, HasLen, 3)
-	s.taskEqual(c, tasks[2], regionIDs[0], "a", "m")
-	s.taskEqual(c, tasks[1], regionIDs[1], "m", "q")
-	s.taskEqual(c, tasks[0], regionIDs[2], "q", "z")
+	require.NoError(t, err)
+	require.Len(t, tasks, 3)
+	taskEqual(t, tasks[2], regionIDs[0], "a", "m")
+	taskEqual(t, tasks[1], regionIDs[1], "m", "q")
+	taskEqual(t, tasks[0], regionIDs[2], "q", "z")
 }
 
 func buildKeyRanges(keys ...string) []kv.KeyRange {
@@ -256,19 +273,19 @@ func buildCopRanges(keys ...string) *KeyRanges {
 	return NewKeyRanges(buildKeyRanges(keys...))
 }
 
-func (s *testCoprocessorSuite) taskEqual(c *C, task *copTask, regionID uint64, keys ...string) {
-	c.Assert(task.region.GetID(), Equals, regionID)
+func taskEqual(t *testing.T, task *copTask, regionID uint64, keys ...string) {
+	require.Equal(t, task.region.GetID(), regionID)
 	for i := 0; i < task.ranges.Len(); i++ {
 		r := task.ranges.At(i)
-		c.Assert(string(r.StartKey), Equals, keys[2*i])
-		c.Assert(string(r.EndKey), Equals, keys[2*i+1])
+		require.Equal(t, string(r.StartKey), keys[2*i])
+		require.Equal(t, string(r.EndKey), keys[2*i+1])
 	}
 }
 
-func (s *testCoprocessorSuite) rangeEqual(c *C, ranges []kv.KeyRange, keys ...string) {
+func rangeEqual(t *testing.T, ranges []kv.KeyRange, keys ...string) {
 	for i := 0; i < len(ranges); i++ {
 		r := ranges[i]
-		c.Assert(string(r.StartKey), Equals, keys[2*i])
-		c.Assert(string(r.EndKey), Equals, keys[2*i+1])
+		require.Equal(t, string(r.StartKey), keys[2*i])
+		require.Equal(t, string(r.EndKey), keys[2*i+1])
 	}
 }
