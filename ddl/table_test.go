@@ -413,3 +413,21 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckJobDone(c, d, job, true)
 	checkTableLockedTest(c, d, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, model.TableLockWrite)
 }
+
+// for drop indexes
+func createTestTableForDropIndexes(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, name string, num int) *model.TableInfo {
+	tableInfo := testTableInfo(c, d, name, num)
+	var idxs []*model.IndexInfo
+	for i := 0; i < num; i++ {
+		idxName := model.NewCIStr(fmt.Sprintf("i%d", i+1))
+		idx := &model.IndexInfo{
+			Name:    idxName,
+			State:   model.StatePublic,
+			Columns: []*model.IndexColumn{{Name: model.NewCIStr(fmt.Sprintf("c%d", i+1))}},
+		}
+		idxs = append(idxs, idx)
+	}
+	tableInfo.Indices = idxs
+	testCreateTable(c, ctx, d, dbInfo, tableInfo)
+	return tableInfo
+}
