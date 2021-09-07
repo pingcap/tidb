@@ -47,6 +47,7 @@ var glEntryPool = sync.Pool{New: func() interface{} {
 	return &GeneralLogEntry{}
 }}
 
+// GetGeneralLogEntry get a general log entry from the object pool
 func GetGeneralLogEntry() *GeneralLogEntry {
 	return glEntryPool.Get().(*GeneralLogEntry)
 }
