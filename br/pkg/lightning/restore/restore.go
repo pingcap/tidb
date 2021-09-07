@@ -1699,6 +1699,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 
+		// PdController will be closed when `taskMetaMgr` closes.
 		rc.taskMgr = rc.metaMgrBuilder.TaskMetaMgr(pdController)
 		taskExist, err = rc.taskMgr.CheckTaskExist(ctx)
 		if err != nil {

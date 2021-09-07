@@ -25,6 +25,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -36,11 +37,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/tikv/pd/pkg/typeutil"
 	"github.com/tikv/pd/server/api"
 	pdconfig "github.com/tikv/pd/server/config"
+
 	"go.uber.org/zap"
+	"modernc.org/mathutil"
 )
 
 const (
@@ -138,6 +142,165 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
 	return nil
 }
 
+<<<<<<< HEAD
+=======
+func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
+	passed := true
+	message := "Cluster doesn't have too many empty regions"
+	defer func() {
+		rc.checkTemplate.Collect(Critical, passed, message)
+	}()
+	storeInfo := &api.StoresInfo{}
+	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, storeInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(storeInfo.Stores) <= 1 {
+		return nil
+	}
+
+	var result api.RegionsInfo
+	if err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
+		return errors.Trace(err)
+	}
+	regions := make(map[uint64]int)
+	stores := make(map[uint64]*api.StoreInfo)
+	for _, region := range result.Regions {
+		for _, peer := range region.Peers {
+			regions[peer.StoreId]++
+		}
+	}
+	for _, store := range storeInfo.Stores {
+		stores[store.Store.Id] = store
+	}
+	tableCount := 0
+	for _, db := range rc.dbMetas {
+		info, ok := rc.dbInfos[db.Name]
+		if !ok {
+			continue
+		}
+		tableCount += len(info.Tables)
+	}
+	errorThrehold := mathutil.Max(errorEmptyRegionCntPerStore, tableCount*3)
+	warnThrehold := mathutil.Max(warnEmptyRegionCntPerStore, tableCount)
+	var (
+		errStores  []string
+		warnStores []string
+	)
+	for storeID, regionCnt := range regions {
+		if store, ok := stores[storeID]; ok {
+			if store.Store.State != metapb.StoreState_Up {
+				continue
+			}
+			if version.IsTiFlash(store.Store.Store) {
+				continue
+			}
+			if regionCnt > errorThrehold {
+				errStores = append(errStores, strconv.Itoa(int(storeID)))
+			} else if regionCnt > warnThrehold {
+				warnStores = append(warnStores, strconv.Itoa(int(storeID)))
+			}
+		}
+	}
+
+	var messages []string
+	if len(errStores) > 0 {
+		passed = false
+		messages = append(messages, fmt.Sprintf("TiKV stores (%s) contains more than %v empty regions respectively, "+
+			"which will greatly affect the import speed and success rate", strings.Join(errStores, ", "), errorEmptyRegionCntPerStore))
+	}
+	if len(warnStores) > 0 {
+		messages = append(messages, fmt.Sprintf("TiKV stores (%s) contains more than %v empty regions respectively, "+
+			"which will affect the import speed and success rate", strings.Join(warnStores, ", "), warnEmptyRegionCntPerStore))
+	}
+	if len(messages) > 0 {
+		message = strings.Join(messages, "\n")
+	}
+	return nil
+}
+
+// checkRegionDistribution checks if regions distribution is unbalanced.
+func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
+	passed := true
+	message := "Cluster region distribution is balanced"
+	defer func() {
+		rc.checkTemplate.Collect(Critical, passed, message)
+	}()
+
+	result := &api.StoresInfo{}
+	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	stores := make([]*api.StoreInfo, 0, len(result.Stores))
+	for _, store := range result.Stores {
+		if store.Store.State != metapb.StoreState_Up {
+			continue
+		}
+		if version.IsTiFlash(store.Store.Store) {
+			continue
+		}
+		stores = append(stores, store)
+	}
+	if len(stores) <= 1 {
+		return nil
+	}
+	sort.Slice(stores, func(i, j int) bool {
+		return stores[i].Status.RegionCount < stores[j].Status.RegionCount
+	})
+	minStore := stores[0]
+	maxStore := stores[len(stores)-1]
+	tableCount := 0
+	for _, db := range rc.dbMetas {
+		info, ok := rc.dbInfos[db.Name]
+		if !ok {
+			continue
+		}
+		tableCount += len(info.Tables)
+	}
+	threhold := mathutil.Max(checkRegionCntRatioThreshold, tableCount)
+	if maxStore.Status.RegionCount <= threhold {
+		return nil
+	}
+	ratio := float64(minStore.Status.RegionCount) / float64(maxStore.Status.RegionCount)
+	if ratio < errorRegionCntMinMaxRatio {
+		passed = false
+		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
+			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it must not be less than %v",
+			minStore.Store.Id, minStore.Status.RegionCount, maxStore.Store.Id, maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
+	} else if ratio < warnRegionCntMinMaxRatio {
+		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
+			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it should not be less than %v",
+			minStore.Store.Id, minStore.Status.RegionCount, maxStore.Store.Id, maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
+	}
+	return nil
+}
+
+// CheckClusterRegion checks cluster if there are too many empty regions or region distribution is unbalanced.
+func (rc *Controller) CheckClusterRegion(ctx context.Context) error {
+	err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
+		restoreStarted := false
+		for _, task := range tasks {
+			if task.status > taskMetaStatusInitial {
+				restoreStarted = true
+				break
+			}
+		}
+		if restoreStarted {
+			return nil, nil
+		}
+		if err := rc.checkEmptyRegion(ctx); err != nil {
+			return nil, errors.Trace(err)
+		}
+		if err := rc.checkRegionDistribution(ctx); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return nil, nil
+	})
+	return errors.Trace(err)
+}
+
+>>>>>>> 254eaea87... lightning: Fix empty region pre-check (#27824)
 // StoragePermission checks whether Lightning has enough permission to storage.
 // this test cannot be skipped.
 func (rc *Controller) StoragePermission(ctx context.Context) error {
