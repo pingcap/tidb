@@ -28,17 +28,13 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
@@ -86,21 +82,24 @@ func (m mockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogRe
 }
 
 func TestBasic(t *testing.T) {
-	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	_, err := tk.Session().Execute(context.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	require.Nil(t, err)
-	require.Nil(t, ts.se.NewTxn(context.Background()))
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.Nil(t, err)
 	require.Greater(t, tb.Meta().ID, int64(0))
 	require.Equal(t, "t", tb.Meta().Name.L)
 	require.NotNil(t, tb.Meta())
 	require.NotNil(t, tb.Indices())
-	c.Assert(string(firstKey(tb)), Not(Equals), "")
-	c.Assert(string(indexPrefix(tb.(table.PhysicalTable))), Not(Equals), "")
-	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
+	require.NotEqual(t, "", string(firstKey(tb)))
+	require.NotEqual(t, "", string(indexPrefix(tb.(table.PhysicalTable))))
+	require.NotEqual(t, "", string(tb.RecordPrefix()))
 	require.NotNil(t, tables.FindIndexByColName(tb, "b"))
 
-	autoID, err := table.AllocAutoIncrementValue(context.Background(), tb, ts.se)
+	autoID, err := table.AllocAutoIncrementValue(context.Background(), tb, tk.Session())
 	require.Nil(t, err)
 	require.Greater(t, autoID, int64(0))
 
@@ -108,7 +107,7 @@ func TestBasic(t *testing.T) {
 	require.Nil(t, err)
 	require.Greater(t, handle.IntValue(), int64(0))
 
-	ctx := ts.se
+	ctx := tk.Session()
 	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	require.Nil(t, err)
 	require.Greater(t, rid.IntValue(), int64(0))
@@ -138,12 +137,12 @@ func TestBasic(t *testing.T) {
 	// RowWithCols test
 	vals, err := tables.RowWithCols(tb, ctx, kv.IntHandle(1), tb.Cols())
 	require.Nil(t, err)
-	c.Assert(vals, HasLen, 2)
+	require.Len(t, vals, 2)
 	require.Equal(t, int64(1), vals[0].GetInt64())
 	cols := []*table.Column{tb.Cols()[1]}
 	vals, err = tables.RowWithCols(tb, ctx, kv.IntHandle(1), cols)
 	require.Nil(t, err)
-	c.Assert(vals, HasLen, 1)
+	require.Len(t, vals, 1)
 	require.Equal(t, []byte("cba"), vals[0].GetBytes())
 
 	// Make sure there is index data in the storage.
@@ -158,7 +157,7 @@ func TestBasic(t *testing.T) {
 	require.Equal(t, int64(1), handle.IntValue())
 	require.Equal(t, true, found)
 	require.Nil(t, err)
-	_, err = ts.se.Execute(context.Background(), "drop table test.t")
+	_, err = tk.Session().Execute(context.Background(), "drop table test.t")
 	require.Nil(t, err)
 
 	table.MockTableFromMeta(tb.Meta())
@@ -184,27 +183,30 @@ func countEntriesWithPrefix(ctx sessionctx.Context, prefix []byte) (int, error) 
 
 func TestTypes(t *testing.T) {
 	ctx := context.Background()
-	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	_, err := tk.Session().Execute(context.Background(), "CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
 	require.Nil(t, err)
-	_, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	_, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.Nil(t, err)
-	_, err = ts.se.Execute(ctx, "insert test.t values (1, 2, 3, 4, '5', '6', '7', '10:10:10', null, 1.4)")
+	_, err = tk.Session().Execute(ctx, "insert test.t values (1, 2, 3, 4, '5', '6', '7', '10:10:10', null, 1.4)")
 	require.Nil(t, err)
-	rs, err := ts.se.Execute(ctx, "select * from test.t where c1 = 1")
+	rs, err := tk.Session().Execute(ctx, "select * from test.t where c1 = 1")
 	require.Nil(t, err)
 	req := rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
 	require.Nil(t, err)
 	require.False(t, req.NumRows() == 0)
 	require.Nil(t, rs[0].Close())
-	_, err = ts.se.Execute(ctx, "drop table test.t")
+	_, err = tk.Session().Execute(ctx, "drop table test.t")
 	require.Nil(t, err)
 
-	_, err = ts.se.Execute(ctx, "CREATE TABLE test.t (c1 tinyint unsigned, c2 smallint unsigned, c3 int unsigned, c4 bigint unsigned, c5 double, c6 bit(8))")
+	_, err = tk.Session().Execute(ctx, "CREATE TABLE test.t (c1 tinyint unsigned, c2 smallint unsigned, c3 int unsigned, c4 bigint unsigned, c5 double, c6 bit(8))")
 	require.Nil(t, err)
-	_, err = ts.se.Execute(ctx, "insert test.t values (1, 2, 3, 4, 5, 6)")
+	_, err = tk.Session().Execute(ctx, "insert test.t values (1, 2, 3, 4, 5, 6)")
 	require.Nil(t, err)
-	rs, err = ts.se.Execute(ctx, "select * from test.t where c1 = 1")
+	rs, err = tk.Session().Execute(ctx, "select * from test.t where c1 = 1")
 	require.Nil(t, err)
 	req = rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
@@ -213,14 +215,14 @@ func TestTypes(t *testing.T) {
 	row := req.GetRow(0)
 	require.Equal(t, types.NewBinaryLiteralFromUint(6, -1), types.BinaryLiteral(row.GetBytes(5)))
 	require.Nil(t, rs[0].Close())
-	_, err = ts.se.Execute(ctx, "drop table test.t")
+	_, err = tk.Session().Execute(ctx, "drop table test.t")
 	require.Nil(t, err)
 
-	_, err = ts.se.Execute(ctx, "CREATE TABLE test.t (c1 enum('a', 'b', 'c'))")
+	_, err = tk.Session().Execute(ctx, "CREATE TABLE test.t (c1 enum('a', 'b', 'c'))")
 	require.Nil(t, err)
-	_, err = ts.se.Execute(ctx, "insert test.t values ('a'), (2), ('c')")
+	_, err = tk.Session().Execute(ctx, "insert test.t values ('a'), (2), ('c')")
 	require.Nil(t, err)
-	rs, err = ts.se.Execute(ctx, "select c1 + 1 from test.t where c1 = 1")
+	rs, err = tk.Session().Execute(ctx, "select c1 + 1 from test.t where c1 = 1")
 	require.Nil(t, err)
 	req = rs[0].NewChunk()
 	err = rs[0].Next(ctx, req)
@@ -228,36 +230,39 @@ func TestTypes(t *testing.T) {
 	require.False(t, req.NumRows() == 0)
 	require.Equal(t, float64(2), req.GetRow(0).GetFloat64(0))
 	require.Nil(t, rs[0].Close())
-	_, err = ts.se.Execute(ctx, "drop table test.t")
+	_, err = tk.Session().Execute(ctx, "drop table test.t")
 	require.Nil(t, err)
 }
 
 func TestUniqueIndexMultipleNullEntries(t *testing.T) {
 	ctx := context.Background()
-	_, err := ts.se.Execute(ctx, "drop table if exists test.t")
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	_, err := tk.Session().Execute(ctx, "drop table if exists test.t")
 	require.Nil(t, err)
-	_, err = ts.se.Execute(ctx, "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
+	_, err = tk.Session().Execute(ctx, "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	require.Nil(t, err)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.Nil(t, err)
 	require.Greater(t, tb.Meta().ID, int64(0))
 	require.Equal(t, "t", tb.Meta().Name.L)
 	require.NotNil(t, tb.Meta())
 	require.NotNil(t, tb.Indices())
-	c.Assert(string(firstKey(tb)), Not(Equals), "")
-	c.Assert(string(indexPrefix(tb.(table.PhysicalTable))), Not(Equals), "")
-	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
+	require.NotEqual(t, "", string(firstKey(tb)))
+	require.NotEqual(t, "", string(indexPrefix(tb.(table.PhysicalTable))))
+	require.NotEqual(t, "", string(tb.RecordPrefix()))
 	require.NotNil(t, tables.FindIndexByColName(tb, "b"))
 
 	handle, err := tables.AllocHandle(context.Background(), nil, tb)
 	require.Nil(t, err)
 	require.Greater(t, handle.IntValue(), int64(0))
 
-	autoid, err := table.AllocAutoIncrementValue(context.Background(), tb, ts.se)
+	autoid, err := table.AllocAutoIncrementValue(context.Background(), tb, tk.Session())
 	require.Nil(t, err)
 	require.Greater(t, autoid, int64(0))
 
-	sctx := ts.se
+	sctx := tk.Session()
 	require.Nil(t, sctx.NewTxn(ctx))
 	_, err = tb.AddRecord(sctx, types.MakeDatums(1, nil))
 	require.Nil(t, err)
@@ -266,7 +271,7 @@ func TestUniqueIndexMultipleNullEntries(t *testing.T) {
 	txn, err := sctx.Txn(true)
 	require.Nil(t, err)
 	require.Nil(t, txn.Rollback())
-	_, err = ts.se.Execute(context.Background(), "drop table test.t")
+	_, err = tk.Session().Execute(context.Background(), "drop table test.t")
 	require.Nil(t, err)
 }
 
@@ -282,16 +287,16 @@ func TestRowKeyCodec(t *testing.T) {
 		{4, -1, 1},
 	}
 
-	for _, t := range tableVal {
-		b := tablecodec.EncodeRowKeyWithHandle(t.tableID, kv.IntHandle(t.h))
+	for _, v := range tableVal {
+		b := tablecodec.EncodeRowKeyWithHandle(v.tableID, kv.IntHandle(v.h))
 		tableID, handle, err := tablecodec.DecodeRecordKey(b)
 	require.Nil(t, err)
-	require.Equal(t, t.tableID, tableID)
-	require.Equal(t, t.h, handle.IntValue())
+	require.Equal(t, v.tableID, tableID)
+	require.Equal(t, v.h, handle.IntValue())
 
 		handle, err = tablecodec.DecodeRowKey(b)
 	require.Nil(t, err)
-	require.Equal(t, t.h, handle.IntValue())
+	require.Equal(t, v.h, handle.IntValue())
 	}
 
 	// test error
@@ -305,65 +310,73 @@ func TestRowKeyCodec(t *testing.T) {
 		"t12345678_r1234567",
 	}
 
-	for _, t := range tbl {
-		_, err := tablecodec.DecodeRowKey(kv.Key(t))
+	for _, v := range tbl {
+		_, err := tablecodec.DecodeRowKey(kv.Key(v))
 	require.NotNil(t, err)
 	}
 }
 
 func TestUnsignedPK(t *testing.T) {
-	_, err := ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tPK")
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	_, err := tk.Session().Execute(context.Background(), "DROP TABLE IF EXISTS test.tPK")
 	require.Nil(t, err)
-	_, err = ts.se.Execute(context.Background(), "CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
+	_, err = tk.Session().Execute(context.Background(), "CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
 	require.Nil(t, err)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
 	require.Nil(t, err)
-	require.Nil(t, ts.se.NewTxn(context.Background()))
-	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1, "abc"))
+	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	rid, err := tb.AddRecord(tk.Session(), types.MakeDatums(1, "abc"))
 	require.Nil(t, err)
 	pt := tb.(table.PhysicalTable)
-	row, err := tables.RowWithCols(pt, ts.se, rid, tb.Cols())
+	row, err := tables.RowWithCols(pt, tk.Session(), rid, tb.Cols())
 	require.Nil(t, err)
 	require.Equal(t, 2, len(row))
 	require.Equal(t, types.KindUint64, row[0].Kind())
-	ts.se.StmtCommit()
-	txn, err := ts.se.Txn(true)
+	tk.Session().StmtCommit()
+	txn, err := tk.Session().Txn(true)
 	require.Nil(t, err)
 	require.Nil(t, txn.Commit(context.Background()))
 }
 
 func TestIterRecords(t *testing.T) {
-	_, err := ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tIter")
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	_, err := tk.Session().Execute(context.Background(), "DROP TABLE IF EXISTS test.tIter")
 	require.Nil(t, err)
-	_, err = ts.se.Execute(context.Background(), "CREATE TABLE test.tIter (a int primary key, b int)")
+	_, err = tk.Session().Execute(context.Background(), "CREATE TABLE test.tIter (a int primary key, b int)")
 	require.Nil(t, err)
-	_, err = ts.se.Execute(context.Background(), "INSERT test.tIter VALUES (-1, 2), (2, NULL)")
+	_, err = tk.Session().Execute(context.Background(), "INSERT test.tIter VALUES (-1, 2), (2, NULL)")
 	require.Nil(t, err)
-	require.Nil(t, ts.se.NewTxn(context.Background()))
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
+	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
 	require.Nil(t, err)
 	totalCount := 0
-	err = tables.IterRecords(tb, ts.se, tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tb, tk.Session(), tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 		totalCount++
 	require.False(t, rec[0].IsNull())
 		return true, nil
 	})
 	require.Nil(t, err)
 	require.Equal(t, 2, totalCount)
-	txn, err := ts.se.Txn(true)
+	txn, err := tk.Session().Txn(true)
 	require.Nil(t, err)
 	require.Nil(t, txn.Commit(context.Background()))
 }
 
 func TestTableFromMeta(t *testing.T) {
-	c.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
-	tk := testkit.NewTestKitWithInit(c, ts.store)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	t.Skip("Skip this unstable test temporarily and bring it back before 2021-07-26")
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE meta (a int primary key auto_increment, b varchar(255) unique)")
-	require.Nil(t, ts.se.NewTxn(context.Background()))
-	_, err := ts.se.Txn(true)
+	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	_, err := tk.Session().Txn(true)
 	require.Nil(t, err)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
 	require.Nil(t, err)
 	tbInfo := tb.Meta().Clone()
 
@@ -385,30 +398,32 @@ func TestTableFromMeta(t *testing.T) {
 	require.NotNil(t, err)
 
 	tk.MustExec(`create table t_mock (id int) partition by range (id) (partition p0 values less than maxvalue)`)
-	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_mock"))
+	tb, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_mock"))
 	require.Nil(t, err)
-	t := table.MockTableFromMeta(tb.Meta())
-	_, ok := t.(table.PartitionedTable)
+	tt := table.MockTableFromMeta(tb.Meta())
+	_, ok := tt.(table.PartitionedTable)
 	require.True(t, ok)
 	tk.MustExec("drop table t_mock")
-	require.Equal(t, table.NormalTable, t.Type())
+	require.Equal(t, table.NormalTable, tt.Type())
 
 	tk.MustExec("create table t_meta (a int) shard_row_id_bits = 15")
-	tb, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_meta"))
+	tb, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t_meta"))
 	require.Nil(t, err)
-	_, err = tables.AllocHandle(context.Background(), tk.Se, tb)
+	_, err = tables.AllocHandle(context.Background(), tk.Session(), tb)
 	require.Nil(t, err)
 
 	maxID := 1<<(64-15-1) - 1
-	err = tb.RebaseAutoID(tk.Se, int64(maxID), false, autoid.RowIDAllocType)
+	err = tb.RebaseAutoID(tk.Session(), int64(maxID), false, autoid.RowIDAllocType)
 	require.Nil(t, err)
 
-	_, err = tables.AllocHandle(context.Background(), tk.Se, tb)
+	_, err = tables.AllocHandle(context.Background(), tk.Session(), tb)
 	require.NotNil(t, err)
 }
 
 func TestShardRowIDBitsStep(t *testing.T) {
-	tk := testkit.NewTestKit(c, ts.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists shard_t;")
 	tk.MustExec("create table shard_t (a int) shard_row_id_bits = 15;")
@@ -425,13 +440,15 @@ func TestShardRowIDBitsStep(t *testing.T) {
 }
 
 func TestHiddenColumn(t *testing.T) {
-	tk := testkit.NewTestKit(c, ts.store)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP DATABASE IF EXISTS test_hidden;")
 	tk.MustExec("CREATE DATABASE test_hidden;")
 	tk.MustExec("USE test_hidden;")
 	tk.MustExec("CREATE TABLE t (a int primary key, b int as (a+1), c int, d int as (c+1) stored, e int, f tinyint as (a+1));")
 	tk.MustExec("insert into t values (1, default, 3, default, 5, default);")
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test_hidden"), model.NewCIStr("t"))
 	require.Nil(t, err)
 	colInfo := tb.Meta().Columns
 	// Set column b, d, f to hidden
@@ -590,51 +607,55 @@ func TestHiddenColumn(t *testing.T) {
 }
 
 func TestAddRecordWithCtx(t *testing.T) {
-	_, err := ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tRecord")
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	_, err := tk.Session().Execute(context.Background(), "DROP TABLE IF EXISTS test.tRecord")
 	require.Nil(t, err)
-	_, err = ts.se.Execute(context.Background(), "CREATE TABLE test.tRecord (a bigint unsigned primary key, b varchar(255))")
+	_, err = tk.Session().Execute(context.Background(), "CREATE TABLE test.tRecord (a bigint unsigned primary key, b varchar(255))")
 	require.Nil(t, err)
-	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tRecord"))
+	tb, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tRecord"))
 	require.Nil(t, err)
 	defer func() {
-		_, err := ts.se.Execute(context.Background(), "DROP TABLE test.tRecord")
+		_, err := tk.Session().Execute(context.Background(), "DROP TABLE test.tRecord")
 	require.Nil(t, err)
 	}()
 
-	require.Nil(t, ts.se.NewTxn(context.Background()))
-	_, err = ts.se.Txn(true)
+	require.Nil(t, tk.Session().NewTxn(context.Background()))
+	_, err = tk.Session().Txn(true)
 	require.Nil(t, err)
 	recordCtx := tables.NewCommonAddRecordCtx(len(tb.Cols()))
-	tables.SetAddRecordCtx(ts.se, recordCtx)
-	defer tables.ClearAddRecordCtx(ts.se)
+	tables.SetAddRecordCtx(tk.Session(), recordCtx)
+	defer tables.ClearAddRecordCtx(tk.Session())
 
 	records := [][]types.Datum{types.MakeDatums(uint64(1), "abc"), types.MakeDatums(uint64(2), "abcd")}
 	for _, r := range records {
-		rid, err := tb.AddRecord(ts.se, r)
+		rid, err := tb.AddRecord(tk.Session(), r)
 	require.Nil(t, err)
-		row, err := tables.RowWithCols(tb.(table.PhysicalTable), ts.se, rid, tb.Cols())
+		row, err := tables.RowWithCols(tb.(table.PhysicalTable), tk.Session(), rid, tb.Cols())
 	require.Nil(t, err)
 	require.Equal(t, len(r), len(row))
 	require.Equal(t, types.KindUint64, row[0].Kind())
 	}
 
 	i := 0
-	err = tables.IterRecords(tb, ts.se, tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+	err = tables.IterRecords(tb, tk.Session(), tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		return true, nil
 	})
 	require.Nil(t, err)
 	require.Equal(t, len(records), i)
 
-	ts.se.StmtCommit()
-	txn, err := ts.se.Txn(true)
+	tk.Session().StmtCommit()
+	txn, err := tk.Session().Txn(true)
 	require.Nil(t, err)
 	require.Nil(t, txn.Commit(context.Background()))
 }
 
 func TestConstraintCheckForUniqueIndex(t *testing.T) {
-	// auto-commit
-	tk := testkit.NewTestKit(c, ts.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@autocommit = 1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ttt")
@@ -660,8 +681,14 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	tk.MustExec("rollback")
 
 	// This test check that with @@tidb_constraint_check_in_place = 0, although there is not KV request for the unique index, the pessimistic lock should still be written.
-	tk1 := testkit.NewTestKit(c, ts.store)
-	tk2 := testkit.NewTestKit(c, ts.store)
+	store1, clean1 := testkit.CreateMockStore(t)
+	defer clean1()
+	tk1 := testkit.NewTestKit(t, store1)
+
+	store2, clean2 := testkit.CreateMockStore(t)
+	defer clean2()
+	tk2 := testkit.NewTestKit(t, store2)
+
 	tk1.MustExec("set @@tidb_txn_mode = 'pessimistic'")
 	tk1.MustExec("set @@tidb_constraint_check_in_place = 0")
 	tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
@@ -686,10 +713,10 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 }
 
 func TestViewColumns(t *testing.T) {
-	se, err := session.CreateSession4Test(ts.store)
-	require.Nil(t, err)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
-	tk := testkit.NewTestKitWithSession(c, ts.store, se)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b varchar(20))")
@@ -709,7 +736,7 @@ func TestViewColumns(t *testing.T) {
 	}
 	tk.MustExec("drop table if exists t")
 	for _, testCase := range testCases {
-		c.Assert(tk.MustQuery(testCase.query).Rows(), HasLen, 0)
+		require.Len(t, tk.MustQuery(testCase.query).Rows(), 0)
 		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
 			"Warning|1356|View 'test.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
 			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
