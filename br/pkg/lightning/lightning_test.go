@@ -113,6 +113,7 @@ var _ = Suite(&lightningServerSuite{})
 type lightningServerSuite struct {
 	lightning *Lightning
 	taskCfgCh chan *config.Config
+	taskRunCh chan struct{}
 }
 
 func (s *lightningServerSuite) SetUpTest(c *C) {
@@ -127,8 +128,10 @@ func (s *lightningServerSuite) SetUpTest(c *C) {
 	cfg.TikvImporter.SortedKVDir = c.MkDir()
 
 	s.lightning = New(cfg)
+	s.taskRunCh = make(chan struct{}, 1)
 	s.taskCfgCh = make(chan *config.Config)
-	s.lightning.ctx = context.WithValue(s.lightning.ctx, &taskCfgRecorderKey, s.taskCfgCh)
+	s.lightning.ctx = context.WithValue(s.lightning.ctx, taskRunNotifyKey, s.taskRunCh)
+	s.lightning.ctx = context.WithValue(s.lightning.ctx, taskCfgRecorderKey, s.taskCfgCh)
 	_ = s.lightning.GoServe()
 
 	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/SkipRunTask", "return")
@@ -263,7 +266,7 @@ func (s *lightningServerSuite) TestGetDeleteTask(c *C) {
 
 	// Check `GET /tasks` returns all tasks currently running
 
-	time.Sleep(100 * time.Millisecond)
+	<-s.taskRunCh
 	c.Assert(getAllTasks(), DeepEquals, getAllResultType{
 		Current: first,
 		Queue:   []int64{second, third},
@@ -357,7 +360,7 @@ func (s *lightningServerSuite) TestGetDeleteTask(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	resp.Body.Close()
 
-	time.Sleep(100 * time.Millisecond)
+	<-s.taskRunCh
 	c.Assert(getAllTasks(), DeepEquals, getAllResultType{
 		Current: third,
 		Queue:   []int64{},
