@@ -371,6 +371,7 @@ func (s *lightningServerSuite) TestHTTPAPIOutsideServerMode(c *C) {
 
 	errCh := make(chan error)
 	cfg := config.NewConfig()
+	cfg.TiDB.DistSQLScanConcurrency = 4
 	err := cfg.LoadFromGlobal(s.lightning.globalCfg)
 	c.Assert(err, IsNil)
 	go func() {
