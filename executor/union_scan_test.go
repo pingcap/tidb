@@ -457,18 +457,21 @@ func (s *testSuite7) TestIssueOptimisticConflictUnionScan(c *C) {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t (a int, b int, primary key (a), unique index uk(b))")
 		tk.MustExec("insert into t values(1, 10)")
+
 		// insert same value
 		tk.MustExec("begin optimistic")
 		tk.MustExec("insert into t values (2, 10)")
 		tk.MustQuery("select * from t").Check(testkit.Rows("2 10"))
 		err = tk.ExecToErr("commit")
 		c.Assert(err, NotNil)
+
 		// insert same pk
 		tk.MustExec("begin optimistic")
 		tk.MustExec("insert into t values (1, 11)")
 		tk.MustQuery("select * from t").Check(testkit.Rows("1 11"))
 		err = tk.ExecToErr("commit")
 		c.Assert(err, NotNil)
+
 		// select twice should got same data
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(c1 varchar(20) key, c2 int, c3 int, unique key k1(c2), key k2(c3))")
@@ -494,7 +497,7 @@ func (s *testSuite7) TestIssuePessimisticConflictUnionScan(c *C) {
 		tk.MustExec("insert into t values ('tag', 10, 't'), ('cat', 20, 'c')")
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("update t set c1=reverse(c1) where c1='tag'")
-		tk1.MustExec("begin  pessimistic")
+		tk1.MustExec("begin pessimistic")
 		errCh := make(chan error)
 		go func() {
 			errCh <- tk1.ExecToErr("insert into t values('dress',40,'d'),('tag', 10, 't')")
@@ -506,6 +509,7 @@ func (s *testSuite7) TestIssuePessimisticConflictUnionScan(c *C) {
 		tk1.MustExec("commit")
 		tk1.MustQuery("select * from t use index(primary) order by c1, c2").
 			Check(testkit.Rows("cat 20 c", "dress 40 d", "gat 10 t", "tag 10 t"))
+
 		// select twice should got same data
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(c1 varchar(20) key, c2 int, c3 int, unique key k1(c2), key k2(c3))")

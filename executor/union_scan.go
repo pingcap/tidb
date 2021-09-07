@@ -279,11 +279,22 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 						if err != nil {
 							return nil, err
 						}
-						// optimistic: will mark keys as locked but do not actually acquire the lock
-						//             e.g. select for update statement will leave a locked key in membuffer, we should read that row
-						//             only skip the snapshot row when key is not locked,
-						// pessimistic: will acquire the pessimistic lock when writing rows
-						//             so skip locked keys only
+						// I do think this fix is too tricky, but seems I have no choice, it's hard to understand how it works.
+						// Here is the basic logic for optimistic and pessimistic transactions.
+						// OPTIMISTIC:
+						// There is no unique check in some executor, so we check every unique key here.
+						// The `SelectForUpdate` statements will mark keys as locked but do not actually acquire the lock.
+						// Also the key is left in membuffer, so when we try getting it, it'll return the value.
+						// Only newly added rows need to overwrite snapshot rows, so we ignore the locked keys here.
+						// PESSIMISTIC:
+						// The unique check for pessimistic transactions is well covered.
+						// For locked keys, there should not be any transactions with duplicated entries being executed.
+						// But we still want to avoid less inconsistency behavior. Consider the following case.
+						// T1 begins pessimistic and lock the primary key and change the key value from PK1 to PK2.
+						// T2 begins pessimistic and insert a record with PK2 and got blocked.
+						// T1 commits, T2 got executed.
+						// T2 scans all records, we do not want neither duplicate entries nor T2's newly added entries here(can not be seen by this snapshot).
+						// In this case, T2 should skip the locked keys and read it's newly added entry only.
 						if flag.HasLocked() == isPessimistic {
 							continue ITER
 						}
