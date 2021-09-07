@@ -34,7 +34,7 @@ func TestSetSystemVariable(t *testing.T) {
 	v := variable.NewSessionVars()
 	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	v.TimeZone = time.UTC
-	tests := []struct {
+	testCases := []struct {
 		key   string
 		value string
 		err   bool
@@ -53,13 +53,16 @@ func TestSetSystemVariable(t *testing.T) {
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
 		{variable.TiDBEnableStmtSummary, "1", false},
 	}
-	for _, test := range tests {
-		err := variable.SetSessionSystemVar(v, test.key, test.value)
-		if test.err {
-			require.Error(t, err)
-		} else {
-			require.NoError(t, err)
-		}
+	for _, tc := range testCases {
+		t.Run(tc.key, func(t *testing.T) {
+			t.Parallel()
+			err := variable.SetSessionSystemVar(v, tc.key, tc.value)
+			if tc.err {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
 	}
 }
 
