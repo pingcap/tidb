@@ -7570,4 +7570,3 @@ func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table if exists t")
 }
-
