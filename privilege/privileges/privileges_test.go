@@ -1162,15 +1162,16 @@ func TestPerformanceSchema(t *testing.T) {
 	// This test tests no privilege check for INFORMATION_SCHEMA database.
 	se := newSession(t, store, dbName)
 	mustExec(t, se, `CREATE USER 'u1'@'localhost';`)
+
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 	_, err := se.ExecuteInternal(context.Background(), "select * from performance_schema.events_statements_summary_by_digest where schema_name = 'tst'")
-	require.NoError(t, err)
-	//require.NoError(t, err)
-	//require.ErrorAs(t, err, &core.ErrTableaccessDenied)
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
 	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
 	mustExec(t, se, `GRANT SELECT ON *.* TO 'u1'@'localhost';`)
-	require.True(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
 	_, err = se.ExecuteInternal(context.Background(), "select * from performance_schema.events_statements_summary_by_digest where schema_name = 'tst'")
 	require.NoError(t, err)
 	mustExec(t, se, `select * from performance_schema.events_statements_summary_by_digest`)
