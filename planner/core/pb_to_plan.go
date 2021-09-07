@@ -120,7 +120,7 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 			}
 		}
 		p.Extractor = extractor
-	case infoschema.ClusterTableStatementsSummary, infoschema.ClusterTableStatementsSummaryEvicted, infoschema.ClusterTableStatementsSummaryHistory:
+	case infoschema.ClusterTableStatementsSummary, infoschema.ClusterTableStatementsSummaryHistory:
 		p.Extractor = &StatementsSummaryExtractor{}
 	}
 	return p, nil

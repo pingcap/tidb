@@ -135,7 +135,7 @@ func (helper extractHelper) extractColOrExpr(extractCols map[int64]*types.FieldN
 	}
 	// Define an inner function to avoid populate the outer scope
 	var extract = func(extractCols map[int64]*types.FieldName, fn *expression.ScalarFunction) (string, []types.Datum) {
-		switch fn.FuncName.L {
+		switch helper.getStringFunctionName(fn) {
 		case ast.EQ:
 			return helper.extractColBinaryOpConsExpr(extractCols, fn)
 		case ast.LogicOr:
