@@ -944,6 +944,22 @@ PARTITION BY LIST COLUMNS(col1) (
 	tk.MustQuery(`SELECT COL1 FROM NT_LP27390 WHERE COL1 IN (46015556,-4123498,54419751)`).Sort().Check(testkit.Rows("-4123498"))
 }
 
+func (s *testIntegrationPartitionSerialSuite) TestIssue27493(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database issue_27493")
+	tk.MustExec("use issue_27493")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`CREATE TABLE UK_LP17321 (
+  COL1 mediumint(16) DEFAULT '82' COMMENT 'NUMERIC UNIQUE INDEX',
+  COL3 bigint(20) DEFAULT NULL,
+  UNIQUE KEY UM_COL (COL1,COL3)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST (COL1 DIV COL3) (
+  PARTITION P0 VALUES IN (NULL,0)
+)`)
+	tk.MustQuery(`select * from UK_LP17321 where col1 is null`).Check(testkit.Rows()) // without any error
+}
+
 func genListPartition(begin, end int) string {
 	buf := &bytes.Buffer{}
 	buf.WriteString("(")
