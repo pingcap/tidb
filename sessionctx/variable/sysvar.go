@@ -1362,6 +1362,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBEnableChangeMultiSchema, Value: BoolToOnOff(DefTiDBChangeMultiSchema), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableChangeMultiSchema = TiDBOptOn(val)
 		return nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		s.EnableChangeMultiSchema = TiDBOptOn(val)
+		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAutoIncrementInGenerated, Value: BoolToOnOff(DefTiDBEnableAutoIncrementInGenerated), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableAutoIncrementInGenerated = TiDBOptOn(val)
