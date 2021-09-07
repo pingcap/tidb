@@ -9,7 +9,6 @@ header:
     - '.gitattributes'
     - '.golangci.yml'
     - '.golangci_br.yml'
-    - '.licenserc.yaml'
     - 'LICENSES/'
     - '**/*.md'
     - '**/*.json'
