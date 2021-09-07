@@ -875,6 +875,20 @@ PARTITION BY LIST COLUMNS(col1) (
 	tk.MustQuery(`SELECT COL1 FROM PK_LP9465 HAVING COL1>=-12354348921530`).Sort().Check(testkit.Rows("8263677"))
 }
 
+func (s *testIntegrationPartitionSerialSuite) TestIssue27544(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database issue_27544")
+	tk.MustExec("use issue_27544")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`create table t3 (a datetime) partition by list (mod( year(a) - abs(weekday(a) + dayofweek(a)), 4) + 1) (
+		partition p0 values in (2),
+		partition p1 values in (3),
+		partition p3 values in (4))`)
+	tk.MustExec(`insert into t3 values ('1921-05-10 15:20:10')`) // success without any error
+	tk.MustExec(`insert into t3 values ('1921-05-10 15:20:20')`)
+	tk.MustExec(`insert into t3 values ('1921-05-10 15:20:30')`)
+}
+
 func (s *testIntegrationPartitionSerialSuite) TestIssue27012(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database issue_27012")
