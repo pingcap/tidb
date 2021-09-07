@@ -15,6 +15,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/pkg/codec"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -230,6 +230,9 @@ func (importer *FileImporter) CheckMultiIngestSupport(ctx context.Context, pdCli
 	}
 	storeIDs := make([]uint64, 0, len(allStores))
 	for _, s := range allStores {
+		if s.State != metapb.StoreState_Up {
+			continue
+		}
 		storeIDs = append(storeIDs, s.Id)
 	}
 
@@ -451,18 +454,14 @@ func (importer *FileImporter) downloadSST(
 ) (*import_sstpb.SSTMeta, error) {
 	uid := uuid.New()
 	id := uid[:]
-	// Assume one region reflects to one rewrite rule
-	_, key, err := codec.DecodeBytes(regionInfo.Region.GetStartKey())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	regionRule := matchNewPrefix(key, rewriteRules)
-	if regionRule == nil {
-		return nil, errors.Annotate(berrors.ErrKVRewriteRuleNotFound, "failed to find rewrite rule.")
+	// Get the rewrite rule for the file.
+	fileRule := findMatchedRewriteRule(file, rewriteRules)
+	if fileRule == nil {
+		return nil, errors.Trace(berrors.ErrKVRewriteRuleNotFound)
 	}
 	rule := import_sstpb.RewriteRule{
-		OldKeyPrefix: encodeKeyPrefix(regionRule.GetOldKeyPrefix()),
-		NewKeyPrefix: encodeKeyPrefix(regionRule.GetNewKeyPrefix()),
+		OldKeyPrefix: encodeKeyPrefix(fileRule.GetOldKeyPrefix()),
+		NewKeyPrefix: encodeKeyPrefix(fileRule.GetNewKeyPrefix()),
 	}
 	sstMeta := GetSSTMetaFromFile(id, file, regionInfo.Region, &rule)
 
@@ -479,6 +478,7 @@ func (importer *FileImporter) downloadSST(
 	)
 	var resp *import_sstpb.DownloadResponse
 	for _, peer := range regionInfo.Region.GetPeers() {
+		var err error
 		resp, err = importer.importClient.DownloadSST(ctx, peer.GetStoreId(), req)
 		if err != nil {
 			return nil, errors.Trace(err)
