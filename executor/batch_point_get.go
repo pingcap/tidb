@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil/inconsist"
+	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
@@ -470,11 +470,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		val := values[string(key)]
 		if len(val) == 0 {
 			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) {
-				return (&inconsist.Reporter{
+				return (&consistency.Reporter{
 					HandleEncode: func(_ kv.Handle) kv.Key {
 						return key
 					},
-					IndexEncode: func(_ *inconsist.RecordData) kv.Key {
+					IndexEncode: func(_ *consistency.RecordData) kv.Key {
 						return indexKeys[i]
 					},
 					Tbl:  e.tblInfo,
@@ -484,7 +484,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 					1, 0,
 					e.handles[i:i+1],
 					e.handles,
-					[]inconsist.RecordData{{}},
+					[]consistency.RecordData{{}},
 				)
 			}
 			continue

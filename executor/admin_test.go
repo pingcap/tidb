@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/logutil/inconsist"
+	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -192,7 +192,7 @@ func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	c.Assert(err, IsNil)
 	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
-	c.Assert(inconsist.ErrAdminCheckInconsistent.Equal(err), IsTrue)
+	c.Assert(consistency.ErrAdminCheckInconsistent.Equal(err), IsTrue)
 	err = tk.ExecToErr("admin check index admin_test c2")
 	c.Assert(err, NotNil)
 
@@ -326,7 +326,7 @@ func (s *testSuite5) TestAdminRecoverPartitionTableIndex(c *C) {
 		c.Assert(err, IsNil)
 		err = tk.ExecToErr("admin check table admin_test")
 		c.Assert(err, NotNil)
-		c.Assert(inconsist.ErrAdminCheckInconsistent.Equal(err), IsTrue)
+		c.Assert(consistency.ErrAdminCheckInconsistent.Equal(err), IsTrue)
 
 		r := tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
 		r.Check(testkit.Rows("2"))
@@ -803,7 +803,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		err = tk.ExecToErr("admin check table admin_test_p")
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Equals, fmt.Sprintf("[admin:8223]data inconsistency in table: admin_test_p, index: idx, handle: %d, index-values:\"\" != record-values:\"handle: %d, values: [KindInt64 %d]\"", i, i, i))
-		c.Assert(inconsist.ErrAdminCheckInconsistent.Equal(err), IsTrue)
+		c.Assert(consistency.ErrAdminCheckInconsistent.Equal(err), IsTrue)
 		// TODO: fix admin recover for partition table.
 		// r := tk.MustQuery("admin recover index admin_test_p idx")
 		// r.Check(testkit.Rows("0 0"))
@@ -1252,7 +1252,7 @@ func (s *testSuiteJoinSerial) TestAdminCheckTableFailed(c *C) {
 	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[admin:8223]data inconsistency in table: admin_test, index: c2, handle: -1, index-values:\"\" != record-values:\"handle: -1, values: [KindInt64 -10]\"")
-	c.Assert(inconsist.ErrAdminCheckInconsistent.Equal(err), IsTrue)
+	c.Assert(consistency.ErrAdminCheckInconsistent.Equal(err), IsTrue)
 	tk.MustExec("set @@tidb_redact_log=1;")
 	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)

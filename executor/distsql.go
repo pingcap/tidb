@@ -49,7 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/logutil/inconsist"
+	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -1123,12 +1123,12 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 	tblInfo := w.idxLookup.table.Meta()
 	vals := make([]types.Datum, 0, len(w.idxTblCols))
 
-	ir := func() *inconsist.Reporter {
-		return &inconsist.Reporter{
+	ir := func() *consistency.Reporter {
+		return &consistency.Reporter{
 			HandleEncode: func(handle kv.Handle) kv.Key {
 				return tablecodec.EncodeRecordKey(w.idxLookup.table.RecordPrefix(), handle)
 			},
-			IndexEncode: func(idxRow *inconsist.RecordData) kv.Key {
+			IndexEncode: func(idxRow *consistency.RecordData) kv.Key {
 				var idx table.Index
 				for _, v := range w.idxLookup.table.Indices() {
 					if strings.EqualFold(v.Meta().Name.String(), w.idxLookup.index.Name.O) {
@@ -1159,7 +1159,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 		if chk.NumRows() == 0 {
 			task.indexOrder.Range(func(h kv.Handle, val interface{}) bool {
 				idxRow := task.idxRows.GetRow(val.(int))
-				err = ir().ReportAdminCheckInconsistent(ctx, h, &inconsist.RecordData{Handle: h, Values: getDatumRow(&idxRow, w.idxColTps)}, nil)
+				err = ir().ReportAdminCheckInconsistent(ctx, h, &consistency.RecordData{Handle: h, Values: getDatumRow(&idxRow, w.idxColTps)}, nil)
 				return false
 			})
 			if err != nil {
@@ -1204,7 +1204,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 						idxRow.GetDatum(i, tp),
 						val,
 						err,
-						&inconsist.RecordData{Handle: handle, Values: getDatumRow(&idxRow, fts)},
+						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, fts)},
 					)
 				}
 				if cmpRes != 0 {
@@ -1218,7 +1218,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 						idxRow.GetDatum(i, tp),
 						val,
 						err,
-						&inconsist.RecordData{Handle: handle, Values: getDatumRow(&idxRow, fts)},
+						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, fts)},
 					)
 				}
 			}
@@ -1309,7 +1309,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				obtainedHandlesMap.Set(handle, true)
 			}
 			missHds := GetLackHandles(task.handles, obtainedHandlesMap)
-			return (&inconsist.Reporter{
+			return (&consistency.Reporter{
 				HandleEncode: func(hd kv.Handle) kv.Key {
 					return tablecodec.EncodeRecordKey(w.idxLookup.table.RecordPrefix(), hd)
 				},

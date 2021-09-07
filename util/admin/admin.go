@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/logutil/inconsist"
+	"github.com/pingcap/tidb/util/logutil/consistency"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -373,12 +373,12 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 		cols[i] = t.Cols()[col.Offset]
 	}
 
-	ir := func() *inconsist.Reporter {
-		return &inconsist.Reporter{
+	ir := func() *consistency.Reporter {
+		return &consistency.Reporter{
 			HandleEncode: func(handle kv.Handle) kv.Key {
 				return tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
 			},
-			IndexEncode: func(idxRow *inconsist.RecordData) kv.Key {
+			IndexEncode: func(idxRow *consistency.RecordData) kv.Key {
 				var idx table.Index
 				for _, v := range t.Indices() {
 					if strings.EqualFold(v.Meta().Name.String(), idx.Meta().Name.O) {
@@ -419,15 +419,15 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 		}
 		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
-			record1 := &inconsist.RecordData{Handle: h1, Values: vals1}
-			record2 := &inconsist.RecordData{Handle: h2, Values: vals1}
+			record1 := &consistency.RecordData{Handle: h1, Values: vals1}
+			record2 := &consistency.RecordData{Handle: h2, Values: vals1}
 			return false, ir().ReportAdminCheckInconsistent(ctx, h1, record2, record1)
 		}
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if !isExist {
-			record := &inconsist.RecordData{Handle: h1, Values: vals1}
+			record := &consistency.RecordData{Handle: h1, Values: vals1}
 			return false, ir().ReportAdminCheckInconsistent(ctx, h1, nil, record)
 		}
 
