@@ -942,14 +942,14 @@ func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
 		Hostname: "localhost",
 	}, nil, nil), Equals, true)
 
-	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("25"))
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("26"))
 
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{
 		Username: "testuser3",
 		Hostname: "localhost",
 	}, nil, nil), Equals, true)
 
-	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("25"))
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("26"))
 }
 
 func (s *testInfoschemaTableSuite) TestSequences(c *C) {
