@@ -26,6 +26,7 @@ import (
 	tlog "github.com/opentracing/opentracing-go/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/metrics"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -101,6 +102,8 @@ var GeneralLogLogger = log.L()
 
 var generalLogMgr *GeneralLogManager
 
+var generalLogDroppedEntry = metrics.GeneralLogDroppedCount
+
 // PutGeneralLogOrDrop sends the general log entry to the logging goroutine
 // The entry will be dropped once the channel is full
 func PutGeneralLogOrDrop(entry *GeneralLogEntry) {
@@ -110,9 +113,12 @@ func PutGeneralLogOrDrop(entry *GeneralLogEntry) {
 		// When logEntryChan is full, the system resource is under so much pressure that the logging system capacity
 		// is reduced. We should NOT output another warning log saying that we are dropping a general log, which will
 		// add more pressure on the system load.
-		// TODO(dragonly): add prometheus counter for dropped log count?
-		generalLogMgr.droppedLogCount++
+		generalLogDroppedEntry.Inc()
 	}
+}
+
+func StopGeneralLog() {
+	generalLogMgr.stopLogWorker()
 }
 
 // InitGeneralQueryLog initialize general query logger, which will starts a format & logging worker goroutine

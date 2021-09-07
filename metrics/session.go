@@ -127,6 +127,14 @@ var (
 			Name:      "validate_read_ts_from_pd_count",
 			Help:      "Counter of validating read ts by getting a timestamp from PD",
 		})
+
+	GeneralLogDroppedCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "general_log_dropped_count",
+			Help:      "Counter of dropped general log entries",
+		})
 )
 
 // Label constants.

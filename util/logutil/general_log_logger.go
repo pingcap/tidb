@@ -49,40 +49,55 @@ var fnGetQueryPool = sync.Pool{New: func() interface{} {
 
 // GeneralLogManager receives general log entry from channel, and log or drop them as needed
 type GeneralLogManager struct {
-	logger          *zap.Logger
-	logEntryChan    chan *GeneralLogEntry
-	droppedLogCount uint64
+	logger       *zap.Logger
+	logEntryChan chan *GeneralLogEntry
+	quit         chan struct{}
 }
 
 func newGeneralLog(logger *zap.Logger) *GeneralLogManager {
 	gl := &GeneralLogManager{
-		logger:          logger,
-		logEntryChan:    make(chan *GeneralLogEntry, generalLogBatchSize),
-		droppedLogCount: 0,
+		logger:       logger,
+		logEntryChan: make(chan *GeneralLogEntry, generalLogBatchSize),
+		quit:         make(chan struct{}),
 	}
-	go gl.startFormatWorker()
+	go gl.startLogWorker()
 	return gl
 }
 
-// startFormatWorker starts a log flushing worker that flushes log periodically or when batch is full
-func (gl *GeneralLogManager) startFormatWorker() {
+func (gl *GeneralLogManager) logEntry(e *GeneralLogEntry) {
+	fnGetQueryBuf := fnGetQueryPool.Get().(*strings.Builder)
+	gl.logger.Info("GENERAL_LOG",
+		zap.Uint64("conn", e.ConnID),
+		zap.String("user", e.FnGetUser()),
+		zap.Int64("schemaVersion", e.FnGetSchemaMetaVersion()),
+		zap.Uint64("txnStartTS", e.TxnStartTS),
+		zap.Uint64("forUpdateTS", e.TxnForUpdateTS),
+		zap.Bool("isReadConsistency", e.IsReadConsistency),
+		zap.String("current_db", e.CurrentDB),
+		zap.String("txn_mode", e.TxnMode),
+		zap.String("sql", e.FnGetQuery(fnGetQueryBuf)),
+	)
+	fnGetQueryBuf.Reset()
+	fnGetQueryPool.Put(fnGetQueryBuf)
+}
+
+// startLogWorker starts a log flushing worker that flushes log periodically or when batch is full
+func (gl *GeneralLogManager) startLogWorker() {
 	for {
-		e := <-gl.logEntryChan
-		fnGetQueryBuf := fnGetQueryPool.Get().(*strings.Builder)
-		gl.logger.Info("GENERAL_LOG",
-			zap.Uint64("conn", e.ConnID),
-			zap.String("user", e.FnGetUser()),
-			zap.Int64("schemaVersion", e.FnGetSchemaMetaVersion()),
-			zap.Uint64("txnStartTS", e.TxnStartTS),
-			zap.Uint64("forUpdateTS", e.TxnForUpdateTS),
-			zap.Bool("isReadConsistency", e.IsReadConsistency),
-			zap.String("current_db", e.CurrentDB),
-			zap.String("txn_mode", e.TxnMode),
-			zap.String("sql", e.FnGetQuery(fnGetQueryBuf)),
-		)
-		fnGetQueryBuf.Reset()
-		fnGetQueryPool.Put(fnGetQueryBuf)
+		select {
+		case e := <-gl.logEntryChan:
+			gl.logEntry(e)
+		case <-gl.quit:
+			for e := range gl.logEntryChan {
+				gl.logEntry(e)
+			}
+			return
+		}
 	}
+}
+
+func (gl *GeneralLogManager) stopLogWorker() {
+	close(gl.quit)
 }
 
 func newGeneralLogLogger() *zap.Logger {

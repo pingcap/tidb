@@ -2903,18 +2903,6 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		}
 
 		logutil.PutGeneralLogOrDrop(&logEntry)
-
-		// logutil.GeneralLogLogger.Info(generalLogText)
-		// logutil.BgLogger().Info("GENERAL_LOG",
-		// 	zap.Uint64("conn", vars.ConnectionID),
-		// 	zap.Stringer("user", vars.User),
-		// 	zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
-		// 	zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
-		// 	zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
-		// 	zap.Bool("isReadConsistency", vars.IsIsolation(ast.ReadCommitted)),
-		// 	zap.String("current_db", vars.CurrentDB),
-		// 	zap.String("txn_mode", vars.GetReadableTxnMode()),
-		// 	zap.String("sql", query))
 	}
 }
 
