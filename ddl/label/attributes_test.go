@@ -38,18 +38,18 @@ func (t *testLabelSuite) TestNew(c *C) {
 	tests := []TestCase{
 		{
 			name:  "normal",
-			input: "merge=true",
+			input: "merge_option=allow",
 			label: Label{
-				Key:   "merge",
-				Value: "true",
+				Key:   "merge_option",
+				Value: "allow",
 			},
 		},
 		{
 			name:  "normal with space",
-			input: " merge=true ",
+			input: " merge_option=allow ",
 			label: Label{
-				Key:   "merge",
-				Value: "true",
+				Key:   "merge_option",
+				Value: "allow",
 			},
 		},
 	}
@@ -68,20 +68,20 @@ func (t *testLabelSuite) TestRestore(c *C) {
 		output string
 	}
 
-	input, err := NewLabel("merge=true")
+	input, err := NewLabel("merge_option=allow")
 	c.Assert(err, IsNil)
-	input1, err := NewLabel(" merge=true  ")
+	input1, err := NewLabel(" merge_option=allow  ")
 	c.Assert(err, IsNil)
 	tests := []TestCase{
 		{
 			name:   "normal",
 			input:  input,
-			output: "merge=true",
+			output: "merge_option=allow",
 		},
 		{
 			name:   "normal with spaces",
 			input:  input1,
-			output: "merge=true",
+			output: "merge_option=allow",
 		},
 	}
 
@@ -104,27 +104,27 @@ func (t *testLabelsSuite) TestNew(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(labels, HasLen, 0)
 
-	labels, err = NewLabels([]string{"merge=true"})
+	labels, err = NewLabels([]string{"merge_option=allow"})
 	c.Assert(err, IsNil)
 	c.Assert(labels, HasLen, 1)
-	c.Assert(labels[0].Key, Equals, "merge")
-	c.Assert(labels[0].Value, Equals, "true")
+	c.Assert(labels[0].Key, Equals, "merge_option")
+	c.Assert(labels[0].Value, Equals, "allow")
 
 	// test multiple attributes
-	labels, err = NewLabels([]string{"merge=true", "somethingelse=false"})
+	labels, err = NewLabels([]string{"merge_option=allow", "key=value"})
 	c.Assert(err, IsNil)
 	c.Assert(labels, HasLen, 2)
-	c.Assert(labels[0].Key, Equals, "merge")
-	c.Assert(labels[0].Value, Equals, "true")
-	c.Assert(labels[1].Key, Equals, "somethingelse")
-	c.Assert(labels[1].Value, Equals, "false")
+	c.Assert(labels[0].Key, Equals, "merge_option")
+	c.Assert(labels[0].Value, Equals, "allow")
+	c.Assert(labels[1].Key, Equals, "key")
+	c.Assert(labels[1].Value, Equals, "value")
 
 	// test duplicated attributes
-	labels, err = NewLabels([]string{"merge=true", "merge=true"})
+	labels, err = NewLabels([]string{"merge_option=allow", "merge_option=allow"})
 	c.Assert(err, IsNil)
 	c.Assert(labels, HasLen, 1)
-	c.Assert(labels[0].Key, Equals, "merge")
-	c.Assert(labels[0].Value, Equals, "true")
+	c.Assert(labels[0].Key, Equals, "merge_option")
+	c.Assert(labels[0].Value, Equals, "allow")
 }
 
 func (t *testLabelsSuite) TestAdd(c *C) {
@@ -135,15 +135,15 @@ func (t *testLabelsSuite) TestAdd(c *C) {
 		err    error
 	}
 
-	labels, err := NewLabels([]string{"merge=true"})
+	labels, err := NewLabels([]string{"merge_option=allow"})
 	c.Assert(err, IsNil)
 	label, err := NewLabel("somethingelse=true")
 	c.Assert(err, IsNil)
-	l1, err := NewLabels([]string{"attr=true"})
+	l1, err := NewLabels([]string{"key=value"})
 	c.Assert(err, IsNil)
-	l2, err := NewLabel("attr=true")
+	l2, err := NewLabel("key=value")
 	c.Assert(err, IsNil)
-	l3, err := NewLabels([]string{"attr=false"})
+	l3, err := NewLabels([]string{"key=value1"})
 	c.Assert(err, IsNil)
 	tests := []TestCase{
 		{
@@ -159,8 +159,8 @@ func (t *testLabelsSuite) TestAdd(c *C) {
 		{
 			"duplicated attributes, skip",
 			append(labels, Label{
-				Key:   "merge",
-				Value: "true",
+				Key:   "merge_option",
+				Value: "allow",
 			}), label,
 			nil,
 		},
@@ -190,9 +190,9 @@ func (t *testLabelsSuite) TestRestore(c *C) {
 		output string
 	}
 
-	input1, err := NewLabel("merge=true")
+	input1, err := NewLabel("merge_option=allow")
 	c.Assert(err, IsNil)
-	input2, err := NewLabel("somethingelse=false")
+	input2, err := NewLabel("key=value")
 	c.Assert(err, IsNil)
 	input3, err := NewLabel("db=d1")
 	c.Assert(err, IsNil)
@@ -210,7 +210,7 @@ func (t *testLabelsSuite) TestRestore(c *C) {
 		{
 			"normal2",
 			Labels{input1, input2},
-			`"merge=true","somethingelse=false"`,
+			`"merge_option=allow","key=value"`,
 		},
 		{
 			"normal3",
@@ -220,7 +220,7 @@ func (t *testLabelsSuite) TestRestore(c *C) {
 		{
 			"normal4",
 			Labels{input1, input2, input3},
-			`"merge=true","somethingelse=false"`,
+			`"merge_option=allow","key=value"`,
 		},
 	}
 
