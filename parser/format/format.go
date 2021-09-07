@@ -218,6 +218,7 @@ const (
 	RestoreNameBackQuotes
 
 	RestoreSpacesAroundBinaryOperation
+	RestoreBracketAroundBinaryOperation
 
 	RestoreStringWithoutCharset
 	RestoreStringWithoutDefaultCharset
@@ -281,6 +282,10 @@ func (rf RestoreFlags) HasNameBackQuotesFlag() bool {
 // HasSpacesAroundBinaryOperationFlag returns a boolean indicating whether `rf` has `RestoreSpacesAroundBinaryOperation` flag.
 func (rf RestoreFlags) HasSpacesAroundBinaryOperationFlag() bool {
 	return rf.has(RestoreSpacesAroundBinaryOperation)
+}
+
+func (rf RestoreFlags) HasRestoreBracketAroundBinaryOperation() bool {
+	return rf.has(RestoreBracketAroundBinaryOperation)
 }
 
 func (rf RestoreFlags) HasStringWithoutDefaultCharset() bool {
