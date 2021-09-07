@@ -17,6 +17,7 @@ package kv
 import (
 	"context"
 	"crypto/tls"
+	"github.com/pingcap/tidb/util/trxevents"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -233,15 +234,10 @@ type Transaction interface {
 	ClearDiskFullOpt()
 }
 
-// DiagnosticInfo is used to pass information to lower layers for diagnostic purposes.
-type DiagnosticInfo struct {
-	Stmt string
-}
-
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, diagInfo DiagnosticInfo) Response
+	Send(ctx context.Context, req *Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool

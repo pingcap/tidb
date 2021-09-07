@@ -1478,8 +1478,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 		return err
 	}
 
-	diagInfo := kv.DiagnosticInfo{Stmt: sctx.GetSessionVars().StmtCtx.OriginalSQL}
-	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, false, diagInfo)
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker, false, nil)
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return err

@@ -50,50 +50,49 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	req := &kv.Request{}
 	flashReq := &kv.Request{}
 	flashReq.StoreType = kv.TiFlash
-	diagInfo := kv.DiagnosticInfo{}
-	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "c"), req, diagInfo)
+	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "c"), flashReq, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "c"), flashReq, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n"), req, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n"), req, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n"), flashReq, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n"), flashReq, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("m", "n"), req, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("m", "n"), req, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[1], "m", "n")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("m", "n"), flashReq, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("m", "n"), flashReq, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[1], "m", "n")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "k"), req, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "k"), req, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
 	s.taskEqual(c, tasks[1], regionIDs[1], "g", "k")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "k"), flashReq, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "k"), flashReq, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
 	s.taskEqual(c, tasks[1], regionIDs[1], "g", "k")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), req, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), req, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 4)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
@@ -101,7 +100,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	s.taskEqual(c, tasks[2], regionIDs[2], "n", "t")
 	s.taskEqual(c, tasks[3], regionIDs[3], "t", "x")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), flashReq, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "x"), flashReq, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 4)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
@@ -109,45 +108,45 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	s.taskEqual(c, tasks[2], regionIDs[2], "n", "t")
 	s.taskEqual(c, tasks[3], regionIDs[3], "t", "x")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), req, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), req, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "b", "c")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), flashReq, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "b", "c"), flashReq, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "b", "c")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), req, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), req, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "e", "f")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), flashReq, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "b", "e", "f"), flashReq, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 1)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "e", "f")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), req, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), req, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
 	s.taskEqual(c, tasks[1], regionIDs[2], "o", "p")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), flashReq, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("g", "n", "o", "p"), flashReq, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
 	s.taskEqual(c, tasks[1], regionIDs[2], "o", "p")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), req, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), req, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[1], "h", "k", "m", "n")
 	s.taskEqual(c, tasks[1], regionIDs[2], "n", "p")
 
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), flashReq, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("h", "k", "m", "p"), flashReq, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[1], "h", "k", "m", "n")
@@ -220,8 +219,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 
 	req := &kv.Request{}
-	diagInfo := kv.DiagnosticInfo{}
-	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "z"), req, diagInfo)
+	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "z"), req, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 2)
 	s.taskEqual(c, tasks[0], regionIDs[0], "a", "m")
@@ -235,7 +233,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	cache.InvalidateCachedRegion(tasks[1].region)
 
 	req.Desc = true
-	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "z"), req, diagInfo)
+	tasks, err = buildCopTasks(bo, cache, buildCopRanges("a", "z"), req, nil)
 	c.Assert(err, IsNil)
 	c.Assert(tasks, HasLen, 3)
 	s.taskEqual(c, tasks[2], regionIDs[0], "a", "m")

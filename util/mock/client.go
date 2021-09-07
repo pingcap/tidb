@@ -16,6 +16,7 @@ package mock
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/trxevents"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/memory"
@@ -29,6 +30,6 @@ type Client struct {
 }
 
 // Send implement kv.Client interface.
-func (c *Client) Send(ctx context.Context, req *kv.Request, kv interface{}, sessionMemTracker *memory.Tracker, enabledRateLimit bool, diagInfo kv.DiagnosticInfo) kv.Response {
+func (c *Client) Send(ctx context.Context, req *kv.Request, kv interface{}, sessionMemTracker *memory.Tracker, enabledRateLimit bool, eventCb trxevents.EventCallback) kv.Response {
 	return c.MockResponse
 }
