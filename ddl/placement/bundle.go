@@ -69,10 +69,6 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	voterCount := options.Voters
 	learnerCount := options.Learners
 
-	if voterCount+followerCount == 0 {
-		return nil, fmt.Errorf("%w: not enough voter, please specify voter or follower count", ErrInvalidPlacementOptions)
-	}
-
 	CommonConstraints, err := NewConstraintsFromYaml([]byte(constraints))
 	if err != nil {
 		return nil, fmt.Errorf("%w: 'Constraints' should be [constraint1, ...] or any yaml compatible array representation", err)

@@ -565,9 +565,9 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 	var tests []TestCase
 
 	tests = append(tests, TestCase{
-		name:  "empty 1",
-		input: &model.PlacementSettings{},
-		err:   ErrInvalidPlacementOptions,
+		name:   "empty 1",
+		input:  &model.PlacementSettings{},
+		output: []*Rule{},
 	})
 
 	tests = append(tests, TestCase{
@@ -651,7 +651,7 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 		input: &model.PlacementSettings{
 			PrimaryRegion: "",
 		},
-		err: ErrInvalidPlacementOptions,
+		output: []*Rule{},
 	})
 
 	tests = append(tests, TestCase{
@@ -873,14 +873,6 @@ func (s *testBundleSuite) TestNewBundleFromOptions(c *C) {
 			Followers:         2,
 		},
 		err: ErrConflictingConstraints,
-	})
-
-	tests = append(tests, TestCase{
-		name: "direct syntax: not enough replicas",
-		input: &model.PlacementSettings{
-			Constraints: "[+region=us]",
-		},
-		err: ErrInvalidPlacementOptions,
 	})
 
 	tests = append(tests, TestCase{
