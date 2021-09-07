@@ -682,14 +682,8 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	tk.MustExec("rollback")
 
 	// This test check that with @@tidb_constraint_check_in_place = 0, although there is not KV request for the unique index, the pessimistic lock should still be written.
-	store1, clean1 := testkit.CreateMockStore(t)
-	defer clean1()
-	tk1 := testkit.NewTestKit(t, store1)
-
-	store2, clean2 := testkit.CreateMockStore(t)
-	defer clean2()
-	tk2 := testkit.NewTestKit(t, store2)
-
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk1.MustExec("set @@tidb_txn_mode = 'pessimistic'")
 	tk1.MustExec("set @@tidb_constraint_check_in_place = 0")
 	tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
