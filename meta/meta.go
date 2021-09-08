@@ -40,6 +40,7 @@ import (
 
 var (
 	globalIDMutex sync.Mutex
+	policyIDMutex sync.Mutex
 )
 
 // Meta structure:
@@ -70,6 +71,25 @@ var (
 	mRandomIDPrefix   = "TARID"
 	mBootstrapKey     = []byte("BootstrapKey")
 	mSchemaDiffPrefix = "Diff"
+	mPolicies         = []byte("Policies")
+	mPolicyPrefix     = "Policy"
+	mPolicyGlobalID   = []byte("PolicyGlobalID")
+	mPolicyMagicByte  = CurrentMagicByteVer
+)
+
+const (
+	// CurrentMagicByteVer is the current magic byte version, used for future meta compatibility.
+	CurrentMagicByteVer byte = 0x00
+	// PolicyMagicByte handler
+	// 0x00 - 0x3F: Json Handler
+	// 0x40 - 0x7F: Reserved
+	// 0x80 - 0xBF: Reserved
+	// 0xC0 - 0xFF: Reserved
+
+	// type means how to handle the serialized data.
+	typeUnknown int = 0
+	typeJSON    int = 1
+	// todo: customized handler.
 )
 
 var (
@@ -77,6 +97,10 @@ var (
 	ErrDBExists = dbterror.ClassMeta.NewStd(mysql.ErrDBCreateExists)
 	// ErrDBNotExists is the error for db not exists.
 	ErrDBNotExists = dbterror.ClassMeta.NewStd(mysql.ErrBadDB)
+	// ErrPolicyExists is the error for policy exists.
+	ErrPolicyExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyExists)
+	// ErrPolicyNotExists is the error for policy not exists.
+	ErrPolicyNotExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyNotExists)
 	// ErrTableExists is the error for table exists.
 	ErrTableExists = dbterror.ClassMeta.NewStd(mysql.ErrTableExists)
 	// ErrTableNotExists is the error for table not exists.
@@ -143,6 +167,15 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 // GetGlobalID gets current global id.
 func (m *Meta) GetGlobalID() (int64, error) {
 	return m.txn.GetInt64(mNextGlobalIDKey)
+}
+
+// GetPolicyID gets current policy global id.
+func (m *Meta) GetPolicyID() (int64, error) {
+	return m.txn.GetInt64(mPolicyGlobalID)
+}
+
+func (m *Meta) policyKey(policyID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mPolicyPrefix, policyID))
 }
 
 func (m *Meta) dbKey(dbID int64) []byte {
@@ -268,6 +301,22 @@ func (m *Meta) GenSchemaVersion() (int64, error) {
 	return m.txn.Inc(mSchemaVersionKey, 1)
 }
 
+func (m *Meta) checkPolicyExists(policyKey []byte) error {
+	v, err := m.txn.HGet(mPolicies, policyKey)
+	if err == nil && v == nil {
+		err = ErrPolicyNotExists.GenWithStack("policy doesn't exist")
+	}
+	return errors.Trace(err)
+}
+
+func (m *Meta) checkPolicyNotExists(policyKey []byte) error {
+	v, err := m.txn.HGet(mPolicies, policyKey)
+	if err == nil && v != nil {
+		err = ErrPolicyExists.GenWithStack("policy already exists")
+	}
+	return errors.Trace(err)
+}
+
 func (m *Meta) checkDBExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
 	if err == nil && v == nil {
@@ -298,6 +347,46 @@ func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 		err = ErrTableExists.GenWithStack("table already exists")
 	}
 	return errors.Trace(err)
+}
+
+// CreatePolicy creates a policy.
+func (m *Meta) CreatePolicy(policy *model.PolicyInfo) error {
+	if policy.ID != 0 {
+		policyKey := m.policyKey(policy.ID)
+		if err := m.checkPolicyNotExists(policyKey); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		// Autofill the policy ID.
+		policyIDMutex.Lock()
+		genID, err := m.txn.Inc(mPolicyGlobalID, 1)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		policyIDMutex.Unlock()
+		policy.ID = genID
+	}
+	policyKey := m.policyKey(policy.ID)
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.HSet(mPolicies, policyKey, attachMagicByte(data))
+}
+
+// UpdatePolicy updates a policy.
+func (m *Meta) UpdatePolicy(policy *model.PolicyInfo) error {
+	policyKey := m.policyKey(policy.ID)
+
+	if err := m.checkPolicyExists(policyKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.HSet(mPolicies, policyKey, attachMagicByte(data))
 }
 
 // CreateDatabase creates a database with db info.
@@ -398,6 +487,19 @@ func (m *Meta) RestartSequenceValue(dbID int64, tableInfo *model.TableInfo, seqV
 		return errors.Trace(err)
 	}
 	return errors.Trace(m.txn.HSet(m.dbKey(dbID), m.sequenceKey(tableInfo.ID), []byte(strconv.FormatInt(seqValue, 10))))
+}
+
+// DropPolicy drops the specified policy.
+func (m *Meta) DropPolicy(policyID int64) error {
+	// Check if policy exists.
+	policyKey := m.policyKey(policyID)
+	if err := m.txn.HClear(policyKey); err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.txn.HDel(mPolicies, policyKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // DropDatabase drops whole database.
@@ -550,6 +652,77 @@ func (m *Meta) GetDatabase(dbID int64) (*model.DBInfo, error) {
 	dbInfo := &model.DBInfo{}
 	err = json.Unmarshal(value, dbInfo)
 	return dbInfo, errors.Trace(err)
+}
+
+// ListPolicies shows all policies.
+func (m *Meta) ListPolicies() ([]*model.PolicyInfo, error) {
+	res, err := m.txn.HGetAll(mPolicies)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	policies := make([]*model.PolicyInfo, 0, len(res))
+	for _, r := range res {
+		value, err := detachMagicByte(r.Value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		policy := &model.PolicyInfo{}
+		err = json.Unmarshal(value, policy)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		policies = append(policies, policy)
+	}
+	return policies, nil
+}
+
+// GetPolicy gets the database value with ID.
+func (m *Meta) GetPolicy(policyID int64) (*model.PolicyInfo, error) {
+	policyKey := m.policyKey(policyID)
+	value, err := m.txn.HGet(mPolicies, policyKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if value == nil {
+		return nil, ErrPolicyNotExists.GenWithStack("policy id : %d doesn't exist", policyID)
+	}
+
+	value, err = detachMagicByte(value)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	policy := &model.PolicyInfo{}
+	err = json.Unmarshal(value, policy)
+	return policy, errors.Trace(err)
+}
+
+func attachMagicByte(data []byte) []byte {
+	data = append(data, 0)
+	copy(data[1:], data)
+	data[0] = mPolicyMagicByte
+	return data
+}
+
+func detachMagicByte(value []byte) ([]byte, error) {
+	magic, data := value[:1], value[1:]
+	switch whichMagicType(magic[0]) {
+	case typeJSON:
+		if magic[0] != CurrentMagicByteVer {
+			return nil, errors.New("incompatible magic type handling module")
+		}
+		return data, nil
+	default:
+		return nil, errors.New("unknown magic type handling module")
+	}
+}
+
+func whichMagicType(b byte) int {
+	if b <= 0x3F {
+		return typeJSON
+	}
+	return typeUnknown
 }
 
 // GetTable gets the table value in database with tableID.

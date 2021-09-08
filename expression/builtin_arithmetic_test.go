@@ -91,31 +91,6 @@ func (s *testEvaluatorSuite) TestSetFlenDecimal4RealOrDecimal(c *C) {
 	c.Assert(ret.Flen, Equals, types.UnspecifiedLength)
 }
 
-func (s *testEvaluatorSuite) TestSetFlenDecimal4Int(c *C) {
-	ret := &types.FieldType{}
-	a := &types.FieldType{
-		Decimal: 1,
-		Flen:    3,
-	}
-	b := &types.FieldType{
-		Decimal: 0,
-		Flen:    2,
-	}
-	setFlenDecimal4Int(ret, a, b)
-	c.Assert(ret.Decimal, Equals, 0)
-	c.Assert(ret.Flen, Equals, mysql.MaxIntWidth)
-
-	b.Flen = mysql.MaxIntWidth + 1
-	setFlenDecimal4Int(ret, a, b)
-	c.Assert(ret.Decimal, Equals, 0)
-	c.Assert(ret.Flen, Equals, mysql.MaxIntWidth)
-
-	b.Flen = types.UnspecifiedLength
-	setFlenDecimal4Int(ret, a, b)
-	c.Assert(ret.Decimal, Equals, 0)
-	c.Assert(ret.Flen, Equals, mysql.MaxIntWidth)
-}
-
 func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	// case: 1
 	args := []interface{}{int64(12), int64(1)}
@@ -192,6 +167,23 @@ func (s *testEvaluatorSuite) TestArithmeticPlus(c *C) {
 	intResult, _, err = intSig.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(intResult, Equals, int64(9007199254740993))
+
+	bitStr, err := types.NewBitLiteral("0b00011")
+	c.Assert(err, IsNil)
+	args = []interface{}{bitStr, int64(1)}
+
+	bf, err = funcs[ast.Plus].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(args...)))
+	c.Assert(err, IsNil)
+	c.Assert(bf, NotNil)
+
+	//check the result type is int
+	intSig, ok = bf.(*builtinArithmeticPlusIntSig)
+	c.Assert(ok, IsTrue)
+	c.Assert(intSig, NotNil)
+
+	intResult, _, err = intSig.evalInt(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(intResult, Equals, int64(4))
 }
 
 func (s *testEvaluatorSuite) TestArithmeticMinus(c *C) {
