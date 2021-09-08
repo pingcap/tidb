@@ -58,7 +58,7 @@ type Context interface {
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 
-	// GetClient gets a kv.Client.
+	// GetMPPClient gets a kv.MPPClient.
 	GetMPPClient() kv.MPPClient
 
 	// SetValue saves a value associated with this context for key.
@@ -113,7 +113,7 @@ type Context interface {
 	AddTableLock([]model.TableLockTpInfo)
 	// ReleaseTableLocks releases table locks in the session lock map.
 	ReleaseTableLocks(locks []model.TableLockTpInfo)
-	// ReleaseTableLockByTableID releases table locks in the session lock map by table ID.
+	// ReleaseTableLockByTableIDs releases table locks in the session lock map by table IDs.
 	ReleaseTableLockByTableIDs(tableIDs []int64)
 	// CheckTableLocked checks the table lock.
 	CheckTableLocked(tblID int64) (bool, model.TableLockType)
