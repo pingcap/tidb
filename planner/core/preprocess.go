@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -375,9 +376,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 
 	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
 	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence) {
-		if tempAttachedIs, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
-			is = tempAttachedIs.InfoSchema
-		}
+		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 
 	tbl, err := is.TableByName(sName, tn.Name)
@@ -1593,17 +1592,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.err = fmt.Errorf("can not get any information schema based on snapshotTS: %d", p.LastSnapshotTS)
 			return
 		}
-		// the same as session.wrapWithTemporaryTable
-		if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); !ok {
-			localTmp := p.ctx.GetSessionVars().LocalTemporaryTables
-			if localTmp != nil {
-				is = &infoschema.TemporaryTableAttachedInfoSchema{
-					InfoSchema:           is,
-					LocalTemporaryTables: localTmp.(*infoschema.LocalTemporaryTables),
-				}
-			}
-		}
-		p.InfoSchema = is
+		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.ctx, is)
 	}
 	if p.flag&inPrepare == 0 {
 		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
