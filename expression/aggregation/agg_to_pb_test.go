@@ -37,20 +37,20 @@ func genColumn(tp byte, id int64) *expression.Column {
 	}
 }
 
-type mockEvaluatorSuite struct {
+type testEvaluatorSuite struct {
 	*parser.Parser
 	ctx sessionctx.Context
 }
 
-func createmockEvaluatorSuite(t *testing.T) (s *mockEvaluatorSuite) {
-	s = new(mockEvaluatorSuite)
+func createtestEvaluatorSuite(t *testing.T) (s *testEvaluatorSuite) {
+	s = new(testEvaluatorSuite)
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
 	return
 }
 
 func TestAggFunc2Pb(t *testing.T) {
-	s := createmockEvaluatorSuite(t)
+	s := createtestEvaluatorSuite(t)
 	client := new(mock.Client)
 
 	funcNames := []string{ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow}
