@@ -800,7 +800,7 @@ outloop:
 		case nil:
 			if !initializedColumns {
 				if len(columnPermutation) == 0 {
-					columnPermutation, err = createColumnPermutation(columnNames, igCols.Columns, tableInfo)
+					columnPermutation, err = createColumnPermutation(columnNames, igCols.ColumnsMap(), tableInfo)
 					if err != nil {
 						return errors.Trace(err)
 					}

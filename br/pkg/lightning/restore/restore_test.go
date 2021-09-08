@@ -742,30 +742,84 @@ func (s *tableRestoreSuite) TestGetColumnsNames(c *C) {
 
 func (s *tableRestoreSuite) TestInitializeColumns(c *C) {
 	ccp := &checkpoints.ChunkCheckpoint{}
-	c.Assert(s.tr.initializeColumns(nil, ccp), IsNil)
-	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{0, 1, 2, -1})
 
-	ccp.ColumnPermutation = nil
-	c.Assert(s.tr.initializeColumns([]string{"b", "c", "a"}, ccp), IsNil)
-	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{2, 0, 1, -1})
+	defer func() {
+		s.tr.ignoreColumns = nil
+	}()
 
-	ccp.ColumnPermutation = nil
-	c.Assert(s.tr.initializeColumns([]string{"b"}, ccp), IsNil)
-	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{-1, 0, -1, -1})
+	cases := []struct{
+		columns []string
+		ignoreColumns map[string]struct{}
+		expectedPermutation []int
+		errPat string
+	} {
+		{
+			nil,
+			nil,
+			[]int{0, 1, 2, -1},
+			"",
+		},
+		{
+			nil,
+			map[string]struct{}{"b": {}},
+			[]int{0, -1, 2, -1},
+			"",
+		},
+		{
+			[]string{"b", "c", "a"},
+			nil,
+			[]int{2, 0, 1, -1},
+			"",
+		},
+		{
+			[]string{"b", "c", "a"},
+			map[string]struct{}{"b": {}},
+			[]int{2, -1, 1, -1},
+			"",
+		},
+		{
+			[]string{"b"},
+			nil,
+			[]int{-1, 0, -1, -1},
+			"",
+		},
+		{
+			[]string{"_tidb_rowid", "b", "a", "c"},
+			nil,
+			[]int{2, 1, 3, 0},
+			"",
+		},
+		{
+			[]string{"_tidb_rowid", "b", "a", "c"},
+			map[string]struct{}{"b": {}, "_tidb_rowid": {}},
+			[]int{2, -1, 3, -1},
+			"",
+		},
+		{
+			[]string{"_tidb_rowid", "b", "a", "c", "d"},
+			nil,
+			nil,
+			`unknown columns in header \[d\]`,
+		},
+		{
+			[]string{"e", "b", "c", "d"},
+			nil,
+			nil,
+			`unknown columns in header \[e d\]`,
+		},
+	}
 
-	ccp.ColumnPermutation = nil
-	c.Assert(s.tr.initializeColumns([]string{"_tidb_rowid", "b", "a", "c"}, ccp), IsNil)
-	c.Assert(ccp.ColumnPermutation, DeepEquals, []int{2, 1, 3, 0})
-
-	ccp.ColumnPermutation = nil
-	err := s.tr.initializeColumns([]string{"_tidb_rowid", "b", "a", "c", "d"}, ccp)
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, `unknown columns in header \[d\]`)
-
-	ccp.ColumnPermutation = nil
-	err = s.tr.initializeColumns([]string{"e", "b", "c", "d"}, ccp)
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, `unknown columns in header \[e d\]`)
+	for _, testCase := range cases {
+		ccp.ColumnPermutation = nil
+		s.tr.ignoreColumns = testCase.ignoreColumns
+		err := s.tr.initializeColumns(testCase.columns, ccp)
+		if len(testCase.errPat) > 0 {
+			c.Assert(err, NotNil)
+			c.Assert(err, ErrorMatches, testCase.errPat)
+		} else {
+			c.Assert(ccp.ColumnPermutation, DeepEquals, testCase.expectedPermutation)
+		}
+	}
 }
 
 func (s *tableRestoreSuite) TestCompareChecksumSuccess(c *C) {
