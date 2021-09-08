@@ -7571,9 +7571,10 @@ func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
 	tk.MustExec("alter table t add b text(100);")
 	tk.MustExec("alter table t add c text;")
 	tk.MustExec("alter table t add d text(50);")
+	tk.MustExec("alter table t change column a a text(50);")
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|", ""+
 		"t CREATE TABLE `t` (\n"+
-		"  `a` text DEFAULT NULL,\n"+
+		"  `a` tinytext DEFAULT NULL,\n"+
 		"  `b` text DEFAULT NULL,\n"+
 		"  `c` text DEFAULT NULL,\n"+
 		"  `d` tinytext DEFAULT NULL\n"+
