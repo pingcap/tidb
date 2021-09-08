@@ -552,6 +552,8 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		SnapshotTS:    job.StartTS,
 		CurAutoIncID:  autoIncID,
 		CurAutoRandID: autoRandID,
+		OldSchemaName: job.SchemaName,
+		OldTableName:  tblInfo.Name.L,
 	}
 	// Call DDL RecoverTable.
 	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, recoverInfo)
@@ -731,6 +733,8 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		SnapshotTS:    job.StartTS,
 		CurAutoIncID:  autoIncID,
 		CurAutoRandID: autoRandID,
+		OldSchemaName: job.SchemaName,
+		OldTableName:  s.Table.Name.L,
 	}
 	// Call DDL RecoverTable.
 	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, recoverInfo)

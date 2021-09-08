@@ -15,9 +15,12 @@
 package ddl_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -170,11 +173,138 @@ PARTITION BY RANGE (c) (
 	c.Assert(rows1[0][2], Equals, `"attr"`)
 	c.Assert(rows1[0][3], Equals, rows[0][3])
 	c.Assert(rows1[0][4], Equals, rows[0][4])
-	// // check partition p0's rule
+	// check partition p0's rule
 	c.Assert(rows1[1][0], Equals, "schema/test/t2/p0")
 	c.Assert(rows1[1][2], Equals, `"attr1"`)
 	c.Assert(rows1[1][3], Equals, rows[1][3])
 	c.Assert(rows1[1][4], Equals, rows[1][4])
+}
+
+func (s *testDBSuite8) TestRecoverTable(c *C) {
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11)
+);`)
+
+	timeBeforeDrop, _, safePointSQL, resetGC := testkit.MockGC(tk)
+	defer resetGC()
+
+	// Set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// Set GC enable.
+	err = gcutil.EnableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	// add rules
+	_, err = tk.Exec(`alter table t1 attributes="attr";`)
+	c.Assert(err, IsNil)
+	_, err = tk.Exec(`alter table t1 partition p0 attributes="attr1";`)
+	c.Assert(err, IsNil)
+	rows := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	// drop table
+	_, err = tk.Exec(`drop table t1;`)
+	c.Assert(err, IsNil)
+	// recover table
+	_, err = tk.Exec(`recover table t1;`)
+	c.Assert(err, IsNil)
+	rows1 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
+	c.Assert(len(rows1), Equals, 2)
+	// check table t1's rule
+	c.Assert(rows1[0][0], Equals, "schema/test/t1")
+	c.Assert(rows1[0][2], Equals, `"attr"`)
+	c.Assert(rows1[0][3], Equals, rows[0][3])
+	c.Assert(rows1[0][4], Equals, rows[0][4])
+	// check partition p0's rule
+	c.Assert(rows1[1][0], Equals, "schema/test/t1/p0")
+	c.Assert(rows1[1][2], Equals, `"attr1"`)
+	c.Assert(rows1[1][3], Equals, rows[1][3])
+	c.Assert(rows1[1][4], Equals, rows[1][4])
+}
+
+func (s *testDBSuite8) TestFlashbackTable(c *C) {
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11)
+);`)
+
+	timeBeforeDrop, _, safePointSQL, resetGC := testkit.MockGC(tk)
+	defer resetGC()
+
+	// Set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// Set GC enable.
+	err = gcutil.EnableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	// add rules
+	_, err = tk.Exec(`alter table t1 attributes="attr";`)
+	c.Assert(err, IsNil)
+	_, err = tk.Exec(`alter table t1 partition p0 attributes="attr1";`)
+	c.Assert(err, IsNil)
+	rows := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
+	c.Assert(len(rows), Equals, 2)
+	// drop table
+	_, err = tk.Exec(`drop table t1;`)
+	c.Assert(err, IsNil)
+	// flashback table
+	_, err = tk.Exec(`flashback table t1 to t2;`)
+	c.Assert(err, IsNil)
+	rows1 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
+	c.Assert(len(rows1), Equals, 2)
+	// check table t2's rule
+	c.Assert(rows1[0][0], Equals, "schema/test/t2")
+	c.Assert(rows1[0][2], Equals, `"attr"`)
+	c.Assert(rows1[0][3], Equals, rows[0][3])
+	c.Assert(rows1[0][4], Equals, rows[0][4])
+	// check partition p0's rule
+	c.Assert(rows1[1][0], Equals, "schema/test/t2/p0")
+	c.Assert(rows1[1][2], Equals, `"attr1"`)
+	c.Assert(rows1[1][3], Equals, rows[1][3])
+	c.Assert(rows1[1][4], Equals, rows[1][4])
+
+	// truncate table
+	_, err = tk.Exec(`truncate table t2;`)
+	c.Assert(err, IsNil)
+	// flashback table
+	_, err = tk.Exec(`flashback table t2 to t3;`)
+	c.Assert(err, IsNil)
+	rows2 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
+	c.Assert(len(rows1), Equals, 2)
+	// check table t3's rule
+	c.Assert(rows2[0][0], Equals, "schema/test/t3")
+	c.Assert(rows2[0][2], Equals, `"attr"`)
+	c.Assert(rows2[0][3], Equals, rows[0][3])
+	c.Assert(rows2[0][4], Equals, rows[0][4])
+	// check partition p0's rule
+	c.Assert(rows2[1][0], Equals, "schema/test/t3/p0")
+	c.Assert(rows2[1][2], Equals, `"attr1"`)
+	c.Assert(rows2[1][3], Equals, rows[1][3])
+	c.Assert(rows2[1][4], Equals, rows[1][4])
 }
 
 func (s *testDBSuite8) TestPartition(c *C) {
