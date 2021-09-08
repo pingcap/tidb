@@ -67,6 +67,23 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		}
 		return ver, errors.Trace(err)
 	}
+	// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
+	if tbInfo.DirectPlacementOpts != nil && tbInfo.PlacementPolicyRef != nil {
+		return ver, errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
+	}
+	if tbInfo.DirectPlacementOpts != nil {
+		// check the direct placement option compatibility.
+		if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+	if tbInfo.PlacementPolicyRef != nil {
+		// placement policy reference will override the direct placement options.
+		_, err = checkPlacementPolicyExistAndCancelNonExistJob(t, job, tbInfo.PlacementPolicyRef.ID)
+		if err != nil {
+			return ver, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
+		}
+	}
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
