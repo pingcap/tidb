@@ -2826,10 +2826,13 @@ func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx 
 	// TODO: Which input arguments are needed?
 	// TODO: What fields should be there and where should the data come from?
 	// TODO: What privileges will be needed?
+	// TODO: Add data from setDataFromTables for DirectPlacementRef where set for each table! (Any way to process a big catalog of tables?)
 	// Same logic as setDataForPlacementPolicy but different output
-	//checker := privilege.GetPrivilegeManager(sctx)
+	checker := privilege.GetPrivilegeManager(sctx)
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	var rows [][]types.Datum
+
+	// Get global PLACEMENT POLICIES
 	for _, policy := range is.AllPlacementPolicies() {
 		//fmt.Println("Policy %v ?", policy)
 		// Did we say that we would skip syntactic sugar?
@@ -2857,6 +2860,61 @@ func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx 
 		)
 		rows = append(rows, row)
 	}
+
+	// Get DIRECT PLACEMENT from schemas/tables/partitions
+	for _, schema := range schemas {
+		// TODO: Filter on schema, to avoid iterating over every schema if SELECT * FROM placment_rules WHERE SCHEMA_NAME IN ('schema1', 'schema2')
+		anyTablePriv := false
+		for _, table := range schema.Tables {
+			if table.IsView() {
+				continue
+			}
+			// TODO: Filter on table, to avoid iterating over every table if SELECT * FROM placment_rules WHERE TABLE_NAME IN ('t1', 't2')
+			// Any privilege on the schema or a table within the schema should allow showing the direct placement rules for that schema (on schema level)
+			// TODO: add test for privileges per table
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+			anyTablePriv = true
+			if table.GetPartitionInfo() != nil {
+				// TODO: how to get DIRECT PLACEMENT from a partition?
+				for _, pi := range table.GetPartitionInfo().Definitions {
+					// does pi have DirectPlacementRef?
+					fmt.Printf("%v\n", pi)
+				}
+			}
+			if table.DirectPlacementOpts == nil {
+				continue
+			}
+			record := types.MakeDatums(
+				nil,                   // PLACEMENT POLICY ID, null since direct placement
+				infoschema.CatalogVal, // CATALOG
+				nil,                   // PLACEMENT POLICY, null since direct placement
+				schema.Name.O,         // SCHEMA
+				table.Name.O,          // TABLE
+				nil,                   // PARTITION
+				table.DirectPlacementOpts.PrimaryRegion,
+				table.DirectPlacementOpts.Regions,
+				table.DirectPlacementOpts.Constraints,
+				table.DirectPlacementOpts.LeaderConstraints,
+				table.DirectPlacementOpts.VoterConstraints,
+				table.DirectPlacementOpts.FollowerConstraints,
+				table.DirectPlacementOpts.LearnerConstraints,
+				table.DirectPlacementOpts.Schedule,
+				table.DirectPlacementOpts.Voters,
+				table.DirectPlacementOpts.Followers,
+				table.DirectPlacementOpts.Learners,
+			)
+			rows = append(rows, record)
+		}
+		// TODO: add test for privileges per schema
+		// Any privilege on global level, the schema or any table within that schema should allow showing the direct placement rules for that schema (on schema level)
+		if !anyTablePriv && checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
+			continue
+		}
+		// TODO: how to get DIRECT PLACEMENT from a schema?
+	}
+
 	e.rows = rows
 	return nil
 }
