@@ -430,7 +430,7 @@ func (rc *Controller) EstimateSourceData(ctx context.Context) (int64, error) {
 }
 
 // LocalResource checks the local node has enough resources for this import when local backend enabled;
-func (rc *Controller) LocalResource(ctx context.Context, sourceSize int64) error {
+func (rc *Controller) LocalResource(sourceSize int64) error {
 	if rc.isSourceInLocal() {
 		sourceDir := strings.TrimPrefix(rc.cfg.Mydumper.SourceDir, storage.LocalURIPrefix)
 		same, err := common.SameDisk(sourceDir, rc.cfg.TikvImporter.SortedKVDir)
@@ -449,9 +449,6 @@ func (rc *Controller) LocalResource(ctx context.Context, sourceSize int64) error
 		return errors.Trace(err)
 	}
 	localAvailable := storageSize.Available
-	if err = rc.taskMgr.InitTask(ctx, sourceSize); err != nil {
-		return errors.Trace(err)
-	}
 
 	var message string
 	var passed bool

@@ -1716,13 +1716,16 @@ func (rc *Controller) isLocalBackend() bool {
 // 4. Lightning configuration
 // before restore tables start.
 func (rc *Controller) preCheckRequirements(ctx context.Context) error {
-	if err := rc.ClusterIsAvailable(ctx); err != nil {
-		return errors.Trace(err)
+	if rc.cfg.App.CheckRequirements {
+		if err := rc.ClusterIsAvailable(ctx); err != nil {
+			return errors.Trace(err)
+		}
+
+		if err := rc.StoragePermission(ctx); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
-	if err := rc.StoragePermission(ctx); err != nil {
-		return errors.Trace(err)
-	}
 	if err := rc.metaMgrBuilder.Init(ctx); err != nil {
 		return err
 	}
@@ -1741,29 +1744,37 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		// We still need to sample source data even if this task has existed, because we need to judge whether the
+		// source is in order as row key to decide how to sort local data.
+		source, err := rc.EstimateSourceData(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if !taskExist {
-			source, err := rc.EstimateSourceData(ctx)
-			if err != nil {
+			if err = rc.taskMgr.InitTask(ctx, source); err != nil {
 				return errors.Trace(err)
 			}
-			err = rc.LocalResource(ctx, source)
-			if err != nil {
-				rc.taskMgr.CleanupTask(ctx)
-				return errors.Trace(err)
-			}
-			if err := rc.ClusterResource(ctx, source); err != nil {
-				rc.taskMgr.CleanupTask(ctx)
-				return errors.Trace(err)
-			}
-			if err := rc.CheckClusterRegion(ctx); err != nil {
-				return errors.Trace(err)
+			if rc.cfg.App.CheckRequirements {
+				err = rc.LocalResource(source)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if err := rc.ClusterResource(ctx, source); err != nil {
+					rc.taskMgr.CleanupTask(ctx)
+					return errors.Trace(err)
+				}
+				if err := rc.CheckClusterRegion(ctx); err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 	}
-	if rc.tidbGlue.OwnsSQLExecutor() {
+
+	if rc.tidbGlue.OwnsSQLExecutor() && rc.cfg.App.CheckRequirements {
 		// print check info at any time.
 		fmt.Print(rc.checkTemplate.Output())
-		if rc.cfg.App.CheckRequirements && !rc.checkTemplate.Success() {
+		if !rc.checkTemplate.Success() {
 			// if check requirements is true, return error.
 			if !taskExist && rc.taskMgr != nil {
 				rc.taskMgr.CleanupTask(ctx)
