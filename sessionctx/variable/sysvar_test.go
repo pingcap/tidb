@@ -17,6 +17,7 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -661,4 +662,12 @@ func (*testSysVarSuite) TestValidateWithRelaxedValidation(c *C) {
 	vars := NewSessionVars()
 	val := sv.ValidateWithRelaxedValidation(vars, "1", ScopeGlobal)
 	c.Assert(val, Equals, "ON")
+}
+
+func TestTiDBReplicaRead(t *testing.T) {
+	sv := GetSysVar(TiDBReplicaRead)
+	vars := NewSessionVars()
+	val, err := sv.Validate(vars, "follower", ScopeGlobal)
+	require.Equal(t, val, "follower")
+	require.NoError(t, err)
 }
