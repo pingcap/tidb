@@ -1308,10 +1308,10 @@ func (cc *clientConn) flush(ctx context.Context) error {
 
 func (cc *clientConn) writeOK(ctx context.Context) error {
 	msg := cc.ctx.LastMessage()
-	return cc.writeOkWith(ctx, msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.Status(), cc.ctx.WarningCount())
+	return cc.writeOkWith(ctx, msg, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.WarningCount())
 }
 
-func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows, lastInsertID uint64, status, warnCnt uint16) error {
+func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows, lastInsertID uint64, warnCnt uint16) error {
 	enclen := 0
 	if len(msg) > 0 {
 		enclen = lengthEncodedIntSize(uint64(len(msg))) + len(msg)
@@ -1322,7 +1322,7 @@ func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows,
 	data = dumpLengthEncodedInt(data, affectedRows)
 	data = dumpLengthEncodedInt(data, lastInsertID)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
-		data = dumpUint16(data, status)
+		data = dumpUint16(data, cc.ctx.Status())
 		data = dumpUint16(data, warnCnt)
 	}
 	if enclen > 0 {
@@ -1380,17 +1380,14 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 // writeEOF writes an EOF packet.
 // Note this function won't flush the stream because maybe there are more
 // packets following it.
-// serverStatus, a flag bit represents server information
 // in the packet.
-func (cc *clientConn) writeEOF(serverStatus uint16) error {
+func (cc *clientConn) writeEOF() error {
 	data := cc.alloc.AllocWithLen(4, 9)
 
 	data = append(data, mysql.EOFHeader)
 	if cc.capability&mysql.ClientProtocol41 > 0 {
 		data = dumpUint16(data, cc.ctx.WarningCount())
-		status := cc.ctx.Status()
-		status |= serverStatus
-		data = dumpUint16(data, status)
+		data = dumpUint16(data, cc.ctx.Status())
 	}
 
 	err := cc.writePacket(data)
@@ -1649,7 +1646,8 @@ func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
-	sc := cc.ctx.GetSessionVars().StmtCtx
+	sessVars := cc.ctx.GetSessionVars()
+	sc := sessVars.StmtCtx
 	prevWarns := sc.GetWarnings()
 	stmts, err := cc.ctx.Parse(ctx, sql)
 	if err != nil {
@@ -1672,11 +1670,11 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		// by early terminating the first statement, and then running an entirely
 		// new statement.
 
-		capabilities := cc.ctx.GetSessionVars().ClientCapability
+		capabilities := sessVars.ClientCapability
 		if capabilities&mysql.ClientMultiStatements < 1 {
 			// The client does not have multi-statement enabled. We now need to determine
 			// how to handle an unsafe situation based on the multiStmt sysvar.
-			switch cc.ctx.GetSessionVars().MultiStatementMode {
+			switch sessVars.MultiStatementMode {
 			case variable.OffInt:
 				err = errMultiStatementDisabled
 				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
@@ -1704,19 +1702,27 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			// Save the point plan in Session so we don't need to build the point plan again.
 			cc.ctx.SetValue(plannercore.PointPlanKey, plannercore.PointPlanVal{Plan: pointPlans[i]})
 		}
-		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
+		if i == len(stmts)-1 {
+			sessVars.StmtCtx.AppendWarnings(parserWarns)
+		} else {
+			sessVars.SetStatusFlag(mysql.ServerMoreResultsExists, true)
+		}
+		retryable, err = cc.handleStmt(ctx, stmt)
 		if err != nil {
-			_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
+			_, allowTiFlashFallback := sessVars.AllowFallbackToTiKV[kv.TiFlash]
 			if allowTiFlashFallback && errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) && retryable {
 				// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
 				// server and fallback to TiKV.
-				warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
+				if i == len(stmts)-1 {
+					warns := []stmtctx.SQLWarn{{Level: stmtctx.WarnLevelError, Err: err}}
+					sessVars.StmtCtx.AppendWarnings(warns)
+				}
 				func() {
-					delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
+					delete(sessVars.IsolationReadEngines, kv.TiFlash)
 					defer func() {
-						cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
+						sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 					}()
-					_, err = cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
+					_, err = cc.handleStmt(ctx, stmt)
 				}()
 				if err != nil {
 					break
@@ -1835,7 +1841,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 
 // The first return value indicates whether the call of handleStmt has no side effect and can be retried.
 // Currently the first return value is used to fallback to TiKV when TiFlash is down.
-func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) (bool, error) {
+func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode) (bool, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
@@ -1851,27 +1857,18 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 		return true, err
 	}
 
-	if lastStmt {
-		cc.ctx.GetSessionVars().StmtCtx.AppendWarnings(warns)
-	}
-
-	status := cc.ctx.Status()
-	if !lastStmt {
-		status |= mysql.ServerMoreResultsExists
-	}
-
 	if rs != nil {
 		connStatus := atomic.LoadInt32(&cc.status)
 		if connStatus == connStatusShutdown {
 			return false, executor.ErrQueryInterrupted
 		}
 
-		retryable, err := cc.writeResultset(ctx, rs, false, status, 0)
+		retryable, err := cc.writeResultset(ctx, rs, false, 0)
 		if err != nil {
 			return retryable, err
 		}
 	} else {
-		handled, err := cc.handleQuerySpecial(ctx, status)
+		handled, err := cc.handleQuerySpecial(ctx)
 		if handled {
 			execStmt := cc.ctx.Value(session.ExecStmtVarKey)
 			if execStmt != nil {
@@ -1885,7 +1882,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	return false, nil
 }
 
-func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bool, error) {
+func (cc *clientConn) handleQuerySpecial(ctx context.Context) (bool, error) {
 	handled := false
 	loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 	if loadDataInfo != nil {
@@ -1923,11 +1920,11 @@ func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bo
 			return handled, err
 		}
 		if token != "" {
-			return handled, cc.writeOkWith(ctx, token, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
+			return handled, cc.writeOkWith(ctx, token, cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.WarningCount())
 		}
 	}
 
-	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
+	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), cc.ctx.WarningCount())
 }
 
 // handleFieldList returns the field list for a table.
@@ -1952,7 +1949,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 			return err
 		}
 	}
-	if err := cc.writeEOF(0); err != nil {
+	if err := cc.writeEOF(); err != nil {
 		return err
 	}
 	return cc.flush(ctx)
@@ -1960,12 +1957,11 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 
 // writeResultset writes data into a resultset and uses rs.Next to get row data back.
 // If binary is true, the data would be encoded in BINARY format.
-// serverStatus, a flag bit represents server information.
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
 // retryable indicates whether the call of writeResultset has no side effect and can be retried to correct error. The call
 // has side effect in cursor mode or once data has been sent to client. Currently retryable is used to fallback to TiKV when
 // TiFlash is down.
-func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16, fetchSize int) (retryable bool, runErr error) {
+func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary bool, fetchSize int) (retryable bool, runErr error) {
 	defer func() {
 		// close ResultSet when cursor doesn't exist
 		r := recover()
@@ -1983,10 +1979,10 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.String("stack", string(buf)))
 	}()
 	var err error
-	if mysql.HasCursorExistsFlag(serverStatus) {
-		err = cc.writeChunksWithFetchSize(ctx, rs, serverStatus, fetchSize)
+	if mysql.HasCursorExistsFlag(cc.ctx.Status()) {
+		err = cc.writeChunksWithFetchSize(ctx, rs, fetchSize)
 	} else {
-		retryable, err = cc.writeChunks(ctx, rs, binary, serverStatus)
+		retryable, err = cc.writeChunks(ctx, rs, binary)
 	}
 	if err != nil {
 		return retryable, err
@@ -1995,7 +1991,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	return false, cc.flush(ctx)
 }
 
-func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
+func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
 	if err := cc.writePacket(data); err != nil {
@@ -2008,14 +2004,13 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 			return err
 		}
 	}
-	return cc.writeEOF(serverStatus)
+	return cc.writeEOF()
 }
 
 // writeChunks writes data from a Chunk, which filled data by a ResultSet, into a connection.
 // binary specifies the way to dump data. It throws any error while dumping data.
-// serverStatus, a flag bit represents server information
 // The first return value indicates whether error occurs at the first call of ResultSet.Next.
-func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) (bool, error) {
+func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool) (bool, error) {
 	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewChunk()
 	gotColumnInfo := false
@@ -2047,7 +2042,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns := rs.Columns()
-			err = cc.writeColumnInfo(columns, serverStatus)
+			err = cc.writeColumnInfo(columns)
 			if err != nil {
 				return false, err
 			}
@@ -2080,14 +2075,13 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
 	}
-	return false, cc.writeEOF(serverStatus)
+	return false, cc.writeEOF()
 }
 
 // writeChunksWithFetchSize writes data from a Chunk, which filled data by a ResultSet, into a connection.
 // binary specifies the way to dump data. It throws any error while dumping data.
-// serverStatus, a flag bit represents server information.
 // fetchSize, the desired number of rows to be fetched each time when client uses cursor.
-func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, serverStatus uint16, fetchSize int) error {
+func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet, fetchSize int) error {
 	fetchedRows := rs.GetFetchedRows()
 
 	// if fetchedRows is not enough, getting data from recordSet.
@@ -2112,10 +2106,10 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
 	// and close ResultSet.
 	if len(fetchedRows) == 0 {
-		serverStatus &^= mysql.ServerStatusCursorExists
-		serverStatus |= mysql.ServerStatusLastRowSend
+		cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, false)
+		cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusLastRowSend, true)
 		terror.Call(rs.Close)
-		return cc.writeEOF(serverStatus)
+		return cc.writeEOF()
 	}
 
 	// construct the rows sent to the client according to fetchSize.
@@ -2153,7 +2147,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	if cl, ok := rs.(fetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
-	return cc.writeEOF(serverStatus)
+	return cc.writeEOF()
 }
 
 func (cc *clientConn) setConn(conn net.Conn) {

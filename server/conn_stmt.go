@@ -94,7 +94,7 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 			}
 		}
 
-		if err := cc.writeEOF(0); err != nil {
+		if err := cc.writeEOF(); err != nil {
 			return err
 		}
 	}
@@ -109,7 +109,7 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 			}
 		}
 
-		if err := cc.writeEOF(0); err != nil {
+		if err := cc.writeEOF(); err != nil {
 			return err
 		}
 
@@ -239,7 +239,8 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	// Tell the client cursor exists in server by setting proper serverStatus.
 	if useCursor {
 		stmt.StoreResultSet(rs)
-		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
+		cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+		err = cc.writeColumnInfo(rs.Columns())
 		if err != nil {
 			return false, err
 		}
@@ -250,7 +251,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		return false, cc.flush(ctx)
 	}
 	defer terror.Call(rs.Close)
-	retryable, err := cc.writeResultset(ctx, rs, true, 0, 0)
+	retryable, err := cc.writeResultset(ctx, rs, true, 0)
 	if err != nil {
 		return retryable, errors.Annotate(err, cc.preparedStmt2String(uint32(stmt.ID())))
 	}
@@ -292,7 +293,8 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs"), cc.preparedStmt2String(stmtID))
 	}
 
-	_, err = cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize))
+	cc.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+	_, err = cc.writeResultset(ctx, rs, true, int(fetchSize))
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
@@ -673,7 +675,7 @@ func (cc *clientConn) handleSetOption(ctx context.Context, data []byte) (err err
 	default:
 		return mysql.ErrMalformPacket
 	}
-	if err = cc.writeEOF(0); err != nil {
+	if err = cc.writeEOF(); err != nil {
 		return err
 	}
 
