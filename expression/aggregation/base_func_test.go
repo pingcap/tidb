@@ -16,14 +16,14 @@ type mockBaseFuncSuite struct {
 	ctx sessionctx.Context
 }
 
-func createmockBaseFuncSuite(t *testing.T) (s *mockBaseFuncSuite) {
+func createBaseFuncSuite(t *testing.T) (s *mockBaseFuncSuite) {
 	s = new(mockBaseFuncSuite)
 	s.ctx = mock.NewContext()
 	return
 }
 
 func TestClone(t *testing.T) {
-	s := createmockBaseFuncSuite(t)
+	s := createBaseFuncSuite(t)
 	col := &expression.Column{
 		UniqueID: 0,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
