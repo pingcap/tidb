@@ -17,6 +17,9 @@ package driver
 import (
 	"context"
 
+	"github.com/pingcap/errors"
+	txn2 "github.com/pingcap/tidb/store/driver/txn"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -99,6 +102,28 @@ func (s *testTxnSuite) TestTxnGet(c *C) {
 	v, err = txn.Get(context.Background(), kv.Key("kn"))
 	c.Assert(v, IsNil)
 	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
+
+	// make snapshot returns error
+	errRetriever := &mockErrRetriever{err: errors.New("error")}
+	txn.SetOption(
+		kv.SortedCustomRetrievers,
+		[]*txn2.RangedKVRetriever{txn2.NewRangeRetriever(errRetriever, nil, nil)},
+	)
+
+	// should return kv.ErrNotExist because k1 is deleted in memBuff
+	v, err = txn.Get(context.Background(), kv.Key("k1"))
+	c.Assert(v, IsNil)
+	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
+
+	// should return dirty data because k2 is in memBuff
+	v, err = txn.Get(context.Background(), kv.Key("k2"))
+	c.Assert(err, IsNil)
+	c.Assert(v, BytesEquals, []byte("v2+"))
+
+	// should return error because kn is read from snapshot
+	v, err = txn.Get(context.Background(), kv.Key("kn"))
+	c.Assert(v, IsNil)
+	c.Assert(err, Equals, errRetriever.err)
 }
 
 func (s *testTxnSuite) TestTxnBatchGet(c *C) {
@@ -127,6 +152,31 @@ func (s *testTxnSuite) TestTxnBatchGet(c *C) {
 	c.Assert(result["k1"], BytesEquals, []byte("v1+"))
 	c.Assert(result["k3"], BytesEquals, []byte("v3"))
 	c.Assert(result["k4"], BytesEquals, []byte("v4+"))
+
+	// make snapshot returns error
+	errRetriever := &mockErrRetriever{err: errors.New("error")}
+	txn.SetOption(
+		kv.SortedCustomRetrievers,
+		[]*txn2.RangedKVRetriever{txn2.NewRangeRetriever(errRetriever, nil, nil)},
+	)
+
+	// return data if not read from snapshot
+	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k4")})
+	c.Assert(err, IsNil)
+	c.Assert(len(result), Equals, 2)
+	c.Assert(result["k1"], BytesEquals, []byte("v1+"))
+	c.Assert(result["k4"], BytesEquals, []byte("v4+"))
+
+	// fails if read from snapshot
+	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k3")})
+	c.Assert(result, IsNil)
+	c.Assert(err, Equals, errRetriever.err)
+	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k3"), kv.Key("k4")})
+	c.Assert(result, IsNil)
+	c.Assert(err, Equals, errRetriever.err)
+	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k4"), kv.Key("kn")})
+	c.Assert(result, IsNil)
+	c.Assert(err, Equals, errRetriever.err)
 }
 
 func (s *testTxnSuite) TestTxnScan(c *C) {

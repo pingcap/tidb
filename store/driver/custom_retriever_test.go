@@ -28,6 +28,23 @@ type testCustomRetrieverSuite struct {
 	store kv.Storage
 }
 
+type mockErrRetriever struct {
+	err error
+}
+
+// Get gets the value for key k from kv store. Always return nil for this retriever
+func (r *mockErrRetriever) Get(_ context.Context, _ kv.Key) ([]byte, error) {
+	return nil, r.err
+}
+
+// Iter creates an Iterator. Always return EmptyIterator for this retriever
+func (r *mockErrRetriever) Iter(_ kv.Key, _ kv.Key) (kv.Iterator, error) { return nil, r.err }
+
+// IterReverse creates a reversed Iterator. Always return EmptyIterator for this retriever
+func (r *mockErrRetriever) IterReverse(_ kv.Key) (kv.Iterator, error) {
+	return nil, r.err
+}
+
 var _ = SerialSuites(&testCustomRetrieverSuite{})
 
 func (s *testCustomRetrieverSuite) SetUpTest(c *C) {
@@ -50,6 +67,10 @@ func (s *testCustomRetrieverSuite) TestSnapshotGetWithCustomRetrievers(c *C) {
 		{"a2", "s2"},
 	})
 
+	errRetriever := &mockErrRetriever{
+		err: errors.New("error"),
+	}
+
 	snap.SetOption(kv.SortedCustomRetrievers, []*txn2.RangedKVRetriever{
 		s.newMemBufferRetriever(c, "a1", "a2", [][]interface{}{
 			{"a0", "v0"},
@@ -61,6 +82,7 @@ func (s *testCustomRetrieverSuite) TestSnapshotGetWithCustomRetrievers(c *C) {
 		s.newMemBufferRetriever(c, "a3", "a4", [][]interface{}{
 			{"a1", "vx"},
 		}),
+		txn2.NewRangeRetriever(errRetriever, kv.Key("a6"), kv.Key("a7")),
 	})
 
 	cases := [][]interface{}{
@@ -73,6 +95,8 @@ func (s *testCustomRetrieverSuite) TestSnapshotGetWithCustomRetrievers(c *C) {
 		{"a12", kv.ErrNotExist},
 		{"a13", kv.ErrNotExist},
 		{"a1x", kv.ErrNotExist},
+		{"a6", errRetriever.err},
+		{"a7", kv.ErrNotExist},
 	}
 
 	ctx := context.Background()
@@ -97,6 +121,10 @@ func (s *testCustomRetrieverSuite) TestSnapshotBatchGetWithCustomRetrievers(c *C
 		{"a2", "s2"},
 	})
 
+	errRetriever := &mockErrRetriever{
+		err: errors.New("error"),
+	}
+
 	snap.SetOption(kv.SortedCustomRetrievers, []*txn2.RangedKVRetriever{
 		s.newMemBufferRetriever(c, "a1", "a2", [][]interface{}{
 			{"a0", "v0"},
@@ -108,11 +136,13 @@ func (s *testCustomRetrieverSuite) TestSnapshotBatchGetWithCustomRetrievers(c *C
 		s.newMemBufferRetriever(c, "a3", "a4", [][]interface{}{
 			{"a1", "vx"},
 		}),
+		txn2.NewRangeRetriever(errRetriever, kv.Key("a6"), kv.Key("a7")),
 	})
 
 	cases := []struct {
 		keys   []interface{}
 		result map[string]string
+		err    error
 	}{
 		{
 			keys:   []interface{}{},
@@ -134,6 +164,14 @@ func (s *testCustomRetrieverSuite) TestSnapshotBatchGetWithCustomRetrievers(c *C
 			keys:   []interface{}{"a0", "a01", "a02", "a03", "a1", "a11", "a12", "a13", "a1x", "a3", "a5"},
 			result: map[string]string{"a0": "s0", "a01": "s01", "a1": "v1", "a11": "v11"},
 		},
+		{
+			keys: []interface{}{"a6"},
+			err:  errRetriever.err,
+		},
+		{
+			keys: []interface{}{"a0", "a6"},
+			err:  errRetriever.err,
+		},
 	}
 
 	ctx := context.Background()
@@ -144,13 +182,23 @@ func (s *testCustomRetrieverSuite) TestSnapshotBatchGetWithCustomRetrievers(c *C
 		}
 
 		m, err := snap.BatchGet(ctx, keys)
-		c.Assert(err, IsNil)
-		c.Assert(m, NotNil)
-		c.Assert(len(m), Equals, len(ca.result))
-		for k, expectedVal := range ca.result {
-			val, ok := m[k]
-			c.Assert(ok, IsTrue)
-			c.Assert(val, BytesEquals, makeBytes(expectedVal))
+
+		if ca.err == nil {
+			c.Assert(err, IsNil)
+		} else {
+			c.Assert(errors.ErrorEqual(err, ca.err), IsTrue)
+		}
+
+		if ca.result == nil {
+			c.Assert(m, IsNil)
+		} else {
+			c.Assert(m, NotNil)
+			c.Assert(len(m), Equals, len(ca.result))
+			for k, expectedVal := range ca.result {
+				val, ok := m[k]
+				c.Assert(ok, IsTrue)
+				c.Assert(val, BytesEquals, makeBytes(expectedVal))
+			}
 		}
 	}
 }
@@ -186,6 +234,7 @@ func (s *testCustomRetrieverSuite) TestSnapshotIterWithCustomRetrievers(c *C) {
 		query   []interface{}
 		reverse bool
 		result  [][]interface{}
+		err     error
 	}{
 		{
 			query: []interface{}{nil, "a1"},

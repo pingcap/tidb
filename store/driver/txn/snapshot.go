@@ -85,7 +85,7 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	if custom, val, err := s.customRetrievers.TryGet(ctx, k); custom {
-		if len(val) == 0 {
+		if err == nil && len(val) == 0 {
 			return nil, kv.ErrNotExist
 		}
 		return val, err

@@ -91,10 +91,17 @@ func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (iter kv.Iterator, err err
 	}
 
 	if snapIter, err = txn.GetSnapshot().Iter(k, upperBound); err != nil {
+		dirtyIter.Close()
 		return nil, err
 	}
 
-	return NewUnionIter(dirtyIter, snapIter, false)
+	iter, err = NewUnionIter(dirtyIter, snapIter, false)
+	if err != nil {
+		dirtyIter.Close()
+		snapIter.Close()
+	}
+
+	return iter, err
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
@@ -109,10 +116,17 @@ func (txn *tikvTxn) IterReverse(k kv.Key) (iter kv.Iterator, err error) {
 	}
 
 	if snapIter, err = txn.GetSnapshot().IterReverse(k); err != nil {
+		dirtyIter.Close()
 		return nil, err
 	}
 
-	return NewUnionIter(dirtyIter, snapIter, true)
+	iter, err = NewUnionIter(dirtyIter, snapIter, false)
+	if err != nil {
+		dirtyIter.Close()
+		snapIter.Close()
+	}
+
+	return iter, err
 }
 
 // BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
@@ -138,7 +152,7 @@ func (txn *tikvTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 		val, err = txn.GetSnapshot().Get(ctx, k)
 	}
 
-	if len(val) == 0 {
+	if err == nil && len(val) == 0 {
 		return nil, kv.ErrNotExist
 	}
 
