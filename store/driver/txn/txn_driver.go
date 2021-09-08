@@ -120,7 +120,7 @@ func (txn *tikvTxn) IterReverse(k kv.Key) (iter kv.Iterator, err error) {
 		return nil, err
 	}
 
-	iter, err = NewUnionIter(dirtyIter, snapIter, false)
+	iter, err = NewUnionIter(dirtyIter, snapIter, true)
 	if err != nil {
 		dirtyIter.Close()
 		snapIter.Close()

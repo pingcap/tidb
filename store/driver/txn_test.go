@@ -209,6 +209,16 @@ func (s *testTxnSuite) TestTxnScan(c *C) {
 	iter, err = txn.IterReverse(kv.Key("k9"))
 	c.Assert(err, IsNil)
 	checkIter(c, iter, [][]interface{}{{"k7", "v7"}, {"k31", "v31+"}, {"k3", "v3+"}, {"k1", "v1+"}})
+
+	// make snapshot returns error
+	errRetriever := &mockErrRetriever{err: errors.New("error")}
+	txn.SetOption(
+		kv.SortedCustomRetrievers,
+		[]*txn2.RangedKVRetriever{txn2.NewRangeRetriever(errRetriever, nil, nil)},
+	)
+	iter, err = txn.Iter(kv.Key("k1"), kv.Key("k2"))
+	c.Assert(err, NotNil)
+	c.Assert(err, Equals, errRetriever.err)
 }
 
 func checkIter(c *C, iter kv.Iterator, expected [][]interface{}) {
