@@ -77,6 +77,7 @@ func (i *SliceIter) Close() {
 	i.cur = -1
 }
 
+// MockedIter is a mocked iter for test
 type MockedIter struct {
 	kv.Iterator
 	t                *testing.T
@@ -85,6 +86,7 @@ type MockedIter struct {
 	failOnMultiClose bool
 }
 
+// NewMockIterFromRecords creates a new MockedIter
 func NewMockIterFromRecords(t *testing.T, records []*kv.Entry, failOnMultiClose bool) *MockedIter {
 	return &MockedIter{
 		t:                t,
@@ -93,18 +95,22 @@ func NewMockIterFromRecords(t *testing.T, records []*kv.Entry, failOnMultiClose 
 	}
 }
 
+// InjectNextError injects error to its Next
 func (i *MockedIter) InjectNextError(err error) {
 	i.nextErr = err
 }
 
+// GetInjectedNextError get the injected error
 func (i *MockedIter) GetInjectedNextError() error {
 	return i.nextErr
 }
 
+// FailOnMultiClose set if should fail when Close is invoked more than once
 func (i *MockedIter) FailOnMultiClose(fail bool) {
 	i.failOnMultiClose = fail
 }
 
+// Next implements kv.Iterator.Next
 func (i *MockedIter) Next() error {
 	if i.nextErr != nil {
 		return i.nextErr
@@ -112,6 +118,7 @@ func (i *MockedIter) Next() error {
 	return i.Iterator.Next()
 }
 
+// Close implements kv.Iterator.Close
 func (i *MockedIter) Close() {
 	if i.closed && i.failOnMultiClose {
 		assert.FailNow(i.t, "Multi close iter")
@@ -120,6 +127,7 @@ func (i *MockedIter) Close() {
 	i.Iterator.Close()
 }
 
+// Closed returns if the iter is closed
 func (i *MockedIter) Closed() bool {
 	return i.closed
 }
