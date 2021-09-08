@@ -1209,17 +1209,19 @@ func appendDirectPlacementInfo(directPlacementOpts *model.PlacementSettings, buf
 	}
 	opts := reflect.ValueOf(*directPlacementOpts)
 	typeOpts := opts.Type()
+	fmt.Fprintf(buf, " /*T![placement]")
 	for i := 0; i < opts.NumField(); i++ {
 		if !opts.Field(i).IsZero() {
 			v := opts.Field(i).Interface()
 			switch v.(type) {
 			case string:
-				fmt.Fprintf(buf, ` /*T![placement] %s="%s" */`, strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
+				fmt.Fprintf(buf, ` %s="%s"`, strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
 			case uint64:
-				fmt.Fprintf(buf, ` /*T![placement] %s=%d */`, strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
+				fmt.Fprintf(buf, " %s=%d", strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
 			}
 		}
 	}
+	fmt.Fprintf(buf, " */")
 }
 
 func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) {
