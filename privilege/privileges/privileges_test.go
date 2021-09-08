@@ -2464,3 +2464,11 @@ func TestPlacementPolicyStmt(t *testing.T) {
 	mustExec(t, se, dropStmt)
 
 }
+
+func TestDBNameCaseSensitivityInTableLevel(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+	se := newSession(t, store, dbName)
+	mustExec(t, se, "CREATE USER test_user")
+	mustExec(t, se, "grant select on metrics_schema.up to test_user;")
+}

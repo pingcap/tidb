@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
-	"github.com/pingcap/tidb/util/placementpolicy"
 )
 
 // Builder builds a new InfoSchema.
@@ -648,7 +647,7 @@ func NewBuilder(store kv.Storage) *Builder {
 		store: store,
 		is: &infoSchema{
 			schemaMap:           map[string]*schemaTables{},
-			policyMap:           map[string]*placementpolicy.PolicyInfo{},
+			policyMap:           map[string]*model.PolicyInfo{},
 			ruleBundleMap:       map[string]*placement.Bundle{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},

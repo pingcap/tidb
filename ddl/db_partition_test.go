@@ -2630,7 +2630,7 @@ func testPartitionDropIndex(c *C, store kv.Storage, lease time.Duration, idxName
 	}
 	c.Assert(idx1, NotNil)
 
-	testutil.SessionExecInGoroutine(c, store, dropIdxSQL, done)
+	testutil.SessionExecInGoroutine(store, dropIdxSQL, done)
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 LOOP:
