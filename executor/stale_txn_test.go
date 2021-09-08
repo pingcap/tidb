@@ -1118,6 +1118,7 @@ func (s *testStaleTxnSerialSuite) TestStaleSessionQuery(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t10(id) values (1);")
 	tk.MustExec("commit")
+	tk.MustExec("insert into t10(id) values (2);")
 	// query will still use staleness read
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix())), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, now.Unix()-2)), IsNil)
