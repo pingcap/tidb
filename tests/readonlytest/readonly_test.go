@@ -28,7 +28,7 @@ var (
 	ReadOnlyErrMsg = "Error 1836: Running in read-only mode"
 )
 
-type TestReadOnlySuit struct {
+type ReadOnlySuite struct {
 	db  *sql.DB
 	udb *sql.DB
 	rdb *sql.DB
@@ -55,9 +55,9 @@ func setReadOnly(t *testing.T, db *sql.DB, status int) {
 	require.NoError(t, err)
 }
 
-func SetUpSuite(t *testing.T) *TestReadOnlySuit {
+func createReadOnlySuite(t *testing.T) (s *ReadOnlySuite, clean func()) {
+	s = new(ReadOnlySuite)
 	var err error
-	s := new(TestReadOnlySuit)
 	s.db, err = sql.Open("mysql", fmt.Sprintf("root:%s@(%s:%d)/test", *tidbRootPassword, "127.0.0.1", *tidbStartPort+1))
 	require.NoError(t, err)
 
@@ -81,11 +81,15 @@ func SetUpSuite(t *testing.T) *TestReadOnlySuit {
 	require.NoError(t, err)
 	s.rdb, err = sql.Open("mysql", fmt.Sprintf("r1:password@(%s:%d)/test", "127.0.0.1", *tidbStartPort+2))
 	require.NoError(t, err)
-	return s
+	clean = func() {
+		require.NoError(t, s.db.Close())
+	}
+	return
 }
 
 func TestRestriction(t *testing.T) {
-	s := SetUpSuite(t)
+	s, clean := createReadOnlySuite(t)
+	defer clean()
 	_, err := s.db.Exec("set global tidb_restricted_read_only=1")
 	require.NoError(t, err)
 	time.Sleep(1)
@@ -97,7 +101,8 @@ func TestRestriction(t *testing.T) {
 }
 
 func TestRestrictionWithConnectionPool(t *testing.T) {
-	s := SetUpSuite(t)
+	s, clean := createReadOnlySuite(t)
+	defer clean()
 	_, err := s.db.Exec("set global tidb_restricted_read_only=0")
 	require.NoError(t, err)
 	_, err = s.db.Exec("drop table if exists t")
@@ -139,7 +144,8 @@ func TestRestrictionWithConnectionPool(t *testing.T) {
 }
 
 func TestReplicationWriter(t *testing.T) {
-	s := SetUpSuite(t)
+	s, clean := createReadOnlySuite(t)
+	defer clean()
 	_, err := s.db.Exec("set global tidb_restricted_read_only=0")
 	require.NoError(t, err)
 	_, err = s.db.Exec("drop table if exists t")
