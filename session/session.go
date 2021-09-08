@@ -2844,8 +2844,7 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 	}
 }
 
-func genFnGetQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) func(buf *strings.Builder) string {
-	vars := s.GetSessionVars()
+func genFnGetQuery(execStmt *executor.ExecStmt, isPrepared bool) func(buf *strings.Builder) string {
 	return func(buf *strings.Builder) string {
 		if isPrepared {
 			buf.WriteString(execStmt.OriginText())
@@ -2860,9 +2859,6 @@ func genFnGetQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) fun
 				queryMutable[i] = ' '
 			}
 		}
-		if !vars.EnableRedactLog {
-			buf.WriteString(vars.PreparedParams.String())
-		}
 		return buf.String()
 	}
 }
@@ -2870,7 +2866,7 @@ func genFnGetQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) fun
 func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 	vars := s.GetSessionVars()
 	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
-		fnGetQuery := genFnGetQuery(execStmt, s, isPrepared)
+		fnGetQuery := genFnGetQuery(execStmt, isPrepared)
 		fnGetSMV := func() int64 {
 			return s.GetInfoSchema().SchemaMetaVersion()
 		}
