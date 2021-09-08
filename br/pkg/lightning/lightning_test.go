@@ -447,6 +447,7 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 	}
 
 	cfg := config.NewConfig()
+	cfg.App.RegionConcurrency = 16
 	cfg.App.CheckRequirements = true
 	cfg.App.TableConcurrency = 4
 	cfg.TikvImporter.Backend = config.BackendLocal
@@ -489,22 +490,22 @@ func (s *lightningServerSuite) TestCheckSystemRequirement(c *C) {
 		},
 	}
 
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue", "return(139439)")
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue", "return(139415)")
 	c.Assert(err, IsNil)
 	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/SetRlimitError", "return(true)")
 	c.Assert(err, IsNil)
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/SetRlimitError")
 	}()
-	// with this dbMetas, the estimated fds will be 139440, so should return error
+	// with this dbMetas, the estimated fds will be 139416, so should return error
 	err = checkSystemRequirement(cfg, dbMetas)
 	c.Assert(err, NotNil)
 
 	err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue")
 	c.Assert(err, IsNil)
 
-	// the min rlimit should be bigger than the default min value (16384)
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue", "return(139440)")
+	// the min rlimit should be not smaller than the default min value (139416)
+	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue", "return(139416)")
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/GetRlimitValue")
 	}()
