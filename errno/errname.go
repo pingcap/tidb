@@ -162,7 +162,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidUseOfNull:                         mysql.Message("Invalid use of NULL value", nil),
 	ErrRegexp:                                   mysql.Message("Got error '%-.64s' from regexp", nil),
 	ErrMixOfGroupFuncAndFields:                  mysql.Message("Mixing of GROUP columns (MIN(),MAX(),COUNT(),...) with no GROUP columns is illegal if there is no GROUP BY clause", nil),
-	ErrNonexistingGrant:                         mysql.Message("There is no such grant defined for user '%-.48s' on host '%-.64s'", nil),
+	ErrNonexistingGrant:                         mysql.Message("There is no such grant defined for user '%-.48s' on host '%-.255s'", nil),
 	ErrTableaccessDenied:                        mysql.Message("%-.128s command denied to user '%-.48s'@'%-.255s' for table '%-.64s'", nil),
 	ErrColumnaccessDenied:                       mysql.Message("%-.16s command denied to user '%-.48s'@'%-.255s' for column '%-.192s' in table '%-.192s'", nil),
 	ErrIllegalGrantForTable:                     mysql.Message("Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used", nil),
