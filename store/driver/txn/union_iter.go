@@ -16,11 +16,8 @@ package txn
 
 import (
 	"bytes"
-	"encoding/hex"
 
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // UnionIter implements kv.Iterator
@@ -125,8 +122,6 @@ func (iter *UnionIter) updateCur() error {
 			} else {
 				// record from dirty comes first
 				if len(iter.dirtyIt.Value()) == 0 {
-					logutil.BgLogger().Warn("delete a record not exists?",
-						zap.String("key", hex.EncodeToString(iter.dirtyIt.Key())))
 					// jump over this deletion
 					if err := iter.dirtyNext(); err != nil {
 						return err
