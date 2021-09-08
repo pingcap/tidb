@@ -45,7 +45,7 @@ func generateRowData() []chunk.Row {
 	return rows
 }
 
-func createmockAggFuncSuite(t *testing.T) (s *mockAggFuncSuite) {
+func createAggFuncSuite(t *testing.T) (s *mockAggFuncSuite) {
 	s = new(mockAggFuncSuite)
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().GlobalVarsAccessor = variable.NewMockGlobalAccessor()
@@ -55,7 +55,7 @@ func createmockAggFuncSuite(t *testing.T) (s *mockAggFuncSuite) {
 }
 
 func TestAvg(t *testing.T) {
-	s := createmockAggFuncSuite(t)
+	s := createAggFuncSuite(t)
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
@@ -100,7 +100,7 @@ func TestAvg(t *testing.T) {
 }
 
 func TestAvgFinalMode(t *testing.T) {
-	s := createmockAggFuncSuite(t)
+	s := createAggFuncSuite(t)
 	rows := make([][]types.Datum, 0, 100)
 	for i := 1; i <= 100; i++ {
 		rows = append(rows, types.MakeDatums(i, types.NewDecFromInt(int64(i*i))))
@@ -130,7 +130,7 @@ func TestAvgFinalMode(t *testing.T) {
 }
 
 func TestSum(t *testing.T) {
-	s := createmockAggFuncSuite(t)
+	s := createAggFuncSuite(t)
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
@@ -172,7 +172,7 @@ func TestSum(t *testing.T) {
 }
 
 func TestBitAnd(t *testing.T) {
-	s := createmockAggFuncSuite(t)
+	s := createAggFuncSuite(t)
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
@@ -251,7 +251,7 @@ func TestBitAnd(t *testing.T) {
 }
 
 func TestBitOr(t *testing.T) {
-	s := createmockAggFuncSuite(t)
+	s := createAggFuncSuite(t)
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
@@ -338,7 +338,7 @@ func TestBitOr(t *testing.T) {
 }
 
 func TestBitXor(t *testing.T) {
-	s := createmockAggFuncSuite(t)
+	s := createAggFuncSuite(t)
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
@@ -417,7 +417,7 @@ func TestBitXor(t *testing.T) {
 }
 
 func TestCount(t *testing.T) {
-	s := createmockAggFuncSuite(t)
+	s := createAggFuncSuite(t)
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
@@ -458,7 +458,7 @@ func TestCount(t *testing.T) {
 }
 
 func TestConcat(t *testing.T) {
-	s := createmockAggFuncSuite(t)
+	s := createAggFuncSuite(t)
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
@@ -515,7 +515,7 @@ func TestConcat(t *testing.T) {
 }
 
 func TestFirstRow(t *testing.T) {
-	s := createmockAggFuncSuite(t)
+	s := createAggFuncSuite(t)
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
@@ -543,7 +543,7 @@ func TestFirstRow(t *testing.T) {
 }
 
 func TestMaxMin(t *testing.T) {
-	s := createmockAggFuncSuite(t)
+	s := createAggFuncSuite(t)
 	col := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
