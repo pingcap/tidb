@@ -960,10 +960,10 @@ func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] PRIMARY_REGION=\"cn-east-1\" */ " +
-			"/*T![placement] REGIONS=\"cn-east-1, cn-east-2\" */ " +
-			"/*T![placement] FOLLOWERS=2 */ " +
-			"/*T![placement] CONSTRAINTS=\"[+disk=ssd]\" */ " +
+			"/*T![placement] PRIMARY_REGION=\"cn-east-1\" */ "+
+			"/*T![placement] REGIONS=\"cn-east-1, cn-east-2\" */ "+
+			"/*T![placement] FOLLOWERS=2 */ "+
+			"/*T![placement] CONSTRAINTS=\"[+disk=ssd]\" */ "+
 			"/*T![placement] FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" */",
 	))
 
@@ -986,7 +986,6 @@ func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
 
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
 }
-
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
