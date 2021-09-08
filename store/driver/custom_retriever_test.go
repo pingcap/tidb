@@ -303,6 +303,17 @@ func (s *testCustomRetrieverSuite) TestSnapshotIterWithCustomRetrievers(c *C) {
 
 		c.Assert(iter.Valid(), IsFalse)
 	}
+
+	// test return error for Iter/IterReverse
+	errRetriever := &mockErrRetriever{err: errors.New("error")}
+	snap.SetOption(kv.SortedCustomRetrievers, []*txn2.RangedKVRetriever{txn2.NewRangeRetriever(errRetriever, nil, kv.Key("k1"))})
+	iter, err := snap.Iter(nil, nil)
+	c.Assert(iter, IsNil)
+	c.Assert(err, Equals, errRetriever.err)
+	snap.SetOption(kv.SortedCustomRetrievers, []*txn2.RangedKVRetriever{txn2.NewRangeRetriever(errRetriever, kv.Key("k1"), nil)})
+	iter, err = snap.IterReverse(nil)
+	c.Assert(iter, IsNil)
+	c.Assert(err, Equals, errRetriever.err)
 }
 
 func (s *testCustomRetrieverSuite) prepareSnapshot(c *C, data [][]interface{}) kv.Snapshot {
