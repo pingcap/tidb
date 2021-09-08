@@ -747,12 +747,12 @@ func (s *tableRestoreSuite) TestInitializeColumns(c *C) {
 		s.tr.ignoreColumns = nil
 	}()
 
-	cases := []struct{
-		columns []string
-		ignoreColumns map[string]struct{}
+	cases := []struct {
+		columns             []string
+		ignoreColumns       map[string]struct{}
 		expectedPermutation []int
-		errPat string
-	} {
+		errPat              string
+	}{
 		{
 			nil,
 			nil,
