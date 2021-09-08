@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	goutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
@@ -492,7 +493,7 @@ func getIntervalFromPolicy(policy []time.Duration, i int) (time.Duration, bool) 
 
 func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn:
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	case model.ActionCreateTable, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
@@ -509,7 +510,7 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 
 	var worker *worker
 	jobTp := job.Type
-	if jobTp == model.ActionAddIndex || jobTp == model.ActionAddPrimaryKey {
+	if admin.MayNeedBackfill(jobTp) {
 		worker = d.workers[addIdxWorker]
 	} else {
 		worker = d.workers[generalWorker]
