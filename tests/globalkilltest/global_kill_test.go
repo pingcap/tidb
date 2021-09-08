@@ -37,11 +37,6 @@ import (
 	"google.golang.org/grpc"
 )
 
-func TestGlobalKill(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
 var (
 	logLevel       = flag.String("L", "info", "test log level")
 	serverLogLevel = flag.String("server_log_level", "info", "server log level")
@@ -66,7 +61,7 @@ const (
 
 // TestGlobakKillSuite is used for automated test of "Global Kill" feature.
 // See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
-type TestGlobalKillSuite struct {
+type GlobalKillSuite struct {
 	pdCli *clientv3.Client
 	pdErr error
 
@@ -75,8 +70,8 @@ type TestGlobalKillSuite struct {
 	tikvProc  *exec.Cmd
 }
 
-func createGloabalKillSuite(t *testing.T) (s *TestGlobalKillSuite) {
-	s = new(TestGlobalKillSuite)
+func createGloabalKillSuite(t *testing.T) (s *GlobalKillSuite, clean func()) {
+	s = new(GlobalKillSuite)
 	err := logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: *logLevel}})
 	require.NoError(t, err)
 
@@ -84,10 +79,17 @@ func createGloabalKillSuite(t *testing.T) (s *TestGlobalKillSuite) {
 	err = s.startCluster()
 	require.NoError(t, err)
 	s.pdCli, s.pdErr = s.connectPD()
+	clean = func() {
+		if s.pdCli != nil {
+			require.NoError(t, err)
+		}
+		require.NoError(t, s.cleanCluster)
+	}
+
 	return
 }
 
-func (s *TestGlobalKillSuite) TearDownSuite(t *testing.T) {
+func (s *GlobalKillSuite) TearDownSuite(t *testing.T) {
 	var err error
 	if s.pdCli != nil {
 		err = s.pdCli.Close()
@@ -97,7 +99,7 @@ func (s *TestGlobalKillSuite) TearDownSuite(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func (s *TestGlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
+func (s *GlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
 	etcdLogCfg := zap.NewProductionConfig()
 	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
 	wait := 250 * time.Millisecond
@@ -133,7 +135,7 @@ func (s *TestGlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
 	return cli, nil
 }
 
-func (s *TestGlobalKillSuite) startTiKV(dataDir string) (err error) {
+func (s *GlobalKillSuite) startTiKV(dataDir string) (err error) {
 	s.tikvProc = exec.Command(*tikvBinaryPath,
 		fmt.Sprintf("--pd=%s", *pdClientPath),
 		fmt.Sprintf("--data-dir=tikv-%s", dataDir),
@@ -150,7 +152,7 @@ func (s *TestGlobalKillSuite) startTiKV(dataDir string) (err error) {
 	return nil
 }
 
-func (s *TestGlobalKillSuite) startPD(dataDir string) (err error) {
+func (s *GlobalKillSuite) startPD(dataDir string) (err error) {
 	s.pdProc = exec.Command(*pdBinaryPath,
 		"--name=pd",
 		"--log-file=pd.log",
@@ -165,7 +167,7 @@ func (s *TestGlobalKillSuite) startPD(dataDir string) (err error) {
 	return nil
 }
 
-func (s *TestGlobalKillSuite) startCluster() (err error) {
+func (s *GlobalKillSuite) startCluster() (err error) {
 	err = s.startPD(s.clusterId)
 	if err != nil {
 		return
@@ -179,7 +181,7 @@ func (s *TestGlobalKillSuite) startCluster() (err error) {
 	return
 }
 
-func (s *TestGlobalKillSuite) stopPD() (err error) {
+func (s *GlobalKillSuite) stopPD() (err error) {
 	if err = s.pdProc.Process.Kill(); err != nil {
 		return
 	}
@@ -189,7 +191,7 @@ func (s *TestGlobalKillSuite) stopPD() (err error) {
 	return nil
 }
 
-func (s *TestGlobalKillSuite) stopTiKV() (err error) {
+func (s *GlobalKillSuite) stopTiKV() (err error) {
 	if err = s.tikvProc.Process.Kill(); err != nil {
 		return
 	}
@@ -199,7 +201,7 @@ func (s *TestGlobalKillSuite) stopTiKV() (err error) {
 	return nil
 }
 
-func (s *TestGlobalKillSuite) cleanCluster() (err error) {
+func (s *GlobalKillSuite) cleanCluster() (err error) {
 	if err = s.stopPD(); err != nil {
 		return err
 	}
@@ -210,7 +212,7 @@ func (s *TestGlobalKillSuite) cleanCluster() (err error) {
 	return nil
 }
 
-func (s *TestGlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd *exec.Cmd, err error) {
+func (s *GlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd *exec.Cmd, err error) {
 	cmd = exec.Command(*tidbBinaryPath,
 		"--store=mocktikv",
 		fmt.Sprintf("-L=%s", *serverLogLevel),
@@ -228,7 +230,7 @@ func (s *TestGlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd 
 	return cmd, nil
 }
 
-func (s *TestGlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath string) (cmd *exec.Cmd, err error) {
+func (s *GlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath string) (cmd *exec.Cmd, err error) {
 	cmd = exec.Command(*tidbBinaryPath,
 		"--store=tikv",
 		fmt.Sprintf("-L=%s", *serverLogLevel),
@@ -246,7 +248,7 @@ func (s *TestGlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath s
 	return cmd, nil
 }
 
-func (s *TestGlobalKillSuite) stopService(name string, cmd *exec.Cmd, graceful bool) (err error) {
+func (s *GlobalKillSuite) stopService(name string, cmd *exec.Cmd, graceful bool) (err error) {
 	log.Info("stopping: " + cmd.String())
 	defer func() {
 		log.Info("stopped: " + cmd.String())
@@ -281,7 +283,7 @@ func (s *TestGlobalKillSuite) stopService(name string, cmd *exec.Cmd, graceful b
 	return nil
 }
 
-func (s *TestGlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
+func (s *GlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	dsn := fmt.Sprintf("root@(%s)/test", addr)
 	sleepTime := 250 * time.Millisecond
@@ -336,7 +338,7 @@ type sleepResult struct {
 	err     error
 }
 
-func (s *TestGlobalKillSuite) killByCtrlC(t *testing.T, port int, sleepTime int) time.Duration {
+func (s *GlobalKillSuite) killByCtrlC(t *testing.T, port int, sleepTime int) time.Duration {
 	cli := exec.Command("mysql",
 		"-h127.0.0.1",
 		fmt.Sprintf("-P%d", port),
@@ -397,7 +399,7 @@ func sleepRoutine(ctx context.Context, sleepTime int, conn *sql.Conn, connID uin
 }
 
 // NOTICE: db1 & db2 can be the same object, for getting conn1 & conn2 from the same TiDB instance.
-func (s *TestGlobalKillSuite) killByKillStatement(t *testing.T, db1 *sql.DB, db2 *sql.DB, sleepTime int) time.Duration {
+func (s *GlobalKillSuite) killByKillStatement(t *testing.T, db1 *sql.DB, db2 *sql.DB, sleepTime int) time.Duration {
 	ctx := context.TODO()
 
 	conn1, err := db1.Conn(ctx)
@@ -436,7 +438,8 @@ func (s *TestGlobalKillSuite) killByKillStatement(t *testing.T, db1 *sql.DB, db2
 
 // [Test Scenario 1] A TiDB without PD, killed by Ctrl+C, and killed by KILL.
 func TestWithoutPD(t *testing.T) {
-	s := new(TestGlobalKillSuite)
+	s, clean := createGloabalKillSuite(t)
+	defer clean()
 	var err error
 	port := *tidbStartPort
 	tidb, err := s.startTiDBWithoutPD(port, *tidbStatusPort)
@@ -465,8 +468,8 @@ func TestWithoutPD(t *testing.T) {
 
 // [Test Scenario 2] One TiDB with PD, killed by Ctrl+C, and killed by KILL.
 func TestOneTiDB(t *testing.T) {
-	s := new(TestGlobalKillSuite)
-
+	s, clean := createGloabalKillSuite(t)
+	defer clean()
 	port := *tidbStartPort + 1
 	tidb, err := s.startTiDBWithPD(port, *tidbStatusPort+1, *pdClientPath)
 	require.NoError(t, err)
@@ -494,7 +497,8 @@ func TestOneTiDB(t *testing.T) {
 
 // [Test Scenario 3] Multiple TiDB nodes, killed {local,remote} by {Ctrl-C,KILL}.
 func TestMultipleTiDB(t *testing.T) {
-	s := new(TestGlobalKillSuite)
+	s, clean := createGloabalKillSuite(t)
+	defer clean()
 	require.NoError(t, s.pdErr, Commentf(msgErrConnectPD, s.pdErr))
 
 	// tidb1 & conn1a,conn1b
@@ -541,7 +545,8 @@ func TestMultipleTiDB(t *testing.T) {
 
 func TestLostConnection(t *testing.T) {
 	t.Skip("unstable, skip race test")
-	s := new(TestGlobalKillSuite)
+	s, clean := createGloabalKillSuite(t)
+	defer clean()
 	require.NoError(t, s.pdErr, Commentf(msgErrConnectPD, s.pdErr))
 
 	// tidb1
