@@ -981,7 +981,7 @@ func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
-			"/*T![placement] PLACEMENT POLICY=\"x\" */",
+			"/*T![placement] PLACEMENT POLICY=`x` */",
 	))
 
 	tk.MustExec(`DROP TABLE IF EXISTS t`)

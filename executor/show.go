@@ -1067,7 +1067,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.PlacementPolicyRef != nil {
-		fmt.Fprintf(buf, ` /*T![placement] PLACEMENT POLICY="%s" */`, tableInfo.PlacementPolicyRef.Name.String())
+		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=`%s` */", tableInfo.PlacementPolicyRef.Name.String())
 	}
 
 	// add direct placement info here
