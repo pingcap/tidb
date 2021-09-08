@@ -16,92 +16,58 @@ package driver
 
 import (
 	"context"
+	"testing"
 
 	"github.com/pingcap/errors"
-	txn2 "github.com/pingcap/tidb/store/driver/txn"
-
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore"
+	txn2 "github.com/pingcap/tidb/store/driver/txn"
+	"github.com/stretchr/testify/require"
 )
 
-type testTxnSuite struct {
-	store kv.Storage
-}
+func TestTxnGet(t *testing.T) {
+	store, clean := createEmptyTestStore(t)
+	defer clean()
+	clearData(t, store)
 
-var _ = SerialSuites(&testTxnSuite{})
-
-func (s *testTxnSuite) SetUpTest(c *C) {
-	var err error
-	s.store, err = mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-}
-
-func (s *testTxnSuite) TearDownTest(c *C) {
-	err := s.store.Close()
-	c.Assert(err, IsNil)
-}
-
-func (s *testTxnSuite) prepareSnapshot(c *C, data [][]interface{}) kv.Snapshot {
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	defer func() {
-		if txn.Valid() {
-			txn.Rollback()
-		}
-	}()
-
-	for _, d := range data {
-		err = txn.Set(makeBytes(d[0]), makeBytes(d[1]))
-		c.Assert(err, IsNil)
-	}
-
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-
-	return s.store.GetSnapshot(kv.MaxVersion)
-}
-
-func (s *testTxnSuite) TestTxnGet(c *C) {
-	s.prepareSnapshot(c, [][]interface{}{{"k1", "v1"}})
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
+	prepareSnapshot(t, store, [][]interface{}{{"k1", "v1"}})
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, err)
 
 	// should return snapshot value if no dirty data
 	v, err := txn.Get(context.Background(), kv.Key("k1"))
-	c.Assert(err, IsNil)
-	c.Assert(v, BytesEquals, []byte("v1"))
+	require.NoError(t, err)
 
 	// insert but not commit
 	err = txn.Set(kv.Key("k1"), kv.Key("v1+"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// should return dirty data if dirty data exists
 	v, err = txn.Get(context.Background(), kv.Key("k1"))
-	c.Assert(err, IsNil)
-	c.Assert(v, BytesEquals, []byte("v1+"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("v1+"), v)
 
 	err = txn.Set(kv.Key("k2"), []byte("v2+"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// should return dirty data if dirty data exists
 	v, err = txn.Get(context.Background(), kv.Key("k2"))
-	c.Assert(err, IsNil)
-	c.Assert(v, BytesEquals, []byte("v2+"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("v2+"), v)
 
 	// delete but not commit
 	err = txn.Delete(kv.Key("k1"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// should return kv.ErrNotExist if deleted
 	v, err = txn.Get(context.Background(), kv.Key("k1"))
-	c.Assert(v, IsNil)
-	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
+	require.Nil(t, v)
+	require.True(t, kv.ErrNotExist.Equal(err))
 
 	// should return kv.ErrNotExist if not exist
 	v, err = txn.Get(context.Background(), kv.Key("kn"))
-	c.Assert(v, IsNil)
-	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
+	require.Nil(t, v)
+	require.True(t, kv.ErrNotExist.Equal(err))
 
 	// make snapshot returns error
 	errRetriever := &mockErrRetriever{err: errors.New("error")}
@@ -112,46 +78,50 @@ func (s *testTxnSuite) TestTxnGet(c *C) {
 
 	// should return kv.ErrNotExist because k1 is deleted in memBuff
 	v, err = txn.Get(context.Background(), kv.Key("k1"))
-	c.Assert(v, IsNil)
-	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
+	require.Nil(t, v)
+	require.True(t, kv.ErrNotExist.Equal(err))
 
 	// should return dirty data because k2 is in memBuff
 	v, err = txn.Get(context.Background(), kv.Key("k2"))
-	c.Assert(err, IsNil)
-	c.Assert(v, BytesEquals, []byte("v2+"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("v2+"), v)
 
 	// should return error because kn is read from snapshot
 	v, err = txn.Get(context.Background(), kv.Key("kn"))
-	c.Assert(v, IsNil)
-	c.Assert(err, Equals, errRetriever.err)
+	require.Nil(t, v)
+	require.Equal(t, errRetriever.err, err)
 }
 
-func (s *testTxnSuite) TestTxnBatchGet(c *C) {
-	s.prepareSnapshot(c, [][]interface{}{{"k1", "v1"}, {"k2", "v2"}, {"k3", "v3"}, {"k4", "v4"}})
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
+func TestTxnBatchGet(t *testing.T) {
+	store, clean := createEmptyTestStore(t)
+	defer clean()
+	clearData(t, store)
+
+	prepareSnapshot(t, store, [][]interface{}{{"k1", "v1"}, {"k2", "v2"}, {"k3", "v3"}, {"k4", "v4"}})
+	txn, err := store.Begin()
+	require.NoError(t, err)
 
 	result, err := txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k2"), kv.Key("k3"), kv.Key("kn")})
-	c.Assert(err, IsNil)
-	c.Assert(len(result), Equals, 3)
-	c.Assert(result["k1"], BytesEquals, []byte("v1"))
-	c.Assert(result["k2"], BytesEquals, []byte("v2"))
-	c.Assert(result["k3"], BytesEquals, []byte("v3"))
+	require.NoError(t, err)
+	require.Equal(t, 3, len(result))
+	require.Equal(t, []byte("v1"), result["k1"])
+	require.Equal(t, []byte("v2"), result["k2"])
+	require.Equal(t, []byte("v3"), result["k3"])
 
 	// make some dirty data
 	err = txn.Set(kv.Key("k1"), []byte("v1+"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Set(kv.Key("k4"), []byte("v4+"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Delete(kv.Key("k2"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k2"), kv.Key("k3"), kv.Key("k4"), kv.Key("kn")})
-	c.Assert(err, IsNil)
-	c.Assert(len(result), Equals, 3)
-	c.Assert(result["k1"], BytesEquals, []byte("v1+"))
-	c.Assert(result["k3"], BytesEquals, []byte("v3"))
-	c.Assert(result["k4"], BytesEquals, []byte("v4+"))
+	require.NoError(t, err)
+	require.Equal(t, 3, len(result))
+	require.Equal(t, []byte("v1+"), result["k1"])
+	require.Equal(t, []byte("v3"), result["k3"])
+	require.Equal(t, []byte("v4+"), result["k4"])
 
 	// make snapshot returns error
 	errRetriever := &mockErrRetriever{err: errors.New("error")}
@@ -162,53 +132,57 @@ func (s *testTxnSuite) TestTxnBatchGet(c *C) {
 
 	// return data if not read from snapshot
 	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k4")})
-	c.Assert(err, IsNil)
-	c.Assert(len(result), Equals, 2)
-	c.Assert(result["k1"], BytesEquals, []byte("v1+"))
-	c.Assert(result["k4"], BytesEquals, []byte("v4+"))
+	require.NoError(t, err)
+	require.Equal(t, 2, len(result))
+	require.Equal(t, []byte("v1+"), result["k1"])
+	require.Equal(t, []byte("v4+"), result["k4"])
 
 	// fails if read from snapshot
 	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k3")})
-	c.Assert(result, IsNil)
-	c.Assert(err, Equals, errRetriever.err)
+	require.Nil(t, result)
+	require.Equal(t, errRetriever.err, err)
 	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k3"), kv.Key("k4")})
-	c.Assert(result, IsNil)
-	c.Assert(err, Equals, errRetriever.err)
+	require.Nil(t, result)
+	require.Equal(t, errRetriever.err, err)
 	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k4"), kv.Key("kn")})
-	c.Assert(result, IsNil)
-	c.Assert(err, Equals, errRetriever.err)
+	require.Nil(t, result)
+	require.Equal(t, errRetriever.err, err)
 }
 
-func (s *testTxnSuite) TestTxnScan(c *C) {
-	s.prepareSnapshot(c, [][]interface{}{{"k1", "v1"}, {"k3", "v3"}, {"k5", "v5"}, {"k7", "v7"}, {"k9", "v9"}})
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
+func TestTxnScan(t *testing.T) {
+	store, clean := createEmptyTestStore(t)
+	defer clean()
+	clearData(t, store)
+
+	prepareSnapshot(t, store, [][]interface{}{{"k1", "v1"}, {"k3", "v3"}, {"k5", "v5"}, {"k7", "v7"}, {"k9", "v9"}})
+	txn, err := store.Begin()
+	require.NoError(t, err)
 
 	iter, err := txn.Iter(kv.Key("k3"), kv.Key("k9"))
-	c.Assert(err, IsNil)
-	checkIter(c, iter, [][]interface{}{{"k3", "v3"}, {"k5", "v5"}, {"k7", "v7"}})
+	require.NoError(t, err)
+	checkIter(t, iter, [][]interface{}{{"k3", "v3"}, {"k5", "v5"}, {"k7", "v7"}})
 
 	iter, err = txn.IterReverse(kv.Key("k9"))
-	c.Assert(err, IsNil)
-	checkIter(c, iter, [][]interface{}{{"k7", "v7"}, {"k5", "v5"}, {"k3", "v3"}, {"k1", "v1"}})
+	require.NoError(t, err)
+	checkIter(t, iter, [][]interface{}{{"k7", "v7"}, {"k5", "v5"}, {"k3", "v3"}, {"k1", "v1"}})
 
 	// make some dirty data
 	err = txn.Set(kv.Key("k1"), []byte("v1+"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Set(kv.Key("k3"), []byte("v3+"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Set(kv.Key("k31"), []byte("v31+"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Delete(kv.Key("k5"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	iter, err = txn.Iter(kv.Key("k3"), kv.Key("k9"))
-	c.Assert(err, IsNil)
-	checkIter(c, iter, [][]interface{}{{"k3", "v3+"}, {"k31", "v31+"}, {"k7", "v7"}})
+	require.NoError(t, err)
+	checkIter(t, iter, [][]interface{}{{"k3", "v3+"}, {"k31", "v31+"}, {"k7", "v7"}})
 
 	iter, err = txn.IterReverse(kv.Key("k9"))
-	c.Assert(err, IsNil)
-	checkIter(c, iter, [][]interface{}{{"k7", "v7"}, {"k31", "v31+"}, {"k3", "v3+"}, {"k1", "v1+"}})
+	require.NoError(t, err)
+	checkIter(t, iter, [][]interface{}{{"k7", "v7"}, {"k31", "v31+"}, {"k3", "v3+"}, {"k1", "v1+"}})
 
 	// make snapshot returns error
 	errRetriever := &mockErrRetriever{err: errors.New("error")}
@@ -217,22 +191,20 @@ func (s *testTxnSuite) TestTxnScan(c *C) {
 		[]*txn2.RangedKVRetriever{txn2.NewRangeRetriever(errRetriever, nil, nil)},
 	)
 	iter, err = txn.Iter(kv.Key("k1"), kv.Key("k2"))
-	c.Assert(err, NotNil)
-	c.Assert(err, Equals, errRetriever.err)
+	require.Equal(t, errRetriever.err, err)
 }
 
-func checkIter(c *C, iter kv.Iterator, expected [][]interface{}) {
+func checkIter(t *testing.T, iter kv.Iterator, expected [][]interface{}) {
 	for _, pair := range expected {
-		expectedKey := makeBytes(pair[0])
+		expectedKey := kv.Key(makeBytes(pair[0]))
 		expectedValue := makeBytes(pair[1])
 
-		c.Assert(iter.Valid(), IsTrue)
-		c.Assert([]byte(iter.Key()), BytesEquals, expectedKey)
-		c.Assert(iter.Value(), BytesEquals, expectedValue)
-
+		require.True(t, iter.Valid())
+		require.Equal(t, expectedKey, iter.Key())
+		require.Equal(t, expectedValue, iter.Value())
 		err := iter.Next()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 
-	c.Assert(iter.Valid(), IsFalse)
+	require.False(t, iter.Valid())
 }

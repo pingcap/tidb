@@ -11,22 +11,19 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package driver
 
 import (
 	"context"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	txn2 "github.com/pingcap/tidb/store/driver/txn"
-	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
-
-type testCustomRetrieverSuite struct {
-	store kv.Storage
-}
 
 type mockErrRetriever struct {
 	err error
@@ -45,21 +42,12 @@ func (r *mockErrRetriever) IterReverse(_ kv.Key) (kv.Iterator, error) {
 	return nil, r.err
 }
 
-var _ = SerialSuites(&testCustomRetrieverSuite{})
+func TestSnapshotGetWithCustomRetrievers(t *testing.T) {
+	store, clean := createEmptyTestStore(t)
+	defer clean()
+	clearData(t, store)
 
-func (s *testCustomRetrieverSuite) SetUpTest(c *C) {
-	var err error
-	s.store, err = mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-}
-
-func (s *testCustomRetrieverSuite) TearDownTest(c *C) {
-	err := s.store.Close()
-	c.Assert(err, IsNil)
-}
-
-func (s *testCustomRetrieverSuite) TestSnapshotGetWithCustomRetrievers(c *C) {
-	snap := s.prepareSnapshot(c, [][]interface{}{
+	snap := prepareSnapshot(t, store, [][]interface{}{
 		{"a0", "s0"},
 		{"a01", "s01"},
 		{"a1", "s1"},
@@ -72,14 +60,14 @@ func (s *testCustomRetrieverSuite) TestSnapshotGetWithCustomRetrievers(c *C) {
 	}
 
 	snap.SetOption(kv.SortedCustomRetrievers, []*txn2.RangedKVRetriever{
-		s.newMemBufferRetriever(c, "a1", "a2", [][]interface{}{
+		newMemBufferRetriever(t, "a1", "a2", [][]interface{}{
 			{"a0", "v0"},
 			{"a02", "v02"},
 			{"a1", "v1"},
 			{"a11", "v11"},
 			{"a1x", ""},
 		}),
-		s.newMemBufferRetriever(c, "a3", "a4", [][]interface{}{
+		newMemBufferRetriever(t, "a3", "a4", [][]interface{}{
 			{"a1", "vx"},
 		}),
 		txn2.NewRangeRetriever(errRetriever, kv.Key("a6"), kv.Key("a7")),
@@ -103,17 +91,21 @@ func (s *testCustomRetrieverSuite) TestSnapshotGetWithCustomRetrievers(c *C) {
 	for _, ca := range cases {
 		val, err := snap.Get(ctx, makeBytes(ca[0]))
 		if expectedErr, ok := ca[1].(error); ok {
-			c.Assert(errors.ErrorEqual(expectedErr, err), IsTrue)
-			c.Assert(val, IsNil)
+			require.True(t, errors.ErrorEqual(expectedErr, err))
+			require.Nil(t, val)
 		} else {
-			c.Assert(err, IsNil)
-			c.Assert(makeBytes(ca[1]), BytesEquals, val)
+			require.NoError(t, err)
+			require.Equal(t, val, makeBytes(ca[1]))
 		}
 	}
 }
 
-func (s *testCustomRetrieverSuite) TestSnapshotBatchGetWithCustomRetrievers(c *C) {
-	snap := s.prepareSnapshot(c, [][]interface{}{
+func TestSnapshotBatchGetWithCustomRetrievers(t *testing.T) {
+	store, clean := createEmptyTestStore(t)
+	defer clean()
+	clearData(t, store)
+
+	snap := prepareSnapshot(t, store, [][]interface{}{
 		{"a0", "s0"},
 		{"a01", "s01"},
 		{"a1", "s1"},
@@ -126,14 +118,14 @@ func (s *testCustomRetrieverSuite) TestSnapshotBatchGetWithCustomRetrievers(c *C
 	}
 
 	snap.SetOption(kv.SortedCustomRetrievers, []*txn2.RangedKVRetriever{
-		s.newMemBufferRetriever(c, "a1", "a2", [][]interface{}{
+		newMemBufferRetriever(t, "a1", "a2", [][]interface{}{
 			{"a0", "v0"},
 			{"a02", "v02"},
 			{"a1", "v1"},
 			{"a11", "v11"},
 			{"a1x", ""},
 		}),
-		s.newMemBufferRetriever(c, "a3", "a4", [][]interface{}{
+		newMemBufferRetriever(t, "a3", "a4", [][]interface{}{
 			{"a1", "vx"},
 		}),
 		txn2.NewRangeRetriever(errRetriever, kv.Key("a6"), kv.Key("a7")),
@@ -182,29 +174,32 @@ func (s *testCustomRetrieverSuite) TestSnapshotBatchGetWithCustomRetrievers(c *C
 		}
 
 		m, err := snap.BatchGet(ctx, keys)
-
 		if ca.err == nil {
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		} else {
-			c.Assert(errors.ErrorEqual(err, ca.err), IsTrue)
+			require.True(t, errors.ErrorEqual(err, ca.err))
 		}
 
 		if ca.result == nil {
-			c.Assert(m, IsNil)
+			require.Nil(t, m)
 		} else {
-			c.Assert(m, NotNil)
-			c.Assert(len(m), Equals, len(ca.result))
+			require.NotNil(t, m)
+			require.Equal(t, len(ca.result), len(m))
 			for k, expectedVal := range ca.result {
 				val, ok := m[k]
-				c.Assert(ok, IsTrue)
-				c.Assert(val, BytesEquals, makeBytes(expectedVal))
+				require.True(t, ok)
+				require.Equal(t, makeBytes(expectedVal), val)
 			}
 		}
 	}
 }
 
-func (s *testCustomRetrieverSuite) TestSnapshotIterWithCustomRetrievers(c *C) {
-	snap := s.prepareSnapshot(c, [][]interface{}{
+func TestSnapshotIterWithCustomRetrievers(t *testing.T) {
+	store, _, clean := createTestStore(t)
+	defer clean()
+	clearData(t, store)
+
+	snap := prepareSnapshot(t, store, [][]interface{}{
 		{"a0", "s0"},
 		{"a01", "s01"},
 		{"a1", "s1"},
@@ -216,14 +211,14 @@ func (s *testCustomRetrieverSuite) TestSnapshotIterWithCustomRetrievers(c *C) {
 	})
 
 	snap.SetOption(kv.SortedCustomRetrievers, []*txn2.RangedKVRetriever{
-		s.newMemBufferRetriever(c, "a1", "a2", [][]interface{}{
+		newMemBufferRetriever(t, "a1", "a2", [][]interface{}{
 			{"a0", "v0"},
 			{"a02", "v02"},
 			{"a1", "v1"},
 			{"a11", "v11"},
 			{"a1x", ""},
 		}),
-		s.newMemBufferRetriever(c, "a3", "a4", [][]interface{}{
+		newMemBufferRetriever(t, "a3", "a4", [][]interface{}{
 			{"a1", "vx"},
 			{"a31", "v31"},
 		}),
@@ -283,62 +278,83 @@ func (s *testCustomRetrieverSuite) TestSnapshotIterWithCustomRetrievers(c *C) {
 		var err error
 		if ca.reverse {
 			iter, err = snap.IterReverse(makeBytes(ca.query[0]))
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		} else {
 			iter, err = snap.Iter(makeBytes(ca.query[0]), makeBytes(ca.query[1]))
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
 
 		for i := range ca.result {
-			c.Assert(iter.Valid(), IsTrue)
+			require.True(t, iter.Valid())
 			gotKey := iter.Key()
 			gotValue := iter.Value()
 			expectedKey := makeBytes(ca.result[i][0])
 			expectedValue := makeBytes(ca.result[i][1])
-			c.Assert([]byte(gotKey), BytesEquals, expectedKey)
-			c.Assert(gotValue, BytesEquals, expectedValue)
+			require.Equal(t, []byte(expectedKey), []byte(gotKey))
+			require.Equal(t, expectedValue, gotValue)
 			err = iter.Next()
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
 
-		c.Assert(iter.Valid(), IsFalse)
+		require.False(t, iter.Valid())
 	}
 
 	// test return error for Iter/IterReverse
 	errRetriever := &mockErrRetriever{err: errors.New("error")}
 	snap.SetOption(kv.SortedCustomRetrievers, []*txn2.RangedKVRetriever{txn2.NewRangeRetriever(errRetriever, nil, kv.Key("k1"))})
 	iter, err := snap.Iter(nil, nil)
-	c.Assert(iter, IsNil)
-	c.Assert(err, Equals, errRetriever.err)
+	require.Nil(t, iter)
+	require.Equal(t, errRetriever.err, err)
 	snap.SetOption(kv.SortedCustomRetrievers, []*txn2.RangedKVRetriever{txn2.NewRangeRetriever(errRetriever, kv.Key("k1"), nil)})
 	iter, err = snap.IterReverse(nil)
-	c.Assert(iter, IsNil)
-	c.Assert(err, Equals, errRetriever.err)
+	require.Nil(t, iter)
+	require.Equal(t, errRetriever.err, err)
 }
 
-func (s *testCustomRetrieverSuite) prepareSnapshot(c *C, data [][]interface{}) kv.Snapshot {
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
+func clearData(t *testing.T, store kv.Storage) {
+	txn, err := store.Begin()
+	require.NoError(t, err)
 	defer func() {
 		if txn.Valid() {
-			txn.Rollback()
+			require.NoError(t, txn.Rollback())
+		}
+	}()
+
+	iter, err := txn.Iter(nil, nil)
+	require.NoError(t, err)
+	defer iter.Close()
+
+	for iter.Valid() {
+		require.NoError(t, txn.Delete(iter.Key()))
+		require.NoError(t, iter.Next())
+	}
+
+	require.NoError(t, txn.Commit(context.Background()))
+}
+
+func prepareSnapshot(t *testing.T, store kv.Storage, data [][]interface{}) kv.Snapshot {
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	defer func() {
+		if txn.Valid() {
+			require.NoError(t, txn.Rollback())
 		}
 	}()
 
 	for _, d := range data {
 		err = txn.Set(makeBytes(d[0]), makeBytes(d[1]))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	return s.store.GetSnapshot(kv.MaxVersion)
+	return store.GetSnapshot(kv.MaxVersion)
 }
 
-func (s *testCustomRetrieverSuite) newMemBufferRetriever(c *C, start interface{}, end interface{}, data [][]interface{}) *txn2.RangedKVRetriever {
+func newMemBufferRetriever(t *testing.T, start interface{}, end interface{}, data [][]interface{}) *txn2.RangedKVRetriever {
 	tmpTxn, err := transaction.NewTiKVTxn(nil, nil, 0, "")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	memBuffer := txn2.NewTiKVTxn(tmpTxn).GetMemBuffer()
 	for _, d := range data {
 		k := makeBytes(d[0])
@@ -346,12 +362,12 @@ func (s *testCustomRetrieverSuite) newMemBufferRetriever(c *C, start interface{}
 		if len(val) == 0 {
 			// to test delete case
 			err := memBuffer.Set(k, []byte("12345"))
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			err = memBuffer.Delete(k)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		} else {
 			err := memBuffer.Set(k, makeBytes(d[1]))
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
 	}
 
