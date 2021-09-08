@@ -17,7 +17,6 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"strconv"
 	"strings"
 	"sync/atomic"
