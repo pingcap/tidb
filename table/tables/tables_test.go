@@ -655,7 +655,7 @@ func TestAddRecordWithCtx(t *testing.T) {
 
 func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
-	defer clean()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@autocommit = 1")
 	tk.MustExec("use test")
@@ -698,6 +698,7 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 		_, err = tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
 		require.NoError(t, err)
 		ch <- 2
+		clean()
 	}()
 	// Sleep 100ms for tk2 to execute, if it's not blocked, 2 should have been sent to the channel.
 	time.Sleep(100 * time.Millisecond)
