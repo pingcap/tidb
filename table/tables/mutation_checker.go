@@ -17,6 +17,8 @@ package tables
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/table"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
@@ -52,13 +54,14 @@ type indexHelperInfo = struct {
 // (a) {added indices} is a subset of {needed indices} => each index mutation is consistent with the input/row key/value
 // (b) {needed indices} is a subset of {added indices}. The check process would be exactly the same with how we generate
 // 		the mutations, thus ignored.
-func CheckIndexConsistency(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, t *TableCommon,
+func CheckIndexConsistency(sessVars *variable.SessionVars, t *TableCommon,
 	dataAdded, dataRemoved []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle) error {
+	sc := sessVars.StmtCtx
 	if sh == 0 {
 		return nil
 	}
 	mutations := collectTableMutationsFromBufferStage(t, memBuffer, sh)
-	if err := checkRowAdditionConsistency(sc, sessVars, t, dataAdded, mutations); err != nil {
+	if err := checkRowAdditionConsistency(sessVars, t.Meta().Columns, dataAdded, mutations); err != nil {
 		return errors.Trace(err)
 	}
 	if err := checkIndexKeys(sc, sessVars, t, dataAdded, dataRemoved, mutations); err != nil {
@@ -115,9 +118,9 @@ func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 		}
 
 		if len(m.value) == 0 {
-			err = compareIndexData(sc, t, indexData, dataRemoved, indexHelperInfo)
+			err = compareIndexData(sc, t.Columns, indexData, dataRemoved, indexHelperInfo.indexInfo)
 		} else {
-			err = compareIndexData(sc, t, indexData, dataAdded, indexHelperInfo)
+			err = compareIndexData(sc, t.Columns, indexData, dataAdded, indexHelperInfo.indexInfo)
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -128,9 +131,15 @@ func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 
 // checkRowAdditionConsistency checks whether the values of row mutations are consistent with the expected ones
 // We only check data added since a deletion of a row doesn't care about its value (and we cannot know it)
-func checkRowAdditionConsistency(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, t *TableCommon,
-	dataAdded []types.Datum, mutations []mutation) error {
-	rowsAdded, _ := ExtractRowMutations(mutations)
+func checkRowAdditionConsistency(sessVars *variable.SessionVars, tableColumns []*model.ColumnInfo, dataAdded []types.Datum, mutations []mutation) error {
+	rowsAdded, _ := extractRowMutations(mutations)
+	if dataAdded == nil {
+		// should be unreachable
+		return nil
+	}
+	if len(rowsAdded) == 0 {
+		return errors.New("record mutations not found for a put of a row")
+	}
 	if len(rowsAdded) > 1 {
 		// TODO: is it possible?
 		logutil.BgLogger().Error("multiple row mutations added/mutated", zap.Any("rowsAdded", rowsAdded))
@@ -138,44 +147,46 @@ func checkRowAdditionConsistency(sc *stmtctx.StatementContext, sessVars *variabl
 	}
 
 	columnMap := make(map[int64]*model.ColumnInfo)
-	columnFieldMap := make(map[int64]*types.FieldType)
-	for _, col := range t.Meta().Columns {
+	for _, col := range tableColumns {
 		columnMap[col.ID] = col
-		columnFieldMap[col.ID] = &col.FieldType
 	}
 
-	if err := checkRowMutationsWithData(sc, sessVars, rowsAdded, columnFieldMap, dataAdded, columnMap); err != nil {
+	if err := checkRowMutationWithData(sessVars, rowsAdded[0].value, dataAdded, columnMap); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-func checkRowMutationsWithData(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, rowMutations []mutation,
-	columnFieldMap map[int64]*types.FieldType, expectedData []types.Datum, columnMap map[int64]*model.ColumnInfo) error {
-	if len(rowMutations) > 0 {
-		// FIXME: len(value) == 0 (delete)
-		decodedData, err := tablecodec.DecodeRowToDatumMap(rowMutations[0].value, columnFieldMap, sessVars.Location())
+// checkRowMutationWithData checks if the given row mutation is consistent with the expected one
+// precondition: expectedData contains all fields in order
+func checkRowMutationWithData(sessVars *variable.SessionVars, mutationValue []byte, expectedData []types.Datum, columnMap map[int64]*model.ColumnInfo) error {
+	columnFieldMap := make(map[int64]*types.FieldType)
+	for id, col := range columnMap {
+		columnFieldMap[id] = &col.FieldType
+	}
+	decodedData, err := tablecodec.DecodeRowToDatumMap(mutationValue, columnFieldMap, sessVars.Location())
+	// NOTE: decodedData can be empty
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// NOTE: we cannot check if the decoded values contain all columns since some columns may be skipped. It can even be empty
+	// Instead, we check that decoded index values are consistent with the input row.
+
+	for columnID, decodedDatum := range decodedData {
+		inputDatum := expectedData[columnMap[columnID].Offset]
+		cmp, err := decodedDatum.CompareDatum(sessVars.StmtCtx, &inputDatum)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		// TODO: we cannot check if the decoded values contain all columns since some columns may be skipped.
-		// Instead we check data in the value are consistent with input.
-
-		for columnID, decodedDatum := range decodedData {
-			inputDatum := expectedData[columnMap[columnID].Offset]
-			cmp, err := decodedDatum.CompareDatum(sc, &inputDatum)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if cmp != 0 {
-				logutil.BgLogger().Error("inconsistent row mutation", zap.String("decoded datum", decodedDatum.String()),
-					zap.String("input datum", inputDatum.String()))
-				return errors.New(fmt.Sprintf("inconsistent row mutation, row datum = {%v}, input datum = {%v}",
-					decodedDatum.String(), inputDatum.String()))
-			}
+		if cmp != 0 {
+			logutil.BgLogger().Error("inconsistent row mutation", zap.String("decoded datum", decodedDatum.String()),
+				zap.String("input datum", inputDatum.String()))
+			return errors.New(fmt.Sprintf("inconsistent row mutation, row datum = {%v}, input datum = {%v}",
+				decodedDatum.String(), inputDatum.String()))
 		}
 	}
+
 	return nil
 }
 
@@ -191,15 +202,18 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 	return mutations
 }
 
-func compareIndexData(sc *stmtctx.StatementContext, t *TableCommon, indexData, input []types.Datum, indexHelperInfo indexHelperInfo) error {
+// compareIndexData compares the decoded index data with the input data.
+// Returns error if the index data is not a subset of the input data.
+func compareIndexData(sc *stmtctx.StatementContext, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo) error {
 	for i, decodedMutationDatum := range indexData {
-		expectedDatum := input[indexHelperInfo.indexInfo.Columns[i].Offset]
+		expectedDatum := input[indexInfo.Columns[i].Offset]
 
-		tablecodec.TruncateIndexValue(&expectedDatum, indexHelperInfo.indexInfo.Columns[i],
-			t.Columns[indexHelperInfo.indexInfo.Columns[i].Offset].ColumnInfo)
+		tablecodec.TruncateIndexValue(&expectedDatum, indexInfo.Columns[i],
+			cols[indexInfo.Columns[i].Offset].ColumnInfo)
 
-		tablecodec.TruncateIndexValue(&decodedMutationDatum, indexHelperInfo.indexInfo.Columns[i],
-			t.Columns[indexHelperInfo.indexInfo.Columns[i].Offset].ColumnInfo)
+		// TODO: no need to truncate index data?
+		//tablecodec.TruncateIndexValue(&decodedMutationDatum, indexInfo.Columns[i],
+		//	cols[indexInfo.Columns[i].Offset].ColumnInfo)
 
 		comparison, err := decodedMutationDatum.CompareDatum(sc, &expectedDatum)
 		if err != nil {
@@ -216,19 +230,19 @@ func compareIndexData(sc *stmtctx.StatementContext, t *TableCommon, indexData, i
 	return nil
 }
 
-// ExtractRowMutations extracts row mutations and classify them into 2 categories: put and delete
-func ExtractRowMutations(mutations []mutation) ([]mutation, []mutation) {
-	handlesAdded := make([]mutation, 0)
-	handlesRemoved := make([]mutation, 0)
+// extractRowMutations extracts row mutations and classify them into 2 categories: put and delete
+func extractRowMutations(mutations []mutation) ([]mutation, []mutation) {
+	insertions := make([]mutation, 0)
+	deletions := make([]mutation, 0)
 	// TODO: assumption: value in mem buffer
 	for _, m := range mutations {
 		if rowcodec.IsRowKey(m.key) {
 			if len(m.value) > 0 {
-				handlesAdded = append(handlesAdded, m)
+				insertions = append(insertions, m)
 			} else {
-				handlesRemoved = append(handlesRemoved, m)
+				deletions = append(deletions, m)
 			}
 		}
 	}
-	return handlesAdded, handlesRemoved
+	return insertions, deletions
 }
