@@ -82,6 +82,7 @@ func (m mockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogRe
 }
 
 func TestBasic(t *testing.T) {
+	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -183,6 +184,7 @@ func countEntriesWithPrefix(ctx sessionctx.Context, prefix []byte) (int, error) 
 }
 
 func TestTypes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -236,6 +238,7 @@ func TestTypes(t *testing.T) {
 }
 
 func TestUniqueIndexMultipleNullEntries(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -277,6 +280,7 @@ func TestUniqueIndexMultipleNullEntries(t *testing.T) {
 }
 
 func TestRowKeyCodec(t *testing.T) {
+	t.Parallel()
 	tableVal := []struct {
 		tableID int64
 		h       int64
@@ -318,6 +322,7 @@ func TestRowKeyCodec(t *testing.T) {
 }
 
 func TestUnsignedPK(t *testing.T) {
+	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -342,6 +347,7 @@ func TestUnsignedPK(t *testing.T) {
 }
 
 func TestIterRecords(t *testing.T) {
+	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -368,6 +374,7 @@ func TestIterRecords(t *testing.T) {
 }
 
 func TestTableFromMeta(t *testing.T) {
+	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -422,6 +429,7 @@ func TestTableFromMeta(t *testing.T) {
 }
 
 func TestShardRowIDBitsStep(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -441,6 +449,7 @@ func TestShardRowIDBitsStep(t *testing.T) {
 }
 
 func TestHiddenColumn(t *testing.T) {
+	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -608,6 +617,7 @@ func TestHiddenColumn(t *testing.T) {
 }
 
 func TestAddRecordWithCtx(t *testing.T) {
+	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -654,6 +664,7 @@ func TestAddRecordWithCtx(t *testing.T) {
 }
 
 func TestConstraintCheckForUniqueIndex(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -709,6 +720,7 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 }
 
 func TestViewColumns(t *testing.T) {
+	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
