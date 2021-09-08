@@ -84,26 +84,32 @@ func (h hashCollision) BlockSize() int                    { panic("not implement
 
 func (s *pkgTestSerialSuite) TestHashRowContainer(c *C) {
 	hashFunc := fnv.New64
-	rowContainer := s.testHashRowContainer(c, hashFunc, false)
-	c.Assert(rowContainer.stat.probeCollision, Equals, 0)
+	rowContainer, copiedRC := s.testHashRowContainer(c, hashFunc, false)
+	c.Assert(rowContainer.stat.probeCollision, Equals, int64(0))
 	// On windows time.Now() is imprecise, the elapse time may equal 0
 	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
+	c.Assert(copiedRC.stat.probeCollision, Equals, rowContainer.stat.probeCollision)
+	c.Assert(copiedRC.stat.buildTableElapse, Equals, rowContainer.stat.buildTableElapse)
 
-	rowContainer = s.testHashRowContainer(c, hashFunc, true)
-	c.Assert(rowContainer.stat.probeCollision, Equals, 0)
+	rowContainer, copiedRC = s.testHashRowContainer(c, hashFunc, true)
+	c.Assert(rowContainer.stat.probeCollision, Equals, int64(0))
 	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
+	c.Assert(copiedRC.stat.probeCollision, Equals, rowContainer.stat.probeCollision)
+	c.Assert(copiedRC.stat.buildTableElapse, Equals, rowContainer.stat.buildTableElapse)
 
 	h := &hashCollision{count: 0}
 	hashFuncCollision := func() hash.Hash64 {
 		return h
 	}
-	rowContainer = s.testHashRowContainer(c, hashFuncCollision, false)
+	rowContainer, copiedRC = s.testHashRowContainer(c, hashFuncCollision, false)
 	c.Assert(h.count > 0, IsTrue)
-	c.Assert(rowContainer.stat.probeCollision > 0, IsTrue)
+	c.Assert(rowContainer.stat.probeCollision > int64(0), IsTrue)
 	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
+	c.Assert(copiedRC.stat.probeCollision, Equals, rowContainer.stat.probeCollision)
+	c.Assert(copiedRC.stat.buildTableElapse, Equals, rowContainer.stat.buildTableElapse)
 }
 
-func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, spill bool) *hashRowContainer {
+func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, spill bool) (originRC, copiedRC *hashRowContainer) {
 	sctx := mock.NewContext()
 	var err error
 	numRows := 10
@@ -120,6 +126,7 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	}
 	rowContainer := newHashRowContainer(sctx, 0, hCtx)
+	copiedRC = rowContainer.ShallowCopy()
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(memory.LabelForBuildSideResult)
 	if spill {
@@ -152,5 +159,5 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 	c.Assert(len(matched), Equals, 2)
 	c.Assert(matched[0].GetDatumRow(colTypes), DeepEquals, chk0.GetRow(1).GetDatumRow(colTypes))
 	c.Assert(matched[1].GetDatumRow(colTypes), DeepEquals, chk1.GetRow(1).GetDatumRow(colTypes))
-	return rowContainer
+	return rowContainer, copiedRC
 }
