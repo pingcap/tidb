@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/testutil"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -374,4 +375,22 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	checkFunc(tbl.Meta().DirectPlacementOpts)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop placement policy if exists x")
+}
+
+// TODO: sylzd
+func (s *testDBSuite6) TestAlterDBWithPlacementPolicy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create placement policy x PRIMARY_REGION=\"cn-east-1\";")
+	tk.MustExec("ALTER DATABASE test DEFAULT PLACEMENT POLICY=`x`;")
+	tk.MustExec("create table t(a int);")
+
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PLACEMENT POLICY=`x` */",
+	))
+
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
 }
