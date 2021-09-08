@@ -58,7 +58,7 @@ func ParseSimpleExprCastWithTableInfo(ctx sessionctx.Context, exprStr string, ta
 	if err != nil {
 		return nil, err
 	}
-	e = BuildCastFunction(ctx, e, targetFt.Clone())
+	e = BuildCastFunction(ctx, e, targetFt)
 	return e, nil
 }
 
