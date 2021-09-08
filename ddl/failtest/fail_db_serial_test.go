@@ -322,8 +322,8 @@ func TestAddIndexWorkerNum(t *testing.T) {
 	defer clean()
 
 	tests := []struct {
-		name                   string
-		createTable            func(*testkit.TestKit)
+		name        string
+		createTable func(*testkit.TestKit)
 	}{
 		{
 			"EnableClusteredIndex",
