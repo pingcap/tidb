@@ -1,0 +1,22 @@
+drop table if exists t;
+set names utf8mb4;
+create table t (a varchar(255) charset utf8mb4);
+insert into t values ('一二三四一');
+select hex(a) from t;
+hex(a)
+E4B880E4BA8CE4B889E59B9BE4B880
+select a from t;
+a
+一二三四一
+set @@character_set_results = 'gbk';
+select a from t;
+a
+һ������һ
+drop table if exists 一;
+create table 一 (二 char(20));
+show create table 一;
+Table	Create Table
+һ	CREATE TABLE `һ` (
+  `��` char(20) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+set @@character_set_results = 'utf8mb4';

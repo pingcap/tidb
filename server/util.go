@@ -49,6 +49,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/transform"
 )
 
 func parseNullTermString(b []byte) (str []byte, remain []byte) {
@@ -280,7 +282,38 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 	return buffer, nil
 }
 
-func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
+type textDumper struct {
+	name    string
+	encoder *encoding.Encoder
+	buf     []byte
+}
+
+func (d *textDumper) transform(src []byte) []byte {
+	if d.encoder == nil {
+		return src
+	}
+	var dstOffset, srcOffset int
+	for {
+		nDst, nSrc, err := d.encoder.Transform(d.buf[dstOffset:], src[srcOffset:], false)
+		dstOffset += nDst
+		srcOffset += nSrc
+		if err == nil {
+			if srcOffset >= len(src) {
+				return d.buf[:dstOffset]
+			}
+		} else if err == transform.ErrShortDst {
+			newDest := make([]byte, len(d.buf)*2)
+			copy(newDest, d.buf)
+			d.buf = newDest
+		} else {
+			d.buf[dstOffset] = byte('?')
+			dstOffset += 1
+			srcOffset += 1
+		}
+	}
+}
+
+func (d *textDumper) dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
 	tmp := make([]byte, 0, 20)
 	for i, col := range columns {
 		if row.IsNull(i) {
@@ -325,18 +358,18 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, e
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-			buffer = dumpLengthEncodedString(buffer, row.GetBytes(i))
+			buffer = dumpLengthEncodedString(buffer, d.transform(row.GetBytes(i)))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetTime(i).String()))
 		case mysql.TypeDuration:
 			dur := row.GetDuration(i, int(col.Decimal))
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(dur.String()))
 		case mysql.TypeEnum:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetEnum(i).String()))
+			buffer = dumpLengthEncodedString(buffer, d.transform(hack.Slice(row.GetEnum(i).String())))
 		case mysql.TypeSet:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetSet(i).String()))
+			buffer = dumpLengthEncodedString(buffer, d.transform(hack.Slice(row.GetSet(i).String())))
 		case mysql.TypeJSON:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetJSON(i).String()))
+			buffer = dumpLengthEncodedString(buffer, d.transform(hack.Slice(row.GetJSON(i).String())))
 		default:
 			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)
 		}

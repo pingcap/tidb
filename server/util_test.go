@@ -126,58 +126,59 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 		Decimal: mysql.NotFixedDec,
 	}}
 
+	dp := textDumper{}
 	null := types.NewIntDatum(0)
 	null.SetNull()
-	bs, err := dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{null}).ToRow())
+	bs, err := dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{null}).ToRow())
 	c.Assert(err, IsNil)
 	_, isNull, _, err := parseLengthEncodedBytes(bs)
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsTrue)
 
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(10)}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(10)}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "10")
 
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(11)}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(11)}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "11")
 
 	columns[0].Flag |= uint16(mysql.UnsignedFlag)
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(11)}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(11)}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "11")
 
 	columns[0].Type = mysql.TypeFloat
 	columns[0].Decimal = 1
 	f32 := types.NewFloat32Datum(1.2)
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f32}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f32}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "1.2")
 
 	columns[0].Decimal = 2
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f32}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f32}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "1.20")
 
 	f64 := types.NewFloat64Datum(2.2)
 	columns[0].Type = mysql.TypeDouble
 	columns[0].Decimal = 1
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f64}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f64}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "2.2")
 
 	columns[0].Decimal = 2
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f64}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f64}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "2.20")
 
 	columns[0].Type = mysql.TypeBlob
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewBytesDatum([]byte("foo"))}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewBytesDatum([]byte("foo"))}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "foo")
 
 	columns[0].Type = mysql.TypeVarchar
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("bar")}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("bar")}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "bar")
 
@@ -193,7 +194,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(err, IsNil)
 	d.SetMysqlTime(time)
 	columns[0].Type = mysql.TypeDatetime
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "2017-01-06 00:00:00")
 
@@ -202,38 +203,38 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	d.SetMysqlDuration(duration)
 	columns[0].Type = mysql.TypeDuration
 	columns[0].Decimal = 0
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "11:30:45")
 
 	d.SetMysqlDecimal(types.NewDecFromStringForTest("1.23"))
 	columns[0].Type = mysql.TypeNewDecimal
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "1.23")
 
 	year := types.NewIntDatum(0)
 	columns[0].Type = mysql.TypeYear
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{year}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{year}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "0000")
 
 	year.SetInt64(1984)
 	columns[0].Type = mysql.TypeYear
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{year}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{year}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "1984")
 
 	enum := types.NewMysqlEnumDatum(types.Enum{Name: "ename", Value: 0})
 	columns[0].Type = mysql.TypeEnum
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{enum}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{enum}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "ename")
 
 	set := types.Datum{}
 	set.SetMysqlSet(types.Set{Name: "sname", Value: 0}, mysql.DefaultCollationName)
 	columns[0].Type = mysql.TypeSet
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{set}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{set}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "sname")
 
@@ -242,7 +243,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(err, IsNil)
 	js.SetMysqlJSON(binaryJSON)
 	columns[0].Type = mysql.TypeJSON
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{js}).ToRow())
+	bs, err = dp.dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{js}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, `{"a": 1, "b": 2}`)
 }

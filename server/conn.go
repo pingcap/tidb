@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -187,6 +188,7 @@ type clientConn struct {
 	lastActive   time.Time         // last active time
 	authPlugin   string            // default authentication plugin
 	isUnixSocket bool              // connection is Unix Socket file
+	textDumper   *textDumper
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -1182,6 +1184,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
 	}
+	cc.updateTextDumper(ctx, vars)
 
 	dataStr := string(hack.String(data))
 	switch cmd {
@@ -1947,7 +1950,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 		column.DefaultValue = []byte{}
 
 		data = data[0:4]
-		data = column.Dump(data)
+		data = column.Dump(data, cc.textDumper.transform)
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
@@ -1995,6 +1998,23 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 	return false, cc.flush(ctx)
 }
 
+func (cc *clientConn) updateTextDumper(ctx context.Context, sysVars *variable.SessionVars) {
+	chs, err := variable.GetSessionOrGlobalSystemVar(sysVars, variable.CharacterSetResults)
+	if err != nil {
+		logutil.Logger(ctx).Info("get character_set_results system variable failed", zap.Error(err))
+	}
+	enc, name := charset.Lookup(chs)
+	if cc.textDumper == nil {
+		cc.textDumper = &textDumper{}
+	}
+	if enc != nil && name != "utf-8" {
+		cc.textDumper.encoder = enc.NewEncoder()
+	}
+	if len(cc.textDumper.buf) == 0 {
+		cc.textDumper.buf = make([]byte, 32)
+	}
+}
+
 func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
 	data := cc.alloc.AllocWithLen(4, 1024)
 	data = dumpLengthEncodedInt(data, uint64(len(columns)))
@@ -2003,7 +2023,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 	}
 	for _, v := range columns {
 		data = data[0:4]
-		data = v.Dump(data)
+		data = v.Dump(data, cc.textDumper.transform)
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
@@ -2025,7 +2045,6 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	if stmtDetailRaw != nil {
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
-
 	for {
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			switch value.(string) {
@@ -2064,7 +2083,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			if binary {
 				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i))
 			} else {
-				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i))
+				data, err = cc.textDumper.dumpTextRow(data, rs.Columns(), req.GetRow(i))
 			}
 			if err != nil {
 				reg.End()
