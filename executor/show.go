@@ -1203,17 +1203,21 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
 }
 
-//TODO: sylzd to be completed
 func appendDirectPlacementInfo(directPlacementOpts *model.PlacementSettings, buf *bytes.Buffer) {
 	if directPlacementOpts == nil {
 		return
 	}
-	wrap := ` /*T![placement] %s="%v" */`
 	opts := reflect.ValueOf(*directPlacementOpts)
 	typeOpts := opts.Type()
 	for i := 0; i < opts.NumField(); i++ {
 		if !opts.Field(i).IsZero() {
-			fmt.Fprintf(buf, wrap, typeOpts.Field(i).Name, opts.Field(i).Interface())
+			v := opts.Field(i).Interface()
+			switch v.(type) {
+			case string:
+				fmt.Fprintf(buf, " /*T![placement] %s=\"%s\" */", strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
+			case uint64:
+				fmt.Fprintf(buf, " /*T![placement] %s=%d */", strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
+			}
 		}
 	}
 }
