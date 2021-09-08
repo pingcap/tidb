@@ -506,9 +506,10 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 		if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII {
 			if len(colValue) > length {
 				// truncate value and limit its length
-				v.SetBytes(colValue[:length])
-				if v.Kind() == types.KindString {
-					v.SetString(v.GetString(), tp.Collate)
+				if v.Kind() == types.KindBytes {
+					v.SetBytes(colValue[:length])
+				} else {
+					v.SetString(v.GetString()[:length], tp.Collate)
 				}
 				return true
 			}
