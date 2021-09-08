@@ -7568,5 +7568,15 @@ func (s *testDBSuite8) TestCreateTextAdjustLen(c *C) {
 		"t CREATE TABLE `t` (\n"+
 		"  `a` text DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("alter table t add b text(100);")
+	tk.MustExec("alter table t add c text;")
+	tk.MustExec("alter table t add d text(50);")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|", ""+
+		"t CREATE TABLE `t` (\n"+
+		"  `a` text DEFAULT NULL,\n"+
+		"  `b` text DEFAULT NULL,\n"+
+		"  `c` text DEFAULT NULL,\n"+
+		"  `d` tinytext DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table if exists t")
 }
