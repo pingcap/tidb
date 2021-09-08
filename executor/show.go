@@ -19,6 +19,7 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -1065,13 +1066,12 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " ON COMMIT DELETE ROWS")
 	}
 
-	if tableInfo.PolicyRef != nil {
-		appendPlacementPolicy()
+	if tableInfo.PlacementPolicyRef != nil {
+		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=\"%s\" */", tableInfo.PlacementPolicyRef.Name.String())
 	}
 
-	// TODO: sylzd: add placement info
-	appendPlacementInfo(tableInfo.Partition, buf)
-
+	// add direct placement info here
+	appendDirectPlacementInfo(tableInfo.DirectPlacementOpts, buf)
 	// add partition info here.
 	appendPartitionInfo(tableInfo.Partition, buf)
 	return nil
@@ -1204,8 +1204,18 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 }
 
 //TODO: sylzd to be completed
-func appendDirectPlacementInfo(placementInfo *DirectPlacementOpts) {
-	// TODO: ADD tableInfo.DirectPlacementOpts&Policy
+func appendDirectPlacementInfo(directPlacementOpts *model.PlacementSettings, buf *bytes.Buffer) {
+	if directPlacementOpts == nil {
+		return
+	}
+	wrap := ` /*T![placement] %s="%v" */`
+	opts := reflect.ValueOf(*directPlacementOpts)
+	typeOpts := opts.Type()
+	for i := 0; i < opts.NumField(); i++ {
+		if !opts.Field(i).IsZero() {
+			fmt.Fprintf(buf, wrap, typeOpts.Field(i).Name, opts.Field(i).Interface())
+		}
+	}
 }
 
 func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) {
