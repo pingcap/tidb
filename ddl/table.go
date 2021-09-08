@@ -1235,11 +1235,23 @@ func onAlterTableAttributes(t *meta.Meta, job *model.Job) (ver int64, err error)
 		return 0, err
 	}
 
+	newRules := []*label.Rule{rule}
+	deleteRules := []string{rule.ID}
+	if tblInfo.GetPartitionInfo() != nil {
+		for _, def := range tblInfo.GetPartitionInfo().Definitions {
+			r := label.NewRule()
+			r.Labels = rule.Labels
+			newRules = append(newRules, r.Reset(def.ID, job.SchemaName, tblInfo.Name.L, def.Name.L))
+			deleteRules = append(deleteRules, r.ID)
+		}
+	}
+
 	if len(rule.Labels) == 0 {
-		patch := label.NewRulePatch(nil, []string{rule.ID})
+		patch := label.NewRulePatch(nil, deleteRules)
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
 	} else {
-		err = infosync.PutLabelRule(context.TODO(), rule)
+		patch := label.NewRulePatch(newRules, nil)
+		err = infosync.UpdateLabelRules(context.TODO(), patch)
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
