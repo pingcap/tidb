@@ -1710,16 +1710,17 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				break
 			}
 			_, allowTiFlashFallback := cc.ctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-			if allowTiFlashFallback {
-				// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
-				// server and fallback to TiKV.
-				warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
-				delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
-				_, err = cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
-				cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
-				if err != nil {
-					break
-				}
+			if !allowTiFlashFallback {
+				break
+			}
+			// When the TiFlash server seems down, we append a warning to remind the user to check the status of the TiFlash
+			// server and fallback to TiKV.
+			warns := append(parserWarns, stmtctx.SQLWarn{Level: stmtctx.WarnLevelError, Err: err})
+			delete(cc.ctx.GetSessionVars().IsolationReadEngines, kv.TiFlash)
+			_, err = cc.handleStmt(ctx, stmt, warns, i == len(stmts)-1)
+			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
+			if err != nil {
+				break
 			}
 		}
 	}
