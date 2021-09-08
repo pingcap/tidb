@@ -500,11 +500,11 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 // CutDatumByPrefixLen cuts the datum according to the prefix length.
 // If it's binary or ascii encoded, we will cut it by bytes rather than characters.
 func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
-	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+	if (v.Kind() == types.KindString || v.Kind() == types.KindBytes) && length != types.UnspecifiedLength {
 		colCharset := tp.Charset
 		colValue := v.GetBytes()
 		if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII {
-			if length != types.UnspecifiedLength && len(colValue) > length {
+			if len(colValue) > length {
 				// truncate value and limit its length
 				v.SetBytes(colValue[:length])
 				if v.Kind() == types.KindString {
@@ -512,7 +512,7 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 				}
 				return true
 			}
-		} else if length != types.UnspecifiedLength && utf8.RuneCount(colValue) > length {
+		} else if utf8.RuneCount(colValue) > length {
 			rs := bytes.Runes(colValue)
 			truncateStr := string(rs[:length])
 			// truncate value and limit its length
@@ -525,13 +525,13 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 
 // ReachPrefixLen checks whether the length of v is equal to the prefix length.
 func ReachPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
-	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+	if (v.Kind() == types.KindString || v.Kind() == types.KindBytes) && length != types.UnspecifiedLength {
 		colCharset := tp.Charset
 		colValue := v.GetBytes()
 		if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII {
-			return length != types.UnspecifiedLength && len(colValue) == length
+			return len(colValue) == length
 		}
-		return length != types.UnspecifiedLength && utf8.RuneCount(colValue) == length
+		return utf8.RuneCount(colValue) == length
 	}
 	return false
 }
