@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -178,16 +179,17 @@ func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error
 		}
 		Rules = append(Rules, NewRule(Leader, 1, constraints))
 	case "majority_in_primary":
-		// number of quorum members, without the leader
-		primary := (followers + 1) / 2
+		// We already have the leader, so we need to calculate how many additional followers
+		// need to be in the primary region for quorum
+		followersInPrimary := uint64(math.Ceil(float64(followers) / 2))
 		constraints, err = NewConstraints([]string{fmt.Sprintf("+region=%s", primaryRegion)})
 		if err != nil {
 			return nil, fmt.Errorf("%w: invalid PrimaryRegion, '%s'", err, primaryRegion)
 		}
 		Rules = append(Rules, NewRule(Leader, 1, constraints))
-		Rules = append(Rules, NewRule(Follower, primary, constraints))
+		Rules = append(Rules, NewRule(Follower, followersInPrimary, constraints))
 		// even split the remaining followers
-		followers = followers - primary
+		followers = followers - followersInPrimary
 	default:
 		return nil, fmt.Errorf("%w: unsupported schedule %s", ErrInvalidPlacementOptions, schedule)
 	}
