@@ -20,12 +20,11 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/store/mockstore"
-
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/copr"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
@@ -58,12 +57,12 @@ func createEmptyTestStore(t *testing.T) (kv.Storage, func()) {
 
 func createTestStore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	if *withTiKV {
-		return createTiKVStore(t, true)
+		return createTiKVStore(t)
 	}
-	return createUnistore(t, true)
+	return createUnistore(t)
 }
 
-func createTiKVStore(t *testing.T, initDomain bool) (kv.Storage, *domain.Domain, func()) {
+func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	var d TiKVDriver
 	store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
 	require.NoError(t, err)
@@ -92,7 +91,7 @@ func createTiKVStore(t *testing.T, initDomain bool) (kv.Storage, *domain.Domain,
 	return store, dom, clean
 }
 
-func createUnistore(t *testing.T, initDomain bool) (kv.Storage, *domain.Domain, func()) {
+func createUnistore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	client, pdClient, cluster, err := unistore.New("")
 	require.NoError(t, err)
 
