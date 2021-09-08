@@ -50,8 +50,8 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20210806074406-317f69fb54b4
-	github.com/pingcap/log v0.0.0-20210818144256-6455d4a4c6f9
-	github.com/pingcap/parser v0.0.0-20210823071803-562fed23b4fb
+	github.com/pingcap/log v0.0.0-20210906054005-afc726e70354
+	github.com/pingcap/parser v0.0.0-20210907051057-948434fa20e4
 	github.com/pingcap/sysutil v0.0.0-20210730114356-fcd8a63f68c5
 	github.com/pingcap/tidb-tools v5.0.3+incompatible
 	github.com/pingcap/tipb v0.0.0-20210802080519-94b831c6db55
