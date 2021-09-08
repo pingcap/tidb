@@ -304,6 +304,7 @@ func (*testSuite) TestInfoTables(c *C) {
 		"PROCESSLIST",
 		"TIDB_TRX",
 		"DEADLOCKS",
+		"PLACEMENT_RULES",
 	}
 	for _, t := range infoTables {
 		tb, err1 := is.TableByName(util.InformationSchemaName, model.NewCIStr(t))

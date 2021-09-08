@@ -2827,86 +2827,39 @@ func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx 
 	// TODO: What fields should be there and where should the data come from?
 	// TODO: What privileges will be needed?
 	// Same logic as setDataForPlacementPolicy but different output
-	checker := privilege.GetPrivilegeManager(sctx)
+	//checker := privilege.GetPrivilegeManager(sctx)
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	var rows [][]types.Datum
 	for _, policy := range is.AllPlacementPolicies() {
-		fmt.Println("Policy %v", policy)
-	}
-	for _, bundle := range is.RuleBundles() {
-		id, err := bundle.ObjectID()
-		if err != nil {
-			if err == placement.ErrInvalidBundleIDFormat {
-				continue
-			}
-			return errors.Wrapf(err, "Restore bundle %s failed", bundle.ID)
-		}
-		// Currently, only partitions have placement rules.
-		var tbName, dbName, ptName string
-		skip := true
-		tb, db, part := is.FindTableByPartitionID(id)
-		if tb != nil && (checker == nil || checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv)) {
-			dbName = db.Name.L
-			tbName = tb.Meta().Name.L
-			ptName = part.Name.L
-			skip = false
-		}
-		failpoint.Inject("outputInvalidPlacementRules", func(val failpoint.Value) {
-			if val.(bool) {
-				skip = false
-			}
-		})
-		if skip {
-			continue
-		}
-		for _, rule := range bundle.Rules {
-			constraint, err := rule.Constraints.Restore()
-			if err != nil {
-				return errors.Wrapf(err, "Restore rule %s in bundle %s failed", rule.ID, bundle.ID)
-			}
-			row := types.MakeDatums(
-				infoschema.CatalogVal, // PLACEMENT_RULE_CATALOG
-				dbName,                // PLACEMENT_RULE_SCHEMA
-				tbName,                // PLACEMENT_RULE_TABLE
-				ptName,                // PLACEMENT_RULE_PARTITION
-				constraint,            // PLACEMENT_RULE_DEFINITION
-				1,
-				2,
-				3,
-				"INVESTIGATING",
-				/*
-					bundle.ID,
-					bundle.Index,
-					rule.ID,
-					nil,
-					string(rule.Role),
-					rule.Count,
-					constraint,
-				*/
-			)
-			rows = append(rows, row)
-		}
+		//fmt.Println("Policy %v ?", policy)
+		// Did we say that we would skip syntactic sugar?
+		// I proposed it to be transformed, xhebox proposed to keep it :)
+		// How about to do both, then one can see if syntactic sugar was used?
+
+		row := types.MakeDatums(
+			policy.ID,
+			infoschema.CatalogVal, // CATALOG
+			policy.Name.O,         // Policy Name
+			nil,                   // dbName,                // SCHEMA
+			nil,                   // tbName,                // TABLE
+			nil,                   // ptName,                // PARTITION
+			policy.PlacementSettings.PrimaryRegion,
+			policy.PlacementSettings.Regions,
+			policy.PlacementSettings.Constraints,
+			policy.PlacementSettings.LeaderConstraints,
+			policy.PlacementSettings.VoterConstraints,
+			policy.PlacementSettings.FollowerConstraints,
+			policy.PlacementSettings.LearnerConstraints,
+			policy.PlacementSettings.Schedule,
+			policy.PlacementSettings.Voters,
+			policy.PlacementSettings.Followers,
+			policy.PlacementSettings.Learners,
+		)
+		rows = append(rows, row)
 	}
 	e.rows = rows
 	return nil
 }
-
-/*
-	record := types.MakeDatums(
-		infoschema.CatalogVal, // CONSTRAINT_CATALOG
-		schema.Name.O,         // CONSTRAINT_SCHEMA
-		fk.Name.O,             // CONSTRAINT_NAME
-		infoschema.CatalogVal, // UNIQUE_CONSTRAINT_CATALOG
-		schema.Name.O,         // UNIQUE_CONSTRAINT_SCHEMA
-		"PRIMARY",             // UNIQUE_CONSTRAINT_NAME
-		"NONE",                // MATCH_OPTION
-		updateRule,            // UPDATE_RULE
-		deleteRule,            // DELETE_RULE
-		table.Name.O,          // TABLE_NAME
-		fk.RefTable.O,         // REFERENCED_TABLE_NAME
-	)
-	rows = append(rows, record)
-*/
 
 func checkRule(rule *label.Rule) (dbName, tableName string, err error) {
 	s := strings.Split(rule.ID, "/")

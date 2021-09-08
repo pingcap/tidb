@@ -236,12 +236,14 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 	// test for normal cases
 	tk.MustExec("alter placement policy x REGIONS=\"bj,sh\"")
 	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x REGIONS=\"bj,sh\" SCHEDULED"))
+	tk.MustQuery("select * from information_schema.placement_rules where policy_name = 'x'").Check(testkit.Rows("1 def x <nil> <nil> <nil>  bj,sh       0 0 0"))
 
 	tk.MustExec("alter placement policy x " +
 		"PRIMARY_REGION=\"bj\" " +
 		"REGIONS=\"sh\" " +
 		"SCHEDULE=\"EVEN\"")
 	tk.MustQuery("show placement where target='POLICY x'").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"bj\" REGIONS=\"sh\" SCHEDULE=\"EVEN\" SCHEDULED"))
+	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_RULES WHERE POLICY_NAME='x'").Check(testkit.Rows("1 def x <nil> <nil> <nil> bj sh      EVEN 0 0 0"))
 
 	tk.MustExec("alter placement policy x " +
 		"LEADER_CONSTRAINTS=\"[+region=us-east-1]\" " +
@@ -249,6 +251,9 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 		"FOLLOWERS=3")
 	tk.MustQuery("show placement where target='POLICY x'").Check(
 		testkit.Rows("POLICY x LEADER_CONSTRAINTS=\"[+region=us-east-1]\" FOLLOWERS=3 FOLLOWER_CONSTRAINTS=\"[+region=us-east-2]\" SCHEDULED"),
+	)
+	tk.MustQuery("SELECT POLICY_NAME,LEADER_CONSTRAINTS,FOLLOWER_CONSTRAINTS,FOLLOWERS FROM information_schema.PLACEMENT_RULES WHERE POLICY_NAME = 'x'").Check(
+		testkit.Rows("x [+region=us-east-1] [+region=us-east-2] 3"),
 	)
 
 	tk.MustExec("alter placement policy x " +
@@ -260,9 +265,16 @@ func (s *testDBSuite6) TestAlterPlacementPolicy(c *C) {
 	tk.MustQuery("show placement where target='POLICY x'").Check(
 		testkit.Rows("POLICY x CONSTRAINTS=\"[+disk=ssd]\" VOTERS=5 VOTER_CONSTRAINTS=\"[+region=bj]\" LEARNERS=3 LEARNER_CONSTRAINTS=\"[+region=sh]\" SCHEDULED"),
 	)
+	tk.MustQuery("SELECT " +
+		"CATALOG_NAME,POLICY_NAME,SCHEMA_NAME,TABLE_NAME,PARTITION_NAME," +
+		"PRIMARY_REGION,REGIONS,CONSTRAINTS,LEADER_CONSTRAINTS,VOTER_CONSTRAINTS,FOLLOWER_CONSTRAINTS,LEARNER_CONSTRAINTS," +
+		"SCHEDULE,VOTERS,FOLLOWERS,LEARNERS FROM INFORMATION_SCHEMA.placement_rules WHERE POLICY_NAME='x'").Check(
+		testkit.Rows("def x <nil> <nil> <nil>   [+disk=ssd]  [+region=bj]  [+region=sh]  5 0 3"),
+	)
 
 	// test alter not exist policies
 	tk.MustExec("drop placement policy x")
 	tk.MustGetErrCode("alter placement policy x REGIONS=\"bj,sh\"", mysql.ErrPlacementPolicyNotExists)
 	tk.MustGetErrCode("alter placement policy x2 REGIONS=\"bj,sh\"", mysql.ErrPlacementPolicyNotExists)
+	tk.MustQuery("select * from INFORMATION_SCHEMA.PLACEMENT_RULES WHERE POLICY_NAME='x'").Check(testkit.Rows())
 }
