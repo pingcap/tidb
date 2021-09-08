@@ -249,6 +249,30 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	}
 
 	if s.cfg.Socket != "" {
+
+		// Try to cleanup the socket file
+		sockStat, err := os.Stat(s.cfg.Socket)
+		if err == nil {
+			if sockStat.Mode().Type() != os.ModeSocket {
+				logutil.BgLogger().Warn("Unix socket has the wrong file type, not removing it",
+					zap.String("socket", s.cfg.Socket), zap.String("file_mode", sockStat.Mode().String()))
+			} else {
+				_, err = net.Dial("unix", s.cfg.Socket)
+				if err != nil {
+					logutil.BgLogger().Warn("Unix socket exists and is nonfunctional, removing it",
+						zap.String("socket", s.cfg.Socket), zap.Error(err))
+					err = os.Remove(s.cfg.Socket)
+					if err != nil {
+						logutil.BgLogger().Warn("Failed to remove socket file",
+							zap.String("socket", s.cfg.Socket), zap.Error(err))
+					}
+				} else {
+					logutil.BgLogger().Warn("Unix socket exists and is functional, not removing it",
+						zap.String("socket", s.cfg.Socket), zap.String("file_mode", sockStat.Mode().String()))
+				}
+			}
+		}
+
 		if s.socket, err = net.Listen("unix", s.cfg.Socket); err != nil {
 			return nil, errors.Trace(err)
 		}
