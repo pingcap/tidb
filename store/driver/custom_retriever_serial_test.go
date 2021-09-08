@@ -290,7 +290,7 @@ func TestSnapshotIterWithCustomRetrievers(t *testing.T) {
 			gotValue := iter.Value()
 			expectedKey := makeBytes(ca.result[i][0])
 			expectedValue := makeBytes(ca.result[i][1])
-			require.Equal(t, []byte(expectedKey), []byte(gotKey))
+			require.Equal(t, expectedKey, []byte(gotKey))
 			require.Equal(t, expectedValue, gotValue)
 			err = iter.Next()
 			require.NoError(t, err)
