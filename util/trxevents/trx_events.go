@@ -15,8 +15,6 @@
 package trxevents
 
 import (
-	"unsafe"
-
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
@@ -36,14 +34,14 @@ type CopMeetLock struct {
 // TransactionEvent represents a transaction event that may belong to any of the possible types.
 type TransactionEvent struct {
 	eventType EventType
-	ptr       unsafe.Pointer
+	inner     interface{}
 }
 
 // GetCopMeetLock tries to extract the inner CopMeetLock event from a TransactionEvent. Returns nil if it's not a
 // CopMeetLock event.
 func (e TransactionEvent) GetCopMeetLock() *CopMeetLock {
 	if e.eventType == EventTypeCopMeetLock {
-		return (*CopMeetLock)(e.ptr)
+		return e.inner.(*CopMeetLock)
 	}
 	return nil
 }
@@ -52,7 +50,7 @@ func (e TransactionEvent) GetCopMeetLock() *CopMeetLock {
 func WrapCopMeetLock(copMeetLock *CopMeetLock) TransactionEvent {
 	return TransactionEvent{
 		eventType: EventTypeCopMeetLock,
-		ptr:       unsafe.Pointer(copMeetLock),
+		inner:     copMeetLock,
 	}
 }
 
