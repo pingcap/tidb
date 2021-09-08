@@ -666,6 +666,19 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 
 	if realOffset == r.pos {
 		return realOffset, nil
+	} else if realOffset >= r.rangeInfo.Size {
+		// See: https://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.35
+		// because s3's GetObject interface doesn't allow get a range that matches zero length data,
+		// so if the position is out of range, we need to always return io.EOF after the seek operation.
+
+		// close current read and open a new one which target offset
+		if err := r.reader.Close(); err != nil {
+			log.L().Warn("close s3 reader failed, will ignore this error", logutil.ShortError(err))
+		}
+
+		r.reader = io.NopCloser(bytes.NewReader(nil))
+		r.pos = r.rangeInfo.Size
+		return r.pos, nil
 	}
 
 	// if seek ahead no more than 64k, we discard these data
