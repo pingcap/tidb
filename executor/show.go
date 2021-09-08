@@ -1067,7 +1067,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	}
 
 	if tableInfo.PlacementPolicyRef != nil {
-		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=\"%s\" */", tableInfo.PlacementPolicyRef.Name.String())
+		fmt.Fprintf(buf, ` /*T![placement] PLACEMENT POLICY="%s" */`, tableInfo.PlacementPolicyRef.Name.String())
 	}
 
 	// add direct placement info here
@@ -1214,9 +1214,9 @@ func appendDirectPlacementInfo(directPlacementOpts *model.PlacementSettings, buf
 			v := opts.Field(i).Interface()
 			switch v.(type) {
 			case string:
-				fmt.Fprintf(buf, " /*T![placement] %s=\"%s\" */", strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
+				fmt.Fprintf(buf, ` /*T![placement] %s="%s" */`, strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
 			case uint64:
-				fmt.Fprintf(buf, " /*T![placement] %s=%d */", strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
+				fmt.Fprintf(buf, ` /*T![placement] %s=%d */`, strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
 			}
 		}
 	}
