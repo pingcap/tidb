@@ -3,8 +3,7 @@ module github.com/pingcap/tidb
 go 1.16
 
 require (
-	cloud.google.com/go v0.54.0 // indirect
-	cloud.google.com/go/storage v1.6.0
+	cloud.google.com/go/storage v1.16.1
 	github.com/BurntSushi/toml v0.3.1
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/HdrHistogram/hdrhistogram-go v1.1.0 // indirect
@@ -30,8 +29,7 @@ require (
 	github.com/golang/protobuf v1.5.2
 	github.com/golang/snappy v0.0.3
 	github.com/google/btree v1.0.0
-	github.com/google/go-cmp v0.5.6 // indirect
-	github.com/google/pprof v0.0.0-20210609004039-a478d1d731e9
+	github.com/google/pprof v0.0.0-20210720184732-4bb14d4b1be1
 	github.com/google/uuid v1.1.2
 	github.com/gorilla/handlers v1.5.1 // indirect
 	github.com/gorilla/mux v1.8.0
@@ -76,20 +74,19 @@ require (
 	github.com/xitongsys/parquet-go v1.5.5-0.20201110004701-b09c49d6d457
 	github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b
-	go.opencensus.io v0.22.5 // indirect
 	go.uber.org/atomic v1.9.0
 	go.uber.org/automaxprocs v1.4.0
 	go.uber.org/goleak v1.1.10
 	go.uber.org/multierr v1.7.0
 	go.uber.org/zap v1.19.0
 	golang.org/x/net v0.0.0-20210503060351-7fd8e65b6420
-	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d
+	golang.org/x/oauth2 v0.0.0-20210805134026-6f1e6394065a
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	golang.org/x/sys v0.0.0-20210630005230-0f9fa26af87c
+	golang.org/x/sys v0.0.0-20210806184541-e5e7981a1069
 	golang.org/x/text v0.3.7
 	golang.org/x/tools v0.1.5
-	google.golang.org/api v0.22.0
-	google.golang.org/grpc v1.29.1
+	google.golang.org/api v0.54.0
+	google.golang.org/grpc v1.40.0
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v2 v2.4.0
 	modernc.org/mathutil v1.2.2
@@ -97,5 +94,6 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-// FIXME the official repo has some bug makes br_gcs test failed. https://github.com/googleapis/google-cloud-go/pull/3509
-// replace cloud.google.com/go/storage => github.com/3pointer/google-cloud-go/storage v1.6.1-0.20210108125931-b59bfa0720b2
+// cloud.google.com/go/storage will upgrade grpc to v1.40.0
+// we need keep the replacement until go.etcd.io supports the higher version of grpc.
+replace google.golang.org/grpc => google.golang.org/grpc v1.29.1
