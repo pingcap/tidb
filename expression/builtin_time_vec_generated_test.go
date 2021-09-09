@@ -307,22 +307,22 @@ var unitForAddSubDate = []string{"MICROSECOND", "SECOND", "MINUTE", "HOUR", "DAY
 func genVecExprBenchCaseForAddSubDate(funcName string, unit string) map[string][]vecExprBenchCase {
 	tps := [][]types.EvalType{
 		// retType, arg0Type, arg1Type
-		[]types.EvalType{types.ETDatetime, types.ETString, types.ETString},    // builtinAddDateStringStringSig
-		[]types.EvalType{types.ETDatetime, types.ETString, types.ETInt},       // builtinAddDateStringIntSig
-		[]types.EvalType{types.ETDatetime, types.ETString, types.ETReal},      // builtinAddDateStringRealSig
-		[]types.EvalType{types.ETDatetime, types.ETString, types.ETDecimal},   // builtinAddDateStringDecimalSig
-		[]types.EvalType{types.ETDatetime, types.ETString, types.ETInt},       // builtinAddDateIntStringSig
-		[]types.EvalType{types.ETDatetime, types.ETInt, types.ETInt},          // builtinAddDateIntIntSig
-		[]types.EvalType{types.ETDatetime, types.ETInt, types.ETReal},         // builtinAddDateIntRealSig
-		[]types.EvalType{types.ETDatetime, types.ETInt, types.ETDecimal},      // builtinAddDateIntDecimalSig
-		[]types.EvalType{types.ETDatetime, types.ETDatetime, types.ETString},  // builtinAddDateDatetimeStringSig
-		[]types.EvalType{types.ETDatetime, types.ETDatetime, types.ETInt},     // builtinAddDateDatetimeIntSig
-		[]types.EvalType{types.ETDatetime, types.ETDatetime, types.ETInt},     // builtinAddDateDatetimeRealSig
-		[]types.EvalType{types.ETDatetime, types.ETDatetime, types.ETInt},     // builtinAddDateDatetimeDecimalSig
-		[]types.EvalType{types.ETDuration, types.ETDuration, types.ETString},  // builtinAddDateDurationStringSig
-		[]types.EvalType{types.ETDuration, types.ETDuration, types.ETInt},     // builtinAddDateDurationIntSig
-		[]types.EvalType{types.ETDuration, types.ETDuration, types.ETReal},    // builtinAddDateDurationRealSig
-		[]types.EvalType{types.ETDuration, types.ETDuration, types.ETDecimal}, // builtinAddDateDurationDecimalSig
+		{types.ETDatetime, types.ETString, types.ETString},    // builtinAddDateStringStringSig
+		{types.ETDatetime, types.ETString, types.ETInt},       // builtinAddDateStringIntSig
+		{types.ETDatetime, types.ETString, types.ETReal},      // builtinAddDateStringRealSig
+		{types.ETDatetime, types.ETString, types.ETDecimal},   // builtinAddDateStringDecimalSig
+		{types.ETDatetime, types.ETString, types.ETInt},       // builtinAddDateIntStringSig
+		{types.ETDatetime, types.ETInt, types.ETInt},          // builtinAddDateIntIntSig
+		{types.ETDatetime, types.ETInt, types.ETReal},         // builtinAddDateIntRealSig
+		{types.ETDatetime, types.ETInt, types.ETDecimal},      // builtinAddDateIntDecimalSig
+		{types.ETDatetime, types.ETDatetime, types.ETString},  // builtinAddDateDatetimeStringSig
+		{types.ETDatetime, types.ETDatetime, types.ETInt},     // builtinAddDateDatetimeIntSig
+		{types.ETDatetime, types.ETDatetime, types.ETInt},     // builtinAddDateDatetimeRealSig
+		{types.ETDatetime, types.ETDatetime, types.ETInt},     // builtinAddDateDatetimeDecimalSig
+		{types.ETDuration, types.ETDuration, types.ETString},  // builtinAddDateDurationStringSig
+		{types.ETDuration, types.ETDuration, types.ETInt},     // builtinAddDateDurationIntSig
+		{types.ETDuration, types.ETDuration, types.ETReal},    // builtinAddDateDurationRealSig
+		{types.ETDuration, types.ETDuration, types.ETDecimal}, // builtinAddDateDurationDecimalSig
 	}
 	var benchCase []vecExprBenchCase
 	for _, tp := range tps {
