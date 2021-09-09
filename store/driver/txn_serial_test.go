@@ -55,11 +55,12 @@ func TestTxnGet(t *testing.T) {
 	prepareSnapshot(t, store, [][]interface{}{{"k1", "v1"}})
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	require.NoError(t, err)
+	require.NotNil(t, txn)
 
 	// should return snapshot value if no dirty data
 	v, err := txn.Get(context.Background(), kv.Key("k1"))
 	require.NoError(t, err)
+	require.Equal(t, []byte("v1"), v)
 
 	// insert but not commit
 	err = txn.Set(kv.Key("k1"), kv.Key("v1+"))
@@ -214,4 +215,5 @@ func TestTxnScan(t *testing.T) {
 
 	iter, err = txn.Iter(kv.Key("k1"), kv.Key("k2"))
 	require.Equal(t, errInterceptor.err, err)
+	require.Nil(t, iter)
 }
