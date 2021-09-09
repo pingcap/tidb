@@ -542,6 +542,9 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustExec(`set tidb_opt_limit_push_down_threshold = 20`)
 	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
 	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
+
+	// stop general log worker goroutine to make goleak happy
+	session.StopGeneralLog()
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
