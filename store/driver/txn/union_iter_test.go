@@ -23,6 +23,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func r(key, value string) *kv.Entry {
+	bKey := []byte(key)
+	bValue := []byte(value)
+	if value == "nil" {
+		bValue = nil
+	}
+
+	return &kv.Entry{Key: bKey, Value: bValue}
+}
+
 func TestUnionIter(t *testing.T) {
 	t.Parallel()
 	// test iter normal cases, snap iter become invalid before dirty iter
