@@ -72,31 +72,40 @@ func TestSnapshotWithoutInterceptor(t *testing.T) {
 
 	// Test for Iter
 	iter, err := snap.Iter(nil, nil)
+	require.NoError(t, err)
 	checkIter(t, iter, [][]interface{}{{"k1", "v1"}, {"k2", "v2"}, {"k3", "v3"}})
 
 	iter, err = snap.Iter(nil, kv.Key("k3"))
+	require.NoError(t, err)
 	checkIter(t, iter, [][]interface{}{{"k1", "v1"}, {"k2", "v2"}})
 
 	iter, err = snap.Iter(kv.Key("k2"), kv.Key("k3"))
+	require.NoError(t, err)
 	checkIter(t, iter, [][]interface{}{{"k2", "v2"}})
 
 	iter, err = snap.Iter(kv.Key("k2"), nil)
+	require.NoError(t, err)
 	checkIter(t, iter, [][]interface{}{{"k2", "v2"}, {"k3", "v3"}})
 
 	iter, err = snap.Iter(kv.Key("k4"), nil)
+	require.NoError(t, err)
 	checkIter(t, iter, [][]interface{}{})
 
 	// Test for IterReverse
 	iter, err = snap.IterReverse(kv.Key("k5"))
+	require.NoError(t, err)
 	checkIter(t, iter, [][]interface{}{{"k3", "v3"}, {"k2", "v2"}, {"k1", "v1"}})
 
 	iter, err = snap.IterReverse(kv.Key("k3"))
+	require.NoError(t, err)
 	checkIter(t, iter, [][]interface{}{{"k2", "v2"}, {"k1", "v1"}})
 
 	iter, err = snap.IterReverse(kv.Key("k1"))
+	require.NoError(t, err)
 	checkIter(t, iter, [][]interface{}{})
 
 	iter, err = snap.IterReverse(kv.Key("k0"))
+	require.NoError(t, err)
 	checkIter(t, iter, [][]interface{}{})
 }
 
