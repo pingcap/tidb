@@ -39,6 +39,8 @@ import (
 	atomic2 "go.uber.org/atomic"
 )
 
+// Only for test
+
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
 type ScopeFlag uint8
 
