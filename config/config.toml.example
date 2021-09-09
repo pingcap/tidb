@@ -1,5 +1,7 @@
 # TiDB Configuration.
 
+# For test.
+
 # TiDB server host.
 host = "0.0.0.0"
 
