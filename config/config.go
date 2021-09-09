@@ -37,6 +37,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// For test the config review rules.
+
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
