@@ -40,6 +40,8 @@ type InfoschemaMetaVersion interface {
 	SchemaMetaVersion() int64
 }
 
+// For test the config review rules.
+
 // Context is an interface for transaction and executive args environment.
 type Context interface {
 	// NewTxn creates a new transaction for further execution.
