@@ -1,0 +1,831 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package temptable
+
+import (
+	"context"
+	"math"
+	"testing"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/stretchr/testify/require"
+)
+
+func incLastByte(key kv.Key) kv.Key {
+	key = append([]byte{}, key...)
+	key[len(key)-1] += 1
+	return key
+}
+
+func decLastByte(key kv.Key) kv.Key {
+	key = append([]byte{}, key...)
+	key[len(key)-1] -= 1
+	return key
+}
+
+func encodeTableKey(tblID int64, suffix ...byte) kv.Key {
+	key := tablecodec.EncodeTablePrefix(tblID)
+	key = append(key, suffix...)
+	return key
+}
+
+func TestGetKeyAccessedTableID(t *testing.T) {
+	t.Parallel()
+	tbPrefix := tablecodec.TablePrefix()
+	prefix0 := encodeTableKey(0)
+	prefixMax := encodeTableKey(math.MaxInt64)
+	prefixNegative := encodeTableKey(-1)
+	prefix1 := encodeTableKey(1)
+	prefixA := encodeTableKey(math.MaxInt64 / 2)
+	prefixB := encodeTableKey(math.MaxInt64 - 1)
+
+	cases := []struct {
+		name       string
+		key        kv.Key
+		ok         bool
+		testSuffix bool
+		tbID       int64
+	}{
+		{name: "empty", key: []byte{}, ok: false},
+		{name: "replace1", key: incLastByte(tbPrefix), ok: false},
+		{name: "replace2", key: decLastByte(tbPrefix), ok: false},
+		// key with not enough id len should not be regard as a valid table id
+		{name: "tbPrefix", key: tbPrefix, ok: false},
+		{name: "back1", key: prefix1[:len(prefix1)-1], tbID: 1, ok: false},
+		{name: "back2", key: prefix1[:len(tbPrefix)+1], tbID: 1, ok: false},
+		// table with an id 0 should not be regard as a valid table id
+		{name: "prefix0", key: prefix0, testSuffix: true, ok: false},
+		// table with id math.MaxInt64 should not regard as a valid table id
+		{name: "prefixMax", key: prefixMax, testSuffix: true, ok: false},
+		// table with id negative should not regard as a valid table id
+		{name: "prefixNegative", key: prefixNegative, testSuffix: true, ok: false},
+		// table with id > 0 && id < math.MaxInt64 regard as a valid table id
+		{name: "prefix1", key: prefix1, tbID: 1, testSuffix: true, ok: true},
+		{name: "prefixA", key: prefixA, tbID: math.MaxInt64 / 2, testSuffix: true, ok: true},
+		{name: "prefixB", key: prefixB, tbID: math.MaxInt64 - 1, testSuffix: true, ok: true},
+	}
+
+	for _, c := range cases {
+		keys := []kv.Key{c.key}
+		if c.testSuffix {
+			for _, s := range [][]byte{
+				{0},
+				{1},
+				{0xFF},
+				codec.EncodeInt(nil, 0),
+				codec.EncodeInt(nil, math.MaxInt64/2),
+				codec.EncodeInt(nil, math.MaxInt64),
+			} {
+				newKey := append([]byte{}, c.key...)
+				newKey = append(newKey, s...)
+				keys = append(keys, newKey)
+			}
+		}
+
+		for i, key := range keys {
+			tblID, ok := getKeyAccessedTableID(key)
+			require.Equal(t, c.ok, ok, "%s %d", c.name, i)
+			if c.ok {
+				require.Equal(t, c.tbID, tblID, "%s %d", c.name, i)
+			} else {
+				require.Equal(t, int64(0), tblID, "%s %d", c.name, i)
+			}
+		}
+	}
+}
+
+func TestGetRangeAccessedTableID(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		start kv.Key
+		end   kv.Key
+		ok    bool
+		tbID  int64
+	}{
+		{
+			start: encodeTableKey(1),
+			end:   encodeTableKey(1),
+			ok:    true,
+			tbID:  1,
+		},
+		{
+			start: encodeTableKey(1),
+			end:   append(encodeTableKey(1), 0),
+			ok:    true,
+			tbID:  1,
+		},
+		{
+			start: encodeTableKey(1),
+			end:   append(encodeTableKey(1), 0xFF),
+			ok:    true,
+			tbID:  1,
+		},
+		{
+			start: encodeTableKey(1),
+			end:   encodeTableKey(2),
+			ok:    true,
+			tbID:  1,
+		},
+		{
+			start: tablecodec.TablePrefix(),
+			end:   encodeTableKey(1),
+			ok:    false,
+		},
+		{
+			start: tablecodec.TablePrefix(),
+			end:   nil,
+			ok:    false,
+		},
+		{
+			start: encodeTableKey(0),
+			end:   encodeTableKey(1),
+			ok:    false,
+		},
+		{
+			start: encodeTableKey(0),
+			end:   nil,
+			ok:    false,
+		},
+		{
+			start: encodeTableKey(1),
+			end:   encodeTableKey(5),
+			ok:    false,
+		},
+		{
+			start: encodeTableKey(1),
+			end:   nil,
+			ok:    false,
+		},
+		{
+			start: encodeTableKey(1),
+			end:   incLastByte(tablecodec.TablePrefix()),
+			ok:    false,
+		},
+		{
+			start: encodeTableKey(1),
+			end:   encodeTableKey(1)[:len(encodeTableKey(1))-1],
+			ok:    false,
+		},
+		{
+			start: encodeTableKey(1)[:len(encodeTableKey(1))-1],
+			end:   encodeTableKey(1),
+			ok:    false,
+		},
+		{
+			start: encodeTableKey(math.MaxInt64),
+			end:   encodeTableKey(math.MaxInt64, 0),
+			ok:    false,
+		},
+		{
+			start: nil,
+			end:   nil,
+			ok:    false,
+		},
+		{
+			start: nil,
+			end:   encodeTableKey(2),
+			ok:    false,
+		},
+	}
+
+	for _, c := range cases {
+		tblID, ok := getRangeAccessedTableID(c.start, c.end)
+		require.Equal(t, c.ok, ok)
+		if ok {
+			require.Equal(t, c.tbID, tblID)
+		} else {
+			require.Equal(t, int64(0), tblID)
+		}
+	}
+}
+
+func TestSafeWithSnapshotScan(t *testing.T) {
+	t.Parallel()
+	falseCases := [][]kv.Key{
+		{nil, nil},
+		{nil, encodeTableKey(1, 0)},
+		{nil, encodeTableKey(1, 1)},
+		{encodeTableKey(1), nil},
+		{encodeTableKey(1, 0), nil},
+		{encodeTableKey(1), encodeTableKey(1)},
+		{encodeTableKey(1), encodeTableKey(1, 0)},
+		{encodeTableKey(1), encodeTableKey(1, 1)},
+		{encodeTableKey(1), encodeTableKey(2)},
+		{encodeTableKey(1), encodeTableKey(2, 0)},
+		{encodeTableKey(1), encodeTableKey(2, 1)},
+		{encodeTableKey(1, 0), encodeTableKey(1, 1)},
+		{encodeTableKey(1), incLastByte(tablecodec.TablePrefix())},
+	}
+
+	tablePrefix := tablecodec.TablePrefix()
+	trueCases := [][]kv.Key{
+		{nil, decLastByte(tablePrefix)},
+		{decLastByte(tablePrefix), append(decLastByte(tablePrefix), 1)},
+		{incLastByte(tablePrefix), nil},
+		{incLastByte(tablePrefix), append(incLastByte(tablePrefix), 1)},
+	}
+
+	for _, c := range falseCases {
+		require.False(t, safeWithSnapshotScan(c[0], c[1]))
+	}
+
+	for _, c := range trueCases {
+		require.True(t, safeWithSnapshotScan(c[0], c[1]))
+	}
+}
+
+func TestGetSessionTemporaryTableKey(t *testing.T) {
+	t.Parallel()
+	localTempTableData := []*kv.Entry{
+		{Key: encodeTableKey(5), Value: []byte("v5")},
+		{Key: encodeTableKey(5, 0), Value: []byte("v50")},
+		{Key: encodeTableKey(5, 1), Value: []byte("v51")},
+		{Key: encodeTableKey(5, 0, 1), Value: []byte("v501")},
+		{Key: encodeTableKey(5, 2), Value: []byte("")},
+		{Key: encodeTableKey(5, 3), Value: nil},
+	}
+
+	is := newMockedInfoSchema(t).
+		AddTable(model.TempTableNone, 1).
+		AddTable(model.TempTableGlobal, 3).
+		AddTable(model.TempTableLocal, 5)
+
+	normalTb, ok := is.TableByID(1)
+	require.True(t, ok)
+	require.Equal(t, model.TempTableNone, normalTb.Meta().TempTableType)
+	globalTb, ok := is.TableByID(3)
+	require.True(t, ok)
+	require.Equal(t, model.TempTableGlobal, globalTb.Meta().TempTableType)
+	localTb, ok := is.TableByID(5)
+	require.True(t, ok)
+	require.Equal(t, model.TempTableLocal, localTb.Meta().TempTableType)
+
+	retriever := newMockedRetriever(t).SetAllowedMethod("Get").SetData(localTempTableData)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	// test local temporary table should read from session
+	cases := append(append([]*kv.Entry{}, localTempTableData...), &kv.Entry{
+		// also add a test case for key not exist in retriever
+		Key: encodeTableKey(5, 'n'), Value: []byte("non-exist-key"),
+	})
+	for i, c := range cases {
+		val, err := getSessionKey(ctx, localTb.Meta(), retriever, c.Key)
+		if len(c.Value) == 0 || string(c.Value) == "non-exist-key" {
+			require.True(t, kv.ErrNotExist.Equal(err), i)
+			require.Nil(t, val, i)
+		} else {
+			require.NoError(t, err, i)
+			require.Equal(t, c.Value, val, i)
+		}
+		invokes := retriever.GetInvokes()
+		require.Equal(t, 1, len(invokes), i)
+		require.Equal(t, "Get", invokes[0].Method, i)
+		require.Equal(t, []interface{}{ctx, c.Key}, invokes[0].Args)
+		retriever.ResetInvokes()
+	}
+
+	// test global temporary table should return empty data directly
+	val, err := getSessionKey(ctx, globalTb.Meta(), retriever, encodeTableKey(3))
+	require.True(t, kv.ErrNotExist.Equal(err))
+	require.Nil(t, val)
+	require.Equal(t, 0, len(retriever.GetInvokes()))
+
+	// test normal table should not be allowed
+	val, err = getSessionKey(ctx, normalTb.Meta(), retriever, encodeTableKey(1))
+	require.Error(t, err, "Cannot get normal table key from session")
+	require.Nil(t, val)
+	require.Equal(t, 0, len(retriever.GetInvokes()))
+
+	// test for other errors
+	injectedErr := errors.New("err")
+	retriever.InjectMethodError("Get", injectedErr)
+	val, err = getSessionKey(ctx, localTb.Meta(), retriever, encodeTableKey(5))
+	require.Nil(t, val)
+	require.Equal(t, injectedErr, err)
+}
+
+func TestInterceptorTemporaryTableInfoByID(t *testing.T) {
+	t.Parallel()
+	is := newMockedInfoSchema(t).
+		AddTable(model.TempTableNone, 1, 5).
+		AddTable(model.TempTableGlobal, 2, 6).
+		AddTable(model.TempTableLocal, 3, 7)
+
+	interceptor := NewTemporaryTableSnapshotInterceptor(is, newMockedRetriever(t))
+
+	// normal table should return nil
+	tblInfo, ok := interceptor.temporaryTableInfoByID(1)
+	require.False(t, ok)
+	require.Nil(t, tblInfo)
+
+	tblInfo, ok = interceptor.temporaryTableInfoByID(5)
+	require.False(t, ok)
+	require.Nil(t, tblInfo)
+
+	// global temporary table
+	tblInfo, ok = interceptor.temporaryTableInfoByID(2)
+	require.True(t, ok)
+	require.Equal(t, "tb2", tblInfo.Name.O)
+	require.Equal(t, model.TempTableGlobal, tblInfo.TempTableType)
+
+	tblInfo, ok = interceptor.temporaryTableInfoByID(6)
+	require.True(t, ok)
+	require.Equal(t, "tb6", tblInfo.Name.O)
+	require.Equal(t, model.TempTableGlobal, tblInfo.TempTableType)
+
+	// local temporary table
+	tblInfo, ok = interceptor.temporaryTableInfoByID(3)
+	require.True(t, ok)
+	require.Equal(t, "tb3", tblInfo.Name.O)
+	require.Equal(t, model.TempTableLocal, tblInfo.TempTableType)
+
+	tblInfo, ok = interceptor.temporaryTableInfoByID(7)
+	require.True(t, ok)
+	require.Equal(t, "tb7", tblInfo.Name.O)
+	require.Equal(t, model.TempTableLocal, tblInfo.TempTableType)
+
+	// non exists table
+	tblInfo, ok = interceptor.temporaryTableInfoByID(4)
+	require.False(t, ok)
+	require.Nil(t, tblInfo)
+
+	tblInfo, ok = interceptor.temporaryTableInfoByID(8)
+	require.False(t, ok)
+	require.Nil(t, tblInfo)
+}
+
+func TestInterceptorOnGet(t *testing.T) {
+	t.Parallel()
+	is := newMockedInfoSchema(t).
+		AddTable(model.TempTableNone, 1).
+		AddTable(model.TempTableGlobal, 3).
+		AddTable(model.TempTableLocal, 5)
+	noTempTableData := []*kv.Entry{
+		// normal table data
+		{Key: encodeTableKey(1), Value: []byte("v1")},
+		{Key: encodeTableKey(1, 1), Value: []byte("v11")},
+		// no exist table data
+		{Key: encodeTableKey(2), Value: []byte("v2")},
+		{Key: encodeTableKey(2, 1), Value: []byte("v21")},
+		// other data
+		{Key: kv.Key("s"), Value: []byte("vs")},
+		{Key: kv.Key("s0"), Value: []byte("vs0")},
+		{Key: kv.Key("u"), Value: []byte("vu")},
+		{Key: kv.Key("u0"), Value: []byte("vu0")},
+		{Key: tablecodec.TablePrefix(), Value: []byte("vt")},
+		{Key: encodeTableKey(0), Value: []byte("v0")},
+		{Key: encodeTableKey(0, 1), Value: []byte("v01")},
+		{Key: encodeTableKey(math.MaxInt64), Value: []byte("vm")},
+		{Key: encodeTableKey(math.MaxInt64, 1), Value: []byte("vm1")},
+	}
+
+	localTempTableData := []*kv.Entry{
+		{Key: encodeTableKey(5), Value: []byte("v5")},
+		{Key: encodeTableKey(5, 0), Value: []byte("v50")},
+		{Key: encodeTableKey(5, 1), Value: []byte("v51")},
+		{Key: encodeTableKey(5, 0, 1), Value: []byte("v501")},
+		{Key: encodeTableKey(5, 2), Value: []byte("")},
+		{Key: encodeTableKey(5, 3), Value: nil},
+	}
+
+	snap := newMockedSnapshot(newMockedRetriever(t).SetAllowedMethod("Get").SetData(noTempTableData))
+	retriever := newMockedRetriever(t).SetAllowedMethod("Get").SetData(localTempTableData)
+	interceptor := NewTemporaryTableSnapshotInterceptor(is, retriever)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	// test normal table and no table key should read from snapshot
+	cases := append(append([]*kv.Entry{}, noTempTableData...), []*kv.Entry{
+		// also add a test case for key not exist in snap
+		{Key: encodeTableKey(1, 'n'), Value: []byte("non-exist-key")},
+		{Key: encodeTableKey(2, 'n'), Value: []byte("non-exist-key")},
+		{Key: kv.Key("sn"), Value: []byte("non-exist-key")},
+		{Key: kv.Key("un"), Value: []byte("non-exist-key")},
+	}...)
+	for i, c := range cases {
+		val, err := interceptor.OnGet(ctx, snap, c.Key)
+		if string(c.Value) == "non-exist-key" {
+			require.True(t, kv.ErrNotExist.Equal(err), i)
+			require.Nil(t, val, i)
+		} else {
+			require.NoError(t, err, i)
+			require.Equal(t, c.Value, val, i)
+		}
+		require.Equal(t, 0, len(retriever.GetInvokes()))
+		invokes := snap.GetInvokes()
+		require.Equal(t, 1, len(invokes), i)
+		require.Equal(t, "Get", invokes[0].Method, i)
+		require.Equal(t, []interface{}{ctx, c.Key}, invokes[0].Args)
+		snap.ResetInvokes()
+	}
+
+	// test global temporary table should return kv.ErrNotExist
+	val, err := interceptor.OnGet(ctx, snap, encodeTableKey(3))
+	require.True(t, kv.ErrNotExist.Equal(err))
+	require.Nil(t, val)
+	require.Equal(t, 0, len(retriever.GetInvokes()))
+	require.Equal(t, 0, len(snap.GetInvokes()))
+
+	val, err = interceptor.OnGet(ctx, snap, encodeTableKey(3, 1))
+	require.True(t, kv.ErrNotExist.Equal(err))
+	require.Nil(t, val)
+	require.Equal(t, 0, len(retriever.GetInvokes()))
+	require.Equal(t, 0, len(snap.GetInvokes()))
+
+	// test local temporary table should read from session
+	cases = append(append([]*kv.Entry{}, localTempTableData...), &kv.Entry{
+		// also add a test case for key not exist in retriever
+		Key: encodeTableKey(5, 'n'), Value: []byte("non-exist-key"),
+	})
+	for i, c := range cases {
+		val, err = interceptor.OnGet(ctx, snap, c.Key)
+		if len(c.Value) == 0 || string(c.Value) == "non-exist-key" {
+			require.True(t, kv.ErrNotExist.Equal(err), i)
+			require.Nil(t, val, i)
+		} else {
+			require.NoError(t, err, i)
+			require.Equal(t, c.Value, val, i)
+		}
+		require.Equal(t, 0, len(snap.GetInvokes()))
+		invokes := retriever.GetInvokes()
+		require.Equal(t, 1, len(invokes), i)
+		require.Equal(t, "Get", invokes[0].Method, i)
+		require.Equal(t, []interface{}{ctx, c.Key}, invokes[0].Args)
+		retriever.ResetInvokes()
+	}
+
+	// test error cases
+	injectedErr := errors.New("err1")
+	snap.InjectMethodError("Get", injectedErr)
+	val, err = interceptor.OnGet(ctx, snap, encodeTableKey(1))
+	require.Nil(t, val)
+	require.Equal(t, injectedErr, err)
+	require.Equal(t, 0, len(retriever.GetInvokes()))
+	require.Equal(t, 1, len(snap.GetInvokes()))
+
+	val, err = interceptor.OnGet(ctx, snap, kv.Key("s"))
+	require.Nil(t, val)
+	require.Equal(t, injectedErr, err)
+	require.Equal(t, 0, len(retriever.GetInvokes()))
+	require.Equal(t, 2, len(snap.GetInvokes()))
+	snap.ResetInvokes()
+	require.Equal(t, 0, len(snap.GetInvokes()))
+
+	injectedErr = errors.New("err2")
+	retriever.InjectMethodError("Get", injectedErr)
+	val, err = interceptor.OnGet(ctx, snap, encodeTableKey(5))
+	require.Nil(t, val)
+	require.Equal(t, injectedErr, err)
+	require.Equal(t, 0, len(snap.GetInvokes()))
+	require.Equal(t, 1, len(retriever.GetInvokes()))
+	retriever.ResetInvokes()
+	require.Equal(t, 0, len(retriever.GetInvokes()))
+}
+
+func TestInterceptorBatchGetTemporaryTableKeys(t *testing.T) {
+	t.Parallel()
+	localTempTableData := []*kv.Entry{
+		{Key: encodeTableKey(5), Value: []byte("v5")},
+		{Key: encodeTableKey(5, 0), Value: []byte("v50")},
+		{Key: encodeTableKey(5, 1), Value: []byte("v51")},
+		{Key: encodeTableKey(5, 0, 1), Value: []byte("v501")},
+		{Key: encodeTableKey(5, 2), Value: []byte("")},
+		{Key: encodeTableKey(5, 3), Value: nil},
+		{Key: encodeTableKey(8), Value: []byte("v8")},
+		{Key: encodeTableKey(8, 0), Value: []byte("v80")},
+		{Key: encodeTableKey(8, 1), Value: []byte("v81")},
+		{Key: encodeTableKey(8, 0, 1), Value: []byte("v801")},
+		{Key: encodeTableKey(8, 2), Value: []byte("")},
+		{Key: encodeTableKey(8, 3), Value: nil},
+	}
+
+	is := newMockedInfoSchema(t).
+		AddTable(model.TempTableNone, 1, 4).
+		AddTable(model.TempTableGlobal, 3, 6).
+		AddTable(model.TempTableLocal, 5, 8)
+	retriever := newMockedRetriever(t).SetAllowedMethod("Get").SetData(localTempTableData)
+	interceptor := NewTemporaryTableSnapshotInterceptor(is, retriever)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	cases := []struct {
+		keys     []kv.Key
+		snapKeys []kv.Key
+		result   map[string][]byte
+	}{
+		{
+			keys:     nil,
+			snapKeys: nil,
+			result:   nil,
+		},
+		{
+			keys: []kv.Key{
+				encodeTableKey(3),
+				encodeTableKey(3, 1),
+				encodeTableKey(6),
+			},
+			snapKeys: nil,
+			result:   nil,
+		},
+		{
+			keys: []kv.Key{
+				encodeTableKey(3),
+				encodeTableKey(5, 'n'),
+			},
+			snapKeys: nil,
+			result:   nil,
+		},
+		{
+			keys: []kv.Key{
+				encodeTableKey(5, 'n'),
+			},
+			snapKeys: nil,
+			result:   nil,
+		},
+		{
+			keys: []kv.Key{
+				encodeTableKey(0),
+				encodeTableKey(1),
+				encodeTableKey(2),
+				encodeTableKey(math.MaxInt64),
+				tablecodec.TablePrefix(),
+				kv.Key("s"),
+				kv.Key("v"),
+			},
+			snapKeys: []kv.Key{
+				encodeTableKey(0),
+				encodeTableKey(1),
+				encodeTableKey(2),
+				encodeTableKey(math.MaxInt64),
+				tablecodec.TablePrefix(),
+				kv.Key("s"),
+				kv.Key("v"),
+			},
+			result: nil,
+		},
+		{
+			keys: []kv.Key{
+				encodeTableKey(5),
+				encodeTableKey(5, 'n'),
+				encodeTableKey(8, 1),
+			},
+			snapKeys: nil,
+			result: map[string][]byte{
+				string(encodeTableKey(5)):    []byte("v5"),
+				string(encodeTableKey(8, 1)): []byte("v81"),
+			},
+		},
+		{
+			keys: []kv.Key{
+				encodeTableKey(5),
+				encodeTableKey(1),
+				encodeTableKey(5, 'n'),
+				encodeTableKey(8, 1),
+			},
+			snapKeys: []kv.Key{encodeTableKey(1)},
+			result: map[string][]byte{
+				string(encodeTableKey(5)):    []byte("v5"),
+				string(encodeTableKey(8, 1)): []byte("v81"),
+			},
+		},
+		{
+			keys: []kv.Key{
+				tablecodec.TablePrefix(),
+				encodeTableKey(5),
+				encodeTableKey(1),
+				encodeTableKey(5, 'n'),
+				encodeTableKey(8, 1),
+			},
+			snapKeys: []kv.Key{tablecodec.TablePrefix(), encodeTableKey(1)},
+			result: map[string][]byte{
+				string(encodeTableKey(5)):    []byte("v5"),
+				string(encodeTableKey(8, 1)): []byte("v81"),
+			},
+		},
+	}
+	for i, c := range cases {
+		snapKeys, result, err := interceptor.batchGetTemporaryTableKeys(ctx, c.keys)
+		require.NoError(t, err, i)
+		if c.snapKeys == nil {
+			require.Nil(t, snapKeys, i)
+		} else {
+			require.Equal(t, c.snapKeys, snapKeys, i)
+		}
+
+		if c.result == nil {
+			require.Nil(t, result, i)
+		} else {
+			require.Equal(t, c.result, result, i)
+			require.True(t, len(retriever.GetInvokes()) > 0)
+		}
+
+		for j, invoke := range retriever.GetInvokes() {
+			require.Equal(t, "Get", invoke.Method, "%d, %d", i, j)
+			require.Equal(t, ctx, invoke.Args[0], "%d, %d", i, j)
+		}
+	}
+
+	// test for error occurs
+	injectedErr := errors.New("err")
+	retriever.InjectMethodError("Get", injectedErr)
+	snapKeys, result, err := interceptor.batchGetTemporaryTableKeys(ctx, []kv.Key{
+		tablecodec.TablePrefix(),
+		encodeTableKey(5),
+		encodeTableKey(1),
+		encodeTableKey(5, 'n'),
+		encodeTableKey(8, 1),
+	})
+	require.Nil(t, snapKeys)
+	require.Nil(t, result)
+	require.Equal(t, injectedErr, err)
+	retriever.ResetInvokes()
+}
+
+func TestInterceptorOnBatchGet(t *testing.T) {
+	t.Parallel()
+	is := newMockedInfoSchema(t).
+		AddTable(model.TempTableNone, 1).
+		AddTable(model.TempTableGlobal, 3).
+		AddTable(model.TempTableLocal, 5)
+	noTempTableData := []*kv.Entry{
+		// normal table data
+		{Key: encodeTableKey(1), Value: []byte("v1")},
+		{Key: encodeTableKey(1, 1), Value: []byte("v11")},
+		// no exist table data
+		{Key: encodeTableKey(2), Value: []byte("v2")},
+		{Key: encodeTableKey(2, 1), Value: []byte("v21")},
+		// other data
+		{Key: kv.Key("s"), Value: []byte("vs")},
+		{Key: kv.Key("s0"), Value: []byte("vs0")},
+		{Key: kv.Key("u"), Value: []byte("vu")},
+		{Key: kv.Key("u0"), Value: []byte("vu0")},
+		{Key: tablecodec.TablePrefix(), Value: []byte("vt")},
+		{Key: encodeTableKey(0), Value: []byte("v0")},
+		{Key: encodeTableKey(0, 1), Value: []byte("v01")},
+		{Key: encodeTableKey(math.MaxInt64), Value: []byte("vm")},
+		{Key: encodeTableKey(math.MaxInt64, 1), Value: []byte("vm1")},
+	}
+
+	localTempTableData := []*kv.Entry{
+		{Key: encodeTableKey(5), Value: []byte("v5")},
+		{Key: encodeTableKey(5, 0), Value: []byte("v50")},
+		{Key: encodeTableKey(5, 1), Value: []byte("v51")},
+		{Key: encodeTableKey(5, 0, 1), Value: []byte("v501")},
+		{Key: encodeTableKey(5, 2), Value: []byte("")},
+		{Key: encodeTableKey(5, 3), Value: nil},
+	}
+
+	snap := newMockedSnapshot(newMockedRetriever(t).SetAllowedMethod("BatchGet").SetData(noTempTableData))
+	retriever := newMockedRetriever(t).SetAllowedMethod("Get").SetData(localTempTableData)
+	interceptor := NewTemporaryTableSnapshotInterceptor(is, retriever)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	cases := []struct {
+		keys     []kv.Key
+		snapKeys []kv.Key
+		result   map[string][]byte
+	}{
+		{
+			keys:     nil,
+			snapKeys: nil,
+			result:   make(map[string][]byte),
+		},
+		{
+			keys: []kv.Key{
+				encodeTableKey(3),
+				encodeTableKey(5, 'n'),
+			},
+			snapKeys: nil,
+			result:   make(map[string][]byte),
+		},
+		{
+			keys: []kv.Key{
+				encodeTableKey(7),
+				encodeTableKey(1, 'n'),
+				[]byte("o"),
+			},
+			snapKeys: []kv.Key{
+				encodeTableKey(7),
+				encodeTableKey(1, 'n'),
+				[]byte("o"),
+			},
+			result: make(map[string][]byte),
+		},
+		{
+			keys: []kv.Key{
+				encodeTableKey(3),
+				encodeTableKey(5),
+				encodeTableKey(5, 1),
+			},
+			snapKeys: nil,
+			result: map[string][]byte{
+				string(encodeTableKey(5)):    []byte("v5"),
+				string(encodeTableKey(5, 1)): []byte("v51"),
+			},
+		},
+		{
+			keys: []kv.Key{
+				encodeTableKey(0),
+				encodeTableKey(1),
+				encodeTableKey(2),
+				encodeTableKey(math.MaxInt64),
+				tablecodec.TablePrefix(),
+				kv.Key("s"),
+				kv.Key("u"),
+				encodeTableKey(9),
+			},
+			snapKeys: []kv.Key{
+				encodeTableKey(0),
+				encodeTableKey(1),
+				encodeTableKey(2),
+				encodeTableKey(math.MaxInt64),
+				tablecodec.TablePrefix(),
+				kv.Key("s"),
+				kv.Key("u"),
+				encodeTableKey(9),
+			},
+			result: map[string][]byte{
+				string(encodeTableKey(0)):             []byte("v0"),
+				string(encodeTableKey(1)):             []byte("v1"),
+				string(encodeTableKey(2)):             []byte("v2"),
+				string(encodeTableKey(math.MaxInt64)): []byte("vm"),
+				string(tablecodec.TablePrefix()):      []byte("vt"),
+				"s":                                   []byte("vs"),
+				"u":                                   []byte("vu"),
+			},
+		},
+		{
+			keys: []kv.Key{
+				tablecodec.TablePrefix(),
+				encodeTableKey(5),
+				encodeTableKey(1),
+				encodeTableKey(5, 'n'),
+				encodeTableKey(1, 'n'),
+			},
+			snapKeys: []kv.Key{
+				tablecodec.TablePrefix(),
+				encodeTableKey(1),
+				encodeTableKey(1, 'n'),
+			},
+			result: map[string][]byte{
+				string(tablecodec.TablePrefix()): []byte("vt"),
+				string(encodeTableKey(5)):        []byte("v5"),
+				string(encodeTableKey(1)):        []byte("v1"),
+			},
+		},
+	}
+
+	for i, c := range cases {
+		result, err := interceptor.OnBatchGet(ctx, snap, c.keys)
+		require.Nil(t, err, i)
+		require.NotNil(t, result, i)
+		require.Equal(t, c.result, result, i)
+		for j, invoke := range retriever.GetInvokes() {
+			require.Equal(t, "Get", invoke.Method, "%d, %d", i, j)
+			require.Equal(t, ctx, invoke.Args[0], "%d, %d", i, j)
+		}
+		if len(c.snapKeys) > 0 {
+			require.Equal(t, 1, len(snap.GetInvokes()), i)
+			require.Equal(t, "BatchGet", snap.GetInvokes()[0].Method, i)
+			require.Equal(t, ctx, snap.GetInvokes()[0].Args[0], i)
+			require.Equal(t, c.snapKeys, snap.GetInvokes()[0].Args[1], i)
+		} else {
+			require.Equal(t, 0, len(snap.GetInvokes()), i)
+		}
+
+		retriever.ResetInvokes()
+		snap.ResetInvokes()
+	}
+
+	// test session error occurs
+	sessionErr := errors.New("errSession")
+	retriever.InjectMethodError("Get", sessionErr)
+	result, err := interceptor.OnBatchGet(ctx, snap, []kv.Key{encodeTableKey(5)})
+	require.Nil(t, result)
+	require.Equal(t, sessionErr, err)
+
+	snapErr := errors.New("errSnap")
+	snap.InjectMethodError("BatchGet", snapErr)
+	result, err = interceptor.OnBatchGet(ctx, snap, []kv.Key{encodeTableKey(1)})
+	require.Nil(t, result)
+	require.Equal(t, snapErr, err)
+}
