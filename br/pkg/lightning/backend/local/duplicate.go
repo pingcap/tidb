@@ -159,6 +159,21 @@ func (indexHandles *pendingIndexHandles) searchSortedRawHandle(rawHandle []byte)
 	})
 }
 
+// physicalTableIDs returns all physical table IDs associated with the tableInfo.
+// A partitioned table can have multiple physical table IDs.
+func physicalTableIDs(tableInfo *model.TableInfo) []int64 {
+	if tableInfo.Partition != nil {
+		defs := tableInfo.Partition.Definitions
+		tids := make([]int64, 1, len(defs)+1)
+		tids[0] = tableInfo.ID
+		for _, def := range defs {
+			tids = append(tids, def.ID)
+		}
+		return tids
+	}
+	return []int64{tableInfo.ID}
+}
+
 func NewDuplicateManager(
 	errorMgr *errormanager.ErrorManager,
 	splitCli restore.SplitClient,
@@ -397,6 +412,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 	}
 
 	allRanges := make([]tidbkv.KeyRange, 0)
+	tableIDs := physicalTableIDs(tbl.Meta())
 	{
 		// Collect row handle duplicates.
 		var dataConflictInfos []errormanager.DataConflictInfo
@@ -404,7 +420,7 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 		if tbl.Meta().IsCommonHandle {
 			ranges = ranger.FullRange()
 		}
-		keyRanges, err := distsql.TableHandleRangesToKVRanges(nil, []int64{tbl.Meta().ID}, tbl.Meta().IsCommonHandle, ranges, nil)
+		keyRanges, err := distsql.TableHandleRangesToKVRanges(nil, tableIDs, tbl.Meta().IsCommonHandle, ranges, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -454,9 +470,13 @@ func (manager *DuplicateManager) CollectDuplicateRowsFromLocalIndex(
 			continue
 		}
 		ranges := ranger.FullRange()
-		keysRanges, err := distsql.IndexRangesToKVRanges(nil, tbl.Meta().ID, indexInfo.ID, ranges, nil)
-		if err != nil {
-			return err
+		var keysRanges []tidbkv.KeyRange
+		for _, id := range tableIDs {
+			partitionKeysRanges, err := distsql.IndexRangesToKVRanges(nil, id, indexInfo.ID, ranges, nil)
+			if err != nil {
+				return err
+			}
+			keysRanges = append(keysRanges, partitionKeysRanges...)
 		}
 		allRanges = append(allRanges, keysRanges...)
 		for _, r := range keysRanges {
@@ -724,19 +744,23 @@ func (manager *DuplicateManager) makeConn(ctx context.Context, storeID uint64) (
 }
 
 func buildDuplicateRequests(tableInfo *model.TableInfo) ([]*DuplicateRequest, error) {
-	reqs, err := buildTableRequests(tableInfo.ID, tableInfo.IsCommonHandle)
-	if err != nil {
-		errors.Trace(err)
-	}
-	for _, indexInfo := range tableInfo.Indices {
-		if indexInfo.State != model.StatePublic {
-			continue
-		}
-		indexReqs, err := buildIndexRequests(tableInfo.ID, indexInfo)
+	var reqs []*DuplicateRequest
+	for _, id := range physicalTableIDs(tableInfo) {
+		tableReqs, err := buildTableRequests(id, tableInfo.IsCommonHandle)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		reqs = append(reqs, indexReqs...)
+		reqs = append(reqs, tableReqs...)
+		for _, indexInfo := range tableInfo.Indices {
+			if indexInfo.State != model.StatePublic {
+				continue
+			}
+			indexReqs, err := buildIndexRequests(id, indexInfo)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			reqs = append(reqs, indexReqs...)
+		}
 	}
 	return reqs, nil
 }

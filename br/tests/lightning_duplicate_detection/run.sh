@@ -63,7 +63,7 @@ verify_detected_rows() {
   fi
   set -x
   if [ "$equal" = "0" ]; then
-    echo "verify detected rows of ${table} fail, expect: ${expect_rows{@}}, actual: ${actual_rows{@}}"
+    echo "verify detected rows of ${table} fail, expect: ${expect_rows[@]}, actual: ${actual_rows[@]}"
     exit 1
   fi
 }
@@ -85,3 +85,6 @@ verify_detected_rows "te"
 
 ## f. No conflicts in table `tf`.
 verify_detected_rows "tf"
+
+## g. Primary key conflict in partitioned table `tg`.
+verify_detected_rows "tg"
