@@ -117,16 +117,16 @@ func (res *Result) Sort() *Result {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(c *check.C, store kv.Storage) *TestKit {
-	tk := &TestKit{
+	variable.ProcessGeneralLog.Store(false)
+	return &TestKit{
 		c:     c,
 		store: store,
 	}
-	variable.ProcessGeneralLog.Store(false)
-	return tk
 }
 
 // NewTestKitWithSession returns a new *TestKit with a session.
 func NewTestKitWithSession(c *check.C, store kv.Storage, se session.Session) *TestKit {
+	variable.ProcessGeneralLog.Store(false)
 	return &TestKit{
 		c:     c,
 		store: store,
@@ -136,6 +136,7 @@ func NewTestKitWithSession(c *check.C, store kv.Storage, se session.Session) *Te
 
 // NewTestKitWithInit returns a new *TestKit and creates a session.
 func NewTestKitWithInit(c *check.C, store kv.Storage) *TestKit {
+	variable.ProcessGeneralLog.Store(false)
 	tk := NewTestKit(c, store)
 	// Use test and prepare a session.
 	tk.MustExec("use test")

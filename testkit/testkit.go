@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
@@ -44,6 +45,7 @@ type TestKit struct {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t *testing.T, store kv.Storage) *TestKit {
+	variable.ProcessGeneralLog.Store(false)
 	return &TestKit{
 		require: require.New(t),
 		assert:  assert.New(t),
