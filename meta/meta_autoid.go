@@ -162,8 +162,7 @@ type AutoIDGroup struct {
 
 // BackupAndRestoreAutoIDs changes the meta key-values to fetch & delete
 // all the auto IDs from an old table, and set them to a new table.
-func BackupAndRestoreAutoIDs(m *Meta, databaseID, tableID int64,
-	newDatabaseID, newTableID int64, transform func(AutoIDGroup) (AutoIDGroup, error)) (err error) {
+func BackupAndRestoreAutoIDs(m *Meta, databaseID, tableID int64, newDatabaseID, newTableID int64) (err error) {
 	acc := NewAutoIDAccessors(m, databaseID, tableID)
 	autoIDs, err := acc.Get()
 	if err != nil {
@@ -172,12 +171,6 @@ func BackupAndRestoreAutoIDs(m *Meta, databaseID, tableID int64,
 	overwriteIDs := databaseID == newDatabaseID && tableID == newTableID
 	if !overwriteIDs {
 		err = acc.Del()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	if transform != nil {
-		autoIDs, err = transform(autoIDs)
 		if err != nil {
 			return errors.Trace(err)
 		}
