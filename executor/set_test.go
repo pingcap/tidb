@@ -552,8 +552,8 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tidb_opt_prefer_range_scan").Check(testkit.Rows("1"))
 	tk.MustExec("set session tidb_opt_prefer_range_scan = 0")
 	tk.MustQuery("select @@session.tidb_opt_prefer_range_scan").Check(testkit.Rows("0"))
-  
-  // stop general log worker goroutine to make goleak happy
+
+	// stop general log worker goroutine to make goleak happy
 	session.StopGeneralLog()
 }
 
