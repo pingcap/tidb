@@ -1,13 +1,12 @@
 package core
 
 import (
-	"sync"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"sync"
 )
 
 var MaxThrNum int
@@ -173,11 +172,11 @@ func findBestXchgTask(ctx sessionctx.Context, root PhysicalPlan) (task, error) {
 }
 
 func (p *PointGetPlan) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgProperty) (task, error) {
-	return findBestXchgTaskForBottomMost(p, ctx, reqProp)
+	return nil, errors.Errorf("FindBestXchgTask not implemented yet for PointGet")
 }
 
 func (p *BatchPointGetPlan) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgProperty) (task, error) {
-	return findBestXchgTaskForBottomMost(p, ctx, reqProp)
+	return nil, errors.Errorf("FindBestXchgTask not implemented yet for BatchPointGet")
 }
 
 func (p *basePhysicalPlan) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgProperty) (task, error) {
@@ -235,10 +234,6 @@ func (p *PhysicalXchg) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgPro
 }
 
 func (p *PhysicalTableReader) FindBestXchgTask(ctx sessionctx.Context, reqProp *XchgProperty) (res task, err error) {
-	return findBestXchgTaskForBottomMost(p, ctx, reqProp)
-}
-
-func findBestXchgTaskForBottomMost(p PhysicalPlan, ctx sessionctx.Context, reqProp *XchgProperty) (res task, err error) {
 	possiblePlans, err := p.TryAddXchg(ctx, reqProp)
 	if err != nil {
 		return nil, err
@@ -325,18 +320,12 @@ func (p *basePhysicalPlan) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPrope
 	return nil, errors.Errorf("TryAddXchg not implemented yet: %v", p.TP())
 }
 
-func (p *PointGetPlan) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
-	if res, err = tryAddXchgPreWork(p, reqProp, res); err != nil {
-		return nil, err
-	}
-	return res, nil
+func (p *PointGetPlan) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) ([]PhysicalPlan, error) {
+	return nil, errors.Errorf("TryAddXchg not implemented yet for PointGet")
 }
 
-func (p *BatchPointGetPlan) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
-	if res, err = tryAddXchgPreWork(p, reqProp, res); err != nil {
-		return nil, err
-	}
-	return res, nil
+func (p *BatchPointGetPlan) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) ([]PhysicalPlan, error) {
+	return nil, errors.Errorf("TryAddXchg not implemented yet for BatchPointGet")
 }
 
 func (p *PhysicalLimit) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
