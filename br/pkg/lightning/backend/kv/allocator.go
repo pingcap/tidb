@@ -40,7 +40,7 @@ func NewPanickingAllocators(base int64) autoid.Allocators {
 }
 
 // Rebase implements the autoid.Allocator interface
-func (alloc *panickingAllocator) Rebase(tableID, newBase int64, allocIDs bool) error {
+func (alloc *panickingAllocator) Rebase(newBase int64, allocIDs bool) error {
 	// CAS
 	for {
 		oldBase := atomic.LoadInt64(alloc.base)
