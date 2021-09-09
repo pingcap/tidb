@@ -141,7 +141,7 @@ func checkRowAdditionConsistency(sessVars *variable.SessionVars, tableColumns []
 		return errors.New("record mutations not found for a put of a row")
 	}
 	if len(rowsAdded) > 1 {
-		// TODO: is it possible?
+		// impossible to have multiple insertions of records when modifying a single row of in a table
 		logutil.BgLogger().Error("multiple row mutations added/mutated", zap.Any("rowsAdded", rowsAdded))
 		return errors.New("multiple row mutations added/mutated")
 	}
@@ -165,7 +165,6 @@ func checkRowMutationWithData(sessVars *variable.SessionVars, mutationValue []by
 		columnFieldMap[id] = &col.FieldType
 	}
 	decodedData, err := tablecodec.DecodeRowToDatumMap(mutationValue, columnFieldMap, sessVars.Location())
-	// NOTE: decodedData can be empty
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -193,7 +192,7 @@ func checkRowMutationWithData(sessVars *variable.SessionVars, mutationValue []by
 func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer, sh kv.StagingHandle) []mutation {
 	mutations := make([]mutation, 0)
 	inspector := func(key kv.Key, flags kv.KeyFlags, data []byte) {
-		// TODO: shall we check only the current table, or all tables involved?
+		// only check the current table
 		if tablecodec.DecodeTableID(key) == t.physicalTableID {
 			mutations = append(mutations, mutation{key, flags, data})
 		}
@@ -232,7 +231,6 @@ func compareIndexData(sc *stmtctx.StatementContext, cols []*table.Column, indexD
 func extractRowMutations(mutations []mutation) ([]mutation, []mutation) {
 	insertions := make([]mutation, 0)
 	deletions := make([]mutation, 0)
-	// TODO: assumption: value in mem buffer
 	for _, m := range mutations {
 		if rowcodec.IsRowKey(m.key) {
 			if len(m.value) > 0 {
