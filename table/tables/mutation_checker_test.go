@@ -15,6 +15,8 @@
 package tables
 
 import (
+	"testing"
+
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -25,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestCompareIndexData(t *testing.T) {

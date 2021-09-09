@@ -210,10 +210,8 @@ func compareIndexData(sc *stmtctx.StatementContext, cols []*table.Column, indexD
 
 		tablecodec.TruncateIndexValue(&expectedDatum, indexInfo.Columns[i],
 			cols[indexInfo.Columns[i].Offset].ColumnInfo)
-
-		// TODO: no need to truncate index data?
-		//tablecodec.TruncateIndexValue(&decodedMutationDatum, indexInfo.Columns[i],
-		//	cols[indexInfo.Columns[i].Offset].ColumnInfo)
+		tablecodec.TruncateIndexValue(&decodedMutationDatum, indexInfo.Columns[i],
+			cols[indexInfo.Columns[i].Offset].ColumnInfo)
 
 		comparison, err := decodedMutationDatum.CompareDatum(sc, &expectedDatum)
 		if err != nil {
