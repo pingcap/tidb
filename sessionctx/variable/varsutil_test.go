@@ -625,6 +625,7 @@ func TestValidate(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
+		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeSession)
@@ -682,6 +683,7 @@ func TestValidateStmtSummary(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
+		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, tc.scope)

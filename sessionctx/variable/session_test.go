@@ -54,6 +54,7 @@ func TestSetSystemVariable(t *testing.T) {
 		{variable.TiDBEnableStmtSummary, "1", false},
 	}
 	for _, tc := range testCases {
+		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
 			t.Parallel()
 			err := variable.SetSessionSystemVar(v, tc.key, tc.value)
