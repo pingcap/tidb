@@ -117,7 +117,6 @@ type StatementContext struct {
 		message           string
 		warnings          []SQLWarn
 		errorCount        uint16
-		histogramsNotLoad bool
 		execDetails       execdetails.ExecDetails
 		allExecDetails    []*execdetails.ExecDetails
 	}
@@ -524,13 +523,6 @@ func (sc *StatementContext) AppendError(warn error) {
 		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelError, warn})
 		sc.mu.errorCount++
 	}
-	sc.mu.Unlock()
-}
-
-// SetHistogramsNotLoad sets histogramsNotLoad.
-func (sc *StatementContext) SetHistogramsNotLoad() {
-	sc.mu.Lock()
-	sc.mu.histogramsNotLoad = true
 	sc.mu.Unlock()
 }
 
