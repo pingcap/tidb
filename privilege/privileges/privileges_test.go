@@ -2398,15 +2398,15 @@ func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
 
 	tk.MustQuery("SHOW GRANTS FOR current_user() USING otherrole;").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'joe'@'%'",
-		"GRANT UPDATE ON role.* TO 'joe'@'%'",
 		"GRANT SELECT ON test.* TO 'joe'@'%'",
+		"GRANT UPDATE ON role.* TO 'joe'@'%'",
 		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
 		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
 	))
 	tk.MustQuery("SHOW GRANTS FOR joe USING otherrole;").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'joe'@'%'",
-		"GRANT UPDATE ON role.* TO 'joe'@'%'",
 		"GRANT SELECT ON test.* TO 'joe'@'%'",
+		"GRANT UPDATE ON role.* TO 'joe'@'%'",
 		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
 		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
 	))
@@ -2463,4 +2463,12 @@ func TestPlacementPolicyStmt(t *testing.T) {
 	mustExec(t, se, createStmt)
 	mustExec(t, se, dropStmt)
 
+}
+
+func TestDBNameCaseSensitivityInTableLevel(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+	se := newSession(t, store, dbName)
+	mustExec(t, se, "CREATE USER test_user")
+	mustExec(t, se, "grant select on metrics_schema.up to test_user;")
 }

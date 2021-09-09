@@ -691,6 +691,11 @@ error = '''
 Invalid attributes '%s': %s
 '''
 
+["ddl:8240"]
+error = '''
+Placement policy '%s' can't co-exist with direct placement options
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV

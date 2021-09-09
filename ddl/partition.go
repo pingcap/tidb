@@ -335,7 +335,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	if !enable {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
 	}
 
@@ -350,7 +350,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 			return errors.Trace(err)
 		}
 		buf := new(bytes.Buffer)
-		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreBracketAroundBinaryOperation, buf)
 		if err := s.Expr.Restore(restoreCtx); err != nil {
 			return err
 		}
@@ -1136,11 +1136,9 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 
 	oldRules := make([]string, 0, len(oldIDs))
 	newRules := make([]*label.Rule, 0, len(oldIDs))
-	oldRuleMap := make(map[string]struct{})
 	for _, newPartition := range newPartitions {
 		oldRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, newPartition.Name.L)
 		oldRules = append(oldRules, oldRuleID)
-		oldRuleMap[oldRuleID] = struct{}{}
 	}
 
 	rules, err := infosync.GetLabelRules(context.TODO(), oldRules)
@@ -1149,11 +1147,9 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		return ver, errors.Wrapf(err, "failed to get label rules from PD")
 	}
 
-	for _, r := range rules {
-		for _, newPartition := range newPartitions {
-			if _, ok := oldRuleMap[r.ID]; ok {
-				newRules = append(newRules, r.Clone().Reset(newPartition.ID, job.SchemaName, tblInfo.Name.L, newPartition.Name.L))
-			}
+	for idx, newPartition := range newPartitions {
+		if r, ok := rules[oldRules[idx]]; ok {
+			newRules = append(newRules, r.Clone().Reset(newPartition.ID, job.SchemaName, tblInfo.Name.L, newPartition.Name.L))
 		}
 	}
 
@@ -1352,16 +1348,8 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return 0, errors.Wrapf(err, "failed to get PD the label rules")
 	}
 
-	var ntr, ptr *label.Rule
-	for _, rule := range rules {
-		if rule.ID == ntrID {
-			ntr = rule
-		} else if rule.ID == ptrID {
-			ptr = rule
-		} else {
-			logutil.BgLogger().Error("[ddl] unexpected label rule", zap.Any("rule", rule))
-		}
-	}
+	ntr := rules[ntrID]
+	ptr := rules[ptrID]
 
 	var setRules []*label.Rule
 	var deleteRules []string

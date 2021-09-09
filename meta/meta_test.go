@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/placementpolicy"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,9 +50,9 @@ func TestPlacementPolicy(t *testing.T) {
 	m := meta.NewMeta(txn)
 
 	// test the meta storage of placemnt policy.
-	policy := &placementpolicy.PolicyInfo{
+	policy := &model.PolicyInfo{
 		Name: model.NewCIStr("aa"),
-		PlacementSettings: placementpolicy.PlacementSettings{
+		PlacementSettings: &model.PlacementSettings{
 			PrimaryRegion:      "my primary",
 			Regions:            "my regions",
 			Learners:           1,
@@ -88,7 +87,7 @@ func TestPlacementPolicy(t *testing.T) {
 
 	ps, err := m.ListPolicies()
 	require.NoError(t, err)
-	require.Equal(t, []*placementpolicy.PolicyInfo{policy}, ps)
+	require.Equal(t, []*model.PolicyInfo{policy}, ps)
 
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)

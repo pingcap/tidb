@@ -67,6 +67,23 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		}
 		return ver, errors.Trace(err)
 	}
+	// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
+	if tbInfo.DirectPlacementOpts != nil && tbInfo.PlacementPolicyRef != nil {
+		return ver, errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
+	}
+	if tbInfo.DirectPlacementOpts != nil {
+		// check the direct placement option compatibility.
+		if err := checkPolicyValidation(tbInfo.DirectPlacementOpts); err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+	if tbInfo.PlacementPolicyRef != nil {
+		// placement policy reference will override the direct placement options.
+		_, err = checkPlacementPolicyExistAndCancelNonExistJob(t, job, tbInfo.PlacementPolicyRef.ID)
+		if err != nil {
+			return ver, errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(tbInfo.PlacementPolicyRef.Name))
+		}
+	}
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
@@ -240,8 +257,9 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	tblInfo := &model.TableInfo{}
 	var autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64
+	var oldTableName, oldSchemaName string
 	const checkFlagIndexInJobArgs = 4 // The index of `recoverTableCheckFlag` in job arg list.
-	if err = job.DecodeArgs(tblInfo, &autoIncID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID); err != nil {
+	if err = job.DecodeArgs(tblInfo, &autoIncID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID, &oldSchemaName, &oldTableName); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -325,6 +343,13 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		} else {
 			tids = []int64{tblInfo.ID}
 		}
+
+		tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(tblInfo, oldSchemaName, oldTableName)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to get old label rules from PD")
+		}
+
 		err = w.delRangeManager.removeFromGCDeleteRange(w.ddlJobCtx, dropJobID, tids)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -342,6 +367,12 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 				err = failpoint.Enable(`tikvclient/mockCommitErrorOpt`, "return(true)")
 			}
 		})
+
+		err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, tblInfo.ID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to update the label rule to PD")
+		}
 
 		job.CtxVars = []interface{}{tids}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
@@ -530,43 +561,16 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
-	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L)
-	ids := []string{tableRuleID}
-	if tblInfo.GetPartitionInfo() != nil {
-		for _, def := range tblInfo.GetPartitionInfo().Definitions {
-			ids = append(ids, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, def.Name.L))
-		}
-	}
-
-	oldRules, err := infosync.GetLabelRules(context.TODO(), ids)
+	tableRuleID, partRuleIDs, _, oldRules, err := getOldLabelRules(tblInfo, job.SchemaName, tblInfo.Name.L)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to get PD the label rule")
+		return 0, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
 
-	var newRules []*label.Rule
-	for _, r := range oldRules {
-		if r.ID == tableRuleID {
-			newRules = append(newRules, r.Clone().Reset(newTableID, job.SchemaName, tblInfo.Name.L))
-		}
-	}
-
-	if tblInfo.GetPartitionInfo() != nil {
-		for _, r := range oldRules {
-			for _, def := range tblInfo.GetPartitionInfo().Definitions {
-				if r.ID == fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, def.Name.L) {
-					newRules = append(newRules, r.Clone().Reset(def.ID, job.SchemaName, tblInfo.Name.L, def.Name.L))
-				}
-			}
-		}
-	}
-
-	// update the key range with same rule id.
-	patch := label.NewRulePatch(newRules, nil)
-	err = infosync.UpdateLabelRules(context.TODO(), patch)
+	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, nil, newTableID)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD the label rules")
+		return 0, errors.Wrapf(err, "failed to update the label rule to PD")
 	}
 
 	// Clear the tiflash replica available status.
@@ -815,19 +819,10 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID
 	})
 
 	oldTableName := tblInfo.Name
-	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, oldSchemaName.L, oldTableName.L)
-	oldRuleIDs := []string{tableRuleID}
-	if pi := tblInfo.GetPartitionInfo(); pi != nil {
-		if len(pi.Definitions) != 0 {
-			for _, def := range pi.Definitions {
-				oldRuleIDs = append(oldRuleIDs, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName.L, oldTableName.L, def.Name.L))
-			}
-		}
-	}
-	oldRules, err := infosync.GetLabelRules(context.TODO(), oldRuleIDs)
+	tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(tblInfo, oldSchemaName.L, oldTableName.L)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, tblInfo, errors.Trace(err)
+		return ver, tblInfo, errors.Wrapf(err, "failed to get old label rules from PD")
 	}
 
 	tblInfo.Name = *tableName
@@ -849,28 +844,10 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID
 	// TODO: Remove it.
 	tblInfo.OldSchemaID = 0
 
-	var newRules []*label.Rule
-	for _, r := range oldRules {
-		if r.ID == tableRuleID {
-			newRules = append(newRules, r.Clone().Reset(tblInfo.ID, job.SchemaName, tblInfo.Name.L))
-		}
-	}
-
-	if tblInfo.GetPartitionInfo() != nil {
-		for _, r := range oldRules {
-			for _, def := range tblInfo.GetPartitionInfo().Definitions {
-				if r.ID == fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName.L, oldTableName.L, def.Name.L) {
-					newRules = append(newRules, r.Clone().Reset(def.ID, job.SchemaName, tblInfo.Name.L, def.Name.L))
-				}
-			}
-		}
-	}
-
-	patch := label.NewRulePatch(newRules, oldRuleIDs)
-	err = infosync.UpdateLabelRules(context.TODO(), patch)
+	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, tblInfo, errors.Trace(err)
+		return ver, tblInfo, errors.Wrapf(err, "failed to update the label rule to PD")
 	}
 
 	return ver, tblInfo, nil
@@ -1262,4 +1239,36 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 
 	return ver, nil
+}
+
+func getOldLabelRules(tblInfo *model.TableInfo, oldSchemaName, oldTableName string) (string, []string, []string, map[string]*label.Rule, error) {
+	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, oldSchemaName, oldTableName)
+	oldRuleIDs := []string{tableRuleID}
+	var partRuleIDs []string
+	if tblInfo.GetPartitionInfo() != nil {
+		for _, def := range tblInfo.GetPartitionInfo().Definitions {
+			partRuleIDs = append(partRuleIDs, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, oldSchemaName, oldTableName, def.Name.L))
+		}
+	}
+
+	oldRuleIDs = append(oldRuleIDs, partRuleIDs...)
+	oldRules, err := infosync.GetLabelRules(context.TODO(), oldRuleIDs)
+	return tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err
+}
+
+func updateLabelRules(job *model.Job, tblInfo *model.TableInfo, oldRules map[string]*label.Rule, tableRuleID string, partRuleIDs, oldRuleIDs []string, tID int64) error {
+	var newRules []*label.Rule
+	if r, ok := oldRules[tableRuleID]; ok {
+		newRules = append(newRules, r.Clone().Reset(tID, job.SchemaName, tblInfo.Name.L))
+	}
+
+	if tblInfo.GetPartitionInfo() != nil {
+		for idx, def := range tblInfo.GetPartitionInfo().Definitions {
+			if r, ok := oldRules[partRuleIDs[idx]]; ok {
+				newRules = append(newRules, r.Clone().Reset(def.ID, job.SchemaName, tblInfo.Name.L, def.Name.L))
+			}
+		}
+	}
+	patch := label.NewRulePatch(newRules, oldRuleIDs)
+	return infosync.UpdateLabelRules(context.TODO(), patch)
 }

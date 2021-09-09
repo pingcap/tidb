@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
-	"github.com/pingcap/tidb/util/placementpolicy"
 )
 
 // Builder builds a new InfoSchema.
@@ -59,6 +58,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return nil, b.applyCreatePolicy(m, diff)
 	case model.ActionDropPlacementPolicy:
 		return b.applyDropPolicy(diff.SchemaID), nil
+	case model.ActionAlterPlacementPolicy:
+		return b.applyAlterPolicy(m, diff)
 	}
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
@@ -258,6 +259,23 @@ func (b *Builder) applyCreatePolicy(m *meta.Meta, diff *model.SchemaDiff) error 
 	}
 	b.is.policyMap[po.Name.L] = po
 	return nil
+}
+
+func (b *Builder) applyAlterPolicy(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	po, err := m.GetPolicy(diff.SchemaID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if po == nil {
+		return nil, ErrPlacementPolicyExists.GenWithStackByArgs(
+			fmt.Sprintf("(Policy ID %d)", diff.SchemaID),
+		)
+	}
+
+	b.is.policyMap[po.Name.L] = po
+	// TODO: return the policy related table ids
+	return []int64{}, nil
 }
 
 func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {
@@ -629,7 +647,7 @@ func NewBuilder(store kv.Storage) *Builder {
 		store: store,
 		is: &infoSchema{
 			schemaMap:           map[string]*schemaTables{},
-			policyMap:           map[string]*placementpolicy.PolicyInfo{},
+			policyMap:           map[string]*model.PolicyInfo{},
 			ruleBundleMap:       map[string]*placement.Bundle{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},
