@@ -680,7 +680,10 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
 
-	cc.handleAuthPlugin(ctx, &resp)
+	err = cc.handleAuthPlugin(ctx, &resp)
+	if err != nil {
+		return err
+	}
 
 	err = cc.openSessionAndDoAuth(resp.Auth)
 	if err != nil {
