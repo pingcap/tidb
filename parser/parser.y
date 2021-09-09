@@ -9645,6 +9645,10 @@ SetExpr:
 	{
 		$$ = ast.NewValueExpr("ON", parser.charset, parser.collation)
 	}
+|	"BINARY"
+	{
+		$$ = ast.NewValueExpr("BINARY", parser.charset, parser.collation)
+	}
 |	ExprOrDefault
 
 EqOrAssignmentEq:
