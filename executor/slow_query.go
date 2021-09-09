@@ -433,7 +433,11 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		if err != nil {
 			t := slowLogTask{}
 			t.resultCh = make(chan parsedSlowLog, 1)
-			e.taskList <- t
+			select {
+			case <-ctx.Done():
+				return
+			case e.taskList <- t:
+			}
 			e.sendParsedSlowLogCh(ctx, t, parsedSlowLog{nil, err})
 		}
 		if len(logs) == 0 || len(logs[0]) == 0 {

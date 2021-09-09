@@ -691,6 +691,11 @@ error = '''
 Invalid attributes '%s': %s
 '''
 
+["ddl:8240"]
+error = '''
+Placement policy '%s' can't co-exist with direct placement options
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -1059,6 +1064,16 @@ Table '%-.192s.%-.192s' doesn't exist
 ["meta:8235"]
 error = '''
 DDL reorg element does not exist
+'''
+
+["meta:8238"]
+error = '''
+Placement policy '%-.192s' already exists
+'''
+
+["meta:8239"]
+error = '''
+Unknown placement policy '%-.192s'
 '''
 
 ["planner:1044"]
@@ -1604,6 +1619,16 @@ TiDB admin check table failed.
 ["schema:8020"]
 error = '''
 Table '%s' was locked in %s by %v
+'''
+
+["schema:8238"]
+error = '''
+Placement policy '%-.192s' already exists
+'''
+
+["schema:8239"]
+error = '''
+Unknown placement policy '%-.192s'
 '''
 
 ["session:8002"]

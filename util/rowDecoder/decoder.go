@@ -193,7 +193,7 @@ func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, sysLoc *
 		if err != nil {
 			return nil, err
 		}
-		val, err = table.CastValue(ctx, val, col.Col.ColumnInfo, false, true)
+		val, err = table.CastValue(ctx, *val.Clone(), col.Col.ColumnInfo, false, true)
 		if err != nil {
 			return nil, err
 		}

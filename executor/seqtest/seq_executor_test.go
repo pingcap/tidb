@@ -114,7 +114,7 @@ func (s *seqTestSuite) SetUpSuite(c *C) {
 
 func (s *seqTestSuite) TearDownSuite(c *C) {
 	s.domain.Close()
-	s.store.Close()
+	c.Assert(s.store.Close(), IsNil)
 }
 
 func (s *seqTestSuite) TestEarlyClose(c *C) {

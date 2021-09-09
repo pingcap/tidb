@@ -1,6 +1,6 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore
+package utils
 
 import (
 	"time"
@@ -8,7 +8,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -35,7 +34,7 @@ type importerBackoffer struct {
 }
 
 // NewBackoffer creates a new controller regulating a truncated exponential backoff.
-func NewBackoffer(attempt int, delayTime, maxDelayTime time.Duration) utils.Backoffer {
+func NewBackoffer(attempt int, delayTime, maxDelayTime time.Duration) Backoffer {
 	return &importerBackoffer{
 		attempt:      attempt,
 		delayTime:    delayTime,
@@ -43,20 +42,21 @@ func NewBackoffer(attempt int, delayTime, maxDelayTime time.Duration) utils.Back
 	}
 }
 
-func newImportSSTBackoffer() utils.Backoffer {
+func NewImportSSTBackoffer() Backoffer {
 	return NewBackoffer(importSSTRetryTimes, importSSTWaitInterval, importSSTMaxWaitInterval)
 }
 
-func newDownloadSSTBackoffer() utils.Backoffer {
+func NewDownloadSSTBackoffer() Backoffer {
 	return NewBackoffer(downloadSSTRetryTimes, downloadSSTWaitInterval, downloadSSTMaxWaitInterval)
 }
 
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
-	if utils.MessageIsRetryableStorageError(err.Error()) {
+	if MessageIsRetryableStorageError(err.Error()) {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	} else {
-		switch errors.Cause(err) { // nolint:errorlint
+		e := errors.Cause(err)
+		switch e { // nolint:errorlint
 		case berrors.ErrKVEpochNotMatch, berrors.ErrKVDownloadFailed, berrors.ErrKVIngestFailed:
 			bo.delayTime = 2 * bo.delayTime
 			bo.attempt--
@@ -65,7 +65,7 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 			bo.delayTime = 0
 			bo.attempt = 0
 		default:
-			switch status.Code(err) {
+			switch status.Code(e) {
 			case codes.Unavailable, codes.Aborted:
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
@@ -93,7 +93,7 @@ type pdReqBackoffer struct {
 	maxDelayTime time.Duration
 }
 
-func newPDReqBackoffer() utils.Backoffer {
+func NewPDReqBackoffer() Backoffer {
 	return &pdReqBackoffer{
 		attempt:      resetTSRetryTime,
 		delayTime:    resetTSWaitInterval,
