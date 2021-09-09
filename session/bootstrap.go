@@ -511,11 +511,13 @@ const (
 	version73 = 73
 	// version74 changes global variable `tidb_stmt_summary_max_stmt_count` value from 200 to 3000.
 	version74 = 74
+	// version75 update mysql.*.host from char(60) to char(255)
+	version75 = 75
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version74
+var currentBootstrapVersion int64 = version75
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -593,6 +595,7 @@ var (
 		upgradeToVer72,
 		upgradeToVer73,
 		upgradeToVer74,
+		upgradeToVer75,
 	}
 )
 
@@ -1555,6 +1558,17 @@ func upgradeToVer74(s Session, ver int64) {
 	}
 	// The old default value of `tidb_stmt_summary_max_stmt_count` is 200, we want to enlarge this to the new default value when TiDB upgrade.
 	mustExecute(s, fmt.Sprintf("UPDATE mysql.global_variables SET VARIABLE_VALUE='%[1]v' WHERE VARIABLE_NAME = 'tidb_stmt_summary_max_stmt_count' AND CAST(VARIABLE_VALUE AS SIGNED) = 200", config.GetGlobalConfig().StmtSummary.MaxStmtCount))
+}
+
+func upgradeToVer75(s Session, ver int64) {
+	if ver >= version75 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.global_priv MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.db MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Host CHAR(255)")
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY COLUMN Host CHAR(255)")
 }
 
 func writeOOMAction(s Session) {
