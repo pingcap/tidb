@@ -544,7 +544,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	if err != nil {
 		return err
 	}
-	autoIDs, err := m.GetAutoIDCtrl(job.SchemaID, job.TableID).All().Get()
+	autoIDs, err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Get()
 	if err != nil {
 		return err
 	}
@@ -711,7 +711,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 	if err != nil {
 		return err
 	}
-	autoIDs, err := m.GetAutoIDCtrl(job.SchemaID, job.TableID).All().Get()
+	autoIDs, err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Get()
 	if err != nil {
 		return err
 	}

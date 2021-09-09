@@ -219,9 +219,9 @@ func (m *Meta) GenAutoTableIDKeyValue(dbID, tableID, autoID int64) (key, value [
 	return m.txn.EncodeHashAutoIDKeyValue(dbKey, autoTableIDKey, autoID)
 }
 
-// GetAutoIDCtrl gets the controller for auto IDs.
-func (m *Meta) GetAutoIDCtrl(dbID, tableID int64) *AutoIDCtrl {
-	return NewAutoIDCtrl(m, dbID, tableID)
+// GetAutoIDAccessors gets the controller for auto IDs.
+func (m *Meta) GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors {
+	return NewAutoIDAccessors(m, dbID, tableID)
 }
 
 // GenSequenceValue adds step to the sequence value and returns the sum.
@@ -492,7 +492,7 @@ func (m *Meta) DropSequence(dbID int64, tblID int64) error {
 	if err != nil {
 		return err
 	}
-	err = m.GetAutoIDCtrl(dbID, tblID).All().Del()
+	err = m.GetAutoIDAccessors(dbID, tblID).Del()
 	if err != nil {
 		return err
 	}

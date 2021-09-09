@@ -172,7 +172,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			err = t.GetAutoIDCtrl(schemaID, oldTbInfoID).All().Del()
+			err = t.GetAutoIDAccessors(schemaID, oldTbInfoID).Del()
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -231,7 +231,7 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			if err = t.DropTableOrView(job.SchemaID, job.TableID); err != nil {
 				break
 			}
-			if err = t.GetAutoIDCtrl(job.SchemaID, job.TableID).All().Del(); err != nil {
+			if err = t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del(); err != nil {
 				break
 			}
 		}
@@ -511,7 +511,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	err = t.GetAutoIDCtrl(schemaID, tblInfo.ID).All().Del()
+	err = t.GetAutoIDAccessors(schemaID, tblInfo.ID).Del()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

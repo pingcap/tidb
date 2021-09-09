@@ -1066,7 +1066,7 @@ func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 		once.Do(func() {
 			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				t := meta.NewMeta(txn)
-				err := t.GetAutoIDCtrl(job.SchemaID, job.TableID).All().Del()
+				err := t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del()
 				if err != nil {
 					return err
 				}

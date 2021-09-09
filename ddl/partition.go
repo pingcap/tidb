@@ -1244,13 +1244,13 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	// partition table auto IDs.
-	ptAutoIDs, err := t.GetAutoIDCtrl(ptSchemaID, ptID).All().Get()
+	ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	// non-partition table auto IDs.
-	ntAutoIDs, err := t.GetAutoIDCtrl(job.SchemaID, nt.ID).All().Get()
+	ntAutoIDs, err := t.GetAutoIDAccessors(job.SchemaID, nt.ID).Get()
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -1305,12 +1305,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		RowID:    mathutil.MaxInt64(ptAutoIDs.RowID, ntAutoIDs.RowID),
 		RandomID: mathutil.MaxInt64(ptAutoIDs.RandomID, ntAutoIDs.RandomID),
 	}
-	err = t.GetAutoIDCtrl(ptSchemaID, pt.ID).All().Put(newAutoIDs)
+	err = t.GetAutoIDAccessors(ptSchemaID, pt.ID).Put(newAutoIDs)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	err = t.GetAutoIDCtrl(job.SchemaID, nt.ID).All().Put(newAutoIDs)
+	err = t.GetAutoIDAccessors(job.SchemaID, nt.ID).Put(newAutoIDs)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

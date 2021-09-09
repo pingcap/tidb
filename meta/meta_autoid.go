@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
-var _ AutoIDAccessor = autoIDAccessor{}
+var _ AutoIDAccessor = &autoIDAccessor{}
 
 // AutoIDAccessor represents the entry to retrieve/mutate auto IDs.
 type AutoIDAccessor interface {
@@ -39,19 +39,19 @@ type autoIDAccessor struct {
 }
 
 // Get implements the interface AutoIDAccessor.
-func (a autoIDAccessor) Get() (int64, error) {
+func (a *autoIDAccessor) Get() (int64, error) {
 	m := a.m
 	return m.txn.HGetInt64(m.dbKey(a.databaseID), a.idEncodeFn(a.tableID))
 }
 
 // Put implements the interface AutoIDAccessor.
-func (a autoIDAccessor) Put(val int64) error {
+func (a *autoIDAccessor) Put(val int64) error {
 	m := a.m
 	return m.txn.HSet(m.dbKey(a.databaseID), a.idEncodeFn(a.tableID), []byte(strconv.FormatInt(val, 10)))
 }
 
 // Inc implements the interface AutoIDAccessor.
-func (a autoIDAccessor) Inc(step int64) (int64, error) {
+func (a *autoIDAccessor) Inc(step int64) (int64, error) {
 	m := a.m
 	dbKey := m.dbKey(a.databaseID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -67,7 +67,7 @@ func (a autoIDAccessor) Inc(step int64) (int64, error) {
 }
 
 // Del implements the interface AutoIDAccessor.
-func (a autoIDAccessor) Del() error {
+func (a *autoIDAccessor) Del() error {
 	m := a.m
 	dbKey := m.dbKey(a.databaseID)
 	if err := m.txn.HDel(dbKey, a.idEncodeFn(a.tableID)); err != nil {
@@ -76,91 +76,76 @@ func (a autoIDAccessor) Del() error {
 	return nil
 }
 
-var _ AutoIDAccessors = autoIDAccessors{}
+var _ AutoIDAccessors = &autoIDAccessors{}
 
 // AutoIDAccessors represents all the auto IDs of a table.
 type AutoIDAccessors interface {
 	Get() (AutoIDGroup, error)
 	Put(autoIDs AutoIDGroup) error
 	Del() error
+
+	AccessorPicker
+}
+
+// AccessorPicker is used to pick a type of auto ID accessor.
+type AccessorPicker interface {
+	RowID() AutoIDAccessor
+	RandomID() AutoIDAccessor
+	IncrementID() AutoIDAccessor
 }
 
 type autoIDAccessors struct {
-	autoIDAccessor
+	access autoIDAccessor
 }
 
 // Get implements the interface AutoIDAccessors.
-func (a autoIDAccessors) Get() (autoIDs AutoIDGroup, err error) {
-	a.idEncodeFn = a.m.autoTableIDKey
-	autoIDs.RowID, err = a.autoIDAccessor.Get()
-	if err != nil {
-		return
+func (a *autoIDAccessors) Get() (autoIDs AutoIDGroup, err error) {
+	if autoIDs.RowID, err = a.RowID().Get(); err != nil {
+		return autoIDs, err
 	}
-	a.idEncodeFn = a.m.autoRandomTableIDKey
-	autoIDs.RandomID, err = a.autoIDAccessor.Get()
-	if err != nil {
-		return
+	if autoIDs.RandomID, err = a.RandomID().Get(); err != nil {
+		return autoIDs, err
 	}
 	return
 }
 
 // Put implements the interface AutoIDAccessors.
-func (a autoIDAccessors) Put(autoIDs AutoIDGroup) error {
-	a.idEncodeFn = a.m.autoTableIDKey
-	if err := a.autoIDAccessor.Put(autoIDs.RowID); err != nil {
+func (a *autoIDAccessors) Put(autoIDs AutoIDGroup) error {
+	if err := a.RowID().Put(autoIDs.RowID); err != nil {
 		return err
 	}
-	a.idEncodeFn = a.m.autoRandomTableIDKey
-	return a.autoIDAccessor.Put(autoIDs.RandomID)
+	return a.RandomID().Put(autoIDs.RandomID)
 }
 
 // Del implements the interface AutoIDAccessors.
-func (a autoIDAccessors) Del() error {
-	a.idEncodeFn = a.m.autoTableIDKey
-	if err := a.autoIDAccessor.Del(); err != nil {
+func (a *autoIDAccessors) Del() error {
+	if err := a.RowID().Del(); err != nil {
 		return err
 	}
-	a.idEncodeFn = a.m.autoRandomTableIDKey
-	return a.autoIDAccessor.Del()
-}
-
-// AutoIDCtrl can be changed into rowid/auto_increment/auto_random ID accessor.
-type AutoIDCtrl struct {
-	access autoIDAccessor
+	return a.RandomID().Del()
 }
 
 // RowID is used to get the _tidb_rowid meta key-value accessor.
-func (a *AutoIDCtrl) RowID() AutoIDAccessor {
+func (a *autoIDAccessors) RowID() AutoIDAccessor {
 	a.access.idEncodeFn = a.access.m.autoTableIDKey
-	return a.access
+	return &a.access
 }
 
 // IncrementID is used to get the auto_increment ID meta key-value accessor.
-func (a *AutoIDCtrl) IncrementID() AutoIDAccessor {
+func (a *autoIDAccessors) IncrementID() AutoIDAccessor {
 	a.access.idEncodeFn = a.access.m.autoIncrementIDKey
-	return a.access
+	return &a.access
 }
 
 // RandomID is used to get the auto_random ID meta key-value accessor.
-func (a *AutoIDCtrl) RandomID() AutoIDAccessor {
+func (a *autoIDAccessors) RandomID() AutoIDAccessor {
 	a.access.idEncodeFn = a.access.m.autoRandomTableIDKey
-	return a.access
+	return &a.access
 }
 
-// All is used to get all auto IDs meta key-value accessor.
-func (a *AutoIDCtrl) All() AutoIDAccessors {
-	return autoIDAccessors{
-		autoIDAccessor{
-			m:          a.access.m,
-			databaseID: a.access.databaseID,
-			tableID:    a.access.tableID,
-		},
-	}
-}
-
-// NewAutoIDCtrl creates a new AutoIDCtrl.
-func NewAutoIDCtrl(m *Meta, databaseID, tableID int64) *AutoIDCtrl {
-	return &AutoIDCtrl{
+// NewAutoIDAccessors creates a new AutoIDAccessors.
+func NewAutoIDAccessors(m *Meta, databaseID, tableID int64) AutoIDAccessors {
+	return &autoIDAccessors{
 		autoIDAccessor{
 			m:          m,
 			databaseID: databaseID,
@@ -179,14 +164,14 @@ type AutoIDGroup struct {
 // all the auto IDs from an old table, and set them to a new table.
 func BackupAndRestoreAutoIDs(m *Meta, databaseID, tableID int64,
 	newDatabaseID, newTableID int64, transform func(AutoIDGroup) (AutoIDGroup, error)) (err error) {
-	ctrl := NewAutoIDCtrl(m, databaseID, tableID).All()
-	autoIDs, err := ctrl.Get()
+	acc := NewAutoIDAccessors(m, databaseID, tableID)
+	autoIDs, err := acc.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	overwriteIDs := databaseID == newDatabaseID && tableID == newTableID
 	if !overwriteIDs {
-		err = ctrl.Del()
+		err = acc.Del()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -197,7 +182,7 @@ func BackupAndRestoreAutoIDs(m *Meta, databaseID, tableID int64,
 			return errors.Trace(err)
 		}
 	}
-	err = NewAutoIDCtrl(m, newDatabaseID, newTableID).All().Put(autoIDs)
+	err = NewAutoIDAccessors(m, newDatabaseID, newTableID).Put(autoIDs)
 	if err != nil {
 		return errors.Trace(err)
 	}
