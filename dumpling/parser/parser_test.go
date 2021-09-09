@@ -1179,6 +1179,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		// set default value
 		{"SET @@global.autocommit = default", true, "SET @@GLOBAL.`autocommit`=DEFAULT"},
 		{"SET @@session.autocommit = default", true, "SET @@SESSION.`autocommit`=DEFAULT"},
+		// set binary value
+		{"SET @@character_set_results = binary", true, "SET @@SESSION.`character_set_results`=_UTF8MB4'BINARY'"},
 		// SET CHARACTER SET
 		{"SET CHARACTER SET utf8mb4;", true, "SET CHARSET 'utf8mb4'"},
 		{"SET CHARACTER SET 'utf8mb4';", true, "SET CHARSET 'utf8mb4'"},
