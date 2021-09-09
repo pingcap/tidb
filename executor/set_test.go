@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -41,6 +42,7 @@ import (
 
 func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	session.InitGeneralLog()
 
 	testSQL := "SET @a = 1;"
 	tk.MustExec(testSQL)

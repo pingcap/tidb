@@ -2848,6 +2848,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 	if variable.ProcessGeneralLog.Load() && !sessVars.InRestrictedSQL {
 		logEntry := getGeneralLogEntry()
 		logEntry.ConnID = sessVars.ConnectionID
+		// TODO: optimize sessVars.User.String() by reusing buffer, which is in package pingcap/parser
 		logEntry.User = sessVars.User.String()
 		logEntry.SchemaMetaVersion = s.GetInfoSchema().SchemaMetaVersion()
 		logEntry.TxnStartTS = sessVars.TxnCtx.StartTS
