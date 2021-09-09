@@ -72,12 +72,16 @@ type DuplicateManager struct {
 
 type pendingIndexHandles struct {
 	// all 4 slices should have exactly the same length.
+	// we use a struct-of-arrays instead of array-of-structs
+	// so that the rawHandles can be directly given to the BatchGetRequest.
 	dataConflictInfos []errormanager.DataConflictInfo
 	indexNames        []string
 	handles           []tidbkv.Handle
 	rawHandles        [][]byte
 }
 
+// makePendingIndexHandlesWithCapacity makes the pendingIndexHandles struct-of-arrays with the given
+// capacity for every internal array.
 func makePendingIndexHandlesWithCapacity(cap int) pendingIndexHandles {
 	return pendingIndexHandles{
 		dataConflictInfos: make([]errormanager.DataConflictInfo, 0, cap),
@@ -87,6 +91,7 @@ func makePendingIndexHandlesWithCapacity(cap int) pendingIndexHandles {
 	}
 }
 
+// append pushes the item (no copying) to the end of the indexHandles.
 func (indexHandles *pendingIndexHandles) append(
 	conflictInfo errormanager.DataConflictInfo,
 	indexName string,
@@ -99,6 +104,7 @@ func (indexHandles *pendingIndexHandles) append(
 	indexHandles.rawHandles = append(indexHandles.rawHandles, rawHandle)
 }
 
+// appendAt pushes `other[i]` to the end of indexHandles.
 func (indexHandles *pendingIndexHandles) appendAt(
 	other *pendingIndexHandles,
 	i int,
@@ -111,6 +117,7 @@ func (indexHandles *pendingIndexHandles) appendAt(
 	)
 }
 
+// extends concatenates `other` to the end of indexHandles.
 func (indexHandles *pendingIndexHandles) extend(other *pendingIndexHandles) {
 	indexHandles.dataConflictInfos = append(indexHandles.dataConflictInfos, other.dataConflictInfos...)
 	indexHandles.indexNames = append(indexHandles.indexNames, other.indexNames...)
@@ -118,6 +125,7 @@ func (indexHandles *pendingIndexHandles) extend(other *pendingIndexHandles) {
 	indexHandles.rawHandles = append(indexHandles.rawHandles, other.rawHandles...)
 }
 
+// truncate resets all arrays in indexHandles to length zero, but keeping the allocated capacity.
 func (indexHandles *pendingIndexHandles) truncate() {
 	indexHandles.dataConflictInfos = indexHandles.dataConflictInfos[:0]
 	indexHandles.indexNames = indexHandles.indexNames[:0]
@@ -125,19 +133,30 @@ func (indexHandles *pendingIndexHandles) truncate() {
 	indexHandles.rawHandles = indexHandles.rawHandles[:0]
 }
 
+// Len implements sort.Interface.
 func (indexHandles *pendingIndexHandles) Len() int {
 	return len(indexHandles.rawHandles)
 }
 
+// Less implements sort.Interface.
 func (indexHandles *pendingIndexHandles) Less(i, j int) bool {
 	return bytes.Compare(indexHandles.rawHandles[i], indexHandles.rawHandles[j]) < 0
 }
 
+// Swap implements sort.Interface.
 func (indexHandles *pendingIndexHandles) Swap(i, j int) {
 	indexHandles.handles[i], indexHandles.handles[j] = indexHandles.handles[j], indexHandles.handles[i]
 	indexHandles.indexNames[i], indexHandles.indexNames[j] = indexHandles.indexNames[j], indexHandles.indexNames[i]
 	indexHandles.dataConflictInfos[i], indexHandles.dataConflictInfos[j] = indexHandles.dataConflictInfos[j], indexHandles.dataConflictInfos[i]
 	indexHandles.rawHandles[i], indexHandles.rawHandles[j] = indexHandles.rawHandles[j], indexHandles.rawHandles[i]
+}
+
+// searchSortedRawHandle looks up for the index i such that `rawHandles[i] == rawHandle`.
+// This function assumes indexHandles is already sorted, and rawHandle does exist in it.
+func (indexHandles *pendingIndexHandles) searchSortedRawHandle(rawHandle []byte) int {
+	return sort.Search(indexHandles.Len(), func(i int) bool {
+		return bytes.Compare(indexHandles.rawHandles[i], rawHandle) >= 0
+	})
 }
 
 func NewDuplicateManager(
@@ -542,6 +561,7 @@ func (manager *DuplicateManager) getValues(
 			// TODO shouldn't we use `sort.Search` for these 🤔
 			continue
 		}
+		batch.truncate()
 		endIdx = startIdx
 		for endIdx < l {
 			handleKey := codec.EncodeBytes([]byte{}, handles.rawHandles[endIdx])
@@ -552,6 +572,9 @@ func (manager *DuplicateManager) getValues(
 				break
 			}
 		}
+		// because `endIdx` is strictly increasing, and `handles` is sorted,
+		// and `batch` is constructed by repeatedly appending `handles[endIdx]`,
+		// we are sure that `batch` is sorted too.
 		if err := manager.getValuesFromRegion(ctx, region, decoder, batch); err != nil {
 			log.L().Error("failed to collect values from TiKV by handle, we will retry it again", zap.Error(err))
 			retryHandles.extend(&batch)
@@ -565,7 +588,7 @@ func (manager *DuplicateManager) getValuesFromRegion(
 	ctx context.Context,
 	region *restore.RegionInfo,
 	decoder *kv.TableKVDecoder,
-	handles pendingIndexHandles,
+	handles pendingIndexHandles, // caller should ensure that handles is sorted.
 ) error {
 	kvclient, err := manager.getKvClient(ctx, region.Leader)
 	if err != nil {
@@ -597,6 +620,11 @@ func (manager *DuplicateManager) getValuesFromRegion(
 
 	rawRows := make([][]byte, 0, len(resp.Pairs))
 	for i, kv := range resp.Pairs {
+		if !bytes.Equal(kv.Key, handles.rawHandles[i]) {
+			// if TiKV returns the result in random order (should be impossible?),
+			// we need to search for the real index.
+			i = handles.searchSortedRawHandle(kv.Key)
+		}
 		rawRows = append(rawRows, kv.Value)
 		handles.dataConflictInfos[i].Row = decoder.DecodeRawRowDataAsStr(handles.handles[i], kv.Value)
 	}
