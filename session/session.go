@@ -32,7 +32,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
@@ -2844,47 +2843,26 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 	}
 }
 
-func genFnGetQuery(execStmt *executor.ExecStmt, isPrepared bool) func(buf *strings.Builder) string {
-	return func(buf *strings.Builder) string {
-		if isPrepared {
-			buf.WriteString(execStmt.OriginText())
-		} else {
-			buf.WriteString(execStmt.GetTextToLog())
-		}
-
-		bufString := buf.String()
-		queryMutable := *(*[]byte)(unsafe.Pointer(&bufString))
-		for i, b := range queryMutable {
-			if b == '\r' || b == '\n' || b == '\t' {
-				queryMutable[i] = ' '
-			}
-		}
-		return buf.String()
-	}
-}
-
 func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
-	vars := s.GetSessionVars()
-	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
-		fnGetQuery := genFnGetQuery(execStmt, isPrepared)
-		fnGetSMV := func() int64 {
-			return s.GetInfoSchema().SchemaMetaVersion()
-		}
-
+	sessVars := s.GetSessionVars()
+	if variable.ProcessGeneralLog.Load() && !sessVars.InRestrictedSQL {
 		logEntry := getGeneralLogEntry()
-		logEntry.ConnID = vars.ConnectionID
-		var user auth.UserIdentity
-		if vars.User != nil {
-			user = *vars.User
+		logEntry.ConnID = sessVars.ConnectionID
+		logEntry.User = sessVars.User.String()
+		logEntry.SchemaMetaVersion = s.GetInfoSchema().SchemaMetaVersion()
+		logEntry.TxnStartTS = sessVars.TxnCtx.StartTS
+		logEntry.TxnForUpdateTS = sessVars.TxnCtx.GetForUpdateTS()
+		logEntry.IsReadConsistency = sessVars.IsIsolation(ast.ReadCommitted)
+		logEntry.CurrentDB = sessVars.CurrentDB
+		logEntry.TxnMode = sessVars.GetReadableTxnMode()
+		logEntry.Query = generalLogEntryQuery{
+			isPrepared:      isPrepared,
+			originalText:    execStmt.OriginText(),
+			stmtNode:        execStmt.StmtNode,
+			stmtCtx:         sessVars.StmtCtx,
+			preparedParams:  sessVars.PreparedParams,
+			enableRedactLog: sessVars.EnableRedactLog,
 		}
-		logEntry.User = user
-		logEntry.FnGetSchemaMetaVersion = fnGetSMV
-		logEntry.TxnStartTS = vars.TxnCtx.StartTS
-		logEntry.TxnForUpdateTS = vars.TxnCtx.GetForUpdateTS()
-		logEntry.IsReadConsistency = vars.IsIsolation(ast.ReadCommitted)
-		logEntry.CurrentDB = vars.CurrentDB
-		logEntry.TxnMode = vars.GetReadableTxnMode()
-		logEntry.FnGetQuery = fnGetQuery
 
 		putGeneralLogOrDrop(logEntry)
 	}

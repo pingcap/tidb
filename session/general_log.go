@@ -18,13 +18,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/natefinch/lumberjack"
-	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"go.uber.org/zap"
-	"go.uber.org/zap/buffer"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -33,20 +35,19 @@ var (
 	GeneralLogLogger       = log.L()
 	globalGeneralLogger    *generalLogger
 	generalLogDroppedEntry = metrics.GeneralLogDroppedCount
-	stringBufferPool       = buffer.NewPool()
 	queryBuilderPool       = sync.Pool{New: func() interface{} {
 		ret := strings.Builder{}
 		ret.Grow(128)
 		return &ret
 	}}
 	glEntryPool = sync.Pool{New: func() interface{} {
-		return &GeneralLogEntry{}
+		return &generalLogEntry{}
 	}}
 )
 
 // putGeneralLogOrDrop sends the general log entry to the logging goroutine
 // The entry will be dropped once the channel is full
-func putGeneralLogOrDrop(entry *GeneralLogEntry) {
+func putGeneralLogOrDrop(entry *generalLogEntry) {
 	select {
 	case globalGeneralLogger.logEntryChan <- entry:
 	default:
@@ -70,66 +71,86 @@ func StopGeneralLog() {
 	globalGeneralLogger.stopLogWorker()
 }
 
-// GeneralLogEntry represents the fields in a general query log
-type GeneralLogEntry struct {
-	ConnID                 uint64
-	User                   auth.UserIdentity
-	FnGetSchemaMetaVersion func() int64
-	TxnStartTS             uint64
-	TxnForUpdateTS         uint64
-	IsReadConsistency      bool
-	CurrentDB              string
-	TxnMode                string
-	FnGetQuery             func(*strings.Builder) string
+// generalLogEntry represents the fields in a general query log
+type generalLogEntry struct {
+	ConnID            uint64
+	User              string
+	SchemaMetaVersion int64
+	TxnStartTS        uint64
+	TxnForUpdateTS    uint64
+	IsReadConsistency bool
+	CurrentDB         string
+	TxnMode           string
+	Query             generalLogEntryQuery
+}
+type generalLogEntryQuery struct {
+	isPrepared      bool
+	originalText    string
+	stmtNode        ast.StmtNode
+	stmtCtx         *stmtctx.StatementContext
+	preparedParams  variable.PreparedParams
+	enableRedactLog bool
 }
 
 // getGeneralLogEntry get a general log entry from the object pool
-func getGeneralLogEntry() *GeneralLogEntry {
-	return glEntryPool.Get().(*GeneralLogEntry)
+func getGeneralLogEntry() *generalLogEntry {
+	return glEntryPool.Get().(*generalLogEntry)
 }
 
 // generalLogger receives general log entry from channel, and log or drop them as needed
 type generalLogger struct {
 	logger       *zap.Logger
-	logEntryChan chan *GeneralLogEntry
+	logEntryChan chan *generalLogEntry
 	quit         chan struct{}
 }
 
 func newGeneralLogger(logger *zap.Logger) *generalLogger {
 	gl := &generalLogger{
 		logger:       logger,
-		logEntryChan: make(chan *GeneralLogEntry, 10000),
+		logEntryChan: make(chan *generalLogEntry, 10000),
 		quit:         make(chan struct{}),
 	}
 	go gl.startLogWorker()
 	return gl
 }
 
-func userToString(user auth.UserIdentity) string {
-	buf := stringBufferPool.Get()
-	buf.WriteString(user.Username)
-	buf.WriteByte('@')
-	buf.WriteString(user.Hostname)
-	ret := buf.String()
-	buf.Free()
-	return ret
-}
-
-func (gl *generalLogger) logEntry(e *GeneralLogEntry) {
-	fnGetQueryBuf := queryBuilderPool.Get().(*strings.Builder)
+func (gl *generalLogger) logEntry(e *generalLogEntry) {
+	buf := queryBuilderPool.Get().(*strings.Builder)
+	q := e.Query
+	if q.isPrepared {
+		buf.WriteString(q.originalText)
+	} else {
+		// The following logic should be kept in sync with ExecStmt.GetTextToLog
+		if q.enableRedactLog {
+			sql, _ := q.stmtCtx.SQLDigest()
+			buf.WriteString(sql)
+		} else if sensitiveStmt, ok := q.stmtNode.(ast.SensitiveStmtNode); ok {
+			buf.WriteString(sensitiveStmt.SecureText())
+		} else {
+			buf.WriteString(q.stmtCtx.OriginalSQL)
+			buf.WriteString(q.preparedParams.String())
+		}
+	}
+	bufString := buf.String()
+	queryMutable := *(*[]byte)(unsafe.Pointer(&bufString))
+	for i, b := range queryMutable {
+		if b == '\r' || b == '\n' || b == '\t' {
+			queryMutable[i] = ' '
+		}
+	}
 	gl.logger.Info("GENERAL_LOG",
 		zap.Uint64("conn", e.ConnID),
-		zap.String("user", userToString(e.User)),
-		zap.Int64("schemaVersion", e.FnGetSchemaMetaVersion()),
+		zap.String("user", e.User),
+		zap.Int64("schemaVersion", e.SchemaMetaVersion),
 		zap.Uint64("txnStartTS", e.TxnStartTS),
 		zap.Uint64("forUpdateTS", e.TxnForUpdateTS),
 		zap.Bool("isReadConsistency", e.IsReadConsistency),
 		zap.String("current_db", e.CurrentDB),
 		zap.String("txn_mode", e.TxnMode),
-		zap.String("sql", e.FnGetQuery(fnGetQueryBuf)),
+		zap.String("sql", buf.String()),
 	)
-	fnGetQueryBuf.Reset()
-	queryBuilderPool.Put(fnGetQueryBuf)
+	buf.Reset()
+	queryBuilderPool.Put(buf)
 	glEntryPool.Put(e)
 }
 
