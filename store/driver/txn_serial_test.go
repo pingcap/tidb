@@ -20,14 +20,33 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	txn2 "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/stretchr/testify/require"
 )
+
+type mockErrInterceptor struct {
+	err error
+}
+
+func (m *mockErrInterceptor) OnGet(_ context.Context, _ kv.Snapshot, _ kv.Key) ([]byte, error) {
+	return nil, m.err
+}
+
+func (m *mockErrInterceptor) OnBatchGet(_ context.Context, _ kv.Snapshot, _ []kv.Key) (map[string][]byte, error) {
+	return nil, m.err
+}
+
+func (m *mockErrInterceptor) OnIter(_ kv.Snapshot, _ kv.Key, _ kv.Key) (kv.Iterator, error) {
+	return nil, m.err
+}
+
+func (m *mockErrInterceptor) OnIterReverse(_ kv.Snapshot, _ kv.Key) (kv.Iterator, error) {
+	return nil, m.err
+}
 
 func TestTxnGet(t *testing.T) {
 	store, clean := createEmptyTestStore(t)
 	defer clean()
-	clearData(t, store)
+	clearStoreData(t, store)
 
 	prepareSnapshot(t, store, [][]interface{}{{"k1", "v1"}})
 	txn, err := store.Begin()
@@ -70,11 +89,8 @@ func TestTxnGet(t *testing.T) {
 	require.True(t, kv.ErrNotExist.Equal(err))
 
 	// make snapshot returns error
-	errRetriever := &mockErrRetriever{err: errors.New("error")}
-	txn.SetOption(
-		kv.SortedCustomRetrievers,
-		[]*txn2.RangedKVRetriever{txn2.NewRangeRetriever(errRetriever, nil, nil)},
-	)
+	errInterceptor := &mockErrInterceptor{err: errors.New("error")}
+	txn.SetOption(kv.SnapInterceptor, errInterceptor)
 
 	// should return kv.ErrNotExist because k1 is deleted in memBuff
 	v, err = txn.Get(context.Background(), kv.Key("k1"))
@@ -89,13 +105,13 @@ func TestTxnGet(t *testing.T) {
 	// should return error because kn is read from snapshot
 	v, err = txn.Get(context.Background(), kv.Key("kn"))
 	require.Nil(t, v)
-	require.Equal(t, errRetriever.err, err)
+	require.Equal(t, errInterceptor.err, err)
 }
 
 func TestTxnBatchGet(t *testing.T) {
 	store, clean := createEmptyTestStore(t)
 	defer clean()
-	clearData(t, store)
+	clearStoreData(t, store)
 
 	prepareSnapshot(t, store, [][]interface{}{{"k1", "v1"}, {"k2", "v2"}, {"k3", "v3"}, {"k4", "v4"}})
 	txn, err := store.Begin()
@@ -124,11 +140,9 @@ func TestTxnBatchGet(t *testing.T) {
 	require.Equal(t, []byte("v4+"), result["k4"])
 
 	// make snapshot returns error
-	errRetriever := &mockErrRetriever{err: errors.New("error")}
-	txn.SetOption(
-		kv.SortedCustomRetrievers,
-		[]*txn2.RangedKVRetriever{txn2.NewRangeRetriever(errRetriever, nil, nil)},
-	)
+	// make snapshot returns error
+	errInterceptor := &mockErrInterceptor{err: errors.New("error")}
+	txn.SetOption(kv.SnapInterceptor, errInterceptor)
 
 	// return data if not read from snapshot
 	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k4")})
@@ -140,19 +154,19 @@ func TestTxnBatchGet(t *testing.T) {
 	// fails if read from snapshot
 	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k3")})
 	require.Nil(t, result)
-	require.Equal(t, errRetriever.err, err)
+	require.Equal(t, errInterceptor.err, err)
 	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k3"), kv.Key("k4")})
 	require.Nil(t, result)
-	require.Equal(t, errRetriever.err, err)
+	require.Equal(t, errInterceptor.err, err)
 	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k4"), kv.Key("kn")})
 	require.Nil(t, result)
-	require.Equal(t, errRetriever.err, err)
+	require.Equal(t, errInterceptor.err, err)
 }
 
 func TestTxnScan(t *testing.T) {
 	store, clean := createEmptyTestStore(t)
 	defer clean()
-	clearData(t, store)
+	clearStoreData(t, store)
 
 	prepareSnapshot(t, store, [][]interface{}{{"k1", "v1"}, {"k3", "v3"}, {"k5", "v5"}, {"k7", "v7"}, {"k9", "v9"}})
 	txn, err := store.Begin()
@@ -185,26 +199,9 @@ func TestTxnScan(t *testing.T) {
 	checkIter(t, iter, [][]interface{}{{"k7", "v7"}, {"k31", "v31+"}, {"k3", "v3+"}, {"k1", "v1+"}})
 
 	// make snapshot returns error
-	errRetriever := &mockErrRetriever{err: errors.New("error")}
-	txn.SetOption(
-		kv.SortedCustomRetrievers,
-		[]*txn2.RangedKVRetriever{txn2.NewRangeRetriever(errRetriever, nil, nil)},
-	)
+	errInterceptor := &mockErrInterceptor{err: errors.New("error")}
+	txn.SetOption(kv.SnapInterceptor, errInterceptor)
+
 	iter, err = txn.Iter(kv.Key("k1"), kv.Key("k2"))
-	require.Equal(t, errRetriever.err, err)
-}
-
-func checkIter(t *testing.T, iter kv.Iterator, expected [][]interface{}) {
-	for _, pair := range expected {
-		expectedKey := kv.Key(makeBytes(pair[0]))
-		expectedValue := makeBytes(pair[1])
-
-		require.True(t, iter.Valid())
-		require.Equal(t, expectedKey, iter.Key())
-		require.Equal(t, expectedValue, iter.Value())
-		err := iter.Next()
-		require.NoError(t, err)
-	}
-
-	require.False(t, iter.Valid())
+	require.Equal(t, errInterceptor.err, err)
 }

@@ -36,8 +36,8 @@ import (
 
 type tikvTxn struct {
 	*tikv.KVTxn
-	idxNameCache     map[int64]*model.TableInfo
-	customRetrievers sortedRetrievers
+	idxNameCache        map[int64]*model.TableInfo
+	snapshotInterceptor kv.SnapshotInterceptor
 }
 
 // NewTiKVTxn returns a new Transaction.
@@ -76,7 +76,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 // GetSnapshot returns the Snapshot binding to this transaction.
 func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
-	return &tikvSnapshot{txn.KVTxn.GetSnapshot(), txn.customRetrievers}
+	return &tikvSnapshot{txn.KVTxn.GetSnapshot(), txn.snapshotInterceptor}
 }
 
 // Iter creates an Iterator positioned on the first entry that k <= entry's key.
@@ -225,8 +225,8 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 		txn.KVTxn.SetResourceGroupTag(val.([]byte))
 	case kv.KVFilter:
 		txn.KVTxn.SetKVFilter(val.(tikv.KVFilter))
-	case kv.SortedCustomRetrievers:
-		txn.customRetrievers = val.([]*RangedKVRetriever)
+	case kv.SnapInterceptor:
+		txn.snapshotInterceptor = val.(kv.SnapshotInterceptor)
 	}
 }
 
