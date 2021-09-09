@@ -1316,7 +1316,7 @@ func (s *testSuite9) TestIssue26762(c *C) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 date);")
 	_, err := tk.Exec("insert into t1 values('2020-02-31');")
-	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
+	c.Assert(err.Error(), Equals, `[table:1366]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
 
 	tk.MustExec("set @@sql_mode='ALLOW_INVALID_DATES';")
 	tk.MustExec("insert into t1 values('2020-02-31');")
@@ -1324,5 +1324,5 @@ func (s *testSuite9) TestIssue26762(c *C) {
 
 	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES';")
 	_, err = tk.Exec("insert into t1 values('2020-02-31');")
-	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
+	c.Assert(err.Error(), Equals, `[table:1366]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
 }
