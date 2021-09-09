@@ -16,6 +16,7 @@ package kv
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -349,11 +350,11 @@ func (kvcodec *tableKVEncoder) AddRecord(
 			if hasSignBit {
 				incrementalBits--
 			}
-			_ = kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64()&((1<<incrementalBits)-1), false, autoid.AutoRandomType)
+			_ = kvcodec.tbl.RebaseAutoID(context.Background(), kvcodec.se, value.GetInt64()&((1<<incrementalBits)-1), false, autoid.AutoRandomType)
 		}
 		if isAutoIncCol {
 			// TODO use auto incremental type
-			_ = kvcodec.tbl.RebaseAutoID(kvcodec.se, getAutoRecordID(value, &col.FieldType), false, autoid.RowIDAllocType)
+			_ = kvcodec.tbl.RebaseAutoID(context.Background(), kvcodec.se, getAutoRecordID(value, &col.FieldType), false, autoid.RowIDAllocType)
 		}
 	}
 
@@ -368,7 +369,7 @@ func (kvcodec *tableKVEncoder) AddRecord(
 			return nil, 0, errors.Trace(err)
 		}
 		record = append(record, value)
-		_ = kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64(), false, autoid.RowIDAllocType)
+		_ = kvcodec.tbl.RebaseAutoID(context.Background(), kvcodec.se, value.GetInt64(), false, autoid.RowIDAllocType)
 	}
 	_, err = kvcodec.tbl.AddRecord(kvcodec.se, record)
 	if err != nil {

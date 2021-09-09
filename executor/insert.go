@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/meta/autoid"
 	"runtime/trace"
 	"time"
 
@@ -304,6 +305,10 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 // Next implements the Executor Next interface.
 func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
+	if e.collectRuntimeStatsEnabled() {
+		ctx = context.WithValue(ctx, autoid.AutoIDAllocatorRuntimeStatsCtxKey, e.stats.AutoIDAllocatorRuntimeStats)
+	}
+
 	if len(e.children) > 0 && e.children[0] != nil {
 		return insertRowsFromSelect(ctx, e)
 	}

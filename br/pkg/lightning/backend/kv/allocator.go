@@ -17,6 +17,7 @@
 package kv
 
 import (
+	"context"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/meta/autoid"
@@ -40,7 +41,7 @@ func NewPanickingAllocators(base int64) autoid.Allocators {
 }
 
 // Rebase implements the autoid.Allocator interface
-func (alloc *panickingAllocator) Rebase(newBase int64, allocIDs bool) error {
+func (alloc *panickingAllocator) Rebase(ctx context.Context, newBase int64, allocIDs bool) error {
 	// CAS
 	for {
 		oldBase := atomic.LoadInt64(alloc.base)

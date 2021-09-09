@@ -1988,7 +1988,7 @@ func (it *infoschemaTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (it *infoschemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
+func (it *infoschemaTable) RebaseAutoID(ctx context.Context, sctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -2071,7 +2071,7 @@ func (vt *VirtualTable) Allocators(_ sessionctx.Context) autoid.Allocators {
 }
 
 // RebaseAutoID implements table.Table RebaseAutoID interface.
-func (vt *VirtualTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
+func (vt *VirtualTable) RebaseAutoID(ctx context.Context, sctx sessionctx.Context, newBase int64, isSetStep bool, tp autoid.AllocatorType) error {
 	return table.ErrUnsupportedOp
 }
 

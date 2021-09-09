@@ -711,7 +711,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		}
 		// Use the value if it's not null and not 0.
 		if recordID != 0 {
-			err = e.Table.RebaseAutoID(e.ctx, recordID, true, autoid.RowIDAllocType)
+			err = e.Table.RebaseAutoID(ctx, e.ctx, recordID, true, autoid.RowIDAllocType)
 			if err != nil {
 				return nil, err
 			}
@@ -801,7 +801,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
-		err = e.Table.RebaseAutoID(e.ctx, recordID, true, autoid.RowIDAllocType)
+		err = e.Table.RebaseAutoID(ctx, e.ctx, recordID, true, autoid.RowIDAllocType)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -877,7 +877,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		if !e.ctx.GetSessionVars().AllowAutoRandExplicitInsert {
 			return types.Datum{}, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExplicitInsertDisabledErrMsg)
 		}
-		err = e.rebaseAutoRandomID(recordID, &c.FieldType)
+		err = e.rebaseAutoRandomID(ctx, recordID, &c.FieldType)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -936,7 +936,7 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	return autoRandomID, nil
 }
 
-func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.FieldType) error {
+func (e *InsertValues) rebaseAutoRandomID(ctx context.Context, recordID int64, fieldType *types.FieldType) error {
 	if recordID < 0 {
 		return nil
 	}
@@ -946,7 +946,7 @@ func (e *InsertValues) rebaseAutoRandomID(recordID int64, fieldType *types.Field
 	layout := autoid.NewShardIDLayout(fieldType, tableInfo.AutoRandomBits)
 	autoRandomID := layout.IncrementalMask() & recordID
 
-	return alloc.Rebase(autoRandomID, true)
+	return alloc.Rebase(ctx, autoRandomID, true)
 }
 
 func (e *InsertValues) adjustImplicitRowID(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
@@ -963,7 +963,7 @@ func (e *InsertValues) adjustImplicitRowID(ctx context.Context, d types.Datum, h
 		if !e.ctx.GetSessionVars().AllowWriteRowID {
 			return types.Datum{}, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
 		}
-		err = e.rebaseImplicitRowID(recordID)
+		err = e.rebaseImplicitRowID(ctx, recordID)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -990,7 +990,7 @@ func (e *InsertValues) adjustImplicitRowID(ctx context.Context, d types.Datum, h
 	return d, nil
 }
 
-func (e *InsertValues) rebaseImplicitRowID(recordID int64) error {
+func (e *InsertValues) rebaseImplicitRowID(ctx context.Context, recordID int64) error {
 	if recordID < 0 {
 		return nil
 	}
@@ -1000,7 +1000,7 @@ func (e *InsertValues) rebaseImplicitRowID(recordID int64) error {
 	layout := autoid.NewShardIDLayout(types.NewFieldType(mysql.TypeLonglong), tableInfo.ShardRowIDBits)
 	newTiDBRowIDBase := layout.IncrementalMask() & recordID
 
-	return alloc.Rebase(newTiDBRowIDBase, true)
+	return alloc.Rebase(ctx, newTiDBRowIDBase, true)
 }
 
 func (e *InsertValues) handleWarning(err error) {
@@ -1013,10 +1013,11 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 		if e.stats == nil {
 			snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 			e.stats = &InsertRuntimeStat{
-				BasicRuntimeStats:    e.runtimeStats,
-				SnapshotRuntimeStats: snapshotStats,
-				Prefetch:             0,
-				CheckInsertTime:      0,
+				BasicRuntimeStats:           e.runtimeStats,
+				SnapshotRuntimeStats:        snapshotStats,
+				AutoIDAllocatorRuntimeStats: autoid.NewAutoIDAllocatorRuntimeStats(),
+				Prefetch:                    0,
+				CheckInsertTime:             0,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -1150,6 +1151,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 type InsertRuntimeStat struct {
 	*execdetails.BasicRuntimeStats
 	*txnsnapshot.SnapshotRuntimeStats
+	*autoid.AutoIDAllocatorRuntimeStats
 	CheckInsertTime time.Duration
 	Prefetch        time.Duration
 }
@@ -1163,7 +1165,21 @@ func (e *InsertRuntimeStat) String() string {
 		return ""
 	}
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
-	buf.WriteString(fmt.Sprintf("prepare:%v, ", execdetails.FormatDuration(time.Duration(e.BasicRuntimeStats.GetTime())-e.CheckInsertTime)))
+	var allocatorStatsStr string
+	if e.AutoIDAllocatorRuntimeStats != nil {
+		allocatorStatsStr = e.AutoIDAllocatorRuntimeStats.String()
+	}
+	if allocatorStatsStr == "" {
+		buf.WriteString("prepare: ")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.BasicRuntimeStats.GetTime()) - e.CheckInsertTime))
+		buf.WriteString(", ")
+	} else {
+		buf.WriteString("prepare: {total: ")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.BasicRuntimeStats.GetTime()) - e.CheckInsertTime))
+		buf.WriteString(", ")
+		buf.WriteString(allocatorStatsStr)
+		buf.WriteString("}, ")
+	}
 	if e.Prefetch > 0 {
 		buf.WriteString(fmt.Sprintf("check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
 			execdetails.FormatDuration(e.CheckInsertTime),
@@ -1194,6 +1210,10 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 	if e.BasicRuntimeStats != nil {
 		basicStats := e.BasicRuntimeStats.Clone()
 		newRs.BasicRuntimeStats = basicStats.(*execdetails.BasicRuntimeStats)
+	}
+	if e.AutoIDAllocatorRuntimeStats != nil {
+		allocatorStats := e.AutoIDAllocatorRuntimeStats.Clone()
+		newRs.AutoIDAllocatorRuntimeStats = allocatorStats.(*autoid.AutoIDAllocatorRuntimeStats)
 	}
 	return newRs
 }
