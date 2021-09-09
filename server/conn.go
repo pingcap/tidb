@@ -680,6 +680,16 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
 
+	cc.handleAuthPlugin(ctx, &resp)
+
+	err = cc.openSessionAndDoAuth(resp.Auth)
+	if err != nil {
+		logutil.Logger(ctx).Warn("open new session or authentication failure", zap.Error(err))
+	}
+	return err
+}
+
+func (cc *clientConn) handleAuthPlugin(ctx context.Context, resp *handshakeResponse41) error {
 	if resp.Capability&mysql.ClientPluginAuth > 0 {
 
 		newAuth, err := cc.checkAuthPlugin(ctx, &resp.AuthPlugin)
@@ -703,12 +713,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	} else {
 		logutil.Logger(ctx).Warn("Client without Auth Plugin support; Please upgrade client")
 	}
-
-	err = cc.openSessionAndDoAuth(resp.Auth)
-	if err != nil {
-		logutil.Logger(ctx).Warn("open new session or authentication failure", zap.Error(err))
-	}
-	return err
+	return nil
 }
 
 func (cc *clientConn) authSha(ctx context.Context) ([]byte, error) {

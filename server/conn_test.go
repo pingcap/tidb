@@ -890,3 +890,36 @@ func TestShowErrors(t *testing.T) {
 	require.Error(t, err)
 	tk.MustQuery("show errors").Check(testkit.Rows("Error 1051 Unknown table 'test.idontexist'"))
 }
+
+func TestHandleAuthPlugin(t *testing.T) {
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	cfg := newTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+
+	cc := &clientConn{
+		connectionID: 1,
+		alloc:        arena.NewAllocator(1024),
+		pkt: &packetIO{
+			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+		},
+		server: srv,
+	}
+	ctx := context.Background()
+	resp := handshakeResponse41{
+		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
+	}
+	err = cc.handleAuthPlugin(ctx, &resp)
+	require.NoError(t, err)
+
+	resp.Capability = mysql.ClientProtocol41
+	err = cc.handleAuthPlugin(ctx, &resp)
+	require.NoError(t, err)
+}
