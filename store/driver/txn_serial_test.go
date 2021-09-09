@@ -147,17 +147,16 @@ func TestTxnBatchGet(t *testing.T) {
 	require.Equal(t, []byte("v3"), result["k3"])
 	require.Equal(t, []byte("v4+"), result["k4"])
 
-	// make snapshot returns error
-	// make snapshot returns error
-	errInterceptor := &mockErrInterceptor{err: errors.New("error")}
-	txn.SetOption(kv.SnapInterceptor, errInterceptor)
-
 	// return data if not read from snapshot
 	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k1"), kv.Key("k4")})
 	require.NoError(t, err)
 	require.Equal(t, 2, len(result))
 	require.Equal(t, []byte("v1+"), result["k1"])
 	require.Equal(t, []byte("v4+"), result["k4"])
+
+	// make snapshot returns error
+	errInterceptor := &mockErrInterceptor{err: errors.New("error")}
+	txn.SetOption(kv.SnapInterceptor, errInterceptor)
 
 	// fails if read from snapshot
 	result, err = txn.BatchGet(context.Background(), []kv.Key{kv.Key("k3")})
