@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/stretchr/testify/require"
