@@ -3414,7 +3414,6 @@ func (s *testIntegrationSuite3) TestTruncateLocalTemporaryTable(c *C) {
 	tk.MustQuery("select * from testt.t3").Check(testkit.Rows())
 }
 
-
 func (s *testIntegrationSuite3) TestDropNoExitsColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
