@@ -15,9 +15,9 @@
 package variable_test
 
 import (
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/config"
@@ -26,19 +26,15 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
 
-var _ = SerialSuites(&testSessionSuite{})
-
-type testSessionSuite struct {
-}
-
-func (*testSessionSuite) TestSetSystemVariable(c *C) {
+func TestSetSystemVariable(t *testing.T) {
 	v := variable.NewSessionVars()
 	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	v.TimeZone = time.UTC
-	tests := []struct {
+	testCases := []struct {
 		key   string
 		value string
 		err   bool
@@ -57,91 +53,94 @@ func (*testSessionSuite) TestSetSystemVariable(c *C) {
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
 		{variable.TiDBEnableStmtSummary, "1", false},
 	}
-	for _, t := range tests {
-		err := variable.SetSessionSystemVar(v, t.key, t.value)
-		if t.err {
-			c.Assert(err, NotNil)
-		} else {
-			c.Assert(err, IsNil)
-		}
+	for _, tc := range testCases {
+		t.Run(tc.key, func(t *testing.T) {
+			t.Parallel()
+			err := variable.SetSessionSystemVar(v, tc.key, tc.value)
+			if tc.err {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
 	}
 }
 
-func (*testSessionSuite) TestSession(c *C) {
+func TestSession(t *testing.T) {
 	ctx := mock.NewContext()
 
 	ss := ctx.GetSessionVars().StmtCtx
-	c.Assert(ss, NotNil)
+	require.NotNil(t, ss)
 
 	// For AffectedRows
 	ss.AddAffectedRows(1)
-	c.Assert(ss.AffectedRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.AffectedRows())
 	ss.AddAffectedRows(1)
-	c.Assert(ss.AffectedRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.AffectedRows())
 
 	// For RecordRows
 	ss.AddRecordRows(1)
-	c.Assert(ss.RecordRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.RecordRows())
 	ss.AddRecordRows(1)
-	c.Assert(ss.RecordRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.RecordRows())
 
 	// For FoundRows
 	ss.AddFoundRows(1)
-	c.Assert(ss.FoundRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.FoundRows())
 	ss.AddFoundRows(1)
-	c.Assert(ss.FoundRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.FoundRows())
 
 	// For UpdatedRows
 	ss.AddUpdatedRows(1)
-	c.Assert(ss.UpdatedRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.UpdatedRows())
 	ss.AddUpdatedRows(1)
-	c.Assert(ss.UpdatedRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.UpdatedRows())
 
 	// For TouchedRows
 	ss.AddTouchedRows(1)
-	c.Assert(ss.TouchedRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.TouchedRows())
 	ss.AddTouchedRows(1)
-	c.Assert(ss.TouchedRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.TouchedRows())
 
 	// For CopiedRows
 	ss.AddCopiedRows(1)
-	c.Assert(ss.CopiedRows(), Equals, uint64(1))
+	require.Equal(t, uint64(1), ss.CopiedRows())
 	ss.AddCopiedRows(1)
-	c.Assert(ss.CopiedRows(), Equals, uint64(2))
+	require.Equal(t, uint64(2), ss.CopiedRows())
 
 	// For last insert id
 	ctx.GetSessionVars().SetLastInsertID(1)
-	c.Assert(ctx.GetSessionVars().StmtCtx.LastInsertID, Equals, uint64(1))
+	require.Equal(t, uint64(1), ctx.GetSessionVars().StmtCtx.LastInsertID)
 
 	ss.ResetForRetry()
-	c.Assert(ss.AffectedRows(), Equals, uint64(0))
-	c.Assert(ss.FoundRows(), Equals, uint64(0))
-	c.Assert(ss.UpdatedRows(), Equals, uint64(0))
-	c.Assert(ss.RecordRows(), Equals, uint64(0))
-	c.Assert(ss.TouchedRows(), Equals, uint64(0))
-	c.Assert(ss.CopiedRows(), Equals, uint64(0))
-	c.Assert(ss.WarningCount(), Equals, uint16(0))
+	require.Equal(t, uint64(0), ss.AffectedRows())
+	require.Equal(t, uint64(0), ss.FoundRows())
+	require.Equal(t, uint64(0), ss.UpdatedRows())
+	require.Equal(t, uint64(0), ss.RecordRows())
+	require.Equal(t, uint64(0), ss.TouchedRows())
+	require.Equal(t, uint64(0), ss.CopiedRows())
+	require.Equal(t, uint16(0), ss.WarningCount())
 }
 
-func (*testSessionSuite) TestAllocMPPID(c *C) {
+func TestAllocMPPID(t *testing.T) {
 	ctx := mock.NewContext()
 
 	seVar := ctx.GetSessionVars()
-	c.Assert(seVar, NotNil)
+	require.NotNil(t, seVar)
 
-	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(1))
-	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(2))
-	c.Assert(seVar.AllocMPPTaskID(1), Equals, int64(3))
-	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(1))
-	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(2))
-	c.Assert(seVar.AllocMPPTaskID(2), Equals, int64(3))
+	require.Equal(t, int64(1), seVar.AllocMPPTaskID(1))
+	require.Equal(t, int64(2), seVar.AllocMPPTaskID(1))
+	require.Equal(t, int64(3), seVar.AllocMPPTaskID(1))
+	require.Equal(t, int64(1), seVar.AllocMPPTaskID(2))
+	require.Equal(t, int64(2), seVar.AllocMPPTaskID(2))
+	require.Equal(t, int64(3), seVar.AllocMPPTaskID(2))
 }
 
-func (*testSessionSuite) TestSlowLogFormat(c *C) {
+func TestSlowLogFormat(t *testing.T) {
 	ctx := mock.NewContext()
 
 	seVar := ctx.GetSessionVars()
-	c.Assert(seVar, NotNil)
+	require.NotNil(t, seVar)
 
 	seVar.User = &auth.UserIdentity{Username: "root", Hostname: "192.168.0.1"}
 	seVar.ConnectionInfo = &variable.ConnectionInfo{ClientIP: "192.168.0.1"}
@@ -262,24 +261,24 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		ExecRetryTime:  5*time.Second + time.Millisecond*100,
 	}
 	logString := seVar.SlowLogFormat(logItems)
-	c.Assert(logString, Equals, resultFields+"\n"+sql)
+	require.Equal(t, resultFields+"\n"+sql, logString)
 
 	seVar.CurrentDBChanged = true
 	logString = seVar.SlowLogFormat(logItems)
-	c.Assert(logString, Equals, resultFields+"\n"+"use test;\n"+sql)
-	c.Assert(seVar.CurrentDBChanged, IsFalse)
+	require.Equal(t, resultFields+"\n"+"use test;\n"+sql, logString)
+	require.False(t, seVar.CurrentDBChanged)
 }
 
-func (*testSessionSuite) TestIsolationRead(c *C) {
+func TestIsolationRead(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tiflash", "tidb"}
 	})
 	sessVars := variable.NewSessionVars()
 	_, ok := sessVars.IsolationReadEngines[kv.TiDB]
-	c.Assert(ok, Equals, true)
+	require.True(t, ok)
 	_, ok = sessVars.IsolationReadEngines[kv.TiKV]
-	c.Assert(ok, Equals, false)
+	require.False(t, ok)
 	_, ok = sessVars.IsolationReadEngines[kv.TiFlash]
-	c.Assert(ok, Equals, true)
+	require.True(t, ok)
 }

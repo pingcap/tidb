@@ -23,7 +23,7 @@ import (
 	pd "github.com/tikv/pd/client"
 )
 
-// New creates a embed unistore client, pd client and cluster handler.
+// New creates an embed unistore client, pd client and cluster handler.
 func New(path string) (*RPCClient, pd.Client, *Cluster, error) {
 	persistent := true
 	if path == "" {
