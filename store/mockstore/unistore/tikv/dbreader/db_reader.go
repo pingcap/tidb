@@ -198,14 +198,18 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 	skipValue := proc.SkipValue()
 	iter := r.GetIter()
 	var cnt int
+	var err error
+	// fmt.Printf("start scanning %s %s\n", startKey, endKey)
 	for iter.Seek(startKey); iter.Valid(); iter.Next() {
 		item := iter.Item()
 		key := item.Key()
+		// fmt.Println("get key", cnt, startKey, item, key, endKey)
 		if exceedEndKey(key, endKey) {
+			// fmt.Printf("exceed endKey: %v, %v\n", key, endKey)
 			break
 		}
-		var err error
 		if item.IsEmpty() {
+			// fmt.Println(cnt, "empty")
 			continue
 		}
 		var val []byte
@@ -227,6 +231,7 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 			break
 		}
 	}
+	// fmt.Printf("scan done with cnt=[%d], limit=[%d] err = %v\n", cnt, limit, err)
 	return nil
 }
 
