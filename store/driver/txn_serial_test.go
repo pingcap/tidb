@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,8 +45,11 @@ func (m *mockErrInterceptor) OnIterReverse(_ kv.Snapshot, _ kv.Key) (kv.Iterator
 }
 
 func TestTxnGet(t *testing.T) {
-	store, clean := createEmptyTestStore(t)
-	defer clean()
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
 	clearStoreData(t, store)
 
 	prepareSnapshot(t, store, [][]interface{}{{"k1", "v1"}})
@@ -109,8 +113,11 @@ func TestTxnGet(t *testing.T) {
 }
 
 func TestTxnBatchGet(t *testing.T) {
-	store, clean := createEmptyTestStore(t)
-	defer clean()
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
 	clearStoreData(t, store)
 
 	prepareSnapshot(t, store, [][]interface{}{{"k1", "v1"}, {"k2", "v2"}, {"k3", "v3"}, {"k4", "v4"}})
@@ -164,8 +171,11 @@ func TestTxnBatchGet(t *testing.T) {
 }
 
 func TestTxnScan(t *testing.T) {
-	store, clean := createEmptyTestStore(t)
-	defer clean()
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
 	clearStoreData(t, store)
 
 	prepareSnapshot(t, store, [][]interface{}{{"k1", "v1"}, {"k3", "v3"}, {"k5", "v5"}, {"k7", "v7"}, {"k9", "v9"}})

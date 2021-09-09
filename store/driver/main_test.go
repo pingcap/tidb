@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/copr"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
@@ -45,14 +44,6 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
-}
-
-func createEmptyTestStore(t *testing.T) (kv.Storage, func()) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	return store, func() {
-		require.NoError(t, store.Close())
-	}
 }
 
 func createTestStore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
