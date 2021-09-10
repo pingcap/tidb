@@ -1506,7 +1506,7 @@ func (s *testIntegrationSuite) TestIssue27648(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(0))
 
 	tk.MustExec("update t set b = b + 2 where '' or 1")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(3))
 }
 
