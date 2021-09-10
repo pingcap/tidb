@@ -1212,11 +1212,11 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bo
 				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Duration type"))
 			}
 			return false
-		case mysql.TypeEnum:
-			if pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Enum type"))
-			}
-			return false
+		//case mysql.TypeEnum:
+		//	if pc.sc.InExplainStmt {
+		//		pc.sc.AppendWarning(errors.New("Expr '" + expr.String() + "' can not be pushed to TiFlash because it contains Enum type"))
+		//	}
+		//	return false
 		default:
 		}
 	}
