@@ -48,11 +48,13 @@ func NewFieldType(tp byte) *FieldType {
 // NewFieldTypeWithCollation returns a FieldType,
 // with a type and other information about field type.
 func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType {
+	coll, _ := charset.GetCollationByName(collation)
 	return &FieldType{
 		Tp:      tp,
 		Flen:    length,
 		Decimal: UnspecifiedLength,
 		Collate: collation,
+		Charset: coll.CharsetName,
 	}
 }
 
