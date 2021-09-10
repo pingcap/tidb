@@ -632,7 +632,7 @@ func TestScanLimitConcurrency(t *testing.T) {
 		tp          tipb.ExecType
 		limit       uint64
 		concurrency int
-		src string
+		src         string
 	}{
 		{tipb.ExecType_TypeTableScan, 1, 1, "TblScan_Def"},
 		{tipb.ExecType_TypeIndexScan, 1, 1, "IdxScan_Def"},
