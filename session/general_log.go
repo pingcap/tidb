@@ -49,6 +49,13 @@ var (
 // The entry will be dropped once the channel is full, or general log has been disabled
 func putGeneralLogOrDrop(entry *generalLogEntry) {
 	select {
+	case <-globalGeneralLogger.quit:
+		generalLogDroppedEntry.Inc()
+		glEntryPool.Put(entry)
+	default:
+	}
+
+	select {
 	case globalGeneralLogger.logEntryChan <- entry:
 	// If the general logger is closed, we should not put entry to the log channel anymore.
 	case <-globalGeneralLogger.quit:
@@ -167,8 +174,11 @@ func (gl *generalLogger) startLogWorker() {
 		case e := <-gl.logEntryChan:
 			gl.logEntry(e)
 		case <-gl.quit:
-			close(gl.logEntryChan)
-			for e := range gl.logEntryChan {
+			// Try to flush the buffered log entries.
+			// This may leave some entries which is currently in flight
+			currLen := len(gl.logEntryChan)
+			for i := 0; i < currLen; i++ {
+				e := <-gl.logEntryChan
 				gl.logEntry(e)
 			}
 			gl.wg.Done()
