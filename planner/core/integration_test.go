@@ -1499,15 +1499,15 @@ func (s *testIntegrationSuite) TestIssue27648(c *C) {
 	tk.MustExec("insert into t values(1,1),(2,3),(4,5)")
 	tk.MustExec("update t set b = b + 1 where ''")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, 0)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(0))
 
 	tk.MustExec("update t set b = b + 2 where '   '")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, 0)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(0))
 
 	tk.MustExec("update t set b = b + 2 where '' or 1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, 3)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(0))
 }
 
 // for issue #14822
