@@ -19,11 +19,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -37,20 +35,8 @@ func genColumn(tp byte, id int64) *expression.Column {
 	}
 }
 
-type testEvaluatorSuite struct {
-	*parser.Parser
-	ctx sessionctx.Context
-}
-
-func createtestEvaluatorSuite(t *testing.T) (s *testEvaluatorSuite) {
-	s = new(testEvaluatorSuite)
-	s.Parser = parser.New()
-	s.ctx = mock.NewContext()
-	return
-}
-
 func TestAggFunc2Pb(t *testing.T) {
-	s := createtestEvaluatorSuite(t)
+	ctx := mock.NewContext()
 	client := new(mock.Client)
 
 	funcNames := []string{ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow}
@@ -76,10 +62,10 @@ func TestAggFunc2Pb(t *testing.T) {
 	for i, funcName := range funcNames {
 		for _, hasDistinct := range []bool{true, false} {
 			args := []expression.Expression{genColumn(mysql.TypeDouble, 1)}
-			aggFunc, err := NewAggFuncDesc(s.ctx, funcName, args, hasDistinct)
+			aggFunc, err := NewAggFuncDesc(ctx, funcName, args, hasDistinct)
 			require.NoError(t, err)
 			aggFunc.RetTp = funcTypes[i]
-			pbExpr := AggFuncToPBExpr(s.ctx, client, aggFunc)
+			pbExpr := AggFuncToPBExpr(ctx, client, aggFunc)
 			js, err := json.Marshal(pbExpr)
 			require.NoError(t, err)
 			require.Equal(t, fmt.Sprintf(jsons[i], hasDistinct), string(js))
