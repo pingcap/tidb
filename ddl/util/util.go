@@ -40,19 +40,6 @@ const (
 	loadGlobalVars               = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
 )
 
-const (
-	// RuleIndexDefault is the default index for a rule, check Rule.Index.
-	RuleIndexDefault int = iota
-	// RuleIndexDatabase is the index for a rule of database.
-	RuleIndexDatabase
-	// RuleIndexTable is the index for a rule of table.
-	RuleIndexTable
-	// RuleIndexPartition is the index for a rule of partition.
-	RuleIndexPartition
-	// RuleIndexIndex is the index for a rule of index.
-	RuleIndexIndex
-)
-
 // DelRangeTask is for run delete-range command in gc_worker.
 type DelRangeTask struct {
 	JobID, ElementID int64

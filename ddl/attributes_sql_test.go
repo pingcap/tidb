@@ -120,22 +120,20 @@ PARTITION BY RANGE (c) (
 	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
 	c.Assert(err, IsNil)
 	rows := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
-	c.Assert(len(rows), Equals, 3)
+	c.Assert(len(rows), Equals, 2)
 	// truncate table
 	_, err = tk.Exec(`truncate table t1;`)
 	c.Assert(err, IsNil)
 	rows1 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
-	c.Assert(len(rows1), Equals, 3)
+	c.Assert(len(rows1), Equals, 2)
 	// check table t1's rule
 	c.Assert(rows1[0][0], Equals, "schema/test/t1")
 	c.Assert(rows1[0][2], Equals, `"key=value"`)
 	c.Assert(rows1[0][3], Not(Equals), rows[0][3])
-	c.Assert(rows1[0][4], Not(Equals), rows[0][4])
 	// check partition p0's rule
 	c.Assert(rows1[1][0], Equals, "schema/test/t1/p0")
 	c.Assert(rows1[1][2], Equals, `"key1=value1"`)
 	c.Assert(rows1[1][3], Not(Equals), rows[1][3])
-	c.Assert(rows1[1][4], Not(Equals), rows[1][4])
 }
 
 func (s *testDBSuite8) TestRenameTable(c *C) {
@@ -162,22 +160,20 @@ PARTITION BY RANGE (c) (
 	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
 	c.Assert(err, IsNil)
 	rows := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
-	c.Assert(len(rows), Equals, 3)
+	c.Assert(len(rows), Equals, 2)
 	// rename table
 	_, err = tk.Exec(`rename table t1 to t2;`)
 	c.Assert(err, IsNil)
 	rows1 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
-	c.Assert(len(rows1), Equals, 3)
+	c.Assert(len(rows1), Equals, 2)
 	// check table t1's rule
 	c.Assert(rows1[0][0], Equals, "schema/test/t2")
 	c.Assert(rows1[0][2], Equals, `"key=value"`)
 	c.Assert(rows1[0][3], Equals, rows[0][3])
-	c.Assert(rows1[0][4], Equals, rows[0][4])
 	// check partition p0's rule
 	c.Assert(rows1[1][0], Equals, "schema/test/t2/p0")
 	c.Assert(rows1[1][2], Equals, `"key1=value1"`)
 	c.Assert(rows1[1][3], Equals, rows[1][3])
-	c.Assert(rows1[1][4], Equals, rows[1][4])
 }
 
 func (s *testDBSuite8) TestRecoverTable(c *C) {
@@ -213,7 +209,7 @@ PARTITION BY RANGE (c) (
 	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
 	c.Assert(err, IsNil)
 	rows := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
-	c.Assert(len(rows), Equals, 3)
+	c.Assert(len(rows), Equals, 2)
 	// drop table
 	_, err = tk.Exec(`drop table t1;`)
 	c.Assert(err, IsNil)
@@ -221,17 +217,15 @@ PARTITION BY RANGE (c) (
 	_, err = tk.Exec(`recover table t1;`)
 	c.Assert(err, IsNil)
 	rows1 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
-	c.Assert(len(rows1), Equals, 3)
+	c.Assert(len(rows1), Equals, 2)
 	// check table t1's rule
 	c.Assert(rows1[0][0], Equals, "schema/test/t1")
 	c.Assert(rows1[0][2], Equals, `"key=value"`)
 	c.Assert(rows1[0][3], Equals, rows[0][3])
-	c.Assert(rows1[0][4], Equals, rows[0][4])
 	// check partition p0's rule
 	c.Assert(rows1[1][0], Equals, "schema/test/t1/p0")
 	c.Assert(rows1[1][2], Equals, `"key1=value1"`)
 	c.Assert(rows1[1][3], Equals, rows[1][3])
-	c.Assert(rows1[1][4], Equals, rows[1][4])
 }
 
 func (s *testDBSuite8) TestFlashbackTable(c *C) {
@@ -267,7 +261,7 @@ PARTITION BY RANGE (c) (
 	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
 	c.Assert(err, IsNil)
 	rows := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
-	c.Assert(len(rows), Equals, 3)
+	c.Assert(len(rows), Equals, 2)
 	// drop table
 	_, err = tk.Exec(`drop table t1;`)
 	c.Assert(err, IsNil)
@@ -275,17 +269,15 @@ PARTITION BY RANGE (c) (
 	_, err = tk.Exec(`flashback table t1 to t2;`)
 	c.Assert(err, IsNil)
 	rows1 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
-	c.Assert(len(rows1), Equals, 3)
+	c.Assert(len(rows1), Equals, 2)
 	// check table t2's rule
 	c.Assert(rows1[0][0], Equals, "schema/test/t2")
 	c.Assert(rows1[0][2], Equals, `"key=value"`)
 	c.Assert(rows1[0][3], Equals, rows[0][3])
-	c.Assert(rows1[0][4], Equals, rows[0][4])
 	// check partition p0's rule
 	c.Assert(rows1[1][0], Equals, "schema/test/t2/p0")
 	c.Assert(rows1[1][2], Equals, `"key1=value1"`)
 	c.Assert(rows1[1][3], Equals, rows[1][3])
-	c.Assert(rows1[1][4], Equals, rows[1][4])
 
 	// truncate table
 	_, err = tk.Exec(`truncate table t2;`)
@@ -294,17 +286,15 @@ PARTITION BY RANGE (c) (
 	_, err = tk.Exec(`flashback table t2 to t3;`)
 	c.Assert(err, IsNil)
 	rows2 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
-	c.Assert(len(rows1), Equals, 3)
+	c.Assert(len(rows1), Equals, 2)
 	// check table t3's rule
 	c.Assert(rows2[0][0], Equals, "schema/test/t3")
 	c.Assert(rows2[0][2], Equals, `"key=value"`)
 	c.Assert(rows2[0][3], Equals, rows[0][3])
-	c.Assert(rows2[0][4], Equals, rows[0][4])
 	// check partition p0's rule
 	c.Assert(rows2[1][0], Equals, "schema/test/t3/p0")
 	c.Assert(rows2[1][2], Equals, `"key1=value1"`)
 	c.Assert(rows2[1][3], Equals, rows[1][3])
-	c.Assert(rows2[1][4], Equals, rows[1][4])
 }
 
 func (s *testDBSuite8) TestPartition(c *C) {
@@ -335,32 +325,32 @@ PARTITION BY RANGE (c) (
 	_, err = tk.Exec(`alter table t1 partition p1 attributes="key2=value2";`)
 	c.Assert(err, IsNil)
 	rows := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
-	c.Assert(len(rows), Equals, 4)
+	c.Assert(len(rows), Equals, 3)
 	// drop partition
 	// partition p0's rule will be deleted
 	_, err = tk.Exec(`alter table t1 drop partition p0;`)
 	c.Assert(err, IsNil)
 	rows1 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
-	c.Assert(len(rows1), Equals, 3)
+	c.Assert(len(rows1), Equals, 2)
 	c.Assert(rows1[0][0], Equals, "schema/test/t1")
 	c.Assert(rows1[0][2], Equals, `"key=value"`)
 	c.Assert(rows1[0][3], Equals, rows[0][3])
-	c.Assert(rows1[0][4], Equals, rows[0][4])
 	c.Assert(rows1[1][0], Equals, "schema/test/t1/p1")
 	c.Assert(rows1[1][2], Equals, `"key2=value2"`)
 	c.Assert(rows1[1][3], Equals, rows[2][3])
-	c.Assert(rows1[1][4], Equals, rows[2][4])
 
 	// truncate partition
 	// partition p1's key range will be updated
 	_, err = tk.Exec(`alter table t1 truncate partition p1;`)
 	c.Assert(err, IsNil)
 	rows2 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
-	c.Assert(len(rows2), Equals, 3)
+	c.Assert(len(rows2), Equals, 2)
+	c.Assert(rows2[0][0], Equals, "schema/test/t1")
+	c.Assert(rows2[0][2], Equals, `"key=value"`)
+	c.Assert(rows2[0][3], Not(Equals), rows1[0][3])
 	c.Assert(rows2[1][0], Equals, "schema/test/t1/p1")
 	c.Assert(rows2[1][2], Equals, `"key2=value2"`)
 	c.Assert(rows2[1][3], Not(Equals), rows1[1][3])
-	c.Assert(rows2[1][4], Not(Equals), rows1[1][4])
 
 	// exchange partition
 	// partition p1's rule will be exchanged to table t2
@@ -369,11 +359,13 @@ PARTITION BY RANGE (c) (
 	_, err = tk.Exec(`alter table t1 exchange partition p1 with table t2;`)
 	c.Assert(err, IsNil)
 	rows3 := tk.MustQuery(`select * from information_schema.region_label;`).Sort().Rows()
-	c.Assert(len(rows3), Equals, 3)
-	c.Assert(rows3[2][0], Equals, "schema/test/t2")
-	c.Assert(rows3[2][2], Equals, `"key2=value2"`)
-	c.Assert(rows3[2][3], Equals, rows2[1][3])
-	c.Assert(rows3[2][4], Equals, rows2[1][4])
+	c.Assert(len(rows3), Equals, 2)
+	c.Assert(rows3[0][0], Equals, "schema/test/t1")
+	c.Assert(rows3[0][2], Equals, `"key=value"`)
+	c.Assert(rows3[0][3], Equals, rows2[0][3])
+	c.Assert(rows3[1][0], Equals, "schema/test/t2")
+	c.Assert(rows3[1][2], Equals, `"key2=value2"`)
+	c.Assert(rows3[1][3], Equals, rows2[1][3])
 }
 
 func (s *testDBSuite8) TestDefaultKeyword(c *C) {
@@ -400,12 +392,12 @@ PARTITION BY RANGE (c) (
 	_, err = tk.Exec(`alter table t1 partition p0 attributes="key1=value1";`)
 	c.Assert(err, IsNil)
 	rows := tk.MustQuery(`select * from information_schema.region_label;`).Rows()
-	c.Assert(len(rows), Equals, 3)
+	c.Assert(len(rows), Equals, 2)
 	// reset the partition p0's rule
 	_, err = tk.Exec(`alter table t1 partition p0 attributes=default;`)
 	c.Assert(err, IsNil)
 	rows = tk.MustQuery(`select * from information_schema.region_label;`).Rows()
-	c.Assert(len(rows), Equals, 2)
+	c.Assert(len(rows), Equals, 1)
 	// reset the table t1's rule
 	_, err = tk.Exec(`alter table t1 attributes=default;`)
 	c.Assert(err, IsNil)

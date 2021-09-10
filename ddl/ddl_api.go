@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -6211,7 +6210,7 @@ func (d *ddl) AlterTableAlterPartition(ctx sessionctx.Context, ident ast.Ident, 
 		bundle.Index = 0
 		bundle.Override = false
 	} else {
-		bundle.Index = ddlutil.RuleIndexPartition
+		bundle.Index = placement.RuleIndexPartition
 		bundle.Override = true
 	}
 
@@ -6251,7 +6250,8 @@ func (d *ddl) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident, spec
 		}
 		return ErrInvalidAttributesSpec.GenWithStackByArgs(err)
 	}
-	rule.Reset(meta.ID, schema.Name.L, meta.Name.L)
+	ids := getIDs([]*model.TableInfo{meta})
+	rule.Reset(ids, schema.Name.L, meta.Name.L)
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -6298,7 +6298,7 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 		}
 		return ErrInvalidAttributesSpec.GenWithStackByArgs(sb.String(), err)
 	}
-	rule.Reset(partitionID, schema.Name.L, meta.Name.L, spec.PartitionNames[0].L)
+	rule.Reset([]int64{partitionID}, schema.Name.L, meta.Name.L, spec.PartitionNames[0].L)
 
 	job := &model.Job{
 		SchemaID:   schema.ID,

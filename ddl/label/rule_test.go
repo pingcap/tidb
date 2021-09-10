@@ -70,7 +70,7 @@ func TestReset(t *testing.T) {
 	require.Equal(t, "db1", rule.Labels[1].Value)
 	require.Equal(t, "t1", rule.Labels[2].Value)
 
-	r := rule.Rule.(map[string]string)
+	r := rule.Rules[0].(map[string]string)
 	require.Equal(t, "7480000000000000ff015f720000000000fa", r["start_key"])
 	require.Equal(t, "7480000000000000ff025f720000000000fa", r["end_key"])
 
@@ -85,7 +85,7 @@ func TestReset(t *testing.T) {
 	require.Equal(t, "t2", rule.Labels[2].Value)
 	require.Equal(t, "p2", rule.Labels[3].Value)
 
-	r = r2.Rule.(map[string]string)
+	r = r2.Rules[0].(map[string]string)
 	require.Equal(t, "7480000000000000ff025f720000000000fa", r["start_key"])
 	require.Equal(t, "7480000000000000ff035f720000000000fa", r["end_key"])
 }

@@ -1134,22 +1134,28 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
-	oldRules := make([]string, 0, len(oldIDs))
-	newRules := make([]*label.Rule, 0, len(oldIDs))
+	tableID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L)
+	oldPartRules := make([]string, 0, len(oldIDs))
 	for _, newPartition := range newPartitions {
-		oldRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, newPartition.Name.L)
-		oldRules = append(oldRules, oldRuleID)
+		oldPartRuleID := fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L, newPartition.Name.L)
+		oldPartRules = append(oldPartRules, oldPartRuleID)
 	}
 
-	rules, err := infosync.GetLabelRules(context.TODO(), oldRules)
+	rules, err := infosync.GetLabelRules(context.TODO(), append([]string{tableID}, oldPartRules...))
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to get label rules from PD")
 	}
 
+	newPartIDs := getPartitionIDs(tblInfo)
+	newRules := make([]*label.Rule, 0, len(oldIDs)+1)
+	if tr, ok := rules[tableID]; ok {
+		newRules = append(newRules, tr.Clone().Reset(append([]int64{tblInfo.ID}, newPartIDs...), job.SchemaName, tblInfo.Name.L))
+	}
+
 	for idx, newPartition := range newPartitions {
-		if r, ok := rules[oldRules[idx]]; ok {
-			newRules = append(newRules, r.Clone().Reset(newPartition.ID, job.SchemaName, tblInfo.Name.L, newPartition.Name.L))
+		if pr, ok := rules[oldPartRules[idx]]; ok {
+			newRules = append(newRules, pr.Clone().Reset([]int64{newPartition.ID}, job.SchemaName, tblInfo.Name.L, newPartition.Name.L))
 		}
 	}
 
@@ -1352,17 +1358,19 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	ntr := rules[ntrID]
 	ptr := rules[ptrID]
 
+	partIDs := getPartitionIDs(nt)
+
 	var setRules []*label.Rule
 	var deleteRules []string
 	if ntr != nil && ptr != nil {
-		setRules = append(setRules, ntr.Clone().Reset(partDef.ID, job.SchemaName, pt.Name.L, partDef.Name.L))
-		setRules = append(setRules, ptr.Clone().Reset(nt.ID, job.SchemaName, nt.Name.L))
+		setRules = append(setRules, ntr.Clone().Reset([]int64{partDef.ID}, job.SchemaName, pt.Name.L, partDef.Name.L))
+		setRules = append(setRules, ptr.Clone().Reset(append([]int64{nt.ID}, partIDs...), job.SchemaName, nt.Name.L))
 	} else if ptr != nil {
-		setRules = append(setRules, ptr.Clone().Reset(nt.ID, job.SchemaName, nt.Name.L))
+		setRules = append(setRules, ptr.Clone().Reset(append([]int64{nt.ID}, partIDs...), job.SchemaName, nt.Name.L))
 		// delete ptr
 		deleteRules = append(deleteRules, ptrID)
 	} else if ntr != nil {
-		setRules = append(setRules, ntr.Clone().Reset(partDef.ID, job.SchemaName, pt.Name.L, partDef.Name.L))
+		setRules = append(setRules, ntr.Clone().Reset([]int64{partDef.ID}, job.SchemaName, pt.Name.L, partDef.Name.L))
 		// delete ntr
 		deleteRules = append(deleteRules, ntrID)
 	}

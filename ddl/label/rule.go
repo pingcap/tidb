@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"gopkg.in/yaml.v2"
@@ -30,6 +29,17 @@ const (
 	// IDPrefix is the prefix for label rule ID.
 	IDPrefix = "schema"
 	ruleType = "key-range"
+)
+
+const (
+	// ruleIndexDefault is the default index for a rule.
+	ruleIndexDefault int = iota
+	// ruleIndexDatabase is the index for a rule of database.
+	ruleIndexDatabase
+	// ruleIndexTable is the index for a rule of table.
+	ruleIndexTable
+	// ruleIndexPartition is the index for a rule of partition.
+	ruleIndexPartition
 )
 
 var (
@@ -43,11 +53,11 @@ var (
 
 // Rule is used to establish the relationship between labels and a key range.
 type Rule struct {
-	ID       string      `json:"id"`
-	Index    int         `json:"index"`
-	Labels   Labels      `json:"labels"`
-	RuleType string      `json:"rule_type"`
-	Rule     interface{} `json:"rule"`
+	ID       string        `json:"id"`
+	Index    int           `json:"index"`
+	Labels   Labels        `json:"labels"`
+	RuleType string        `json:"rule_type"`
+	Rules    []interface{} `json:"rules"`
 }
 
 // NewRule creates a rule.
@@ -89,7 +99,7 @@ func (r *Rule) Clone() *Rule {
 }
 
 // Reset will reset the label rule for a table/partition with a given ID and names.
-func (r *Rule) Reset(id int64, dbName, tableName string, partName ...string) *Rule {
+func (r *Rule) Reset(ids []int64, dbName, tableName string, partName ...string) *Rule {
 	isPartition := len(partName) != 0
 	if isPartition {
 		r.ID = fmt.Sprintf(PartitionIDFormat, IDPrefix, dbName, tableName, partName[0])
@@ -129,14 +139,18 @@ func (r *Rule) Reset(id int64, dbName, tableName string, partName ...string) *Ru
 		r.Labels = append(r.Labels, Label{Key: partitionKey, Value: partName[0]})
 	}
 	r.RuleType = ruleType
-	r.Rule = map[string]string{
-		"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id))),
-		"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(id+1))),
+	r.Rules = []interface{}{}
+	for i := 0; i < len(ids); i++ {
+		rule := map[string]string{
+			"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(ids[i]))),
+			"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(ids[i]+1))),
+		}
+		r.Rules = append(r.Rules, rule)
 	}
 	// We may support more types later.
-	r.Index = util.RuleIndexTable
+	r.Index = ruleIndexTable
 	if isPartition {
-		r.Index = util.RuleIndexPartition
+		r.Index = ruleIndexPartition
 	}
 	return r
 }
