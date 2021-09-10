@@ -156,6 +156,16 @@ func (t *Table) ColumnByName(colName string) *Column {
 	return nil
 }
 
+// ColHistCount returns the count of the column histograms.
+func (t *Table) ColHistCount() float64 {
+	for _, col := range t.Columns {
+		if col != nil {
+			return col.TotalRowCount()
+		}
+	}
+	return -1
+}
+
 type tableColumnID struct {
 	TableID  int64
 	ColumnID int64
