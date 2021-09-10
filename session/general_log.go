@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -208,7 +209,9 @@ func newGeneralLogLogger() (*zap.Logger, func()) {
 	logger := zap.New(ioCore)
 
 	fnStopBufferedWS := func() {
-		wsBuffered.Stop()
+		if err := wsBuffered.Stop(); err != nil {
+			logutil.BgLogger().Error("failed to stop zapcore.BufferedWriteSyncer", zap.Error(err))
+		}
 	}
 
 	return logger, fnStopBufferedWS
