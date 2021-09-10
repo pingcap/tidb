@@ -1507,7 +1507,7 @@ func (s *testIntegrationSuite) TestIssue27648(c *C) {
 
 	tk.MustExec("update t set b = b + 2 where '' or 1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(0))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(3))
 }
 
 // for issue #14822
