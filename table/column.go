@@ -53,6 +53,8 @@ type Column struct {
 	DefaultExpr ast.ExprNode
 }
 
+type ErrorConverter func(error) error
+
 // String implements fmt.Stringer interface.
 func (c *Column) String() string {
 	ans := []string{c.Name.O, types.TypeToStr(c.Tp, c.Charset)}
@@ -274,6 +276,12 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 	return casted, false, nil
 }
 
+func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+	return CastValueWithErrorConvert(ctx, val, col, returnErr, forceIgnoreTruncate, func(err error) error {
+		return err
+	})
+}
+
 // CastValue casts a value based on column type.
 // If forceIgnoreTruncate is true, truncated errors will be ignored.
 // If returnErr is true, directly return any conversion errors.
@@ -281,7 +289,8 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 // Set it to true only in FillVirtualColumnValue and UnionScanExec.Next()
 // If the handle of err is changed latter, the behavior of forceIgnoreTruncate also need to change.
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
-func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+// The converter will convert the error type before possibly turns the error into warnings in HandleTruncate
+func CastValueWithErrorConvert(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool, converter ErrorConverter) (casted types.Datum, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	casted, err = val.ConvertTo(sc, &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
@@ -307,6 +316,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		}
 	}
 
+	err = converter(err)
 	err = sc.HandleTruncate(err)
 
 	if forceIgnoreTruncate {

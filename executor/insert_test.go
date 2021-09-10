@@ -1756,3 +1756,20 @@ func (s *testSuite13) TestIssue26762(c *C) {
 	_, err = tk.Exec("insert into t1 values('2020-02-31');")
 	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
 }
+
+func (s *testSuite13) TestIssue26361(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a TINYINT, b TINYINT UNSIGNED)")
+	tk.MustExec("set sql_mode = ''")
+	tk.MustExec("insert into t(a, b) values (256, 256)")
+	warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warns), Equals, 2)
+	c.Assert(types.ErrWarnDataOutOfRange.Equal(warns[0].Err), IsTrue)
+	c.Assert(types.ErrWarnDataOutOfRange.Equal(warns[1].Err), IsTrue)
+
+	// strict mode returns error
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+	_, err := tk.Exec("insert into t(a, b) values (256, 256)")
+	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
+}

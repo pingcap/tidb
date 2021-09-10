@@ -283,7 +283,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	return nil
 }
 
-func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
+func (e *InsertValues) convertErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -320,11 +320,20 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
 	}
 
+	return err
+}
+
+func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
+	convertedErr := e.convertErr(col, val, rowIdx, err)
+	if convertedErr == nil {
+		return nil
+	}
+
 	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
-		return err
+		return convertedErr
 	}
 	// TODO: should not filter all types of errors here.
-	e.handleWarning(err)
+	e.handleWarning(convertedErr)
 	return nil
 }
 
@@ -380,7 +389,9 @@ func (e *InsertValues) fastEvalRow(ctx context.Context, list []expression.Expres
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
-		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false, false)
+		val1, err := table.CastValueWithErrorConvert(e.ctx, val, e.insertColumns[i].ToInfo(), false, false, func(err error) error {
+			return e.convertErr(e.insertColumns[i], &val, rowIdx, err)
+		})
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
