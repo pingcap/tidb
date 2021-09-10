@@ -195,3 +195,23 @@ func NewIndexScanImpl(scan *plannercore.PhysicalIndexScan, tblColHists *statisti
 		tblColHists: tblColHists,
 	}
 }
+
+// CTEImpl is the implementation of PhysicalCTE.
+type CTEImpl struct {
+	baseImpl
+}
+
+// NewCTEImpl creates a new CTEImpl.
+func NewCTEImpl(cte *plannercore.PhysicalCTE) *CTEImpl {
+	return &CTEImpl{baseImpl{plan: cte}}
+}
+
+// CalcCost implements Implementation CalcCost interface.
+func (impl *CTEImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	cte := impl.plan.(*plannercore.PhysicalCTE)
+	impl.cost = cte.SeedPlan.Cost()
+	if cte.RecurPlan != nil {
+		impl.cost += cte.RecurPlan.Cost()
+	}
+	return impl.cost
+}
