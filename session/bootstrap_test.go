@@ -17,6 +17,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -709,6 +710,58 @@ func (s *testBootstrapSuite) TestUpgradeVersion66(c *C) {
 	row := req.GetRow(0)
 	c.Assert(row.GetInt64(0), Equals, int64(1))
 	c.Assert(row.GetInt64(1), Equals, int64(1))
+}
+
+func (s *testBootstrapSuite) TestUpgradeVersion74(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := context.Background()
+
+	cases := []struct {
+		oldValue int
+		newValue int
+	}{
+		{200, 3000},
+		{3000, 3000},
+		{3001, 3001},
+	}
+
+	for _, ca := range cases {
+		store, _ := newStoreWithBootstrap(c, s.dbName)
+		defer func() {
+			c.Assert(store.Close(), IsNil)
+		}()
+
+		seV73 := newSession(c, store, s.dbName)
+		txn, err := store.Begin()
+		c.Assert(err, IsNil)
+		m := meta.NewMeta(txn)
+		err = m.FinishBootstrap(int64(73))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+		mustExecSQL(c, seV73, "update mysql.tidb set variable_value='72' where variable_name='tidb_server_version'")
+		mustExecSQL(c, seV73, "set @@global.tidb_stmt_summary_max_stmt_count = "+strconv.Itoa(ca.oldValue))
+		mustExecSQL(c, seV73, "commit")
+		unsetStoreBootstrapped(store.UUID())
+		ver, err := getBootstrapVersion(seV73)
+		c.Assert(err, IsNil)
+		c.Assert(ver, Equals, int64(72))
+
+		domV74, err := BootstrapSession(store)
+		c.Assert(err, IsNil)
+		defer domV74.Close()
+		seV74 := newSession(c, store, s.dbName)
+		ver, err = getBootstrapVersion(seV74)
+		c.Assert(err, IsNil)
+		c.Assert(ver, Equals, currentBootstrapVersion)
+		r := mustExecSQL(c, seV74, `select @@global.tidb_stmt_summary_max_stmt_count, @@session.tidb_stmt_summary_max_stmt_count`)
+		req := r.NewChunk()
+		c.Assert(r.Next(ctx, req), IsNil)
+		c.Assert(req.NumRows(), Equals, 1)
+		row := req.GetRow(0)
+		c.Assert(row.GetString(0), Equals, strconv.Itoa(ca.newValue))
+		c.Assert(row.GetString(1), Equals, strconv.Itoa(ca.newValue))
+	}
 }
 
 func (s *testBootstrapSuite) TestForIssue23387(c *C) {
