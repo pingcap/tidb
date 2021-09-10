@@ -371,6 +371,18 @@ type Snapshot interface {
 	SetOption(opt int, val interface{})
 }
 
+// SnapshotInterceptor is used to intercept snapshot's read operation
+type SnapshotInterceptor interface {
+	// OnGet intercepts Get operation for Snapshot
+	OnGet(ctx context.Context, snap Snapshot, k Key) ([]byte, error)
+	// OnBatchGet intercepts BatchGet operation for Snapshot
+	OnBatchGet(ctx context.Context, snap Snapshot, keys []Key) (map[string][]byte, error)
+	// OnIter intercepts Iter operation for Snapshot
+	OnIter(snap Snapshot, k Key, upperBound Key) (Iterator, error)
+	// OnIterReverse intercepts IterReverse operation for Snapshot
+	OnIterReverse(snap Snapshot, k Key) (Iterator, error)
+}
+
 // BatchGetter is the interface for BatchGet.
 type BatchGetter interface {
 	// BatchGet gets a batch of values.
