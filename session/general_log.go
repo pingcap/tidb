@@ -18,7 +18,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unsafe"
 
 	"github.com/natefinch/lumberjack"
 	"github.com/pingcap/parser/ast"
@@ -144,13 +143,7 @@ func (gl *generalLogger) logEntry(e *generalLogEntry) {
 			buf.WriteString(q.preparedParams.String())
 		}
 	}
-	bufString := buf.String()
-	queryMutable := *(*[]byte)(unsafe.Pointer(&bufString))
-	for i, b := range queryMutable {
-		if b == '\r' || b == '\n' || b == '\t' {
-			queryMutable[i] = ' '
-		}
-	}
+
 	gl.logger.Info("GENERAL_LOG",
 		zap.Uint64("conn", e.ConnID),
 		zap.String("user", e.User),
