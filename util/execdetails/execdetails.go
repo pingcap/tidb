@@ -149,7 +149,7 @@ func (d ExecDetails) String() string {
 			parts = append(parts, CommitBackoffTimeStr+": "+strconv.FormatFloat(time.Duration(commitBackoffTime).Seconds(), 'f', -1, 64))
 		}
 		if len(commitDetails.Mu.BackoffTypes) > 0 {
-			parts = append(parts, BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes))
+			parts = append(parts, BackoffTypesStr+": "+strings.Replace(fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes), " ", ",", -1))
 		}
 		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
