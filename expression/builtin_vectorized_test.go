@@ -16,7 +16,6 @@ package expression
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
 	"math/rand"
 	"sync"
 	"testing"
@@ -123,9 +122,7 @@ func (s *testVectorizeSuite2) TestMockVecPlusIntParallel(c *C) {
 	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
 		wg.Add(1)
-		workerID := i
-		logutil.BgLogger().Error("start new worker")
-		go func(workerID int) {
+		go func() {
 			defer wg.Done()
 			result := buf.CopyConstruct(nil)
 			for i := 0; i < 10; i++ {
@@ -135,7 +132,7 @@ func (s *testVectorizeSuite2) TestMockVecPlusIntParallel(c *C) {
 					c.Assert(result.GetInt64(i), Equals, int64(i*2))
 				}
 			}
-		}(workerID)
+		}()
 	}
 	wg.Wait()
 }
