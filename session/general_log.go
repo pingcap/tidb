@@ -46,10 +46,14 @@ var (
 )
 
 // putGeneralLogOrDrop sends the general log entry to the logging goroutine
-// The entry will be dropped once the channel is full
+// The entry will be dropped once the channel is full, or general log has been disabled
 func putGeneralLogOrDrop(entry *generalLogEntry) {
 	select {
 	case globalGeneralLogger.logEntryChan <- entry:
+	// If the general logger is closed, we should not put entry to the log channel anymore.
+	case <-globalGeneralLogger.quit:
+		generalLogDroppedEntry.Inc()
+		glEntryPool.Put(entry)
 	default:
 		// When logEntryChan is full, the system resource is under so much pressure that the logging system capacity
 		// is reduced. We should NOT output another warning log saying that we are dropping a general log, which will
@@ -102,8 +106,7 @@ type generalLogger struct {
 	logger       *zap.Logger
 	logEntryChan chan *generalLogEntry
 	quit         chan struct{}
-
-	wg sync.WaitGroup
+	wg           sync.WaitGroup
 }
 
 func newGeneralLogger(logger *zap.Logger) *generalLogger {
