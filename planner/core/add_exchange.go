@@ -1,12 +1,13 @@
 package core
 
 import (
+	"sync"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"sync"
 )
 
 var MaxThrNum int
@@ -350,6 +351,13 @@ func (p *PhysicalTopN) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty)
 }
 
 func (p *PhysicalHashAgg) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
+	if res, err = tryAddXchgForBasicPlan(ctx, p, reqProp); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+func (p *PhysicalSort) TryAddXchg(ctx sessionctx.Context, reqProp *XchgProperty) (res []PhysicalPlan, err error) {
 	if res, err = tryAddXchgForBasicPlan(ctx, p, reqProp); err != nil {
 		return nil, err
 	}
