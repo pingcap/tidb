@@ -1023,8 +1023,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		// json functions.
 		ast.JSONType,
 		ast.JSONExtract,
-		// FIXME: JSONUnquote is incompatible with Coprocessor
-		// ast.JSONUnquote,
+		ast.JSONUnquote,
 		ast.JSONObject,
 		ast.JSONArray,
 		ast.JSONMerge,

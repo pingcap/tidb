@@ -1264,7 +1264,13 @@ func (cli *testServerClient) runTestStatusAPI(c *C) {
 func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
 	cli.runTestsOnNewDB(c, nil, "FailedMultiStatements", func(dbt *DBTest) {
 
-		// Default of WARN
+		// Default is now OFF in new installations.
+		// It is still WARN in upgrade installations (for now)
+		_, err := dbt.db.Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
+		c.Assert(err.Error(), Equals, "Error 8130: client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
+
+		// Change to WARN (legacy mode)
+		dbt.mustExec("SET tidb_multi_statement_mode='WARN'")
 		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
 		res := dbt.mustExec("INSERT INTO test VALUES (1, 1)")
 		count, err := res.RowsAffected()
@@ -1295,11 +1301,6 @@ func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
 		} else {
 			dbt.Error("no data")
 		}
-
-		// Change to OFF = Does not work
-		dbt.mustExec("SET tidb_multi_statement_mode='OFF'")
-		_, err = dbt.db.Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
-		c.Assert(err.Error(), Equals, "Error 8130: client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk")
 
 		// Change to ON = Fully supported, TiDB legacy. No warnings or Errors.
 		dbt.mustExec("SET tidb_multi_statement_mode='ON';")
@@ -1495,6 +1496,54 @@ func (cli *testServerClient) waitUntilServerOnline() {
 	if retry == retryTime {
 		log.Fatal("failed to connect HTTP status in every 10 ms", zap.Int("retryTime", retryTime))
 	}
+}
+
+func (cli *testServerClient) runTestInitConnect(c *C) {
+
+	cli.runTests(c, nil, func(dbt *DBTest) {
+		dbt.mustExec(`SET GLOBAL init_connect="insert into test.ts VALUES (NOW());SET @a=1;"`)
+		dbt.mustExec(`CREATE USER init_nonsuper`)
+		dbt.mustExec(`CREATE USER init_super`)
+		dbt.mustExec(`GRANT SELECT, INSERT, DROP ON test.* TO init_nonsuper`)
+		dbt.mustExec(`GRANT SELECT, INSERT, DROP, SUPER ON *.* TO init_super`)
+		dbt.mustExec(`CREATE TABLE ts (a TIMESTAMP)`)
+	})
+
+	// test init_nonsuper
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "init_nonsuper"
+	}, func(dbt *DBTest) {
+		rows := dbt.mustQuery(`SELECT @a`)
+		c.Assert(rows.Next(), IsTrue)
+		var a int
+		err := rows.Scan(&a)
+		c.Assert(err, IsNil)
+		dbt.Check(a, Equals, 1)
+		c.Assert(rows.Close(), IsNil)
+	})
+
+	// test init_super
+	cli.runTests(c, func(config *mysql.Config) {
+		config.User = "init_super"
+	}, func(dbt *DBTest) {
+		rows := dbt.mustQuery(`SELECT IFNULL(@a,"")`)
+		c.Assert(rows.Next(), IsTrue)
+		var a string
+		err := rows.Scan(&a)
+		c.Assert(err, IsNil)
+		dbt.Check(a, Equals, "") // null
+		c.Assert(rows.Close(), IsNil)
+		// change the init-connect to invalid.
+		dbt.mustExec(`SET GLOBAL init_connect="invalidstring"`)
+	})
+
+	db, err := sql.Open("mysql", cli.getDSN(func(config *mysql.Config) {
+		config.User = "init_nonsuper"
+	}))
+	c.Assert(err, IsNil, Commentf("Error connecting")) // doesn't fail because of lazy loading
+	defer db.Close()                                   // may already be closed
+	_, err = db.Exec("SELECT 1")                       // fails because of init sql
+	c.Assert(err, NotNil)
 }
 
 // Client errors are only incremented when using the TiDB Server protocol,

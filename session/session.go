@@ -1500,7 +1500,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 		return false, nil
 	}
 	// check auto commit
-	if !s.GetSessionVars().IsAutocommit() {
+	if !plannercore.IsAutoCommitTxn(s) {
 		return false, nil
 	}
 	// check schema version
@@ -1884,10 +1884,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	initLoadCommonGlobalVarsSQL()
 
-	ver := getStoreBootstrapVersion(store)
+	ver, minorVer := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
-	} else if ver < currentBootstrapVersion {
+	} else if ver < currentBootstrapVersion || minorVer < currentMinorVersion {
 		runInBootstrapSession(store, upgrade)
 	}
 
@@ -2077,24 +2077,28 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version51
+	currentBootstrapVersion = version52
+	currentMinorVersion     = minorVersion1
 )
 
-func getStoreBootstrapVersion(store kv.Storage) int64 {
+func getStoreBootstrapVersion(store kv.Storage) (int64, int64) {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
 	// check in memory
 	_, ok := storeBootstrapped[store.UUID()]
 	if ok {
-		return currentBootstrapVersion
+		return currentBootstrapVersion, currentMinorVersion
 	}
 
-	var ver int64
+	var ver, minorVer int64
 	// check in kv store
 	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		var err error
 		t := meta.NewMeta(txn)
 		ver, err = t.GetBootstrapVersion()
+		if err == nil {
+			minorVer, err = t.GetMinorVersion()
+		}
 		return err
 	})
 
@@ -2108,7 +2112,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		storeBootstrapped[store.UUID()] = true
 	}
 
-	return ver
+	return ver, minorVer
 }
 
 func finishBootstrap(store kv.Storage) {
@@ -2117,6 +2121,9 @@ func finishBootstrap(store kv.Storage) {
 	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := t.FinishBootstrap(currentBootstrapVersion)
+		if err == nil {
+			err = t.SetMinorVersion(currentMinorVersion)
+		}
 		return err
 	})
 	if err != nil {
@@ -2221,6 +2228,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableRateLimitAction,
 	variable.TiDBMemoryUsageAlarmRatio,
 	variable.TiDBMultiStatementMode,
+	variable.TiDBEnableOrderedResultMode,
 }
 
 var (

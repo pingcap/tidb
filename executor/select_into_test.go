@@ -266,3 +266,16 @@ func (s *testSuite1) TestEscapeType(c *C) {
 	cmpAndRm(`1,1,11,11,{"key": 11},11,11
 `, outfile, c)
 }
+
+func (s *testSuite1) TestYearType(c *C) {
+	outfile := randomSelectFilePath("TestYearType")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(time1 year(4) default '2030');")
+	tk.MustExec("insert into t values (2010), (2011), (2012);")
+	tk.MustExec("insert into t values ();")
+
+	tk.MustExec(fmt.Sprintf("select * from t into outfile '%v' fields terminated by ',' optionally enclosed by '\"' lines terminated by '\\n';", outfile))
+	cmpAndRm("2010\n2011\n2012\n2030\n", outfile, c)
+}

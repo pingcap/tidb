@@ -428,6 +428,16 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
 	tk.MustExec("set session tidb_slow_log_masking = 1")
 	tk.MustQuery(`select @@session.tidb_slow_log_masking;`).Check(testkit.Rows("1"))
+
+	// test for tidb_enable_ordered_result_mode
+	tk.MustQuery(`select @@tidb_enable_ordered_result_mode`).Check(testkit.Rows("0"))
+	tk.MustExec(`set global tidb_enable_ordered_result_mode = 1`)
+	tk.MustQuery(`select @@global.tidb_enable_ordered_result_mode`).Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_enable_ordered_result_mode = 0`)
+	tk.MustQuery(`select @@global.tidb_enable_ordered_result_mode`).Check(testkit.Rows("0"))
+	tk.MustExec(`set tidb_enable_ordered_result_mode=1`)
+	tk.MustQuery(`select @@global.tidb_enable_ordered_result_mode`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_enable_ordered_result_mode`).Check(testkit.Rows("1"))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
