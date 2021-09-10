@@ -4438,3 +4438,23 @@ func (s *testIntegrationSuite) TestIssue27797(c *C) {
 	result = tk.MustQuery("select col2 from IDT_HP24172 where col1 = 8388607 and col1 in (select col1 from IDT_HP24172);")
 	result.Check(testkit.Rows("<nil>"))
 }
+
+func (s *testIntegrationSuite) TestIssue27949(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t27949")
+	tk.MustExec("create table t27949 (a int, b int, key(b))")
+	tk.MustQuery("explain select * from t27949 where b=1").Check(testkit.Rows("IndexLookUp_10 10.00 root  ",
+		"├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:t27949, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:t27949 keep order:false, stats:pseudo"))
+	tk.MustExec("create global binding for select * from t27949 where b=1 using select * from t27949 ignore index(b) where b=1")
+	tk.MustQuery("explain select * from t27949 where b=1").Check(testkit.Rows("TableReader_7 10.00 root  data:Selection_6",
+		"└─Selection_6 10.00 cop[tikv]  eq(test.t27949.b, 1)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t27949 keep order:false, stats:pseudo"))
+	tk.MustExec("set @@sql_select_limit=100")
+	tk.MustQuery("explain select * from t27949 where b=1").Check(testkit.Rows("Limit_8 10.00 root  offset:0, count:100",
+		"└─TableReader_13 10.00 root  data:Limit_12",
+		"  └─Limit_12 10.00 cop[tikv]  offset:0, count:100",
+		"    └─Selection_11 10.00 cop[tikv]  eq(test.t27949.b, 1)",
+		"      └─TableFullScan_10 10000.00 cop[tikv] table:t27949 keep order:false, stats:pseudo"))
+}

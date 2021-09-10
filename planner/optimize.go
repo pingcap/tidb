@@ -100,6 +100,26 @@ func GetExecuteForUpdateReadIS(node ast.Node, sctx sessionctx.Context) infoschem
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
 	sessVars := sctx.GetSessionVars()
+	useBinding := sessVars.UsePlanBaselines
+	stmtNode, ok := node.(ast.StmtNode)
+	if !ok {
+		useBinding = false
+	}
+	var (
+		bindRecord *bindinfo.BindRecord
+		scope      string
+		err        error
+	)
+	if useBinding {
+		bindRecord, scope, err = getBindRecord(sctx, stmtNode) // get the corresponding binding record before adding the extra limit
+		if err != nil || bindRecord == nil || len(bindRecord.Bindings) == 0 {
+			useBinding = false
+		}
+	}
+
+	if stmt, ok := node.(ast.StmtNode) ;ok{
+		node = plannercore.TryAddExtraLimit(sctx, stmt)
+	}
 
 	// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
 	// engine in not read only stmt.
@@ -140,27 +160,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 	sctx.PrepareTSFuture(ctx)
-
-	useBinding := sessVars.UsePlanBaselines
-	stmtNode, ok := node.(ast.StmtNode)
-	if !ok {
-		useBinding = false
-	}
-	var (
-		bindRecord *bindinfo.BindRecord
-		scope      string
-		err        error
-	)
-	if useBinding {
-		bindRecord, scope, err = getBindRecord(sctx, stmtNode)
-		if err != nil || bindRecord == nil || len(bindRecord.Bindings) == 0 {
-			useBinding = false
-		}
-	}
-	if useBinding && sessVars.SelectLimit != math.MaxUint64 {
-		sessVars.StmtCtx.AppendWarning(errors.New("sql_select_limit is set, ignore SQL bindings"))
-		useBinding = false
-	}
 
 	var names types.NameSlice
 	var bestPlan, bestPlanFromBind plannercore.Plan
