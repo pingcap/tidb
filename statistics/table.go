@@ -156,10 +156,12 @@ func (t *Table) ColumnByName(colName string) *Column {
 	return nil
 }
 
-// ColHistCount returns the count of the column histograms.
-func (t *Table) ColHistCount() float64 {
+// GetColRowCount tries to get the row count of the a column if possible.
+// This method is useful because this row count doesn't consider the modify count.
+func (t *Table) GetColRowCount() float64 {
 	for _, col := range t.Columns {
-		if col != nil {
+		// need to make sure stats on this column is loaded.
+		if col != nil && !(col.Histogram.NDV > 0 && col.notNullCount() == 0) && col.TotalRowCount() != 0 {
 			return col.TotalRowCount()
 		}
 	}
@@ -204,7 +206,11 @@ var RatioOfPseudoEstimate = atomic.NewFloat64(0.7)
 
 // IsOutdated returns true if the table stats is outdated.
 func (t *Table) IsOutdated() bool {
-	if t.Count > 0 && float64(t.ModifyCount)/float64(t.Count) > RatioOfPseudoEstimate.Load() {
+	rowcount := t.GetColRowCount()
+	if rowcount < 0 {
+		rowcount = float64(t.Count)
+	}
+	if rowcount > 0 && float64(t.ModifyCount)/rowcount > RatioOfPseudoEstimate.Load() {
 		return true
 	}
 	return false
