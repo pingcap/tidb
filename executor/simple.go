@@ -1379,6 +1379,9 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		return err
 	}
 	_, _, err = exec.ExecRestrictedStmt(ctx, stmt)
+	if err != nil {
+		return err
+	}
 	return domain.GetDomain(e.ctx).NotifyUpdatePrivilege()
 }
 
