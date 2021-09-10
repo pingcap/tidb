@@ -74,10 +74,11 @@ type HashJoinExec struct {
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	joiners []joiner
 
-	probeChkResourceCh chan *probeChkResource
-	probeResultChs     []chan *chunk.Chunk
-	joinChkResourceCh  []chan *chunk.Chunk
-	joinResultCh       chan *hashjoinWorkerResult
+	probeChkResourceCh   chan *probeChkResource
+	probeResultChs       []chan *chunk.Chunk
+	joinChkResourceCh    []chan *chunk.Chunk
+	joinResultCh         chan *hashjoinWorkerResult
+	rowContainerForProbe []*hashRowContainer
 
 	memTracker  *memory.Tracker // track memory usage.
 	diskTracker *disk.Tracker   // track disk usage.
@@ -330,22 +331,12 @@ func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
 		probeKeyColIdx[i] = e.probeKeys[i].Index
 	}
 
-	// Start e.concurrency join workers to probe hash table and join build side and
-	// probe side rows.
-	rowContainer := make([]*hashRowContainer, e.concurrency)
-	for i := uint(0); i < e.concurrency; i++ {
-		if i == 0 {
-			rowContainer[i] = e.rowContainer
-		} else {
-			rowContainer[i] = e.rowContainer.ShallowCopy()
-		}
-	}
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joinWorkerWaitGroup.Add(1)
 		workID := i
 		go util.WithRecovery(func() {
 			defer trace.StartRegion(ctx, "HashJoinWorker").End()
-			e.runJoinWorker(workID, probeKeyColIdx, rowContainer[workID])
+			e.runJoinWorker(workID, probeKeyColIdx)
 		}, e.handleJoinWorkerPanic)
 	}
 	go util.WithRecovery(e.waitJoinWorkersAndCloseResultChan, nil)
@@ -418,7 +409,7 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	close(e.joinResultCh)
 }
 
-func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int, rowContainerForProbe *hashRowContainer) {
+func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 	probeTime := int64(0)
 	if e.stats != nil {
 		start := time.Now()
@@ -461,9 +452,9 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int, rowCon
 		}
 		start := time.Now()
 		if e.useOuterToBuild {
-			ok, joinResult = e.join2ChunkForOuterHashJoin(workerID, probeSideResult, hCtx, rowContainerForProbe, joinResult)
+			ok, joinResult = e.join2ChunkForOuterHashJoin(workerID, probeSideResult, hCtx, e.rowContainerForProbe[workerID], joinResult)
 		} else {
-			ok, joinResult = e.join2Chunk(workerID, probeSideResult, hCtx, rowContainerForProbe, joinResult, selected)
+			ok, joinResult = e.join2Chunk(workerID, probeSideResult, hCtx, e.rowContainerForProbe[workerID], joinResult, selected)
 		}
 		probeTime += int64(time.Since(start))
 		if !ok {
@@ -670,6 +661,15 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			keyColIdx: buildKeyColIdx,
 		}
 		e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
+		// we shallow copies rowContainer for each probe worker to avoid lock contention
+		e.rowContainerForProbe = make([]*hashRowContainer, e.concurrency)
+		for i := uint(0); i < e.concurrency; i++ {
+			if i == 0 {
+				e.rowContainerForProbe[i] = e.rowContainer
+			} else {
+				e.rowContainerForProbe[i] = e.rowContainer.ShallowCopy()
+			}
+		}
 		go util.WithRecovery(func() {
 			defer trace.StartRegion(ctx, "HashJoinHashTableBuilder").End()
 			e.fetchAndBuildHashTable(ctx)
