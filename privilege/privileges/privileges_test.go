@@ -1138,21 +1138,6 @@ func TestSystemSchema(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
 
-	// Test performance_schema.
-	mustExec(t, se, `select * from performance_schema.events_statements_summary_by_digest`)
-	_, err = se.ExecuteInternal(context.Background(), "drop table performance_schema.events_statements_summary_by_digest")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
-	_, err = se.ExecuteInternal(context.Background(), "update performance_schema.events_statements_summary_by_digest set schema_name = 'tst'")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
-	_, err = se.ExecuteInternal(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
-	_, err = se.ExecuteInternal(context.Background(), "create table performance_schema.t(a int)")
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
-
 	// Test metric_schema.
 	mustExec(t, se, `select * from metrics_schema.tidb_query_duration`)
 	_, err = se.ExecuteInternal(context.Background(), "drop table metrics_schema.tidb_query_duration")
@@ -1165,6 +1150,41 @@ func TestSystemSchema(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 	_, err = se.ExecuteInternal(context.Background(), "create table metric_schema.t(a int)")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+}
+
+func TestPerformanceSchema(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	// This test tests no privilege check for INFORMATION_SCHEMA database.
+	se := newSession(t, store, dbName)
+	mustExec(t, se, `CREATE USER 'u1'@'localhost';`)
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+	_, err := se.ExecuteInternal(context.Background(), "select * from performance_schema.events_statements_summary_by_digest where schema_name = 'tst'")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil))
+	mustExec(t, se, `GRANT SELECT ON *.* TO 'u1'@'localhost';`)
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil))
+	_, err = se.ExecuteInternal(context.Background(), "select * from performance_schema.events_statements_summary_by_digest where schema_name = 'tst'")
+	require.NoError(t, err)
+	mustExec(t, se, `select * from performance_schema.events_statements_summary_by_digest`)
+	_, err = se.ExecuteInternal(context.Background(), "drop table performance_schema.events_statements_summary_by_digest")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	_, err = se.ExecuteInternal(context.Background(), "update performance_schema.events_statements_summary_by_digest set schema_name = 'tst'")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrPrivilegeCheckFail))
+	_, err = se.ExecuteInternal(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
+	require.Error(t, err)
+	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
+	_, err = se.ExecuteInternal(context.Background(), "create table performance_schema.t(a int)")
 	require.Error(t, err)
 	require.True(t, terror.ErrorEqual(err, core.ErrTableaccessDenied))
 }
