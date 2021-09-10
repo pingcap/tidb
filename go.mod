@@ -37,7 +37,6 @@ require (
 	github.com/iancoleman/strcase v0.0.0-20191112232945-16388991a334
 	github.com/jedib0t/go-pretty/v6 v6.2.2
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
-	github.com/natefinch/lumberjack v2.0.0+incompatible
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/opentracing/basictracer-go v1.0.0
@@ -89,6 +88,7 @@ require (
 	google.golang.org/api v0.54.0
 	google.golang.org/grpc v1.40.0
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/yaml.v2 v2.4.0
 	modernc.org/mathutil v1.2.2
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0

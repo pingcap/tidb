@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/natefinch/lumberjack"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/metrics"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 var (
@@ -72,8 +72,8 @@ func putGeneralLogOrDrop(entry *generalLogEntry) {
 // InitGeneralLog initialize general query logger, which will starts a format & logging worker goroutine
 // General query logs are sent to the worker through a channel, which is asynchronously flushed to logging files.
 func InitGeneralLog() {
-	GeneralLogLogger := newGeneralLogLogger()
-	globalGeneralLogger = newGeneralLogger(GeneralLogLogger)
+	GeneralLogLogger, fnStopBufferedWS := newGeneralLogLogger()
+	globalGeneralLogger = newGeneralLogger(GeneralLogLogger, fnStopBufferedWS)
 }
 
 // StopGeneralLog stops the general log worker goroutine
@@ -109,17 +109,19 @@ func getGeneralLogEntry() *generalLogEntry {
 
 // generalLogger receives general log entry from channel, and log or drop them as needed
 type generalLogger struct {
-	logger       *zap.Logger
-	logEntryChan chan *generalLogEntry
-	quit         chan struct{}
-	wg           sync.WaitGroup
+	logger           *zap.Logger
+	logEntryChan     chan *generalLogEntry
+	quit             chan struct{}
+	wg               sync.WaitGroup
+	fnStopBufferedWS func()
 }
 
-func newGeneralLogger(logger *zap.Logger) *generalLogger {
+func newGeneralLogger(logger *zap.Logger, fnStopBufferedWS func()) *generalLogger {
 	gl := &generalLogger{
-		logger:       logger,
-		logEntryChan: make(chan *generalLogEntry, 10000),
-		quit:         make(chan struct{}),
+		logger:           logger,
+		logEntryChan:     make(chan *generalLogEntry, 10000),
+		quit:             make(chan struct{}),
+		fnStopBufferedWS: fnStopBufferedWS,
 	}
 	gl.wg.Add(1)
 	go gl.startLogWorker()
@@ -183,9 +185,10 @@ func (gl *generalLogger) startLogWorker() {
 func (gl *generalLogger) stopLogWorker() {
 	close(gl.quit)
 	gl.wg.Wait()
+	gl.fnStopBufferedWS()
 }
 
-func newGeneralLogLogger() *zap.Logger {
+func newGeneralLogLogger() (*zap.Logger, func()) {
 	// create the general query logger
 	encCfg := zap.NewProductionEncoderConfig()
 	encCfg.LevelKey = zapcore.OmitKey
@@ -204,5 +207,9 @@ func newGeneralLogLogger() *zap.Logger {
 	ioCore := zapcore.NewCore(jsonEncoder, &wsBuffered, level)
 	logger := zap.New(ioCore)
 
-	return logger
+	fnStopBufferedWS := func() {
+		wsBuffered.Stop()
+	}
+
+	return logger, fnStopBufferedWS
 }
