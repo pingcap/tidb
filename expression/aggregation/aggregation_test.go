@@ -95,8 +95,7 @@ func TestAvg(t *testing.T) {
 	partialResult := distinctAvgFunc.GetPartialResult(evalCtx)
 	require.Equal(t, int64(100), partialResult[0].GetInt64())
 	needed = types.NewDecFromStringForTest("5050")
-	require.True(t, partialResult[1].GetMysqlDecimal().Compare(needed) == 0)
-	//c.Assert(partialResult[1].GetMysqlDecimal().Compare(needed) == 0, IsTrue, Commentf("%v, %v ", result.GetMysqlDecimal(), needed))
+	require.Equalf(t, 0, partialResult[1].GetMysqlDecimal().Compare(needed), "%v, %v ", result.GetMysqlDecimal(), needed)
 }
 
 func TestAvgFinalMode(t *testing.T) {
