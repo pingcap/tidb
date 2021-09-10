@@ -27,6 +27,8 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
+		goleak.IgnoreTopFunction("github.com/natefinch/lumberjack.(*Logger).millRun"),
+		goleak.IgnoreTopFunction("go.uber.org/zap/zapcore.(*BufferedWriteSyncer).flushLoop"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }

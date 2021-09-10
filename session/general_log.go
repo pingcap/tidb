@@ -102,6 +102,8 @@ type generalLogger struct {
 	logger       *zap.Logger
 	logEntryChan chan *generalLogEntry
 	quit         chan struct{}
+
+	wg sync.WaitGroup
 }
 
 func newGeneralLogger(logger *zap.Logger) *generalLogger {
@@ -110,6 +112,7 @@ func newGeneralLogger(logger *zap.Logger) *generalLogger {
 		logEntryChan: make(chan *generalLogEntry, 10000),
 		quit:         make(chan struct{}),
 	}
+	gl.wg.Add(1)
 	go gl.startLogWorker()
 	return gl
 }
@@ -161,9 +164,11 @@ func (gl *generalLogger) startLogWorker() {
 		case e := <-gl.logEntryChan:
 			gl.logEntry(e)
 		case <-gl.quit:
+			close(gl.logEntryChan)
 			for e := range gl.logEntryChan {
 				gl.logEntry(e)
 			}
+			gl.wg.Done()
 			return
 		}
 	}
@@ -171,6 +176,7 @@ func (gl *generalLogger) startLogWorker() {
 
 func (gl *generalLogger) stopLogWorker() {
 	close(gl.quit)
+	gl.wg.Wait()
 }
 
 func newGeneralLogLogger() *zap.Logger {
