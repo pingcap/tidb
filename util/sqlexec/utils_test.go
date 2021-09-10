@@ -97,6 +97,7 @@ func TestEscapeBackslash(t *testing.T) {
 		},
 	}
 	for _, v := range tests {
+		// copy iterator variable into a new variable, see issue #27779
 		v := v
 		t.Run(v.name, func(t *testing.T) {
 			t.Parallel()
@@ -388,6 +389,7 @@ func TestEscapeSQL(t *testing.T) {
 		},
 	}
 	for _, v := range tests {
+		// copy iterator variable into a new variable, see issue #27779
 		v := v
 		t.Run(v.name, func(t *testing.T) {
 			t.Parallel()

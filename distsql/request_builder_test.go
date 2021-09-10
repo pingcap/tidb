@@ -529,6 +529,7 @@ func TestRequestBuilder7(t *testing.T) {
 		{kv.ReplicaReadFollower, "Follower"},
 		{kv.ReplicaReadMixed, "Mixed"},
 	} {
+		// copy iterator variable into a new variable, see issue #27779
 		replicaRead := replicaRead
 		t.Run(replicaRead.src, func(t *testing.T) {
 			t.Parallel()
@@ -631,7 +632,6 @@ func TestScanLimitConcurrency(t *testing.T) {
 		tp          tipb.ExecType
 		limit       uint64
 		concurrency int
-
 		src string
 	}{
 		{tipb.ExecType_TypeTableScan, 1, 1, "TblScan_Def"},
@@ -639,6 +639,7 @@ func TestScanLimitConcurrency(t *testing.T) {
 		{tipb.ExecType_TypeTableScan, 1000000, vars.Concurrency.DistSQLScanConcurrency(), "TblScan_SessionVars"},
 		{tipb.ExecType_TypeIndexScan, 1000000, vars.Concurrency.DistSQLScanConcurrency(), "IdxScan_SessionVars"},
 	} {
+		// copy iterator variable into a new variable, see issue #27779
 		tt := tt
 		t.Run(tt.src, func(t *testing.T) {
 			t.Parallel()

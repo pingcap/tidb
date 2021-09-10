@@ -44,6 +44,7 @@ func TestValueExprRestore(t *testing.T) {
 	}
 
 	for _, test := range tests {
+		// copy iterator variable into a new variable, see issue #27779
 		test := test
 		t.Run(test.expect, func(t *testing.T) {
 			t.Parallel()
