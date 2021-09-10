@@ -10,6 +10,7 @@ import (
 )
 
 func TestDistinct(t *testing.T) {
+	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	dc := createDistinctChecker(sc)
 	testCases := []struct {
