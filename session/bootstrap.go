@@ -509,11 +509,13 @@ const (
 	version72 = 72
 	// version73 adds mysql.capture_plan_baselines_blacklist table
 	version73 = 73
+	// version74 changes global variable `tidb_stmt_summary_max_stmt_count` value from 200 to 3000.
+	version74 = 74
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version73
+var currentBootstrapVersion int64 = version74
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -590,6 +592,7 @@ var (
 		upgradeToVer71,
 		upgradeToVer72,
 		upgradeToVer73,
+		upgradeToVer74,
 	}
 )
 
@@ -1544,6 +1547,14 @@ func upgradeToVer73(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateCapturePlanBaselinesBlacklist)
+}
+
+func upgradeToVer74(s Session, ver int64) {
+	if ver >= version74 {
+		return
+	}
+	// The old default value of `tidb_stmt_summary_max_stmt_count` is 200, we want to enlarge this to the new default value when TiDB upgrade.
+	mustExecute(s, fmt.Sprintf("UPDATE mysql.global_variables SET VARIABLE_VALUE='%[1]v' WHERE VARIABLE_NAME = 'tidb_stmt_summary_max_stmt_count' AND CAST(VARIABLE_VALUE AS SIGNED) = 200", config.GetGlobalConfig().StmtSummary.MaxStmtCount))
 }
 
 func writeOOMAction(s Session) {
