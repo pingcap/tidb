@@ -283,7 +283,7 @@ func TestMaxRecvSize(t *testing.T) {
 	binlogWR := info.WriteBinlog(1)
 	err := binlogWR.GetError()
 	require.Error(t, err)
-	require.Falsef(t, terror.ErrCritical.Equal(err), fmt.Sprintf("%v", err))
+	require.Truef(t, terror.ErrCritical.Equal(err), fmt.Sprintf("%v", err))
 }
 
 func getLatestBinlogPrewriteValue(t *testing.T, pump *mockBinlogPump) *binlog.PrewriteValue {
