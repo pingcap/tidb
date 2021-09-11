@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mockcopr_test
+package mockcopr
 
 import (
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/util/testbridge"
 	"go.uber.org/goleak"
 )
@@ -26,7 +28,11 @@ func TestMain(m *testing.M) {
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-		goleak.IgnoreTopFunction("github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain"),
 	}
-	goleak.VerifyTestMain(m, opts...)
+	callback := func(i int) int {
+		// wait for leveldb to close, leveldb will be closed in one second
+		time.Sleep(time.Second)
+		return i
+	}
+	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
