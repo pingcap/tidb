@@ -119,7 +119,6 @@ func TestBasic(t *testing.T) {
 
 	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"))
 	require.Error(t, err)
-	require.Error(t, err)
 	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
 	require.Error(t, err)
 
