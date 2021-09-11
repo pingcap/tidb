@@ -1050,6 +1050,7 @@ const (
 	ErrInvalidAttributesSpec              = 8237
 	ErrPlacementPolicyExists              = 8238
 	ErrPlacementPolicyNotExists           = 8239
+	ErrPlacementPolicyWithDirectOption    = 8240
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
