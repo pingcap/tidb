@@ -28,10 +28,96 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/pdapi"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"go.uber.org/zap"
 )
+
+func TestHotRegion(t *testing.T) {
+	t.Parallel()
+
+	store, clean := createMockStore(t)
+	defer clean()
+
+	h := helper.Helper{
+		Store:       store,
+		RegionCache: store.GetRegionCache(),
+	}
+	regionMetric, err := h.FetchHotRegion(pdapi.HotRead)
+	require.NoError(t, err)
+
+	expected := map[uint64]helper.RegionMetric{
+		2: {
+			FlowBytes:    100,
+			MaxHotDegree: 1,
+			Count:        0,
+		},
+		4: {
+			FlowBytes:    200,
+			MaxHotDegree: 2,
+			Count:        0,
+		},
+	}
+	require.Equal(t, expected, regionMetric)
+
+	dbInfo := &model.DBInfo{
+		Name: model.NewCIStr("test"),
+	}
+	require.NoError(t, err)
+
+	res, err := h.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
+	require.NotEqual(t, res[0].RegionMetric, res[1].RegionMetric)
+	require.NoError(t, err)
+}
+
+func TestGetRegionsTableInfo(t *testing.T) {
+	t.Parallel()
+
+	store, clean := createMockStore(t)
+	defer clean()
+
+	h := helper.NewHelper(store)
+	regionsInfo := getMockTiKVRegionsInfo()
+	schemas := getMockRegionsTableInfoSchema()
+	tableInfos := h.GetRegionsTableInfo(regionsInfo, schemas)
+	require.Equal(t, getRegionsTableInfoAns(schemas), tableInfos)
+}
+
+func TestTiKVRegionsInfo(t *testing.T) {
+	t.Parallel()
+
+	store, clean := createMockStore(t)
+	defer clean()
+
+	h := helper.Helper{
+		Store:       store,
+		RegionCache: store.GetRegionCache(),
+	}
+	regionsInfo, err := h.GetRegionsInfo()
+	require.NoError(t, err)
+	require.Equal(t, getMockTiKVRegionsInfo(), regionsInfo)
+}
+
+func TestTiKVStoresStat(t *testing.T) {
+	t.Parallel()
+
+	store, clean := createMockStore(t)
+	defer clean()
+
+	h := helper.Helper{
+		Store:       store,
+		RegionCache: store.GetRegionCache(),
+	}
+
+	stat, err := h.GetStoresStat()
+	require.NoError(t, err)
+
+	data, err := json.Marshal(stat)
+	require.NoError(t, err)
+
+	expected := `{"count":1,"stores":[{"store":{"id":1,"address":"127.0.0.1:20160","state":0,"state_name":"Up","version":"3.0.0-beta","labels":[{"key":"test","value":"test"}],"status_address":"","git_hash":"","start_timestamp":0},"status":{"capacity":"60 GiB","available":"100 GiB","leader_count":10,"leader_weight":999999.999999,"leader_score":999999.999999,"leader_size":1000,"region_count":200,"region_weight":999999.999999,"region_score":999999.999999,"region_size":1000,"start_ts":"2019-04-23T19:30:30+08:00","last_heartbeat_ts":"2019-04-23T19:31:30+08:00","uptime":"1h30m"}}]}`
+	require.Equal(t, expected, string(data))
+}
 
 type mockStore struct {
 	helper.Storage
@@ -58,99 +144,40 @@ func (s *mockStore) Describe() string {
 	return ""
 }
 
-func MockStore(t *testing.T) helper.Storage {
-	url := mockPDHTTPServer()
-	time.Sleep(100 * time.Millisecond)
-	mockTikvStore, err := mockstore.NewMockStore(
+func createMockStore(t *testing.T) (store helper.Storage, clean func()) {
+	s, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithMultiRegions(c, []byte("x"))
 		}),
 	)
+	require.NoError(t, err)
 
-	store := &mockStore{
-		mockTikvStore.(helper.Storage),
-		[]string{"invalid_pd_address", url[len("http://"):]},
+	server := mockPDHTTPServer()
+
+	store = &mockStore{
+		s.(helper.Storage),
+		[]string{"invalid_pd_address", server.URL[len("http://"):]},
 	}
 
-	assert.Nil(t, err)
-	return store
+	clean = func() {
+		server.Close()
+		require.NoError(t, store.Close())
+	}
+
+	return
 }
 
-func TestHotRegion(t *testing.T) {
-	store := MockStore(t)
-	h := helper.Helper{
-		Store:       store,
-		RegionCache: store.GetRegionCache(),
-	}
-	regionMetric, err := h.FetchHotRegion(pdapi.HotRead)
-	assert.Nilf(t, err, "err: %+v", err)
-	expected := map[uint64]helper.RegionMetric{
-		2: {
-			FlowBytes:    100,
-			MaxHotDegree: 1,
-			Count:        0,
-		},
-		4: {
-			FlowBytes:    200,
-			MaxHotDegree: 2,
-			Count:        0,
-		},
-	}
-	assert.Equal(t, regionMetric, expected)
-	dbInfo := &model.DBInfo{
-		Name: model.NewCIStr("test"),
-	}
-	assert.Nil(t, err)
-	res, err := h.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
-	assert.NotEqual(t, res[0].RegionMetric, res[1].RegionMetric)
-	assert.Nilf(t, err, "err: %+v", err)
-}
-
-func TestGetRegionsTableInfo(t *testing.T) {
-	store := MockStore(t)
-	h := helper.NewHelper(store)
-	regionsInfo := getMockTiKVRegionsInfo()
-	schemas := getMockRegionsTableInfoSchema()
-	tableInfos := h.GetRegionsTableInfo(regionsInfo, schemas)
-	assert.Equal(t, tableInfos, getRegionsTableInfoAns(schemas))
-}
-
-func TestTiKVRegionsInfo(t *testing.T) {
-	store := MockStore(t)
-	h := helper.Helper{
-		Store:       store,
-		RegionCache: store.GetRegionCache(),
-	}
-	regionsInfo, err := h.GetRegionsInfo()
-	assert.Nilf(t, err, "err: %+v", err)
-	assert.Equal(t, regionsInfo, getMockTiKVRegionsInfo())
-}
-
-func TestTiKVStoresStat(t *testing.T) {
-	store := MockStore(t)
-	h := helper.Helper{
-		Store:       store,
-		RegionCache: store.GetRegionCache(),
-	}
-	stat, err := h.GetStoresStat()
-	assert.Nilf(t, err, "err: %+v", err)
-	data, err := json.Marshal(stat)
-	assert.Nil(t, err)
-	assert.Equal(t, string(data), `{"count":1,"stores":[{"store":{"id":1,"address":"127.0.0.1:20160","state":0,"state_name":"Up","version":"3.0.0-beta","labels":[{"key":"test","value":"test"}],"status_address":"","git_hash":"","start_timestamp":0},"status":{"capacity":"60 GiB","available":"100 GiB","leader_count":10,"leader_weight":999999.999999,"leader_score":999999.999999,"leader_size":1000,"region_count":200,"region_weight":999999.999999,"region_score":999999.999999,"region_size":1000,"start_ts":"2019-04-23T19:30:30+08:00","last_heartbeat_ts":"2019-04-23T19:31:30+08:00","uptime":"1h30m"}}]}`)
-}
-
-func mockPDHTTPServer() (url string) {
+func mockPDHTTPServer() *httptest.Server {
 	router := mux.NewRouter()
 	router.HandleFunc(pdapi.HotRead, mockHotRegionResponse)
 	router.HandleFunc(pdapi.Regions, mockTiKVRegionsInfoResponse)
 	router.HandleFunc(pdapi.Stores, mockStoreStatResponse)
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
-	server := httptest.NewServer(serverMux)
-	return server.URL
+	return httptest.NewServer(serverMux)
 }
 
-func mockHotRegionResponse(w http.ResponseWriter, req *http.Request) {
+func mockHotRegionResponse(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	regionsStat := helper.HotRegionsStat{
@@ -342,7 +369,7 @@ func getMockTiKVRegionsInfo() *helper.RegionsInfo {
 	}
 }
 
-func mockTiKVRegionsInfoResponse(w http.ResponseWriter, req *http.Request) {
+func mockTiKVRegionsInfoResponse(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	resp := getMockTiKVRegionsInfo()
@@ -356,7 +383,7 @@ func mockTiKVRegionsInfoResponse(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func mockStoreStatResponse(w http.ResponseWriter, req *http.Request) {
+func mockStoreStatResponse(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	startTs, err := time.Parse(time.RFC3339, "2019-04-23T19:30:30+08:00")
