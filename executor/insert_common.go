@@ -360,7 +360,9 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 		if err != nil {
 			return nil, err
 		}
-		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false, false)
+		val1, err := table.CastValueWithErrorConvert(e.ctx, val, e.insertColumns[i].ToInfo(), false, false, func(err error) error {
+			return e.convertErr(e.insertColumns[i], &val, rowIdx, err)
+		})
 		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, err
 		}
@@ -528,7 +530,9 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i := 0; i < e.rowLen; i++ {
-		casted, err := table.CastValue(e.ctx, vals[i], e.insertColumns[i].ToInfo(), false, false)
+		casted, err := table.CastValueWithErrorConvert(e.ctx, vals[i], e.insertColumns[i].ToInfo(), false, false, func(err error) error {
+			return e.convertErr(e.insertColumns[i], &vals[i], 0, err)
+		})
 		if e.handleErr(nil, &vals[i], 0, err) != nil {
 			return nil, err
 		}
