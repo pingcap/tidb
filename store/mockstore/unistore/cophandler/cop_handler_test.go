@@ -303,8 +303,8 @@ func TestPointGet(t *testing.T) {
 	store, clean := newTestStore(t, "cop_handler_test_db", "cop_handler_test_log")
 	defer clean()
 
-	errors := initTestData(store, data.encodedTestKVDatas)
-	require.Nil(t, errors)
+	errs := initTestData(store, data.encodedTestKVDatas)
+	require.Nil(t, errs)
 
 	// point get should return nothing when handle is math.MinInt64
 	handle := int64(math.MinInt64)
@@ -354,8 +354,8 @@ func TestClosureExecutor(t *testing.T) {
 	store, clean := newTestStore(t, "cop_handler_test_db", "cop_handler_test_log")
 	defer clean()
 
-	errors := initTestData(store, data.encodedTestKVDatas)
-	require.Nil(t, errors)
+	errs := initTestData(store, data.encodedTestKVDatas)
+	require.Nil(t, errs)
 
 	dagRequest := newDagBuilder().
 		setStartTs(dagRequestStartTs).
