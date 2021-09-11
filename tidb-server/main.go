@@ -542,6 +542,11 @@ func setGlobalVars() {
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
 	variable.ForcePriority = int32(priority)
 
+	if len(cfg.ServerVersion) > 0 {
+		mysql.ServerVersion = cfg.ServerVersion
+		variable.SetSysVar(variable.Version, cfg.ServerVersion)
+	}
+
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
@@ -674,7 +679,8 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 
 func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
 	if graceful {
-		svr.GracefulDown(context.Background(), nil)
+		done := make(chan struct{})
+		svr.GracefulDown(context.Background(), done)
 	} else {
 		svr.TryGracefulDown()
 	}

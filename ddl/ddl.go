@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +11,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package ddl
 
@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
 	goutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
@@ -115,6 +116,9 @@ type DDL interface {
 	CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error
 	DropSequence(ctx sessionctx.Context, tableIdent ast.Ident, ifExists bool) (err error)
 	AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error
+	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
+	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
+	AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error
 
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
 	//
@@ -489,7 +493,7 @@ func getIntervalFromPolicy(policy []time.Duration, i int) (time.Duration, bool) 
 
 func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn:
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	case model.ActionCreateTable, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
@@ -506,7 +510,7 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 
 	var worker *worker
 	jobTp := job.Type
-	if jobTp == model.ActionAddIndex || jobTp == model.ActionAddPrimaryKey {
+	if admin.MayNeedBackfill(jobTp) {
 		worker = d.workers[addIdxWorker]
 	} else {
 		worker = d.workers[generalWorker]
@@ -599,6 +603,13 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 					}
 				}
 			}
+
+			if historyJob.MultiSchemaInfo != nil && len(historyJob.MultiSchemaInfo.Warnings) != 0 {
+				for _, warning := range historyJob.MultiSchemaInfo.Warnings {
+					ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+				}
+			}
+
 			logutil.BgLogger().Info("[ddl] DDL job is finished", zap.Int64("jobID", jobID))
 			return nil
 		}
@@ -607,8 +618,13 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			logutil.BgLogger().Info("[ddl] DDL job is failed", zap.Int64("jobID", jobID))
 			return errors.Trace(historyJob.Error)
 		}
-		// Only for JobStateCancelled job which is adding columns or drop columns.
-		if historyJob.IsCancelled() && (historyJob.Type == model.ActionAddColumns || historyJob.Type == model.ActionDropColumns) {
+		// Only for JobStateCancelled job which is adding columns or drop columns or drop indexes.
+		if historyJob.IsCancelled() && (historyJob.Type == model.ActionAddColumns || historyJob.Type == model.ActionDropColumns || historyJob.Type == model.ActionDropIndexes) {
+			if historyJob.MultiSchemaInfo != nil && len(historyJob.MultiSchemaInfo.Warnings) != 0 {
+				for _, warning := range historyJob.MultiSchemaInfo.Warnings {
+					ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+				}
+			}
 			logutil.BgLogger().Info("[ddl] DDL job is cancelled", zap.Int64("jobID", jobID))
 			return nil
 		}
@@ -682,8 +698,9 @@ type RecoverInfo struct {
 	TableInfo     *model.TableInfo
 	DropJobID     int64
 	SnapshotTS    uint64
-	CurAutoIncID  int64
-	CurAutoRandID int64
+	AutoIDs       meta.AutoIDGroup
+	OldSchemaName string
+	OldTableName  string
 }
 
 // delayForAsyncCommit sleeps `SafeWindow + AllowedClockDrift` before a DDL job finishes.
