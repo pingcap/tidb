@@ -1,6 +1,6 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package restore
+package utils
 
 import (
 	"time"
@@ -8,7 +8,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -35,7 +34,7 @@ type importerBackoffer struct {
 }
 
 // NewBackoffer creates a new controller regulating a truncated exponential backoff.
-func NewBackoffer(attempt int, delayTime, maxDelayTime time.Duration) utils.Backoffer {
+func NewBackoffer(attempt int, delayTime, maxDelayTime time.Duration) Backoffer {
 	return &importerBackoffer{
 		attempt:      attempt,
 		delayTime:    delayTime,
@@ -43,16 +42,16 @@ func NewBackoffer(attempt int, delayTime, maxDelayTime time.Duration) utils.Back
 	}
 }
 
-func newImportSSTBackoffer() utils.Backoffer {
+func NewImportSSTBackoffer() Backoffer {
 	return NewBackoffer(importSSTRetryTimes, importSSTWaitInterval, importSSTMaxWaitInterval)
 }
 
-func newDownloadSSTBackoffer() utils.Backoffer {
+func NewDownloadSSTBackoffer() Backoffer {
 	return NewBackoffer(downloadSSTRetryTimes, downloadSSTWaitInterval, downloadSSTMaxWaitInterval)
 }
 
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
-	if utils.MessageIsRetryableStorageError(err.Error()) {
+	if MessageIsRetryableStorageError(err.Error()) {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--
 	} else {
@@ -94,7 +93,7 @@ type pdReqBackoffer struct {
 	maxDelayTime time.Duration
 }
 
-func newPDReqBackoffer() utils.Backoffer {
+func NewPDReqBackoffer() Backoffer {
 	return &pdReqBackoffer{
 		attempt:      resetTSRetryTime,
 		delayTime:    resetTSWaitInterval,
