@@ -36,8 +36,7 @@ func TestPartitionBasic(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	ctx := tk.Session()
-	ctx.GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(mockPumpClient{})
+	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(mockPumpClient{})
 	tk.MustExec("set @@session.tidb_enable_table_partition = '1'")
 	tk.MustExec(`CREATE TABLE partition_basic (id int(11), unique index(id))
 PARTITION BY RANGE COLUMNS ( id ) (
@@ -270,7 +269,6 @@ func TestGeneratePartitionExpr(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "use test")
-	require.NoError(t, err)
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), "drop table if exists t1;")
 	require.NoError(t, err)

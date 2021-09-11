@@ -944,6 +944,49 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
+func (s *testAutoRandomSuite) TestShowCreateTablePlacement(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// case for direct opts
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("create table t(a int) " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+		"CONSTRAINTS=\"[+disk=ssd]\"")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PRIMARY_REGION=\"cn-east-1\" "+
+			"REGIONS=\"cn-east-1, cn-east-2\" "+
+			"FOLLOWERS=2 "+
+			"CONSTRAINTS=\"[+disk=ssd]\" "+
+			"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" */",
+	))
+
+	// case for policy
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec("create placement policy x " +
+		"PRIMARY_REGION=\"cn-east-1\" " +
+		"REGIONS=\"cn-east-1, cn-east-2\" " +
+		"FOLLOWERS=2 " +
+		"FOLLOWER_CONSTRAINTS=\"[+zone=cn-east-1]\" " +
+		"CONSTRAINTS=\"[+disk=ssd]\" ")
+	tk.MustExec("create table t(a int)" +
+		"PLACEMENT POLICY=\"x\"")
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
+			"/*T![placement] PLACEMENT POLICY=`x` */",
+	))
+
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+}
+
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
