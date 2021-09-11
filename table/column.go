@@ -53,6 +53,7 @@ type Column struct {
 	DefaultExpr ast.ExprNode
 }
 
+// ErrorConverter is the a function to convert one error into another
 type ErrorConverter func(error) error
 
 // String implements fmt.Stringer interface.
@@ -276,13 +277,14 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 	return casted, false, nil
 }
 
+// CastValue is a wrapper on top of CastValueWithErrorConvert without actually change the error
 func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	return CastValueWithErrorConvert(ctx, val, col, returnErr, forceIgnoreTruncate, func(err error) error {
 		return err
 	})
 }
 
-// CastValue casts a value based on column type.
+// CastValueWithErrorConvert casts a value based on column type.
 // If forceIgnoreTruncate is true, truncated errors will be ignored.
 // If returnErr is true, directly return any conversion errors.
 // It's safe now and it's the same as the behavior of select statement.
