@@ -717,3 +717,41 @@ alter placement policy
 		testFunc(testcase.name, testcase.hook, testcase.expectErr)
 	}
 }
+
+func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop schema if exists SchemaDirectPlacementTest")
+	tk.MustExec("drop schema if exists SchemaPolicyPlacementTest")
+	tk.Se.GetSessionVars().EnableAlterPlacement = true
+	defer func() {
+		tk.MustExec("drop schema if exists SchemaDirectPlacementTest")
+		tk.MustExec("drop schema if exists SchemaPolicyPlacementTest")
+		tk.MustExec("drop placement policy if exists PolicySchemaTest")
+		tk.Se.GetSessionVars().EnableAlterPlacement = false
+	}()
+
+	tk.MustExec(`CREATE SCHEMA SchemaDirectPlacementTest PRIMARY_REGION='nl' REGIONS = "se,nz" FOLLOWERS=3`)
+	tk.MustQuery("SHOW CREATE SCHEMA schemadirectplacementtest").Check(testkit.Rows("SchemaDirectPlacementTest CREATE DATABASE `SchemaDirectPlacementTest` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ PRIMARY_REGION=\"nl\" REGIONS=\"se,nz\" FOLLOWERS=3"))
+
+	tk.MustExec(`CREATE PLACEMENT POLICY PolicySchemaTest LEADER_CONSTRAINTS = "[+region=nl]" FOLLOWER_CONSTRAINTS="[+region=se]" FOLLOWERS=4 LEARNER_CONSTRAINTS="[+region=be]" LEARNERS=4`)
+	tk.MustQuery("SHOW PLACEMENT like 'POLICY %PolicySchemaTest%'").Check(testkit.Rows("POLICY PolicySchemaTest LEADER_CONSTRAINTS=\"[+region=nl]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=se]\" LEARNERS=4 LEARNER_CONSTRAINTS=\"[+region=be]\" SCHEDULED"))
+	tk.MustExec(`CREATE SCHEMA SchemaPolicyPlacementTest PLACEMENT POLICY = 'PolicySchemaTest'`)
+	tk.MustQuery("SHOW CREATE SCHEMA SCHEMAPOLICYPLACEMENTTEST").Check(testkit.Rows("SchemaPolicyPlacementTest CREATE DATABASE `SchemaPolicyPlacementTest` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ PLACEMENT POLICY `PolicySchemaTest`"))
+
+	is := s.dom.InfoSchema()
+
+	db, ok := is.SchemaByName(model.NewCIStr("SchemaDirectPlacementTest"))
+	c.Assert(ok, IsTrue)
+	c.Assert(db.PlacementPolicyRef, IsNil)
+	c.Assert(db.DirectPlacementOpts, NotNil)
+	c.Assert(db.DirectPlacementOpts.PrimaryRegion, Matches, "nl")
+	c.Assert(db.DirectPlacementOpts.Regions, Matches, "se,nz")
+	c.Assert(db.DirectPlacementOpts.Followers, Equals, uint64(3))
+	c.Assert(db.DirectPlacementOpts.Learners, Equals, uint64(0))
+
+	db, ok = is.SchemaByName(model.NewCIStr("SchemaPolicyPlacementTest"))
+	c.Assert(ok, IsTrue)
+	c.Assert(db.PlacementPolicyRef, NotNil)
+	c.Assert(db.DirectPlacementOpts, IsNil)
+	c.Assert(db.PlacementPolicyRef.Name.O, Equals, "PolicySchemaTest")
+}
