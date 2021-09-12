@@ -56,71 +56,69 @@ func TestPad(t *testing.T) {
 	require.Equal(t, "0A0B0C0D0C0C0C0C0C0C0C0C0C0C0C0C", toHex(p))
 }
 
-func (s *testEncryptSuite) TestUnpad(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestUnpad(t *testing.T) {
 	// Valid paddings.
 	p := []byte{0x0A, 0x0B, 0x0C, 0x0D, 0x04, 0x04, 0x04, 0x04}
 	p, err := PKCS7Unpad(p, 8)
-	c.Assert(err, IsNil)
-	c.Assert(toHex(p), Equals, "0A0B0C0D")
+	require.NoError(t, err)
+	require.Equal(t, "0A0B0C0D", toHex(p))
 
 	p = []byte{0x0A, 0x0B, 0x0C, 0x0D, 0x0A, 0x0B, 0x0C, 0x0D, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08}
 	p, err = PKCS7Unpad(p, 8)
-	c.Assert(err, IsNil)
-	c.Assert(toHex(p), Equals, "0A0B0C0D0A0B0C0D")
+	require.NoError(t, err)
+	require.Equal(t, "0A0B0C0D0A0B0C0D", toHex(p))
 
 	p = []byte{0x0A, 0x0B, 0x0C, 0x0D, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C}
 	p, err = PKCS7Unpad(p, 16)
-	c.Assert(err, IsNil)
-	c.Assert(toHex(p), Equals, "0A0B0C0D")
+	require.NoError(t, err)
+	require.Equal(t, "0A0B0C0D", toHex(p))
 
 	p = []byte{0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08}
 	p, err = PKCS7Unpad(p, 8)
-	c.Assert(err, IsNil)
-	c.Assert(toHex(p), Equals, "")
+	require.NoError(t, err)
+	require.Equal(t, "", toHex(p))
 
 	// Invalid padding: incorrect block size
 	p = []byte{0x0A, 0x0B, 0x0C, 0x04, 0x04, 0x04, 0x04}
 	_, err = PKCS7Unpad(p, 8)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	p = []byte{0x0A, 0x0B, 0x0C, 0x02, 0x03, 0x04, 0x04, 0x04, 0x04}
 	_, err = PKCS7Unpad(p, 8)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	p = []byte{}
 	_, err = PKCS7Unpad(p, 8)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// Invalid padding: padding length > block length
 	p = []byte{0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09}
 	_, err = PKCS7Unpad(p, 8)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// Invalid padding: padding length == 0
 	p = []byte{0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x00}
 	//                                                   ^^^^
 	_, err = PKCS7Unpad(p, 8)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// Invalid padding: padding content invalid
 	p = []byte{0x0A, 0x0B, 0x0C, 0x0D, 0x0A, 0x0B, 0x0C, 0x0D, 0x04, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08}
 	//                                                         ^^^^
 	_, err = PKCS7Unpad(p, 8)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// Invalid padding: padding content invalid
 	p = []byte{0x03, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08}
 	//         ^^^^
 	_, err = PKCS7Unpad(p, 8)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// Invalid padding: padding content invalid
 	p = []byte{0x0A, 0x0B, 0x0C, 0x0D, 0x04, 0x04, 0x03, 0x04}
 	//                                             ^^^^
 	_, err = PKCS7Unpad(p, 8)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
 func (s *testEncryptSuite) TestAESECB(c *C) {
