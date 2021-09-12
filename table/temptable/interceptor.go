@@ -142,7 +142,7 @@ func (i *TemporaryTableSnapshotInterceptor) OnIter(snap kv.Snapshot, k kv.Key, u
 		return i.iterTable(tblID, snap, k, upperBound)
 	}
 
-	return i.createUnionIter(snap, k, upperBound, false)
+	return createUnionIter(i.sessionData, snap, k, upperBound, false)
 }
 
 // OnIterReverse intercepts IterReverse operation for Snapshot
@@ -153,7 +153,7 @@ func (i *TemporaryTableSnapshotInterceptor) OnIterReverse(snap kv.Snapshot, k kv
 	}
 
 	// because lower bound is nil, so the range cannot be located in one table
-	return i.createUnionIter(snap, nil, k, true)
+	return createUnionIter(i.sessionData, snap, nil, k, true)
 }
 
 func (i *TemporaryTableSnapshotInterceptor) iterTable(tblID int64, snap kv.Snapshot, k, upperBound kv.Key) (kv.Iterator, error) {
@@ -167,10 +167,21 @@ func (i *TemporaryTableSnapshotInterceptor) iterTable(tblID int64, snap kv.Snaps
 	}
 
 	// still need union iter to filter out empty value in session data
-	return i.createUnionIter(nil, k, upperBound, false)
+	return createUnionIter(i.sessionData, nil, k, upperBound, false)
 }
 
-func (i *TemporaryTableSnapshotInterceptor) createUnionIter(snap kv.Snapshot, k, upperBound kv.Key, reverse bool) (iter kv.Iterator, err error) {
+func (i *TemporaryTableSnapshotInterceptor) temporaryTableInfoByID(tblID int64) (*model.TableInfo, bool) {
+	if tbl, ok := i.is.TableByID(tblID); ok {
+		tblInfo := tbl.Meta()
+		if tblInfo.TempTableType != model.TempTableNone {
+			return tblInfo, true
+		}
+	}
+
+	return nil, false
+}
+
+func createUnionIter(sessionData kv.Retriever, snap kv.Snapshot, k, upperBound kv.Key, reverse bool) (iter kv.Iterator, err error) {
 	if reverse && k != nil {
 		return nil, errors.New("k should be nil for iter reverse")
 	}
@@ -190,19 +201,19 @@ func (i *TemporaryTableSnapshotInterceptor) createUnionIter(snap kv.Snapshot, k,
 		return nil, err
 	}
 
-	if i.sessionData == nil {
+	if sessionData == nil {
 		return snapIter, nil
 	}
 
 	var sessionIter kv.Iterator
 	if reverse {
-		sessionIter, err = i.sessionData.IterReverse(upperBound)
+		sessionIter, err = sessionData.IterReverse(upperBound)
 	} else {
-		sessionIter, err = i.sessionData.Iter(k, upperBound)
+		sessionIter, err = sessionData.Iter(k, upperBound)
 	}
 
 	if err != nil {
-		sessionIter.Close()
+		snapIter.Close()
 		return nil, err
 	}
 
@@ -212,17 +223,6 @@ func (i *TemporaryTableSnapshotInterceptor) createUnionIter(snap kv.Snapshot, k,
 		sessionIter.Close()
 	}
 	return iter, err
-}
-
-func (i *TemporaryTableSnapshotInterceptor) temporaryTableInfoByID(tblID int64) (*model.TableInfo, bool) {
-	if tbl, ok := i.is.TableByID(tblID); ok {
-		tblInfo := tbl.Meta()
-		if tblInfo.TempTableType != model.TempTableNone {
-			return tblInfo, true
-		}
-	}
-
-	return nil, false
 }
 
 func getRangeAccessedTableID(startKey, endKey kv.Key) (int64, bool) {

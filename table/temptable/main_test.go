@@ -197,7 +197,11 @@ func (r *mockedRetriever) Iter(k kv.Key, upperBound kv.Key) (iter kv.Iterator, e
 				data = append(data, item)
 			}
 		}
-		iter = mock.NewSliceIter(data)
+		mockIter := mock.NewMockIterFromRecords(r.t, data, true)
+		if err = r.getMethodErr("IterNext"); err != nil {
+			mockIter.InjectNextError(err)
+		}
+		iter = mockIter
 	}
 	r.appendInvoke("Iter", []interface{}{k, upperBound}, []interface{}{iter, err})
 	return
@@ -213,7 +217,11 @@ func (r *mockedRetriever) IterReverse(k kv.Key) (iter kv.Iterator, err error) {
 				data = append(data, item)
 			}
 		}
-		iter = mock.NewSliceIter(data)
+		mockIter := mock.NewMockIterFromRecords(r.t, data, true)
+		if err = r.getMethodErr("IterReverseNext"); err != nil {
+			mockIter.InjectNextError(err)
+		}
+		iter = mockIter
 	}
 	r.appendInvoke("IterReverse", []interface{}{k}, []interface{}{iter, err})
 	return

@@ -20,6 +20,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/util/mock"
+
+	"github.com/pingcap/tidb/store/driver/txn"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
@@ -832,4 +836,283 @@ func TestInterceptorOnBatchGet(t *testing.T) {
 	result, err = interceptor.OnBatchGet(ctx, snap, []kv.Key{encodeTableKey(1)})
 	require.Nil(t, result)
 	require.Equal(t, snapErr, err)
+}
+
+func TestCreateUnionIter(t *testing.T) {
+	t.Parallel()
+	retriever := newMockedRetriever(t).SetData([]*kv.Entry{
+		{Key: kv.Key("k1"), Value: []byte("v1")},
+		{Key: kv.Key("k10"), Value: []byte("")},
+		{Key: kv.Key("k11"), Value: []byte("v11")},
+		{Key: kv.Key("k5"), Value: []byte("v5")},
+	})
+
+	snap := newMockedSnapshot(newMockedRetriever(t).SetData([]*kv.Entry{
+		{Key: kv.Key("k2"), Value: []byte("v2")},
+		{Key: kv.Key("k20"), Value: []byte("v20")},
+		{Key: kv.Key("k21"), Value: []byte("v21")},
+	}))
+
+	cases := []struct {
+		args    []kv.Key
+		reverse bool
+		nilSess bool
+		nilSnap bool
+		result  []kv.Entry
+	}{
+		{
+			args: []kv.Key{kv.Key("k1"), kv.Key("k21")},
+			result: []kv.Entry{
+				{Key: kv.Key("k1"), Value: []byte("v1")},
+				{Key: kv.Key("k11"), Value: []byte("v11")},
+				{Key: kv.Key("k2"), Value: []byte("v2")},
+				{Key: kv.Key("k20"), Value: []byte("v20")},
+			},
+		},
+		{
+			args:    []kv.Key{kv.Key("k21")},
+			reverse: true,
+			result: []kv.Entry{
+				{Key: kv.Key("k20"), Value: []byte("v20")},
+				{Key: kv.Key("k2"), Value: []byte("v2")},
+				{Key: kv.Key("k11"), Value: []byte("v11")},
+				{Key: kv.Key("k1"), Value: []byte("v1")},
+			},
+		},
+		{
+			args:    []kv.Key{kv.Key("k1"), kv.Key("k21")},
+			nilSnap: true,
+			result: []kv.Entry{
+				{Key: kv.Key("k1"), Value: []byte("v1")},
+				{Key: kv.Key("k11"), Value: []byte("v11")},
+			},
+		},
+		{
+			args:    []kv.Key{kv.Key("k21")},
+			nilSnap: true,
+			reverse: true,
+			result: []kv.Entry{
+				{Key: kv.Key("k11"), Value: []byte("v11")},
+				{Key: kv.Key("k1"), Value: []byte("v1")},
+			},
+		},
+		{
+			args:    []kv.Key{kv.Key("k1"), kv.Key("k21")},
+			nilSess: true,
+			result: []kv.Entry{
+				{Key: kv.Key("k2"), Value: []byte("v2")},
+				{Key: kv.Key("k20"), Value: []byte("v20")},
+			},
+		},
+		{
+			args:    []kv.Key{kv.Key("k21")},
+			nilSess: true,
+			reverse: true,
+			result: []kv.Entry{
+				{Key: kv.Key("k20"), Value: []byte("v20")},
+				{Key: kv.Key("k2"), Value: []byte("v2")},
+			},
+		},
+	}
+
+	retriever.SetAllowedMethod("Iter", "IterReverse")
+	snap.SetAllowedMethod("Iter", "IterReverse")
+	for i, c := range cases {
+		var iter kv.Iterator
+		var err error
+		var method string
+		var sessArg kv.Retriever
+		if !c.nilSess {
+			sessArg = retriever
+		}
+
+		var snapArg kv.Snapshot
+		if !c.nilSnap {
+			snapArg = snap
+		}
+
+		if c.reverse {
+			method = "IterReverse"
+			iter, err = createUnionIter(sessArg, snapArg, nil, c.args[0], c.reverse)
+		} else {
+			method = "Iter"
+			iter, err = createUnionIter(sessArg, snapArg, c.args[0], c.args[1], c.reverse)
+		}
+
+		require.NoError(t, err, i)
+
+		if c.nilSess && c.nilSnap {
+			require.IsType(t, &kv.EmptyIterator{}, iter, i)
+		} else if !c.nilSess {
+			require.IsType(t, &txn.UnionIter{}, iter, i)
+		} else {
+			require.IsType(t, &mock.MockedIter{}, iter, i)
+		}
+
+		if !c.nilSess {
+			require.Equal(t, 1, len(retriever.GetInvokes()), i)
+			require.Equal(t, method, retriever.GetInvokes()[0].Method, i)
+			require.Equal(t, c.args[0], retriever.GetInvokes()[0].Args[0].(kv.Key), i)
+			if !c.reverse {
+				require.Equal(t, c.args[1], retriever.GetInvokes()[0].Args[1].(kv.Key), i)
+			}
+		}
+
+		if !c.nilSnap {
+			require.Equal(t, 1, len(snap.GetInvokes()), i)
+			require.Equal(t, method, snap.GetInvokes()[0].Method, i)
+			require.Equal(t, c.args[0], snap.GetInvokes()[0].Args[0].(kv.Key), i)
+			if !c.reverse {
+				require.Equal(t, c.args[1], snap.GetInvokes()[0].Args[1].(kv.Key), i)
+			}
+		}
+
+		result := make([]kv.Entry, 0)
+		for iter.Valid() {
+			result = append(result, kv.Entry{Key: iter.Key(), Value: iter.Value()})
+			require.NoError(t, iter.Next(), i)
+		}
+		require.Equal(t, c.result, result, i)
+
+		retriever.ResetInvokes()
+		snap.ResetInvokes()
+	}
+}
+
+func TestErrorCreateUnionIter(t *testing.T) {
+	t.Parallel()
+	retriever := newMockedRetriever(t).SetAllowedMethod("Iter", "IterReverse").SetData([]*kv.Entry{
+		{Key: kv.Key("k1"), Value: []byte("")},
+	})
+	snap := newMockedSnapshot(newMockedRetriever(t).SetAllowedMethod("Iter", "IterReverse").SetData([]*kv.Entry{
+		{Key: kv.Key("k1"), Value: []byte("v1")},
+	}))
+
+	// test for not allow iter with lowerBound
+	iter, err := createUnionIter(retriever, snap, kv.Key("k1"), kv.Key("k2"), true)
+	require.Error(t, err, "k should be nil for iter reverse")
+	require.Nil(t, iter)
+	require.Equal(t, 0, len(retriever.GetInvokes()))
+	require.Equal(t, 0, len(snap.GetInvokes()))
+
+	// test for iter next error
+	iterNextErr := errors.New("iterNextErr")
+	retriever.InjectMethodError("IterNext", iterNextErr)
+	iter, err = createUnionIter(retriever, snap, kv.Key("k1"), kv.Key("k2"), false)
+	require.Equal(t, iterNextErr, err)
+	require.Nil(t, iter)
+	checkCreatedIterClosed(t, retriever, snap, false)
+	retriever.ResetInvokes()
+	snap.ResetInvokes()
+
+	// test for iter reverse next error
+	iterReverseNextErr := errors.New("iterReverseNextErr")
+	retriever.InjectMethodError("IterReverseNext", iterReverseNextErr)
+	iter, err = createUnionIter(retriever, snap, nil, kv.Key("k2"), true)
+	require.Equal(t, iterReverseNextErr, err)
+	require.Nil(t, iter)
+	checkCreatedIterClosed(t, retriever, snap, true)
+	retriever.ResetInvokes()
+	snap.ResetInvokes()
+
+	// test for creating session iter error occurs
+	sessionIterErr := errors.New("sessionIterErr")
+	retriever.InjectMethodError("Iter", sessionIterErr)
+
+	iter, err = createUnionIter(retriever, snap, kv.Key("k1"), kv.Key("k2"), false)
+	require.Equal(t, sessionIterErr, err)
+	require.Nil(t, iter)
+	checkCreatedIterClosed(t, retriever, snap, false)
+	retriever.ResetInvokes()
+	snap.ResetInvokes()
+
+	iter, err = createUnionIter(retriever, nil, kv.Key("k1"), kv.Key("k2"), false)
+	require.Equal(t, sessionIterErr, err)
+	require.Nil(t, iter)
+	checkCreatedIterClosed(t, retriever, snap, false)
+	retriever.ResetInvokes()
+	snap.ResetInvokes()
+
+	// test for creating session reverse iter occurs
+	sessionIterReverseErr := errors.New("sessionIterReverseErr")
+	retriever.InjectMethodError("IterReverse", sessionIterReverseErr)
+
+	iter, err = createUnionIter(retriever, snap, nil, kv.Key("k2"), true)
+	require.Equal(t, sessionIterReverseErr, err)
+	require.Nil(t, iter)
+	checkCreatedIterClosed(t, retriever, snap, true)
+	retriever.ResetInvokes()
+	snap.ResetInvokes()
+
+	iter, err = createUnionIter(retriever, snap, nil, kv.Key("k2"), true)
+	require.Equal(t, sessionIterReverseErr, err)
+	require.Nil(t, iter)
+	checkCreatedIterClosed(t, retriever, snap, true)
+	retriever.ResetInvokes()
+	snap.ResetInvokes()
+
+	// test for creating snap iter error occurs
+	snapIterErr := errors.New("snapIterError")
+	snap.InjectMethodError("Iter", snapIterErr)
+
+	iter, err = createUnionIter(nil, snap, kv.Key("k1"), kv.Key("k2"), false)
+	require.Equal(t, snapIterErr, err)
+	require.Nil(t, iter)
+	checkCreatedIterClosed(t, retriever, snap, false)
+	retriever.ResetInvokes()
+	snap.ResetInvokes()
+
+	iter, err = createUnionIter(nil, snap, kv.Key("k1"), kv.Key("k2"), false)
+	require.Equal(t, snapIterErr, err)
+	require.Nil(t, iter)
+	checkCreatedIterClosed(t, retriever, snap, false)
+	retriever.ResetInvokes()
+	snap.ResetInvokes()
+
+	// test for creating snap reverse iter error occurs
+	snapIterReverseErr := errors.New("snapIterError")
+	snap.InjectMethodError("IterReverse", snapIterReverseErr)
+
+	iter, err = createUnionIter(nil, snap, nil, kv.Key("k2"), true)
+	require.Equal(t, snapIterReverseErr, err)
+	require.Nil(t, iter)
+	checkCreatedIterClosed(t, retriever, snap, true)
+	retriever.ResetInvokes()
+	snap.ResetInvokes()
+
+	iter, err = createUnionIter(nil, snap, nil, kv.Key("k2"), true)
+	require.Equal(t, snapIterReverseErr, err)
+	require.Nil(t, iter)
+	checkCreatedIterClosed(t, retriever, snap, true)
+	retriever.ResetInvokes()
+	snap.ResetInvokes()
+}
+
+func checkCreatedIterClosed(t *testing.T, retriever *mockedRetriever, snap *mockedSnapshot, reverse bool) {
+	method := "Iter"
+	if reverse {
+		method = "IterReverse"
+	}
+
+	require.True(t, len(retriever.GetInvokes()) <= 1)
+	for _, invoke := range retriever.GetInvokes() {
+		require.Equal(t, method, invoke.Method)
+		err := invoke.Ret[1]
+		if err == nil {
+			require.NotNil(t, invoke.Ret[0])
+			iter := invoke.Ret[0].(*mock.MockedIter)
+			require.True(t, iter.Closed())
+		}
+	}
+
+	require.True(t, len(snap.GetInvokes()) <= 1)
+	for _, invoke := range snap.GetInvokes() {
+		require.Equal(t, method, invoke.Method)
+		err := invoke.Ret[1]
+		if err == nil {
+			require.NotNil(t, invoke.Ret[0])
+			iter := invoke.Ret[0].(*mock.MockedIter)
+			require.True(t, iter.Closed())
+		}
+	}
 }
