@@ -22,6 +22,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testEncryptSuite{})
@@ -38,23 +39,21 @@ func toHex(buf []byte) string {
 	return strings.ToUpper(hex.EncodeToString(buf))
 }
 
-func (s *testEncryptSuite) TestPad(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestPad(t *testing.T) {
 	p := []byte{0x0A, 0x0B, 0x0C, 0x0D}
 	p, err := PKCS7Pad(p, 8)
-	c.Assert(err, IsNil)
-	c.Assert(toHex(p), Equals, "0A0B0C0D04040404")
+	require.NoError(t, err)
+	require.Equal(t, "0A0B0C0D04040404", toHex(p))
 
 	p = []byte{0x0A, 0x0B, 0x0C, 0x0D, 0x0A, 0x0B, 0x0C, 0x0D}
 	p, err = PKCS7Pad(p, 8)
-	c.Assert(err, IsNil)
-	c.Assert(toHex(p), Equals, "0A0B0C0D0A0B0C0D0808080808080808")
+	require.NoError(t, err)
+	require.Equal(t, "0A0B0C0D0A0B0C0D0808080808080808", toHex(p))
 
 	p = []byte{0x0A, 0x0B, 0x0C, 0x0D}
 	p, err = PKCS7Pad(p, 16)
-	c.Assert(err, IsNil)
-	c.Assert(toHex(p), Equals, "0A0B0C0D0C0C0C0C0C0C0C0C0C0C0C0C")
+	require.NoError(t, err)
+	require.Equal(t, "0A0B0C0D0C0C0C0C0C0C0C0C0C0C0C0C", toHex(p))
 }
 
 func (s *testEncryptSuite) TestUnpad(c *C) {
