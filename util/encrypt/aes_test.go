@@ -121,8 +121,7 @@ func TestUnpad(t *testing.T) {
 	require.Error(t, err)
 }
 
-func (s *testEncryptSuite) TestAESECB(c *C) {
-	defer testleak.AfterTest(c)()
+func TestAESECB(t *testing.T) {
 	var commonInput = []byte{
 		0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a,
 		0xae, 0x2d, 0x8a, 0x57, 0x1e, 0x03, 0xac, 0x9c, 0x9e, 0xb7, 0x6f, 0xac, 0x45, 0xaf, 0x8e, 0x51,
@@ -184,17 +183,17 @@ func (s *testEncryptSuite) TestAESECB(c *C) {
 		test := tt.name
 
 		cipher, err := aes.NewCipher(tt.key)
-		c.Assert(err, IsNil, Commentf("%s: NewCipher(%d bytes) = %s", test, len(tt.key), err))
+		require.NoErrorf(t, err, "%s: NewCipher(%d bytes) = %s", test, len(tt.key), err)
 
 		encrypter := newECBEncrypter(cipher)
 		d := make([]byte, len(tt.in))
 		encrypter.CryptBlocks(d, tt.in)
-		c.Assert(toHex(tt.out), Equals, toHex(d), Commentf("%s: ECBEncrypter\nhave %x\nwant %x", test, d, tt.out))
+		require.Equalf(t, toHex(tt.out), toHex(d), "%s: ECBEncrypter\nhave %x\nwant %x", test, d, tt.out)
 
 		decrypter := newECBDecrypter(cipher)
 		p := make([]byte, len(d))
 		decrypter.CryptBlocks(p, d)
-		c.Assert(toHex(tt.in), Equals, toHex(p), Commentf("%s: ECBDecrypter\nhave %x\nwant %x", test, d, tt.in))
+		require.Equalf(t, toHex(tt.in), toHex(p), "%s: ECBDecrypter\nhave %x\nwant %x", test, p, tt.in)
 	}
 }
 
