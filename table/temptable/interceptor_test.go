@@ -584,6 +584,7 @@ func TestInterceptorBatchGetTemporaryTableKeys(t *testing.T) {
 		{
 			keys: []kv.Key{
 				encodeTableKey(5),
+				encodeTableKey(5, 2),
 				encodeTableKey(5, 'n'),
 				encodeTableKey(8, 1),
 			},
@@ -611,6 +612,7 @@ func TestInterceptorBatchGetTemporaryTableKeys(t *testing.T) {
 				tablecodec.TablePrefix(),
 				encodeTableKey(5),
 				encodeTableKey(1),
+				encodeTableKey(5, 2),
 				encodeTableKey(5, 'n'),
 				encodeTableKey(8, 1),
 			},
@@ -735,6 +737,7 @@ func TestInterceptorOnBatchGet(t *testing.T) {
 				encodeTableKey(3),
 				encodeTableKey(5),
 				encodeTableKey(5, 1),
+				encodeTableKey(5, 2),
 			},
 			snapKeys: nil,
 			result: map[string][]byte{
@@ -778,6 +781,7 @@ func TestInterceptorOnBatchGet(t *testing.T) {
 				tablecodec.TablePrefix(),
 				encodeTableKey(5),
 				encodeTableKey(1),
+				encodeTableKey(5, 2),
 				encodeTableKey(5, 'n'),
 				encodeTableKey(1, 'n'),
 			},
