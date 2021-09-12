@@ -365,8 +365,7 @@ func TestAESDecryptWithOFB(t *testing.T) {
 	}
 }
 
-func (s *testEncryptSuite) TestAESDecryptWithCBC(c *C) {
-	defer testleak.AfterTest(c)()
+func TestAESDecryptWithCBC(t *testing.T) {
 	tests := []struct {
 		expect      string
 		key         string
@@ -388,18 +387,18 @@ func (s *testEncryptSuite) TestAESDecryptWithCBC(c *C) {
 		{"", "1234567890123456", "1234567890123456", "1122334455667711223311223344556611", true},
 	}
 
-	for _, t := range tests {
-		cryptStr, _ := hex.DecodeString(t.hexCryptStr)
-		key := []byte(t.key)
-		iv := []byte(t.iv)
+	for _, tt := range tests {
+		cryptStr, _ := hex.DecodeString(tt.hexCryptStr)
+		key := []byte(tt.key)
+		iv := []byte(tt.iv)
 
 		result, err := AESDecryptWithCBC(cryptStr, key, iv)
-		if t.isError {
-			c.Assert(err, NotNil)
+		if tt.isError {
+			require.Error(t, err)
 			continue
 		}
-		c.Assert(err, IsNil)
-		c.Assert(string(result), Equals, t.expect)
+		require.NoError(t, err)
+		require.Equal(t, tt.expect, string(result))
 	}
 }
 
