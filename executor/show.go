@@ -1331,7 +1331,9 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 		fmt.Fprintf(buf, " %s", dbInfo.DirectPlacementOpts)
 	}
 	if dbInfo.PlacementPolicyRef != nil {
-		fmt.Fprintf(buf, " PLACEMENT POLICY %s", stringutil.Escape(dbInfo.PlacementPolicyRef.Name.O, sqlMode))
+		fmt.Fprintf(buf, " PLACEMENT POLICY = '%s'", dbInfo.PlacementPolicyRef.Name.O)
+		// FIXME: Support properly quoted policy names in the parser!
+		//fmt.Fprintf(buf, " PLACEMENT POLICY = %s", stringutil.Escape(dbInfo.PlacementPolicyRef.Name.O, sqlMode))
 	}
 	return nil
 }
