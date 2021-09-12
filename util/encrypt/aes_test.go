@@ -197,8 +197,7 @@ func TestAESECB(t *testing.T) {
 	}
 }
 
-func (s *testEncryptSuite) TestAESEncryptWithECB(c *C) {
-	defer testleak.AfterTest(c)()
+func TestAESEncryptWithECB(t *testing.T) {
 	tests := []struct {
 		str     string
 		key     string
@@ -215,18 +214,18 @@ func (s *testEncryptSuite) TestAESEncryptWithECB(c *C) {
 		{"pingcap", "123456789012345", "", true},
 	}
 
-	for _, t := range tests {
-		str := []byte(t.str)
-		key := []byte(t.key)
+	for _, tt := range tests {
+		str := []byte(tt.str)
+		key := []byte(tt.key)
 
 		crypted, err := AESEncryptWithECB(str, key)
-		if t.isError {
-			c.Assert(err, NotNil, Commentf("%v", t))
+		if tt.isError {
+			require.Errorf(t, err, "%v", tt)
 			continue
 		}
-		c.Assert(err, IsNil, Commentf("%v", t))
+		require.NoErrorf(t, err, "%v", tt)
 		result := toHex(crypted)
-		c.Assert(result, Equals, t.expect, Commentf("%v", t))
+		require.Equalf(t, tt.expect, result, "%v", tt)
 	}
 }
 
