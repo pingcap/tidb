@@ -1909,3 +1909,30 @@ func (s *testTableSuite) TestReferentialConstraints(c *C) {
 
 	tk.MustQuery(`SELECT * FROM information_schema.referential_constraints WHERE table_name='t2'`).Check(testkit.Rows("def referconstraints fk_to_t1 def referconstraints PRIMARY NONE NO ACTION NO ACTION t2 t1"))
 }
+
+func (s *testTableSuite) TestIssue26379(c *C) {
+	tk := s.newTestKitWithRoot(c)
+
+	// Clear all statements.
+	tk.MustExec("set session tidb_enable_stmt_summary = 0")
+	tk.MustExec("set session tidb_enable_stmt_summary = ''")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), c int, d int, key k(a))")
+
+	_, digest1 := parser.NormalizeDigest("select * from t where a = 3")
+	_, digest2 := parser.NormalizeDigest("select * from t where b = 'b'")
+	_, digest3 := parser.NormalizeDigest("select * from t where c = 6")
+	_, digest4 := parser.NormalizeDigest("select * from t where d = 5")
+	tk.MustQuery("select * from t where a = 3")
+	tk.MustQuery("select * from t where b = 'b'")
+	tk.MustQuery("select * from t where c = 6")
+	tk.MustQuery("select * from t where d = 5")
+	tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s'", digest1.String())).Check(testkit.Rows(digest1.String()))
+	tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s'", digest2.String())).Check(testkit.Rows(digest2.String()))
+	tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s'", digest3.String())).Check(testkit.Rows(digest3.String()))
+	tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s'", digest4.String())).Check(testkit.Rows(digest4.String()))
+	tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s' or digest = '%s'", digest1.String(), digest2.String())).Sort().Check(testkit.Rows(digest1.String(), digest2.String()))
+	c.Assert(len(tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest = '%s' and digest = '%s'", digest1.String(), digest2.String())).Rows()), Equals, 0)
+	tk.MustQuery(fmt.Sprintf("select digest from information_schema.statements_summary where digest in ('%s', '%s', '%s', '%s')", digest1.String(), digest2.String(), digest3.String(), digest4.String())).Sort().Check(testkit.Rows(digest1.String(), digest4.String(), digest2.String(), digest3.String()))
+}
