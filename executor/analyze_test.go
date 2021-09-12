@@ -558,11 +558,7 @@ func (s *testSuite1) TestIssue15752(c *C) {
 	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
 }
 
-<<<<<<< HEAD
-func (s *testSuite1) TestAnalyzeIndex(c *C) {
-=======
 func (s *testSerialSuite2) TestAnalyzeIndex(c *C) {
->>>>>>> f8d420b2c... executor: fix several analyze related unstable tests (#26875)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -601,12 +597,7 @@ func (s *testSerialSuite2) TestAnalyzeIncrementalStreaming(c *C) {
 	s.testAnalyzeIncremental(tk, c)
 }
 
-<<<<<<< HEAD
-func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
-=======
-// nolint:unused
 func (s *testSerialSuite2) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
->>>>>>> f8d420b2c... executor: fix several analyze related unstable tests (#26875)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, primary key(a), index idx(b))")
