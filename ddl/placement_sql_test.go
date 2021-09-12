@@ -727,6 +727,7 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 		tk.MustExec("drop schema if exists SchemaDirectPlacementTest")
 		tk.MustExec("drop schema if exists SchemaPolicyPlacementTest")
 		tk.MustExec("drop placement policy if exists PolicySchemaTest")
+		tk.MustExec("drop placement policy if exists PolicyTableTest")
 		tk.Se.GetSessionVars().EnableAlterPlacement = false
 	}()
 
@@ -734,9 +735,55 @@ func (s *testDBSuite6) TestCreateSchemaWithPlacement(c *C) {
 	tk.MustQuery("SHOW CREATE SCHEMA schemadirectplacementtest").Check(testkit.Rows("SchemaDirectPlacementTest CREATE DATABASE `SchemaDirectPlacementTest` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ PRIMARY_REGION=\"nl\" REGIONS=\"se,nz\" FOLLOWERS=3"))
 
 	tk.MustExec(`CREATE PLACEMENT POLICY PolicySchemaTest LEADER_CONSTRAINTS = "[+region=nl]" FOLLOWER_CONSTRAINTS="[+region=se]" FOLLOWERS=4 LEARNER_CONSTRAINTS="[+region=be]" LEARNERS=4`)
+	tk.MustExec(`CREATE PLACEMENT POLICY PolicyTableTest LEADER_CONSTRAINTS = "[+region=tl]" FOLLOWER_CONSTRAINTS="[+region=tf]" FOLLOWERS=2 LEARNER_CONSTRAINTS="[+region=tle]" LEARNERS=1`)
 	tk.MustQuery("SHOW PLACEMENT like 'POLICY %PolicySchemaTest%'").Check(testkit.Rows("POLICY PolicySchemaTest LEADER_CONSTRAINTS=\"[+region=nl]\" FOLLOWERS=4 FOLLOWER_CONSTRAINTS=\"[+region=se]\" LEARNERS=4 LEARNER_CONSTRAINTS=\"[+region=be]\" SCHEDULED"))
+	tk.MustQuery("SHOW PLACEMENT like 'POLICY %PolicyTableTest%'").Check(testkit.Rows("POLICY PolicyTableTest LEADER_CONSTRAINTS=\"[+region=tl]\" FOLLOWERS=2 FOLLOWER_CONSTRAINTS=\"[+region=tf]\" LEARNERS=1 LEARNER_CONSTRAINTS=\"[+region=tle]\" SCHEDULED"))
 	tk.MustExec(`CREATE SCHEMA SchemaPolicyPlacementTest PLACEMENT POLICY = 'PolicySchemaTest'`)
 	tk.MustQuery("SHOW CREATE SCHEMA SCHEMAPOLICYPLACEMENTTEST").Check(testkit.Rows("SchemaPolicyPlacementTest CREATE DATABASE `SchemaPolicyPlacementTest` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ PLACEMENT POLICY = 'PolicySchemaTest'"))
+
+	tk.MustExec(`CREATE TABLE SchemaDirectPlacementTest.UseSchemaDefault (a int unsigned primary key, b varchar(255))`)
+	tk.MustQuery(`SHOW CREATE TABLE SchemaDirectPlacementTest.UseSchemaDefault`).Check(testkit.Rows(
+		"UseSchemaDefault CREATE TABLE `UseSchemaDefault` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `b` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"nl\" REGIONS=\"se,nz\" FOLLOWERS=3 */"))
+	tk.MustExec(`CREATE TABLE SchemaDirectPlacementTest.UseDirectPlacement (a int unsigned primary key, b varchar(255)) PRIMARY_REGION="se"`)
+	tk.MustQuery(`SHOW CREATE TABLE SchemaDirectPlacementTest.UseDirectPlacement`).Check(testkit.Rows(
+		"UseDirectPlacement CREATE TABLE `UseDirectPlacement` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `b` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"se\" */"))
+	tk.MustExec(`CREATE TABLE SchemaDirectPlacementTest.UsePolicy (a int unsigned primary key, b varchar(255)) PLACEMENT POLICY = "PolicyTableTest"`)
+	tk.MustQuery(`SHOW CREATE TABLE SchemaDirectPlacementTest.UsePolicy`).Check(testkit.Rows(
+		"UsePolicy CREATE TABLE `UsePolicy` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `b` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`PolicyTableTest` */"))
+
+	tk.MustExec(`CREATE TABLE SchemaPolicyPlacementTest.UseSchemaDefault (a int unsigned primary key, b varchar(255))`)
+	tk.MustQuery(`SHOW CREATE TABLE SchemaPolicyPlacementTest.UseSchemaDefault`).Check(testkit.Rows(
+		"UseSchemaDefault CREATE TABLE `UseSchemaDefault` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `b` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`PolicySchemaTest` */"))
+	tk.MustExec(`CREATE TABLE SchemaPolicyPlacementTest.UseDirectPlacement (a int unsigned primary key, b varchar(255)) PRIMARY_REGION="se"`)
+	tk.MustQuery(`SHOW CREATE TABLE SchemaPolicyPlacementTest.UseDirectPlacement`).Check(testkit.Rows(
+		"UseDirectPlacement CREATE TABLE `UseDirectPlacement` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `b` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PRIMARY_REGION=\"se\" */"))
+	tk.MustExec(`CREATE TABLE SchemaPolicyPlacementTest.UsePolicy (a int unsigned primary key, b varchar(255)) PLACEMENT POLICY = "PolicyTableTest"`)
+	tk.MustQuery(`SHOW CREATE TABLE SchemaPolicyPlacementTest.UsePolicy`).Check(testkit.Rows(
+		"UsePolicy CREATE TABLE `UsePolicy` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `b` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`PolicyTableTest` */"))
 
 	is := s.dom.InfoSchema()
 

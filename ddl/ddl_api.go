@@ -1727,13 +1727,13 @@ func buildTableInfoWithLike(ctx sessionctx.Context, ident ast.Ident, referTblInf
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionID are left as uninitialized value.
 func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
-	return buildTableInfoWithCheck(mock.NewContext(), s, mysql.DefaultCharset, "")
+	return buildTableInfoWithCheck(mock.NewContext(), s, mysql.DefaultCharset, "", nil, nil)
 }
 
 // buildTableInfoWithCheck builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionIDs are left as uninitialized value.
-func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
-	tbInfo, err := buildTableInfoWithStmt(ctx, s, dbCharset, dbCollate)
+func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings) (*model.TableInfo, error) {
+	tbInfo, err := buildTableInfoWithStmt(ctx, s, dbCharset, dbCollate, placementPolicyRef, directPlacementOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -1750,7 +1750,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 }
 
 // BuildSessionTemporaryTableInfo builds model.TableInfo from a SQL statement.
-func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSchema, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
+func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSchema, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings) (*model.TableInfo, error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	//build tableInfo
 	var tbInfo *model.TableInfo
@@ -1768,13 +1768,13 @@ func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSc
 		}
 		tbInfo, err = buildTableInfoWithLike(ctx, ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithCheck(ctx, s, dbCharset, dbCollate)
+		tbInfo, err = buildTableInfoWithCheck(ctx, s, dbCharset, dbCollate, placementPolicyRef, directPlacementOpts)
 	}
 	return tbInfo, err
 }
 
 // buildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
-func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string) (*model.TableInfo, error) {
+func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo, directPlacementOpts *model.PlacementSettings) (*model.TableInfo, error) {
 	colDefs := s.Cols
 	tableCharset, tableCollate, err := getCharsetAndCollateInTableOption(0, s.Options)
 	if err != nil {
@@ -1811,14 +1811,25 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 		return nil, errors.Trace(err)
 	}
 
+	if err = handleTableOptions(s.Options, tbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if tbInfo.PlacementPolicyRef == nil && tbInfo.DirectPlacementOpts == nil {
+		// Set the defaults from Schema. Note: they are mutual exlusive!
+		if placementPolicyRef != nil {
+			tbInfo.PlacementPolicyRef = placementPolicyRef
+		} else if directPlacementOpts != nil {
+			tbInfo.DirectPlacementOpts = directPlacementOpts
+		}
+	}
+
+	// After handleTableOptions, so the partitions can get defaults from Table level
 	err = buildTablePartitionInfo(ctx, s.Partition, tbInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	if err = handleTableOptions(s.Options, tbInfo); err != nil {
-		return nil, errors.Trace(err)
-	}
 	return tbInfo, nil
 }
 
@@ -1868,7 +1879,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if s.ReferTable != nil {
 		tbInfo, err = buildTableInfoWithLike(ctx, ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate)
+		tbInfo, err = buildTableInfoWithStmt(ctx, s, schema.Charset, schema.Collate, schema.PlacementPolicyRef, schema.DirectPlacementOpts)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -5962,7 +5973,7 @@ func (d *ddl) RepairTable(ctx sessionctx.Context, table *ast.TableName, createSt
 	}
 
 	// It is necessary to specify the table.ID and partition.ID manually.
-	newTableInfo, err := buildTableInfoWithCheck(ctx, createStmt, oldTableInfo.Charset, oldTableInfo.Collate)
+	newTableInfo, err := buildTableInfoWithCheck(ctx, createStmt, oldTableInfo.Charset, oldTableInfo.Collate, oldTableInfo.PlacementPolicyRef, oldTableInfo.DirectPlacementOpts)
 	if err != nil {
 		return errors.Trace(err)
 	}
