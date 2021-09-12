@@ -2398,17 +2398,77 @@ func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
 
 	tk.MustQuery("SHOW GRANTS FOR current_user() USING otherrole;").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'joe'@'%'",
-		"GRANT UPDATE ON role.* TO 'joe'@'%'",
 		"GRANT SELECT ON test.* TO 'joe'@'%'",
+		"GRANT UPDATE ON role.* TO 'joe'@'%'",
 		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
 		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
 	))
 	tk.MustQuery("SHOW GRANTS FOR joe USING otherrole;").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'joe'@'%'",
-		"GRANT UPDATE ON role.* TO 'joe'@'%'",
 		"GRANT SELECT ON test.* TO 'joe'@'%'",
+		"GRANT UPDATE ON role.* TO 'joe'@'%'",
 		"GRANT DELETE ON mysql.user TO 'joe'@'%'",
 		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
 	))
 
+}
+
+func TestGrantPlacementAdminDynamicPriv(t *testing.T) {
+	t.Parallel()
+	store, clean := newStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE placement_db")
+	tk.MustExec("USE placement_db")
+	tk.MustExec("CREATE TABLE placement_table (a int)")
+	tk.MustExec("CREATE USER placement_user")
+	tk.MustExec("GRANT PLACEMENT_ADMIN ON *.* TO placement_user")
+	// Must set a session user to avoid null pointer dereferencing
+	tk.Session().Auth(&auth.UserIdentity{
+		Username: "root",
+		Hostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery("SHOW GRANTS FOR placement_user").Check(testkit.Rows(
+		`GRANT USAGE ON *.* TO 'placement_user'@'%'`,
+		`GRANT PLACEMENT_ADMIN ON *.* TO 'placement_user'@'%'`))
+	tk.MustExec("DROP USER placement_user")
+	tk.MustExec("DROP DATABASE placement_db")
+}
+
+func TestPlacementPolicyStmt(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+	se := newSession(t, store, dbName)
+	mustExec(t, se, "drop placement policy if exists x")
+	createStmt := "create placement policy x PRIMARY_REGION=\"cn-east-1\" "
+	dropStmt := "drop placement policy if exists x"
+
+	// high privileged user setting password for other user (passes)
+	mustExec(t, se, "CREATE USER super_user, placement_user, empty_user")
+	mustExec(t, se, "GRANT ALL ON *.* TO super_user")
+	mustExec(t, se, "GRANT PLACEMENT_ADMIN ON *.* TO placement_user")
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "empty_user", Hostname: "localhost"}, nil, nil))
+	_, err := se.ExecuteInternal(context.Background(), createStmt)
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or PLACEMENT_ADMIN privilege(s) for this operation")
+	_, err = se.ExecuteInternal(context.Background(), dropStmt)
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or PLACEMENT_ADMIN privilege(s) for this operation")
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "super_user", Hostname: "localhost"}, nil, nil))
+	mustExec(t, se, createStmt)
+	mustExec(t, se, dropStmt)
+
+	require.True(t, se.Auth(&auth.UserIdentity{Username: "placement_user", Hostname: "localhost"}, nil, nil))
+	mustExec(t, se, createStmt)
+	mustExec(t, se, dropStmt)
+
+}
+
+func TestDBNameCaseSensitivityInTableLevel(t *testing.T) {
+	store, clean := newStore(t)
+	defer clean()
+	se := newSession(t, store, dbName)
+	mustExec(t, se, "CREATE USER test_user")
+	mustExec(t, se, "grant select on metrics_schema.up to test_user;")
 }
