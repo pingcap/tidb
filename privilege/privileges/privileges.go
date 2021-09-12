@@ -150,9 +150,6 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 			switch priv {
 			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
 				return false
-			// TODO: remove this and update the test cases.
-			case mysql.SelectPriv:
-				return true
 			}
 		}
 	case util.MetricSchemaName.L:
