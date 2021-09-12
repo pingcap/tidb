@@ -251,7 +251,7 @@ func getKeyAccessedTableID(k kv.Key) (int64, bool) {
 }
 
 func safeWithSnapshotScan(k, upperBound kv.Key) bool {
-	prefix := tablecodec.TablePrefix()
-	return (bytes.Compare(k, prefix) > 0 && !bytes.HasPrefix(k, prefix)) ||
-		(len(upperBound) > 0 && bytes.Compare(upperBound, prefix) < 0)
+	tblPrefix := tablecodec.TablePrefix()
+	return bytes.Compare(k, tblPrefix) > 0 && !bytes.HasPrefix(k, tblPrefix) ||
+		len(upperBound) > 0 && bytes.Compare(upperBound, tblPrefix) < 0
 }
