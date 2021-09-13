@@ -27,8 +27,10 @@ func init() {
 		"testCTCSerialSuiteWrapper.TestColumnTypeChangeFromStringToOthers",
 		"testSerialDBSuite.TestCommitTxnWithIndexChange",
 		"testSerialDBSuite.TestDuplicateErrorMessage",
-		"testFailDBSuite.TestAddIndexFailed",
-		"testFailDBSuite.TestAddIndexWorkerNum",
+		"TestAddIndexFailed",
+		"TestAddIndexWorkerNum",
+		"TestAddIndexWorkerNum/EnableClusteredIndex",
+		"TestAddIndexWorkerNum/DisableClusteredIndex",
 		"pkgTestSuite.TestAggPartialResultMapperB",
 		"testFastAnalyze.TestFastAnalyzeRetryRowCount",
 		"testSuite2.TestAddIndexPriority",
@@ -100,6 +102,7 @@ func init() {
 		"testDBSuite1.TestAddIndexWithSplitTable",
 		"testSerialDBSuite.TestAddIndexWithShardRowID",
 		"testColumnTypeChangeSuite.TestColumnTypeChangeFromDateTimeTypeToOthers",
+		"testSerialDBSuite1.TestAddPartitionReplicaBiggerThanTiFlashStores",
 		"TestMemStoreConcurrent",
 	}
 	for _, v := range tmp {
