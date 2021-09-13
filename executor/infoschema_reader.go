@@ -2823,21 +2823,20 @@ func (e *memtableRetriever) setDataForRegionLabel(ctx sessionctx.Context) error 
 }
 
 func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	// TODO: Which input arguments are needed?
-	// TODO: What fields should be there and where should the data come from?
-	// TODO: What privileges will be needed?
-	// TODO: Add data from setDataFromTables for DirectPlacementRef where set for each table! (Any way to process a big catalog of tables?)
-	// Same logic as setDataForPlacementPolicy but different output
 	checker := privilege.GetPrivilegeManager(sctx)
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	var rows [][]types.Datum
 
 	// Get global PLACEMENT POLICIES
+	// Currently no privileges needed for seeing global PLACEMENT POLICIES!
 	for _, policy := range is.AllPlacementPolicies() {
-		//fmt.Println("Policy %v ?", policy)
 		// Did we say that we would skip syntactic sugar?
 		// I proposed it to be transformed, xhebox proposed to keep it :)
 		// How about to do both, then one can see if syntactic sugar was used?
+
+		// TODO: if PrimaryRegion or Regions are set,
+		// also convert them to LeaderConstraints and FollowerConstraints
+		// for better user experience searching for particular constraints
 
 		row := types.MakeDatums(
 			policy.ID,
@@ -2876,13 +2875,33 @@ func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx 
 				continue
 			}
 			anyTablePriv = true
-			if table.GetPartitionInfo() != nil {
-				// TODO: how to get DIRECT PLACEMENT from a partition?
+			// TODO: get DIRECT PLACEMENT from partitions
+			/* if table.GetPartitionInfo() != nil {
 				for _, pi := range table.GetPartitionInfo().Definitions {
-					// does pi have DirectPlacementRef?
-					fmt.Printf("%v\n", pi)
+					if pi.DirectPlacementOpts != nil {
+						record := types.MakeDatums(
+							nil,                   // PLACEMENT POLICY ID, null since direct placement
+							infoschema.CatalogVal, // CATALOG
+							nil,                   // PLACEMENT POLICY, null since direct placement
+							schema.Name.O,         // SCHEMA
+							table.Name.O,          // TABLE
+							pi.Name.O,             // PARTITION
+							pi.DirectPlacementOpts.PrimaryRegion,
+							pi.DirectPlacementOpts.Regions,
+							pi.DirectPlacementOpts.Constraints,
+							pi.DirectPlacementOpts.LeaderConstraints,
+							pi.DirectPlacementOpts.VoterConstraints,
+							pi.DirectPlacementOpts.FollowerConstraints,
+							pi.DirectPlacementOpts.LearnerConstraints,
+							pi.DirectPlacementOpts.Schedule,
+							pi.DirectPlacementOpts.Voters,
+							pi.DirectPlacementOpts.Followers,
+							pi.DirectPlacementOpts.Learners,
+						)
+						rows = append(rows, record)
+					}
 				}
-			}
+			} */
 			if table.DirectPlacementOpts == nil {
 				continue
 			}
@@ -2907,12 +2926,35 @@ func (e *memtableRetriever) setDataFromPlacementRules(ctx context.Context, sctx 
 			)
 			rows = append(rows, record)
 		}
-		// TODO: add test for privileges per schema
-		// Any privilege on global level, the schema or any table within that schema should allow showing the direct placement rules for that schema (on schema level)
+		// Any privilege on global level, the schema or any table within that schema
+		// should allow showing the direct placement rules for that schema (on schema level)
 		if !anyTablePriv && checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
 			continue
 		}
-		// TODO: how to get DIRECT PLACEMENT from a schema?
+		// TODO: get DIRECT PLACEMENT from schema
+		/* if schema.DirectPlacementOpts != nil {
+			record := types.MakeDatums(
+				nil,                   // PLACEMENT POLICY ID, null since direct placement
+				infoschema.CatalogVal, // CATALOG
+				nil,                   // PLACEMENT POLICY, null since direct placement
+				schema.Name.O,         // SCHEMA
+				nil,                   // TABLE
+				nil,                   // PARTITION
+				schema.DirectPlacementOpts.PrimaryRegion,
+				schema.DirectPlacementOpts.Regions,
+				schema.DirectPlacementOpts.Constraints,
+				schema.DirectPlacementOpts.LeaderConstraints,
+				schema.DirectPlacementOpts.VoterConstraints,
+				schema.DirectPlacementOpts.FollowerConstraints,
+				schema.DirectPlacementOpts.LearnerConstraints,
+				schema.DirectPlacementOpts.Schedule,
+				schema.DirectPlacementOpts.Voters,
+				schema.DirectPlacementOpts.Followers,
+				schema.DirectPlacementOpts.Learners,
+			)
+			rows = append(rows, record)
+
+		} */
 	}
 
 	e.rows = rows
