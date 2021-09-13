@@ -540,7 +540,11 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
 	}
 
-	autoIncID, autoRandID, err := e.getTableAutoIDsFromSnapshot(job)
+	m, err := domain.GetDomain(e.ctx).GetSnapshotMeta(job.StartTS)
+	if err != nil {
+		return err
+	}
+	autoIDs, err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Get()
 	if err != nil {
 		return err
 	}
@@ -550,32 +554,13 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
 		SnapshotTS:    job.StartTS,
-		CurAutoIncID:  autoIncID,
-		CurAutoRandID: autoRandID,
+		AutoIDs:       autoIDs,
 		OldSchemaName: job.SchemaName,
 		OldTableName:  tblInfo.Name.L,
 	}
 	// Call DDL RecoverTable.
 	err = domain.GetDomain(e.ctx).DDL().RecoverTable(e.ctx, recoverInfo)
 	return err
-}
-
-func (e *DDLExec) getTableAutoIDsFromSnapshot(job *model.Job) (autoIncID, autoRandID int64, err error) {
-	// Get table original autoIDs before table drop.
-	dom := domain.GetDomain(e.ctx)
-	m, err := dom.GetSnapshotMeta(job.StartTS)
-	if err != nil {
-		return 0, 0, err
-	}
-	autoIncID, err = m.GetAutoTableID(job.SchemaID, job.TableID)
-	if err != nil {
-		return 0, 0, errors.Errorf("recover table_id: %d, get original autoIncID from snapshot meta err: %s", job.TableID, err.Error())
-	}
-	autoRandID, err = m.GetAutoRandomID(job.SchemaID, job.TableID)
-	if err != nil {
-		return 0, 0, errors.Errorf("recover table_id: %d, get original autoRandID from snapshot meta err: %s", job.TableID, err.Error())
-	}
-	return autoIncID, autoRandID, nil
 }
 
 func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
@@ -722,7 +707,11 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been flashback to '%-.192s', can't be flashback repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
 	}
 
-	autoIncID, autoRandID, err := e.getTableAutoIDsFromSnapshot(job)
+	m, err := domain.GetDomain(e.ctx).GetSnapshotMeta(job.StartTS)
+	if err != nil {
+		return err
+	}
+	autoIDs, err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Get()
 	if err != nil {
 		return err
 	}
@@ -731,8 +720,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		TableInfo:     tblInfo,
 		DropJobID:     job.ID,
 		SnapshotTS:    job.StartTS,
-		CurAutoIncID:  autoIncID,
-		CurAutoRandID: autoRandID,
+		AutoIDs:       autoIDs,
 		OldSchemaName: job.SchemaName,
 		OldTableName:  s.Table.Name.L,
 	}
