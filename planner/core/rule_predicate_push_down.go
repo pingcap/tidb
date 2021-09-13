@@ -73,13 +73,6 @@ func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expressio
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
-<<<<<<< HEAD
-	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
-	retConditions, child := p.children[0].PredicatePushDown(append(canBePushDown, predicates...))
-	retConditions = append(retConditions, canNotBePushDown...)
-=======
-	predicates = DeleteTrueExprs(p, predicates)
-	p.Conditions = DeleteTrueExprs(p, p.Conditions)
 	var child LogicalPlan
 	var retConditions []expression.Expression
 	if p.buildByHaving {
@@ -90,7 +83,6 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 		retConditions, child = p.children[0].PredicatePushDown(append(canBePushDown, predicates...))
 		retConditions = append(retConditions, canNotBePushDown...)
 	}
->>>>>>> 09ebd0d70... planner: fix wrong selection push down when having above agg (#27021)
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
 		// Return table dual when filter is constant false or null.
