@@ -59,7 +59,7 @@ const (
 	msgErrConnectPD = "connect PD err: %v. Establish a cluster with PD & TiKV, and provide PD client path by `--pd=<ip:port>[,<ip:port>]"
 )
 
-// TestGlobakKillSuite is used for automated test of "Global Kill" feature.
+// GlobakKillSuite is used for automated test of "Global Kill" feature.
 // See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
 type GlobalKillSuite struct {
 	pdCli *clientv3.Client
@@ -87,16 +87,6 @@ func createGloabalKillSuite(t *testing.T) (s *GlobalKillSuite, clean func()) {
 	}
 
 	return
-}
-
-func (s *GlobalKillSuite) TearDownSuite(t *testing.T) {
-	var err error
-	if s.pdCli != nil {
-		err = s.pdCli.Close()
-		require.NoError(t, err)
-	}
-	err = s.cleanCluster()
-	require.NoError(t, err)
 }
 
 func (s *GlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
