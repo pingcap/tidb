@@ -178,7 +178,7 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 	if r.Sctx.GetSessionVars().EnableRedactLog {
 		logutil.Logger(ctx).Error("indexLookup found data inconsistency",
 			zap.String("table_name", r.Tbl.Name.O),
-			zap.String("index", r.Idx.Name.O),
+			zap.String("index_name", r.Idx.Name.O),
 			zap.Int("index_cnt", idxCnt),
 			zap.Int("table_cnt", tblCnt))
 	} else {
