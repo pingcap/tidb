@@ -259,6 +259,9 @@ var (
 	// ErrInvalidPlacementPolicyCheck is returned when txn_scope and commit data changing do not meet the placement policy
 	ErrInvalidPlacementPolicyCheck = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyCheck)
 
+	// ErrPlacementPolicyWithDirectOption is returned when create/alter table with both placement policy and placement options existed.
+	ErrPlacementPolicyWithDirectOption = dbterror.ClassDDL.NewStd(mysql.ErrPlacementPolicyWithDirectOption)
+
 	// ErrMultipleDefConstInListPart returns multiple definition of same constant in list partitioning.
 	ErrMultipleDefConstInListPart = dbterror.ClassDDL.NewStd(mysql.ErrMultipleDefConstInListPart)
 

@@ -886,6 +886,8 @@ func (ts *tidbTestSerialSuite) TestTLSAuto(c *C) {
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = true
 	cfg.Security.RSAKeySize = 528 // Reduces unittest runtime
+	err := os.MkdirAll(cfg.TempStoragePath, 0700)
+	c.Assert(err, IsNil)
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	cli.port = getPortFromTCPAddr(server.listener.Addr())
