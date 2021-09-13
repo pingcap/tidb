@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -188,6 +189,7 @@ type clientConn struct {
 	authPlugin   string            // default authentication plugin
 	isUnixSocket bool              // connection is Unix Socket file
 	textDumper   *textDumper
+	encoding     *charset.Encoding
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -1949,7 +1951,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 		column.DefaultValue = []byte{}
 
 		data = data[0:4]
-		data = column.Dump(data, cc.textDumper.transform)
+		data = column.Dump(data, cc.textDumper.encode)
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}
@@ -2003,10 +2005,7 @@ func (cc *clientConn) loadCharsetResults(ctx context.Context, sysVars *variable.
 	if err != nil {
 		logutil.Logger(ctx).Info("get character_set_results system variable failed", zap.Error(err))
 	}
-	if cc.textDumper == nil {
-		cc.textDumper = &textDumper{}
-	}
-	cc.textDumper.updateCharset(chs)
+	cc.textDumper.encoding.UpdateEncoding(charset.Format(chs))
 }
 
 func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
@@ -2017,7 +2016,7 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 	}
 	for _, v := range columns {
 		data = data[0:4]
-		data = v.Dump(data, cc.textDumper.transform)
+		data = v.Dump(data, cc.textDumper.encode)
 		if err := cc.writePacket(data); err != nil {
 			return err
 		}

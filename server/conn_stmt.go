@@ -87,7 +87,7 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 	if len(params) > 0 {
 		for i := 0; i < len(params); i++ {
 			data = data[0:4]
-			data = params[i].Dump(data, cc.textDumper.transform)
+			data = params[i].Dump(data, cc.textDumper.encode)
 
 			if err := cc.writePacket(data); err != nil {
 				return err
@@ -102,7 +102,7 @@ func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 	if len(columns) > 0 {
 		for i := 0; i < len(columns); i++ {
 			data = data[0:4]
-			data = columns[i].Dump(data, cc.textDumper.transform)
+			data = columns[i].Dump(data, cc.textDumper.encode)
 
 			if err := cc.writePacket(data); err != nil {
 				return err

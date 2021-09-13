@@ -51,8 +51,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	"golang.org/x/text/encoding"
-	"golang.org/x/text/transform"
 )
 
 func parseNullTermString(b []byte) (str []byte, remain []byte) {
@@ -285,55 +283,25 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 }
 
 type textDumper struct {
-	name    string
-	encoder *encoding.Encoder
-	buf     []byte
+	encoding charset.Encoding
 }
 
-func (d *textDumper) updateCharset(chs string) {
-	enc, name := charset.Lookup(chs)
-	d.name = name
-	if enc != nil && name != "utf-8" {
-		d.encoder = enc.NewEncoder()
-	}
-	if len(d.buf) == 0 {
-		d.buf = make([]byte, 32)
-	}
-}
-
-func (d *textDumper) transform(src []byte) []byte {
-	if d.encoder == nil {
+func (d *textDumper) encode(src []byte) []byte {
+	if !d.encoding.Enabled() {
 		return src
 	}
-	if d.name == charset.CharsetBinary {
+	if d.encoding.Name() == charset.CharsetBinary {
 		return []byte(fmt.Sprintf("%X", string(src)))
 	}
-	var dstOffset, srcOffset int
-	for {
-		nDst, nSrc, err := d.encoder.Transform(d.buf[dstOffset:], src[srcOffset:], false)
-		dstOffset += nDst
-		srcOffset += nSrc
-		if err == nil {
-			if srcOffset >= len(src) {
-				return d.buf[:dstOffset]
-			}
-		} else if err == transform.ErrShortDst {
-			newDest := make([]byte, len(d.buf)*2)
-			copy(newDest, d.buf)
-			d.buf = newDest
-		} else {
-			d.buf[dstOffset] = byte('?')
-			dstOffset += 1
-			srcOffset += 1
-		}
-	}
+	result, _ := d.encoding.Encode(src)
+	return hack.Slice(result)
 }
 
 func (d *textDumper) dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
 	tmp := make([]byte, 0, 20)
-	originCharset := d.name
-	defer d.updateCharset(originCharset)
-	charsetResultIsNull := len(d.name) == 0
+	originCharset := charset.Formatted(d.encoding.Name())
+	defer d.encoding.UpdateEncoding(originCharset)
+	charsetResultIsNull := len(originCharset) == 0
 	for i, col := range columns {
 		if row.IsNull(i) {
 			buffer = append(buffer, 0xfb)
@@ -344,7 +312,7 @@ func (d *textDumper) dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk
 			if err != nil {
 				chs = ""
 			}
-			d.updateCharset(chs)
+			d.encoding.UpdateEncoding(charset.Formatted(chs))
 		}
 		switch col.Type {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
@@ -384,18 +352,18 @@ func (d *textDumper) dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-			buffer = dumpLengthEncodedString(buffer, d.transform(row.GetBytes(i)))
+			buffer = dumpLengthEncodedString(buffer, d.encode(row.GetBytes(i)))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetTime(i).String()))
 		case mysql.TypeDuration:
 			dur := row.GetDuration(i, int(col.Decimal))
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(dur.String()))
 		case mysql.TypeEnum:
-			buffer = dumpLengthEncodedString(buffer, d.transform(hack.Slice(row.GetEnum(i).String())))
+			buffer = dumpLengthEncodedString(buffer, d.encode(hack.Slice(row.GetEnum(i).String())))
 		case mysql.TypeSet:
-			buffer = dumpLengthEncodedString(buffer, d.transform(hack.Slice(row.GetSet(i).String())))
+			buffer = dumpLengthEncodedString(buffer, d.encode(hack.Slice(row.GetSet(i).String())))
 		case mysql.TypeJSON:
-			buffer = dumpLengthEncodedString(buffer, d.transform(hack.Slice(row.GetJSON(i).String())))
+			buffer = dumpLengthEncodedString(buffer, d.encode(hack.Slice(row.GetJSON(i).String())))
 		default:
 			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)
 		}
