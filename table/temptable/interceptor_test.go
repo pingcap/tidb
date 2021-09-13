@@ -1266,8 +1266,8 @@ func TestIterTable(t *testing.T) {
 			result: []kv.Entry{
 				{Key: encodeTableKey(5), Value: []byte("v5")},
 				{Key: encodeTableKey(5, 0), Value: []byte("v50")},
-				{Key: encodeTableKey(5, 1), Value: []byte("v51")},
 				{Key: encodeTableKey(5, 0, 1), Value: []byte("v501")},
+				{Key: encodeTableKey(5, 1), Value: []byte("v51")},
 			},
 		},
 		{
@@ -1341,6 +1341,381 @@ func TestIterTable(t *testing.T) {
 	retrieverErr := errors.New("retrieverErr")
 	retriever.InjectMethodError("Iter", retrieverErr)
 	iter, err = interceptor.iterTable(5, snap, encodeTableKey(5), encodeTableKey(6))
+	require.Nil(t, iter)
+	require.Equal(t, retrieverErr, err)
+}
+
+func TestOnIter(t *testing.T) {
+	t.Parallel()
+	is := newMockedInfoSchema(t).
+		AddTable(model.TempTableNone, 1).
+		AddTable(model.TempTableGlobal, 3).
+		AddTable(model.TempTableLocal, 5)
+
+	noTempTableData := []*kv.Entry{
+		// normal table data
+		{Key: encodeTableKey(1), Value: []byte("v1")},
+		{Key: encodeTableKey(1, 1), Value: []byte("v11")},
+		// no exist table data
+		{Key: encodeTableKey(2), Value: []byte("v2")},
+		{Key: encodeTableKey(2, 1), Value: []byte("v21")},
+		// other data
+		{Key: kv.Key("s"), Value: []byte("vs")},
+		{Key: kv.Key("s0"), Value: []byte("vs0")},
+		{Key: kv.Key("u"), Value: []byte("vu")},
+		{Key: kv.Key("u0"), Value: []byte("vu0")},
+		{Key: tablecodec.TablePrefix(), Value: []byte("vt")},
+		{Key: encodeTableKey(0), Value: []byte("v0")},
+		{Key: encodeTableKey(0, 1), Value: []byte("v01")},
+		{Key: encodeTableKey(math.MaxInt64), Value: []byte("vm")},
+		{Key: encodeTableKey(math.MaxInt64, 1), Value: []byte("vm1")},
+	}
+
+	localTempTableData := []*kv.Entry{
+		{Key: encodeTableKey(5), Value: []byte("v5")},
+		{Key: encodeTableKey(5, 0), Value: []byte("v50")},
+		{Key: encodeTableKey(5, 1), Value: []byte("v51")},
+		{Key: encodeTableKey(5, 0, 1), Value: []byte("v501")},
+		{Key: encodeTableKey(5, 2), Value: []byte("")},
+		{Key: encodeTableKey(5, 3), Value: nil},
+	}
+	retriever := newMockedRetriever(t).SetData(localTempTableData).SetAllowedMethod("Iter")
+	snap := newMockedSnapshot(newMockedRetriever(t).SetData(noTempTableData).SetAllowedMethod("Iter"))
+	interceptor := NewTemporaryTableSnapshotInterceptor(is, retriever)
+	emptyRetrieverInterceptor := NewTemporaryTableSnapshotInterceptor(is, nil)
+
+	cases := []struct {
+		nilSession bool
+		args       []kv.Key
+		result     []kv.Entry
+	}{
+		{
+			args: []kv.Key{nil, nil},
+			result: []kv.Entry{
+				{Key: kv.Key("s"), Value: []byte("vs")},
+				{Key: kv.Key("s0"), Value: []byte("vs0")},
+				{Key: tablecodec.TablePrefix(), Value: []byte("vt")},
+				{Key: encodeTableKey(0), Value: []byte("v0")},
+				{Key: encodeTableKey(0, 1), Value: []byte("v01")},
+				{Key: encodeTableKey(1), Value: []byte("v1")},
+				{Key: encodeTableKey(1, 1), Value: []byte("v11")},
+				{Key: encodeTableKey(2), Value: []byte("v2")},
+				{Key: encodeTableKey(2, 1), Value: []byte("v21")},
+				{Key: encodeTableKey(5), Value: []byte("v5")},
+				{Key: encodeTableKey(5, 0), Value: []byte("v50")},
+				{Key: encodeTableKey(5, 0, 1), Value: []byte("v501")},
+				{Key: encodeTableKey(5, 1), Value: []byte("v51")},
+				{Key: encodeTableKey(math.MaxInt64), Value: []byte("vm")},
+				{Key: encodeTableKey(math.MaxInt64, 1), Value: []byte("vm1")},
+				{Key: kv.Key("u"), Value: []byte("vu")},
+				{Key: kv.Key("u0"), Value: []byte("vu0")},
+			},
+		},
+		{
+			args: []kv.Key{nil, kv.Key("s0")},
+			result: []kv.Entry{
+				{Key: kv.Key("s"), Value: []byte("vs")},
+			},
+		},
+		{
+			args: []kv.Key{kv.Key("u"), nil},
+			result: []kv.Entry{
+				{Key: kv.Key("u"), Value: []byte("vu")},
+				{Key: kv.Key("u0"), Value: []byte("vu0")},
+			},
+		},
+		{
+			args: []kv.Key{encodeTableKey(1), nil},
+			result: []kv.Entry{
+				{Key: encodeTableKey(1), Value: []byte("v1")},
+				{Key: encodeTableKey(1, 1), Value: []byte("v11")},
+				{Key: encodeTableKey(2), Value: []byte("v2")},
+				{Key: encodeTableKey(2, 1), Value: []byte("v21")},
+				{Key: encodeTableKey(5), Value: []byte("v5")},
+				{Key: encodeTableKey(5, 0), Value: []byte("v50")},
+				{Key: encodeTableKey(5, 0, 1), Value: []byte("v501")},
+				{Key: encodeTableKey(5, 1), Value: []byte("v51")},
+				{Key: encodeTableKey(math.MaxInt64), Value: []byte("vm")},
+				{Key: encodeTableKey(math.MaxInt64, 1), Value: []byte("vm1")},
+				{Key: kv.Key("u"), Value: []byte("vu")},
+				{Key: kv.Key("u0"), Value: []byte("vu0")},
+			},
+		},
+		{
+			args: []kv.Key{nil, encodeTableKey(1, 1)},
+			result: []kv.Entry{
+				{Key: kv.Key("s"), Value: []byte("vs")},
+				{Key: kv.Key("s0"), Value: []byte("vs0")},
+				{Key: tablecodec.TablePrefix(), Value: []byte("vt")},
+				{Key: encodeTableKey(0), Value: []byte("v0")},
+				{Key: encodeTableKey(0, 1), Value: []byte("v01")},
+				{Key: encodeTableKey(1), Value: []byte("v1")},
+			},
+		},
+		{
+			args: []kv.Key{encodeTableKey(1), encodeTableKey(2)},
+			result: []kv.Entry{
+				{Key: encodeTableKey(1), Value: []byte("v1")},
+				{Key: encodeTableKey(1, 1), Value: []byte("v11")},
+			},
+		},
+		{
+			args: []kv.Key{encodeTableKey(1), encodeTableKey(3)},
+			result: []kv.Entry{
+				{Key: encodeTableKey(1), Value: []byte("v1")},
+				{Key: encodeTableKey(1, 1), Value: []byte("v11")},
+				{Key: encodeTableKey(2), Value: []byte("v2")},
+				{Key: encodeTableKey(2, 1), Value: []byte("v21")},
+			},
+		},
+		{
+			args:   []kv.Key{encodeTableKey(3), encodeTableKey(4)},
+			result: []kv.Entry{},
+		},
+		{
+			args: []kv.Key{encodeTableKey(5), encodeTableKey(5, 3)},
+			result: []kv.Entry{
+				{Key: encodeTableKey(5), Value: []byte("v5")},
+				{Key: encodeTableKey(5, 0), Value: []byte("v50")},
+				{Key: encodeTableKey(5, 0, 1), Value: []byte("v501")},
+				{Key: encodeTableKey(5, 1), Value: []byte("v51")},
+			},
+		},
+		{
+			args:       []kv.Key{nil, nil},
+			nilSession: true,
+			result: []kv.Entry{
+				{Key: kv.Key("s"), Value: []byte("vs")},
+				{Key: kv.Key("s0"), Value: []byte("vs0")},
+				{Key: tablecodec.TablePrefix(), Value: []byte("vt")},
+				{Key: encodeTableKey(0), Value: []byte("v0")},
+				{Key: encodeTableKey(0, 1), Value: []byte("v01")},
+				{Key: encodeTableKey(1), Value: []byte("v1")},
+				{Key: encodeTableKey(1, 1), Value: []byte("v11")},
+				{Key: encodeTableKey(2), Value: []byte("v2")},
+				{Key: encodeTableKey(2, 1), Value: []byte("v21")},
+				{Key: encodeTableKey(math.MaxInt64), Value: []byte("vm")},
+				{Key: encodeTableKey(math.MaxInt64, 1), Value: []byte("vm1")},
+				{Key: kv.Key("u"), Value: []byte("vu")},
+				{Key: kv.Key("u0"), Value: []byte("vu0")},
+			},
+		},
+		{
+			args:       []kv.Key{encodeTableKey(5), encodeTableKey(5, 3)},
+			nilSession: true,
+			result:     []kv.Entry{},
+		},
+	}
+
+	for i, c := range cases {
+		inter := interceptor
+		if c.nilSession {
+			inter = emptyRetrieverInterceptor
+		}
+
+		iter, err := inter.OnIter(snap, c.args[0], c.args[1])
+		require.NoError(t, err, i)
+		require.NotNil(t, iter, i)
+		result := make([]kv.Entry, 0, i)
+		for iter.Valid() {
+			result = append(result, kv.Entry{Key: iter.Key(), Value: iter.Value()})
+			require.NoError(t, iter.Next(), i)
+		}
+		require.Equal(t, c.result, result, i)
+	}
+
+	// test error for snap
+	snapErr := errors.New("snapErr")
+	snap.InjectMethodError("Iter", snapErr)
+
+	iter, err := interceptor.OnIter(snap, nil, nil)
+	require.Nil(t, iter)
+	require.Equal(t, snapErr, err)
+
+	iter, err = interceptor.OnIter(snap, nil, kv.Key("o"))
+	require.Nil(t, iter)
+	require.Equal(t, snapErr, err)
+
+	iter, err = interceptor.OnIter(snap, encodeTableKey(4), encodeTableKey(5))
+	require.Nil(t, iter)
+	require.Equal(t, snapErr, err)
+
+	snap.InjectMethodError("Iter", nil)
+
+	// test error for retriever
+	retrieverErr := errors.New("retrieverErr")
+	retriever.InjectMethodError("Iter", retrieverErr)
+
+	iter, err = interceptor.OnIter(snap, nil, nil)
+	require.Nil(t, iter)
+	require.Equal(t, retrieverErr, err)
+
+	iter, err = interceptor.OnIter(snap, encodeTableKey(5), encodeTableKey(6))
+	require.Nil(t, iter)
+	require.Equal(t, retrieverErr, err)
+}
+
+func TestOnIterReverse(t *testing.T) {
+	t.Parallel()
+	is := newMockedInfoSchema(t).
+		AddTable(model.TempTableNone, 1).
+		AddTable(model.TempTableGlobal, 3).
+		AddTable(model.TempTableLocal, 5)
+
+	noTempTableData := []*kv.Entry{
+		// normal table data
+		{Key: encodeTableKey(1), Value: []byte("v1")},
+		{Key: encodeTableKey(1, 1), Value: []byte("v11")},
+		// no exist table data
+		{Key: encodeTableKey(2), Value: []byte("v2")},
+		{Key: encodeTableKey(2, 1), Value: []byte("v21")},
+		// other data
+		{Key: kv.Key("s"), Value: []byte("vs")},
+		{Key: kv.Key("s0"), Value: []byte("vs0")},
+		{Key: kv.Key("u"), Value: []byte("vu")},
+		{Key: kv.Key("u0"), Value: []byte("vu0")},
+		{Key: tablecodec.TablePrefix(), Value: []byte("vt")},
+		{Key: encodeTableKey(0), Value: []byte("v0")},
+		{Key: encodeTableKey(0, 1), Value: []byte("v01")},
+		{Key: encodeTableKey(math.MaxInt64), Value: []byte("vm")},
+		{Key: encodeTableKey(math.MaxInt64, 1), Value: []byte("vm1")},
+	}
+
+	localTempTableData := []*kv.Entry{
+		{Key: encodeTableKey(5), Value: []byte("v5")},
+		{Key: encodeTableKey(5, 0), Value: []byte("v50")},
+		{Key: encodeTableKey(5, 1), Value: []byte("v51")},
+		{Key: encodeTableKey(5, 0, 1), Value: []byte("v501")},
+		{Key: encodeTableKey(5, 2), Value: []byte("")},
+		{Key: encodeTableKey(5, 3), Value: nil},
+	}
+	retriever := newMockedRetriever(t).SetData(localTempTableData).SetAllowedMethod("IterReverse")
+	snap := newMockedSnapshot(newMockedRetriever(t).SetData(noTempTableData).SetAllowedMethod("IterReverse"))
+	interceptor := NewTemporaryTableSnapshotInterceptor(is, retriever)
+	emptyRetrieverInterceptor := NewTemporaryTableSnapshotInterceptor(is, nil)
+
+	cases := []struct {
+		nilSession bool
+		args       []kv.Key
+		result     []kv.Entry
+	}{
+		{
+			args: []kv.Key{nil},
+			result: []kv.Entry{
+				{Key: kv.Key("u0"), Value: []byte("vu0")},
+				{Key: kv.Key("u"), Value: []byte("vu")},
+				{Key: encodeTableKey(math.MaxInt64, 1), Value: []byte("vm1")},
+				{Key: encodeTableKey(math.MaxInt64), Value: []byte("vm")},
+				{Key: encodeTableKey(5, 1), Value: []byte("v51")},
+				{Key: encodeTableKey(5, 0, 1), Value: []byte("v501")},
+				{Key: encodeTableKey(5, 0), Value: []byte("v50")},
+				{Key: encodeTableKey(5), Value: []byte("v5")},
+				{Key: encodeTableKey(2, 1), Value: []byte("v21")},
+				{Key: encodeTableKey(2), Value: []byte("v2")},
+				{Key: encodeTableKey(1, 1), Value: []byte("v11")},
+				{Key: encodeTableKey(1), Value: []byte("v1")},
+				{Key: encodeTableKey(0, 1), Value: []byte("v01")},
+				{Key: encodeTableKey(0), Value: []byte("v0")},
+				{Key: tablecodec.TablePrefix(), Value: []byte("vt")},
+				{Key: kv.Key("s0"), Value: []byte("vs0")},
+				{Key: kv.Key("s"), Value: []byte("vs")},
+			},
+		},
+		{
+			args: []kv.Key{kv.Key("u")},
+			result: []kv.Entry{
+				{Key: encodeTableKey(math.MaxInt64, 1), Value: []byte("vm1")},
+				{Key: encodeTableKey(math.MaxInt64), Value: []byte("vm")},
+				{Key: encodeTableKey(5, 1), Value: []byte("v51")},
+				{Key: encodeTableKey(5, 0, 1), Value: []byte("v501")},
+				{Key: encodeTableKey(5, 0), Value: []byte("v50")},
+				{Key: encodeTableKey(5), Value: []byte("v5")},
+				{Key: encodeTableKey(2, 1), Value: []byte("v21")},
+				{Key: encodeTableKey(2), Value: []byte("v2")},
+				{Key: encodeTableKey(1, 1), Value: []byte("v11")},
+				{Key: encodeTableKey(1), Value: []byte("v1")},
+				{Key: encodeTableKey(0, 1), Value: []byte("v01")},
+				{Key: encodeTableKey(0), Value: []byte("v0")},
+				{Key: tablecodec.TablePrefix(), Value: []byte("vt")},
+				{Key: kv.Key("s0"), Value: []byte("vs0")},
+				{Key: kv.Key("s"), Value: []byte("vs")},
+			},
+		},
+		{
+			args: []kv.Key{encodeTableKey(5, 0, 1)},
+			result: []kv.Entry{
+				{Key: encodeTableKey(5, 0), Value: []byte("v50")},
+				{Key: encodeTableKey(5), Value: []byte("v5")},
+				{Key: encodeTableKey(2, 1), Value: []byte("v21")},
+				{Key: encodeTableKey(2), Value: []byte("v2")},
+				{Key: encodeTableKey(1, 1), Value: []byte("v11")},
+				{Key: encodeTableKey(1), Value: []byte("v1")},
+				{Key: encodeTableKey(0, 1), Value: []byte("v01")},
+				{Key: encodeTableKey(0), Value: []byte("v0")},
+				{Key: tablecodec.TablePrefix(), Value: []byte("vt")},
+				{Key: kv.Key("s0"), Value: []byte("vs0")},
+				{Key: kv.Key("s"), Value: []byte("vs")},
+			},
+		},
+		{
+			args: []kv.Key{kv.Key("s0")},
+			result: []kv.Entry{
+				{Key: kv.Key("s"), Value: []byte("vs")},
+			},
+		},
+		{
+			args:       []kv.Key{encodeTableKey(5, 0, 1)},
+			nilSession: true,
+			result: []kv.Entry{
+				{Key: encodeTableKey(2, 1), Value: []byte("v21")},
+				{Key: encodeTableKey(2), Value: []byte("v2")},
+				{Key: encodeTableKey(1, 1), Value: []byte("v11")},
+				{Key: encodeTableKey(1), Value: []byte("v1")},
+				{Key: encodeTableKey(0, 1), Value: []byte("v01")},
+				{Key: encodeTableKey(0), Value: []byte("v0")},
+				{Key: tablecodec.TablePrefix(), Value: []byte("vt")},
+				{Key: kv.Key("s0"), Value: []byte("vs0")},
+				{Key: kv.Key("s"), Value: []byte("vs")},
+			},
+		},
+	}
+
+	for i, c := range cases {
+		inter := interceptor
+		if c.nilSession {
+			inter = emptyRetrieverInterceptor
+		}
+
+		iter, err := inter.OnIterReverse(snap, c.args[0])
+		require.NoError(t, err, i)
+		require.NotNil(t, iter, i)
+		result := make([]kv.Entry, 0, i)
+		for iter.Valid() {
+			result = append(result, kv.Entry{Key: iter.Key(), Value: iter.Value()})
+			require.NoError(t, iter.Next(), i)
+		}
+		require.Equal(t, c.result, result, i)
+	}
+
+	// test error for snap
+	snapErr := errors.New("snapErr")
+	snap.InjectMethodError("IterReverse", snapErr)
+
+	iter, err := interceptor.OnIterReverse(snap, nil)
+	require.Nil(t, iter)
+	require.Equal(t, snapErr, err)
+
+	iter, err = interceptor.OnIterReverse(snap, kv.Key("o"))
+	require.Nil(t, iter)
+	require.Equal(t, snapErr, err)
+
+	snap.InjectMethodError("IterReverse", nil)
+
+	// test error for retriever
+	retrieverErr := errors.New("retrieverErr")
+	retriever.InjectMethodError("IterReverse", retrieverErr)
+
+	iter, err = interceptor.OnIterReverse(snap, nil)
 	require.Nil(t, iter)
 	require.Equal(t, retrieverErr, err)
 }

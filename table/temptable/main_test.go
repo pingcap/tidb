@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"testing"
 
 	"github.com/pingcap/parser/model"
@@ -122,6 +123,12 @@ func newMockedRetriever(t *testing.T) *mockedRetriever {
 }
 
 func (r *mockedRetriever) SetData(data []*kv.Entry) *mockedRetriever {
+	lessFunc := func(i, j int) bool { return bytes.Compare(data[i].Key, data[j].Key) < 0 }
+	if !sort.SliceIsSorted(data, lessFunc) {
+		data = append([]*kv.Entry{}, data...)
+		sort.Slice(data, lessFunc)
+	}
+
 	r.data = data
 	r.dataMap = make(map[string][]byte)
 	for _, item := range r.data {
