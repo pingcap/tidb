@@ -19,4 +19,24 @@ Table	Create Table
 һ	CREATE TABLE `һ` (
   `��` char(20) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+set names utf8mb4;
+create table t (a varchar(255) charset gbk, b varchar(255) charset utf8mb4);
+insert into t values ('一', '一');
+set @@character_set_results = null;
+select * from t;
+a	b
+һ	һ
+set @@character_set_results = BINARY;
+select * from t;
+61	62
+E4B880	E4B880
+set @@character_set_results = "BINARY";
+select * from t;
+61	62
+E4B880	E4B880
+set names utf8mb4;
+select * from t;
+a	b
+一	一
 set @@character_set_results = 'utf8mb4';

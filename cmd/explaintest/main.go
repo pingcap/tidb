@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"go.uber.org/zap"
@@ -278,6 +279,7 @@ func (t *tester) execute(query query) error {
 		return nil
 	}
 
+	collate.EnableNewCharset()
 	list, err := session.Parse(t.ctx, query.Query)
 	if err != nil {
 		return t.parserErrorHandle(query, err)

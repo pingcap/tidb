@@ -38,12 +38,14 @@ package server
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
@@ -288,9 +290,23 @@ type textDumper struct {
 	buf     []byte
 }
 
+func (d *textDumper) updateCharset(chs string) {
+	enc, name := charset.Lookup(chs)
+	d.name = name
+	if enc != nil && name != "utf-8" {
+		d.encoder = enc.NewEncoder()
+	}
+	if len(d.buf) == 0 {
+		d.buf = make([]byte, 32)
+	}
+}
+
 func (d *textDumper) transform(src []byte) []byte {
 	if d.encoder == nil {
 		return src
+	}
+	if d.name == charset.CharsetBinary {
+		return []byte(fmt.Sprintf("%X", string(src)))
 	}
 	var dstOffset, srcOffset int
 	for {
@@ -315,10 +331,20 @@ func (d *textDumper) transform(src []byte) []byte {
 
 func (d *textDumper) dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
 	tmp := make([]byte, 0, 20)
+	originCharset := d.name
+	defer d.updateCharset(originCharset)
+	charsetResultIsNull := len(d.name) == 0
 	for i, col := range columns {
 		if row.IsNull(i) {
 			buffer = append(buffer, 0xfb)
 			continue
+		}
+		if charsetResultIsNull {
+			chs, _, err := charset.GetCharsetInfoByID(int(col.Charset))
+			if err != nil {
+				chs = ""
+			}
+			d.updateCharset(chs)
 		}
 		switch col.Type {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
