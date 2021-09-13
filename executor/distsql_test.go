@@ -232,7 +232,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 		c.Assert(err, IsNil)
 
 		err = tk.QueryToErr("select * from t use index(idx_a) where a >= 0")
-		c.Assert(err.Error(), Equals, fmt.Sprintf("inconsistent index idx_a handle count %d isn't equal to value count 10", i+11))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[executor:8133]data inconsistency in table: t, index: idx_a, index-count:%d != record-count:10", i+11))
 
 		// if has other conditions, the inconsistent index check doesn't work.
 		err = tk.QueryToErr("select * from t where a>=0 and b<10")

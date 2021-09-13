@@ -1005,8 +1005,8 @@ const (
 	ErrMultiStatementDisabled              = 8130
 	ErrPartitionStatsMissing               = 8131
 	ErrNotSupportedWithSem                 = 8132
-	ErrDataInConsistentExtraIndex          = 8133
-	ErrDataInConsistentMisMatchIndex       = 8134
+	ErrDataInconsistentMismatchCount       = 8133
+	ErrDataInconsistentMismatchIndex       = 8134
 	ErrAsOf                                = 8135
 
 	// Error codes used by TiDB ddl package
@@ -1033,7 +1033,7 @@ const (
 	ErrWriteOnSnapshot                    = 8220
 	ErrInvalidKey                         = 8221
 	ErrInvalidIndexKey                    = 8222
-	ErrDataInConsistent                   = 8223
+	ErrDataInconsistent                   = 8223
 	ErrDDLJobNotFound                     = 8224
 	ErrCancelFinishedDDLJob               = 8225
 	ErrCannotCancelDDLJob                 = 8226
