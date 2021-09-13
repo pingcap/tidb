@@ -224,7 +224,7 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
 * /tidb/hotRegionsHistoryRetriver: test with three mock PD http servers.
 * /pd/HotRegionStorage: test read and write function.
 * /pd/GetHistoryHotRegions: test PD's http server function. 
-* /pd/TestHotWithHistoryRegions: test pd-ctl with mock hot regions.
+* /pd/TestHistoryHotRegions: test pd-ctl with mock hot regions.
 
 ### Scenario Tests
 
