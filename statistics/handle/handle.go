@@ -217,7 +217,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		if oldTbl, ok := oldCache.tables[physicalID]; ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
-		tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, false, 0)
+		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
 			logutil.BgLogger().Error("[stats] error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
@@ -531,8 +531,8 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 	return nil
 }
 
-// tableStatsFromStorage loads table stats info from storage.
-func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (_ *statistics.Table, err error) {
+// TableStatsFromStorage loads table stats info from storage.
+func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (_ *statistics.Table, err error) {
 	reader, err := h.getStatsReader(snapshot)
 	if err != nil {
 		return nil, err
@@ -705,6 +705,12 @@ func (h *Handle) histogramFromStorage(reader *statsReader, tableID int64, colID 
 		} else {
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
+			// When there's new collation data, the length of bounds of histogram(the collate key) might be
+			// longer than the FieldType.Flen of this column.
+			// We change it to TypeBlob to bypass the length check here.
+			if tp.EvalType() == types.ETString && tp.Tp != mysql.TypeEnum && tp.Tp != mysql.TypeSet {
+				tp = types.NewFieldType(mysql.TypeBlob)
+			}
 			lowerBound, err = d.ConvertTo(sc, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
