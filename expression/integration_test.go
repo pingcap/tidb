@@ -3117,6 +3117,19 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil> 4"))
 	result = tk.MustQuery("select * from t where b = case when a is null then 4 when  a = 'str5' then 7 else 9 end")
 	result.Check(testkit.Rows("<nil> 4"))
+	result = tk.MustQuery(`SELECT -Max(+23) * -+Cast(--10 AS SIGNED) * -CASE
+                                               WHEN 0 > 85 THEN NULL
+                                               WHEN NOT
+              CASE +55
+                WHEN +( +82 ) + -89 * -69 THEN +Count(-88)
+                WHEN +CASE 57
+                        WHEN +89 THEN -89 * Count(*)
+                        WHEN 17 THEN NULL
+                      END THEN ( -10 )
+              END IS NULL THEN NULL
+                                               ELSE 83 + 48
+                                             END AS col0; `)
+	result.Check(testkit.Rows("-30130"))
 
 	// return type of case when expr should not include NotNullFlag. issue-23036
 	tk.MustExec("drop table if exists t1")
@@ -9375,6 +9388,12 @@ func (s *testIntegrationSuite) TestEnumPushDown(c *C) {
 		Check(testkit.Rows("c"))
 	tk.MustQuery("select e from t where e > 2").
 		Check(testkit.Rows("a"))
+
+	tk.MustExec("drop table if exists tdm")
+	tk.MustExec("create table tdm(id int, `c12` enum('a','b','c'), PRIMARY KEY (`id`));")
+	tk.MustExec("insert into tdm values (1, 'a');")
+	tk.MustExec("update tdm set c12 = 2 where id = 1;")
+	tk.MustQuery("select * from tdm").Check(testkit.Rows("1 b"))
 }
 
 func (s *testIntegrationSuite) TestJiraSetInnoDBDefaultRowFormat(c *C) {
