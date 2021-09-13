@@ -951,3 +951,18 @@ func GetBuiltinList() []string {
 	sort.Strings(res)
 	return res
 }
+
+func (b *baseBuiltinFunc) setDecimalAndFlenForDatetime(fsp int) {
+	b.tp.Decimal = fsp
+	b.tp.Flen = mysql.MaxDatetimeWidthNoFsp + fsp
+	if fsp > 0 {
+		// For `.`
+		b.tp.Flen++
+	}
+}
+
+func (b *baseBuiltinFunc) setDecimalAndFlenForDate() {
+	b.tp.Decimal = 0
+	b.tp.Flen = mysql.MaxDateWidth
+	b.tp.Tp = mysql.TypeDate
+}

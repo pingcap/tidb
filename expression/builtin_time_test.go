@@ -1167,8 +1167,6 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	c.Assert(n.String(), GreaterEqual, last.Format(types.TimeFormat))
 
 	f, err = fc.getFunction(ctx, s.datumsToConstants(types.MakeDatums(-2)))
-	c.Assert(err, IsNil)
-	_, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, NotNil)
 }
 
