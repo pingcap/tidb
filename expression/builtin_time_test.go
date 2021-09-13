@@ -1166,7 +1166,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	n := v.GetMysqlTime()
 	c.Assert(n.String(), GreaterEqual, last.Format(types.TimeFormat))
 
-	f, err = fc.getFunction(ctx, s.datumsToConstants(types.MakeDatums(-2)))
+	_, err = fc.getFunction(ctx, s.datumsToConstants(types.MakeDatums(-2)))
 	c.Assert(err, NotNil)
 }
 
