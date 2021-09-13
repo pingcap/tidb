@@ -29,5 +29,4 @@ type StmtExecutor interface {
 type DBExecutor interface {
 	StmtExecutor
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
-
 }

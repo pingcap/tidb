@@ -345,7 +345,7 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 	}
 
 	// convert result into a map. fill in any missing variables with default values.
-	result := make(map[string]string, len(defaultImportantVariables) + len(defaultImportVariablesTiDB))
+	result := make(map[string]string, len(defaultImportantVariables)+len(defaultImportVariablesTiDB))
 	for _, kv := range kvs {
 		result[kv[0]] = kv[1]
 	}
