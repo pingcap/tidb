@@ -129,11 +129,11 @@ func (hp *hintParser) parse(input string, sqlMode mysql.SQLMode, initPos Pos) ([
 	hp.result = nil
 	hp.lexer.reset(input[3:])
 	hp.lexer.SetSQLMode(sqlMode)
-	hp.lexer.r.p = Pos{
+	hp.lexer.r.updatePos(Pos{
 		Line:   initPos.Line,
 		Col:    initPos.Col + 3, // skipped the initial '/*+'
 		Offset: 0,
-	}
+	})
 	hp.lexer.inBangComment = true // skip the final '*/' (we need the '*/' for reporting warnings)
 
 	yyhintParse(&hp.lexer, hp)
