@@ -46,6 +46,7 @@ var dynamicPrivs = []string{
 	"SYSTEM_VARIABLES_ADMIN",
 	"ROLE_ADMIN",
 	"CONNECTION_ADMIN",
+	"PLACEMENT_ADMIN",                 // Can Create/Drop/Alter PLACEMENT POLICY
 	"DASHBOARD_CLIENT",                // Can login to the TiDB-Dashboard.
 	"RESTRICTED_TABLES_ADMIN",         // Can see system tables when SEM is enabled
 	"RESTRICTED_STATUS_ADMIN",         // Can see all status vars when SEM is enabled.
@@ -144,14 +145,21 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		}
 		return true
 	// We should be very careful of limiting privileges, so ignore `mysql` for now.
-	case util.PerformanceSchemaName.L, util.MetricSchemaName.L:
-		if (dbLowerName == util.PerformanceSchemaName.L && perfschema.IsPredefinedTable(table)) ||
-			(dbLowerName == util.MetricSchemaName.L && infoschema.IsMetricTable(table)) {
+	case util.PerformanceSchemaName.L:
+		if perfschema.IsPredefinedTable(table) {
 			switch priv {
 			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
 				return false
+			}
+		}
+	case util.MetricSchemaName.L:
+		if infoschema.IsMetricTable(table) {
+			switch priv {
+			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+				return false
+			// PROCESS is the same with SELECT for metrics_schema.
 			case mysql.SelectPriv:
-				return true
+				priv |= mysql.ProcessPriv
 			}
 		}
 	}

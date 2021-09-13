@@ -19,6 +19,7 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -215,6 +216,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowBRIE(ast.BRIEKindRestore)
 	case ast.ShowPlacementLabels:
 		return e.fetchShowPlacementLabels(ctx)
+	case ast.ShowPlacement:
+		return e.fetchShowPlacement(ctx)
 	}
 	return nil
 }
@@ -1020,7 +1023,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	incrementAllocator := allocators.Get(autoid.RowIDAllocType)
 	if hasAutoIncID && incrementAllocator != nil {
-		autoIncID, err := incrementAllocator.NextGlobalAutoID(tableInfo.ID)
+		autoIncID, err := incrementAllocator.NextGlobalAutoID()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1037,7 +1040,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 
 	randomAllocator := allocators.Get(autoid.AutoRandomType)
 	if randomAllocator != nil {
-		autoRandID, err := randomAllocator.NextGlobalAutoID(tableInfo.ID)
+		autoRandID, err := randomAllocator.NextGlobalAutoID()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1063,6 +1066,12 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " ON COMMIT DELETE ROWS")
 	}
 
+	if tableInfo.PlacementPolicyRef != nil {
+		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=`%s` */", tableInfo.PlacementPolicyRef.Name.String())
+	}
+
+	// add direct placement info here
+	appendDirectPlacementInfo(tableInfo.DirectPlacementOpts, buf)
 	// add partition info here.
 	appendPartitionInfo(tableInfo.Partition, buf)
 	return nil
@@ -1192,6 +1201,27 @@ func fetchShowCreateTable4View(ctx sessionctx.Context, tb *model.TableInfo, buf 
 		}
 	}
 	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
+}
+
+func appendDirectPlacementInfo(directPlacementOpts *model.PlacementSettings, buf *bytes.Buffer) {
+	if directPlacementOpts == nil {
+		return
+	}
+	opts := reflect.ValueOf(*directPlacementOpts)
+	typeOpts := opts.Type()
+	fmt.Fprintf(buf, " /*T![placement]")
+	for i := 0; i < opts.NumField(); i++ {
+		if !opts.Field(i).IsZero() {
+			v := opts.Field(i).Interface()
+			switch v.(type) {
+			case string:
+				fmt.Fprintf(buf, ` %s="%s"`, strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
+			case uint64:
+				fmt.Fprintf(buf, " %s=%d", strings.ToUpper(typeOpts.Field(i).Tag.Get("json")), v)
+			}
+		}
+	}
+	fmt.Fprintf(buf, " */")
 }
 
 func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) {

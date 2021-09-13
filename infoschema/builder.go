@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
-	"github.com/pingcap/tidb/util/placementpolicy"
 )
 
 // Builder builds a new InfoSchema.
@@ -55,6 +54,12 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyDropSchema(diff.SchemaID), nil
 	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
+	case model.ActionCreatePlacementPolicy:
+		return nil, b.applyCreatePolicy(m, diff)
+	case model.ActionDropPlacementPolicy:
+		return b.applyDropPolicy(diff.SchemaID), nil
+	case model.ActionAlterPlacementPolicy:
+		return b.applyAlterPolicy(m, diff)
 	}
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
@@ -242,6 +247,37 @@ func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
 	}
 }
 
+func (b *Builder) applyCreatePolicy(m *meta.Meta, diff *model.SchemaDiff) error {
+	po, err := m.GetPolicy(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if po == nil {
+		return ErrPlacementPolicyExists.GenWithStackByArgs(
+			fmt.Sprintf("(Policy ID %d)", diff.SchemaID),
+		)
+	}
+	b.is.policyMap[po.Name.L] = po
+	return nil
+}
+
+func (b *Builder) applyAlterPolicy(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	po, err := m.GetPolicy(diff.SchemaID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if po == nil {
+		return nil, ErrPlacementPolicyExists.GenWithStackByArgs(
+			fmt.Sprintf("(Policy ID %d)", diff.SchemaID),
+		)
+	}
+
+	b.is.policyMap[po.Name.L] = po
+	// TODO: return the policy related table ids
+	return []int64{}, nil
+}
+
 func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
@@ -273,6 +309,16 @@ func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.S
 	newDbInfo.Charset = di.Charset
 	newDbInfo.Collate = di.Collate
 	return nil
+}
+
+func (b *Builder) applyDropPolicy(PolicyID int64) []int64 {
+	po, ok := b.is.PolicyByID(PolicyID)
+	if !ok {
+		return nil
+	}
+	delete(b.is.policyMap, po.Name.L)
+	// TODO: return the policy related table ids
+	return []int64{}
 }
 
 func (b *Builder) applyDropSchema(schemaID int64) []int64 {
@@ -509,7 +555,7 @@ func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
 	is := b.is
 	is.policyMutex.Lock()
 	defer is.policyMutex.Unlock()
-	for _, v := range oldIS.PlacementPolicies() {
+	for _, v := range oldIS.AllPlacementPolicies() {
 		is.policyMap[v.Name.L] = v
 	}
 }
@@ -601,7 +647,7 @@ func NewBuilder(store kv.Storage) *Builder {
 		store: store,
 		is: &infoSchema{
 			schemaMap:           map[string]*schemaTables{},
-			policyMap:           map[string]*placementpolicy.PolicyInfo{},
+			policyMap:           map[string]*model.PolicyInfo{},
 			ruleBundleMap:       map[string]*placement.Bundle{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},
