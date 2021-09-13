@@ -24,9 +24,9 @@ import (
 )
 
 func TestRemoveDir(t *testing.T) {
-	t.Parallel()
 	path, err := os.MkdirTemp("", "tmp-storage-disk-pkg")
 	require.NoError(t, err)
+	defer config.RestoreFunc()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = path
 	})
