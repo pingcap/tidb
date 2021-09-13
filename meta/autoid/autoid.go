@@ -261,20 +261,14 @@ func (alloc *allocator) rebase4Unsigned(ctx context.Context, tableID int64, requ
 		return nil
 	}
 
-	var allocatorStats *AutoIDAllocatorRuntimeStats
-	ctxValue := ctx.Value(AutoIDAllocatorRuntimeStatsCtxKey)
-	if ctxValue != nil {
-		allocatorStats = ctxValue.(*AutoIDAllocatorRuntimeStats)
-		allocatorStats.rebaseCount++
-		var commitDetail *tikvutil.CommitDetails
-		ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
+	ctx, allocatorStats, commitDetail := getAllocatorStatsFromCtx(ctx)
+	if allocatorStats != nil {
 		defer func() {
 			if commitDetail != nil {
-				allocatorStats.mergeCommitDetail(commitDetail)
+				allocatorStats.mergeCommitDetail(*commitDetail)
 			}
 		}()
 	}
-
 	var newBase, newEnd uint64
 	startTime := time.Now()
 	err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
@@ -327,10 +321,10 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, tableID, requiredBase
 	}
 
 	var allocatorStats *AutoIDAllocatorRuntimeStats
-	ctxValue := ctx.Value(AutoIDAllocatorRuntimeStatsCtxKey)
+	ctxValue := ctx.Value(AllocatorRuntimeStatsCtxKey)
 	if ctxValue != nil {
 		allocatorStats = ctxValue.(*AutoIDAllocatorRuntimeStats)
-		allocatorStats.rebaseCount++
+		allocatorStats.allocCount++
 		var commitDetail *tikvutil.CommitDetails
 		ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
 		defer func() {
@@ -418,9 +412,9 @@ func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) (int64, boo
 	return requiredBase, false, err
 }
 
-type autoIDAllocatorRuntimeStatsCtxKeyType struct{}
+type allocatorRuntimeStatsCtxKeyType struct{}
 
-var AutoIDAllocatorRuntimeStatsCtxKey = autoIDAllocatorRuntimeStatsCtxKeyType{}
+var AllocatorRuntimeStatsCtxKey = allocatorRuntimeStatsCtxKeyType{}
 
 type AutoIDAllocatorRuntimeStats struct {
 	*txnsnapshot.SnapshotRuntimeStats
@@ -436,12 +430,13 @@ func NewAutoIDAllocatorRuntimeStats() *AutoIDAllocatorRuntimeStats {
 }
 
 func (e *AutoIDAllocatorRuntimeStats) mergeCommitDetail(detail *tikvutil.CommitDetails) {
-	if e.RuntimeStatsWithCommit == nil {
-		e.RuntimeStatsWithCommit = &execdetails.RuntimeStatsWithCommit{}
-		e.RuntimeStatsWithCommit.Commit = detail
+	if detail == nil {
 		return
 	}
-	e.RuntimeStatsWithCommit.Commit.Merge(detail)
+	if e.RuntimeStatsWithCommit == nil {
+		e.RuntimeStatsWithCommit = &execdetails.RuntimeStatsWithCommit{}
+	}
+	e.RuntimeStatsWithCommit.MergeCommitDetails(detail)
 }
 
 func (e *AutoIDAllocatorRuntimeStats) String() string {
@@ -856,19 +851,15 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, tableID int64, n uint6
 			nextStep = NextStep(alloc.step, consumeDur)
 		}
 
-		var allocatorStats *AutoIDAllocatorRuntimeStats
-		ctxValue := ctx.Value(AutoIDAllocatorRuntimeStatsCtxKey)
-		if ctxValue != nil {
-			allocatorStats = ctxValue.(*AutoIDAllocatorRuntimeStats)
-			allocatorStats.allocCount++
-			var commitDetail *tikvutil.CommitDetails
-			ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
+		ctx, allocatorStats, commitDetail := getAllocatorStatsFromCtx(ctx)
+		if allocatorStats != nil {
 			defer func() {
 				if commitDetail != nil {
-					allocatorStats.mergeCommitDetail(commitDetail)
+					allocatorStats.mergeCommitDetail(*commitDetail)
 				}
 			}()
 		}
+
 		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 				span1 := span.Tracer().StartSpan("alloc.alloc4Signed", opentracing.ChildOf(span.Context()))
@@ -948,19 +939,15 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, tableID int64, n uin
 			nextStep = NextStep(alloc.step, consumeDur)
 		}
 
-		var allocatorStats *AutoIDAllocatorRuntimeStats
-		ctxValue := ctx.Value(AutoIDAllocatorRuntimeStatsCtxKey)
-		if ctxValue != nil {
-			allocatorStats = ctxValue.(*AutoIDAllocatorRuntimeStats)
-			allocatorStats.allocCount++
-			var commitDetail *tikvutil.CommitDetails
-			ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
+		ctx, allocatorStats, commitDetail := getAllocatorStatsFromCtx(ctx)
+		if allocatorStats != nil {
 			defer func() {
 				if commitDetail != nil {
-					allocatorStats.mergeCommitDetail(commitDetail)
+					allocatorStats.mergeCommitDetail(*commitDetail)
 				}
 			}()
 		}
+
 		err := kv.RunInNewTxn(ctx, alloc.store, true, func(ctx context.Context, txn kv.Transaction) error {
 			if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 				span1 := span.Tracer().StartSpan("alloc.alloc4Unsigned", opentracing.ChildOf(span.Context()))
@@ -1014,6 +1001,18 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, tableID int64, n uin
 	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + uint64(n1))
 	return min, alloc.base, nil
+}
+
+func getAllocatorStatsFromCtx(ctx context.Context) (context.Context, *AutoIDAllocatorRuntimeStats, **tikvutil.CommitDetails) {
+	var allocatorStats *AutoIDAllocatorRuntimeStats
+	var commitDetail *tikvutil.CommitDetails
+	ctxValue := ctx.Value(AllocatorRuntimeStatsCtxKey)
+	if ctxValue != nil {
+		allocatorStats = ctxValue.(*AutoIDAllocatorRuntimeStats)
+		allocatorStats.allocCount++
+		ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
+	}
+	return ctx, allocatorStats, &commitDetail
 }
 
 // alloc4Sequence is used to alloc value for sequence, there are several aspects different from autoid logic.

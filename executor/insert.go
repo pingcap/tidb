@@ -306,7 +306,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if e.collectRuntimeStatsEnabled() {
-		ctx = context.WithValue(ctx, autoid.AutoIDAllocatorRuntimeStatsCtxKey, e.stats.AutoIDAllocatorRuntimeStats)
+		ctx = context.WithValue(ctx, autoid.AllocatorRuntimeStatsCtxKey, e.stats.AutoIDAllocatorRuntimeStats)
 	}
 
 	if len(e.children) > 0 && e.children[0] != nil {

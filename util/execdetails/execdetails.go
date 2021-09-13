@@ -763,6 +763,7 @@ func (e *RuntimeStatsWithConcurrencyInfo) Merge(_ RuntimeStats) {
 // RuntimeStatsWithCommit is the RuntimeStats with commit detail.
 type RuntimeStatsWithCommit struct {
 	Commit   *util.CommitDetails
+	TxnCnt   int
 	LockKeys *util.LockKeysDetails
 }
 
@@ -772,11 +773,26 @@ func (e *RuntimeStatsWithCommit) Tp() int {
 }
 
 // Merge implements the RuntimeStats interface.
+func (e *RuntimeStatsWithCommit) MergeCommitDetails(detail *util.CommitDetails) {
+	if detail == nil {
+		return
+	}
+	if e.Commit == nil {
+		e.Commit = detail
+		e.TxnCnt = 1
+		return
+	}
+	e.Commit.Merge(detail)
+	e.TxnCnt++
+}
+
+// Merge implements the RuntimeStats interface.
 func (e *RuntimeStatsWithCommit) Merge(rs RuntimeStats) {
 	tmp, ok := rs.(*RuntimeStatsWithCommit)
 	if !ok {
 		return
 	}
+	e.TxnCnt += tmp.TxnCnt
 	if tmp.Commit != nil {
 		if e.Commit == nil {
 			e.Commit = &util.CommitDetails{}
@@ -809,6 +825,12 @@ func (e *RuntimeStatsWithCommit) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
 	if e.Commit != nil {
 		buf.WriteString("commit_txn: {")
+		// Only print out when there are more than 1 transaction.
+		if e.TxnCnt > 1 {
+			buf.WriteString("count: ")
+			buf.WriteString(strconv.Itoa(e.TxnCnt))
+			buf.WriteString(", ")
+		}
 		if e.Commit.PrewriteTime > 0 {
 			buf.WriteString("prewrite:")
 			buf.WriteString(FormatDuration(e.Commit.PrewriteTime))
