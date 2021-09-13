@@ -459,7 +459,7 @@ func (e *UpdateExec) collectRuntimeStatsEnabled() bool {
 	return false
 }
 
-// updateRuntimeStats record the execution stats about update statements.
+// updateRuntimeStats is the execution stats about update statements.
 type updateRuntimeStats struct {
 	*txnsnapshot.SnapshotRuntimeStats
 	*autoid.AllocatorRuntimeStats

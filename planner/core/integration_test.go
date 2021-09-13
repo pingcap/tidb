@@ -2512,6 +2512,23 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML2(c *C) {
 			c.Assert(explain, Matches, ca.planRegexp, Commentf("sql: %v", ca.sql))
 		}
 	}
+
+	// Test for table without auto id.
+	for _, ca := range cases {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a bigint, b int);")
+		tk.MustExec("insert into t () values ()")
+		if ca.prepare != "" {
+			tk.MustExec(ca.prepare)
+		}
+		res := tk.MustQuery("explain analyze " + ca.sql)
+		resBuff := bytes.NewBufferString("")
+		for _, row := range res.Rows() {
+			fmt.Fprintf(resBuff, "%s\t", row)
+		}
+		explain := resBuff.String()
+		c.Assert(strings.Contains(explain, "allocator_stats"), IsFalse, Commentf("sql: %v, explain: %v", ca.sql, explain))
+	}
 }
 
 func (s *testIntegrationSuite) TestPartitionExplain(c *C) {

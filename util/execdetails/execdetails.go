@@ -772,7 +772,7 @@ func (e *RuntimeStatsWithCommit) Tp() int {
 	return TpRuntimeStatsWithCommit
 }
 
-// Merge implements the RuntimeStats interface.
+// MergeCommitDetails merges the commit details.
 func (e *RuntimeStatsWithCommit) MergeCommitDetails(detail *util.CommitDetails) {
 	if detail == nil {
 		return

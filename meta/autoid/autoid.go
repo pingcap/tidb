@@ -409,110 +409,6 @@ func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) (int64, boo
 	return requiredBase, false, err
 }
 
-type allocatorRuntimeStatsCtxKeyType struct{}
-
-var AllocatorRuntimeStatsCtxKey = allocatorRuntimeStatsCtxKeyType{}
-
-type AllocatorRuntimeStats struct {
-	*txnsnapshot.SnapshotRuntimeStats
-	*execdetails.RuntimeStatsWithCommit
-	allocCount  int
-	rebaseCount int
-}
-
-func NewAllocatorRuntimeStats() *AllocatorRuntimeStats {
-	return &AllocatorRuntimeStats{
-		SnapshotRuntimeStats: &txnsnapshot.SnapshotRuntimeStats{},
-	}
-}
-
-func (e *AllocatorRuntimeStats) mergeCommitDetail(detail *tikvutil.CommitDetails) {
-	if detail == nil {
-		return
-	}
-	if e.RuntimeStatsWithCommit == nil {
-		e.RuntimeStatsWithCommit = &execdetails.RuntimeStatsWithCommit{}
-	}
-	e.RuntimeStatsWithCommit.MergeCommitDetails(detail)
-}
-
-func (e *AllocatorRuntimeStats) String() string {
-	if e.allocCount == 0 && e.rebaseCount == 0 && e.SnapshotRuntimeStats == nil && e.RuntimeStatsWithCommit == nil {
-		return ""
-	}
-	var buf bytes.Buffer
-	buf.WriteString("allocator_stats: {")
-	initialSize := buf.Len()
-	if e.allocCount > 0 {
-		buf.WriteString("alloc_cnt: ")
-		buf.WriteString(strconv.FormatInt(int64(e.allocCount), 10))
-	}
-	if e.rebaseCount > 0 {
-		if buf.Len() > initialSize {
-			buf.WriteString(", ")
-		}
-		buf.WriteString("rebase_cnt: ")
-		buf.WriteString(strconv.FormatInt(int64(e.rebaseCount), 10))
-	}
-	if e.SnapshotRuntimeStats != nil {
-		stats := e.SnapshotRuntimeStats.String()
-		if stats != "" {
-			if buf.Len() > initialSize {
-				buf.WriteString(", ")
-			}
-			buf.WriteString(e.SnapshotRuntimeStats.String())
-		}
-	}
-	if e.RuntimeStatsWithCommit != nil {
-		stats := e.RuntimeStatsWithCommit.String()
-		if stats != "" {
-			if buf.Len() > initialSize {
-				buf.WriteString(", ")
-			}
-			buf.WriteString(stats)
-		}
-	}
-	buf.WriteString("}")
-	return buf.String()
-}
-
-// Clone implements the RuntimeStats interface.
-func (e *AllocatorRuntimeStats) Clone() *AllocatorRuntimeStats {
-	newRs := &AllocatorRuntimeStats{
-		allocCount:  e.allocCount,
-		rebaseCount: e.rebaseCount,
-	}
-	if e.SnapshotRuntimeStats != nil {
-		snapshotStats := e.SnapshotRuntimeStats.Clone()
-		newRs.SnapshotRuntimeStats = snapshotStats
-	}
-	if e.RuntimeStatsWithCommit != nil {
-		newRs.RuntimeStatsWithCommit = e.RuntimeStatsWithCommit.Clone().(*execdetails.RuntimeStatsWithCommit)
-	}
-	return newRs
-}
-
-// Merge implements the RuntimeStats interface.
-func (e *AllocatorRuntimeStats) Merge(other *AllocatorRuntimeStats) {
-	if other == nil {
-		return
-	}
-	if other.SnapshotRuntimeStats != nil {
-		if e.SnapshotRuntimeStats == nil {
-			e.SnapshotRuntimeStats = other.SnapshotRuntimeStats.Clone()
-		} else {
-			e.SnapshotRuntimeStats.Merge(other.SnapshotRuntimeStats)
-		}
-	}
-	if other.RuntimeStatsWithCommit != nil {
-		if e.RuntimeStatsWithCommit == nil {
-			e.RuntimeStatsWithCommit = other.RuntimeStatsWithCommit.Clone().(*execdetails.RuntimeStatsWithCommit)
-		} else {
-			e.RuntimeStatsWithCommit.Merge(other.RuntimeStatsWithCommit)
-		}
-	}
-}
-
 // Rebase implements autoid.Allocator Rebase interface.
 // The requiredBase is the minimum base value after Rebase.
 // The real base may be greater than the required base.
@@ -1214,4 +1110,112 @@ func (l *ShardIDLayout) IncrementalBitsCapacity() uint64 {
 // IncrementalMask returns 00..0[11..1], where [xxx] is the incremental section of the current layout.
 func (l *ShardIDLayout) IncrementalMask() int64 {
 	return (1 << l.IncrementalBits) - 1
+}
+
+type allocatorRuntimeStatsCtxKeyType struct{}
+
+// AllocatorRuntimeStatsCtxKey is the context key of allocator runtime stats.
+var AllocatorRuntimeStatsCtxKey = allocatorRuntimeStatsCtxKeyType{}
+
+// AllocatorRuntimeStats is the execution stats of auto id allocator.
+type AllocatorRuntimeStats struct {
+	*txnsnapshot.SnapshotRuntimeStats
+	*execdetails.RuntimeStatsWithCommit
+	allocCount  int
+	rebaseCount int
+}
+
+// NewAllocatorRuntimeStats return a new AllocatorRuntimeStats.
+func NewAllocatorRuntimeStats() *AllocatorRuntimeStats {
+	return &AllocatorRuntimeStats{
+		SnapshotRuntimeStats: &txnsnapshot.SnapshotRuntimeStats{},
+	}
+}
+
+func (e *AllocatorRuntimeStats) mergeCommitDetail(detail *tikvutil.CommitDetails) {
+	if detail == nil {
+		return
+	}
+	if e.RuntimeStatsWithCommit == nil {
+		e.RuntimeStatsWithCommit = &execdetails.RuntimeStatsWithCommit{}
+	}
+	e.RuntimeStatsWithCommit.MergeCommitDetails(detail)
+}
+
+// String implements the RuntimeStats interface.
+func (e *AllocatorRuntimeStats) String() string {
+	if e.allocCount == 0 && e.rebaseCount == 0 {
+		return ""
+	}
+	var buf bytes.Buffer
+	buf.WriteString("allocator_stats: {")
+	initialSize := buf.Len()
+	if e.allocCount > 0 {
+		buf.WriteString("alloc_cnt: ")
+		buf.WriteString(strconv.FormatInt(int64(e.allocCount), 10))
+	}
+	if e.rebaseCount > 0 {
+		if buf.Len() > initialSize {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("rebase_cnt: ")
+		buf.WriteString(strconv.FormatInt(int64(e.rebaseCount), 10))
+	}
+	if e.SnapshotRuntimeStats != nil {
+		stats := e.SnapshotRuntimeStats.String()
+		if stats != "" {
+			if buf.Len() > initialSize {
+				buf.WriteString(", ")
+			}
+			buf.WriteString(e.SnapshotRuntimeStats.String())
+		}
+	}
+	if e.RuntimeStatsWithCommit != nil {
+		stats := e.RuntimeStatsWithCommit.String()
+		if stats != "" {
+			if buf.Len() > initialSize {
+				buf.WriteString(", ")
+			}
+			buf.WriteString(stats)
+		}
+	}
+	buf.WriteString("}")
+	return buf.String()
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *AllocatorRuntimeStats) Clone() *AllocatorRuntimeStats {
+	newRs := &AllocatorRuntimeStats{
+		allocCount:  e.allocCount,
+		rebaseCount: e.rebaseCount,
+	}
+	if e.SnapshotRuntimeStats != nil {
+		snapshotStats := e.SnapshotRuntimeStats.Clone()
+		newRs.SnapshotRuntimeStats = snapshotStats
+	}
+	if e.RuntimeStatsWithCommit != nil {
+		newRs.RuntimeStatsWithCommit = e.RuntimeStatsWithCommit.Clone().(*execdetails.RuntimeStatsWithCommit)
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *AllocatorRuntimeStats) Merge(other *AllocatorRuntimeStats) {
+	if other == nil {
+		return
+	}
+	if other.SnapshotRuntimeStats != nil {
+		if e.SnapshotRuntimeStats == nil {
+			e.SnapshotRuntimeStats = other.SnapshotRuntimeStats.Clone()
+		} else {
+			e.SnapshotRuntimeStats.Merge(other.SnapshotRuntimeStats)
+		}
+	}
+	if other.RuntimeStatsWithCommit != nil {
+		if e.RuntimeStatsWithCommit == nil {
+			e.RuntimeStatsWithCommit = other.RuntimeStatsWithCommit.Clone().(*execdetails.RuntimeStatsWithCommit)
+		} else {
+			e.RuntimeStatsWithCommit.Merge(other.RuntimeStatsWithCommit)
+		}
+	}
 }

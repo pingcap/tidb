@@ -1016,8 +1016,6 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 				BasicRuntimeStats:     e.runtimeStats,
 				SnapshotRuntimeStats:  snapshotStats,
 				AllocatorRuntimeStats: autoid.NewAllocatorRuntimeStats(),
-				Prefetch:              0,
-				CheckInsertTime:       0,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -1158,10 +1156,19 @@ type InsertRuntimeStat struct {
 
 func (e *InsertRuntimeStat) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
-	e.genPrepareString(buf)
+	var allocatorStatsStr string
+	if e.AllocatorRuntimeStats != nil {
+		allocatorStatsStr = e.AllocatorRuntimeStats.String()
+	}
 	if e.CheckInsertTime == 0 {
 		// For replace statement.
+		if allocatorStatsStr != "" {
+			buf.WriteString(allocatorStatsStr)
+		}
 		if e.Prefetch > 0 && e.SnapshotRuntimeStats != nil {
+			if buf.Len() > 0 {
+				buf.WriteString(", ")
+			}
 			buf.WriteString("prefetch: ")
 			buf.WriteString(execdetails.FormatDuration(e.Prefetch))
 			buf.WriteString(", rpc: {")
@@ -1170,6 +1177,17 @@ func (e *InsertRuntimeStat) String() string {
 			return buf.String()
 		}
 		return ""
+	}
+	if allocatorStatsStr != "" {
+		buf.WriteString("prepare: {total: ")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.BasicRuntimeStats.GetTime()) - e.CheckInsertTime))
+		buf.WriteString(", ")
+		buf.WriteString(allocatorStatsStr)
+		buf.WriteString("}, ")
+	} else {
+		buf.WriteString("prepare: ")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.BasicRuntimeStats.GetTime()) - e.CheckInsertTime))
+		buf.WriteString(", ")
 	}
 	if e.Prefetch > 0 {
 		buf.WriteString(fmt.Sprintf("check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
@@ -1186,32 +1204,6 @@ func (e *InsertRuntimeStat) String() string {
 		buf.WriteString(fmt.Sprintf("insert:%v", execdetails.FormatDuration(e.CheckInsertTime)))
 	}
 	return buf.String()
-}
-
-func (e *InsertRuntimeStat) genPrepareString(buf *bytes.Buffer) {
-	var allocatorStatsStr string
-	if e.AllocatorRuntimeStats != nil {
-		allocatorStatsStr = e.AllocatorRuntimeStats.String()
-	}
-	if allocatorStatsStr == "" {
-		if e.CheckInsertTime == 0 {
-			return
-		}
-		buf.WriteString("prepare: ")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.BasicRuntimeStats.GetTime()) - e.CheckInsertTime))
-		buf.WriteString(", ")
-		return
-	}
-	if e.CheckInsertTime != 0 {
-		buf.WriteString("prepare: {total: ")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.BasicRuntimeStats.GetTime()) - e.CheckInsertTime))
-		buf.WriteString(", ")
-		buf.WriteString(allocatorStatsStr)
-		buf.WriteString("}, ")
-	} else {
-		buf.WriteString(allocatorStatsStr)
-		buf.WriteString(", ")
-	}
 }
 
 // Clone implements the RuntimeStats interface.
