@@ -1440,43 +1440,39 @@ func (tr *TableRestore) restoreTable(
 				rowIDMax = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
 			}
 		}
+		db, _ := rc.tidbGlue.GetDB()
+		versionStr, err := version.FetchVersion(ctx, db)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+
+		versionInfo := version.ParseServerInfo(versionStr)
 
 		// "show table next_row_id" is only available after v4.0.0
-		if rc.cfg.TikvImporter.Backend == config.BackendLocal || rc.cfg.TikvImporter.Backend == config.BackendImporter {
-			versionStr, err := rc.tidbGlue.GetSQLExecutor().ObtainStringWithLog(
-				ctx, "SELECT version()", "fetch tidb version", log.L())
-			if err != nil {
-				return false, errors.Trace(err)
+		if versionInfo.ServerType == version.ServerTypeTiDB && versionInfo.ServerVersion.Major >= 4 &&
+			(rc.cfg.TikvImporter.Backend == config.BackendLocal || rc.cfg.TikvImporter.Backend == config.BackendImporter) {
+			// first, insert a new-line into meta table
+			if err = metaMgr.InitTableMeta(ctx); err != nil {
+				return false, err
 			}
 
-			tidbVersion, err := version.ExtractTiDBVersion(versionStr)
+			checksum, rowIDBase, err := metaMgr.AllocTableRowIDs(ctx, rowIDMax)
 			if err != nil {
-				return false, errors.Trace(err)
+				return false, err
 			}
-			if tidbVersion.Major >= 4 {
-				// first, insert a new-line into meta table
-				if err = metaMgr.InitTableMeta(ctx); err != nil {
-					return false, err
-				}
+			tr.RebaseChunkRowIDs(cp, rowIDBase)
 
-				checksum, rowIDBase, err := metaMgr.AllocTableRowIDs(ctx, rowIDMax)
-				if err != nil {
-					return false, err
-				}
-				tr.RebaseChunkRowIDs(cp, rowIDBase)
-
-				if checksum != nil {
-					if cp.Checksum != *checksum {
-						cp.Checksum = *checksum
-						rc.saveCpCh <- saveCp{
-							tableName: tr.tableName,
-							merger: &checkpoints.TableChecksumMerger{
-								Checksum: cp.Checksum,
-							},
-						}
+			if checksum != nil {
+				if cp.Checksum != *checksum {
+					cp.Checksum = *checksum
+					rc.saveCpCh <- saveCp{
+						tableName: tr.tableName,
+						merger: &checkpoints.TableChecksumMerger{
+							Checksum: cp.Checksum,
+						},
 					}
-					tr.logger.Info("checksum before restore table", zap.Object("checksum", &cp.Checksum))
 				}
+				tr.logger.Info("checksum before restore table", zap.Object("checksum", &cp.Checksum))
 			}
 		}
 		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, tr.tableName, cp.Engines); err != nil {
