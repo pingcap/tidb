@@ -125,6 +125,17 @@ func (m errorRateDeltaMap) clear(tableID int64, histID int64, isIndex bool) {
 	m[tableID] = item
 }
 
+// colStatsUsageMap maps (tableID, columnID) to the last time when the column stats are used(needed).
+type colStatsUsageMap map[model.TableColumnID]time.Time
+
+func (m colStatsUsageMap) merge(other colStatsUsageMap) {
+	for id, t := range other {
+		if mt, ok := m[id]; !ok || mt.Before(t) {
+			m[id] = t
+		}
+	}
+}
+
 func (h *Handle) merge(s *SessionStatsCollector, rateMap errorRateDeltaMap) {
 	for id, item := range s.mapper {
 		h.globalMap.update(id, item.Delta, item.Count, &item.ColSize)
@@ -134,16 +145,19 @@ func (h *Handle) merge(s *SessionStatsCollector, rateMap errorRateDeltaMap) {
 	s.rateMap = make(errorRateDeltaMap)
 	h.feedback.Merge(s.feedback)
 	s.feedback = statistics.NewQueryFeedbackMap()
+	h.colStatsUsage.merge(s.colStatsUsage)
+	s.colStatsUsage = make(colStatsUsageMap)
 }
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsCollector struct {
 	sync.Mutex
 
-	mapper   tableDeltaMap
-	feedback *statistics.QueryFeedbackMap
-	rateMap  errorRateDeltaMap
-	next     *SessionStatsCollector
+	mapper        tableDeltaMap
+	feedback      *statistics.QueryFeedbackMap
+	rateMap       errorRateDeltaMap
+	colStatsUsage colStatsUsageMap
+	next          *SessionStatsCollector
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
 }
@@ -198,15 +212,24 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	return nil
 }
 
+// UpdateColStatsUsage updates the last time when the column stats are used(needed).
+func (s *SessionStatsCollector) UpdateColStatsUsage(tableID, columnID int64) {
+	s.Lock()
+	defer s.Unlock()
+	id := model.TableColumnID{TableID: tableID, ColumnID: columnID}
+	s.colStatsUsage[id] = time.Now()
+}
+
 // NewSessionStatsCollector allocates a stats collector for a session.
 func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
-		mapper:   make(tableDeltaMap),
-		rateMap:  make(errorRateDeltaMap),
-		next:     h.listHead.next,
-		feedback: statistics.NewQueryFeedbackMap(),
+		mapper:        make(tableDeltaMap),
+		rateMap:       make(errorRateDeltaMap),
+		next:          h.listHead.next,
+		feedback:      statistics.NewQueryFeedbackMap(),
+		colStatsUsage: make(colStatsUsageMap),
 	}
 	h.listHead.next = newCollector
 	return newCollector
@@ -380,6 +403,7 @@ func (h *Handle) sweepList() {
 	for curr := prev.next; curr != nil; curr = curr.next {
 		curr.Lock()
 		// Merge the session stats into handle and error rate map.
+		// TODO: specify which data to merge rather than merge all the data
 		h.merge(curr, errorRateMap)
 		if curr.deleted {
 			prev.next = curr.next
@@ -830,6 +854,19 @@ func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.Query
 	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, fms, int(statsVersion), 0, false)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
+}
+
+func (h *Handle) DumpColStatsUsageToKV() error {
+	h.sweepList()
+	for col, t := range h.colStatsUsage {
+		lastUsedAt := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, types.MaxFsp)
+		const sql = "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE last_used_at = GREATEST(last_used_at, %?)"
+		_, _, err := h.execRestrictedSQL(context.Background(), sql, col.TableID, col.ColumnID, lastUsedAt, lastUsedAt)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 const (

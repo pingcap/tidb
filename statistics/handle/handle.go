@@ -102,6 +102,8 @@ type Handle struct {
 	globalMap tableDeltaMap
 	// feedback is used to store query feedback info.
 	feedback *statistics.QueryFeedbackMap
+	// colStatsUsage stores the last time when the column stats are used(needed).
+	colStatsUsage colStatsUsageMap
 
 	lease atomic2.Duration
 
@@ -174,6 +176,7 @@ func (h *Handle) Clear() {
 	h.mu.ctx.GetSessionVars().SetProjectionConcurrency(0)
 	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)}
 	h.globalMap = make(tableDeltaMap)
+	h.colStatsUsage = make(colStatsUsageMap)
 	h.mu.rateMap = make(errorRateDeltaMap)
 	h.mu.Unlock()
 }
@@ -190,6 +193,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*
 		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:        make(tableDeltaMap),
 		feedback:         statistics.NewQueryFeedbackMap(),
+		colStatsUsage:    make(colStatsUsageMap),
 		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
 		pool:             pool,
 	}

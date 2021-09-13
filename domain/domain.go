@@ -1280,8 +1280,10 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	gcStatsTicker := time.NewTicker(100 * lease)
 	dumpFeedbackTicker := time.NewTicker(200 * lease)
 	loadFeedbackTicker := time.NewTicker(5 * lease)
+	dumpColStatsUsageTicker := time.NewTicker(10 * lease)
 	statsHandle := do.StatsHandle()
 	defer func() {
+		dumpColStatsUsageTicker.Stop()
 		loadFeedbackTicker.Stop()
 		dumpFeedbackTicker.Stop()
 		gcStatsTicker.Stop()
@@ -1329,6 +1331,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
 			if err != nil {
 				logutil.BgLogger().Debug("GC stats failed", zap.Error(err))
+			}
+		case <-dumpColStatsUsageTicker.C:
+			err := statsHandle.DumpColStatsUsageToKV()
+			if err != nil {
+				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
 			}
 		}
 	}

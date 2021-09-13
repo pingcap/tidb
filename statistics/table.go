@@ -297,6 +297,7 @@ func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Dat
 func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.Datum, colID int64) (float64, error) {
 	c, ok := t.Columns[colID]
 	if !ok || c.IsInvalid(sc, t.Pseudo) {
+
 		return float64(t.Count) / pseudoBetweenRate, nil
 	}
 	aEncoded, err := codec.EncodeKey(sc, nil, a)
