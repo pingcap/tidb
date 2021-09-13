@@ -26,8 +26,8 @@ I will explain why and how to migration parser back to the tidb repository.
 The PR  is [tidb#2923: Move TiDB parser to a separate repository](https://github.com/pingcap/tidb/issues/7923). In short, when we migrated to go module 111, @tiancaiamao decided to do so, because
 
 > We can put generated `parser.go` in the repository directly, rather than generate it using Makefile script. The drawback of this way is that every time `parser.y` is touched, there will be many lines change in `parser.go` . Then the TiDB repo will be inflate quickly.
-> 
->A better way is moving parser to a separated repo, so every time parser is changed, only go.mod need to change accordingly. 
+>
+>A better way is moving parser to a separated repo, so every time parser is changed, only go.mod need to change accordingly.
 
 Personally, that is a weird argument for me. Indeed, pingcap/tidb does not store the diff of `parser.go` anymore, but pingcap/parser does. How is moving the inflation from one repo to another better?
 
@@ -59,6 +59,10 @@ The detailed plan:
 3. Announce the deprecation of pingcap/parser to possible users. Clean up old issues and PRs, create it in pingcap/tidb again, close it, or just forget about it.
 4. We can create wrapper packages for pingcap/parser, which re-exports things from `pingcap/tidb/parser`. I mean something like `import ( . github.com/pingcap/tidb/parser/xxx)`, create a dummy function will eliminate the error of `not used import`. All code of pingcap/parser will be removed in this step. This will delevery new updates without the need of migrating importing paths.
 5. After another one or two dev cycles, we could archive pingcap/parser. It mainly depends on users of pingcap/parser.
+
+There will be a tracking issue, and the whole progress is public. Step 1 or 2 will likely take one or two weeks. Internally we could do the migration for internal tools while doing step 3.
+
+Step 4 and 5 are long-running tasks to smoothly end the support of the old parser.
 
 ## Questions
 
