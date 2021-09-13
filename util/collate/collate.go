@@ -269,15 +269,16 @@ func sign(i int) int {
 
 // decode rune by hand
 func decodeRune(s string, si int) (r rune, newIndex int) {
-	switch b := s[si]; {
-	case b < 0x80:
+	b := s[si]
+	switch runeLen(b) {
+	case 1:
 		r = rune(b)
 		newIndex = si + 1
-	case b < 0xE0:
+	case 2:
 		r = rune(b&b2Mask)<<6 |
 			rune(s[1+si]&mbMask)
 		newIndex = si + 2
-	case b < 0xF0:
+	case 3:
 		r = rune(b&b3Mask)<<12 |
 			rune(s[si+1]&mbMask)<<6 |
 			rune(s[si+2]&mbMask)
@@ -290,6 +291,17 @@ func decodeRune(s string, si int) (r rune, newIndex int) {
 		newIndex = si + 4
 	}
 	return
+}
+
+func runeLen(b byte) int {
+	if b < 0x80 {
+		return 1
+	} else if b < 0xE0 {
+		return 2
+	} else if b < 0xF0 {
+		return 3
+	}
+	return 4
 }
 
 // IsCICollation returns if the collation is case-sensitive
