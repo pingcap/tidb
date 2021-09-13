@@ -4897,7 +4897,7 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
 	s.mustExec(tk, c, "alter table t1 drop column if exists b") // only `a` exists now
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|column b doesn't exist"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|Can't DROP 'b'; check that column/key exists"))
 
 	// CHANGE COLUMN
 	sql = "alter table t1 change column b c int"
