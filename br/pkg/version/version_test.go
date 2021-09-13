@@ -5,9 +5,9 @@ package version
 import (
 	"context"
 	"fmt"
-	"github.com/DATA-DOG/go-sqlmock"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/coreos/go-semver/semver"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -321,7 +321,7 @@ func (s *checkSuite) TestDetectServerInfo(c *C) {
 		rows := sqlmock.NewRows([]string{"version"}).AddRow(r)
 		mock.ExpectQuery("SELECT version()").WillReturnRows(rows)
 
-		verStr, err := FetchVersion(db)
+		verStr, err := FetchVersion(context.Background(), db)
 		c.Assert(err, IsNil, cmt)
 		info := ParseServerInfo(verStr)
 		c.Assert(info.ServerType, Equals, serverTp, cmt)

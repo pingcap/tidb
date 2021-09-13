@@ -5,7 +5,6 @@ package version
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
