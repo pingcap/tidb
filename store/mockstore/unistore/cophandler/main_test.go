@@ -12,23 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package txn
+package cophandler
 
 import (
-	"github.com/pingcap/tidb/kv"
-	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"testing"
+
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-type tikvScanner struct {
-	*txnsnapshot.Scanner
-}
-
-// Next returns the next element.
-func (s *tikvScanner) Next() error {
-	err := s.Scanner.Next()
-	return extractKeyErr(err)
-}
-
-func (s *tikvScanner) Key() kv.Key {
-	return kv.Key(s.Scanner.Key())
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
+	goleak.VerifyTestMain(m)
 }

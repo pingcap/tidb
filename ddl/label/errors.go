@@ -12,23 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package txn
+package label
 
-import (
-	"github.com/pingcap/tidb/kv"
-	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+import "errors"
+
+var (
+	// ErrInvalidAttributesFormat is from attributes.go
+	ErrInvalidAttributesFormat = errors.New("attributes should be in format 'key=value'")
+	// ErrConflictingAttributes is from attributes.go
+	ErrConflictingAttributes = errors.New("conflicting attributes")
 )
-
-type tikvScanner struct {
-	*txnsnapshot.Scanner
-}
-
-// Next returns the next element.
-func (s *tikvScanner) Next() error {
-	err := s.Scanner.Next()
-	return extractKeyErr(err)
-}
-
-func (s *tikvScanner) Key() kv.Key {
-	return kv.Key(s.Scanner.Key())
-}
