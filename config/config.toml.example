@@ -483,9 +483,6 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
-# enable-new-charset controls whether to support new charset like gbk.
-# This option is valid only when the new collation is enabled.
-enable-new-charset = false
 
 # server level isolation read by engines and labels
 [isolation-read]
