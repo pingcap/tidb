@@ -14,9 +14,8 @@
 package parser
 
 import (
-	"strings"
-
-	"github.com/pingcap/parser/charset"
+	"reflect"
+	"unsafe"
 )
 
 func isLetter(ch rune) bool {
@@ -991,18 +990,13 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 	return tok
 }
 
-func handleIdent(lval *yySymType) int {
-	s := lval.ident
-	// A character string literal may have an optional character set introducer and COLLATE clause:
-	// [_charset_name]'string' [COLLATE collation_name]
-	// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
-	if !strings.HasPrefix(s, "_") {
-		return identifier
-	}
-	cs, err := charset.GetCharsetInfo(s[1:])
-	if err != nil {
-		return identifier
-	}
-	lval.ident = cs.Name
-	return underscoreCS
+// Slice converts string to slice without copy.
+// Use at your own risk.
+func Slice(s string) (b []byte) {
+	pBytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pString := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	pBytes.Data = pString.Data
+	pBytes.Len = pString.Len
+	pBytes.Cap = pString.Len
+	return
 }
