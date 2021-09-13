@@ -22,11 +22,10 @@ import (
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/util/placementpolicy"
 )
 
 func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	policyInfo := &placementpolicy.PolicyInfo{}
+	policyInfo := &model.PolicyInfo{}
 	if err := job.DecodeArgs(policyInfo); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -37,7 +36,7 @@ func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	err = checkPolicyValidation(policyInfo)
+	err = checkPolicyValidation(policyInfo.PlacementSettings)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -65,7 +64,7 @@ func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 	}
 }
 
-func checkPolicyValidation(info *placementpolicy.PolicyInfo) error {
+func checkPolicyValidation(info *model.PlacementSettings) error {
 	checkMergeConstraint := func(replica uint64, constr1, constr2 string) error {
 		// Constr2 only make sense when replica is set (whether it is in the replica field or included in the constr1)
 		if replica == 0 && constr1 == "" {
@@ -92,7 +91,7 @@ func checkPolicyValidation(info *placementpolicy.PolicyInfo) error {
 	return nil
 }
 
-func getPolicyInfo(t *meta.Meta, policyID int64) (*placementpolicy.PolicyInfo, error) {
+func getPolicyInfo(t *meta.Meta, policyID int64) (*model.PolicyInfo, error) {
 	policy, err := t.GetPolicy(policyID)
 	if err != nil {
 		if meta.ErrPolicyNotExists.Equal(err) {
@@ -105,7 +104,7 @@ func getPolicyInfo(t *meta.Meta, policyID int64) (*placementpolicy.PolicyInfo, e
 	return policy, nil
 }
 
-func checkPlacementPolicyNotExistAndCancelExistJob(d *ddlCtx, t *meta.Meta, job *model.Job, info *placementpolicy.PolicyInfo) error {
+func checkPlacementPolicyNotExistAndCancelExistJob(d *ddlCtx, t *meta.Meta, job *model.Job, info *model.PolicyInfo) error {
 	currVer, err := t.GetSchemaVersion()
 	if err != nil {
 		return err
@@ -134,7 +133,7 @@ func checkPlacementPolicyNotExistAndCancelExistJob(d *ddlCtx, t *meta.Meta, job 
 	return nil
 }
 
-func checkPlacementPolicyExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, policyID int64) (*placementpolicy.PolicyInfo, error) {
+func checkPlacementPolicyExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, policyID int64) (*model.PolicyInfo, error) {
 	policy, err := getPolicyInfo(t, policyID)
 	if err == nil {
 		return policy, nil
@@ -196,4 +195,40 @@ func onDropPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		err = ErrInvalidDDLState.GenWithStackByArgs("policy", policyInfo.State)
 	}
 	return ver, errors.Trace(err)
+}
+
+func onAlterPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	alterPolicy := &model.PolicyInfo{}
+	if err := job.DecodeArgs(alterPolicy); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	oldPolicy, err := checkPlacementPolicyExistAndCancelNonExistJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	newPolicyInfo := *oldPolicy
+	newPolicyInfo.PlacementSettings = alterPolicy.PlacementSettings
+
+	err = checkPolicyValidation(newPolicyInfo.PlacementSettings)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	err = t.UpdatePolicy(&newPolicyInfo)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Finish this job.
+	job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, nil)
+	return ver, nil
 }

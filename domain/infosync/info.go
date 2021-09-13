@@ -209,7 +209,7 @@ func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
 
 func initLabelRuleManager(addrs []string) LabelRuleManager {
 	if len(addrs) == 0 {
-		return &mockLabelManager{labelRules: map[string]*label.Rule{}}
+		return &mockLabelManager{labelRules: map[string][]byte{}}
 	}
 	return &PDLabelManager{addrs: addrs}
 }
@@ -865,7 +865,7 @@ func GetAllLabelRules(ctx context.Context) ([]*label.Rule, error) {
 }
 
 // GetLabelRules gets the label rules according to the given IDs from PD.
-func GetLabelRules(ctx context.Context, ruleIDs []string) ([]*label.Rule, error) {
+func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rule, error) {
 	if len(ruleIDs) == 0 {
 		return nil, nil
 	}
