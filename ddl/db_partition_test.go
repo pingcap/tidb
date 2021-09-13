@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -246,7 +247,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 		  c varchar(30))
 		  partition by range columns (a, b)
 		  (partition p0 values less than (10, 10.0))`)
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Unsupported partition type, treat as normal table"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Unsupported partition type RANGE, treat as normal table"))
 
 	tk.MustGetErrCode(`create table t31 (a int not null) partition by range( a );`, tmysql.ErrPartitionsMustBeDefined)
 	tk.MustGetErrCode(`create table t32 (a int not null) partition by range columns( a );`, tmysql.ErrPartitionsMustBeDefined)
@@ -2629,7 +2630,7 @@ func testPartitionDropIndex(c *C, store kv.Storage, lease time.Duration, idxName
 	}
 	c.Assert(idx1, NotNil)
 
-	testutil.SessionExecInGoroutine(c, store, dropIdxSQL, done)
+	testutil.SessionExecInGoroutine(store, dropIdxSQL, done)
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 LOOP:
@@ -3389,6 +3390,7 @@ func (s *testSerialDBSuite1) TestPartitionListWithNewCollation(c *C) {
 }
 
 func (s *testSerialDBSuite1) TestAddTableWithPartition(c *C) {
+	// for global temporary table
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set tidb_enable_global_temporary_table=true")
 	tk.MustExec("use test;")
@@ -3415,6 +3417,33 @@ func (s *testSerialDBSuite1) TestAddTableWithPartition(c *C) {
 	    partition p3 values in (5,null)
 	) ON COMMIT DELETE ROWS;`, errno.ErrPartitionNoTemporary)
 	tk.MustExec("drop table if exists partition_list_table;")
+
+	// for local temporary table
+	tk.MustExec("set tidb_enable_noop_functions=1")
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists local_partition_table;")
+	tk.MustGetErrCode("create temporary table local_partition_table (a int, b int) partition by hash(a) partitions 3;", errno.ErrPartitionNoTemporary)
+	tk.MustExec("drop table if exists local_partition_table;")
+	tk.MustExec("drop table if exists partition_table;")
+	_, err = tk.Exec("create table partition_table (a int, b int) partition by hash(a) partitions 3;")
+	c.Assert(err, IsNil)
+	tk.MustExec("drop table if exists partition_table;")
+	tk.MustExec("drop table if exists local_partition_range_table;")
+	tk.MustGetErrCode(`create temporary table local_partition_range_table (c1 smallint(6) not null, c2 char(5) default null) partition by range ( c1 ) (
+			partition p0 values less than (10),
+			partition p1 values less than (20),
+			partition p2 values less than (30),
+			partition p3 values less than (MAXVALUE)
+	);`, errno.ErrPartitionNoTemporary)
+	tk.MustExec("drop table if exists local_partition_range_table;")
+	tk.MustExec("drop table if exists local_partition_list_table;")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustGetErrCode(`create temporary table local_partition_list_table (id int) partition by list  (id) (
+	    partition p0 values in (1,2),
+	    partition p1 values in (3,4),
+	    partition p3 values in (5,null)
+	);`, errno.ErrPartitionNoTemporary)
+	tk.MustExec("drop table if exists local_partition_list_table;")
 }
 
 func (s *testSerialDBSuite1) TestTruncatePartitionMultipleTimes(c *C) {

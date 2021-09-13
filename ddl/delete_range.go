@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -344,6 +345,24 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
 			return doInsert(ctx, s, job.ID, indexID, startKey, endKey, now)
+		}
+	case model.ActionDropIndexes:
+		var indexIDs []int64
+		var partitionIDs []int64
+		if err := job.DecodeArgs(&[]model.CIStr{}, &[]bool{}, &indexIDs, &partitionIDs); err != nil {
+			return errors.Trace(err)
+		}
+		// Remove data in TiKV.
+		if len(indexIDs) == 0 {
+			return nil
+		}
+		if len(partitionIDs) == 0 {
+			return doBatchDeleteIndiceRange(ctx, s, job.ID, job.TableID, indexIDs, now)
+		}
+		for _, pID := range partitionIDs {
+			if err := doBatchDeleteIndiceRange(ctx, s, job.ID, pID, indexIDs, now); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	case model.ActionDropColumn:
 		var colName model.CIStr

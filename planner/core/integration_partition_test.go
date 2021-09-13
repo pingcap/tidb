@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -770,6 +771,60 @@ func (s *testIntegrationPartitionSerialSuite) TestListPartitionAlterPK(c *C) {
 	c.Assert(tk.ExecToErr(`alter table tcollist add primary key(b)`), ErrorMatches, ".*must include all columns.*")
 }
 
+func (s *testIntegrationPartitionSerialSuite) TestListPartitionRandomTransaction(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database list_partition_random_tran")
+	tk.MustExec("use list_partition_random_tran")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+
+	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (` +
+		` partition p0 values in ` + genListPartition(0, 20) +
+		`, partition p1 values in ` + genListPartition(20, 40) +
+		`, partition p2 values in ` + genListPartition(40, 60) +
+		`, partition p3 values in ` + genListPartition(60, 80) +
+		`, partition p4 values in ` + genListPartition(80, 100) + `)`)
+	tk.MustExec(`create table tcollist (a int, b int) partition by list columns(a) (` +
+		` partition p0 values in ` + genListPartition(0, 20) +
+		`, partition p1 values in ` + genListPartition(20, 40) +
+		`, partition p2 values in ` + genListPartition(40, 60) +
+		`, partition p3 values in ` + genListPartition(60, 80) +
+		`, partition p4 values in ` + genListPartition(80, 100) + `)`)
+	tk.MustExec(`create table tnormal (a int, b int)`)
+
+	inTrans := false
+	for i := 0; i < 50; i++ {
+		switch rand.Intn(4) {
+		case 0: // begin
+			if inTrans {
+				continue
+			}
+			tk.MustExec(`begin`)
+			inTrans = true
+		case 1: // sel
+			cond := fmt.Sprintf("where a>=%v and a<=%v", rand.Intn(50), 50+rand.Intn(50))
+			rnormal := tk.MustQuery(`select * from tnormal ` + cond).Sort().Rows()
+			tk.MustQuery(`select * from tlist ` + cond).Sort().Check(rnormal)
+			tk.MustQuery(`select * from tcollist ` + cond).Sort().Check(rnormal)
+		case 2: // insert
+			values := fmt.Sprintf("(%v, %v)", rand.Intn(100), rand.Intn(100))
+			tk.MustExec(`insert into tnormal values ` + values)
+			tk.MustExec(`insert into tlist values ` + values)
+			tk.MustExec(`insert into tcollist values ` + values)
+		case 3: // commit or rollback
+			if !inTrans {
+				continue
+			}
+			tk.MustExec([]string{"commit", "rollback"}[rand.Intn(2)])
+			inTrans = false
+		}
+	}
+}
+
 func (s *testIntegrationPartitionSerialSuite) TestIssue27018(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database issue_27018")
@@ -820,6 +875,20 @@ PARTITION BY LIST COLUMNS(col1) (
 	tk.MustQuery(`SELECT COL1 FROM PK_LP9465 HAVING COL1>=-12354348921530`).Sort().Check(testkit.Rows("8263677"))
 }
 
+func (s *testIntegrationPartitionSerialSuite) TestIssue27544(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database issue_27544")
+	tk.MustExec("use issue_27544")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`create table t3 (a datetime) partition by list (mod( year(a) - abs(weekday(a) + dayofweek(a)), 4) + 1) (
+		partition p0 values in (2),
+		partition p1 values in (3),
+		partition p3 values in (4))`)
+	tk.MustExec(`insert into t3 values ('1921-05-10 15:20:10')`) // success without any error
+	tk.MustExec(`insert into t3 values ('1921-05-10 15:20:20')`)
+	tk.MustExec(`insert into t3 values ('1921-05-10 15:20:30')`)
+}
+
 func (s *testIntegrationPartitionSerialSuite) TestIssue27012(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database issue_27012")
@@ -866,6 +935,14 @@ PARTITION BY LIST COLUMNS(col1) (
 	tk.MustQuery(`SELECT COL1 FROM PK_LCP9290 WHERE COL1 IN (x'ffacadeb424179bc4b5c',x'ae9f733168669fa900be',x'32d8fb9da8b63508a6b8')`).Sort().Check(testkit.Rows("2\xd8\xfb\x9d\xa8\xb65\b\xa6\xb8", "\xae\x9fs1hf\x9f\xa9\x00\xbe", "\xff\xac\xad\xebBAy\xbcK\\"))
 }
 
+func (s *testIntegrationPartitionSerialSuite) TestIssue27070(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database issue_27070")
+	tk.MustExec("use issue_27070")
+	tk.MustExec(`create table if not exists t (id int,   create_date date NOT NULL DEFAULT '2000-01-01',   PRIMARY KEY (id,create_date)  ) PARTITION BY list COLUMNS(create_date) (   PARTITION p20210506 VALUES IN ("20210507"),   PARTITION p20210507 VALUES IN ("20210508") )`)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Unsupported partition type LIST, treat as normal table"))
+}
+
 func (s *testIntegrationPartitionSerialSuite) TestIssue27031(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create database issue_27031")
@@ -879,6 +956,22 @@ PARTITION BY LIST COLUMNS(col1) (
 )`)
 	tk.MustExec(`insert into NT_LP27390 values(-4123498)`)
 	tk.MustQuery(`SELECT COL1 FROM NT_LP27390 WHERE COL1 IN (46015556,-4123498,54419751)`).Sort().Check(testkit.Rows("-4123498"))
+}
+
+func (s *testIntegrationPartitionSerialSuite) TestIssue27493(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database issue_27493")
+	tk.MustExec("use issue_27493")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`CREATE TABLE UK_LP17321 (
+  COL1 mediumint(16) DEFAULT '82' COMMENT 'NUMERIC UNIQUE INDEX',
+  COL3 bigint(20) DEFAULT NULL,
+  UNIQUE KEY UM_COL (COL1,COL3)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST (COL1 DIV COL3) (
+  PARTITION P0 VALUES IN (NULL,0)
+)`)
+	tk.MustQuery(`select * from UK_LP17321 where col1 is null`).Check(testkit.Rows()) // without any error
 }
 
 func genListPartition(begin, end int) string {

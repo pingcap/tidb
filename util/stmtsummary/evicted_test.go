@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,18 +19,14 @@ import (
 	"container/list"
 	"fmt"
 	"reflect"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testStmtSummarySuite{})
-
-type testStmtSummarySuite struct {
-}
 
 // fake a stmtSummaryByDigest
 func newInduceSsbd(beginTime int64, endTime int64) *stmtSummaryByDigest {
@@ -51,7 +48,7 @@ func newInduceSsbde(beginTime int64, endTime int64) *stmtSummaryByDigestElement 
 }
 
 // generate new stmtSummaryByDigestKey and stmtSummaryByDigest
-func (s *testStmtSummarySuite) generateStmtSummaryByDigestKeyValue(schema string, beginTime int64, endTime int64) (*stmtSummaryByDigestKey, *stmtSummaryByDigest) {
+func generateStmtSummaryByDigestKeyValue(schema string, beginTime int64, endTime int64) (*stmtSummaryByDigestKey, *stmtSummaryByDigest) {
 	key := &stmtSummaryByDigestKey{
 		schemaName: schema,
 	}
@@ -60,7 +57,8 @@ func (s *testStmtSummarySuite) generateStmtSummaryByDigestKeyValue(schema string
 }
 
 // Test stmtSummaryByDigestMap.ToEvictedCountDatum
-func (s *testStmtSummarySuite) TestMapToEvictedCountDatum(c *C) {
+func TestMapToEvictedCountDatum(t *testing.T) {
+	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	ssMap.Clear()
 	now := time.Now().Unix()
@@ -90,17 +88,18 @@ func (s *testStmtSummarySuite) TestMapToEvictedCountDatum(c *C) {
 	}
 
 	// test stmtSummaryByDigestMap.toEvictedCountDatum
-	matchCheck(c, ssMap.ToEvictedCountDatum()[0], expectedEvictedCount...)
+	match(t, ssMap.ToEvictedCountDatum()[0], expectedEvictedCount...)
 
 	// test multiple intervals
 	ssMap.Clear()
 	err = ssMap.SetRefreshInterval("60", false)
 	interval = ssMap.refreshInterval()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = ssMap.SetMaxStmtCount("1", false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	err = ssMap.SetHistorySize("100", false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	ssMap.beginTimeForCurInterval = now + interval
 	// insert one statement per interval.
@@ -108,14 +107,14 @@ func (s *testStmtSummarySuite) TestMapToEvictedCountDatum(c *C) {
 		ssMap.AddStatement(generateAnyExecInfo())
 		ssMap.beginTimeForCurInterval += interval * 2
 	}
-	c.Assert(ssMap.summaryMap.Size(), Equals, 1)
+	require.Equal(t, 1, ssMap.summaryMap.Size())
 	val := ssMap.summaryMap.Values()[0]
-	c.Assert(val, NotNil)
+	require.NotNil(t, val)
 	digest := val.(*stmtSummaryByDigest)
-	c.Assert(digest.history.Len(), Equals, 50)
+	require.Equal(t, 50, digest.history.Len())
 
 	err = ssMap.SetHistorySize("25", false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// update begin time
 	ssMap.beginTimeForCurInterval += interval * 2
 	banditSei := generateAnyExecInfo()
@@ -123,7 +122,7 @@ func (s *testStmtSummarySuite) TestMapToEvictedCountDatum(c *C) {
 	ssMap.AddStatement(banditSei)
 
 	evictedCountDatums := ssMap.ToEvictedCountDatum()
-	c.Assert(len(evictedCountDatums), Equals, 25)
+	require.Equal(t, 25, len(evictedCountDatums))
 
 	// update begin time
 	banditSei.SchemaName = "Yet another kicker"
@@ -131,7 +130,7 @@ func (s *testStmtSummarySuite) TestMapToEvictedCountDatum(c *C) {
 
 	evictedCountDatums = ssMap.ToEvictedCountDatum()
 	// test young digest
-	c.Assert(len(evictedCountDatums), Equals, 25)
+	require.Equal(t, 25, len(evictedCountDatums))
 	n = ssMap.beginTimeForCurInterval
 	newlyEvicted := evictedCountDatums[0]
 	expectedEvictedCount = []interface{}{
@@ -139,140 +138,142 @@ func (s *testStmtSummarySuite) TestMapToEvictedCountDatum(c *C) {
 		types.NewTime(types.FromGoTime(time.Unix(n+interval, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		int64(1),
 	}
-	matchCheck(c, newlyEvicted, expectedEvictedCount...)
+	match(t, newlyEvicted, expectedEvictedCount...)
 }
 
 // Test stmtSummaryByDigestEvicted
-func (s *testStmtSummarySuite) TestSimpleStmtSummaryByDigestEvicted(c *C) {
+func TestSimpleStmtSummaryByDigestEvicted(t *testing.T) {
+	t.Parallel()
 	ssbde := newStmtSummaryByDigestEvicted()
-	evictedKey, evictedValue := s.generateStmtSummaryByDigestKeyValue("a", 1, 2)
+	evictedKey, evictedValue := generateStmtSummaryByDigestKeyValue("a", 1, 2)
 
 	// test NULL
 	ssbde.AddEvicted(nil, nil, 10)
-	c.Assert(ssbde.history.Len(), Equals, 0)
+	require.Equal(t, 0, ssbde.history.Len())
 	ssbde.Clear()
 	// passing NULL key is used as *refresh*.
 	ssbde.AddEvicted(nil, evictedValue, 10)
-	c.Assert(ssbde.history.Len(), Equals, 1)
+	require.Equal(t, 1, ssbde.history.Len())
 	ssbde.Clear()
 	ssbde.AddEvicted(evictedKey, nil, 10)
-	c.Assert(ssbde.history.Len(), Equals, 0)
+	require.Equal(t, 0, ssbde.history.Len())
 	ssbde.Clear()
 
 	// test zero historySize
 	ssbde.AddEvicted(evictedKey, evictedValue, 0)
-	c.Assert(ssbde.history.Len(), Equals, 0)
+	require.Equal(t, 0, ssbde.history.Len())
 
 	ssbde = newStmtSummaryByDigestEvicted()
 	ssbde.AddEvicted(evictedKey, evictedValue, 1)
-	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 1, end: 2, count: 1}")
+	require.Equal(t, "{begin: 1, end: 2, count: 1}", getAllEvicted(ssbde))
 	// test insert same *kind* of digest
 	ssbde.AddEvicted(evictedKey, evictedValue, 1)
-	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 1, end: 2, count: 1}")
+	require.Equal(t, "{begin: 1, end: 2, count: 1}", getAllEvicted(ssbde))
 
-	evictedKey, evictedValue = s.generateStmtSummaryByDigestKeyValue("b", 1, 2)
+	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("b", 1, 2)
 	ssbde.AddEvicted(evictedKey, evictedValue, 1)
-	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 1, end: 2, count: 2}")
+	require.Equal(t, "{begin: 1, end: 2, count: 2}", getAllEvicted(ssbde))
 
-	evictedKey, evictedValue = s.generateStmtSummaryByDigestKeyValue("b", 5, 6)
+	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("b", 5, 6)
 	ssbde.AddEvicted(evictedKey, evictedValue, 2)
-	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 5, end: 6, count: 1}, {begin: 1, end: 2, count: 2}")
+	require.Equal(t, "{begin: 5, end: 6, count: 1}, {begin: 1, end: 2, count: 2}", getAllEvicted(ssbde))
 
-	evictedKey, evictedValue = s.generateStmtSummaryByDigestKeyValue("b", 3, 4)
+	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("b", 3, 4)
 	ssbde.AddEvicted(evictedKey, evictedValue, 3)
-	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 5, end: 6, count: 1}, {begin: 3, end: 4, count: 1}, {begin: 1, end: 2, count: 2}")
+	require.Equal(t, "{begin: 5, end: 6, count: 1}, {begin: 3, end: 4, count: 1}, {begin: 1, end: 2, count: 2}", getAllEvicted(ssbde))
 
 	// test evicted element with multi-time range value.
 	ssbde = newStmtSummaryByDigestEvicted()
-	evictedKey, evictedValue = s.generateStmtSummaryByDigestKeyValue("a", 1, 2)
+	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("a", 1, 2)
 	evictedValue.history.PushBack(newInduceSsbde(2, 3))
 	evictedValue.history.PushBack(newInduceSsbde(5, 6))
 	evictedValue.history.PushBack(newInduceSsbde(8, 9))
 	ssbde.AddEvicted(evictedKey, evictedValue, 3)
-	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 8, end: 9, count: 1}, {begin: 5, end: 6, count: 1}, {begin: 2, end: 3, count: 1}")
+	require.Equal(t, "{begin: 8, end: 9, count: 1}, {begin: 5, end: 6, count: 1}, {begin: 2, end: 3, count: 1}", getAllEvicted(ssbde))
 
 	evictedKey = &stmtSummaryByDigestKey{schemaName: "b"}
 	ssbde.AddEvicted(evictedKey, evictedValue, 4)
-	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 8, end: 9, count: 2}, {begin: 5, end: 6, count: 2}, {begin: 2, end: 3, count: 2}, {begin: 1, end: 2, count: 1}")
+	require.Equal(t, "{begin: 8, end: 9, count: 2}, {begin: 5, end: 6, count: 2}, {begin: 2, end: 3, count: 2}, {begin: 1, end: 2, count: 1}", getAllEvicted(ssbde))
 
-	evictedKey, evictedValue = s.generateStmtSummaryByDigestKeyValue("c", 4, 5)
+	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("c", 4, 5)
 	evictedValue.history.PushBack(newInduceSsbde(5, 6))
 	evictedValue.history.PushBack(newInduceSsbde(7, 8))
 	ssbde.AddEvicted(evictedKey, evictedValue, 4)
-	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 8, end: 9, count: 2}, {begin: 7, end: 8, count: 1}, {begin: 5, end: 6, count: 3}, {begin: 4, end: 5, count: 1}")
-
-	evictedKey, evictedValue = s.generateStmtSummaryByDigestKeyValue("d", 7, 8)
+	require.Equal(t, "{begin: 8, end: 9, count: 2}, {begin: 7, end: 8, count: 1}, {begin: 5, end: 6, count: 3}, {begin: 4, end: 5, count: 1}", getAllEvicted(ssbde))
+	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("d", 7, 8)
 	ssbde.AddEvicted(evictedKey, evictedValue, 4)
-	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 8, end: 9, count: 2}, {begin: 7, end: 8, count: 2}, {begin: 5, end: 6, count: 3}, {begin: 4, end: 5, count: 1}")
+	require.Equal(t, "{begin: 8, end: 9, count: 2}, {begin: 7, end: 8, count: 2}, {begin: 5, end: 6, count: 3}, {begin: 4, end: 5, count: 1}", getAllEvicted(ssbde))
 
 	// test for too old
-	evictedKey, evictedValue = s.generateStmtSummaryByDigestKeyValue("d", 0, 1)
+	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("d", 0, 1)
 	evictedValue.history.PushBack(newInduceSsbde(1, 2))
 	evictedValue.history.PushBack(newInduceSsbde(2, 3))
 	evictedValue.history.PushBack(newInduceSsbde(4, 5))
 	ssbde.AddEvicted(evictedKey, evictedValue, 4)
-	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 8, end: 9, count: 2}, {begin: 7, end: 8, count: 2}, {begin: 5, end: 6, count: 3}, {begin: 4, end: 5, count: 2}")
+	require.Equal(t, "{begin: 8, end: 9, count: 2}, {begin: 7, end: 8, count: 2}, {begin: 5, end: 6, count: 3}, {begin: 4, end: 5, count: 2}", getAllEvicted(ssbde))
 
 	// test for too young
-	evictedKey, evictedValue = s.generateStmtSummaryByDigestKeyValue("d", 1, 2)
+	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("d", 1, 2)
 	evictedValue.history.PushBack(newInduceSsbde(9, 10))
 	ssbde.AddEvicted(evictedKey, evictedValue, 4)
-	c.Assert(getAllEvicted(ssbde), Equals, "{begin: 9, end: 10, count: 1}, {begin: 8, end: 9, count: 2}, {begin: 7, end: 8, count: 2}, {begin: 5, end: 6, count: 3}")
+	require.Equal(t, "{begin: 9, end: 10, count: 1}, {begin: 8, end: 9, count: 2}, {begin: 7, end: 8, count: 2}, {begin: 5, end: 6, count: 3}", getAllEvicted(ssbde))
 }
 
 // Test stmtSummaryByDigestEvictedElement.ToEvictedCountDatum
-func (s *testStmtSummarySuite) TestStmtSummaryByDigestEvictedElement(c *C) {
+func TestStmtSummaryByDigestEvictedElement(t *testing.T) {
+	t.Parallel()
 	record := newStmtSummaryByDigestEvictedElement(0, 1)
-	evictedKey, evictedValue := s.generateStmtSummaryByDigestKeyValue("alpha", 0, 1)
+	evictedKey, evictedValue := generateStmtSummaryByDigestKeyValue("alpha", 0, 1)
 	digestValue := evictedValue.history.Back().Value.(*stmtSummaryByDigestElement)
 
 	// test poisoning will NULL key.
 	record.addEvicted(nil, nil)
-	c.Assert(getEvicted(record), Equals, "{begin: 0, end: 1, count: 0}")
+	require.Equal(t, "{begin: 0, end: 1, count: 0}", getEvicted(record))
 	record.addEvicted(nil, digestValue)
-	c.Assert(getEvicted(record), Equals, "{begin: 0, end: 1, count: 0}")
+	require.Equal(t, "{begin: 0, end: 1, count: 0}", getEvicted(record))
 
 	// test add evictedKey and evicted stmtSummaryByDigestElement
 	record.addEvicted(evictedKey, digestValue)
-	c.Assert(getEvicted(record), Equals, "{begin: 0, end: 1, count: 1}")
+	require.Equal(t, "{begin: 0, end: 1, count: 1}", getEvicted(record))
 
 	// test add same *kind* of values.
 	record.addEvicted(evictedKey, digestValue)
-	c.Assert(getEvicted(record), Equals, "{begin: 0, end: 1, count: 1}")
+	require.Equal(t, "{begin: 0, end: 1, count: 1}", getEvicted(record))
 
 	// test add different *kind* of values.
-	evictedKey, evictedValue = s.generateStmtSummaryByDigestKeyValue("bravo", 0, 1)
+	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("bravo", 0, 1)
 	digestValue = evictedValue.history.Back().Value.(*stmtSummaryByDigestElement)
 	record.addEvicted(evictedKey, digestValue)
-	c.Assert(getEvicted(record), Equals, "{begin: 0, end: 1, count: 2}")
+	require.Equal(t, "{begin: 0, end: 1, count: 2}", getEvicted(record))
 }
 
 // test stmtSummaryByDigestEvicted.addEvicted
 // test stmtSummaryByDigestEvicted.toEvictedCountDatum (single and multiple intervals)
-func (s *testStmtSummarySuite) TestEvictedCountDetailed(c *C) {
+func TestEvictedCountDetailed(t *testing.T) {
+	t.Parallel()
 	ssMap := newStmtSummaryByDigestMap()
 	ssMap.Clear()
 	err := ssMap.SetRefreshInterval("60", false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = ssMap.SetHistorySize("100", false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	now := time.Now().Unix()
 	interval := int64(60)
 	ssMap.beginTimeForCurInterval = now + interval
 	// set capacity to 1
 	err = ssMap.summaryMap.SetCapacity(1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// test stmtSummaryByDigest's history length
 	for i := 0; i < 100; i++ {
 		if i == 0 {
-			c.Assert(ssMap.summaryMap.Size(), Equals, 0)
+			require.Equal(t, 0, ssMap.summaryMap.Size())
 		} else {
-			c.Assert(ssMap.summaryMap.Size(), Equals, 1)
+			require.Equal(t, 1, ssMap.summaryMap.Size())
 			val := ssMap.summaryMap.Values()[0]
-			c.Assert(val, NotNil)
+			require.NotNil(t, val)
 			digest := val.(*stmtSummaryByDigest)
-			c.Assert(digest.history.Len(), Equals, i)
+			require.Equal(t, i, digest.history.Len())
 		}
 		ssMap.AddStatement(generateAnyExecInfo())
 		ssMap.beginTimeForCurInterval += interval
@@ -290,7 +291,7 @@ func (s *testStmtSummarySuite) TestEvictedCountDetailed(c *C) {
 			types.NewTime(types.FromGoTime(time.Unix(n+60, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 			int64(1),
 		}
-		matchCheck(c, evictedCountDatum, expectedDatum...)
+		match(t, evictedCountDatum, expectedDatum...)
 		n -= 60
 	}
 
@@ -304,31 +305,33 @@ func (s *testStmtSummarySuite) TestEvictedCountDetailed(c *C) {
 	}
 	ssMap.AddStatement(banditSei)
 	evictedCountDatums = ssMap.ToEvictedCountDatum()
-	matchCheck(c, evictedCountDatums[0], expectedDatum...)
-
+	match(t, evictedCountDatums[0], expectedDatum...)
 	ssMap.Clear()
 	other := ssMap.other
 	// test poisoning with empty-history digestValue
 	other.AddEvicted(new(stmtSummaryByDigestKey), new(stmtSummaryByDigest), 100)
-	c.Assert(other.history.Len(), Equals, 0)
+	require.Equal(t, 0, other.history.Len())
 }
 
-func (s *testStmtSummarySuite) TestNewStmtSummaryByDigestEvictedElement(c *C) {
+func TestNewStmtSummaryByDigestEvictedElement(t *testing.T) {
+	t.Parallel()
 	now := time.Now().Unix()
 	end := now + 60
 	stmtEvictedElement := newStmtSummaryByDigestEvictedElement(now, end)
-	c.Assert(stmtEvictedElement.beginTime, Equals, now)
-	c.Assert(stmtEvictedElement.endTime, Equals, end)
-	c.Assert(len(stmtEvictedElement.digestKeyMap), Equals, 0)
+	require.Equal(t, now, stmtEvictedElement.beginTime)
+	require.Equal(t, end, stmtEvictedElement.endTime)
+	require.Equal(t, 0, len(stmtEvictedElement.digestKeyMap))
 }
 
-func (s *testStmtSummarySuite) TestStmtSummaryByDigestEvicted(c *C) {
+func TestStmtSummaryByDigestEvicted(t *testing.T) {
+	t.Parallel()
 	stmtEvicted := newStmtSummaryByDigestEvicted()
-	c.Assert(stmtEvicted.history.Len(), Equals, 0)
+	require.Equal(t, 0, stmtEvicted.history.Len())
 }
 
 // test addInfo function
-func (s *testStmtSummarySuite) TestAddInfo(c *C) {
+func TestAddInfo(t *testing.T) {
+	t.Parallel()
 	now := time.Now().Unix()
 	addTo := stmtSummaryByDigestElement{
 		// user
@@ -618,7 +621,7 @@ func (s *testStmtSummarySuite) TestAddInfo(c *C) {
 		sumWriteSQLRespTotal: 200,
 		sumErrors:            16,
 	}
-	c.Assert(reflect.DeepEqual(&addTo, &expectedSum), Equals, true)
+	require.Equal(t, true, reflect.DeepEqual(&addTo, &expectedSum))
 }
 
 func getAllEvicted(ssdbe *stmtSummaryByDigestEvicted) string {
@@ -637,13 +640,4 @@ func getEvicted(ssbdee *stmtSummaryByDigestEvictedElement) string {
 	buf := bytes.NewBuffer(nil)
 	buf.WriteString(fmt.Sprintf("{begin: %v, end: %v, count: %v}", ssbdee.beginTime, ssbdee.endTime, len(ssbdee.digestKeyMap)))
 	return buf.String()
-}
-
-func matchCheck(c *C, row []types.Datum, expected ...interface{}) {
-	c.Assert(len(row), Equals, len(expected))
-	for i := range row {
-		got := fmt.Sprintf("%v", row[i].GetValue())
-		need := fmt.Sprintf("%v", expected[i])
-		c.Assert(got, Equals, need)
-	}
 }

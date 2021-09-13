@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -75,9 +76,6 @@ func dumpFlag(tp byte, flag uint16) uint16 {
 	case mysql.TypeEnum:
 		return flag | uint16(mysql.EnumFlag)
 	default:
-		if mysql.HasBinaryFlag(uint(flag)) {
-			return flag | uint16(mysql.NotNullFlag)
-		}
 		return flag
 	}
 }
