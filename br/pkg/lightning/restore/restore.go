@@ -308,7 +308,7 @@ func NewRestoreControllerWithPauser(
 			return nil, errors.Annotate(err, "open importer backend failed")
 		}
 	case config.BackendTiDB:
-		db, err := DBFromConfig(cfg.TiDB)
+		db, err := g.GetDB()
 		if err != nil {
 			return nil, errors.Annotate(err, "open tidb backend failed")
 		}
@@ -753,7 +753,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 
 	go rc.listenCheckpointUpdates()
 
-	rc.sysVars = ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor())
+	rc.sysVars = ObtainImportantVariables(ctx, rc.tidbGlue.GetSQLExecutor(), !rc.isTiDBBackend())
 
 	// Estimate the number of chunks for progress reporting
 	err = rc.estimateChunkCountIntoMetrics(ctx)
@@ -1552,6 +1552,9 @@ func (rc *Controller) switchToImportMode(ctx context.Context) {
 }
 
 func (rc *Controller) switchToNormalMode(ctx context.Context) error {
+	if rc.isTiDBBackend() {
+		return nil
+	}
 	rc.switchTiKVMode(ctx, sstpb.SwitchMode_Normal)
 	return nil
 }
@@ -1667,6 +1670,10 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 }
 
 func (rc *Controller) setGlobalVariables(ctx context.Context) error {
+	// skip for tidb backend to be compatible with MySQL
+	if rc.isTiDBBackend() {
+		return nil
+	}
 	// set new collation flag base on tidb config
 	enabled := ObtainNewCollationEnabled(ctx, rc.tidbGlue.GetSQLExecutor())
 	// we should enable/disable new collation here since in server mode, tidb config
@@ -1707,6 +1714,10 @@ func (rc *Controller) cleanCheckpoints(ctx context.Context) error {
 
 func (rc *Controller) isLocalBackend() bool {
 	return rc.cfg.TikvImporter.Backend == config.BackendLocal
+}
+
+func (rc *Controller) isTiDBBackend() bool {
+	return rc.cfg.TikvImporter.Backend == config.BackendTiDB
 }
 
 // preCheckRequirements checks

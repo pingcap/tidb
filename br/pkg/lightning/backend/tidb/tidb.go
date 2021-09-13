@@ -532,8 +532,11 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 			return err
 		}
 		tidbVersion, err := version.ExtractTiDBVersion(versionStr)
+		isTiDB := err == nil
 		if err != nil {
-			return err
+			log.L().Warn("parse tidb version failed, skip check feature only supported by tidb like shard_rowid_bits",
+				zap.String("version", versionStr), zap.Error(err))
+			isTiDB = false
 		}
 
 		rows, e := tx.Query(`
@@ -591,7 +594,7 @@ func (be *tidbBackend) FetchRemoteTableModels(ctx context.Context, schemaName st
 		}
 		// shard_row_id/auto random is only available after tidb v4.0.0
 		// `show table next_row_id` is also not available before tidb v4.0.0
-		if tidbVersion.Major < 4 {
+		if !isTiDB || tidbVersion.Major < 4 {
 			return nil
 		}
 
