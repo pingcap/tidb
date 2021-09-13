@@ -652,3 +652,11 @@ func TestValidateWithRelaxedValidation(t *testing.T) {
 	val := sv.ValidateWithRelaxedValidation(vars, "1", ScopeGlobal)
 	require.Equal(t, "ON", val)
 }
+
+func TestTiDBReplicaRead(t *testing.T) {
+	sv := GetSysVar(TiDBReplicaRead)
+	vars := NewSessionVars()
+	val, err := sv.Validate(vars, "follower", ScopeGlobal)
+	require.Equal(t, val, "follower")
+	require.NoError(t, err)
+}
