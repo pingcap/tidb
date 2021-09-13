@@ -304,6 +304,12 @@ func TestGetSessionTemporaryTableKey(t *testing.T) {
 		require.Equal(t, "Get", invokes[0].Method, i)
 		require.Equal(t, []interface{}{ctx, c.Key}, invokes[0].Args)
 		retriever.ResetInvokes()
+
+		// test for nil session
+		val, err = getSessionKey(ctx, localTb.Meta(), nil, c.Key)
+		require.True(t, kv.ErrNotExist.Equal(err), i)
+		require.Nil(t, val, i)
+		require.Equal(t, 0, len(retriever.GetInvokes()), i)
 	}
 
 	// test global temporary table should return empty data directly
@@ -413,6 +419,7 @@ func TestInterceptorOnGet(t *testing.T) {
 	snap := newMockedSnapshot(newMockedRetriever(t).SetAllowedMethod("Get").SetData(noTempTableData))
 	retriever := newMockedRetriever(t).SetAllowedMethod("Get").SetData(localTempTableData)
 	interceptor := NewTemporaryTableSnapshotInterceptor(is, retriever)
+	emptyRetrieverInterceptor := NewTemporaryTableSnapshotInterceptor(is, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
@@ -425,20 +432,26 @@ func TestInterceptorOnGet(t *testing.T) {
 		{Key: kv.Key("un"), Value: []byte("non-exist-key")},
 	}...)
 	for i, c := range cases {
-		val, err := interceptor.OnGet(ctx, snap, c.Key)
-		if string(c.Value) == "non-exist-key" {
-			require.True(t, kv.ErrNotExist.Equal(err), i)
-			require.Nil(t, val, i)
-		} else {
-			require.NoError(t, err, i)
-			require.Equal(t, c.Value, val, i)
+		for _, emptyRetriever := range []bool{false, true} {
+			inter := interceptor
+			if emptyRetriever {
+				inter = emptyRetrieverInterceptor
+			}
+			val, err := inter.OnGet(ctx, snap, c.Key)
+			if string(c.Value) == "non-exist-key" {
+				require.True(t, kv.ErrNotExist.Equal(err), i)
+				require.Nil(t, val, i)
+			} else {
+				require.NoError(t, err, i)
+				require.Equal(t, c.Value, val, i)
+			}
+			require.Equal(t, 0, len(retriever.GetInvokes()))
+			invokes := snap.GetInvokes()
+			require.Equal(t, 1, len(invokes), i)
+			require.Equal(t, "Get", invokes[0].Method, i)
+			require.Equal(t, []interface{}{ctx, c.Key}, invokes[0].Args)
+			snap.ResetInvokes()
 		}
-		require.Equal(t, 0, len(retriever.GetInvokes()))
-		invokes := snap.GetInvokes()
-		require.Equal(t, 1, len(invokes), i)
-		require.Equal(t, "Get", invokes[0].Method, i)
-		require.Equal(t, []interface{}{ctx, c.Key}, invokes[0].Args)
-		snap.ResetInvokes()
 	}
 
 	// test global temporary table should return kv.ErrNotExist
@@ -449,6 +462,12 @@ func TestInterceptorOnGet(t *testing.T) {
 	require.Equal(t, 0, len(snap.GetInvokes()))
 
 	val, err = interceptor.OnGet(ctx, snap, encodeTableKey(3, 1))
+	require.True(t, kv.ErrNotExist.Equal(err))
+	require.Nil(t, val)
+	require.Equal(t, 0, len(retriever.GetInvokes()))
+	require.Equal(t, 0, len(snap.GetInvokes()))
+
+	val, err = emptyRetrieverInterceptor.OnGet(ctx, snap, encodeTableKey(3, 1))
 	require.True(t, kv.ErrNotExist.Equal(err))
 	require.Nil(t, val)
 	require.Equal(t, 0, len(retriever.GetInvokes()))
@@ -468,12 +487,16 @@ func TestInterceptorOnGet(t *testing.T) {
 			require.NoError(t, err, i)
 			require.Equal(t, c.Value, val, i)
 		}
-		require.Equal(t, 0, len(snap.GetInvokes()))
+		require.Equal(t, 0, len(snap.GetInvokes()), i)
 		invokes := retriever.GetInvokes()
 		require.Equal(t, 1, len(invokes), i)
 		require.Equal(t, "Get", invokes[0].Method, i)
 		require.Equal(t, []interface{}{ctx, c.Key}, invokes[0].Args)
 		retriever.ResetInvokes()
+
+		val, err = emptyRetrieverInterceptor.OnGet(ctx, snap, c.Key)
+		require.Equal(t, 0, len(snap.GetInvokes()), i)
+		require.Equal(t, 0, len(retriever.GetInvokes()), i)
 	}
 
 	// test error cases
@@ -527,13 +550,15 @@ func TestInterceptorBatchGetTemporaryTableKeys(t *testing.T) {
 		AddTable(model.TempTableLocal, 5, 8)
 	retriever := newMockedRetriever(t).SetAllowedMethod("Get").SetData(localTempTableData)
 	interceptor := NewTemporaryTableSnapshotInterceptor(is, retriever)
+	emptyRetrieverInterceptor := NewTemporaryTableSnapshotInterceptor(is, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	cases := []struct {
-		keys     []kv.Key
-		snapKeys []kv.Key
-		result   map[string][]byte
+		keys       []kv.Key
+		snapKeys   []kv.Key
+		nilSession bool
+		result     map[string][]byte
 	}{
 		{
 			keys:     nil,
@@ -626,9 +651,26 @@ func TestInterceptorBatchGetTemporaryTableKeys(t *testing.T) {
 				string(encodeTableKey(8, 1)): []byte("v81"),
 			},
 		},
+		{
+			keys: []kv.Key{
+				tablecodec.TablePrefix(),
+				encodeTableKey(5),
+				encodeTableKey(1),
+				encodeTableKey(5, 2),
+				encodeTableKey(5, 'n'),
+				encodeTableKey(8, 1),
+			},
+			snapKeys:   []kv.Key{tablecodec.TablePrefix(), encodeTableKey(1)},
+			nilSession: true,
+			result:     nil,
+		},
 	}
 	for i, c := range cases {
-		snapKeys, result, err := interceptor.batchGetTemporaryTableKeys(ctx, c.keys)
+		inter := interceptor
+		if c.nilSession {
+			inter = emptyRetrieverInterceptor
+		}
+		snapKeys, result, err := inter.batchGetTemporaryTableKeys(ctx, c.keys)
 		require.NoError(t, err, i)
 		if c.snapKeys == nil {
 			require.Nil(t, snapKeys, i)
@@ -640,13 +682,17 @@ func TestInterceptorBatchGetTemporaryTableKeys(t *testing.T) {
 			require.Nil(t, result, i)
 		} else {
 			require.Equal(t, c.result, result, i)
-			require.True(t, len(retriever.GetInvokes()) > 0)
+		}
+
+		if c.nilSession {
+			require.Equal(t, 0, len(retriever.GetInvokes()))
 		}
 
 		for j, invoke := range retriever.GetInvokes() {
 			require.Equal(t, "Get", invoke.Method, "%d, %d", i, j)
 			require.Equal(t, ctx, invoke.Args[0], "%d, %d", i, j)
 		}
+		retriever.ResetInvokes()
 	}
 
 	// test for error occurs
@@ -702,13 +748,15 @@ func TestInterceptorOnBatchGet(t *testing.T) {
 	snap := newMockedSnapshot(newMockedRetriever(t).SetAllowedMethod("BatchGet").SetData(noTempTableData))
 	retriever := newMockedRetriever(t).SetAllowedMethod("Get").SetData(localTempTableData)
 	interceptor := NewTemporaryTableSnapshotInterceptor(is, retriever)
+	emptyRetrieverInterceptor := NewTemporaryTableSnapshotInterceptor(is, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	cases := []struct {
-		keys     []kv.Key
-		snapKeys []kv.Key
-		result   map[string][]byte
+		keys       []kv.Key
+		snapKeys   []kv.Key
+		nilSession bool
+		result     map[string][]byte
 	}{
 		{
 			keys:     nil,
@@ -800,13 +848,40 @@ func TestInterceptorOnBatchGet(t *testing.T) {
 				string(encodeTableKey(1)):        []byte("v1"),
 			},
 		},
+		{
+			keys: []kv.Key{
+				tablecodec.TablePrefix(),
+				encodeTableKey(5),
+				encodeTableKey(1),
+				encodeTableKey(5, 2),
+				encodeTableKey(5, 'n'),
+				encodeTableKey(1, 'n'),
+			},
+			nilSession: true,
+			snapKeys: []kv.Key{
+				tablecodec.TablePrefix(),
+				encodeTableKey(1),
+				encodeTableKey(1, 'n'),
+			},
+			result: map[string][]byte{
+				string(tablecodec.TablePrefix()): []byte("vt"),
+				string(encodeTableKey(1)):        []byte("v1"),
+			},
+		},
 	}
 
 	for i, c := range cases {
-		result, err := interceptor.OnBatchGet(ctx, snap, c.keys)
+		inter := interceptor
+		if c.nilSession {
+			inter = emptyRetrieverInterceptor
+		}
+		result, err := inter.OnBatchGet(ctx, snap, c.keys)
 		require.Nil(t, err, i)
 		require.NotNil(t, result, i)
 		require.Equal(t, c.result, result, i)
+		if c.nilSession {
+			require.Equal(t, 0, len(retriever.GetInvokes()))
+		}
 		for j, invoke := range retriever.GetInvokes() {
 			require.Equal(t, "Get", invoke.Method, "%d, %d", i, j)
 			require.Equal(t, ctx, invoke.Args[0], "%d, %d", i, j)
@@ -1115,4 +1190,157 @@ func checkCreatedIterClosed(t *testing.T, retriever *mockedRetriever, snap *mock
 			require.True(t, iter.Closed())
 		}
 	}
+}
+
+func TestIterTable(t *testing.T) {
+	t.Parallel()
+	is := newMockedInfoSchema(t).
+		AddTable(model.TempTableNone, 1).
+		AddTable(model.TempTableGlobal, 3).
+		AddTable(model.TempTableLocal, 5)
+
+	noTempTableData := []*kv.Entry{
+		// normal table data
+		{Key: encodeTableKey(1), Value: []byte("v1")},
+		{Key: encodeTableKey(1, 1), Value: []byte("v11")},
+		// no exist table data
+		{Key: encodeTableKey(2), Value: []byte("v2")},
+		{Key: encodeTableKey(2, 1), Value: []byte("v21")},
+	}
+
+	localTempTableData := []*kv.Entry{
+		{Key: encodeTableKey(5), Value: []byte("v5")},
+		{Key: encodeTableKey(5, 0), Value: []byte("v50")},
+		{Key: encodeTableKey(5, 1), Value: []byte("v51")},
+		{Key: encodeTableKey(5, 0, 1), Value: []byte("v501")},
+		{Key: encodeTableKey(5, 2), Value: []byte("")},
+		{Key: encodeTableKey(5, 3), Value: nil},
+	}
+	retriever := newMockedRetriever(t).SetData(localTempTableData).SetAllowedMethod("Iter")
+	snap := newMockedSnapshot(newMockedRetriever(t).SetData(noTempTableData).SetAllowedMethod("Iter"))
+	interceptor := NewTemporaryTableSnapshotInterceptor(is, retriever)
+	emptyRetrieverInterceptor := NewTemporaryTableSnapshotInterceptor(is, nil)
+
+	cases := []struct {
+		tblID      int64
+		nilSession bool
+		args       []kv.Key
+		result     []kv.Entry
+	}{
+		{
+			tblID: 1,
+			args:  []kv.Key{encodeTableKey(1), encodeTableKey(2)},
+			result: []kv.Entry{
+				{Key: encodeTableKey(1), Value: []byte("v1")},
+				{Key: encodeTableKey(1, 1), Value: []byte("v11")},
+			},
+		},
+		{
+			tblID: 1,
+			args:  []kv.Key{encodeTableKey(1), encodeTableKey(1, 1)},
+			result: []kv.Entry{
+				{Key: encodeTableKey(1), Value: []byte("v1")},
+			},
+		},
+		{
+			tblID: 2,
+			args:  []kv.Key{encodeTableKey(2), encodeTableKey(3)},
+			result: []kv.Entry{
+				{Key: encodeTableKey(2), Value: []byte("v2")},
+				{Key: encodeTableKey(2, 1), Value: []byte("v21")},
+			},
+		},
+		{
+			tblID:  3,
+			args:   []kv.Key{encodeTableKey(3), encodeTableKey(4)},
+			result: []kv.Entry{},
+		},
+		{
+			tblID:  4,
+			args:   []kv.Key{encodeTableKey(4), encodeTableKey(5)},
+			result: []kv.Entry{},
+		},
+		{
+			tblID: 5,
+			args:  []kv.Key{encodeTableKey(5), encodeTableKey(6)},
+			result: []kv.Entry{
+				{Key: encodeTableKey(5), Value: []byte("v5")},
+				{Key: encodeTableKey(5, 0), Value: []byte("v50")},
+				{Key: encodeTableKey(5, 1), Value: []byte("v51")},
+				{Key: encodeTableKey(5, 0, 1), Value: []byte("v501")},
+			},
+		},
+		{
+			tblID: 5,
+			args:  []kv.Key{encodeTableKey(5), encodeTableKey(5, 1)},
+			result: []kv.Entry{
+				{Key: encodeTableKey(5), Value: []byte("v5")},
+				{Key: encodeTableKey(5, 0), Value: []byte("v50")},
+				{Key: encodeTableKey(5, 0, 1), Value: []byte("v501")},
+			},
+		},
+		{
+			tblID:      5,
+			nilSession: true,
+			args:       []kv.Key{encodeTableKey(5), encodeTableKey(5, 1)},
+			result:     []kv.Entry{},
+		},
+	}
+
+	for i, c := range cases {
+		inter := interceptor
+		if c.nilSession {
+			inter = emptyRetrieverInterceptor
+		}
+		iter, err := inter.iterTable(c.tblID, snap, c.args[0], c.args[1])
+		require.NoError(t, err)
+		result := make([]kv.Entry, 0, i)
+		for iter.Valid() {
+			result = append(result, kv.Entry{Key: iter.Key(), Value: iter.Value()})
+			require.NoError(t, iter.Next(), i)
+		}
+		require.Equal(t, c.result, result, i)
+
+		tbl, ok := is.TableByID(c.tblID)
+		if !ok || tbl.Meta().TempTableType == model.TempTableNone {
+			require.Equal(t, 0, len(retriever.GetInvokes()), i)
+			require.Equal(t, 1, len(snap.GetInvokes()), i)
+			require.Equal(t, "Iter", snap.GetInvokes()[0].Method)
+			require.Equal(t, []interface{}{c.args[0], c.args[1]}, snap.GetInvokes()[0].Args, i)
+		}
+
+		if ok && tbl.Meta().TempTableType == model.TempTableGlobal {
+			require.Equal(t, 0, len(retriever.GetInvokes()), i)
+			require.Equal(t, 0, len(snap.GetInvokes()), i)
+		}
+
+		if ok && tbl.Meta().TempTableType == model.TempTableLocal {
+			require.Equal(t, 0, len(snap.GetInvokes()), i)
+			if c.nilSession {
+				require.Equal(t, 0, len(retriever.GetInvokes()), i)
+			} else {
+				require.Equal(t, 1, len(retriever.GetInvokes()), i)
+				require.Equal(t, "Iter", retriever.GetInvokes()[0].Method)
+				require.Equal(t, []interface{}{c.args[0], c.args[1]}, retriever.GetInvokes()[0].Args, i)
+			}
+		}
+
+		snap.ResetInvokes()
+		retriever.ResetInvokes()
+	}
+
+	// test error for snap
+	snapErr := errors.New("snapErr")
+	snap.InjectMethodError("Iter", snapErr)
+	iter, err := interceptor.iterTable(1, snap, encodeTableKey(1), encodeTableKey(2))
+	require.Nil(t, iter)
+	require.Equal(t, snapErr, err)
+	snap.InjectMethodError("Iter", nil)
+
+	// test error for retriever
+	retrieverErr := errors.New("retrieverErr")
+	retriever.InjectMethodError("Iter", retrieverErr)
+	iter, err = interceptor.iterTable(5, snap, encodeTableKey(5), encodeTableKey(6))
+	require.Nil(t, iter)
+	require.Equal(t, retrieverErr, err)
 }
