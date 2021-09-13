@@ -700,7 +700,7 @@ func TestIsolationInc(t *testing.T) {
 	// delete
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	defer func(){
+	defer func() {
 		require.NoError(t, txn.Commit(context.Background()))
 	}()
 	require.NoError(t, txn.Delete([]byte("key")))
