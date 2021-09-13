@@ -127,7 +127,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
-	snapshot.SetOption(kv.TxnScope, e.readReplicaScope)
+	snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
 	snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
 	failpoint.Inject("assertBatchPointStalenessOption", func(val failpoint.Value) {
 		assertScope := val.(string)
