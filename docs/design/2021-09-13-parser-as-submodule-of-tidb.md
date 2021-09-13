@@ -33,7 +33,7 @@ Personally, that is a weird argument for me. Indeed, pingcap/tidb does not store
 
 Another argument is about the messy dependency. The separation does improve the case.
 
-### What is  wrong with a separate repository?
+### What is wrong with a separate repository?
 
 In fact, there is no big problem. However the development becomes inconvenient. You could argue that we have workarounds, but why not make the development easier?
 
@@ -86,4 +86,4 @@ Since sub-module is merely another module inside another module, we need to rele
 
 We can not simply remove it. Importing pingcap/parser to build applications needs parser.go file, but go lacks build scripts in rust or `postbuild` in nodejs to auto-generate parser.go.
 
-One solution is to only include the file for the released version. But TiDB does not support package semver, `go get xxx/parser` won't simply give a buildable package.
+One solution is to only include the file for the released version. But TiDB does not support package semver, `go get xxx/parser` won't simply give a buildable package. That will be too frustrating for users.
