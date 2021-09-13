@@ -174,6 +174,10 @@ func physicalTableIDs(tableInfo *model.TableInfo) []int64 {
 	return []int64{tableInfo.ID}
 }
 
+// NewDuplicateManager creates a new *DuplicateManager.
+//
+// This object provides methods to collect and decode duplicated KV pairs into row data. The results
+// are stored into the errorMgr.
 func NewDuplicateManager(
 	errorMgr *errormanager.ErrorManager,
 	splitCli restore.SplitClient,
@@ -191,6 +195,9 @@ func NewDuplicateManager(
 	}, nil
 }
 
+// CollectDuplicateRowsFromTiKV collects duplicated rows already imported into TiKV.
+//
+// Collection result are saved into the ErrorManager.
 func (manager *DuplicateManager) CollectDuplicateRowsFromTiKV(ctx context.Context, tbl table.Table) (err error) {
 	logTask := log.L().Begin(zapcore.InfoLevel, "collect duplicate data from remote TiKV")
 	defer func() {
