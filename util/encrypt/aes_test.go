@@ -436,8 +436,7 @@ func TestAESEncryptWithCFB(t *testing.T) {
 	}
 }
 
-func (s *testEncryptSuite) TestAESDecryptWithCFB(c *C) {
-	defer testleak.AfterTest(c)()
+func TestAESDecryptWithCFB(t *testing.T) {
 	tests := []struct {
 		str     string
 		key     string
@@ -455,18 +454,18 @@ func (s *testEncryptSuite) TestAESDecryptWithCFB(c *C) {
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
 
-	for _, t := range tests {
-		str, _ := hex.DecodeString(t.str)
-		key := []byte(t.key)
-		iv := []byte(t.iv)
+	for _, tt := range tests {
+		str, _ := hex.DecodeString(tt.str)
+		key := []byte(tt.key)
+		iv := []byte(tt.iv)
 
 		plainText, err := AESDecryptWithCFB(str, key, iv)
-		if t.isError {
-			c.Assert(err, NotNil, Commentf("%v", t))
+		if tt.isError {
+			require.Errorf(t, err, "%v", tt)
 			continue
 		}
-		c.Assert(err, IsNil, Commentf("%v", t))
-		c.Assert(string(plainText), Equals, t.expect, Commentf("%v", t))
+		require.NoErrorf(t, err, "%v", tt)
+		require.Equalf(t, tt.expect, string(plainText), "%v", tt)
 	}
 }
 
