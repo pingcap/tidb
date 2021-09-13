@@ -189,7 +189,6 @@ type clientConn struct {
 	authPlugin   string            // default authentication plugin
 	isUnixSocket bool              // connection is Unix Socket file
 	textDumper   *textDumper
-	encoding     *charset.Encoding
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -2005,7 +2004,10 @@ func (cc *clientConn) loadCharsetResults(ctx context.Context, sysVars *variable.
 	if err != nil {
 		logutil.Logger(ctx).Info("get character_set_results system variable failed", zap.Error(err))
 	}
-	cc.textDumper.encoding.UpdateEncoding(charset.Format(chs))
+	if cc.textDumper == nil {
+		enc := charset.NewEncoding(charset.Format(chs))
+		cc.textDumper = &textDumper{encoding: *enc}
+	}
 }
 
 func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {
