@@ -667,3 +667,13 @@ func (s *testStatsSuite) TestCollationColumnEstimate(c *C) {
 		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
 }
+
+func (s *testStatsSuite) TestIssue27294(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists tt")
+	testKit.MustExec("create table tt (COL1 blob DEFAULT NULL,COL2 decimal(37,4) DEFAULT NULL,COL3 timestamp NULL DEFAULT NULL,COL4 int(11) DEFAULT NULL,UNIQUE KEY U_M_COL4(COL1(10),COL2), UNIQUE KEY U_M_COL5(COL3,COL2));")
+	testKit.MustExec("explain select * from tt where col1 is not null or col2 not between 454623814170074.2771 and -975540642273402.9269 and col3 not between '2039-1-19 10:14:57' and '2002-3-27 14:40:23';")
+}

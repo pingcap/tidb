@@ -296,6 +296,10 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 	p := (*partialResult4CountWithDistinct)(pr)
 
 	encodedBytes := make([]byte, 0)
+	collators := make([]collate.Collator, 0, len(e.args))
+	for _, arg := range e.args {
+		collators = append(collators, collate.GetCollator(arg.GetType().Collate))
+	}
 	// Decimal struct is the biggest type we will use.
 	buf := make([]byte, types.MyDecimalStructSize)
 
@@ -304,7 +308,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 		encodedBytes = encodedBytes[:0]
 
 		for i := 0; i < len(e.args) && !hasNull; i++ {
-			encodedBytes, isNull, err = evalAndEncode(sctx, e.args[i], row, buf, encodedBytes)
+			encodedBytes, isNull, err = evalAndEncode(sctx, e.args[i], collators[i], row, buf, encodedBytes)
 			if err != nil {
 				return
 			}
@@ -325,7 +329,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 
 // evalAndEncode eval one row with an expression and encode value to bytes.
 func evalAndEncode(
-	sctx sessionctx.Context, arg expression.Expression,
+	sctx sessionctx.Context, arg expression.Expression, collator collate.Collator,
 	row chunk.Row, buf, encodedBytes []byte,
 ) (_ []byte, isNull bool, err error) {
 	switch tp := arg.GetType().EvalType(); tp {
@@ -377,7 +381,7 @@ func evalAndEncode(
 		if err != nil || isNull {
 			break
 		}
-		encodedBytes = codec.EncodeCompactBytes(encodedBytes, hack.Slice(val))
+		encodedBytes = codec.EncodeCompactBytes(encodedBytes, collator.Key(val))
 	default:
 		return nil, false, errors.Errorf("unsupported column type for encode %d", tp)
 	}
@@ -756,13 +760,17 @@ func (e *approxCountDistinctOriginal) UpdatePartialResult(sctx sessionctx.Contex
 	encodedBytes := make([]byte, 0)
 	// Decimal struct is the biggest type we will use.
 	buf := make([]byte, types.MyDecimalStructSize)
+	collators := make([]collate.Collator, 0, len(e.args))
+	for _, arg := range e.args {
+		collators = append(collators, collate.GetCollator(arg.GetType().Collate))
+	}
 
 	for _, row := range rowsInGroup {
 		var hasNull, isNull bool
 		encodedBytes = encodedBytes[:0]
 
 		for i := 0; i < len(e.args) && !hasNull; i++ {
-			encodedBytes, isNull, err = evalAndEncode(sctx, e.args[i], row, buf, encodedBytes)
+			encodedBytes, isNull, err = evalAndEncode(sctx, e.args[i], collators[i], row, buf, encodedBytes)
 			if err != nil {
 				return
 			}
