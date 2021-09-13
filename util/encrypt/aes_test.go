@@ -20,19 +20,8 @@ import (
 	"strings"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testEncryptSuite{})
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-type testEncryptSuite struct {
-}
 
 func toHex(buf []byte) string {
 	return strings.ToUpper(hex.EncodeToString(buf))
