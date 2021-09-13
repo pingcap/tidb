@@ -1,22 +1,19 @@
 package aggregation
 
 import (
+	"testing"
 	"time"
 
-	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = check.Suite(&testUtilSuite{})
-
-type testUtilSuite struct {
-}
-
-func (s *testUtilSuite) TestDistinct(c *check.C) {
+func TestDistinct(t *testing.T) {
+	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	dc := createDistinctChecker(sc)
-	tests := []struct {
+	testCases := []struct {
 		vals   []interface{}
 		expect bool
 	}{
@@ -27,9 +24,9 @@ func (s *testUtilSuite) TestDistinct(c *check.C) {
 		{[]interface{}{1, nil}, true},
 		{[]interface{}{1, nil}, false},
 	}
-	for _, tt := range tests {
-		d, err := dc.Check(types.MakeDatums(tt.vals...))
-		c.Assert(err, check.IsNil)
-		c.Assert(d, check.Equals, tt.expect)
+	for _, tc := range testCases {
+		d, err := dc.Check(types.MakeDatums(tc.vals...))
+		require.NoError(t, err)
+		require.Equal(t, tc.expect, d)
 	}
 }

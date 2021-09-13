@@ -955,9 +955,9 @@ func GetAutoID(m *meta.Meta, dbID, tableID int64, allocType AllocatorType) (int6
 	switch allocType {
 	// Currently, row id allocator and auto-increment value allocator shares the same key-value pair.
 	case RowIDAllocType, AutoIncrementType:
-		return m.GetAutoTableID(dbID, tableID)
+		return m.GetAutoIDAccessors(dbID, tableID).RowID().Get()
 	case AutoRandomType:
-		return m.GetAutoRandomID(dbID, tableID)
+		return m.GetAutoIDAccessors(dbID, tableID).RandomID().Get()
 	case SequenceType:
 		return m.GetSequenceValue(dbID, tableID)
 	default:
@@ -969,9 +969,9 @@ func GetAutoID(m *meta.Meta, dbID, tableID int64, allocType AllocatorType) (int6
 func GenerateAutoID(m *meta.Meta, dbID, tableID, step int64, allocType AllocatorType) (int64, error) {
 	switch allocType {
 	case RowIDAllocType, AutoIncrementType:
-		return m.GenAutoTableID(dbID, tableID, step)
+		return m.GetAutoIDAccessors(dbID, tableID).RowID().Inc(step)
 	case AutoRandomType:
-		return m.GenAutoRandomID(dbID, tableID, step)
+		return m.GetAutoIDAccessors(dbID, tableID).RandomID().Inc(step)
 	case SequenceType:
 		return m.GenSequenceValue(dbID, tableID, step)
 	default:

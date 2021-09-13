@@ -528,7 +528,7 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 			job.State = model.JobStateCancelled
 			return nil, nil, 0, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 		}
-		if err = isDroppableColumn(tblInfo, colName); err != nil {
+		if err = isDroppableColumn(job.MultiSchemaInfo != nil, tblInfo, colName); err != nil {
 			job.State = model.JobStateCancelled
 			return nil, nil, 0, nil, errors.Trace(err)
 		}
@@ -657,7 +657,7 @@ func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Col
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
-	if err = isDroppableColumn(tblInfo, colName); err != nil {
+	if err = isDroppableColumn(job.MultiSchemaInfo != nil, tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, errors.Trace(err)
 	}
@@ -1648,7 +1648,8 @@ func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 		errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
 		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 	}
-	nextAutoIncID, err := m.GetAutoTableID(dbInfo.ID, tblInfo.ID)
+	idAcc := m.GetAutoIDAccessors(dbInfo.ID, tblInfo.ID).RowID()
+	nextAutoIncID, err := idAcc.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1656,7 +1657,7 @@ func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := m.CleanAutoID(dbInfo.ID, tblInfo.ID); err != nil {
+	if err := idAcc.Del(); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1733,9 +1734,9 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 	return false
 }
 
-func isColumnCanDropWithIndex(colName string, indices []*model.IndexInfo) bool {
+func isColumnCanDropWithIndex(isMultiSchemaChange bool, colName string, indices []*model.IndexInfo) bool {
 	for _, indexInfo := range indices {
-		if indexInfo.Primary || len(indexInfo.Columns) > 1 {
+		if indexInfo.Primary || len(indexInfo.Columns) > 1 || (!isMultiSchemaChange && len(indexInfo.Columns) == 1) {
 			for _, col := range indexInfo.Columns {
 				if col.Name.L == colName {
 					return false
