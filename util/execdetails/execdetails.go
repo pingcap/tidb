@@ -425,8 +425,8 @@ const (
 	TpIndexMergeRunTimeStats
 	// TpBasicCopRunTimeStats is the tp for BasicCopRunTimeStats
 	TpBasicCopRunTimeStats
-	// TpAutoIDAllocatorRuntimeStats is s the tp for AutoIDAllocatorRuntimeStats
-	TpAutoIDAllocatorRuntimeStats
+	// TpUpdateRuntimeStats is the tp for UpdateRuntimeStats
+	TpUpdateRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -810,7 +810,9 @@ func (e *RuntimeStatsWithCommit) Merge(rs RuntimeStats) {
 
 // Clone implements the RuntimeStats interface.
 func (e *RuntimeStatsWithCommit) Clone() RuntimeStats {
-	newRs := RuntimeStatsWithCommit{}
+	newRs := RuntimeStatsWithCommit{
+		TxnCnt: e.TxnCnt,
+	}
 	if e.Commit != nil {
 		newRs.Commit = e.Commit.Clone()
 	}

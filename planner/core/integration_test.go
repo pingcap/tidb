@@ -2440,6 +2440,80 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML(c *C) {
 	checkExplain("BatchGet")
 }
 
+func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML2(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	cases := []struct {
+		prepare    string
+		sql        string
+		planRegexp string
+	}{
+		// Test for alloc auto ID.
+		{
+			sql:        "insert into t () values ()",
+			planRegexp: ".*prepare.*total.*, allocator_stats.*alloc_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*, insert.*",
+		},
+		// Test for rebase ID.
+		{
+			sql:        "insert into t (a) values (99000000000)",
+			planRegexp: ".*prepare.*total.*, allocator_stats.*rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*, insert.*",
+		},
+		// Test for alloc auto ID and rebase ID.
+		{
+			sql:        "insert into t (a) values (null), (99000000000)",
+			planRegexp: ".*prepare.*total.*, allocator_stats.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*, insert.*",
+		},
+		// Test for insert ignore.
+		{
+			sql:        "insert ignore into t values (null,1), (2, 2), (99000000000, 3), (100000000000, 4)",
+			planRegexp: ".*prepare.*total.*, allocator_stats.*alloc_cnt: 1, rebase_cnt: 2, Get.*num_rpc.*total_time.*commit_txn.*count: 3, prewrite.*get_commit_ts.*commit.*write_keys.*, check_insert.*",
+		},
+		// Test for insert on duplicate.
+		{
+			sql:        "insert into t values (null,null), (1,1),(2,2) on duplicate key update a = a + 100000000000",
+			planRegexp: ".*prepare.*total.*, allocator_stats.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*count: 2, prewrite.*get_commit_ts.*commit.*write_keys.*, check_insert.*",
+		},
+		// Test for replace with alloc ID.
+		{
+			sql:        "replace into t () values ()",
+			planRegexp: ".*allocator_stats.*alloc_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*",
+		},
+		// Test for replace with alloc ID and rebase ID.
+		{
+			sql:        "replace into t (a) values (null), (99000000000)",
+			planRegexp: ".*allocator_stats.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*",
+		},
+		// Test for update with rebase ID.
+		{
+			prepare:    "insert into t values (1,1),(2,2)",
+			sql:        "update t set a=a*100000000000",
+			planRegexp: ".*allocator_stats.*rebase_cnt: 2, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*",
+		},
+	}
+
+	for _, ca := range cases {
+		for i := 0; i < 2; i++ {
+			tk.MustExec("drop table if exists t")
+			if i == 0 {
+				tk.MustExec(" create table t (a bigint auto_increment, b int, primary key (a));")
+			} else {
+				tk.MustExec(" create table t (a bigint unsigned auto_increment, b int, primary key (a));")
+			}
+			if ca.prepare != "" {
+				tk.MustExec(ca.prepare)
+			}
+			res := tk.MustQuery("explain analyze " + ca.sql)
+			resBuff := bytes.NewBufferString("")
+			for _, row := range res.Rows() {
+				fmt.Fprintf(resBuff, "%s\t", row)
+			}
+			explain := resBuff.String()
+			c.Assert(explain, Matches, ca.planRegexp, Commentf("sql: %v", ca.sql))
+		}
+	}
+}
+
 func (s *testIntegrationSuite) TestPartitionExplain(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

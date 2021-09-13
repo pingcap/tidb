@@ -263,6 +263,7 @@ func (alloc *allocator) rebase4Unsigned(ctx context.Context, tableID int64, requ
 
 	ctx, allocatorStats, commitDetail := getAllocatorStatsFromCtx(ctx)
 	if allocatorStats != nil {
+		allocatorStats.rebaseCount++
 		defer func() {
 			if commitDetail != nil {
 				allocatorStats.mergeCommitDetail(*commitDetail)
@@ -320,16 +321,12 @@ func (alloc *allocator) rebase4Signed(ctx context.Context, tableID, requiredBase
 		return nil
 	}
 
-	var allocatorStats *AutoIDAllocatorRuntimeStats
-	ctxValue := ctx.Value(AllocatorRuntimeStatsCtxKey)
-	if ctxValue != nil {
-		allocatorStats = ctxValue.(*AutoIDAllocatorRuntimeStats)
-		allocatorStats.allocCount++
-		var commitDetail *tikvutil.CommitDetails
-		ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
+	ctx, allocatorStats, commitDetail := getAllocatorStatsFromCtx(ctx)
+	if allocatorStats != nil {
+		allocatorStats.rebaseCount++
 		defer func() {
 			if commitDetail != nil {
-				allocatorStats.mergeCommitDetail(commitDetail)
+				allocatorStats.mergeCommitDetail(*commitDetail)
 			}
 		}()
 	}
@@ -416,20 +413,20 @@ type allocatorRuntimeStatsCtxKeyType struct{}
 
 var AllocatorRuntimeStatsCtxKey = allocatorRuntimeStatsCtxKeyType{}
 
-type AutoIDAllocatorRuntimeStats struct {
+type AllocatorRuntimeStats struct {
 	*txnsnapshot.SnapshotRuntimeStats
 	*execdetails.RuntimeStatsWithCommit
 	allocCount  int
 	rebaseCount int
 }
 
-func NewAutoIDAllocatorRuntimeStats() *AutoIDAllocatorRuntimeStats {
-	return &AutoIDAllocatorRuntimeStats{
+func NewAllocatorRuntimeStats() *AllocatorRuntimeStats {
+	return &AllocatorRuntimeStats{
 		SnapshotRuntimeStats: &txnsnapshot.SnapshotRuntimeStats{},
 	}
 }
 
-func (e *AutoIDAllocatorRuntimeStats) mergeCommitDetail(detail *tikvutil.CommitDetails) {
+func (e *AllocatorRuntimeStats) mergeCommitDetail(detail *tikvutil.CommitDetails) {
 	if detail == nil {
 		return
 	}
@@ -439,7 +436,7 @@ func (e *AutoIDAllocatorRuntimeStats) mergeCommitDetail(detail *tikvutil.CommitD
 	e.RuntimeStatsWithCommit.MergeCommitDetails(detail)
 }
 
-func (e *AutoIDAllocatorRuntimeStats) String() string {
+func (e *AllocatorRuntimeStats) String() string {
 	if e.allocCount == 0 && e.rebaseCount == 0 && e.SnapshotRuntimeStats == nil && e.RuntimeStatsWithCommit == nil {
 		return ""
 	}
@@ -480,34 +477,40 @@ func (e *AutoIDAllocatorRuntimeStats) String() string {
 }
 
 // Clone implements the RuntimeStats interface.
-func (e *AutoIDAllocatorRuntimeStats) Clone() execdetails.RuntimeStats {
-	newRs := &AutoIDAllocatorRuntimeStats{}
+func (e *AllocatorRuntimeStats) Clone() *AllocatorRuntimeStats {
+	newRs := &AllocatorRuntimeStats{
+		allocCount:  e.allocCount,
+		rebaseCount: e.rebaseCount,
+	}
 	if e.SnapshotRuntimeStats != nil {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
 		newRs.SnapshotRuntimeStats = snapshotStats
+	}
+	if e.RuntimeStatsWithCommit != nil {
+		newRs.RuntimeStatsWithCommit = e.RuntimeStatsWithCommit.Clone().(*execdetails.RuntimeStatsWithCommit)
 	}
 	return newRs
 }
 
 // Merge implements the RuntimeStats interface.
-func (e *AutoIDAllocatorRuntimeStats) Merge(other execdetails.RuntimeStats) {
-	tmp, ok := other.(*AutoIDAllocatorRuntimeStats)
-	if !ok {
+func (e *AllocatorRuntimeStats) Merge(other *AllocatorRuntimeStats) {
+	if other == nil {
 		return
 	}
-	if tmp.SnapshotRuntimeStats != nil {
+	if other.SnapshotRuntimeStats != nil {
 		if e.SnapshotRuntimeStats == nil {
-			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
-			e.SnapshotRuntimeStats = snapshotStats
-			return
+			e.SnapshotRuntimeStats = other.SnapshotRuntimeStats.Clone()
+		} else {
+			e.SnapshotRuntimeStats.Merge(other.SnapshotRuntimeStats)
 		}
-		e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
 	}
-}
-
-// Tp implements the RuntimeStats interface.
-func (e *AutoIDAllocatorRuntimeStats) Tp() int {
-	return execdetails.TpAutoIDAllocatorRuntimeStats
+	if other.RuntimeStatsWithCommit != nil {
+		if e.RuntimeStatsWithCommit == nil {
+			e.RuntimeStatsWithCommit = other.RuntimeStatsWithCommit.Clone().(*execdetails.RuntimeStatsWithCommit)
+		} else {
+			e.RuntimeStatsWithCommit.Merge(other.RuntimeStatsWithCommit)
+		}
+	}
 }
 
 // Rebase implements autoid.Allocator Rebase interface.
@@ -853,6 +856,7 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, tableID int64, n uint6
 
 		ctx, allocatorStats, commitDetail := getAllocatorStatsFromCtx(ctx)
 		if allocatorStats != nil {
+			allocatorStats.allocCount++
 			defer func() {
 				if commitDetail != nil {
 					allocatorStats.mergeCommitDetail(*commitDetail)
@@ -941,6 +945,7 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, tableID int64, n uin
 
 		ctx, allocatorStats, commitDetail := getAllocatorStatsFromCtx(ctx)
 		if allocatorStats != nil {
+			allocatorStats.allocCount++
 			defer func() {
 				if commitDetail != nil {
 					allocatorStats.mergeCommitDetail(*commitDetail)
@@ -1003,13 +1008,12 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, tableID int64, n uin
 	return min, alloc.base, nil
 }
 
-func getAllocatorStatsFromCtx(ctx context.Context) (context.Context, *AutoIDAllocatorRuntimeStats, **tikvutil.CommitDetails) {
-	var allocatorStats *AutoIDAllocatorRuntimeStats
+func getAllocatorStatsFromCtx(ctx context.Context) (context.Context, *AllocatorRuntimeStats, **tikvutil.CommitDetails) {
+	var allocatorStats *AllocatorRuntimeStats
 	var commitDetail *tikvutil.CommitDetails
 	ctxValue := ctx.Value(AllocatorRuntimeStatsCtxKey)
 	if ctxValue != nil {
-		allocatorStats = ctxValue.(*AutoIDAllocatorRuntimeStats)
-		allocatorStats.allocCount++
+		allocatorStats = ctxValue.(*AllocatorRuntimeStats)
 		ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
 	}
 	return ctx, allocatorStats, &commitDetail

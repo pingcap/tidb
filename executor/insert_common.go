@@ -1013,11 +1013,11 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 		if e.stats == nil {
 			snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 			e.stats = &InsertRuntimeStat{
-				BasicRuntimeStats:           e.runtimeStats,
-				SnapshotRuntimeStats:        snapshotStats,
-				AutoIDAllocatorRuntimeStats: autoid.NewAutoIDAllocatorRuntimeStats(),
-				Prefetch:                    0,
-				CheckInsertTime:             0,
+				BasicRuntimeStats:     e.runtimeStats,
+				SnapshotRuntimeStats:  snapshotStats,
+				AllocatorRuntimeStats: autoid.NewAllocatorRuntimeStats(),
+				Prefetch:              0,
+				CheckInsertTime:       0,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -1151,7 +1151,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 type InsertRuntimeStat struct {
 	*execdetails.BasicRuntimeStats
 	*txnsnapshot.SnapshotRuntimeStats
-	*autoid.AutoIDAllocatorRuntimeStats
+	*autoid.AllocatorRuntimeStats
 	CheckInsertTime time.Duration
 	Prefetch        time.Duration
 }
@@ -1190,8 +1190,8 @@ func (e *InsertRuntimeStat) String() string {
 
 func (e *InsertRuntimeStat) genPrepareString(buf *bytes.Buffer) {
 	var allocatorStatsStr string
-	if e.AutoIDAllocatorRuntimeStats != nil {
-		allocatorStatsStr = e.AutoIDAllocatorRuntimeStats.String()
+	if e.AllocatorRuntimeStats != nil {
+		allocatorStatsStr = e.AllocatorRuntimeStats.String()
 	}
 	if allocatorStatsStr == "" {
 		if e.CheckInsertTime == 0 {
@@ -1228,9 +1228,8 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 		basicStats := e.BasicRuntimeStats.Clone()
 		newRs.BasicRuntimeStats = basicStats.(*execdetails.BasicRuntimeStats)
 	}
-	if e.AutoIDAllocatorRuntimeStats != nil {
-		allocatorStats := e.AutoIDAllocatorRuntimeStats.Clone()
-		newRs.AutoIDAllocatorRuntimeStats = allocatorStats.(*autoid.AutoIDAllocatorRuntimeStats)
+	if e.AllocatorRuntimeStats != nil {
+		newRs.AllocatorRuntimeStats = e.AllocatorRuntimeStats.Clone()
 	}
 	return newRs
 }
@@ -1255,6 +1254,13 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 			e.BasicRuntimeStats = basicStats.(*execdetails.BasicRuntimeStats)
 		} else {
 			e.BasicRuntimeStats.Merge(tmp.BasicRuntimeStats)
+		}
+	}
+	if tmp.AllocatorRuntimeStats != nil {
+		if e.AllocatorRuntimeStats == nil {
+			e.AllocatorRuntimeStats = tmp.AllocatorRuntimeStats.Clone()
+		} else {
+			e.AllocatorRuntimeStats.Merge(tmp.AllocatorRuntimeStats)
 		}
 	}
 	e.Prefetch += tmp.Prefetch
