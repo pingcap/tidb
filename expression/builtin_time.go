@@ -7230,10 +7230,8 @@ func calAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
 
 func getFspByIntArg(ctx sessionctx.Context, exp Expression) (int, error) {
 	_, ok := exp.(*Constant)
-	fsp := int64(types.MaxFsp)
-	var err error
 	if ok {
-		fsp, _, err = exp.EvalInt(ctx, chunk.Row{})
+		fsp, _, err := exp.EvalInt(ctx, chunk.Row{})
 		if err != nil {
 			return 0, err
 		}
