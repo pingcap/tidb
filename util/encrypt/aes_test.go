@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/stretchr/testify/require"
 )
 
@@ -469,20 +468,18 @@ func TestAESDecryptWithCFB(t *testing.T) {
 	}
 }
 
-func (s *testEncryptSuite) TestDeriveKeyMySQL(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestDeriveKeyMySQL(t *testing.T) {
 	p := []byte("MySQL=insecure! MySQL=insecure! ")
 	p = DeriveKeyMySQL(p, 16)
-	c.Assert(toHex(p), Equals, "00000000000000000000000000000000")
+	require.Equal(t, "00000000000000000000000000000000", toHex(p))
 
 	// Short password.
 	p = []byte{0xC0, 0x10, 0x44, 0xCC, 0x10, 0xD9}
 	p = DeriveKeyMySQL(p, 16)
-	c.Assert(toHex(p), Equals, "C01044CC10D900000000000000000000")
+	require.Equal(t, "C01044CC10D900000000000000000000", toHex(p))
 
 	// Long password.
 	p = []byte("MySecretVeryLooooongPassword")
 	p = DeriveKeyMySQL(p, 16)
-	c.Assert(toHex(p), Equals, "22163D0233131607210A001D4C6F6F6F")
+	require.Equal(t, "22163D0233131607210A001D4C6F6F6F", toHex(p))
 }
