@@ -111,6 +111,7 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
   | REGION_ID   | bigint(21)  | YES  |      | NULL    |       | 
   | STORE_ID    | bigint(21)  | YES  |      | NULL    |       | // new
   | PEER_ID     | bigint(21)  | YES  |      | NULL    |       | // new
+  | IS_LEARNER  | tinyint(1)  | NO   |      | 0       |       | // new
   | IS_LEADER   | tinyint(1)  | NO   |      | 0       |       | // new
   | TYPE        | varchar(64) | YES  |      | NULL    |       |
   | HOT_DEGREE  | bigint(21)  | YES  |      | NULL    |       | // rename max_hot_degree to HOT_DEGREE
@@ -123,6 +124,7 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
   * Add `UPDATE_TIME` to support history.
   * Add `STORE_ID` ,  `PEER_ID`,  `IS_LAEDER`to track the machine of region.
   * Rename `MAX_HOT_DEGREE`  to `HOT_DEGREE` for precise meaning in history scenario.
+  * Add `IS_LEARNER` and `IS_LEADER` to show role of regions.
   * Add `KEY_RATE` and `QUERY_RATE` for future expansion in hotspot determination dimensions.
   * Remove `REGION_COUNT` for disuse and repeat with `STORE_ID`.
 
@@ -166,6 +168,9 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
      | 10                  | 550                                  | 880                                        |
 
      If the data survival time exceeds the preservation time,it will be delete from LevelDB,every month we will compact the data that store in LevelDB to reduce space usage.This work takes 1.7s to complete.
+     
+6. PD-CTL
+   Support history hot regions in pd-ctl.
 
 ### TiDB
 
@@ -176,24 +181,17 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
 1. Add `HotRegionsHistoryTableExtractor` to push down some predicates to PD in order to  reduce network IO.
 
    ```go
-   // HistoryHotRegionsRequest wrap conditions push down to PD. 
-    type HistoryHotRegionsRequest struct { 
-        StartTime int64 `json:"start_time,omitempty"` 
-        EndTime int64 `json:"end_time,omitempty"` 
-        RegionIDs []uint64 `json:"region_ids,omitempty"` 
-        StoreIDs []uint64 `json:"store_ids,omitempty"` 
-        PeerIDs []uint64 `json:"peer_ids,omitempty"` 
-        Roles []uint64 `json:"roles,omitempty"` 
-        HotRegionTypes []string `json:"hot_region_types,omitempty"` 
-        LowHotDegree int64 `json:"low_hot_degree,omitempty"` 
-        HighHotDegree int64 `json:"high_hot_degree,omitempty"` 
-        LowFlowBytes float64 `json:"low_flow_bytes,omitempty"` 
-        HighFlowBytes float64 `json:"high_flow_bytes,omitempty"` 
-        LowKeyRate float64 `json:"low_key_rate,omitempty"` 
-        HighKeyRate float64 `json:"high_key_rate,omitempty"` 
-        LowQueryRate float64 `json:"low_query_rate,omitempty"` 
-        HighQueryRate float64 `json:"high_query_rate,omitempty"` 
-    } 
+   // HistoryHotRegionsRequest wrap conditions push down to PD.
+   type HistoryHotRegionsRequest struct {
+    StartTime      int64    `json:"start_time,omitempty"`
+    EndTime        int64    `json:"end_time,omitempty"`
+    RegionIDs      []uint64 `json:"region_ids,omitempty"`
+    StoreIDs       []uint64 `json:"store_ids,omitempty"`
+    PeerIDs        []uint64 `json:"peer_ids,omitempty"`
+    IsLearners     []bool   `json:"is_learners,omitempty"`
+    IsLeaders      []bool   `json:"is_leaders,omitempty"`
+    HotRegionTypes []string `json:"hot_region_type,omitempty"`
+   }
    ```
    
 1. Add `hotRegionsHistoryRetriver` to fetch hotspot regions from all  PD servers by HTTP request(GET method),  then supplement fields like `DB_NAME`, `TABLE_NAME`,  `TABLE_ID`,  `INDEX_NAME`, `INDEX_ID` according to the `START_KEY` and `END_KEY`of the hotspot region, and merge the results.
@@ -202,18 +200,19 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
    // HistoryHotRegion records each hot region's statistics.
    // it's the response of PD.
    type HistoryHotRegion struct {
-   	UpdateTime    int64   `json:"update_time,omitempty"`
-   	RegionID      uint64  `json:"region_id,omitempty"`
-   	StoreID       uint64  `json:"store_id,omitempty"`
-   	PeerID        uint64  `json:"peer_id,omitempty"`
-   	IsLeader      int64   `json:"is_leader,omitempty"`
-   	HotRegionType string  `json:"hot_region_type,omitempty"`
-   	HotDegree     int64   `json:"hot_degree,omitempty"`
-   	FlowBytes     float64 `json:"flow_bytes,omitempty"`
-   	KeyRate       float64 `json:"key_rate,omitempty"`
-   	QueryRate     float64 `json:"query_rate,omitempty"`
-   	StartKey      []byte  `json:"start_key,omitempty"`
-   	EndKey        []byte  `json:"end_key,omitempty"`
+    UpdateTime    int64   `json:"update_time,omitempty"`
+    RegionID      uint64  `json:"region_id,omitempty"`
+    StoreID       uint64  `json:"store_id,omitempty"`
+    PeerID        uint64  `json:"peer_id,omitempty"`
+    IsLearner     bool    `json:"is_learner,omitempty"`
+    IsLeader      bool    `json:"is_leader,omitempty"`
+    HotRegionType string  `json:"hot_region_type,omitempty"`
+    HotDegree     int64   `json:"hot_degree,omitempty"`
+    FlowBytes     float64 `json:"flow_bytes,omitempty"`
+    KeyRate       float64 `json:"key_rate,omitempty"`
+    QueryRate     float64 `json:"query_rate,omitempty"`
+    StartKey      []byte  `json:"start_key,omitempty"`
+    EndKey        []byte  `json:"end_key,omitempty"`
    }
    ```
 
@@ -225,6 +224,7 @@ In addition, hot regions can also be obtained directly through [pd-ctl](https://
 * /tidb/hotRegionsHistoryRetriver: test with three mock PD http servers.
 * /pd/HotRegionStorage: test read and write function.
 * /pd/GetHistoryHotRegions: test PD's http server function. 
+* /pd/TestHotWithHistoryRegions: test pd-ctl with mock hot regions.
 
 ### Scenario Tests
 
