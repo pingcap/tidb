@@ -15,6 +15,7 @@
 package label
 
 import (
+	"errors"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -37,24 +38,25 @@ func (t *testLabelSuite) TestNew(c *C) {
 	tests := []TestCase{
 		{
 			name:  "normal",
-			input: "nomerge",
+			input: "merge_option=allow",
 			label: Label{
-				Key:   "nomerge",
-				Value: "true",
+				Key:   "merge_option",
+				Value: "allow",
 			},
 		},
 		{
 			name:  "normal with space",
-			input: " nomerge ",
+			input: " merge_option=allow ",
 			label: Label{
-				Key:   "nomerge",
-				Value: "true",
+				Key:   "merge_option",
+				Value: "allow",
 			},
 		},
 	}
 
 	for _, t := range tests {
-		label := NewLabel(t.input)
+		label, err := NewLabel(t.input)
+		c.Assert(err, IsNil)
 		c.Assert(label, DeepEquals, t.label, Commentf("%s", t.name))
 	}
 }
@@ -66,18 +68,20 @@ func (t *testLabelSuite) TestRestore(c *C) {
 		output string
 	}
 
-	input := NewLabel("nomerge")
-	input1 := NewLabel(" nomerge  ")
+	input, err := NewLabel("merge_option=allow")
+	c.Assert(err, IsNil)
+	input1, err := NewLabel(" merge_option=allow  ")
+	c.Assert(err, IsNil)
 	tests := []TestCase{
 		{
 			name:   "normal",
 			input:  input,
-			output: "nomerge",
+			output: "merge_option=allow",
 		},
 		{
 			name:   "normal with spaces",
 			input:  input1,
-			output: "nomerge",
+			output: "merge_option=allow",
 		},
 	}
 
@@ -92,26 +96,35 @@ var _ = Suite(&testLabelsSuite{})
 type testLabelsSuite struct{}
 
 func (t *testLabelsSuite) TestNew(c *C) {
-	labels := NewLabels(nil)
+	labels, err := NewLabels(nil)
+	c.Assert(err, IsNil)
 	c.Assert(labels, HasLen, 0)
 
-	labels = NewLabels([]string{})
+	labels, err = NewLabels([]string{})
+	c.Assert(err, IsNil)
 	c.Assert(labels, HasLen, 0)
 
-	labels = NewLabels([]string{"nomerge"})
+	labels, err = NewLabels([]string{"merge_option=allow"})
+	c.Assert(err, IsNil)
 	c.Assert(labels, HasLen, 1)
-	c.Assert(labels[0].Key, Equals, "nomerge")
+	c.Assert(labels[0].Key, Equals, "merge_option")
+	c.Assert(labels[0].Value, Equals, "allow")
 
 	// test multiple attributes
-	labels = NewLabels([]string{"nomerge", "somethingelse"})
+	labels, err = NewLabels([]string{"merge_option=allow", "key=value"})
+	c.Assert(err, IsNil)
 	c.Assert(labels, HasLen, 2)
-	c.Assert(labels[0].Key, Equals, "nomerge")
-	c.Assert(labels[1].Key, Equals, "somethingelse")
+	c.Assert(labels[0].Key, Equals, "merge_option")
+	c.Assert(labels[0].Value, Equals, "allow")
+	c.Assert(labels[1].Key, Equals, "key")
+	c.Assert(labels[1].Value, Equals, "value")
 
 	// test duplicated attributes
-	labels = NewLabels([]string{"nomerge", "nomerge"})
+	labels, err = NewLabels([]string{"merge_option=allow", "merge_option=allow"})
+	c.Assert(err, IsNil)
 	c.Assert(labels, HasLen, 1)
-	c.Assert(labels[0].Key, Equals, "nomerge")
+	c.Assert(labels[0].Key, Equals, "merge_option")
+	c.Assert(labels[0].Value, Equals, "allow")
 }
 
 func (t *testLabelsSuite) TestAdd(c *C) {
@@ -119,31 +132,54 @@ func (t *testLabelsSuite) TestAdd(c *C) {
 		name   string
 		labels Labels
 		label  Label
+		err    error
 	}
 
-	labels := NewLabels([]string{"nomerge"})
-	label := NewLabel("somethingelse")
+	labels, err := NewLabels([]string{"merge_option=allow"})
+	c.Assert(err, IsNil)
+	label, err := NewLabel("somethingelse=true")
+	c.Assert(err, IsNil)
+	l1, err := NewLabels([]string{"key=value"})
+	c.Assert(err, IsNil)
+	l2, err := NewLabel("key=value")
+	c.Assert(err, IsNil)
+	l3, err := NewLabels([]string{"key=value1"})
+	c.Assert(err, IsNil)
 	tests := []TestCase{
 		{
 			"normal",
 			labels, label,
+			nil,
 		},
 		{
 			"duplicated attributes, skip",
-			NewLabels([]string{"nomerge"}), NewLabel("nomerge"),
+			l1, l2,
+			nil,
 		},
 		{
 			"duplicated attributes, skip",
 			append(labels, Label{
-				Key:   "nomerge",
-				Value: "true",
+				Key:   "merge_option",
+				Value: "allow",
 			}), label,
+			nil,
+		},
+		{
+			"conflict attributes",
+			l3, l2,
+			ErrConflictingAttributes,
 		},
 	}
 
 	for _, t := range tests {
-		t.labels.Add(t.label)
-		c.Assert(t.labels[len(t.labels)-1], DeepEquals, t.label, Commentf("%s", t.name))
+		err := t.labels.Add(t.label)
+		comment := Commentf("%s: %v", t.name, err)
+		if t.err == nil {
+			c.Assert(err, IsNil, comment)
+			c.Assert(t.labels[len(t.labels)-1], DeepEquals, t.label, comment)
+		} else {
+			c.Assert(errors.Is(err, t.err), IsTrue, comment)
+		}
 	}
 }
 
@@ -154,11 +190,16 @@ func (t *testLabelsSuite) TestRestore(c *C) {
 		output string
 	}
 
-	input1 := NewLabel("nomerge")
-	input2 := NewLabel("somethingelse")
-	input3 := NewLabel("db")
-	input4 := NewLabel("table")
-	input5 := NewLabel("partition")
+	input1, err := NewLabel("merge_option=allow")
+	c.Assert(err, IsNil)
+	input2, err := NewLabel("key=value")
+	c.Assert(err, IsNil)
+	input3, err := NewLabel("db=d1")
+	c.Assert(err, IsNil)
+	input4, err := NewLabel("table=t1")
+	c.Assert(err, IsNil)
+	input5, err := NewLabel("partition=p1")
+	c.Assert(err, IsNil)
 
 	tests := []TestCase{
 		{
@@ -169,7 +210,7 @@ func (t *testLabelsSuite) TestRestore(c *C) {
 		{
 			"normal2",
 			Labels{input1, input2},
-			`"nomerge","somethingelse"`,
+			`"merge_option=allow","key=value"`,
 		},
 		{
 			"normal3",
@@ -179,7 +220,7 @@ func (t *testLabelsSuite) TestRestore(c *C) {
 		{
 			"normal4",
 			Labels{input1, input2, input3},
-			`"nomerge","somethingelse"`,
+			`"merge_option=allow","key=value"`,
 		},
 	}
 
