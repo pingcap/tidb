@@ -54,7 +54,7 @@ var defaultImportantVariables = map[string]string{
 
 // defaultImportVariablesTiDB is used in ObtainImportantVariables to retrieve the system
 // variables from downstream in local/importer backend. The values record the default
-//// values if missing.
+// values if missing.
 var defaultImportVariablesTiDB = map[string]string{
 	"tidb_row_format_version": "1",
 }
@@ -327,13 +327,13 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 		if first {
 			first = false
 		} else {
-			query.WriteByte(',')
+			query.WriteString("','")
 		}
 		query.WriteString(k)
 	}
 	if needTiDBVars {
 		for k := range defaultImportVariablesTiDB {
-			query.WriteByte(',')
+			query.WriteString("','")
 			query.WriteString(k)
 		}
 	}
