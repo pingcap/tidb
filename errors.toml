@@ -713,7 +713,7 @@ Prometheus address is not set in PD and etcd
 
 ["executor:1044"]
 error = '''
-Access denied for user '%-.48s'@'%-.64s' to database '%-.192s'
+Access denied for user '%-.48s'@'%-.255s' to database '%-.192s'
 '''
 
 ["executor:1049"]
@@ -728,7 +728,7 @@ Can't find any matching row in the user table
 
 ["executor:1142"]
 error = '''
-%-.128s command denied to user '%-.48s'@'%-.64s' for table '%-.64s'
+%-.128s command denied to user '%-.48s'@'%-.255s' for table '%-.64s'
 '''
 
 ["executor:1144"]
@@ -1078,12 +1078,12 @@ Unknown placement policy '%-.192s'
 
 ["planner:1044"]
 error = '''
-Access denied for user '%-.48s'@'%-.64s' to database '%-.192s'
+Access denied for user '%-.48s'@'%-.255s' to database '%-.192s'
 '''
 
 ["planner:1045"]
 error = '''
-Access denied for user '%-.48s'@'%-.64s'
+Access denied for user '%-.48s'@'%-.255s'
 '''
 
 ["planner:1046"]
@@ -1158,7 +1158,7 @@ Column count doesn't match value count at row %d
 
 ["planner:1142"]
 error = '''
-%-.128s command denied to user '%-.48s'@'%-.64s' for table '%-.64s'
+%-.128s command denied to user '%-.48s'@'%-.255s' for table '%-.64s'
 '''
 
 ["planner:1146"]
@@ -1483,7 +1483,7 @@ invalid as of timestamp: %s
 
 ["privilege:1141"]
 error = '''
-There is no such grant defined for user '%-.48s' on host '%-.64s'
+There is no such grant defined for user '%-.48s' on host '%-.255s'
 '''
 
 ["privilege:3530"]
@@ -1503,7 +1503,7 @@ Can't drop database '%-.192s'; database doesn't exist
 
 ["schema:1045"]
 error = '''
-Access denied for user '%-.48s'@'%-.64s' (using password: %s)
+Access denied for user '%-.48s'@'%-.255s' (using password: %s)
 '''
 
 ["schema:1049"]
