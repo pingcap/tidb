@@ -28,8 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testbridge"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
@@ -38,191 +37,192 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }
 
-type TemporaryTableDDLSuite struct {
-	suite.Suite
-	sctx sessionctx.Context
-	ddl  *temporaryTableDDL
-}
-
-func TestTemporaryTableDDLSuit(t *testing.T) {
-	suite.Run(t, new(TemporaryTableDDLSuite))
-}
-
-func (s *TemporaryTableDDLSuite) SetupTest() {
+func createTestSuite(t *testing.T) (sessionctx.Context, *temporaryTableDDL, func()) {
 	store, err := mockstore.NewMockStore()
-	assert.Nil(s.T(), err)
+	require.NoError(t, err)
 
 	sctx := mock.NewContext()
 	sctx.Store = store
+	ddl := GetTemporaryTableDDL(sctx).(*temporaryTableDDL)
+	clean := func() {
+		require.NoError(t, store.Close())
+	}
 
-	s.sctx = sctx
-	s.ddl = GetTemporaryTableDDL(sctx).(*temporaryTableDDL)
+	return sctx, ddl, clean
 }
 
-func (s *TemporaryTableDDLSuite) TearDownTest() {
-	assert.Nil(s.T(), s.sctx.GetStore().Close())
-}
+func TestAddLocalTemporaryTable(t *testing.T) {
+	t.Parallel()
 
-func (s *TemporaryTableDDLSuite) TestAddLocalTemporaryTable() {
-	assert := assert.New(s.T())
-	sessVars := s.sctx.GetSessionVars()
+	sctx, ddl, clean := createTestSuite(t)
+	defer clean()
+
+	sessVars := sctx.GetSessionVars()
 
 	tbl1 := newMockTable("t1")
 	tbl2 := newMockTable("t2")
 
-	assert.Nil(sessVars.LocalTemporaryTables)
-	assert.Nil(sessVars.TemporaryTableData)
+	require.Nil(t, sessVars.LocalTemporaryTables)
+	require.Nil(t, sessVars.TemporaryTableData)
 
 	// insert t1
-	err := s.ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl1)
-	assert.Nil(err)
-	assert.NotNil(sessVars.LocalTemporaryTables)
-	assert.NotNil(sessVars.TemporaryTableData)
-	assert.Equal(int64(1), tbl1.ID)
+	err := ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl1)
+	require.NoError(t, err)
+	require.NotNil(t, sessVars.LocalTemporaryTables)
+	require.NotNil(t, sessVars.TemporaryTableData)
+	require.Equal(t, int64(1), tbl1.ID)
 	got, exists := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
-	assert.True(exists)
-	assert.Equal(got.Meta(), tbl1)
+	require.True(t, exists)
+	require.Equal(t, got.Meta(), tbl1)
 
 	// insert t2 with data
-	err = s.ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl2)
-	assert.Nil(err)
-	assert.Equal(int64(2), tbl2.ID)
+	err = ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl2)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), tbl2.ID)
 	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t2"))
-	assert.True(exists)
-	assert.Equal(got.Meta(), tbl2)
+	require.True(t, exists)
+	require.Equal(t, got.Meta(), tbl2)
 
 	// should success to set a key for a table
 	k := tablecodec.EncodeRowKeyWithHandle(tbl1.ID, kv.IntHandle(1))
 	err = sessVars.TemporaryTableData.SetTableKey(tbl1.ID, k, []byte("v1"))
-	assert.Nil(err)
+	require.NoError(t, err)
 
 	val, err := sessVars.TemporaryTableData.Get(context.Background(), k)
-	assert.Nil(err)
-	assert.Equal([]byte("v1"), val)
+	require.NoError(t, err)
+	require.Equal(t, []byte("v1"), val)
 
 	// insert dup table
 	tbl1x := newMockTable("t1")
-	err = s.ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl1x)
-	assert.True(infoschema.ErrTableExists.Equal(err))
+	err = ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl1x)
+	require.True(t, infoschema.ErrTableExists.Equal(err))
 	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
-	assert.True(exists)
-	assert.Equal(got.Meta(), tbl1)
+	require.True(t, exists)
+	require.Equal(t, got.Meta(), tbl1)
 
 	// insert should be success for same table name in different db
-	err = s.ddl.CreateLocalTemporaryTable(model.NewCIStr("db2"), tbl1x)
-	assert.Nil(err)
+	err = ddl.CreateLocalTemporaryTable(model.NewCIStr("db2"), tbl1x)
+	require.NoError(t, err)
 	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db2"), model.NewCIStr("t1"))
-	assert.Equal(int64(4), got.Meta().ID)
-	assert.True(exists)
-	assert.Equal(got.Meta(), tbl1x)
+	require.Equal(t, int64(4), got.Meta().ID)
+	require.True(t, exists)
+	require.Equal(t, got.Meta(), tbl1x)
 
 	// tbl1 still exist
 	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
-	assert.True(exists)
-	assert.Equal(got.Meta(), tbl1)
+	require.True(t, exists)
+	require.Equal(t, got.Meta(), tbl1)
 }
 
-func (s *TemporaryTableDDLSuite) TestRemoveLocalTemporaryTable() {
-	assert := assert.New(s.T())
-	sessVars := s.sctx.GetSessionVars()
+func TestRemoveLocalTemporaryTable(t *testing.T) {
+	t.Parallel()
+
+	sctx, ddl, clean := createTestSuite(t)
+	defer clean()
+
+	sessVars := sctx.GetSessionVars()
 
 	// remove when empty
-	err := s.ddl.DropLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
-	assert.True(infoschema.ErrTableNotExists.Equal(err))
+	err := ddl.DropLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
+	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 
 	// add one table
 	tbl1 := newMockTable("t1")
-	err = s.ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl1)
-	assert.Nil(err)
-	assert.Equal(int64(1), tbl1.ID)
+	err = ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl1)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), tbl1.ID)
 	k := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
 	err = sessVars.TemporaryTableData.SetTableKey(tbl1.ID, k, []byte("v1"))
-	assert.Nil(err)
+	require.NoError(t, err)
 
 	// remove failed when table not found
-	err = s.ddl.DropLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t2"))
-	assert.True(infoschema.ErrTableNotExists.Equal(err))
+	err = ddl.DropLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t2"))
+	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 
 	// remove failed when table not found (same table name in different db)
-	err = s.ddl.DropLocalTemporaryTable(model.NewCIStr("db2"), model.NewCIStr("t1"))
-	assert.True(infoschema.ErrTableNotExists.Equal(err))
+	err = ddl.DropLocalTemporaryTable(model.NewCIStr("db2"), model.NewCIStr("t1"))
+	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 
 	// check failed remove should have no effects
 	got, exists := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByID(tbl1.ID)
-	assert.True(exists)
-	assert.Equal(got.Meta(), tbl1)
+	require.True(t, exists)
+	require.Equal(t, got.Meta(), tbl1)
 	val, err := sessVars.TemporaryTableData.Get(context.Background(), k)
-	assert.Nil(err)
-	assert.Equal([]byte("v1"), val)
+	require.NoError(t, err)
+	require.Equal(t, []byte("v1"), val)
 
 	// remove success
-	err = s.ddl.DropLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
-	assert.Nil(err)
+	err = ddl.DropLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
+	require.NoError(t, err)
 	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
-	assert.Nil(got)
-	assert.False(exists)
+	require.Nil(t, got)
+	require.False(t, exists)
 	val, err = sessVars.TemporaryTableData.Get(context.Background(), k)
-	assert.Nil(err)
-	assert.Equal([]byte{}, val)
+	require.NoError(t, err)
+	require.Equal(t, []byte{}, val)
 }
 
-func (s *TemporaryTableDDLSuite) TestTruncateLocalTemporaryTable() {
-	assert := assert.New(s.T())
-	sessVars := s.sctx.GetSessionVars()
+func TestTruncateLocalTemporaryTable(t *testing.T) {
+	t.Parallel()
+
+	sctx, ddl, clean := createTestSuite(t)
+	defer clean()
+
+	sessVars := sctx.GetSessionVars()
 
 	// truncate when empty
-	err := s.ddl.TruncateLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
-	assert.True(infoschema.ErrTableNotExists.Equal(err))
-	assert.Nil(sessVars.LocalTemporaryTables)
-	assert.Nil(sessVars.TemporaryTableData)
+	err := ddl.TruncateLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
+	require.True(t, infoschema.ErrTableNotExists.Equal(err))
+	require.Nil(t, sessVars.LocalTemporaryTables)
+	require.Nil(t, sessVars.TemporaryTableData)
 
 	// add one table
 	tbl1 := newMockTable("t1")
-	err = s.ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl1)
-	assert.Equal(int64(1), tbl1.ID)
-	assert.Nil(err)
+	err = ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl1)
+	require.Equal(t, int64(1), tbl1.ID)
+	require.NoError(t, err)
 	k := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
 	err = sessVars.TemporaryTableData.SetTableKey(1, k, []byte("v1"))
-	assert.Nil(err)
+	require.NoError(t, err)
 
 	// truncate failed for table not exist
-	err = s.ddl.TruncateLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t2"))
-	assert.True(infoschema.ErrTableNotExists.Equal(err))
-	err = s.ddl.TruncateLocalTemporaryTable(model.NewCIStr("db2"), model.NewCIStr("t1"))
-	assert.True(infoschema.ErrTableNotExists.Equal(err))
+	err = ddl.TruncateLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t2"))
+	require.True(t, infoschema.ErrTableNotExists.Equal(err))
+	err = ddl.TruncateLocalTemporaryTable(model.NewCIStr("db2"), model.NewCIStr("t1"))
+	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 
 	// check failed should have no effects
 	got, exists := sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
-	assert.True(exists)
-	assert.Equal(got.Meta(), tbl1)
+	require.True(t, exists)
+	require.Equal(t, got.Meta(), tbl1)
 	val, err := sessVars.TemporaryTableData.Get(context.Background(), k)
-	assert.Nil(err)
-	assert.Equal([]byte("v1"), val)
+	require.NoError(t, err)
+	require.Equal(t, []byte("v1"), val)
 
 	// insert a new tbl
 	tbl2 := newMockTable("t2")
-	err = s.ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl2)
-	assert.Equal(int64(2), tbl2.ID)
-	assert.Nil(err)
+	err = ddl.CreateLocalTemporaryTable(model.NewCIStr("db1"), tbl2)
+	require.Equal(t, int64(2), tbl2.ID)
+	require.NoError(t, err)
 	k2 := tablecodec.EncodeRowKeyWithHandle(2, kv.IntHandle(1))
 	err = sessVars.TemporaryTableData.SetTableKey(2, k2, []byte("v2"))
-	assert.Nil(err)
+	require.NoError(t, err)
 
 	// truncate success
-	err = s.ddl.TruncateLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
-	assert.Nil(err)
+	err = ddl.TruncateLocalTemporaryTable(model.NewCIStr("db1"), model.NewCIStr("t1"))
+	require.NoError(t, err)
 	got, exists = sessVars.LocalTemporaryTables.(*infoschema.LocalTemporaryTables).TableByName(model.NewCIStr("db1"), model.NewCIStr("t1"))
-	assert.True(exists)
-	assert.NotEqual(got.Meta(), tbl1)
-	assert.Equal(int64(3), got.Meta().ID)
+	require.True(t, exists)
+	require.NotEqual(t, got.Meta(), tbl1)
+	require.Equal(t, int64(3), got.Meta().ID)
 	val, err = sessVars.TemporaryTableData.Get(context.Background(), k)
-	assert.Nil(err)
-	assert.Equal([]byte{}, val)
+	require.NoError(t, err)
+	require.Equal(t, []byte{}, val)
 
 	// truncate just effect its own data
 	val, err = sessVars.TemporaryTableData.Get(context.Background(), k2)
-	assert.Nil(err)
-	assert.Equal([]byte("v2"), val)
+	require.NoError(t, err)
+	require.Equal(t, []byte("v2"), val)
 }
 
 func newMockTable(tblName string) *model.TableInfo {
