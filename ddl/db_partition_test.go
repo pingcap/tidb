@@ -48,8 +48,10 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"go.uber.org/zap"
 )
 
 func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
@@ -2167,6 +2169,8 @@ func checkPartitionDelRangeDone(c *C, s *testIntegrationSuite, partitionPrefix k
 		if !hasOldPartitionData {
 			break
 		}
+
+		logutil.BgLogger().Info("sleep in check", zap.Stringer("key", partitionPrefix))
 		time.Sleep(waitForCleanDataInterval)
 	}
 	return hasOldPartitionData
