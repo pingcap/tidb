@@ -335,7 +335,7 @@ func (manager *DuplicateManager) sendRequestToTiKV(ctx context.Context,
 			}
 		}
 
-		// it means that all the region send to TiKV fail, so we must sleep some time to avoid retry too frequency
+		// it means that all the regions sent to TiKV fail, so we must sleep for a while to avoid retrying too frequently.
 		if len(unfinishedRegions) == len(regions) {
 			tryTimes += 1
 			time.Sleep(defaultRetryBackoffTime)
