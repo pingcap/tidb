@@ -107,6 +107,16 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 	return ok
 }
 
+// GetDefaultCollationLegacy is compatible with the charset support in old version parser.
+func GetDefaultCollationLegacy(charset string) (string, error) {
+	switch strings.ToLower(charset) {
+	case CharsetUTF8, CharsetUTF8MB4, CharsetASCII, CharsetLatin1, CharsetBin:
+		return GetDefaultCollation(charset)
+	default:
+		return "", errors.Errorf("Unknown charset %s", charset)
+	}
+}
+
 // GetDefaultCollation returns the default collation for charset.
 func GetDefaultCollation(charset string) (string, error) {
 	cs, err := GetCharsetInfo(charset)

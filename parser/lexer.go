@@ -21,6 +21,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	tidbfeature "github.com/pingcap/parser/tidb"
 )
@@ -38,6 +40,8 @@ type Pos struct {
 type Scanner struct {
 	r   reader
 	buf bytes.Buffer
+
+	encoding charset.Encoding
 
 	errs         []error
 	warns        []error
@@ -134,11 +138,28 @@ func (s *Scanner) AppendError(err error) {
 	s.errs = append(s.errs, err)
 }
 
+func (s *Scanner) tryDecodeToUTF8String(sql string) string {
+	if !s.encoding.Enabled() {
+		name := s.encoding.Name()
+		if len(name) > 0 {
+			s.AppendError(errors.Errorf("Encoding %s is not supported", name))
+			s.lastErrorAsWarn()
+		}
+		return sql
+	}
+	utf8Lit, ok := s.encoding.Decode(Slice(sql))
+	if !ok {
+		s.AppendError(errors.Errorf("Cannot convert string '%x' from %s to utf8mb4", sql, s.encoding.Name()))
+		s.lastErrorAsWarn()
+	}
+	return utf8Lit
+}
+
 func (s *Scanner) getNextToken() int {
 	r := s.r
 	tok, pos, lit := s.scan()
 	if tok == identifier {
-		tok = handleIdent(&yySymType{})
+		tok = s.handleIdent(&yySymType{})
 	}
 	if tok == identifier {
 		if tok1 := s.isTokenIdentifier(lit, pos.Offset); tok1 != 0 {
@@ -163,7 +184,7 @@ func (s *Scanner) Lex(v *yySymType) int {
 	v.offset = pos.Offset
 	v.ident = lit
 	if tok == identifier {
-		tok = handleIdent(v)
+		tok = s.handleIdent(v)
 	}
 	if tok == identifier {
 		if tok1 := s.isTokenIdentifier(lit, pos.Offset); tok1 != 0 {
@@ -240,6 +261,7 @@ func (s *Scanner) EnableWindowFunc(val bool) {
 func (s *Scanner) InheritScanner(sql string) *Scanner {
 	return &Scanner{
 		r:                 reader{s: sql},
+		encoding:          s.encoding,
 		sqlMode:           s.sqlMode,
 		supportWindowFunc: s.supportWindowFunc,
 	}
@@ -248,6 +270,22 @@ func (s *Scanner) InheritScanner(sql string) *Scanner {
 // NewScanner returns a new scanner object.
 func NewScanner(s string) *Scanner {
 	return &Scanner{r: reader{s: s}}
+}
+
+func (s *Scanner) handleIdent(lval *yySymType) int {
+	str := lval.ident
+	// A character string literal may have an optional character set introducer and COLLATE clause:
+	// [_charset_name]'string' [COLLATE collation_name]
+	// See https://dev.mysql.com/doc/refman/5.7/en/charset-literal.html
+	if !strings.HasPrefix(str, "_") {
+		return identifier
+	}
+	cs, err := charset.GetCharsetInfo(str[1:])
+	if err != nil {
+		return identifier
+	}
+	lval.ident = cs.Name
+	return underscoreCS
 }
 
 func (s *Scanner) skipWhitespace() rune {
@@ -266,7 +304,7 @@ func (s *Scanner) scan() (tok int, pos Pos, lit string) {
 		return 0, pos, ""
 	}
 
-	if !s.r.eof() && isIdentExtend(ch0) {
+	if isIdentExtend(ch0) {
 		return scanIdentifier(s)
 	}
 
@@ -302,7 +340,7 @@ func startWithXx(s *Scanner) (tok int, pos Pos, lit string) {
 		}
 		return
 	}
-	s.r.p = pos
+	s.r.updatePos(pos)
 	return scanIdentifier(s)
 }
 
@@ -334,7 +372,7 @@ func startWithBb(s *Scanner) (tok int, pos Pos, lit string) {
 		}
 		return
 	}
-	s.r.p = pos
+	s.r.updatePos(pos)
 	return scanIdentifier(s)
 }
 
@@ -762,7 +800,7 @@ func (s *Scanner) scanBit() {
 }
 
 func (s *Scanner) scanFloat(beg *Pos) (tok int, pos Pos, lit string) {
-	s.r.p = *beg
+	s.r.updatePos(*beg)
 	// float = D1 . D2 e D3
 	s.scanDigits()
 	ch0 := s.r.peek()
@@ -784,7 +822,7 @@ func (s *Scanner) scanFloat(beg *Pos) (tok int, pos Pos, lit string) {
 			// D1 . D2 e XX when XX is not D3, parse the result to an identifier.
 			// 9e9e = 9e9(float) + e(identifier)
 			// 9est = 9est(identifier)
-			s.r.p = *beg
+			s.r.updatePos(*beg)
 			s.r.incAsLongAs(isIdentChar)
 			tok = identifier
 		}
@@ -810,7 +848,7 @@ func (s *Scanner) scanVersionDigits(min, max int) {
 		if isDigit(ch) {
 			s.r.inc()
 		} else if i < min {
-			s.r.p = pos
+			s.r.updatePos(pos)
 			return
 		} else {
 			break
@@ -832,7 +870,7 @@ func (s *Scanner) scanFeatureIDs() (featureIDs []string) {
 				state = expectChar
 				break
 			}
-			s.r.p = pos
+			s.r.updatePos(pos)
 			return nil
 		case expectChar:
 			if isIdentChar(ch) {
@@ -840,7 +878,7 @@ func (s *Scanner) scanFeatureIDs() (featureIDs []string) {
 				state = obtainChar
 				break
 			}
-			s.r.p = pos
+			s.r.updatePos(pos)
 			return nil
 		case obtainChar:
 			if isIdentChar(ch) {
@@ -856,11 +894,11 @@ func (s *Scanner) scanFeatureIDs() (featureIDs []string) {
 				featureIDs = append(featureIDs, b.String())
 				return featureIDs
 			}
-			s.r.p = pos
+			s.r.updatePos(pos)
 			return nil
 		}
 	}
-	s.r.p = pos
+	s.r.updatePos(pos)
 	return nil
 }
 
@@ -876,6 +914,9 @@ type reader struct {
 	s string
 	p Pos
 	w int
+
+	peekRune        rune
+	peekRuneUpdated bool
 }
 
 var eof = Pos{-1, -1, -1}
@@ -888,21 +929,22 @@ func (r *reader) eof() bool {
 // if reader meets EOF, it will return unicode.ReplacementChar. to distinguish from
 // the real unicode.ReplacementChar, the caller should call r.eof() again to check.
 func (r *reader) peek() rune {
+	if r.peekRuneUpdated {
+		return r.peekRune
+	}
 	if r.eof() {
 		return unicode.ReplacementChar
 	}
 	v, w := rune(r.s[r.p.Offset]), 1
-	switch {
-	case v == 0:
-		r.w = w
-		return v // illegal UTF-8 encoding
-	case v >= 0x80:
+	if v >= 0x80 {
 		v, w = utf8.DecodeRuneInString(r.s[r.p.Offset:])
 		if v == utf8.RuneError && w == 1 {
-			v = rune(r.s[r.p.Offset]) // illegal UTF-8 encoding
+			v = rune(r.s[r.p.Offset]) // illegal encoding
 		}
 	}
 	r.w = w
+	r.peekRune = v
+	r.peekRuneUpdated = true
 	return v
 }
 
@@ -915,6 +957,7 @@ func (r *reader) inc() {
 	}
 	r.p.Offset += r.w
 	r.p.Col++
+	r.peekRuneUpdated = false
 }
 
 func (r *reader) incN(n int) {
@@ -934,6 +977,13 @@ func (r *reader) readByte() (ch rune) {
 
 func (r *reader) pos() Pos {
 	return r.p
+}
+
+func (r *reader) updatePos(pos Pos) {
+	if r.p.Offset != pos.Offset {
+		r.peekRuneUpdated = false
+	}
+	r.p = pos
 }
 
 func (r *reader) data(from *Pos) string {
