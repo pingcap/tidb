@@ -1429,17 +1429,6 @@ func (tr *TableRestore) restoreTable(
 			zap.Int("filesCnt", cp.CountChunks()),
 		)
 	} else if cp.Status < checkpoints.CheckpointStatusAllWritten {
-		versionStr, err := rc.tidbGlue.GetSQLExecutor().ObtainStringWithLog(
-			ctx, "SELECT version()", "fetch tidb version", log.L())
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-
-		tidbVersion, err := version.ExtractTiDBVersion(versionStr)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-
 		if err := tr.populateChunks(ctx, rc, cp); err != nil {
 			return false, errors.Trace(err)
 		}
@@ -1453,29 +1442,41 @@ func (tr *TableRestore) restoreTable(
 		}
 
 		// "show table next_row_id" is only available after v4.0.0
-		if tidbVersion.Major >= 4 && (rc.cfg.TikvImporter.Backend == config.BackendLocal || rc.cfg.TikvImporter.Backend == config.BackendImporter) {
-			// first, insert a new-line into meta table
-			if err = metaMgr.InitTableMeta(ctx); err != nil {
-				return false, err
-			}
-
-			checksum, rowIDBase, err := metaMgr.AllocTableRowIDs(ctx, rowIDMax)
+		if rc.cfg.TikvImporter.Backend == config.BackendLocal || rc.cfg.TikvImporter.Backend == config.BackendImporter {
+			versionStr, err := rc.tidbGlue.GetSQLExecutor().ObtainStringWithLog(
+				ctx, "SELECT version()", "fetch tidb version", log.L())
 			if err != nil {
-				return false, err
+				return false, errors.Trace(err)
 			}
-			tr.RebaseChunkRowIDs(cp, rowIDBase)
 
-			if checksum != nil {
-				if cp.Checksum != *checksum {
-					cp.Checksum = *checksum
-					rc.saveCpCh <- saveCp{
-						tableName: tr.tableName,
-						merger: &checkpoints.TableChecksumMerger{
-							Checksum: cp.Checksum,
-						},
-					}
+			tidbVersion, err := version.ExtractTiDBVersion(versionStr)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			if tidbVersion.Major >= 4 {
+				// first, insert a new-line into meta table
+				if err = metaMgr.InitTableMeta(ctx); err != nil {
+					return false, err
 				}
-				tr.logger.Info("checksum before restore table", zap.Object("checksum", &cp.Checksum))
+
+				checksum, rowIDBase, err := metaMgr.AllocTableRowIDs(ctx, rowIDMax)
+				if err != nil {
+					return false, err
+				}
+				tr.RebaseChunkRowIDs(cp, rowIDBase)
+
+				if checksum != nil {
+					if cp.Checksum != *checksum {
+						cp.Checksum = *checksum
+						rc.saveCpCh <- saveCp{
+							tableName: tr.tableName,
+							merger: &checkpoints.TableChecksumMerger{
+								Checksum: cp.Checksum,
+							},
+						}
+					}
+					tr.logger.Info("checksum before restore table", zap.Object("checksum", &cp.Checksum))
+				}
 			}
 		}
 		if err := rc.checkpointsDB.InsertEngineCheckpoints(ctx, tr.tableName, cp.Engines); err != nil {
