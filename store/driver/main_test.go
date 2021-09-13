@@ -104,3 +104,57 @@ func createUnistore(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 
 	return store, dom, clean
 }
+
+func prepareSnapshot(t *testing.T, store kv.Storage, data [][]interface{}) kv.Snapshot {
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	defer func() {
+		if txn.Valid() {
+			require.NoError(t, txn.Rollback())
+		}
+	}()
+
+	for _, d := range data {
+		err = txn.Set(makeBytes(d[0]), makeBytes(d[1]))
+		require.NoError(t, err)
+	}
+
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	return store.GetSnapshot(kv.MaxVersion)
+}
+
+func makeBytes(s interface{}) []byte {
+	if s == nil {
+		return nil
+	}
+
+	switch key := s.(type) {
+	case string:
+		return []byte(key)
+	default:
+		return key.([]byte)
+	}
+}
+
+func clearStoreData(t *testing.T, store kv.Storage) {
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	defer func() {
+		if txn.Valid() {
+			require.NoError(t, txn.Rollback())
+		}
+	}()
+
+	iter, err := txn.Iter(nil, nil)
+	require.NoError(t, err)
+	defer iter.Close()
+
+	for iter.Valid() {
+		require.NoError(t, txn.Delete(iter.Key()))
+		require.NoError(t, iter.Next())
+	}
+
+	require.NoError(t, txn.Commit(context.Background()))
+}
