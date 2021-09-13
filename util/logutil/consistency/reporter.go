@@ -77,7 +77,13 @@ func getMvccByKey(sctx sessionctx.Context, key kv.Key, decodeMvccFn func(kv.Key,
 	if err != nil {
 		return ""
 	}
-	return string(rj)
+	const maxMvccInfoLen = 5000
+	s := string(rj)
+	if len(s) > maxMvccInfoLen {
+		s = s[:maxMvccInfoLen] + "[truncated]..."
+	}
+
+	return s
 }
 
 func getRegionIDByKey(tikvStore helper.Storage, encodedKey []byte) uint64 {
@@ -182,12 +188,17 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 			zap.Int("index_cnt", idxCnt),
 			zap.Int("table_cnt", tblCnt))
 	} else {
+		const maxFullHandleCnt = 50
+		displayFullHdCnt := len(fullHd)
+		if displayFullHdCnt > maxFullHandleCnt {
+			displayFullHdCnt = maxFullHandleCnt
+		}
 		fs := []zap.Field{
 			zap.String("table_name", r.Tbl.Name.O),
 			zap.String("index_name", r.Idx.Name.O),
 			zap.Int("index_cnt", idxCnt), zap.Int("table_cnt", tblCnt),
 			zap.String("missing_handles", fmt.Sprint(missHd)),
-			zap.String("total_handles", fmt.Sprint(fullHd)),
+			zap.String("total_handles", fmt.Sprint(fullHd[:displayFullHdCnt])),
 		}
 		for i, hd := range missHd {
 			fs = append(fs, zap.String("row_mvcc_"+strconv.Itoa(i), getMvccByKey(r.Sctx, r.HandleEncode(hd), r.decodeRowMvccData)))
