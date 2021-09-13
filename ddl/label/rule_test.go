@@ -24,29 +24,34 @@ var _ = Suite(&testRuleSuite{})
 type testRuleSuite struct{}
 
 func (t *testRuleSuite) TestApplyAttributesSpec(c *C) {
-	spec := &ast.AttributesSpec{Attributes: "attr1,attr2"}
+	spec := &ast.AttributesSpec{Attributes: "attr1=true,attr2=false"}
 	rule := NewRule()
-	rule.ApplyAttributesSpec(spec)
+	err := rule.ApplyAttributesSpec(spec)
+	c.Assert(err, IsNil)
 	c.Assert(rule.Labels, HasLen, 2)
 	c.Assert(rule.Labels[0].Key, Equals, "attr1")
+	c.Assert(rule.Labels[0].Value, Equals, "true")
 	c.Assert(rule.Labels[1].Key, Equals, "attr2")
+	c.Assert(rule.Labels[1].Value, Equals, "false")
 }
 
 func (t *testRuleSuite) TestDefaultOrEmpty(c *C) {
 	spec := &ast.AttributesSpec{Attributes: ""}
 	rule := NewRule()
-	rule.ApplyAttributesSpec(spec)
+	err := rule.ApplyAttributesSpec(spec)
+	c.Assert(err, IsNil)
 	rule.Reset(1, "db", "t")
 	c.Assert(rule.Labels, HasLen, 0)
 	spec = &ast.AttributesSpec{Default: true}
 	rule = NewRule()
-	rule.ApplyAttributesSpec(spec)
+	err = rule.ApplyAttributesSpec(spec)
+	c.Assert(err, IsNil)
 	rule.Reset(1, "db", "t")
 	c.Assert(rule.Labels, HasLen, 0)
 }
 
 func (t *testRuleSuite) TestReset(c *C) {
-	spec := &ast.AttributesSpec{Attributes: "attr"}
+	spec := &ast.AttributesSpec{Attributes: "attr=true"}
 	rule := NewRule()
 	rule.ApplyAttributesSpec(spec)
 	rule.Reset(1, "db1", "t1")

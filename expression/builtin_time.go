@@ -2036,6 +2036,8 @@ func (c *sysDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 	bf.tp.Flen, bf.tp.Decimal = 19, 0
+	// Illegal parameters have been filtered out in the parser, so the result is always not null.
+	bf.tp.Flag |= mysql.NotNullFlag
 
 	var sig builtinFunc
 	if len(args) == 1 {
@@ -7073,7 +7075,7 @@ func (b *builtinLastDaySig) evalTime(row chunk.Row) (types.Time, bool, error) {
 // getExpressionFsp calculates the fsp from given expression.
 func getExpressionFsp(ctx sessionctx.Context, expression Expression) (int, error) {
 	constExp, isConstant := expression.(*Constant)
-	if isConstant && types.IsString(expression.GetType().Tp) && !isTemporalColumn(expression) {
+	if isConstant && types.IsString(expression.GetType().Tp) {
 		str, isNil, err := constExp.EvalString(ctx, chunk.Row{})
 		if isNil || err != nil {
 			return 0, err

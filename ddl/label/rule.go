@@ -67,8 +67,8 @@ func (r *Rule) ApplyAttributesSpec(spec *ast.AttributesSpec) error {
 	if err != nil {
 		return err
 	}
-	r.Labels = NewLabels(attributes)
-	return nil
+	r.Labels, err = NewLabels(attributes)
+	return err
 }
 
 // String implements fmt.Stringer.
