@@ -17,8 +17,6 @@ package encrypt
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,8 +51,7 @@ func TestSQLDecode(t *testing.T) {
 	}
 }
 
-func (s *testEncryptSuite) TestSQLEncode(c *C) {
-	defer testleak.AfterTest(c)()
+func TestSQLEncode(t *testing.T) {
 	tests := []struct {
 		str     string
 		passwd  string
@@ -73,15 +70,15 @@ func (s *testEncryptSuite) TestSQLEncode(c *C) {
 		{"pingcap数据库", "数据库passwd12345667", "pingcap数据库", false},
 	}
 
-	for _, t := range tests {
-		crypted, err := SQLDecode(t.str, t.passwd)
-		c.Assert(err, IsNil)
-		uncrypte, err := SQLEncode(crypted, t.passwd)
-		if t.isError {
-			c.Assert(err, NotNil, Commentf("%v", t))
+	for _, tt := range tests {
+		crypted, err := SQLDecode(tt.str, tt.passwd)
+		require.NoError(t, err)
+		uncrypte, err := SQLEncode(crypted, tt.passwd)
+		if tt.isError {
+			require.Errorf(t, err, "%v", tt)
 			continue
 		}
-		c.Assert(err, IsNil, Commentf("%v", t))
-		c.Assert(uncrypte, Equals, t.expect, Commentf("%v", t))
+		require.NoError(t, err, "%v", tt)
+		require.Equal(t, tt.expect, uncrypte, "%v", tt)
 	}
 }
