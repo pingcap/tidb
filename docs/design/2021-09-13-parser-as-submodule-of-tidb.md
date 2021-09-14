@@ -56,7 +56,7 @@ The detailed plan:
 
 1. Create parser directory, a sub-module, in pingcap/tidb, which is synchronized with pingcap/parser, with `replace github.com/pingcap/parser => ./parser`.
 2. Stop sending new PRs and issues to pingcap/parser, new PRs should be directly sent to pingcap/tidb. And merge recent PRs in pingcap/parser as much as possible. Changes will be synchronized from pingcap/parser to pingcap/tidb(manually), of course.
-3. Announce the deprecation of pingcap/parser to possible users. Clean up old issues and PRs, create it in pingcap/tidb again, close it, or just forget about it.
+3. Announce the deprecation of pingcap/parser to possible users. Clean up old PRs, reopen it in pingcap/tidb, close it, or just forget about it. As for issues, by @kennytm, we could directly transfer all issues to pingcap/tidb according to the [document](https://docs.github.com/en/issues/tracking-your-work-with-issues/transferring-an-issue-to-another-repository).
 4. We can create wrapper packages for pingcap/parser, which re-exports things from `pingcap/tidb/parser`. I mean something like `import ( . github.com/pingcap/tidb/parser/xxx)`, create a dummy function will eliminate the error of `not used import`. All code of pingcap/parser will be removed in this step. This will delevery new updates without the need of migrating importing paths.
 5. After another one or two dev cycles, we could archive pingcap/parser. It mainly depends on users of pingcap/parser.
 
