@@ -56,6 +56,8 @@ const (
 	GuaranteeLinearizability
 	// TxnScope indicates which @@txn_scope this transaction will work with.
 	TxnScope
+	// ReadReplicaScope
+	ReadReplicaScope
 	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
 	IsStalenessReadOnly
 	// MatchStoreLabels indicates the labels the store should be matched
@@ -64,6 +66,8 @@ const (
 	ResourceGroupTag
 	// KVFilter indicates the filter to ignore key-values in the transaction's memory buffer.
 	KVFilter
+	// SnapInterceptor is used for setting the interceptor for snapshot
+	SnapInterceptor
 )
 
 // ReplicaReadType is the type of replica to read data from

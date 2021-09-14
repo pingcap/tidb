@@ -87,7 +87,7 @@ func (e *GrantExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if len(e.Level.DBName) > 0 {
 			// The database name should also match.
 			db, succ := schema.SchemaByName(dbNameStr)
-			if !succ || db.Name.String() != dbName {
+			if !succ || db.Name.L != dbNameStr.L {
 				return err
 			}
 		}

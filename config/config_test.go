@@ -466,7 +466,9 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 	}{
 		{4 << 10, true},
 		{10 << 30, true},
-		{10<<30 + 1, false},
+		{10<<30 + 1, true},
+		{1 << 40, true},
+		{1<<40 + 1, false},
 	}
 
 	for _, tt := range tests {
