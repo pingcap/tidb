@@ -20,17 +20,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type mockStatusVarSuite struct {
-	ms *mockStatistics
-}
-
-func createStatusVarSuite(t *testing.T) (s *mockStatusVarSuite) {
-	s = new(mockStatusVarSuite)
-	s.ms = &mockStatistics{}
-	RegisterStatistics(s.ms)
-	return
-}
-
 // mockStatistics represents mocked statistics.
 type mockStatistics struct{}
 
@@ -53,7 +42,7 @@ func (ms *mockStatistics) GetScope(status string) ScopeFlag {
 	return scope
 }
 
-func (ms *mockStatistics) Stats(vars *SessionVars) (map[string]interface{}, error) {
+func (ms *mockStatistics) Stats(_ *SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{}, len(specificStatusScopes))
 	m[testStatus] = testStatusVal
 
@@ -61,10 +50,12 @@ func (ms *mockStatistics) Stats(vars *SessionVars) (map[string]interface{}, erro
 }
 
 func TestStatusVar(t *testing.T) {
-	s := createStatusVarSuite(t)
-	scope := s.ms.GetScope(testStatus)
+	ms := &mockStatistics{}
+	RegisterStatistics(ms)
+
+	scope := ms.GetScope(testStatus)
 	require.Equal(t, DefaultStatusVarScopeFlag, scope)
-	scope = s.ms.GetScope(testSessionStatus)
+	scope = ms.GetScope(testSessionStatus)
 	require.Equal(t, ScopeSession, scope)
 
 	vars, err := GetStatusVars(nil)

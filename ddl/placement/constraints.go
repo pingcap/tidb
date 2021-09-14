@@ -17,12 +17,14 @@ package placement
 import (
 	"fmt"
 	"strings"
+
+	"gopkg.in/yaml.v2"
 )
 
 // Constraints is a slice of constraints.
 type Constraints []Constraint
 
-// NewConstraints will check labels, and build Constraints for rule.
+// NewConstraints will check each labels, and build the Constraints.
 func NewConstraints(labels []string) (Constraints, error) {
 	constraints := make(Constraints, 0, len(labels))
 	for _, str := range labels {
@@ -37,6 +39,17 @@ func NewConstraints(labels []string) (Constraints, error) {
 		}
 	}
 	return constraints, nil
+}
+
+// NewConstraintsFromYaml will transform parse the raw 'array' constraints and call NewConstraints.
+// Refer to https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md.
+func NewConstraintsFromYaml(c []byte) (Constraints, error) {
+	constraints := []string{}
+	err := yaml.UnmarshalStrict(c, &constraints)
+	if err != nil {
+		return nil, ErrInvalidConstraintsFormat
+	}
+	return NewConstraints(constraints)
 }
 
 // Restore converts label constraints to a string.

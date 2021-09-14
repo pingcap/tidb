@@ -15,67 +15,77 @@
 package label
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/parser/ast"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testRuleSuite{})
+func TestApplyAttributesSpec(t *testing.T) {
+	t.Parallel()
 
-type testRuleSuite struct{}
-
-func (t *testRuleSuite) TestApplyAttributesSpec(c *C) {
 	spec := &ast.AttributesSpec{Attributes: "attr1=true,attr2=false"}
 	rule := NewRule()
 	err := rule.ApplyAttributesSpec(spec)
-	c.Assert(err, IsNil)
-	c.Assert(rule.Labels, HasLen, 2)
-	c.Assert(rule.Labels[0].Key, Equals, "attr1")
-	c.Assert(rule.Labels[0].Value, Equals, "true")
-	c.Assert(rule.Labels[1].Key, Equals, "attr2")
-	c.Assert(rule.Labels[1].Value, Equals, "false")
+	require.NoError(t, err)
+	require.Len(t, rule.Labels, 2)
+	require.Equal(t, "attr1", rule.Labels[0].Key)
+	require.Equal(t, "true", rule.Labels[0].Value)
+	require.Equal(t, "attr2", rule.Labels[1].Key)
+	require.Equal(t, "false", rule.Labels[1].Value)
 }
 
-func (t *testRuleSuite) TestDefaultOrEmpty(c *C) {
+func TestDefaultOrEmpty(t *testing.T) {
+	t.Parallel()
+
 	spec := &ast.AttributesSpec{Attributes: ""}
 	rule := NewRule()
 	err := rule.ApplyAttributesSpec(spec)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	rule.Reset(1, "db", "t")
-	c.Assert(rule.Labels, HasLen, 0)
+	require.Len(t, rule.Labels, 0)
+
 	spec = &ast.AttributesSpec{Default: true}
 	rule = NewRule()
 	err = rule.ApplyAttributesSpec(spec)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
 	rule.Reset(1, "db", "t")
-	c.Assert(rule.Labels, HasLen, 0)
+	require.Len(t, rule.Labels, 0)
 }
 
-func (t *testRuleSuite) TestReset(c *C) {
+func TestReset(t *testing.T) {
+	t.Parallel()
+
 	spec := &ast.AttributesSpec{Attributes: "attr=true"}
 	rule := NewRule()
-	rule.ApplyAttributesSpec(spec)
+	require.NoError(t, rule.ApplyAttributesSpec(spec))
+
 	rule.Reset(1, "db1", "t1")
-	c.Assert(rule.ID, Equals, "schema/db1/t1")
-	c.Assert(rule.RuleType, Equals, ruleType)
-	c.Assert(rule.Labels, HasLen, 3)
-	c.Assert(rule.Labels[0].Value, Equals, "true")
-	c.Assert(rule.Labels[1].Value, Equals, "db1")
-	c.Assert(rule.Labels[2].Value, Equals, "t1")
+	require.Equal(t, "schema/db1/t1", rule.ID)
+	require.Equal(t, ruleType, rule.RuleType)
+	require.Len(t, rule.Labels, 3)
+	require.Equal(t, "true", rule.Labels[0].Value)
+	require.Equal(t, "db1", rule.Labels[1].Value)
+	require.Equal(t, "t1", rule.Labels[2].Value)
+
 	r := rule.Rule.(map[string]string)
-	c.Assert(r["start_key"], Equals, "7480000000000000ff015f720000000000fa")
-	c.Assert(r["end_key"], Equals, "7480000000000000ff025f720000000000fa")
+	require.Equal(t, "7480000000000000ff015f720000000000fa", r["start_key"])
+	require.Equal(t, "7480000000000000ff025f720000000000fa", r["end_key"])
 
 	r1 := rule.Clone()
-	c.Assert(rule, DeepEquals, r1)
+	require.Equal(t, r1, rule)
 
 	r2 := rule.Reset(2, "db2", "t2", "p2")
-	c.Assert(r2.ID, Equals, "schema/db2/t2/p2")
-	c.Assert(r2.Labels, HasLen, 4)
-	c.Assert(rule.Labels[0].Value, Equals, "true")
-	c.Assert(rule.Labels[1].Value, Equals, "db2")
-	c.Assert(rule.Labels[2].Value, Equals, "t2")
-	c.Assert(rule.Labels[3].Value, Equals, "p2")
+	require.Equal(t, "schema/db2/t2/p2", r2.ID)
+	require.Len(t, rule.Labels, 4)
+	require.Equal(t, "true", rule.Labels[0].Value)
+	require.Equal(t, "db2", rule.Labels[1].Value)
+	require.Equal(t, "t2", rule.Labels[2].Value)
+	require.Equal(t, "p2", rule.Labels[3].Value)
+
 	r = r2.Rule.(map[string]string)
-	c.Assert(r["start_key"], Equals, "7480000000000000ff025f720000000000fa")
-	c.Assert(r["end_key"], Equals, "7480000000000000ff035f720000000000fa")
+	require.Equal(t, "7480000000000000ff025f720000000000fa", r["start_key"])
+	require.Equal(t, "7480000000000000ff035f720000000000fa", r["end_key"])
 }
