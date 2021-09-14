@@ -42,12 +42,6 @@ import (
 	"go.uber.org/zap"
 )
 
-func init() {
-	domain.DomainMapDelete = func(store kv.Storage) {
-		domap.Delete(store)
-	}
-}
-
 type domainMap struct {
 	domains map[string]*domain.Domain
 	mu      sync.Mutex
@@ -81,7 +75,11 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			zap.Stringer("index usage sync lease", idxUsageSyncLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, factory)
+		onClose := func() {
+			dm.Delete(store)
+			unsetStoreBootstrapped(store.UUID())
+		}
+		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, factory, onClose)
 		err1 = d.Init(ddlLease, sysFactory)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.

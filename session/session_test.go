@@ -5672,12 +5672,6 @@ func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	backup := variable.RegisterStatistics
-	variable.RegisterStatistics = func(_ variable.Statistics) {}
-	defer func() {
-		variable.RegisterStatistics = backup
-	}()
-
 	for i := 0; i < 10; i++ {
 		initAndCloseTiDB()
 	}

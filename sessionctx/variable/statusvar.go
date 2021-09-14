@@ -42,14 +42,30 @@ type Statistics interface {
 	Stats(*SessionVars) (map[string]interface{}, error)
 }
 
-// RegisterStatistics is exposed to avoid holding a reference in global variables, when using TiDB as a library.
-var RegisterStatistics = registerStatistics
-
-// registerStatistics registers statistics.
-func registerStatistics(s Statistics) {
+// RegisterStatistics registers statistics.
+func RegisterStatistics(s Statistics) {
 	statisticsListLock.Lock()
 	statisticsList = append(statisticsList, s)
 	statisticsListLock.Unlock()
+}
+
+// UnregisterStatistics unregisters statistics.
+func UnregisterStatistics(s Statistics) {
+	statisticsListLock.Lock()
+	defer statisticsListLock.Unlock()
+	idx := -1
+	for i := range statisticsList {
+		if statisticsList[i] == s {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		return
+	}
+	last := len(statisticsList) - 1
+	statisticsList[idx] = statisticsList[last]
+	statisticsList[last] = nil
+	statisticsList = statisticsList[:last]
 }
 
 // GetStatusVars gets registered statistics status variables.
