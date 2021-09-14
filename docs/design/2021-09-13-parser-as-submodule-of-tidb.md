@@ -1,4 +1,4 @@
-# TiDB Design Documents
+# Proposal: Move parser back to pingcap/tidb
 
 - Author(s): [xhebox](http://github.com/xhebox)
 - Discussion: [Move parser back to pingcap/tidb](https://internals.tidb.io/t/topic/385)
