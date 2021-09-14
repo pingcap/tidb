@@ -16,119 +16,119 @@ package types
 
 import (
 	"strconv"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&FspTest{})
-
-type FspTest struct{}
-
-func (s *FspTest) TestCheckFsp(c *C) {
-	c.Parallel()
+func TestCheckFsp(t *testing.T) {
+	t.Parallel()
 	obtained, err := CheckFsp(int(UnspecifiedFsp))
-	c.Assert(obtained, Equals, DefaultFsp)
-	c.Assert(err, IsNil)
+	require.Equal(t, obtained, DefaultFsp)
+	require.NoError(t, err)
 
 	obtained, err = CheckFsp(-2019)
-	c.Assert(obtained, Equals, DefaultFsp)
-	c.Assert(err, ErrorMatches, "Invalid fsp -2019")
+	require.Equal(t, obtained, DefaultFsp)
+	require.EqualError(t, err, "Invalid fsp -2019")
+
 
 	obtained, err = CheckFsp(int(MinFsp) - 4294967296)
-	c.Assert(obtained, Equals, DefaultFsp)
-	c.Assert(err, ErrorMatches, "Invalid fsp "+strconv.Itoa(int(MinFsp)-4294967296))
+	require.Equal(t, obtained, DefaultFsp)
+	require.EqualError(t, err, "Invalid fsp "+strconv.Itoa(int(MinFsp)-4294967296))
 
 	// UnspecifiedFsp
 	obtained, err = CheckFsp(-1)
-	c.Assert(obtained, Equals, DefaultFsp)
-	c.Assert(err, IsNil)
+	require.Equal(t, obtained, DefaultFsp)
+	require.NoError(t, err)
 
 	obtained, err = CheckFsp(int(MaxFsp) + 1)
-	c.Assert(obtained, Equals, MaxFsp)
-	c.Assert(err, IsNil)
+	require.Equal(t, obtained, MaxFsp)
+	require.NoError(t, err)
 
 	obtained, err = CheckFsp(int(MaxFsp) + 2019)
-	c.Assert(obtained, Equals, MaxFsp)
-	c.Assert(err, IsNil)
+	require.Equal(t, obtained, MaxFsp)
+	require.NoError(t, err)
 
 	obtained, err = CheckFsp(int(MaxFsp) + 4294967296)
-	c.Assert(obtained, Equals, MaxFsp)
-	c.Assert(err, IsNil)
+	require.Equal(t, obtained, MaxFsp)
+	require.NoError(t, err)
 
 	obtained, err = CheckFsp(int(MaxFsp+MinFsp) / 2)
-	c.Assert(obtained, Equals, (MaxFsp+MinFsp)/2)
-	c.Assert(err, IsNil)
+	require.Equal(t, obtained, (MaxFsp+MinFsp)/2)
+	require.NoError(t, err)
 
 	obtained, err = CheckFsp(5)
-	c.Assert(obtained, Equals, int8(5))
-	c.Assert(err, IsNil)
+	require.Equal(t, obtained, int8(5))
+	require.NoError(t, err)
 }
 
-func (s *FspTest) TestParseFrac(c *C) {
-	c.Parallel()
+func TestParseFrac(t *testing.T) {
+	t.Parallel()
 	obtained, overflow, err := ParseFrac("", 5)
-	c.Assert(obtained, Equals, 0)
-	c.Assert(overflow, Equals, false)
-	c.Assert(err, IsNil)
+	require.Equal(t, obtained, 0)
+	require.Equal(t, overflow, false)
+	require.NoError(t, err)
 
 	a := 200
 	obtained, overflow, err = ParseFrac("999", int8(a))
-	c.Assert(obtained, Equals, 0)
-	c.Assert(overflow, Equals, false)
-	c.Assert(err, ErrorMatches, "Invalid fsp .*")
+	require.Equal(t, obtained, 0)
+	require.Equal(t, overflow, false)
+	require.Error(t, err)
+	require.Regexp(t, "Invalid fsp .*", err.Error())
 
 	obtained, overflow, err = ParseFrac("NotNum", MaxFsp)
-	c.Assert(obtained, Equals, 0)
-	c.Assert(overflow, Equals, false)
-	c.Assert(err, ErrorMatches, "strconv.ParseInt:.*")
+	require.Equal(t, obtained, 0)
+	require.Equal(t, overflow, false)
+	require.Error(t, err)
+	require.Regexp(t, "strconv.ParseInt:.*", err.Error())
 
 	obtained, overflow, err = ParseFrac("1235", 6)
-	c.Assert(obtained, Equals, 123500)
-	c.Assert(overflow, Equals, false)
-	c.Assert(err, IsNil)
+	require.Equal(t, obtained, 123500)
+	require.Equal(t, overflow, false)
+	require.NoError(t, err)
 
 	obtained, overflow, err = ParseFrac("123456", 4)
-	c.Assert(obtained, Equals, 123500)
-	c.Assert(overflow, Equals, false)
-	c.Assert(err, IsNil)
+	require.Equal(t, obtained, 123500)
+	require.Equal(t, overflow, false)
+	require.NoError(t, err)
 
 	obtained, overflow, err = ParseFrac("1234567", 6)
-	c.Assert(obtained, Equals, 123457)
-	c.Assert(overflow, Equals, false)
-	c.Assert(err, IsNil)
+	require.Equal(t, obtained, 123457)
+	require.Equal(t, overflow, false)
+	require.NoError(t, err)
 
 	obtained, overflow, err = ParseFrac("1234567", 4)
-	c.Assert(obtained, Equals, 123500)
-	c.Assert(overflow, Equals, false)
-	c.Assert(err, IsNil)
+	require.Equal(t, obtained, 123500)
+	require.Equal(t, overflow, false)
+	require.NoError(t, err)
 
 	// 1236 round 3 -> 124 -> 124000
 	obtained, overflow, err = ParseFrac("1236", 3)
-	c.Assert(obtained, Equals, 124000)
-	c.Assert(overflow, Equals, false)
-	c.Assert(err, IsNil)
+	require.Equal(t, obtained, 124000)
+	require.Equal(t, overflow, false)
+	require.NoError(t, err)
 
 	// 03123 round 2 -> 3 -> 30000
 	obtained, overflow, err = ParseFrac("0312", 2)
-	c.Assert(obtained, Equals, 30000)
-	c.Assert(overflow, Equals, false)
-	c.Assert(err, IsNil)
+	require.Equal(t, obtained, 30000)
+	require.Equal(t, overflow, false)
+	require.NoError(t, err)
 
 	// 999 round 2 -> 100 -> overflow
 	obtained, overflow, err = ParseFrac("999", 2)
-	c.Assert(obtained, Equals, 0)
-	c.Assert(overflow, Equals, true)
-	c.Assert(err, IsNil)
+	require.Equal(t, obtained, 0)
+	require.Equal(t, overflow, true)
+	require.NoError(t, err)
 }
 
-func (s *FspTest) TestAlignFrac(c *C) {
-	c.Parallel()
+func TestAlignFrac(t *testing.T) {
+	t.Parallel()
 	obtained := alignFrac("100", 6)
-	c.Assert(obtained, Equals, "100000")
+	require.Equal(t, obtained, "100000")
 	obtained = alignFrac("10000000000", 6)
-	c.Assert(obtained, Equals, "10000000000")
+	require.Equal(t, obtained, "10000000000")
 	obtained = alignFrac("-100", 6)
-	c.Assert(obtained, Equals, "-100000")
+	require.Equal(t, obtained, "-100000")
 	obtained = alignFrac("-10000000000", 6)
-	c.Assert(obtained, Equals, "-10000000000")
+	require.Equal(t, obtained, "-10000000000")
 }
