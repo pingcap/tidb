@@ -17,6 +17,7 @@
 package kv
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -374,12 +375,12 @@ func (kvcodec *tableKVEncoder) Encode(
 
 		if isAutoRandom && isPk {
 			incrementalBits := autoRandomIncrementBits(col, int(meta.AutoRandomBits))
-			if err := kvcodec.tbl.RebaseAutoID(kvcodec.se, value.GetInt64()&((1<<incrementalBits)-1), false, autoid.AutoRandomType); err != nil {
+			if err := kvcodec.tbl.RebaseAutoID(context.Background(), kvcodec.se, value.GetInt64()&((1<<incrementalBits)-1), false, autoid.AutoRandomType); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
 		if isAutoIncCol {
-			if err := kvcodec.tbl.RebaseAutoID(kvcodec.se, getAutoRecordID(value, &col.FieldType), false, autoid.AutoIncrementType); err != nil {
+			if err := kvcodec.tbl.RebaseAutoID(context.Background(), kvcodec.se, getAutoRecordID(value, &col.FieldType), false, autoid.AutoIncrementType); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -399,7 +400,7 @@ func (kvcodec *tableKVEncoder) Encode(
 			return nil, logKVConvertFailed(logger, row, j, ExtraHandleColumnInfo, err)
 		}
 		record = append(record, value)
-		if err := kvcodec.tbl.RebaseAutoID(kvcodec.se, rowValue, false, autoid.RowIDAllocType); err != nil {
+		if err := kvcodec.tbl.RebaseAutoID(context.Background(), kvcodec.se, rowValue, false, autoid.RowIDAllocType); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}

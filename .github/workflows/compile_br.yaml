@@ -1,35 +1,37 @@
-name: build
+name: BR & Lightning 
 on:
   push:
     branches:
       - master
       - 'release-[0-9].[0-9]*'
-    paths-ignore:
-      - '**.html'
-      - '**.md'
-      - 'CNAME'
-      - 'LICENSE'
-      - 'docs/**'
-      - 'tests/**'
-      - 'docker/**'
-      - '.github/workflows/**.yml'
+    paths:
+      - 'br/**'
+      - '!**.html'
+      - '!**.md'
+      - '!CNAME'
+      - '!LICENSE'
+      - '!br/docs/**'
+      - '!br/tests/**'
+      - '!br/docker/**'
   pull_request:
     branches:
       - master
       - 'release-[0-9].[0-9]*'
-    paths-ignore:
-      - '**.html'
-      - '**.md'
-      - 'CNAME'
-      - 'LICENSE'
-      - 'docs/**'
-      - 'tests/**'
-      - 'docker/**'
-      - '.github/workflows/**.yml'
+    paths:
+      - 'br/**'
+      - '!**.html'
+      - '!**.md'
+      - '!CNAME'
+      - '!LICENSE'
+      - '!br/docs/**'
+      - '!br/tests/**'
+      - '!br/docker/**'
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   compile:
-    name: ${{ matrix.os }} / ${{ matrix.target}}
+    name: Compile for ${{ matrix.os }} / ${{ matrix.target}}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -51,7 +53,7 @@ jobs:
           go-version: 1.16
 
       - name: Run build
-        run: make build
+        run: make build_tools
 
   compile-freebsd:
     name: Compile for FreeBSD job
@@ -65,4 +67,4 @@ jobs:
           go-version: 1.16
 
       - name: Compile for FreeBSD
-        run: GOOS=freebsd make build
+        run: GOOS=freebsd make build_tools

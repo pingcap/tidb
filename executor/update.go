@@ -420,7 +420,7 @@ func (e *UpdateExec) Close() error {
 	e.setMessage()
 	if e.runtimeStats != nil && e.stats != nil {
 		txn, err := e.ctx.Txn(false)
-		if err == nil && txn.GetSnapshot() != nil {
+		if err == nil && txn.Valid() && txn.GetSnapshot() != nil {
 			txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
