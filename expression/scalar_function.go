@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -198,9 +199,14 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 
 		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
 	}
-	if !ctx.GetSessionVars().EnableNoopFuncs {
+	if ctx.GetSessionVars().NoopFuncsMode != variable.OnInt {
 		if _, ok := noopFuncs[funcName]; ok {
-			return nil, ErrFunctionsNoopImpl.GenWithStackByArgs(funcName)
+			err := ErrFunctionsNoopImpl.GenWithStackByArgs(funcName)
+			if ctx.GetSessionVars().NoopFuncsMode == variable.OffInt {
+				return nil, err
+			}
+			// NoopFuncsMode is Warn, append an error
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 	}
 	funcArgs := make([]Expression, len(args))

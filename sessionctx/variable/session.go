@@ -761,8 +761,8 @@ type SessionVars struct {
 	// ConnectionInfo indicates current connection info used by current session, only be lazy assigned by plugin.
 	ConnectionInfo *ConnectionInfo
 
-	// use noop funcs or not
-	EnableNoopFuncs bool
+	// NoopFuncsMode allows OFF/ON/WARN values as 0/1/2.
+	NoopFuncsMode int
 
 	// StartTime is the start time of the last query.
 	StartTime time.Time
@@ -1144,7 +1144,7 @@ func NewSessionVars() *SessionVars {
 		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
 		enableIndexMerge:            false,
-		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
+		NoopFuncsMode:               DefTiDBEnableNoopFuncs,
 		replicaRead:                 kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
 		UsePlanBaselines:            DefTiDBUsePlanBaselines,
@@ -1340,6 +1340,19 @@ func (s *SessionVars) CleanBuffers() {
 func (s *SessionVars) AllocPlanColumnID() int64 {
 	s.PlanColumnID++
 	return s.PlanColumnID
+}
+
+// CheckEnableNoopFunctions is used to see if noop funcs is enabled.
+// It has a special behavior where OFF returns an error,
+// ON returns returns no error,
+// and WARN returns no error but attaches a warning to context.
+func (s *SessionVars) CheckEnableNoopFunctions(err error) error {
+	if s.NoopFuncsMode == OffInt {
+		return err
+	} else if s.NoopFuncsMode == WarnInt {
+		s.StmtCtx.AppendWarning(err)
+	}
+	return nil
 }
 
 // GetCharsetInfo gets charset and collation for current context.

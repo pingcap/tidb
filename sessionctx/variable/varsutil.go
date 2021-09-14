@@ -135,7 +135,7 @@ func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue stri
 		feature = "OFFLINE MODE"
 	}
 	if TiDBOptOn(normalizedValue) {
-		if !vars.EnableNoopFuncs && scope == ScopeSession {
+		if vars.NoopFuncsMode == OffInt && scope == ScopeSession {
 			return Off, ErrFunctionsNoopImpl.GenWithStackByArgs(feature)
 		}
 		val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
@@ -281,16 +281,17 @@ func TiDBOptOn(opt string) bool {
 }
 
 const (
-	// OffInt is used by TiDBMultiStatementMode
+	// OffInt is used by TiDBOptOnOffWarn
 	OffInt = 0
-	// OnInt is used TiDBMultiStatementMode
+	// OnInt is used TiDBOptOnOffWarn
 	OnInt = 1
-	// WarnInt is used by TiDBMultiStatementMode
+	// WarnInt is used by TiDBOptOnOffWarn
 	WarnInt = 2
 )
 
-// TiDBOptMultiStmt converts multi-stmt options to int.
-func TiDBOptMultiStmt(opt string) int {
+// TiDBOptOnOffWarn converts On/Off/Warn to an int.
+// It is used for MultiStmtMode and NoopFunctionsMode
+func TiDBOptOnOffWarn(opt string) int {
 	switch opt {
 	case Off:
 		return OffInt

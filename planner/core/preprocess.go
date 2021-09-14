@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
@@ -744,10 +745,14 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
-	enableNoopFuncs := p.ctx.GetSessionVars().EnableNoopFuncs
-	if stmt.TemporaryKeyword == ast.TemporaryLocal && !enableNoopFuncs {
-		p.err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("CREATE TEMPORARY TABLE")
-		return
+	if stmt.TemporaryKeyword == ast.TemporaryLocal && p.ctx.GetSessionVars().NoopFuncsMode != variable.OnInt {
+		err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("CREATE TEMPORARY TABLE")
+		if p.ctx.GetSessionVars().NoopFuncsMode == variable.OffInt {
+			p.err = err
+			return
+		}
+		// NoopFuncsMode is Warn, append an error
+		p.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
