@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -151,7 +152,13 @@ func (m *mppIterator) run(ctx context.Context) {
 		}
 		m.mu.Unlock()
 		m.wg.Add(1)
-		bo := backoff.NewBackoffer(ctx, copNextMaxBackoff)
+		boMaxSleep := copNextMaxBackoff
+		failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
+			if value.(bool) {
+				boMaxSleep = 2
+			}
+		})
+		bo := backoff.NewBackoffer(ctx, boMaxSleep)
 		go func(mppTask *kv.MPPDispatchRequest) {
 			defer func() {
 				m.wg.Done()

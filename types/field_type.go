@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -40,23 +41,20 @@ func NewFieldType(tp byte) *FieldType {
 		Flen:    UnspecifiedLength,
 		Decimal: UnspecifiedLength,
 	}
-	if tp != mysql.TypeVarchar && tp != mysql.TypeVarString && tp != mysql.TypeString {
-		ft.Collate = charset.CollationBin
-	} else {
-		ft.Collate = mysql.DefaultCollationName
-	}
-	// TODO: use DefaultCharsetForType to set charset and collate
+	ft.Charset, ft.Collate = DefaultCharsetForType(tp)
 	return ft
 }
 
 // NewFieldTypeWithCollation returns a FieldType,
 // with a type and other information about field type.
 func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType {
+	coll, _ := charset.GetCollationByName(collation)
 	return &FieldType{
 		Tp:      tp,
 		Flen:    length,
 		Decimal: UnspecifiedLength,
 		Collate: collation,
+		Charset: coll.CharsetName,
 	}
 }
 
@@ -197,6 +195,9 @@ func hasVariantFieldLength(tp *FieldType) bool {
 
 // DefaultTypeForValue returns the default FieldType for the value.
 func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate string) {
+	if value != nil {
+		tp.Flag |= mysql.NotNullFlag
+	}
 	switch x := value.(type) {
 	case nil:
 		tp.Tp = mysql.TypeNull

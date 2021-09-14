@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -85,6 +86,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		expect types.CoreTime
 	}{
 		{`01,05,2013`, `%d,%m,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
+		{`5 12 2021`, `%m%d%Y`, types.FromDate(2021, 5, 12, 0, 0, 0, 0)},
 		{`May 01, 2013`, `%M %d,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
 		{`a09:30:17`, `a%h:%i:%s`, types.FromDate(0, 0, 0, 9, 30, 17, 0)},
 		{`09:30:17a`, `%h:%i:%s`, types.FromDate(0, 0, 0, 9, 30, 17, 0)},
@@ -118,6 +120,9 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`70/10/22`, `%Y/%m/%d`, types.FromDate(1970, 10, 22, 0, 0, 0, 0)},
 		{`18/10/22`, `%Y/%m/%d`, types.FromDate(2018, 10, 22, 0, 0, 0, 0)},
 		{`100/10/22`, `%Y/%m/%d`, types.FromDate(100, 10, 22, 0, 0, 0, 0)},
+		{`09/10/1021`, `%d/%m/%y`, types.FromDate(2010, 10, 9, 0, 0, 0, 0)}, // '%y' only accept up to 2 digits for year
+		{`09/10/1021`, `%d/%m/%Y`, types.FromDate(1021, 10, 9, 0, 0, 0, 0)}, // '%Y' accept up to 4 digits for year
+		{`09/10/10`, `%d/%m/%Y`, types.FromDate(2010, 10, 9, 0, 0, 0, 0)},   // '%Y' will fix the year for only 2 digits
 		//'%b'/'%M' should be case insensitive
 		{"31/may/2016 12:34:56.1234", "%d/%b/%Y %H:%i:%S.%f", types.FromDate(2016, 5, 31, 12, 34, 56, 123400)},
 		{"30/april/2016 12:34:56.", "%d/%M/%Y %H:%i:%s.%f", types.FromDate(2016, 4, 30, 12, 34, 56, 0)},
@@ -164,6 +169,8 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		// invalid days when `AllowInvalidDate` is false
 		{`04/31/2004`, `%m/%d/%Y`},                        // not exists in the real world
 		{"29/Feb/2021 12:34:56.", "%d/%b/%Y %H:%i:%s.%f"}, // Feb 29 in non-leap-year
+
+		{`512 2021`, `%m%d %Y`}, // MySQL will try to parse '51' for '%m', fail
 
 		{`a09:30:17`, `%h:%i:%s`}, // format mismatch
 		{`12:43:24 a`, `%r`},      // followed by incomplete 'AM'/'PM'

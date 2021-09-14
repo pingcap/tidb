@@ -29,6 +29,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -976,6 +977,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 
 		startTime := time.Now()
 		if err = cc.dispatch(ctx, data); err != nil {
+			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
 				disconnectNormal.Inc()
@@ -992,6 +994,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if cc.ctx != nil {
 				txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
 			}
+			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 			logutil.Logger(ctx).Info("command dispatched failed",
 				zap.String("connInfo", cc.String()),
 				zap.String("command", mysql.Command2Str[data[0]]),
@@ -1626,6 +1629,21 @@ func (cc *clientConn) handlePlanRecreator(ctx context.Context, info executor.Pla
 	return "", errors.New("plan recreator: not supporting info type")
 }
 
+func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
+	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		audit := plugin.DeclareAuditManifest(p.Manifest)
+		if audit.OnGeneralEvent != nil {
+			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&cc.ctx.GetSessionVars().CommandValue))]
+			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, cc.ctx.GetSessionVars().StartTime)
+			audit.OnGeneralEvent(ctx, cc.ctx.GetSessionVars(), eventType, cmd)
+		}
+		return nil
+	})
+	if err != nil {
+		terror.Log(err)
+	}
+}
+
 // handleQuery executes the sql query string and writes result set or result ok to the client.
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // There is a special query `load data` that does not return result, which is handled differently.
@@ -1636,7 +1654,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	prevWarns := sc.GetWarnings()
 	stmts, err := cc.ctx.Parse(ctx, sql)
 	if err != nil {
-		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
 	}
 
@@ -1662,7 +1679,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			switch cc.ctx.GetSessionVars().MultiStatementMode {
 			case variable.OffInt:
 				err = errMultiStatementDisabled
-				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 				return err
 			case variable.OnInt:
 				// multi statement is fully permitted, do nothing
@@ -1708,9 +1724,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				break
 			}
 		}
-	}
-	if err != nil {
-		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 	}
 	return err
 }
@@ -1822,6 +1835,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
+	cc.audit(plugin.Starting)
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
 	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.

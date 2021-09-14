@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -437,7 +438,11 @@ func importEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engi
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(ce.Import(ctx))
+	regionSplitSize := int64(cfg.TikvImporter.RegionSplitSize)
+	if regionSplitSize == 0 {
+		regionSplitSize = int64(config.SplitRegionSize)
+	}
+	return errors.Trace(ce.Import(ctx, regionSplitSize))
 }
 
 func cleanupEngine(ctx context.Context, cfg *config.Config, tls *common.TLS, engine string) error {

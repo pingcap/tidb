@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -26,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
@@ -92,6 +94,9 @@ const (
 	maxRetryTimes           = 4
 	defaultRetryBackoffTime = 100 * time.Millisecond
 	pdStores                = "/pd/api/v1/stores"
+
+	defaultCSVDataCharacterSet       = "binary"
+	defaultCSVDataInvalidCharReplace = utf8.RuneError
 )
 
 var (
@@ -242,6 +247,7 @@ type PostRestore struct {
 }
 
 type CSVConfig struct {
+	// Separator, Delimiter and Terminator should all be in utf8mb4 encoding.
 	Separator       string `toml:"separator" json:"separator"`
 	Delimiter       string `toml:"delimiter" json:"delimiter"`
 	Terminator      string `toml:"terminator" json:"terminator"`
@@ -268,6 +274,16 @@ type MydumperRuntime struct {
 	StrictFormat     bool             `toml:"strict-format" json:"strict-format"`
 	DefaultFileRules bool             `toml:"default-file-rules" json:"default-file-rules"`
 	IgnoreColumns    AllIgnoreColumns `toml:"ignore-data-columns" json:"ignore-data-columns"`
+	// DataCharacterSet is the character set of the source file. Only CSV files are supported now. The following options are supported.
+	//   - utf8mb4
+	//   - GB18030
+	//   - GBK: an extension of the GB2312 character set and is also known as Code Page 936.
+	//   - binary: no attempt to convert the encoding.
+	// Leave DataCharacterSet empty will make it use `binary` by default.
+	DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
+	// DataInvalidCharReplace is the replacement characters for non-compatible characters, which shouldn't duplicate with the separators or line breaks.
+	// Changing the default value will result in increased parsing time. Non-compatible characters do not cause an increase in error.
+	DataInvalidCharReplace string `toml:"data-invalid-char-replace" json:"data-invalid-char-replace"`
 }
 
 type AllIgnoreColumns []*IgnoreColumns
@@ -308,6 +324,10 @@ type FileRouteRule struct {
 	Type        string `json:"type" toml:"type" yaml:"type"`
 	Key         string `json:"key" toml:"key" yaml:"key"`
 	Compression string `json:"compression" toml:"compression" yaml:"compression"`
+	// TODO: DataCharacterSet here can overide the same field in [mydumper.csv] with a higher level.
+	// This could provide users a more flexable usage to configure different files with
+	// different data charsets.
+	// DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
 }
 
 type TikvImporter struct {
@@ -426,16 +446,18 @@ func NewConfig() *Config {
 				BackslashEscape: true,
 				TrimLastSep:     false,
 			},
-			StrictFormat:  false,
-			MaxRegionSize: MaxRegionSize,
-			Filter:        DefaultFilter,
+			StrictFormat:           false,
+			MaxRegionSize:          MaxRegionSize,
+			Filter:                 DefaultFilter,
+			DataCharacterSet:       defaultCSVDataCharacterSet,
+			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
 		TikvImporter: TikvImporter{
 			Backend:         "",
 			OnDuplicate:     ReplaceOnDup,
 			MaxKVPairs:      4096,
 			SendKVPairs:     32768,
-			RegionSplitSize: SplitRegionSize,
+			RegionSplitSize: 0,
 			DiskQuota:       ByteSize(math.MaxInt64),
 		},
 		PostRestore: PostRestore{
@@ -575,6 +597,10 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	// enable default file route rule if no rules are set
 	if len(cfg.Mydumper.FileRouters) == 0 {
 		cfg.Mydumper.DefaultFileRules = true
+	}
+
+	if len(cfg.Mydumper.DataCharacterSet) == 0 {
+		cfg.Mydumper.DataCharacterSet = defaultCSVDataCharacterSet
 	}
 
 	if cfg.TikvImporter.Backend == "" {
@@ -738,9 +764,6 @@ func (cfg *Config) DefaultVarsForImporterAndLocalBackend(ctx context.Context) {
 	}
 	if cfg.TikvImporter.RangeConcurrency == 0 {
 		cfg.TikvImporter.RangeConcurrency = 16
-	}
-	if cfg.TikvImporter.RegionSplitSize == 0 {
-		cfg.TikvImporter.RegionSplitSize = SplitRegionSize
 	}
 	if cfg.TiDB.BuildStatsConcurrency == 0 {
 		cfg.TiDB.BuildStatsConcurrency = defaultBuildStatsConcurrency
