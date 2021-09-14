@@ -84,6 +84,6 @@ Since sub-module is merely another module inside another module, we need to rele
 
 - What about the bloated parser.go file? Nobody wants it, and it increases the size of tidb repo.
 
-We can not simply remove it. Importing pingcap/parser to build applications needs parser.go file, but go lacks build scripts in rust or `postbuild` in nodejs to auto-generate parser.go.
+We can not simply remove it. Importing pingcap/parser to build applications needs parser.go file, but go module lacks build scripts in rust or `postbuild` in nodejs to auto-generate parser.go.
 
 One solution is to only include the file for the released version. But TiDB does not support package semver, `go get xxx/parser` won't simply give a buildable package. That will be too frustrating for users.
