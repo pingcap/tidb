@@ -32,14 +32,14 @@ const (
 )
 
 const (
-	// ruleIndexDefault is the default index for a rule.
-	ruleIndexDefault int = iota
-	// ruleIndexDatabase is the index for a rule of database.
-	ruleIndexDatabase
-	// ruleIndexTable is the index for a rule of table.
-	ruleIndexTable
-	// ruleIndexPartition is the index for a rule of partition.
-	ruleIndexPartition
+	// RuleIndexDefault is the default index for a rule.
+	RuleIndexDefault int = iota
+	// RuleIndexDatabase is the index for a rule of database.
+	RuleIndexDatabase
+	// RuleIndexTable is the index for a rule of table.
+	RuleIndexTable
+	// RuleIndexPartition is the index for a rule of partition.
+	RuleIndexPartition
 )
 
 var (
@@ -148,9 +148,9 @@ func (r *Rule) Reset(ids []int64, dbName, tableName string, partName ...string) 
 		r.Rules = append(r.Rules, rule)
 	}
 	// We may support more types later.
-	r.Index = ruleIndexTable
+	r.Index = RuleIndexTable
 	if isPartition {
-		r.Index = ruleIndexPartition
+		r.Index = RuleIndexPartition
 	}
 	return r
 }
