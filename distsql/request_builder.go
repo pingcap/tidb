@@ -50,7 +50,7 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	if builder.ReadReplicaScope == "" {
 		builder.ReadReplicaScope = kv.GlobalReplicaScope
 	}
-	if builder.IsStaleness && builder.ReadReplicaScope != kv.GlobalReplicaScope {
+	if builder.ReplicaRead.IsClosestRead() && builder.ReadReplicaScope != kv.GlobalReplicaScope {
 		builder.MatchStoreLabels = []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,

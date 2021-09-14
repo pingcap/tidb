@@ -244,6 +244,7 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 }
 
 func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
+	//c.Skip("tmp skip")
 	tk := testkit.NewTestKit(c, s.store)
 	safePointName := "tikv_gc_safe_point"
 	safePointValue := "20160102-15:04:05 -0700"
@@ -288,6 +289,7 @@ func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
 			assert: "github.com/pingcap/tidb/executor/assertBatchPointStalenessOption",
 		},
 	}
+	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
 	for _, testcase := range testcases {
 		failpoint.Enable(testcase.assert, `return("sh")`)
 		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3);`)
