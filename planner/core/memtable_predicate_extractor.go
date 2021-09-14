@@ -472,18 +472,18 @@ func (helper extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 
 	return quantiles
 }
 
-func (helper extractHelper) parseUint64(quantileSet set.StringSet) []uint64 {
-	quantiles := make([]uint64, 0, len(quantileSet))
-	for k := range quantileSet {
+func (helper extractHelper) parseUint64(uint64Set set.StringSet) []uint64 {
+	uint64s := make([]uint64, 0, len(uint64Set))
+	for k := range uint64Set {
 		v, err := strconv.ParseUint(k, 10, 64)
 		if err != nil {
 			// ignore the parse error won't affect result.
 			continue
 		}
-		quantiles = append(quantiles, v)
+		uint64s = append(uint64s, v)
 	}
-	sort.Slice(quantiles, func(i, j int) bool { return quantiles[i] < quantiles[j] })
-	return quantiles
+	sort.Slice(uint64s, func(i, j int) bool { return uint64s[i] < uint64s[j] })
+	return uint64s
 }
 
 func (helper extractHelper) extractCols(
@@ -701,7 +701,7 @@ type HotRegionsHistoryTableExtractor struct {
 	// IsLearners/IsLeaders represents whether we should request for learner/leader role in PD to reduce network IO.
 	// e.g:
 	// 1. SELECT * FROM tidb_hot_regions_history WHERE is_learner=1
-	// 2. SELECT * FROM tidb_hot_regions_history WHERE is_learner in (0,1,2,3) -> request all
+	// 2. SELECT * FROM tidb_hot_regions_history WHERE is_learner in (0,1) -> request all
 	IsLearners []uint64
 	IsLeaders  []uint64
 
