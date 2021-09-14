@@ -521,7 +521,7 @@ func (b *Builder) applyPlacementPolicyDependency(tableID, policyID int64) {
 func (b *Builder) removePlacementPolicyDependency(oldTableID, policyID int64) {
 	if policyID != 0 {
 		if po, ok := b.is.PolicyByID(policyID); ok {
-			b.is.AttachPolicyDependency(po.Name.L, []int64{oldTableID})
+			b.is.DetachPolicyDependency(po.Name.L, []int64{oldTableID})
 		}
 	}
 }
