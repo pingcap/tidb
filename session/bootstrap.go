@@ -354,7 +354,7 @@ const (
 		column_id BIGINT(64) NOT NULL,
 		last_used_at TIMESTAMP,
 		last_analyzed_at TIMESTAMP,
-		PRIMARY KEY (table_id, column_id)
+		PRIMARY KEY (table_id, column_id) CLUSTERED
 	);`
 )
 
