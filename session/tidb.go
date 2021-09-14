@@ -42,6 +42,12 @@ import (
 	"go.uber.org/zap"
 )
 
+func init() {
+	domain.DomainMapDelete = func(store kv.Storage) {
+		domap.Delete(store)
+	}
+}
+
 type domainMap struct {
 	domains map[string]*domain.Domain
 	mu      sync.Mutex

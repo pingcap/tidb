@@ -605,6 +605,9 @@ func (do *Domain) isClose() bool {
 	return false
 }
 
+// DomainMapDelete is used to avoid cycle import with `session` package.
+var DomainMapDelete func (kv.Storage)
+
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
 	if do == nil {
@@ -627,6 +630,7 @@ func (do *Domain) Close() {
 	do.cancel()
 	do.wg.Wait()
 	do.sysSessionPool.Close()
+	DomainMapDelete(do.store)
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 

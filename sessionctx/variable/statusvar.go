@@ -42,8 +42,11 @@ type Statistics interface {
 	Stats(*SessionVars) (map[string]interface{}, error)
 }
 
-// RegisterStatistics registers statistics.
-func RegisterStatistics(s Statistics) {
+// RegisterStatistics is exposed to avoid holding a reference in global variables, when using TiDB as a library.
+var RegisterStatistics = registerStatistics
+
+// registerStatistics registers statistics.
+func registerStatistics(s Statistics) {
 	statisticsListLock.Lock()
 	statisticsList = append(statisticsList, s)
 	statisticsListLock.Unlock()
