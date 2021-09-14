@@ -77,7 +77,6 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		sysFactory := createSessionWithDomainFunc(store)
 		onClose := func() {
 			dm.Delete(store)
-			unsetStoreBootstrapped(store.UUID())
 		}
 		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, factory, onClose)
 		err1 = d.Init(ddlLease, sysFactory)
