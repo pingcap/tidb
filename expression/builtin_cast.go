@@ -1896,9 +1896,6 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
 	tp.Flen, tp.Decimal = expr.GetType().Flen, expr.GetType().Decimal
-	if tp.Flen < 10 {
-		tp.Flen = 10
-	}
 	if expr.GetType().EvalType() == types.ETInt {
 		tp.Flen = mysql.MaxIntWidth
 	}
