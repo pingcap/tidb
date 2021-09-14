@@ -2493,12 +2493,21 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML2(c *C) {
 	}
 
 	for _, ca := range cases {
-		for i := 0; i < 2; i++ {
+		for i := 0; i < 3; i++ {
 			tk.MustExec("drop table if exists t")
-			if i == 0 {
-				tk.MustExec(" create table t (a bigint auto_increment, b int, primary key (a));")
-			} else {
-				tk.MustExec(" create table t (a bigint unsigned auto_increment, b int, primary key (a));")
+			switch i {
+			case 0:
+				tk.MustExec("create table t (a bigint auto_increment, b int, primary key (a));")
+			case 1:
+				tk.MustExec("create table t (a bigint unsigned auto_increment, b int, primary key (a));")
+			case 2:
+				if strings.Contains(ca.sql, "on duplicate key") {
+					continue
+				}
+				tk.MustExec("create table t (a bigint primary key auto_random(5), b int);")
+				tk.MustExec("set @@allow_auto_random_explicit_insert=1;")
+			default:
+				panic("should never happen")
 			}
 			if ca.prepare != "" {
 				tk.MustExec(ca.prepare)
@@ -2509,7 +2518,7 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML2(c *C) {
 				fmt.Fprintf(resBuff, "%s\t", row)
 			}
 			explain := resBuff.String()
-			c.Assert(explain, Matches, ca.planRegexp, Commentf("sql: %v", ca.sql))
+			c.Assert(explain, Matches, ca.planRegexp, Commentf("idx: %v,sql: %v", i, ca.sql))
 		}
 	}
 
