@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
@@ -2310,6 +2311,7 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 32
+		err = s.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, "utf8mb4")
 	}
 	return s, err
 }
@@ -3007,7 +3009,7 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	}
 
 	// Override the infoschema if the session has temporary table.
-	return wrapWithTemporaryTable(s, is)
+	return temptable.AttachLocalTemporaryTableInfoSchema(s, is)
 }
 
 func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.InfoSchema, error) {
@@ -3017,24 +3019,7 @@ func getSnapshotInfoSchema(s sessionctx.Context, snapshotTS uint64) (infoschema.
 	}
 	// Set snapshot does not affect the witness of the local temporary table.
 	// The session always see the latest temporary tables.
-	return wrapWithTemporaryTable(s, is), nil
-}
-
-func wrapWithTemporaryTable(s sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
-	// Already a wrapped one.
-	if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
-		return is
-	}
-	// No temporary table.
-	local := s.GetSessionVars().LocalTemporaryTables
-	if local == nil {
-		return is
-	}
-
-	return &infoschema.TemporaryTableAttachedInfoSchema{
-		InfoSchema:           is,
-		LocalTemporaryTables: local.(*infoschema.LocalTemporaryTables),
-	}
+	return temptable.AttachLocalTemporaryTableInfoSchema(s, is), nil
 }
 
 func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
