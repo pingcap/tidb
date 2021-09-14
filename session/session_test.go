@@ -5672,12 +5672,16 @@ func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
 		c.Assert(err, IsNil)
 	}
 
+	runtime.GC()
+	memStat := runtime.MemStats{}
+	runtime.ReadMemStats(&memStat)
+	oldHeapInUse := memStat.HeapInuse
+
 	for i := 0; i < 10; i++ {
 		initAndCloseTiDB()
 	}
 
 	runtime.GC()
-	memStat := runtime.MemStats{}
 	runtime.ReadMemStats(&memStat)
-	c.Assert(memStat.HeapInuse, Less, uint64(100*units.MiB))
+	c.Assert(memStat.HeapInuse-oldHeapInUse, Less, uint64(100*units.MiB))
 }
