@@ -194,10 +194,6 @@ func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// TODO: Reset all the policy reference, (modify meta & notify pd)
-		// If any partitions currently use this policy, they will be converted to the policy used by the table
-		// they belong to. If any databases use this policy, they will be converted to the default placement_policy policy.
-
 		// Finish this job. By now policy don't consider the binlog sync.
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, nil)
 	default:
@@ -231,6 +227,8 @@ func onAlterPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+
+	// TODO: send pd rules to updating the placement policy reference.
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {

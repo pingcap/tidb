@@ -51,6 +51,7 @@ type InfoSchema interface {
 	// TableIsSequence indicates whether the schema.table is a sequence.
 	TableIsSequence(schema, table model.CIStr) bool
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
+	FindDBInfoByTableID(tableID int64) *model.DBInfo
 	// BundleByName is used to get a rule bundle.
 	BundleByName(name string) (*placement.Bundle, bool)
 	// SetBundle is used internally to update rule bundles or mock tests.
@@ -59,6 +60,9 @@ type InfoSchema interface {
 	RuleBundles() []*placement.Bundle
 	// AllPlacementPolicies returns all placement policies
 	AllPlacementPolicies() []*model.PolicyInfo
+	// DismissPolicyDependencies return whether it's ok to drop/modify a policy.
+	DismissPolicyDependencies(name string) bool
+
 }
 
 type sortedTables []table.Table
@@ -92,6 +96,14 @@ type schemaTables struct {
 
 const bucketCount = 512
 
+type PolicyDependedIDRefType uint8
+
+const(
+	PolicyDependedIDRefDBType PolicyDependedIDRefType = iota
+	PolicyDependedIDRefTableType
+	PolicyDependedIDRefPartitionType
+)
+
 type infoSchema struct {
 	// ruleBundleMap stores all placement rules
 	ruleBundleMutex sync.RWMutex
@@ -100,6 +112,10 @@ type infoSchema struct {
 	// policyMap stores all placement policies.
 	policyMutex sync.RWMutex
 	policyMap   map[string]*model.PolicyInfo
+
+	// policyDependencyMap stores all the element ids which depended on this policy.
+	policyDependencyMutex sync.RWMutex
+	policyDependencySet map[string]map[int64]struct{}
 
 	schemaMap map[string]*schemaTables
 
@@ -310,6 +326,18 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 	return nil, nil, nil
 }
 
+// FindDBInfoByTableID return the dbInfo contains the tableID.
+func (is *infoSchema) FindDBInfoByTableID(tableID int64) *model.DBInfo {
+	for _, v := range is.schemaMap {
+		for _, tbl := range v.tables {
+			if tbl.Meta().ID ==  tableID {
+				return v.dbInfo
+			}
+		}
+	}
+	return nil
+}
+
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
 	for _, v := range is.schemaMap {
 		result = append(result, v.dbInfo.Clone())
@@ -374,6 +402,16 @@ func (is *infoSchema) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool) {
 	return t, r
 }
 
+func (is *infoSchema) DismissPolicyDependencies(name string) bool {
+	is.policyDependencyMutex.RLock()
+	defer is.policyDependencyMutex.RUnlock()
+	t, r := is.policyDependencySet[name]
+	if r && len(t) > 0 {
+		return false
+	}
+	return true
+}
+
 // AllPlacementPolicies returns all placement policies
 func (is *infoSchema) AllPlacementPolicies() []*model.PolicyInfo {
 	is.policyMutex.RLock()
@@ -400,6 +438,34 @@ func (is *infoSchema) RuleBundles() []*placement.Bundle {
 		bundles = append(bundles, bundle)
 	}
 	return bundles
+}
+
+func (is *infoSchema) AttachPolicyDependency(policyName string, ids []int64) {
+	is.policyDependencyMutex.Lock()
+	defer is.policyDependencyMutex.Unlock()
+	for _, id := range ids {
+		is.policyDependencySet[policyName][id] = struct{}{}
+	}
+}
+
+func (is *infoSchema) DetachPolicyDependency(policyName string, ids []int64) {
+	is.policyDependencyMutex.Lock()
+	defer is.policyDependencyMutex.Unlock()
+	for _, id := range ids {
+		delete(is.policyDependencySet[policyName], id)
+	}
+}
+
+func (is *infoSchema) SetPolicy(policy *model.PolicyInfo) {
+	is.policyMutex.Lock()
+	defer is.policyMutex.Unlock()
+	is.policyMap[policy.Name.L] = policy
+}
+
+func (is *infoSchema) DeletePolicy(name string) {
+	is.policyMutex.Lock()
+	defer is.policyMutex.Unlock()
+	delete(is.policyMap, name)
 }
 
 func (is *infoSchema) SetBundle(bundle *placement.Bundle) {

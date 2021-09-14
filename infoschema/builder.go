@@ -82,7 +82,13 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	// handle placement rule cache
 	switch diff.Type {
+	case model.ActionCreateTable:
+		b.applyPlacementPolicyDependency(newTableID, diff.PolicyID)
+		if err := b.applyPlacementUpdate(placement.GroupID(newTableID)); err != nil {
+			return nil, errors.Trace(err)
+		}
 	case model.ActionDropTable:
+		b.removePlacementPolicyDependency(oldTableID, diff.PolicyID)
 		b.applyPlacementDelete(placement.GroupID(oldTableID))
 	case model.ActionTruncateTable:
 		b.applyPlacementDelete(placement.GroupID(oldTableID))
@@ -257,7 +263,7 @@ func (b *Builder) applyCreatePolicy(m *meta.Meta, diff *model.SchemaDiff) error 
 			fmt.Sprintf("(Policy ID %d)", diff.SchemaID),
 		)
 	}
-	b.is.policyMap[po.Name.L] = po
+	b.is.SetPolicy(po)
 	return nil
 }
 
@@ -273,7 +279,7 @@ func (b *Builder) applyAlterPolicy(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		)
 	}
 
-	b.is.policyMap[po.Name.L] = po
+	b.is.SetPolicy(po)
 	// TODO: return the policy related table ids
 	return []int64{}, nil
 }
@@ -316,7 +322,7 @@ func (b *Builder) applyDropPolicy(PolicyID int64) []int64 {
 	if !ok {
 		return nil
 	}
-	delete(b.is.policyMap, po.Name.L)
+	b.is.DeletePolicy(po.Name.L)
 	// TODO: return the policy related table ids
 	return []int64{}
 }
@@ -504,6 +510,22 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 	return affected
 }
 
+func (b *Builder) applyPlacementPolicyDependency(tableID, policyID int64) {
+	if policyID != 0 {
+		if po, ok := b.is.PolicyByID(policyID); ok {
+			b.is.AttachPolicyDependency(po.Name.L, []int64{tableID})
+		}
+	}
+}
+
+func (b *Builder) removePlacementPolicyDependency(oldTableID, policyID int64) {
+	if policyID != 0 {
+		if po, ok := b.is.PolicyByID(policyID); ok {
+			b.is.AttachPolicyDependency(po.Name.L, []int64{oldTableID})
+		}
+	}
+}
+
 func (b *Builder) applyPlacementDelete(id string) {
 	b.is.deleteBundle(id)
 }
@@ -577,14 +599,19 @@ func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 }
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
-func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.Bundle, schemaVersion int64) (*Builder, error) {
+func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.Bundle, policies []*model.PolicyInfo, schemaVersion int64) (*Builder, error) {
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
 	for _, bundle := range bundles {
 		info.SetBundle(bundle)
 	}
+	// build the policies in advance of policy dependency.
+	for _, policy := range policies {
+		info.SetPolicy(policy)
+	}
 
 	for _, di := range dbInfos {
+		// todo: construct dbInfo's policy dependency.
 		err := b.createSchemaTablesForDB(di, tables.TableFromMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -625,6 +652,16 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		schTbls.tables[t.Name.L] = tbl
 		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]
 		b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, tbl)
+
+		// build table's policy dependency.
+		if t.PlacementPolicyRef != nil {
+			// check the policy existence.
+			if _, ok := b.is.PolicyByName(t.PlacementPolicyRef.Name); !ok {
+				return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` 's policy `%s` dependency failed", di.Name.O, t.Name.O, t.PlacementPolicyRef.Name.O))
+			}
+			b.is.AttachPolicyDependency(t.PlacementPolicyRef.Name.L, []int64{t.ID})
+		}
+		// todo: build partition's policy dependency.
 	}
 	return nil
 }
@@ -648,6 +685,7 @@ func NewBuilder(store kv.Storage) *Builder {
 		is: &infoSchema{
 			schemaMap:           map[string]*schemaTables{},
 			policyMap:           map[string]*model.PolicyInfo{},
+			policyDependencySet: map[string]map[int64]struct{}{},
 			ruleBundleMap:       map[string]*placement.Bundle{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},
