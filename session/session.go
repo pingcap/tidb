@@ -409,6 +409,10 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 	}
 }
 
+func (s *session) UpdateColStatsUsage(colStatsUsage map[model.TableColumnID]time.Time) {
+	s.statsCollector.UpdateColStatsUsage(colStatsUsage)
+}
+
 // StoreIndexUsage stores index usage information in idxUsageCollector.
 func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) {
 	if s.idxUsageCollector == nil {

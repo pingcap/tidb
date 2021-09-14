@@ -213,11 +213,11 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 }
 
 // UpdateColStatsUsage updates the last time when the column stats are used(needed).
-func (s *SessionStatsCollector) UpdateColStatsUsage(tableID, columnID int64) {
+func (s *SessionStatsCollector) UpdateColStatsUsage(usageMap colStatsUsageMap) {
+	// TODO: do we really need to lock here?
 	s.Lock()
 	defer s.Unlock()
-	id := model.TableColumnID{TableID: tableID, ColumnID: columnID}
-	s.colStatsUsage[id] = time.Now()
+	s.colStatsUsage.merge(usageMap)
 }
 
 // NewSessionStatsCollector allocates a stats collector for a session.

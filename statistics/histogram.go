@@ -1437,7 +1437,7 @@ func (idx *Index) expBackoffEstimation(sc *stmtctx.StatementContext, coll *HistC
 		)
 		if anotherIdxID, ok := coll.ColID2IdxID[colID]; ok && anotherIdxID != idx.ID {
 			count, err = coll.GetRowCountByIndexRanges(sc, anotherIdxID, tmpRan)
-		} else if col, ok := coll.Columns[colID]; ok && !col.IsInvalid(sc, coll.Pseudo) {
+		} else if col := coll.GetValidColumn(sc, colID, coll.Pseudo); col != nil {
 			count, err = coll.GetRowCountByColumnRanges(sc, colID, tmpRan)
 		} else {
 			continue
@@ -1568,11 +1568,12 @@ func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode 
 // NewHistCollBySelectivity creates new HistColl by the given statsNodes.
 func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, statsNodes []*StatsNode) *HistColl {
 	newColl := &HistColl{
-		Columns:       make(map[int64]*Column),
-		Indices:       make(map[int64]*Index),
-		Idx2ColumnIDs: coll.Idx2ColumnIDs,
-		ColID2IdxID:   coll.ColID2IdxID,
-		Count:         coll.Count,
+		Columns:           make(map[int64]*Column),
+		Indices:           make(map[int64]*Index),
+		Idx2ColumnIDs:     coll.Idx2ColumnIDs,
+		ColID2IdxID:       coll.ColID2IdxID,
+		Count:             coll.Count,
+		UniqueID2TblColID: coll.UniqueID2TblColID,
 	}
 	for _, node := range statsNodes {
 		if node.Tp == IndexType {
