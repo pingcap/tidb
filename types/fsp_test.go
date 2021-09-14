@@ -24,111 +24,110 @@ import (
 func TestCheckFsp(t *testing.T) {
 	t.Parallel()
 	obtained, err := CheckFsp(int(UnspecifiedFsp))
-	require.Equal(t, obtained, DefaultFsp)
+	require.Equal(t, DefaultFsp, obtained)
 	require.NoError(t, err)
 
 	obtained, err = CheckFsp(-2019)
-	require.Equal(t, obtained, DefaultFsp)
+	require.Equal(t, DefaultFsp, obtained)
 	require.EqualError(t, err, "Invalid fsp -2019")
 
-
 	obtained, err = CheckFsp(int(MinFsp) - 4294967296)
-	require.Equal(t, obtained, DefaultFsp)
+	require.Equal(t, DefaultFsp, obtained)
 	require.EqualError(t, err, "Invalid fsp "+strconv.Itoa(int(MinFsp)-4294967296))
 
 	// UnspecifiedFsp
 	obtained, err = CheckFsp(-1)
-	require.Equal(t, obtained, DefaultFsp)
+	require.Equal(t, DefaultFsp, obtained)
 	require.NoError(t, err)
 
 	obtained, err = CheckFsp(int(MaxFsp) + 1)
-	require.Equal(t, obtained, MaxFsp)
+	require.Equal(t, MaxFsp, obtained)
 	require.NoError(t, err)
 
 	obtained, err = CheckFsp(int(MaxFsp) + 2019)
-	require.Equal(t, obtained, MaxFsp)
+	require.Equal(t, MaxFsp, obtained)
 	require.NoError(t, err)
 
 	obtained, err = CheckFsp(int(MaxFsp) + 4294967296)
-	require.Equal(t, obtained, MaxFsp)
+	require.Equal(t, MaxFsp, obtained)
 	require.NoError(t, err)
 
 	obtained, err = CheckFsp(int(MaxFsp+MinFsp) / 2)
-	require.Equal(t, obtained, (MaxFsp+MinFsp)/2)
+	require.Equal(t, (MaxFsp+MinFsp)/2, obtained)
 	require.NoError(t, err)
 
 	obtained, err = CheckFsp(5)
-	require.Equal(t, obtained, int8(5))
+	require.Equal(t, int8(5), obtained)
 	require.NoError(t, err)
 }
 
 func TestParseFrac(t *testing.T) {
 	t.Parallel()
 	obtained, overflow, err := ParseFrac("", 5)
-	require.Equal(t, obtained, 0)
-	require.Equal(t, overflow, false)
+	require.Equal(t, 0, obtained)
+	require.Equal(t, false, overflow)
 	require.NoError(t, err)
 
 	a := 200
 	obtained, overflow, err = ParseFrac("999", int8(a))
-	require.Equal(t, obtained, 0)
-	require.Equal(t, overflow, false)
+	require.Equal(t, 0, obtained)
+	require.Equal(t, false, overflow)
 	require.Error(t, err)
 	require.Regexp(t, "Invalid fsp .*", err.Error())
 
 	obtained, overflow, err = ParseFrac("NotNum", MaxFsp)
-	require.Equal(t, obtained, 0)
-	require.Equal(t, overflow, false)
+	require.Equal(t, 0, obtained)
+	require.Equal(t, false, overflow)
 	require.Error(t, err)
 	require.Regexp(t, "strconv.ParseInt:.*", err.Error())
 
 	obtained, overflow, err = ParseFrac("1235", 6)
-	require.Equal(t, obtained, 123500)
-	require.Equal(t, overflow, false)
+	require.Equal(t, 123500, obtained)
+	require.Equal(t, false, overflow)
 	require.NoError(t, err)
 
 	obtained, overflow, err = ParseFrac("123456", 4)
-	require.Equal(t, obtained, 123500)
-	require.Equal(t, overflow, false)
+	require.Equal(t, 123500, obtained)
+	require.Equal(t, false, overflow)
 	require.NoError(t, err)
 
 	obtained, overflow, err = ParseFrac("1234567", 6)
-	require.Equal(t, obtained, 123457)
-	require.Equal(t, overflow, false)
+	require.Equal(t, 123457, obtained)
+	require.Equal(t, false, overflow)
 	require.NoError(t, err)
 
 	obtained, overflow, err = ParseFrac("1234567", 4)
-	require.Equal(t, obtained, 123500)
-	require.Equal(t, overflow, false)
+	require.Equal(t, 123500, obtained)
+	require.Equal(t, false, overflow)
 	require.NoError(t, err)
 
 	// 1236 round 3 -> 124 -> 124000
 	obtained, overflow, err = ParseFrac("1236", 3)
-	require.Equal(t, obtained, 124000)
-	require.Equal(t, overflow, false)
+	require.Equal(t, 124000, obtained)
+	require.Equal(t, false, overflow)
 	require.NoError(t, err)
 
 	// 03123 round 2 -> 3 -> 30000
 	obtained, overflow, err = ParseFrac("0312", 2)
-	require.Equal(t, obtained, 30000)
-	require.Equal(t, overflow, false)
+	require.Equal(t, 30000, obtained)
+	require.Equal(t, false, overflow)
 	require.NoError(t, err)
 
 	// 999 round 2 -> 100 -> overflow
 	obtained, overflow, err = ParseFrac("999", 2)
-	require.Equal(t, obtained, 0)
-	require.Equal(t, overflow, true)
+	require.Equal(t, 0, obtained)
+	require.Equal(t, true, overflow)
 	require.NoError(t, err)
 }
 
 func TestAlignFrac(t *testing.T) {
 	t.Parallel()
 	obtained := alignFrac("100", 6)
-	require.Equal(t, obtained, "100000")
+	require.Equal(t, "100000", obtained)
 	obtained = alignFrac("10000000000", 6)
-	require.Equal(t, obtained, "10000000000")
+	require.Equal(t, "10000000000", obtained)
 	obtained = alignFrac("-100", 6)
-	require.Equal(t, obtained, "-100000")
+	require.Equal(t, "-100000", obtained)
 	obtained = alignFrac("-10000000000", 6)
-	require.Equal(t, obtained, "-10000000000")
+	require.Equal(t, "-10000000000", obtained)
 }
