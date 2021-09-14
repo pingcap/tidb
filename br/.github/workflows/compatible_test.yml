@@ -1,0 +1,71 @@
+name: compatibility-test
+
+on:
+  push:
+    branches:
+      - master
+      - 'release-[0-9].[0-9]*'
+    paths-ignore:
+      - '**.html'
+      - '**.md'
+      - 'CNAME'
+      - 'LICENSE'
+      - 'docs/**'
+      - 'tests/**'
+      - 'docker/**'
+      - '.github/workflows/**.yml'
+  pull_request:
+    branches:
+      - master
+      - 'release-[0-9].[0-9]*'
+    paths-ignore:
+      - '**.html'
+      - '**.md'
+      - 'CNAME'
+      - 'LICENSE'
+      - 'docs/**'
+      - 'tests/**'
+      - 'docker/**'
+      - '.github/workflows/**.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+
+    - name: Free disk space
+      run: |
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /usr/share/dotnet
+        docker volume prune -f
+        docker image prune -f
+
+    - uses: actions/checkout@v2
+
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.16
+
+    - name: Generate compatibility test backup data
+      timeout-minutes: 15
+      run: sh compatibility/prepare_backup.sh
+
+    - name: Start server
+      run: |
+        TAG=nightly PORT_SUFFIX=1 docker-compose -f compatibility/backup_cluster.yaml rm -s -v
+        TAG=nightly PORT_SUFFIX=1 docker-compose -f compatibility/backup_cluster.yaml build
+        TAG=nightly PORT_SUFFIX=1 docker-compose -f compatibility/backup_cluster.yaml up --remove-orphans -d
+        TAG=nightly PORT_SUFFIX=1 docker-compose -f compatibility/backup_cluster.yaml exec -T control make compatibility_test
+
+    - name: Collect component log
+      if: ${{ failure() }}
+      run: |
+        tar czvf ${{ github.workspace }}/logs.tar.gz /tmp/br/docker/backup_logs/*
+
+    - uses: actions/upload-artifact@v2
+      if: ${{ failure() }}
+      with:
+        name: logs
+        path: ${{ github.workspace }}/logs.tar.gz

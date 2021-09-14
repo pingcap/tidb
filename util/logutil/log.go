@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -42,8 +43,6 @@ const (
 	DefaultRecordPlanInSlowLog = 1
 	// DefaultTiDBEnableSlowLog enables TiDB to log slow queries.
 	DefaultTiDBEnableSlowLog = true
-	// GRPCLogDebugVerbosity enables max verbosity when debugging grpc code.
-	GRPCLogDebugVerbosity = 99
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.
@@ -106,20 +105,42 @@ func InitLogger(cfg *LogConfig) error {
 	log.ReplaceGlobals(gl, props)
 
 	// init dedicated logger for slow query log
-	SlowQueryLogger, err = newSlowQueryLogger(cfg)
+	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	// init logger for grpc debugging
-	if len(os.Getenv("GRPC_DEBUG")) > 0 {
-		// more information for verbosity: https://github.com/google/glog#verbose-logging
-		gzap.ReplaceGrpcLoggerV2WithVerbosity(gl, GRPCLogDebugVerbosity)
-	} else {
-		gzap.ReplaceGrpcLoggerV2(gl)
+	_, _, err = initGRPCLogger(cfg)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil
+}
+
+func initGRPCLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
+	// Copy Config struct by assignment.
+	config := cfg.Config
+	var l *zap.Logger
+	var err error
+	var prop *log.ZapProperties
+	if len(os.Getenv("GRPC_DEBUG")) > 0 {
+		config.Level = "debug"
+		l, prop, err = log.InitLogger(&config, zap.AddStacktrace(zapcore.FatalLevel))
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		gzap.ReplaceGrpcLoggerV2WithVerbosity(l, 999)
+	} else {
+		config.Level = "error"
+		l, prop, err = log.InitLogger(&config, zap.AddStacktrace(zapcore.FatalLevel))
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		gzap.ReplaceGrpcLoggerV2(l)
+	}
+
+	return l, prop, nil
 }
 
 // SetLevel sets the zap logger's level.

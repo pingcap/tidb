@@ -12,6 +12,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -128,11 +129,13 @@ func CheckIllegalMixCollation(funcName string, args []Expression, evalType types
 }
 
 func illegalMixCollationErr(funcName string, args []Expression) error {
+	funcName = GetDisplayName(funcName)
+
 	switch len(args) {
 	case 2:
 		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], funcName)
 	case 3:
-		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], args[0].GetType().Collate, coerString[args[2].Coercibility()], funcName)
+		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], args[2].GetType().Collate, coerString[args[2].Coercibility()], funcName)
 	default:
 		return collate.ErrIllegalMixCollation.GenWithStackByArgs(funcName)
 	}
@@ -582,6 +585,14 @@ type functionClass interface {
 	verifyArgsByCount(l int) error
 }
 
+// functionClassWithName is the interface for a function with a display name extended from functionClass
+type functionClassWithName interface {
+	functionClass
+
+	// getDisplayName gets the display name of a function
+	getDisplayName() string
+}
+
 // funcs holds all registered builtin functions. When new function is added,
 // check expression/function_traits.go to see if it should be appended to
 // any set there.
@@ -695,6 +706,10 @@ var funcs = map[string]functionClass{
 	// string functions
 	ast.ASCII:           &asciiFunctionClass{baseFunctionClass{ast.ASCII, 1, 1}},
 	ast.Bin:             &binFunctionClass{baseFunctionClass{ast.Bin, 1, 1}},
+	ast.BitLength:       &bitLengthFunctionClass{baseFunctionClass{ast.BitLength, 1, 1}},
+	ast.CharFunc:        &charFunctionClass{baseFunctionClass{ast.CharFunc, 2, -1}},
+	ast.CharLength:      &charLengthFunctionClass{baseFunctionClass{ast.CharLength, 1, 1}},
+	ast.CharacterLength: &charLengthFunctionClass{baseFunctionClass{ast.CharacterLength, 1, 1}},
 	ast.Concat:          &concatFunctionClass{baseFunctionClass{ast.Concat, 1, -1}},
 	ast.ConcatWS:        &concatWSFunctionClass{baseFunctionClass{ast.ConcatWS, 2, -1}},
 	ast.Convert:         &convertFunctionClass{baseFunctionClass{ast.Convert, 2, 2}},
@@ -703,11 +718,12 @@ var funcs = map[string]functionClass{
 	ast.Field:           &fieldFunctionClass{baseFunctionClass{ast.Field, 2, -1}},
 	ast.Format:          &formatFunctionClass{baseFunctionClass{ast.Format, 2, 3}},
 	ast.FromBase64:      &fromBase64FunctionClass{baseFunctionClass{ast.FromBase64, 1, 1}},
+	ast.FindInSet:       &findInSetFunctionClass{baseFunctionClass{ast.FindInSet, 2, 2}},
+	ast.Hex:             &hexFunctionClass{baseFunctionClass{ast.Hex, 1, 1}},
 	ast.InsertFunc:      &insertFunctionClass{baseFunctionClass{ast.InsertFunc, 4, 4}},
 	ast.Instr:           &instrFunctionClass{baseFunctionClass{ast.Instr, 2, 2}},
 	ast.Lcase:           &lowerFunctionClass{baseFunctionClass{ast.Lcase, 1, 1}},
 	ast.Left:            &leftFunctionClass{baseFunctionClass{ast.Left, 2, 2}},
-	ast.Right:           &rightFunctionClass{baseFunctionClass{ast.Right, 2, 2}},
 	ast.Length:          &lengthFunctionClass{baseFunctionClass{ast.Length, 1, 1}},
 	ast.LoadFile:        &loadFileFunctionClass{baseFunctionClass{ast.LoadFile, 1, 1}},
 	ast.Locate:          &locateFunctionClass{baseFunctionClass{ast.Locate, 2, 3}},
@@ -724,7 +740,9 @@ var funcs = map[string]functionClass{
 	ast.Repeat:          &repeatFunctionClass{baseFunctionClass{ast.Repeat, 2, 2}},
 	ast.Replace:         &replaceFunctionClass{baseFunctionClass{ast.Replace, 3, 3}},
 	ast.Reverse:         &reverseFunctionClass{baseFunctionClass{ast.Reverse, 1, 1}},
+	ast.Right:           &rightFunctionClass{baseFunctionClass{ast.Right, 2, 2}},
 	ast.RTrim:           &rTrimFunctionClass{baseFunctionClass{ast.RTrim, 1, 1}},
+	ast.Rpad:            &rpadFunctionClass{baseFunctionClass{ast.Rpad, 3, 3}},
 	ast.Space:           &spaceFunctionClass{baseFunctionClass{ast.Space, 1, 1}},
 	ast.Strcmp:          &strcmpFunctionClass{baseFunctionClass{ast.Strcmp, 2, 2}},
 	ast.Substring:       &substringFunctionClass{baseFunctionClass{ast.Substring, 2, 3}},
@@ -732,16 +750,10 @@ var funcs = map[string]functionClass{
 	ast.SubstringIndex:  &substringIndexFunctionClass{baseFunctionClass{ast.SubstringIndex, 3, 3}},
 	ast.ToBase64:        &toBase64FunctionClass{baseFunctionClass{ast.ToBase64, 1, 1}},
 	ast.Trim:            &trimFunctionClass{baseFunctionClass{ast.Trim, 1, 3}},
+	ast.Translate:       &translateFunctionClass{baseFunctionClass{ast.Translate, 3, 3}},
 	ast.Upper:           &upperFunctionClass{baseFunctionClass{ast.Upper, 1, 1}},
 	ast.Ucase:           &upperFunctionClass{baseFunctionClass{ast.Ucase, 1, 1}},
-	ast.Hex:             &hexFunctionClass{baseFunctionClass{ast.Hex, 1, 1}},
 	ast.Unhex:           &unhexFunctionClass{baseFunctionClass{ast.Unhex, 1, 1}},
-	ast.Rpad:            &rpadFunctionClass{baseFunctionClass{ast.Rpad, 3, 3}},
-	ast.BitLength:       &bitLengthFunctionClass{baseFunctionClass{ast.BitLength, 1, 1}},
-	ast.CharFunc:        &charFunctionClass{baseFunctionClass{ast.CharFunc, 2, -1}},
-	ast.CharLength:      &charLengthFunctionClass{baseFunctionClass{ast.CharLength, 1, 1}},
-	ast.CharacterLength: &charLengthFunctionClass{baseFunctionClass{ast.CharacterLength, 1, 1}},
-	ast.FindInSet:       &findInSetFunctionClass{baseFunctionClass{ast.FindInSet, 2, 2}},
 	ast.WeightString:    &weightStringFunctionClass{baseFunctionClass{ast.WeightString, 1, 3}},
 
 	// information functions
@@ -885,9 +897,10 @@ var funcs = map[string]functionClass{
 	// TiDB internal function.
 	ast.TiDBDecodeKey: &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},
 	// This function is used to show tidb-server version info.
-	ast.TiDBVersion:    &tidbVersionFunctionClass{baseFunctionClass{ast.TiDBVersion, 0, 0}},
-	ast.TiDBIsDDLOwner: &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
-	ast.TiDBDecodePlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
+	ast.TiDBVersion:          &tidbVersionFunctionClass{baseFunctionClass{ast.TiDBVersion, 0, 0}},
+	ast.TiDBIsDDLOwner:       &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
+	ast.TiDBDecodePlan:       &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
+	ast.TiDBDecodeSQLDigests: &tidbDecodeSQLDigestsFunctionClass{baseFunctionClass{ast.TiDBDecodeSQLDigests, 1, 2}},
 
 	// TiDB Sequence function.
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
@@ -899,6 +912,17 @@ var funcs = map[string]functionClass{
 func IsFunctionSupported(name string) bool {
 	_, ok := funcs[name]
 	return ok
+}
+
+// GetDisplayName translate a function name to its display name
+func GetDisplayName(name string) string {
+	if funClass, ok := funcs[name]; ok {
+		if funClass, ok := funClass.(functionClassWithName); ok {
+			return funClass.getDisplayName()
+		}
+	}
+
+	return name
 }
 
 // GetBuiltinList returns a list of builtin functions

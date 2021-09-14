@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -63,6 +64,12 @@ const (
 	ResourceGroupTag
 	// KVFilter indicates the filter to ignore key-values in the transaction's memory buffer.
 	KVFilter
+	// SortedCustomRetrievers is used for setting the ranges for custom data fetch.
+	// The option value must be a slice with type `[]*RangedKVRetriever` and
+	// 		1. Each retriever in this slice must have a valid range (That means EndKey is AFTER StartKey).
+	//		2. Ranges of Retrievers do not intersect each other.
+	//		3. Retrievers are sorted by range.
+	SortedCustomRetrievers
 )
 
 // ReplicaReadType is the type of replica to read data from

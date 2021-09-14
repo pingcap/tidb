@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -768,7 +770,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 // decodeSampleDataWithVirtualColumn constructs the virtual column by evaluating from the deocded normal columns.
 // If it failed, it would return false to trigger normal decoding way without the virtual column.
 func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
-	collector *statistics.RowSampleCollector,
+	collector *statistics.ReservoirRowSampleCollector,
 	fieldTps []*types.FieldType,
 	virtualColIdx []int,
 	schema *expression.Schema,
@@ -825,13 +827,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}()
 
 	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
-	rootRowCollector := &statistics.RowSampleCollector{
-		NullCount:     make([]int64, l),
-		FMSketches:    make([]*statistics.FMSketch, 0, l),
-		TotalSizes:    make([]int64, l),
-		Samples:       make(statistics.WeightedRowSampleHeap, 0, e.analyzePB.ColReq.SampleSize),
-		MaxSampleSize: int(e.analyzePB.ColReq.SampleSize),
-	}
+	rootRowCollector := statistics.NewReservoirRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), l)
 	for i := 0; i < l; i++ {
 		rootRowCollector.FMSketches = append(rootRowCollector.FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
@@ -1156,7 +1152,7 @@ func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(indexInfos []*model
 }
 
 type samplingMergeResult struct {
-	collector *statistics.RowSampleCollector
+	collector *statistics.ReservoirRowSampleCollector
 	err       error
 }
 
@@ -1186,13 +1182,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 	failpoint.Inject("mockAnalyzeSamplingMergeWorkerPanic", func() {
 		panic("failpoint triggered")
 	})
-	retCollector := &statistics.RowSampleCollector{
-		NullCount:     make([]int64, l),
-		FMSketches:    make([]*statistics.FMSketch, 0, l),
-		TotalSizes:    make([]int64, l),
-		Samples:       make(statistics.WeightedRowSampleHeap, 0, e.analyzePB.ColReq.SampleSize),
-		MaxSampleSize: int(e.analyzePB.ColReq.SampleSize),
-	}
+	retCollector := statistics.NewReservoirRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), l)
 	for i := 0; i < l; i++ {
 		retCollector.FMSketches = append(retCollector.FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
@@ -1207,7 +1197,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 			resultCh <- &samplingMergeResult{err: err}
 			return
 		}
-		subCollector := &statistics.RowSampleCollector{
+		subCollector := &statistics.ReservoirRowSampleCollector{
 			MaxSampleSize: int(e.analyzePB.ColReq.SampleSize),
 		}
 		subCollector.FromProto(colResp.RowCollector)
@@ -1219,7 +1209,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 
 type samplingBuildTask struct {
 	id               int64
-	rootRowCollector *statistics.RowSampleCollector
+	rootRowCollector *statistics.ReservoirRowSampleCollector
 	tp               *types.FieldType
 	isColumn         bool
 	slicePos         int
@@ -1268,7 +1258,7 @@ workLoop:
 				// When it's new collation data, we need to use its collate key instead of original value because only
 				// the collate key can ensure the correct ordering.
 				// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
-				if ft.EvalType() == types.ETString {
+				if ft.EvalType() == types.ETString && ft.Tp != mysql.TypeEnum && ft.Tp != mysql.TypeSet {
 					val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
 				}
 				sampleItems = append(sampleItems, &statistics.SampleItem{
@@ -1669,7 +1659,7 @@ func (e *AnalyzeFastExec) buildSampTask() (err error) {
 		// Search for the region which contains the targetKey.
 		loc, err := e.cache.LocateKey(bo, targetKey)
 		if err != nil {
-			return err
+			return derr.ToTiDBErr(err)
 		}
 		if bytes.Compare(endKey, loc.StartKey) < 0 {
 			break
@@ -1824,7 +1814,7 @@ func (e *AnalyzeFastExec) handleBatchSeekResponse(kvMap map[string][]byte) (err 
 }
 
 func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, err error) {
-	rander := rand.New(rand.NewSource(e.randSeed))
+	rander := rand.New(rand.NewSource(e.randSeed)) // #nosec G404
 	sampleSize := int64(e.opts[ast.AnalyzeOptNumSamples])
 	for ; iter.Valid() && err == nil; err = iter.Next() {
 		// reservoir sampling
@@ -1880,7 +1870,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 
-	rander := rand.New(rand.NewSource(e.randSeed))
+	rander := rand.New(rand.NewSource(e.randSeed)) // #nosec G404
 	for i := workID; i < len(e.sampTasks); i += e.concurrency {
 		task := e.sampTasks[i]
 		// randomize the estimate step in range [step - 2 * sqrt(step), step]

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -191,7 +192,7 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 
 // CheckAggPushDown checks whether an agg function can be pushed to storage.
 func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
-	if len(aggFunc.OrderByItems) > 0 {
+	if len(aggFunc.OrderByItems) > 0 && aggFunc.Name != ast.AggFuncGroupConcat {
 		return false
 	}
 	if aggFunc.Name == ast.AggFuncApproxPercentile {
@@ -201,6 +202,9 @@ func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 	switch storeType {
 	case kv.TiFlash:
 		ret = CheckAggPushFlash(aggFunc)
+	case kv.TiKV:
+		// TiKV does not support group_concat now
+		ret = aggFunc.Name != ast.AggFuncGroupConcat
 	}
 	if ret {
 		ret = expression.IsPushDownEnabled(strings.ToLower(aggFunc.Name), storeType)
@@ -211,7 +215,7 @@ func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 // CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
 func CheckAggPushFlash(aggFunc *AggFuncDesc) bool {
 	switch aggFunc.Name {
-	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncApproxCountDistinct:
+	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncApproxCountDistinct, ast.AggFuncGroupConcat:
 		return true
 	}
 	return false
