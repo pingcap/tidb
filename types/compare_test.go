@@ -141,7 +141,7 @@ func TestCompare(t *testing.T) {
 		require.Equal(t, tt.ret, ret, "%d %v %v", i, tt.lhs, tt.rhs)
 
 		ret, err = compareForTest(tt.rhs, tt.lhs)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.Equal(t, -tt.ret, ret, "%d %v %v", i, tt.lhs, tt.rhs)
 	}
 }
