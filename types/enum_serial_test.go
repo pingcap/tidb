@@ -42,14 +42,14 @@ func TestEnum(t *testing.T) {
 				e, err := ParseEnum(test.Elems, test.Name, collation)
 				if test.Expected == 0 {
 					require.Error(t, err)
-					require.Equal(t, e.ToNumber(), float64(0))
-					require.Equal(t, e.String(), "")
+					require.Equal(t, float64(0), e.ToNumber())
+					require.Equal(t, "", e.String())
 					continue
 				}
 
 				require.NoError(t, err)
-				require.Equal(t, e.String(), test.Elems[test.Expected-1])
-				require.Equal(t, e.ToNumber(), float64(test.Expected))
+				require.Equal(t, test.Elems[test.Expected-1], e.String())
+				require.Equal(t, float64(test.Expected), e.ToNumber())
 			}
 		}
 	})
@@ -71,14 +71,14 @@ func TestEnum(t *testing.T) {
 			e, err := ParseEnum(test.Elems, test.Name, "utf8_general_ci")
 			if test.Expected == 0 {
 				require.Error(t, err)
-				require.Equal(t, e.ToNumber(), float64(0))
-				require.Equal(t, e.String(), "")
+				require.Equal(t, float64(0), e.ToNumber())
+				require.Equal(t, "", e.String())
 				continue
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, e.String(), test.Elems[test.Expected-1])
-			require.Equal(t, e.ToNumber(), float64(test.Expected))
+			require.Equal(t, test.Elems[test.Expected-1], e.String())
+			require.Equal(t, float64(test.Expected), e.ToNumber())
 		}
 	})
 
@@ -100,7 +100,7 @@ func TestEnum(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			require.Equal(t, e.ToNumber(), float64(test.Expected))
+			require.Equal(t, float64(test.Expected), e.ToNumber())
 		}
 	})
 }
