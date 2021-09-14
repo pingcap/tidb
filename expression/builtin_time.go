@@ -3324,11 +3324,12 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 
 	argTps := []types.EvalType{dateEvalTp, intervalEvalTp, types.ETString}
 	var bf baseBuiltinFunc
+	unit, _, err := args[2].EvalString(ctx, chunk.Row{})
+	if err != nil {
+		return nil, err
+	}
 	if dateEvalTp == types.ETDuration {
-		unit, _, err := args[2].EvalString(ctx, chunk.Row{})
-		if err != nil {
-			return nil, err
-		}
+
 		internalFsp := 0
 		switch unit {
 		// If the unit has micro second, then the fsp must be the MaxFsp.
@@ -3352,7 +3353,7 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		}
 		bf.tp.Flen, bf.tp.Decimal = mysql.MaxDurationWidthWithFsp, mathutil.Max(arg0Dec, internalFsp)
 	} else {
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, argTps...)
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, dateEvalTp, argTps...)
 		if err != nil {
 			return nil, err
 		}
@@ -3367,6 +3368,22 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			args[0] = BuildCastFunction(ctx, args[0], tp)
 		}
 		bf.tp.Flen, bf.tp.Decimal = mysql.MaxDatetimeFullWidth, types.UnspecifiedLength
+
+		if dateEvalTp == types.ETString {
+			bf.tp.Tp = mysql.TypeString
+		}
+
+		if dateEvalTp == types.ETDatetime && args[0].GetType().Tp == mysql.TypeDate {
+			switch unit {
+			// If the unit is YMD, the return type is date.
+			case "YEAR", "MONTH", "DAY":
+				tp := types.NewFieldType(mysql.TypeDate)
+				tp.Decimal = 0
+				tp.Flen = mysql.MaxDateWidth
+				types.SetBinChsClnFlag(tp)
+				bf.tp = tp
+			}
+		}
 	}
 
 	switch {
