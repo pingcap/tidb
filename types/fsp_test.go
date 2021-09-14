@@ -65,58 +65,58 @@ func TestParseFrac(t *testing.T) {
 	t.Parallel()
 	obtained, overflow, err := ParseFrac("", 5)
 	require.Equal(t, 0, obtained)
-	require.Equal(t, false, overflow)
+	require.False(t, overflow)
 	require.NoError(t, err)
 
 	a := 200
 	obtained, overflow, err = ParseFrac("999", int8(a))
 	require.Equal(t, 0, obtained)
-	require.Equal(t, false, overflow)
+	require.False(t, overflow)
 	require.Error(t, err)
 	require.Regexp(t, "Invalid fsp .*", err.Error())
 
 	obtained, overflow, err = ParseFrac("NotNum", MaxFsp)
 	require.Equal(t, 0, obtained)
-	require.Equal(t, false, overflow)
+	require.False(t, overflow)
 	require.Error(t, err)
 	require.Regexp(t, "strconv.ParseInt:.*", err.Error())
 
 	obtained, overflow, err = ParseFrac("1235", 6)
 	require.Equal(t, 123500, obtained)
-	require.Equal(t, false, overflow)
+	require.False(t, overflow)
 	require.NoError(t, err)
 
 	obtained, overflow, err = ParseFrac("123456", 4)
 	require.Equal(t, 123500, obtained)
-	require.Equal(t, false, overflow)
+	require.False(t, overflow)
 	require.NoError(t, err)
 
 	obtained, overflow, err = ParseFrac("1234567", 6)
 	require.Equal(t, 123457, obtained)
-	require.Equal(t, false, overflow)
+	require.False(t, overflow)
 	require.NoError(t, err)
 
 	obtained, overflow, err = ParseFrac("1234567", 4)
 	require.Equal(t, 123500, obtained)
-	require.Equal(t, false, overflow)
+	require.False(t, overflow)
 	require.NoError(t, err)
 
 	// 1236 round 3 -> 124 -> 124000
 	obtained, overflow, err = ParseFrac("1236", 3)
 	require.Equal(t, 124000, obtained)
-	require.Equal(t, false, overflow)
+	require.False(t, overflow)
 	require.NoError(t, err)
 
 	// 03123 round 2 -> 3 -> 30000
 	obtained, overflow, err = ParseFrac("0312", 2)
 	require.Equal(t, 30000, obtained)
-	require.Equal(t, false, overflow)
+	require.False(t, overflow)
 	require.NoError(t, err)
 
 	// 999 round 2 -> 100 -> overflow
 	obtained, overflow, err = ParseFrac("999", 2)
 	require.Equal(t, 0, obtained)
-	require.Equal(t, true, overflow)
+	require.True(t, overflow)
 	require.NoError(t, err)
 }
 
