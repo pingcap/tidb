@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 // RequestBuilder is used to build a "kv.Request".
@@ -49,9 +48,9 @@ type RequestBuilder struct {
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	if builder.ReadReplicaScope == "" {
-		builder.ReadReplicaScope = oracle.GlobalTxnScope
+		builder.ReadReplicaScope = kv.GlobalReplicaScope
 	}
-	if builder.IsStaleness && builder.ReadReplicaScope != kv.GlobalTxnScope {
+	if builder.IsStaleness && builder.ReadReplicaScope != kv.GlobalReplicaScope {
 		builder.MatchStoreLabels = []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
@@ -295,9 +294,9 @@ func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext)
 
 func (builder *RequestBuilder) verifyTxnScope() error {
 	if builder.ReadReplicaScope == "" {
-		builder.ReadReplicaScope = kv.GlobalTxnScope
+		builder.ReadReplicaScope = kv.GlobalReplicaScope
 	}
-	if builder.ReadReplicaScope == kv.GlobalTxnScope || builder.is == nil {
+	if builder.ReadReplicaScope == kv.GlobalReplicaScope || builder.is == nil {
 		return nil
 	}
 	visitPhysicalTableID := make(map[int64]struct{})

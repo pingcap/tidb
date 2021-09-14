@@ -339,6 +339,10 @@ type Request struct {
 	ResourceGroupTag []byte
 }
 
+const (
+	GlobalReplicaScope = oracle.GlobalTxnScope
+)
+
 // ResultSubset represents a result subset from a single storage unit.
 // TODO: Find a better interface for ResultSubset that can reuse bytes.
 type ResultSubset interface {

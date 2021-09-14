@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 type handleRange struct {
@@ -262,7 +261,7 @@ func TestRequestBuilder1(t *testing.T) {
 		SyncLog:          false,
 		Streaming:        false,
 		ReplicaRead:      kv.ReplicaReadLeader,
-		ReadReplicaScope: oracle.GlobalTxnScope,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
 }
@@ -340,7 +339,7 @@ func TestRequestBuilder2(t *testing.T) {
 		SyncLog:          false,
 		Streaming:        false,
 		ReplicaRead:      kv.ReplicaReadLeader,
-		ReadReplicaScope: oracle.GlobalTxnScope,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
 }
@@ -389,7 +388,7 @@ func TestRequestBuilder3(t *testing.T) {
 		SyncLog:          false,
 		Streaming:        false,
 		ReplicaRead:      kv.ReplicaReadLeader,
-		ReadReplicaScope: oracle.GlobalTxnScope,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
 }
@@ -438,7 +437,7 @@ func TestRequestBuilder4(t *testing.T) {
 		NotFillCache:     false,
 		SyncLog:          false,
 		ReplicaRead:      kv.ReplicaReadLeader,
-		ReadReplicaScope: oracle.GlobalTxnScope,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
 }
@@ -483,7 +482,7 @@ func TestRequestBuilder5(t *testing.T) {
 		NotFillCache:     true,
 		SyncLog:          false,
 		Streaming:        false,
-		ReadReplicaScope: oracle.GlobalTxnScope,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
 }
@@ -515,7 +514,7 @@ func TestRequestBuilder6(t *testing.T) {
 		NotFillCache:     true,
 		SyncLog:          false,
 		Streaming:        false,
-		ReadReplicaScope: oracle.GlobalTxnScope,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
 }
@@ -552,7 +551,7 @@ func TestRequestBuilder7(t *testing.T) {
 				SyncLog:          false,
 				Streaming:        false,
 				ReplicaRead:      replicaRead.replicaReadType,
-				ReadReplicaScope: oracle.GlobalTxnScope,
+				ReadReplicaScope: kv.GlobalReplicaScope,
 			}
 			require.Equal(t, expect, actual)
 		})
@@ -575,7 +574,7 @@ func TestRequestBuilder8(t *testing.T) {
 		Priority:         0,
 		MemTracker:       (*memory.Tracker)(nil),
 		SchemaVar:        0,
-		ReadReplicaScope: oracle.GlobalTxnScope,
+		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
 	require.Equal(t, expect, actual)
 }
