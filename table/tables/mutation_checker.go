@@ -17,13 +17,12 @@ package tables
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/table"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -31,13 +30,13 @@ import (
 	"go.uber.org/zap"
 )
 
-type mutation = struct {
+type mutation struct {
 	key   kv.Key
 	flags kv.KeyFlags
 	value []byte
 }
 
-type indexHelperInfo = struct {
+type indexHelperInfo struct {
 	indexInfo   *model.IndexInfo
 	rowColInfos []rowcodec.ColInfo
 }
@@ -55,16 +54,25 @@ type indexHelperInfo = struct {
 // (b) {needed indices} is a subset of {added indices}. The check process would be exactly the same with how we generate
 // 		the mutations, thus ignored.
 func CheckIndexConsistency(sessVars *variable.SessionVars, t *TableCommon,
-	dataAdded, dataRemoved []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle) error {
-	sc := sessVars.StmtCtx
-	if sh == 0 {
+	rowToInsert, rowToRemove []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle) error {
+	if t.Meta().GetPartitionInfo() != nil {
 		return nil
 	}
-	mutations := collectTableMutationsFromBufferStage(t, memBuffer, sh)
-	if err := checkRowAdditionConsistency(sessVars, t.Meta().Columns, dataAdded, mutations); err != nil {
+	sc := sessVars.StmtCtx
+	if sh == 0 {
+		logutil.BgLogger().Error("No membuffer stage when checking index consistency")
+		return errors.New("No membuffer stage when checking index consistency")
+	}
+	indexMutations, rowInsertion, err := collectTableMutationsFromBufferStage(t, memBuffer, sh)
+	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkIndexKeys(sc, sessVars, t, dataAdded, dataRemoved, mutations); err != nil {
+	if rowToInsert != nil {
+		if err := checkRowInsertionConsistency(sessVars, t.Meta().Columns, rowToInsert, rowInsertion); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if err := checkIndexKeys(sc, sessVars, t, rowToInsert, rowToRemove, indexMutations); err != nil {
 		return errors.Trace(err)
 	}
 	// TODO: check whether handles match in index and row mutations
@@ -73,23 +81,23 @@ func CheckIndexConsistency(sessVars *variable.SessionVars, t *TableCommon,
 
 // checkIndexKeys checks whether the decoded data from keys of index mutations are consistent with the expected ones.
 func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars, t *TableCommon,
-	dataAdded []types.Datum, dataRemoved []types.Datum, mutations []mutation) error {
+	dataAdded []types.Datum, dataRemoved []types.Datum, indexMutations []mutation) error {
 	indexIDMap := make(map[int64]indexHelperInfo)
 	for _, index := range t.indices {
+		if index.Meta().Primary && t.meta.IsCommonHandle {
+			continue
+		}
 		indexIDMap[index.Meta().ID] = indexHelperInfo{
 			index.Meta(),
 			BuildRowcodecColInfoForIndexColumns(index.Meta(), t.Meta()),
 		}
 	}
 
-	for _, m := range mutations {
-		if !tablecodec.IsIndexKey(m.key) {
-			continue
-		}
-
+	for _, m := range indexMutations {
 		_, indexID, _, err := tablecodec.DecodeIndexKey(m.key)
 		if err != nil {
-			continue
+			//FIXME: continue or return error?
+			return errors.Trace(err)
 		}
 
 		indexHelperInfo, ok := indexIDMap[indexID]
@@ -129,21 +137,12 @@ func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 	return nil
 }
 
-// checkRowAdditionConsistency checks whether the values of row mutations are consistent with the expected ones
+// checkRowInsertionConsistency checks whether the values of row mutations are consistent with the expected ones
 // We only check data added since a deletion of a row doesn't care about its value (and we cannot know it)
-func checkRowAdditionConsistency(sessVars *variable.SessionVars, tableColumns []*model.ColumnInfo, dataAdded []types.Datum, mutations []mutation) error {
-	rowsAdded, _ := extractRowMutations(mutations)
-	if dataAdded == nil {
-		// should be unreachable
+func checkRowInsertionConsistency(sessVars *variable.SessionVars, tableColumns []*model.ColumnInfo, rowToInsert []types.Datum, rowInsertion mutation) error {
+	if rowToInsert == nil {
+		// it's a deletion
 		return nil
-	}
-	if len(rowsAdded) == 0 {
-		return errors.New("record mutations not found for a put of a row")
-	}
-	if len(rowsAdded) > 1 {
-		// impossible to have multiple insertions of records when modifying a single row of in a table
-		logutil.BgLogger().Error("multiple row mutations added/mutated", zap.Any("rowsAdded", rowsAdded))
-		return errors.New("multiple row mutations added/mutated")
 	}
 
 	columnMap := make(map[int64]*model.ColumnInfo)
@@ -151,7 +150,7 @@ func checkRowAdditionConsistency(sessVars *variable.SessionVars, tableColumns []
 		columnMap[col.ID] = col
 	}
 
-	if err := checkRowMutationWithData(sessVars, rowsAdded[0].value, dataAdded, columnMap); err != nil {
+	if err := checkRowMutationWithData(sessVars, rowInsertion.value, rowToInsert, columnMap); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -181,24 +180,40 @@ func checkRowMutationWithData(sessVars *variable.SessionVars, mutationValue []by
 		if cmp != 0 {
 			logutil.BgLogger().Error("inconsistent row mutation", zap.String("decoded datum", decodedDatum.String()),
 				zap.String("input datum", inputDatum.String()))
-			return errors.New(fmt.Sprintf("inconsistent row mutation, row datum = {%v}, input datum = {%v}",
-				decodedDatum.String(), inputDatum.String()))
+			return errors.Errorf("inconsistent row mutation, row datum = {%v}, input datum = {%v}", decodedDatum.String(), inputDatum.String())
 		}
 	}
 
 	return nil
 }
 
-func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer, sh kv.StagingHandle) []mutation {
-	mutations := make([]mutation, 0)
+// collectTableMutationsFromBufferStage collects mutations of the current table from the mem buffer stage
+// It returns: (1) all index mutations (2) the only row insertion
+// If there are no row insertions, the 2nd returned value is nil
+// If there are multiple row insertions, an error is returned
+func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer, sh kv.StagingHandle) ([]mutation, mutation, error) {
+	indexMutations := make([]mutation, 0)
+	var rowInsertion mutation
+	var err error
 	inspector := func(key kv.Key, flags kv.KeyFlags, data []byte) {
 		// only check the current table
 		if tablecodec.DecodeTableID(key) == t.physicalTableID {
-			mutations = append(mutations, mutation{key, flags, data})
+			m := mutation{key, flags, data}
+			if rowcodec.IsRowKey(key) {
+				if len(data) > 0 {
+					if rowInsertion.key == nil {
+						rowInsertion = m
+					} else {
+						err = errors.Errorf("multiple row mutations added/mutated, one = %+v, another = %+v", rowInsertion, m)
+					}
+				}
+			} else {
+				indexMutations = append(indexMutations, m)
+			}
 		}
 	}
 	memBuffer.InspectStage(sh, inspector)
-	return mutations
+	return indexMutations, rowInsertion, err
 }
 
 // compareIndexData compares the decoded index data with the input data.
@@ -225,20 +240,4 @@ func compareIndexData(sc *stmtctx.StatementContext, cols []*table.Column, indexD
 		}
 	}
 	return nil
-}
-
-// extractRowMutations extracts row mutations and classify them into 2 categories: put and delete
-func extractRowMutations(mutations []mutation) ([]mutation, []mutation) {
-	insertions := make([]mutation, 0)
-	deletions := make([]mutation, 0)
-	for _, m := range mutations {
-		if rowcodec.IsRowKey(m.key) {
-			if len(m.value) > 0 {
-				insertions = append(insertions, m)
-			} else {
-				deletions = append(deletions, m)
-			}
-		}
-	}
-	return insertions, deletions
 }

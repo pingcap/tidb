@@ -34,7 +34,7 @@ func TestCompareIndexData(t *testing.T) {
 	// 	 1. table structure, where we only care about column types that influence truncating values
 	//	 2. comparison of row data & index data
 
-	type caseData = struct {
+	type caseData struct {
 		indexData   []types.Datum
 		inputData   []types.Datum
 		fts         []*types.FieldType
@@ -82,74 +82,25 @@ func TestCompareIndexData(t *testing.T) {
 	}
 }
 
-func TestCheckRowAdditionConsistency(t *testing.T) {
+func TestCheckRowInsertionConsistency(t *testing.T) {
 	sessVars := variable.NewSessionVars()
 	rd := rowcodec.Encoder{Enable: true}
 
 	// mocked data
-	mockRowKey := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
 	mockRowKey233 := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(233))
 	mockValue233, err := tablecodec.EncodeRow(sessVars.StmtCtx, []types.Datum{types.NewIntDatum(233)}, []int64{101}, nil, nil, &rd)
 	require.Nil(t, err)
-	fakeMutations := []mutation{
-		{key: []byte{1, 1}, value: []byte{1, 1, 1}},
-	}
-	type caseData = struct {
+	fakeRowInsertion := mutation{key: []byte{1, 1}, value: []byte{1, 1, 1}}
+
+	type caseData struct {
 		tableColumns []*model.ColumnInfo
-		inputRow     []types.Datum
-		mutations    []mutation
-		autoEncode   bool // encode mutations from row and cols, then append the result to the mutations
+		rowToInsert  []types.Datum
+		rowInsertion mutation
 		correct      bool
 	}
 
 	testData := []caseData{
-		{ // no mutations
-			[]*model.ColumnInfo{
-				{
-					ID:        101,
-					Offset:    0,
-					FieldType: *types.NewFieldType(mysql.TypeShort),
-				},
-			},
-			[]types.Datum{types.NewIntDatum(1)},
-			nil,
-			false,
-			false,
-		},
-		{ // no corresponding mutation
-			[]*model.ColumnInfo{
-				{
-					ID:        101,
-					Offset:    0,
-					FieldType: *types.NewFieldType(mysql.TypeShort),
-				},
-			},
-			[]types.Datum{types.NewIntDatum(1)},
-			fakeMutations,
-			false,
-			false,
-		},
-		{
-			[]*model.ColumnInfo{
-				{
-					ID:        101,
-					Offset:    0,
-					FieldType: *types.NewFieldType(mysql.TypeShort),
-				},
-			},
-			[]types.Datum{types.NewIntDatum(1)},
-			fakeMutations,
-			true,
-			true,
-		},
-		{ // no input row
-			[]*model.ColumnInfo{},
-			nil,
-			fakeMutations,
-			true,
-			true,
-		},
-		{ // duplicated mutation
+		{ // expected correct behavior
 			[]*model.ColumnInfo{
 				{
 					ID:        101,
@@ -158,26 +109,26 @@ func TestCheckRowAdditionConsistency(t *testing.T) {
 				},
 			},
 			[]types.Datum{types.NewIntDatum(233)},
-			[]mutation{
-				{key: mockRowKey233, value: mockValue233},
-			},
+			mutation{key: mockRowKey233, value: mockValue233},
 			true,
-			false,
 		},
-		{ // different value
+		{ // mismatching mutation
 			[]*model.ColumnInfo{
 				{
 					ID:        101,
 					Offset:    0,
-					FieldType: *types.NewFieldType(mysql.TypeInt24),
+					FieldType: *types.NewFieldType(mysql.TypeShort),
 				},
 			},
 			[]types.Datum{types.NewIntDatum(1)},
-			[]mutation{
-				{key: mockRowKey233, value: mockValue233},
-			},
+			fakeRowInsertion,
 			false,
-			false,
+		},
+		{ // no input row
+			[]*model.ColumnInfo{},
+			nil,
+			fakeRowInsertion,
+			true,
 		},
 		{ // invalid value
 			[]*model.ColumnInfo{
@@ -188,29 +139,13 @@ func TestCheckRowAdditionConsistency(t *testing.T) {
 				},
 			},
 			[]types.Datum{types.NewIntDatum(233)},
-			[]mutation{
-				{key: mockRowKey233, value: []byte{0, 1, 2, 3}},
-			},
-			false,
+			mutation{key: mockRowKey233, value: []byte{0, 1, 2, 3}},
 			false,
 		},
 	}
 
 	for caseID, data := range testData {
-		if data.autoEncode {
-			value, err := tablecodec.EncodeRow(sessVars.StmtCtx, data.inputRow, columnsToIDs(data.tableColumns), nil, nil, &rd)
-			require.Nil(t, err)
-			data.mutations = append(data.mutations, mutation{key: mockRowKey, value: value})
-		}
-		err := checkRowAdditionConsistency(sessVars, data.tableColumns, data.inputRow, data.mutations)
+		err := checkRowInsertionConsistency(sessVars, data.tableColumns, data.rowToInsert, data.rowInsertion)
 		require.Equal(t, data.correct, err == nil, "case id = %v", caseID)
 	}
-}
-
-func columnsToIDs(columns []*model.ColumnInfo) []int64 {
-	colIDs := make([]int64, 0, len(columns))
-	for _, col := range columns {
-		colIDs = append(colIDs, col.ID)
-	}
-	return colIDs
 }
