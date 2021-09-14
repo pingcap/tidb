@@ -45,7 +45,11 @@ type indexHelperInfo struct {
 // Namely, assume the database is consistent before, applying the mutations shouldn't break the consistency.
 // It aims at reducing bugs that will corrupt data, and preventing mistakes from spreading if possible.
 //
-// Assume the set of row values changes from V1 to V2. We check
+// The check doesn't work and just returns nil when:
+// (1) the table is partitioned
+// (2) new collation is enabled and restored data is needed
+//
+// Assume the set of row values changes from V1 to V2, we check
 // (1) V2 - V1 = {added indices}
 // (2) V1 - V2 = {deleted indices}
 //
