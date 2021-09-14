@@ -186,6 +186,9 @@ type StatementContext struct {
 	OptimInfo map[int]string
 	// InVerboseExplain indicates the statement is "explain format='verbose' ...".
 	InVerboseExplain bool
+
+	// columnMap maps tableID -> ColID -> ColumnInfo. It saves redundant computations when checking data consistency.
+	ColumnMap map[int64]map[int64]*model.ColumnInfo
 }
 
 // StmtHints are SessionVars related sql hints.

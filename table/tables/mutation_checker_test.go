@@ -93,7 +93,7 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 	fakeRowInsertion := mutation{key: []byte{1, 1}, value: []byte{1, 1, 1}}
 
 	type caseData struct {
-		tableColumns []*model.ColumnInfo
+		columnMap    map[int64]*model.ColumnInfo
 		rowToInsert  []types.Datum
 		rowInsertion mutation
 		correct      bool
@@ -101,8 +101,8 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 
 	testData := []caseData{
 		{ // expected correct behavior
-			[]*model.ColumnInfo{
-				{
+			map[int64]*model.ColumnInfo{
+				101: {
 					ID:        101,
 					Offset:    0,
 					FieldType: *types.NewFieldType(mysql.TypeShort),
@@ -113,8 +113,8 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 			true,
 		},
 		{ // mismatching mutation
-			[]*model.ColumnInfo{
-				{
+			map[int64]*model.ColumnInfo{
+				101: {
 					ID:        101,
 					Offset:    0,
 					FieldType: *types.NewFieldType(mysql.TypeShort),
@@ -125,14 +125,14 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 			false,
 		},
 		{ // no input row
-			[]*model.ColumnInfo{},
+			map[int64]*model.ColumnInfo{},
 			nil,
 			fakeRowInsertion,
 			true,
 		},
 		{ // invalid value
-			[]*model.ColumnInfo{
-				{
+			map[int64]*model.ColumnInfo{
+				101: {
 					ID:        101,
 					Offset:    0,
 					FieldType: *types.NewFieldType(mysql.TypeShort),
@@ -145,7 +145,7 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 	}
 
 	for caseID, data := range testData {
-		err := checkRowInsertionConsistency(sessVars, data.tableColumns, data.rowToInsert, data.rowInsertion)
+		err := checkRowInsertionConsistency(sessVars, data.columnMap, data.rowToInsert, data.rowInsertion)
 		require.Equal(t, data.correct, err == nil, "case id = %v", caseID)
 	}
 }

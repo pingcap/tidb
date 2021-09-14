@@ -49,6 +49,8 @@ type indexHelperInfo struct {
 // (1) the table is partitioned
 // (2) new collation is enabled and restored data is needed
 //
+// How it works:
+//
 // Assume the set of row values changes from V1 to V2, we check
 // (1) V2 - V1 = {added indices}
 // (2) V1 - V2 = {deleted indices}
@@ -71,8 +73,9 @@ func CheckIndexConsistency(sessVars *variable.SessionVars, t *TableCommon,
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	if rowToInsert != nil {
-		if err := checkRowInsertionConsistency(sessVars, t.Meta().Columns, rowToInsert, rowInsertion); err != nil {
+		if err := checkRowInsertionConsistency(sessVars, getOrBuildColumnMap(sessVars.StmtCtx, t), rowToInsert, rowInsertion); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -81,6 +84,23 @@ func CheckIndexConsistency(sessVars *variable.SessionVars, t *TableCommon,
 	}
 	// TODO: check whether handles match in index and row mutations
 	return nil
+}
+
+// getOrBuildColumnMap tries to get the column map from stmt ctx. If there isn't one, it builds one and stores it.
+// It saves redundant computations of the map.
+func getOrBuildColumnMap(sc *stmtctx.StatementContext, t *TableCommon) map[int64]*model.ColumnInfo {
+	if sc.ColumnMap == nil {
+		sc.ColumnMap = make(map[int64]map[int64]*model.ColumnInfo)
+	}
+	columnMap, ok := sc.ColumnMap[t.tableID]
+	if !ok {
+		columnMap = make(map[int64]*model.ColumnInfo)
+		for _, col := range t.Meta().Columns {
+			columnMap[col.ID] = col
+		}
+		sc.ColumnMap[t.tableID] = columnMap
+	}
+	return columnMap
 }
 
 // checkIndexKeys checks whether the decoded data from keys of index mutations are consistent with the expected ones.
@@ -143,15 +163,10 @@ func checkIndexKeys(sc *stmtctx.StatementContext, sessVars *variable.SessionVars
 
 // checkRowInsertionConsistency checks whether the values of row mutations are consistent with the expected ones
 // We only check data added since a deletion of a row doesn't care about its value (and we cannot know it)
-func checkRowInsertionConsistency(sessVars *variable.SessionVars, tableColumns []*model.ColumnInfo, rowToInsert []types.Datum, rowInsertion mutation) error {
+func checkRowInsertionConsistency(sessVars *variable.SessionVars, columnMap map[int64]*model.ColumnInfo, rowToInsert []types.Datum, rowInsertion mutation) error {
 	if rowToInsert == nil {
 		// it's a deletion
 		return nil
-	}
-
-	columnMap := make(map[int64]*model.ColumnInfo)
-	for _, col := range tableColumns {
-		columnMap[col.ID] = col
 	}
 
 	if err := checkRowMutationWithData(sessVars, rowInsertion.value, rowToInsert, columnMap); err != nil {
