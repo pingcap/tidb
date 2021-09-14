@@ -340,6 +340,7 @@ type Request struct {
 }
 
 const (
+	// GlobalReplicaScope indicates the default replica scope for tidb to request
 	GlobalReplicaScope = oracle.GlobalTxnScope
 )
 
