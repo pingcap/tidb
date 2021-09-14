@@ -606,7 +606,7 @@ func (do *Domain) isClose() bool {
 }
 
 // DomainMapDelete is used to avoid cycle import with `session` package.
-var DomainMapDelete func (kv.Storage)
+var DomainMapDelete func(kv.Storage)
 
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {

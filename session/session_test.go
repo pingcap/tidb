@@ -127,7 +127,7 @@ type testStatisticsSuite struct {
 	testSessionSuiteBase
 }
 
-type testTiDBAsLibrary struct {}
+type testTiDBAsLibrary struct{}
 
 func clearStorage(store kv.Storage) error {
 	txn, err := store.Begin()
@@ -5667,6 +5667,7 @@ func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
 		defer store.Close()
 
 		dom, err := session.BootstrapSession(store)
+		//nolint:staticcheck
 		defer dom.Close()
 		c.Assert(err, IsNil)
 	}
