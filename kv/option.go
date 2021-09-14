@@ -56,6 +56,8 @@ const (
 	GuaranteeLinearizability
 	// TxnScope indicates which @@txn_scope this transaction will work with.
 	TxnScope
+	// ReadReplicaScope
+	ReadReplicaScope
 	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
 	IsStalenessReadOnly
 	// MatchStoreLabels indicates the labels the store should be matched

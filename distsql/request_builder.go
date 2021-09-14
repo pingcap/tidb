@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 // RequestBuilder is used to build a "kv.Request".
@@ -48,21 +47,21 @@ type RequestBuilder struct {
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
-	if builder.TxnScope == "" {
-		builder.TxnScope = oracle.GlobalTxnScope
+	if builder.ReadReplicaScope == "" {
+		builder.ReadReplicaScope = kv.GlobalReplicaScope
 	}
-	if builder.IsStaleness && builder.TxnScope != kv.GlobalTxnScope {
+	if builder.IsStaleness && builder.ReadReplicaScope != kv.GlobalReplicaScope {
 		builder.MatchStoreLabels = []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
-				Value: builder.TxnScope,
+				Value: builder.ReadReplicaScope,
 			},
 		}
 	}
 	failpoint.Inject("assertRequestBuilderStalenessOption", func(val failpoint.Value) {
 		assertScope := val.(string)
 		if len(assertScope) > 0 {
-			if builder.IsStaleness && assertScope != builder.TxnScope {
+			if builder.IsStaleness && assertScope != builder.ReadReplicaScope {
 				panic("request builder get staleness option fail")
 			}
 		}
@@ -294,10 +293,10 @@ func (builder *RequestBuilder) SetResourceGroupTag(sc *stmtctx.StatementContext)
 }
 
 func (builder *RequestBuilder) verifyTxnScope() error {
-	if builder.TxnScope == "" {
-		builder.TxnScope = kv.GlobalTxnScope
+	if builder.ReadReplicaScope == "" {
+		builder.ReadReplicaScope = kv.GlobalReplicaScope
 	}
-	if builder.TxnScope == kv.GlobalTxnScope || builder.is == nil {
+	if builder.ReadReplicaScope == kv.GlobalReplicaScope || builder.is == nil {
 		return nil
 	}
 	visitPhysicalTableID := make(map[int64]struct{})
@@ -311,7 +310,7 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 	}
 
 	for phyTableID := range visitPhysicalTableID {
-		valid := VerifyTxnScope(builder.TxnScope, phyTableID, builder.is)
+		valid := VerifyTxnScope(builder.ReadReplicaScope, phyTableID, builder.is)
 		if !valid {
 			var tblName string
 			var partName string
@@ -323,10 +322,10 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 				tblInfo, _ = builder.is.TableByID(phyTableID)
 				tblName = tblInfo.Meta().Name.String()
 			}
-			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, builder.TxnScope)
+			err := fmt.Errorf("table %v can not be read by %v txn_scope", tblName, builder.ReadReplicaScope)
 			if len(partName) > 0 {
 				err = fmt.Errorf("table %v's partition %v can not be read by %v txn_scope",
-					tblName, partName, builder.TxnScope)
+					tblName, partName, builder.ReadReplicaScope)
 			}
 			return err
 		}
@@ -334,9 +333,9 @@ func (builder *RequestBuilder) verifyTxnScope() error {
 	return nil
 }
 
-// SetTxnScope sets request TxnScope
-func (builder *RequestBuilder) SetTxnScope(scope string) *RequestBuilder {
-	builder.TxnScope = scope
+// SetReadReplicaScope sets request readReplicaScope
+func (builder *RequestBuilder) SetReadReplicaScope(scope string) *RequestBuilder {
+	builder.ReadReplicaScope = scope
 	return builder
 }
 

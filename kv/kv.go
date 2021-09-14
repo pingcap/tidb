@@ -329,8 +329,8 @@ type Request struct {
 	TaskID uint64
 	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
 	TiDBServerID uint64
-	// TxnScope is the scope of the current txn.
-	TxnScope string
+	// ReadReplicaScope is the scope of the read replica.
+	ReadReplicaScope string
 	// IsStaleness indicates whether the request read staleness data
 	IsStaleness bool
 	// MatchStoreLabels indicates the labels the store should be matched
@@ -338,6 +338,11 @@ type Request struct {
 	// ResourceGroupTag indicates the kv request task group.
 	ResourceGroupTag []byte
 }
+
+const (
+	// GlobalReplicaScope indicates the default replica scope for tidb to request
+	GlobalReplicaScope = oracle.GlobalTxnScope
+)
 
 // ResultSubset represents a result subset from a single storage unit.
 // TODO: Find a better interface for ResultSubset that can reuse bytes.
