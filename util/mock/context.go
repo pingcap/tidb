@@ -354,6 +354,9 @@ func NewContext() *Context {
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)
 	}
+	if err := sctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, "utf8mb4"); err != nil {
+		panic(err)
+	}
 	return sctx
 }
 
