@@ -471,8 +471,8 @@ func (s *Server) onConn(conn *clientConn) {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we only record metrics.
 		metrics.HandShakeErrorCounter.Inc()
-		err = conn.Close()
 		terror.Log(errors.Trace(err))
+		terror.Log(errors.Trace(conn.Close()))
 		return
 	}
 

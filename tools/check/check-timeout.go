@@ -105,6 +105,8 @@ func init() {
 		"TestGlobalConnIDLockFreePoolBasicConcurrencySafety",
 		"TestGlobalConnIDLockBasedPoolConcurrencySafety",
 		"TestGlobalConnIDLockFreePoolConcurrencySafety",
+		"testSerialDBSuite1.TestAddPartitionReplicaBiggerThanTiFlashStores",
+		"TestMemStoreConcurrent",
 	}
 	for _, v := range tmp {
 		allowList[v] = struct{}{}

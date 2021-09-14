@@ -1714,9 +1714,9 @@ func (s *testSerialDBSuite) TestCreateTableNoBlock(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime"), IsNil)
 	}()
 	save := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(1)
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 1")
 	defer func() {
-		variable.SetDDLErrorCountLimit(save)
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", save))
 	}()
 
 	tk.MustExec("drop table if exists t")
