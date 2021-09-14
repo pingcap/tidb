@@ -1292,6 +1292,42 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 	return ver, nil
 }
 
+func onAlterTablePartitionOptions(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	var partitionID int64
+	ptDef := &model.PartitionDefinition{}
+	err = job.DecodeArgs(&partitionID, ptDef)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return 0, err
+	}
+
+	ptInfo := tblInfo.GetPartitionInfo()
+	if ptInfo.GetNameByID(partitionID) == "" {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
+	}
+	for idx, orgPtDef := range ptInfo.Definitions {
+		if orgPtDef.ID == partitionID {
+			orgPtDef.DirectPlacementOpts = ptDef.DirectPlacementOpts
+			orgPtDef.PlacementPolicyRef = ptDef.PlacementPolicyRef
+			ptInfo.Definitions[idx] = orgPtDef
+			break
+		}
+	}
+
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+
+	return ver, nil
+}
+
 func getOldLabelRules(tblInfo *model.TableInfo, oldSchemaName, oldTableName string) (string, []string, []string, map[string]*label.Rule, error) {
 	tableRuleID := fmt.Sprintf(label.TableIDFormat, label.IDPrefix, oldSchemaName, oldTableName)
 	oldRuleIDs := []string{tableRuleID}

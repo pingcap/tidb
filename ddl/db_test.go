@@ -242,6 +242,23 @@ func (s *testDBSuite1) TestRenameIndex(c *C) {
 	tk.MustGetErrCode("alter table t rename key k3 to K2", errno.ErrDupKeyName)
 }
 
+func testGetPartitionDefinitionsByName(c *C, ctx sessionctx.Context, db string, table string, ptName string) model.PartitionDefinition {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	c.Assert(tbl, NotNil)
+	var ptDef model.PartitionDefinition
+	for _, def := range tbl.Meta().Partition.Definitions {
+		if ptName == def.Name.L {
+			ptDef = def
+			break
+		}
+	}
+	return ptDef
+}
+
 func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.

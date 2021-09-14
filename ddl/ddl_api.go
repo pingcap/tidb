@@ -2723,6 +2723,8 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			err = d.AlterTableAttributes(sctx, ident, spec)
 		case ast.AlterTablePartitionAttributes:
 			err = d.AlterTablePartitionAttributes(sctx, ident, spec)
+		case ast.AlterTablePartitionOptions:
+			err = d.AlterTablePartitionOptions(sctx, ident, spec)
 		default:
 			// Nothing to do now.
 		}
@@ -6307,6 +6309,124 @@ func (d *ddl) AlterTablePartitionAttributes(ctx sessionctx.Context, ident ast.Id
 		Type:       model.ActionAlterTablePartitionAttributes,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partitionID, rule},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterTablePartitionOptions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	meta := tb.Meta()
+	if meta.Partition == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	partitionID, err := tables.FindPartitionByName(meta, spec.PartitionNames[0].L)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ptDef := &model.PartitionDefinition{}
+	if spec.Options != nil {
+		for _, op := range spec.Options {
+			switch op.Tp {
+			case ast.TableOptionPlacementPolicy:
+				ptDef.PlacementPolicyRef = &model.PolicyRefInfo{
+					Name: model.NewCIStr(op.StrValue),
+				}
+			case ast.TableOptionPlacementPrimaryRegion:
+				if ptDef.DirectPlacementOpts == nil {
+					ptDef.DirectPlacementOpts = &model.PlacementSettings{}
+				}
+				ptDef.DirectPlacementOpts.PrimaryRegion = op.StrValue
+			case ast.TableOptionPlacementRegions:
+				if ptDef.DirectPlacementOpts == nil {
+					ptDef.DirectPlacementOpts = &model.PlacementSettings{}
+				}
+				ptDef.DirectPlacementOpts.Regions = op.StrValue
+			case ast.TableOptionPlacementFollowerCount:
+				if ptDef.DirectPlacementOpts == nil {
+					ptDef.DirectPlacementOpts = &model.PlacementSettings{}
+				}
+				ptDef.DirectPlacementOpts.Followers = op.UintValue
+			case ast.TableOptionPlacementVoterCount:
+				if ptDef.DirectPlacementOpts == nil {
+					ptDef.DirectPlacementOpts = &model.PlacementSettings{}
+				}
+				ptDef.DirectPlacementOpts.Voters = op.UintValue
+			case ast.TableOptionPlacementLearnerCount:
+				if ptDef.DirectPlacementOpts == nil {
+					ptDef.DirectPlacementOpts = &model.PlacementSettings{}
+				}
+				ptDef.DirectPlacementOpts.Learners = op.UintValue
+			case ast.TableOptionPlacementSchedule:
+				if ptDef.DirectPlacementOpts == nil {
+					ptDef.DirectPlacementOpts = &model.PlacementSettings{}
+				}
+				ptDef.DirectPlacementOpts.Schedule = op.StrValue
+			case ast.TableOptionPlacementConstraints:
+				if ptDef.DirectPlacementOpts == nil {
+					ptDef.DirectPlacementOpts = &model.PlacementSettings{}
+				}
+				ptDef.DirectPlacementOpts.Constraints = op.StrValue
+			case ast.TableOptionPlacementLeaderConstraints:
+				if ptDef.DirectPlacementOpts == nil {
+					ptDef.DirectPlacementOpts = &model.PlacementSettings{}
+				}
+				ptDef.DirectPlacementOpts.LeaderConstraints = op.StrValue
+			case ast.TableOptionPlacementLearnerConstraints:
+				if ptDef.DirectPlacementOpts == nil {
+					ptDef.DirectPlacementOpts = &model.PlacementSettings{}
+				}
+				ptDef.DirectPlacementOpts.LearnerConstraints = op.StrValue
+			case ast.TableOptionPlacementFollowerConstraints:
+				if ptDef.DirectPlacementOpts == nil {
+					ptDef.DirectPlacementOpts = &model.PlacementSettings{}
+				}
+				ptDef.DirectPlacementOpts.FollowerConstraints = op.StrValue
+			case ast.TableOptionPlacementVoterConstraints:
+				if ptDef.DirectPlacementOpts == nil {
+					ptDef.DirectPlacementOpts = &model.PlacementSettings{}
+				}
+				ptDef.DirectPlacementOpts.VoterConstraints = op.StrValue
+			}
+		}
+	}
+
+	// Can not use both a placement policy and direct assignment. If you alter specify both in a CREATE TABLE or ALTER TABLE an error will be returned.
+	if ptDef.DirectPlacementOpts != nil && ptDef.PlacementPolicyRef != nil {
+		return errors.Trace(ErrPlacementPolicyWithDirectOption.GenWithStackByArgs(ptDef.PlacementPolicyRef.Name))
+	}
+	if ptDef.DirectPlacementOpts != nil {
+		// check the direct placement option compatibility.
+		if err := checkPolicyValidation(ptDef.DirectPlacementOpts); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if ptDef.PlacementPolicyRef != nil {
+		// placement policy reference will override the direct placement options.
+		policy, ok := ctx.GetInfoSchema().(infoschema.InfoSchema).PolicyByName(ptDef.PlacementPolicyRef.Name)
+		if !ok {
+			return errors.Trace(infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(ptDef.PlacementPolicyRef.Name))
+		}
+		ptDef.PlacementPolicyRef.ID = policy.ID
+	}
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAlterTablePartitionOptions,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{partitionID, ptDef},
 	}
 
 	err = d.doDDLJob(ctx, job)
