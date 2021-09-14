@@ -833,6 +833,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionAlterPlacementPolicy:
 		ver, err = onAlterPlacementPolicy(d, t, job)
 	case model.ActionAlterTablePartitionOptions:
+		ver, err = onAlterPlacementPolicy(t, job)
+	case model.ActionAlterTablePartitionPolicy:
 		ver, err = onAlterTablePartitionOptions(t, job)
 	default:
 		// Invalid job, cancel it.
