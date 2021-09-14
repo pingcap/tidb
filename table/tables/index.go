@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/tikv/minitrace-go"
 )
 
 // indexIter is for KV store index iterator.
@@ -194,6 +195,9 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			defer span1.Finish()
 			ctx = opentracing.ContextWithSpan(ctx, span1)
 		}
+		var span minitrace.SpanHandle
+		ctx, span = minitrace.StartSpanWithContext(ctx, "index.Create")
+		defer span.Finish()
 	} else {
 		ctx = context.TODO()
 	}

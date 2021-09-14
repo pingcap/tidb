@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"github.com/tikv/minitrace-go"
 	"go.uber.org/zap"
 )
 
@@ -1032,6 +1033,9 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		defer span1.Finish()
 		opentracing.ContextWithSpan(ctx, span1)
 	}
+	ctx, span := minitrace.StartSpanWithContext(ctx, "InsertValues.batchCheckAndInsert")
+	defer span.Finish()
+
 	start := time.Now()
 	// Get keys need to be checked.
 	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, rows)

@@ -67,6 +67,7 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	"github.com/tikv/minitrace-go"
 	"go.uber.org/zap"
 )
 
@@ -279,6 +280,9 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	ctx, span := minitrace.StartSpanWithContext(ctx, fmt.Sprintf("%T.Next", e))
+	defer span.Finish()
+
 	if trace.IsEnabled() {
 		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
 	}
@@ -1169,6 +1173,9 @@ func init() {
 			defer span1.Finish()
 			ctx = opentracing.ContextWithSpan(ctx, span1)
 		}
+
+		ctx, span := minitrace.StartSpanWithContext(ctx, "executor.EvalSubQuery")
+		defer span.Finish()
 
 		e := &executorBuilder{is: is, ctx: sctx}
 		exec := e.build(p)

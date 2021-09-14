@@ -42,6 +42,7 @@ import (
 	goerr "errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"runtime"
 	"runtime/pprof"
@@ -76,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/tablecodec"
+	tidbtrace "github.com/pingcap/tidb/trace"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
@@ -85,6 +87,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
+	"github.com/tikv/minitrace-go"
 	"go.uber.org/zap"
 )
 
@@ -974,10 +977,20 @@ func (cc *clientConn) Run(ctx context.Context) {
 			return
 		}
 
+		ctx := ctx
+		var handle minitrace.TraceHandle
+		traceEnabled := tidbtrace.Enable.Load()
+		if traceEnabled {
+			traceID := rand.Uint64()
+			parentSpanID := uint64(0)
+			ctx, handle = minitrace.StartRootSpan(ctx, cc.packetToSQL(data), traceID, parentSpanID, &tidbtrace.Context{})
+		}
+
+		cmd := data[0]
 		startTime := time.Now()
 		if err = cc.dispatch(ctx, data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
-				cc.addMetrics(data[0], startTime, nil)
+				cc.addMetrics(cmd, startTime, nil)
 				disconnectNormal.Inc()
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
@@ -994,7 +1007,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			}
 			logutil.Logger(ctx).Info("command dispatched failed",
 				zap.String("connInfo", cc.String()),
-				zap.String("command", mysql.Command2Str[data[0]]),
+				zap.String("command", mysql.Command2Str[cmd]),
 				zap.String("status", cc.SessionStatusToString()),
 				zap.Stringer("sql", getLastStmtInConn{cc}),
 				zap.String("txn_mode", txnMode),
@@ -1003,8 +1016,12 @@ func (cc *clientConn) Run(ctx context.Context) {
 			err1 := cc.writeError(ctx, err)
 			terror.Log(err1)
 		}
-		cc.addMetrics(data[0], startTime, err)
+		cc.addMetrics(cmd, startTime, err)
 		cc.pkt.sequence = 0
+
+		if traceEnabled {
+			tidbtrace.Report(handle)
+		}
 	}
 }
 
@@ -2240,17 +2257,8 @@ func (cc *clientConn) handleRefresh(ctx context.Context, subCommand byte) error 
 	return cc.writeOK(ctx)
 }
 
-var _ fmt.Stringer = getLastStmtInConn{}
-
-type getLastStmtInConn struct {
-	*clientConn
-}
-
-func (cc getLastStmtInConn) String() string {
-	if len(cc.lastPacket) == 0 {
-		return ""
-	}
-	cmd, data := cc.lastPacket[0], cc.lastPacket[1:]
+func (cc *clientConn) packetToSQL(pkg []byte) string {
+	cmd, data := pkg[0], pkg[1:]
 	switch cmd {
 	case mysql.ComInitDB:
 		return "Use " + string(data)
@@ -2274,6 +2282,19 @@ func (cc getLastStmtInConn) String() string {
 		}
 		return string(hack.String(data))
 	}
+}
+
+var _ fmt.Stringer = getLastStmtInConn{}
+
+type getLastStmtInConn struct {
+	*clientConn
+}
+
+func (cc getLastStmtInConn) String() string {
+	if len(cc.lastPacket) == 0 {
+		return ""
+	}
+	return cc.packetToSQL(cc.lastPacket)
 }
 
 // PProfLabel return sql label used to tag pprof.

@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	tidbtrace "github.com/pingcap/tidb/trace"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -58,6 +59,7 @@ import (
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
+	"github.com/tikv/minitrace-go"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -225,6 +227,10 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+
+	ctx, span := minitrace.StartSpanWithContext(ctx, "ExecStmt.PointGet")
+	defer span.Finish()
+
 	ctx = a.setPlanLabelForTopSQL(ctx)
 	startTs := uint64(math.MaxUint64)
 	err := a.Ctx.InitTxnWithStartTS(startTs)
@@ -566,6 +572,9 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e Executor) (sqlex
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+
+	ctx, span := minitrace.StartSpanWithContext(ctx, "executor.handleNoDelayExecutor")
+	defer span.Finish()
 
 	var err error
 	defer func() {
@@ -979,6 +988,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
 	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
+	_, _, isEnable := minitrace.CurrentID(a.GoCtx)
+	if isEnable {
+		minitrace.AccessAttachment(a.GoCtx, func(attachment interface{}) {
+			c := attachment.(*tidbtrace.Context)
+			c.ShouldReport = true
+		})
+	}
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql.String(),

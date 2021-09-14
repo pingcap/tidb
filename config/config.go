@@ -15,9 +15,13 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	tidbtrace "github.com/pingcap/tidb/trace"
+	"github.com/tikv/minitrace-go"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -183,6 +187,8 @@ type Config struct {
 	// 1. there is a network partition problem between TiDB and PD leader.
 	// 2. there is a network partition problem between TiDB and TiKV leader.
 	EnableForwarding bool `toml:"enable-forwarding" json:"enable-forwarding"`
+	// Trace enables timeline tracing.
+	Trace Trace `toml:"trace" json:"trace"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -209,7 +215,19 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
 		TxnScope:              c.Labels["zone"],
+		CollectTraceDetail:    collectTraceDetail,
 	}
+}
+
+func collectTraceDetail(ctx context.Context, detail *kvrpcpb.TraceDetail) {
+	if detail == nil {
+		return
+	}
+
+	minitrace.AccessAttachment(ctx, func(attachment interface{}) {
+		c := attachment.(*tidbtrace.Context)
+		c.TraceDetail.SpanSets = append(c.TraceDetail.SpanSets, detail.SpanSets...)
+	})
 }
 
 func encodeDefTempStorageDir(tempDir string, host, statusHost string, port, statusPort uint) string {
@@ -541,6 +559,18 @@ type IsolationRead struct {
 	Engines []string `toml:"engines" json:"engines"`
 }
 
+// Trace is the config for timeline tracing.
+type Trace struct {
+	// Enable timeline tracing or not.
+	Enable bool `toml:"enable" json:"enable"`
+	// Jaeger agent to report tracing results.
+	JaegerThriftCompactAgent string `toml:"jaeger-thrift-compact-agent" json:"jaeger-thrift-compact-agent"`
+	// Datadog agent to report tracing results.
+	DatadogAgent string `toml:"datadog-agent" json:"datadog-agent"`
+	// The maximum length of spans produced by TiDB to report per SQL.
+	MaxSpansLength int64 `toml:"max-spans-length" json:"max-spans-length"`
+}
+
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
@@ -684,6 +714,12 @@ var defaultConf = Config{
 	EnableEnumLengthLimit:        true,
 	StoresRefreshInterval:        defTiKVCfg.StoresRefreshInterval,
 	EnableForwarding:             defTiKVCfg.EnableForwarding,
+	Trace: Trace{
+		Enable:                   false,
+		JaegerThriftCompactAgent: "",
+		DatadogAgent:             "",
+		MaxSpansLength:           2000,
+	},
 }
 
 var (

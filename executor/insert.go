@@ -20,9 +20,8 @@ import (
 	"runtime/trace"
 	"time"
 
-	"github.com/pingcap/parser/model"
-
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/tikv/minitrace-go"
 	"go.uber.org/zap"
 )
 
@@ -119,6 +119,8 @@ func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeC
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	ctx, span := minitrace.StartSpanWithContext(ctx, "prefetchUniqueIndices")
+	defer span.Finish()
 
 	nKeys := 0
 	for _, r := range rows {
@@ -151,6 +153,8 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	ctx, span := minitrace.StartSpanWithContext(ctx, "prefetchConflictedOldRows")
+	defer span.Finish()
 
 	batchKeys := make([]kv.Key, 0, len(rows))
 	for _, r := range rows {
@@ -179,6 +183,9 @@ func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	ctx, span := minitrace.StartSpanWithContext(ctx, "prefetchDataCache")
+	defer span.Finish()
+
 	values, err := prefetchUniqueIndices(ctx, txn, rows)
 	if err != nil {
 		return err

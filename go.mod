@@ -41,7 +41,7 @@ require (
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/opentracing/basictracer-go v1.0.0
+	github.com/opentracing/basictracer-go v1.1.0
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20200908111422-2e78ee155d19
@@ -67,6 +67,7 @@ require (
 	github.com/stretchr/testify v1.7.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.0-alpha.0.20210820060448-daddf73a0706
+	github.com/tikv/minitrace-go v0.0.0-20210623164044-529c511f20f8
 	github.com/tikv/pd v1.1.0-beta.0.20210818112400-0c5667766690
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.4.0
@@ -99,3 +100,7 @@ require (
 
 // FIXME the official repo has some bug makes br_gcs test failed. https://github.com/googleapis/google-cloud-go/pull/3509
 // replace cloud.google.com/go/storage => github.com/3pointer/google-cloud-go/storage v1.6.1-0.20210108125931-b59bfa0720b2
+
+replace github.com/pingcap/kvproto => github.com/zhongzc/kvproto v0.0.0-20210915022532-ff14dd411624
+
+replace github.com/tikv/client-go/v2 => github.com/zhongzc/client-go/v2 v2.0.0-alpha.0.20210917030035-02389015a33b

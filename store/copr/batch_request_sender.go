@@ -49,7 +49,7 @@ func NewRegionBatchRequestSender(cache *RegionCache, client tikv.Client) *Region
 // SendReqToAddr send batch cop request
 func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *tikv.RPCContext, regionInfos []RegionInfo, req *tikvrpc.Request, timout time.Duration) (resp *tikvrpc.Response, retry bool, cancel func(), err error) {
 	cancel = func() {}
-	if e := tikvrpc.SetContext(req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
+	if e := tikvrpc.SetContext(bo.GetCtx(), req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
 		return nil, false, cancel, errors.Trace(e)
 	}
 	ctx := bo.GetCtx()
