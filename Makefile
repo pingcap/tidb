@@ -72,7 +72,7 @@ static: tools
 	@#              gosec - too many false positive
 	@#          errorlint - can't detect errors.Cause
 	@#      sqlclosecheck - the rows in dumpling is created in one function but closed in other functions
-	CGO_ENABLED=0 tools/bin/golangci-lint run --enable-all --deadline 120s \
+	CGO_ENABLED=0 tools/bin/golangci-lint run --enable-all --deadline 180s \
 		--disable gochecknoglobals \
 		--disable gofmt \
 		--disable gci \
