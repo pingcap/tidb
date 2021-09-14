@@ -368,7 +368,7 @@ func (be *tidbBackend) CollectRemoteDuplicateRows(ctx context.Context, tbl table
 	panic("Unsupported Operation")
 }
 
-func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID) error {
+func (be *tidbBackend) ImportEngine(context.Context, uuid.UUID, int64) error {
 	return nil
 }
 

@@ -278,6 +278,14 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.My
 		return nil, true, nil
 	}
 	res, err := dt.ToDecimal(ctx.GetSessionVars().StmtCtx)
+	if err != nil {
+		return nil, false, err
+	}
+	// The decimal may be modified during plan building.
+	_, frac := res.PrecisionAndFrac()
+	if frac < c.GetType().Decimal {
+		err = res.Round(res, c.GetType().Decimal, types.ModeHalfEven)
+	}
 	return res, false, err
 }
 

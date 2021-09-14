@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -375,9 +376,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 
 	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
 	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence) {
-		if tempAttachedIs, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
-			is = tempAttachedIs.InfoSchema
-		}
+		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 
 	tbl, err := is.TableByName(sName, tn.Name)
@@ -422,37 +421,21 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 
 	// Check the bind operation is not on any temporary table.
-	var resNode ast.ResultSetNode
-	switch n := originNode.(type) {
-	case *ast.SelectStmt:
-		resNode = n
-	case *ast.SetOprStmt:
-		resNode = n
-	case *ast.DeleteStmt:
-		resNode = n.TableRefs.TableRefs
-	case *ast.UpdateStmt:
-		resNode = n.TableRefs.TableRefs
-	//TODO: What about insert into (select * from t)
-	case *ast.InsertStmt:
-		resNode = n.Table.TableRefs
-	}
-	if resNode != nil {
-		tblNames := extractTableList(resNode, nil, false)
-		for _, tn := range tblNames {
-			tbl, err := p.tableByName(tn)
-			if err != nil {
-				// If the operation is order is: drop table -> drop binding
-				// The table doesn't  exist, it is not an error.
-				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
-					continue
-				}
-				p.err = err
-				return
+	tblNames := extractTableList(originNode, nil, false)
+	for _, tn := range tblNames {
+		tbl, err := p.tableByName(tn)
+		if err != nil {
+			// If the operation is order is: drop table -> drop binding
+			// The table doesn't  exist, it is not an error.
+			if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+				continue
 			}
-			if tbl.Meta().TempTableType != model.TempTableNone {
-				p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
-				return
-			}
+			p.err = err
+			return
+		}
+		if tbl.Meta().TempTableType != model.TempTableNone {
+			p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
+			return
 		}
 	}
 
@@ -1609,17 +1592,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.err = fmt.Errorf("can not get any information schema based on snapshotTS: %d", p.LastSnapshotTS)
 			return
 		}
-		// the same as session.wrapWithTemporaryTable
-		if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); !ok {
-			localTmp := p.ctx.GetSessionVars().LocalTemporaryTables
-			if localTmp != nil {
-				is = &infoschema.TemporaryTableAttachedInfoSchema{
-					InfoSchema:           is,
-					LocalTemporaryTables: localTmp.(*infoschema.LocalTemporaryTables),
-				}
-			}
-		}
-		p.InfoSchema = is
+		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.ctx, is)
 	}
 	if p.flag&inPrepare == 0 {
 		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
