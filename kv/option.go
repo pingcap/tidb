@@ -64,12 +64,8 @@ const (
 	ResourceGroupTag
 	// KVFilter indicates the filter to ignore key-values in the transaction's memory buffer.
 	KVFilter
-	// SortedCustomRetrievers is used for setting the ranges for custom data fetch.
-	// The option value must be a slice with type `[]*RangedKVRetriever` and
-	// 		1. Each retriever in this slice must have a valid range (That means EndKey is AFTER StartKey).
-	//		2. Ranges of Retrievers do not intersect each other.
-	//		3. Retrievers are sorted by range.
-	SortedCustomRetrievers
+	// SnapInterceptor is used for setting the interceptor for snapshot
+	SnapInterceptor
 )
 
 // ReplicaReadType is the type of replica to read data from

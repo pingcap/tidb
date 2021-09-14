@@ -2853,6 +2853,17 @@ func (s *testSessionSuite2) TestDBUserNameLength(c *C) {
 	tk.MustExec(`grant all privileges on test.t to 'abcddfjakldfjaldddds'@'%'`)
 }
 
+func (s *testSessionSuite2) TestHostLengthMax(c *C) {
+	host1 := strings.Repeat("a", 65)
+	host2 := strings.Repeat("a", 256)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(fmt.Sprintf(`CREATE USER 'abcddfjakldfjaldddds'@'%s'`, host1))
+
+	err := tk.ExecToErr(fmt.Sprintf(`CREATE USER 'abcddfjakldfjaldddds'@'%s'`, host2))
+	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'Host' at row 1")
+}
+
 func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set @@tidb_backoff_lock_fast = 1")

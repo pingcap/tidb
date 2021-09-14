@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -3477,4 +3478,46 @@ func (s *testSerialDBSuite1) TestTruncatePartitionMultipleTimes(c *C) {
 	<-done1
 	<-done2
 	c.Assert(errCount, LessEqual, int32(1))
+}
+
+func (s *testSerialDBSuite1) TestAddPartitionReplicaBiggerThanTiFlashStores(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_partition2")
+	tk.MustExec("use test_partition2")
+	tk.MustExec("drop table if exists t1")
+	// Build a tableInfo with replica count = 1 while there is no real tiFlash store.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	tk.MustExec(`create table t1 (c int) partition by range(c) (
+			partition p0 values less than (100),
+			partition p1 values less than (200))`)
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"), IsNil)
+	// Mock partitions replica as available.
+	t1 := testGetTableByName(c, s.s, "test_partition2", "t1")
+	partition := t1.Meta().Partition
+	c.Assert(len(partition.Definitions), Equals, 2)
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[0].ID, true)
+	c.Assert(err, IsNil)
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[1].ID, true)
+	c.Assert(err, IsNil)
+	t1 = testGetTableByName(c, s.s, "test_partition2", "t1")
+	c.Assert(t1.Meta().TiFlashReplica.Available, IsTrue)
+	// Since there is no real TiFlash store (less than replica count), adding a partition will error here.
+	err = tk.ExecToErr("alter table t1 add partition (partition p2 values less than (300));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1][ddl] the tiflash replica count: 1 should be less than the total tiflash server count: 0")
+	// Test `add partition` waiting TiFlash replica can exit when its retry count is beyond the limitation.
+	originErrCountLimit := variable.GetDDLErrorCountLimit()
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", originErrCountLimit))
+	}()
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplica", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplica"), IsNil)
+	}()
+	c.Assert(t1.Meta().TiFlashReplica.Available, IsTrue)
+	err = tk.ExecToErr("alter table t1 add partition (partition p3 values less than (300));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: [ddl] add partition wait for tiflash replica to complete")
 }
