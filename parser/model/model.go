@@ -858,11 +858,13 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID       int64      `json:"id"`
-	Name     CIStr      `json:"name"`
-	LessThan []string   `json:"less_than"`
-	InValues [][]string `json:"in_values"`
-	Comment  string     `json:"comment,omitempty"`
+	ID                  int64              `json:"id"`
+	Name                CIStr              `json:"name"`
+	LessThan            []string           `json:"less_than"`
+	InValues            [][]string         `json:"in_values"`
+	PlacementPolicyRef  *PolicyRefInfo     `json:"policy_ref_info"`
+	DirectPlacementOpts *PlacementSettings `json:"placement_settings"`
+	Comment             string             `json:"comment,omitempty"`
 }
 
 // Clone clones ConstraintInfo.
@@ -1042,12 +1044,14 @@ func (fk *FKInfo) Clone() *FKInfo {
 
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
-	ID      int64        `json:"id"`      // Database ID
-	Name    CIStr        `json:"db_name"` // DB name.
-	Charset string       `json:"charset"`
-	Collate string       `json:"collate"`
-	Tables  []*TableInfo `json:"-"` // Tables in the DB.
-	State   SchemaState  `json:"state"`
+	ID                  int64              `json:"id"`      // Database ID
+	Name                CIStr              `json:"db_name"` // DB name.
+	Charset             string             `json:"charset"`
+	Collate             string             `json:"collate"`
+	Tables              []*TableInfo       `json:"-"` // Tables in the DB.
+	State               SchemaState        `json:"state"`
+	PlacementPolicyRef  *PolicyRefInfo     `json:"policy_ref_info"`
+	DirectPlacementOpts *PlacementSettings `json:"placement_settings"`
 }
 
 // Clone clones DBInfo.
