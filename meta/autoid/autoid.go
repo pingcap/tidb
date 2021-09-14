@@ -1148,7 +1148,7 @@ func (e *AllocatorRuntimeStats) String() string {
 		return ""
 	}
 	var buf bytes.Buffer
-	buf.WriteString("allocator_stats: {")
+	buf.WriteString("auto_id_allocator: {")
 	initialSize := buf.Len()
 	if e.allocCount > 0 {
 		buf.WriteString("alloc_cnt: ")

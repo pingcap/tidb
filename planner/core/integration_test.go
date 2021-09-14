@@ -2452,43 +2452,43 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML2(c *C) {
 		// Test for alloc auto ID.
 		{
 			sql:        "insert into t () values ()",
-			planRegexp: ".*prepare.*total.*, allocator_stats.*alloc_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*, insert.*",
+			planRegexp: ".*prepare.*total.*, auto_id_allocator.*alloc_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*, insert.*",
 		},
 		// Test for rebase ID.
 		{
 			sql:        "insert into t (a) values (99000000000)",
-			planRegexp: ".*prepare.*total.*, allocator_stats.*rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*, insert.*",
+			planRegexp: ".*prepare.*total.*, auto_id_allocator.*rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*, insert.*",
 		},
 		// Test for alloc auto ID and rebase ID.
 		{
 			sql:        "insert into t (a) values (null), (99000000000)",
-			planRegexp: ".*prepare.*total.*, allocator_stats.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*, insert.*",
+			planRegexp: ".*prepare.*total.*, auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*, insert.*",
 		},
 		// Test for insert ignore.
 		{
 			sql:        "insert ignore into t values (null,1), (2, 2), (99000000000, 3), (100000000000, 4)",
-			planRegexp: ".*prepare.*total.*, allocator_stats.*alloc_cnt: 1, rebase_cnt: 2, Get.*num_rpc.*total_time.*commit_txn.*count: 3, prewrite.*get_commit_ts.*commit.*write_keys.*, check_insert.*",
+			planRegexp: ".*prepare.*total.*, auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 2, Get.*num_rpc.*total_time.*commit_txn.*count: 3, prewrite.*get_commit_ts.*commit.*write_keys.*, check_insert.*",
 		},
 		// Test for insert on duplicate.
 		{
 			sql:        "insert into t values (null,null), (1,1),(2,2) on duplicate key update a = a + 100000000000",
-			planRegexp: ".*prepare.*total.*, allocator_stats.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*count: 2, prewrite.*get_commit_ts.*commit.*write_keys.*, check_insert.*",
+			planRegexp: ".*prepare.*total.*, auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*count: 2, prewrite.*get_commit_ts.*commit.*write_keys.*, check_insert.*",
 		},
 		// Test for replace with alloc ID.
 		{
 			sql:        "replace into t () values ()",
-			planRegexp: ".*allocator_stats.*alloc_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*",
+			planRegexp: ".*auto_id_allocator.*alloc_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*",
 		},
 		// Test for replace with alloc ID and rebase ID.
 		{
 			sql:        "replace into t (a) values (null), (99000000000)",
-			planRegexp: ".*allocator_stats.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*",
+			planRegexp: ".*auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*",
 		},
 		// Test for update with rebase ID.
 		{
 			prepare:    "insert into t values (1,1),(2,2)",
 			sql:        "update t set a=a*100000000000",
-			planRegexp: ".*allocator_stats.*rebase_cnt: 2, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*",
+			planRegexp: ".*auto_id_allocator.*rebase_cnt: 2, Get.*num_rpc.*total_time.*commit_txn.*prewrite.*get_commit_ts.*commit.*write_keys.*",
 		},
 	}
 
@@ -2527,7 +2527,7 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML2(c *C) {
 			fmt.Fprintf(resBuff, "%s\t", row)
 		}
 		explain := resBuff.String()
-		c.Assert(strings.Contains(explain, "allocator_stats"), IsFalse, Commentf("sql: %v, explain: %v", ca.sql, explain))
+		c.Assert(strings.Contains(explain, "auto_id_allocator"), IsFalse, Commentf("sql: %v, explain: %v", ca.sql, explain))
 	}
 }
 
