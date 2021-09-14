@@ -2005,9 +2005,11 @@ func (cc *clientConn) loadCharsetResults(ctx context.Context, sysVars *variable.
 		logutil.Logger(ctx).Info("get character_set_results system variable failed", zap.Error(err))
 	}
 	if cc.textDumper == nil {
-		enc := charset.NewEncoding(charset.Format(chs))
-		cc.textDumper = &textDumper{encoding: *enc}
+		cc.textDumper = &textDumper{}
 	}
+	fmtCharset := charset.Format(chs)
+	cc.textDumper.isBinary = fmtCharset == charset.CharsetBinary
+	cc.textDumper.encoding.UpdateEncoding(fmtCharset)
 }
 
 func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16) error {

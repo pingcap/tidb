@@ -7,7 +7,6 @@ select hex(a) from t;
 select a from t;
 set @@character_set_results = 'gbk';
 select a from t;
-
 -- TiDB transforms table name and column name into GBK charset.
 drop table if exists 一;
 create table 一 (二 char(20));

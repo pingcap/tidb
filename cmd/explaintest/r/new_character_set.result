@@ -26,15 +26,15 @@ insert into t values ('一', '一');
 set @@character_set_results = null;
 select * from t;
 a	b
-һ	һ
+һ	一
 set @@character_set_results = BINARY;
 select * from t;
-61	62
-E4B880	E4B880
+0x61	0x62
+0xD2BB	0xE4B880
 set @@character_set_results = "BINARY";
 select * from t;
-61	62
-E4B880	E4B880
+0x61	0x62
+0xD2BB	0xE4B880
 set names utf8mb4;
 select * from t;
 a	b

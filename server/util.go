@@ -284,30 +284,36 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 
 type textDumper struct {
 	encoding charset.Encoding
+	isBinary bool
 }
 
 func (d *textDumper) encode(src []byte) []byte {
 	if !d.encoding.Enabled() {
+		if d.isBinary {
+			return []byte(fmt.Sprintf("0x%X", src))
+		}
 		return src
 	}
-	if d.encoding.Name() == charset.CharsetBinary {
-		return []byte(fmt.Sprintf("%X", string(src)))
-	}
 	result, _ := d.encoding.Encode(src)
+	if d.isBinary {
+		return []byte(fmt.Sprintf("0x%X", result))
+	}
 	return hack.Slice(result)
 }
 
 func (d *textDumper) dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
 	tmp := make([]byte, 0, 20)
 	originCharset := charset.Formatted(d.encoding.Name())
-	defer d.encoding.UpdateEncoding(originCharset)
 	charsetResultIsNull := len(originCharset) == 0
+	if charsetResultIsNull || d.isBinary {
+		defer d.encoding.UpdateEncoding(originCharset)
+	}
 	for i, col := range columns {
 		if row.IsNull(i) {
 			buffer = append(buffer, 0xfb)
 			continue
 		}
-		if charsetResultIsNull {
+		if charsetResultIsNull || d.isBinary {
 			chs, _, err := charset.GetCharsetInfoByID(int(col.Charset))
 			if err != nil {
 				chs = ""
