@@ -36,6 +36,7 @@ func TestSetSystemVariable(t *testing.T) {
 	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	v.TimeZone = time.UTC
 	mtx := new(sync.Mutex)
+
 	testCases := []struct {
 		key   string
 		value string
@@ -55,6 +56,7 @@ func TestSetSystemVariable(t *testing.T) {
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
 		{variable.TiDBEnableStmtSummary, "1", false},
 	}
+
 	for _, tc := range testCases {
 		t.Run(tc.key, func(t *testing.T) {
 			t.Parallel()
