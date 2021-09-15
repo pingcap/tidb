@@ -366,13 +366,13 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 				bf.tp.Flen = mysql.MaxBlobWidth
 				logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
 			}
+			bf.tp.Flen += argType.Flen
 		}
-		bf.tp.Flen += argType.Flen
 	}
 
 	// add separator
-	argsLen := len(args) - 1
-	bf.tp.Flen += argsLen - 1
+	sepsLen := len(args) - 2
+	bf.tp.Flen += sepsLen * args[0].GetType().Flen
 
 	if bf.tp.Flen >= mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
