@@ -5826,6 +5826,21 @@ func (c *makeTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	tp, decimal := args[2].GetType().EvalType(), 0
 	switch tp {
 	case types.ETInt:
+	case types.ETDuration:
+		var err error
+
+		decimal, err = c.getTimeDecimal(args)
+		if err != nil {
+			return nil, err
+		}
+
+		if decimal > 6 {
+			decimal = 6
+		}
+
+		if decimal > 0 {
+			flen += 1 + decimal
+		}
 	case types.ETReal, types.ETDecimal:
 		decimal = args[2].GetType().Decimal
 		if decimal > 6 || decimal == types.UnspecifiedLength {
@@ -5843,6 +5858,38 @@ func (c *makeTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	sig := &builtinMakeTimeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_MakeTime)
 	return sig, nil
+}
+
+func (c *makeTimeFunctionClass) getTimeDecimal(args []Expression) (decimal int, err error) {
+	secondArg, ok := args[2].(*Constant)
+	if !ok {
+		return 0, nil
+	}
+
+	dt, err := secondArg.Eval(chunk.Row{})
+	if err != nil {
+		return 0, err
+	}
+
+	duration := dt.GetMysqlDuration().Duration
+	decimal = 9
+	d := time.Nanosecond * 10
+
+	for {
+		if decimal == 0 {
+			break
+		}
+
+		r := duration % d
+		if r != 0 {
+			break
+		}
+
+		d *= 10
+		decimal--
+	}
+
+	return decimal, nil
 }
 
 type builtinMakeTimeSig struct {
