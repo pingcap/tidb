@@ -778,10 +778,10 @@ func TestToNumber(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestParseTimeFromFloatString(c *C) {
+func TestParseTimeFromFloatString(t *testing.T) {
+	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input       string
 		Fsp         int8
@@ -801,12 +801,12 @@ func (s *testTimeSuite) TestParseTimeFromFloatString(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseTimeFromFloatString(sc, test.Input, mysql.TypeDatetime, test.Fsp)
+		time, err := types.ParseTimeFromFloatString(sc, test.Input, mysql.TypeDatetime, test.Fsp)
 		if test.ExpectError {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			c.Assert(t.String(), Equals, test.Expect)
+			require.NoError(t, err)
+			require.Equal(t, test.Expect, time.String())
 		}
 	}
 }
