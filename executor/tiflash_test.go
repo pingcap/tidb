@@ -261,9 +261,7 @@ func (s *tiflashTestSuite) TestInjectExtraProj(c *C) {
 }
 
 func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashJoin(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("exhaustive types test, skip race test")
-	}
+	c.Skip("too slow")
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`create database tiflash_partition_SHJ`)
@@ -337,9 +335,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashJoin(c *C) {
 }
 
 func (s *tiflashTestSuite) TestTiFlashPartitionTableReader(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("exhaustive types test, skip race test")
-	}
+	c.Skip("too slow")
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`create database tiflash_partition_tablereader`)
@@ -735,9 +731,7 @@ func (s *tiflashTestSuite) TestTiFlashVirtualColumn(c *C) {
 }
 
 func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashAggregation(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("exhaustive types test, skip race test")
-	}
+	c.Skip("too slow")
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database tiflash_partition_AGG")
@@ -807,9 +801,7 @@ func (s *tiflashTestSuite) TestTiFlashPartitionTableShuffledHashAggregation(c *C
 }
 
 func (s *tiflashTestSuite) TestTiFlashPartitionTableBroadcastJoin(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("exhaustive types test, skip race test")
-	}
+	c.Skip("too slow")
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database tiflash_partition_BCJ")
