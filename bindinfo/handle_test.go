@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	dto "github.com/prometheus/client_model/go"
@@ -47,7 +46,6 @@ func utilNormalizeWithDefaultDB(t *testing.T, sql, db string) (string, string) {
 func TestBindingCache(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	defer variable.ClearStatistics4Test()
 
 	tk := testkit.NewTestKit(t, store)
 
