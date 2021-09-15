@@ -1126,8 +1126,8 @@ func (s *testStaleTxnSerialSuite) TestStaleSessionQuery(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix())), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, now.Unix()-2)), IsNil)
 	tk.MustExec("select * from t10;")
-	failpoint.Disable("github.com/pingcap/tidb/expression/assertStaleTSO")
-	failpoint.Disable("github.com/pingcap/tidb/expression/injectNow")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/injectNow"), IsNil)
 	// begin transaction won't be affected by read staleness
 	tk.MustExec("begin")
 	tk.MustExec("insert into t10(id) values (1);")
@@ -1137,6 +1137,6 @@ func (s *testStaleTxnSerialSuite) TestStaleSessionQuery(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix())), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, now.Unix()-2)), IsNil)
 	tk.MustExec("select * from t10;")
-	failpoint.Disable("github.com/pingcap/tidb/expression/assertStaleTSO")
-	failpoint.Disable("github.com/pingcap/tidb/expression/injectNow")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/injectNow"), IsNil)
 }
