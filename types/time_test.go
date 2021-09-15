@@ -467,10 +467,10 @@ func TestDurationSub(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestTimeFsp(c *C) {
+func TestTimeFsp(t *testing.T) {
+	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Fsp    int8
@@ -489,9 +489,9 @@ func (s *testTimeSuite) TestTimeFsp(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDuration(sc, test.Input, test.Fsp)
-		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		duration, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, duration.String())
 	}
 
 	errTable := []struct {
@@ -503,9 +503,10 @@ func (s *testTimeSuite) TestTimeFsp(c *C) {
 
 	for _, test := range errTable {
 		_, err := types.ParseDuration(sc, test.Input, test.Fsp)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 }
+
 func (s *testTimeSuite) TestYear(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []struct {
