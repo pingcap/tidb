@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -42,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -147,9 +147,9 @@ type PreprocessorReturn struct {
 	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
-	LastSnapshotTS uint64
-	InfoSchema     infoschema.InfoSchema
-	TxnScope       string
+	LastSnapshotTS   uint64
+	InfoSchema       infoschema.InfoSchema
+	ReadReplicaScope string
 }
 
 // PreprocessExecuteISUpdate is used to update information schema for special Execute statement in the preprocessor.
@@ -1519,14 +1519,14 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	// When statement is during the Txn, we check whether there exists AsOfClause. If exists, we will return error,
 	// otherwise we should directly set the return param from TxnCtx.
-	p.TxnScope = oracle.GlobalTxnScope
+	p.ReadReplicaScope = kv.GlobalReplicaScope
 	if p.ctx.GetSessionVars().InTxn() {
 		if node != nil {
 			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
 			return
 		}
 		txnCtx := p.ctx.GetSessionVars().TxnCtx
-		p.TxnScope = txnCtx.TxnScope
+		p.ReadReplicaScope = txnCtx.TxnScope
 		// It means we meet following case:
 		// 1. start transaction read only as of timestamp ts
 		// 2. select statement
@@ -1621,7 +1621,7 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *preprocessor) setStalenessReturn() {
-	txnScope := config.GetTxnScopeFromConfig()
+	scope := config.GetTxnScopeFromConfig()
 	p.IsStaleness = true
-	p.TxnScope = txnScope
+	p.ReadReplicaScope = scope
 }
