@@ -19,7 +19,7 @@ In short, I want to move pingcap/parser back to the pingcap/tidb repository in t
 
 ## Background
 
-I will explain why and how to migration parser back to the tidb repository.
+I will explain why and how to migrate the parser back to the TiDB repository.
 
 ### Why did we move parser into a separate repository?
 
