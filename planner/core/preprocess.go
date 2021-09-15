@@ -32,16 +32,17 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -146,9 +147,9 @@ type PreprocessorReturn struct {
 	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
-	LastSnapshotTS uint64
-	InfoSchema     infoschema.InfoSchema
-	TxnScope       string
+	LastSnapshotTS   uint64
+	InfoSchema       infoschema.InfoSchema
+	ReadReplicaScope string
 }
 
 // PreprocessExecuteISUpdate is used to update information schema for special Execute statement in the preprocessor.
@@ -375,9 +376,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 
 	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
 	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence) {
-		if tempAttachedIs, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); ok {
-			is = tempAttachedIs.InfoSchema
-		}
+		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 
 	tbl, err := is.TableByName(sName, tn.Name)
@@ -1520,14 +1519,14 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	// When statement is during the Txn, we check whether there exists AsOfClause. If exists, we will return error,
 	// otherwise we should directly set the return param from TxnCtx.
-	p.TxnScope = oracle.GlobalTxnScope
+	p.ReadReplicaScope = kv.GlobalReplicaScope
 	if p.ctx.GetSessionVars().InTxn() {
 		if node != nil {
 			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
 			return
 		}
 		txnCtx := p.ctx.GetSessionVars().TxnCtx
-		p.TxnScope = txnCtx.TxnScope
+		p.ReadReplicaScope = txnCtx.TxnScope
 		// It means we meet following case:
 		// 1. start transaction read only as of timestamp ts
 		// 2. select statement
@@ -1593,17 +1592,7 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.err = fmt.Errorf("can not get any information schema based on snapshotTS: %d", p.LastSnapshotTS)
 			return
 		}
-		// the same as session.wrapWithTemporaryTable
-		if _, ok := is.(*infoschema.TemporaryTableAttachedInfoSchema); !ok {
-			localTmp := p.ctx.GetSessionVars().LocalTemporaryTables
-			if localTmp != nil {
-				is = &infoschema.TemporaryTableAttachedInfoSchema{
-					InfoSchema:           is,
-					LocalTemporaryTables: localTmp.(*infoschema.LocalTemporaryTables),
-				}
-			}
-		}
-		p.InfoSchema = is
+		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.ctx, is)
 	}
 	if p.flag&inPrepare == 0 {
 		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
@@ -1632,7 +1621,7 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *preprocessor) setStalenessReturn() {
-	txnScope := config.GetTxnScopeFromConfig()
+	scope := config.GetTxnScopeFromConfig()
 	p.IsStaleness = true
-	p.TxnScope = txnScope
+	p.ReadReplicaScope = scope
 }
