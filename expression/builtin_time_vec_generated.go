@@ -1734,9 +1734,12 @@ func (b *builtinAddDateStringIntSig) vecEvalString(input *chunk.Chunk, result *c
 		return err
 	}
 
+	result.ReserveString(n)
+
 	dateBuf.MergeNulls(intervalBuf)
 	for i := 0; i < n; i++ {
 		if dateBuf.IsNull(i) {
+			result.AppendNull()
 			continue
 		}
 		resDate, isNull, err := b.add(b.ctx, dateBuf.Times()[i], intervalBuf.GetString(i), unit)
