@@ -848,11 +848,11 @@ func TestParseFrac(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestRoundFrac(c *C) {
+func TestRoundFrac(t *testing.T) {
+	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	sc.TimeZone = time.UTC
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
 		Fsp    int8
@@ -871,16 +871,16 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 		// {"2012-01-00 23:59:59.999999", 3, "2012-01-01 00:00:00.000"},
 	}
 
-	for _, t := range tbl {
-		v, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
-		nv, err := v.RoundFrac(sc, t.Fsp)
-		c.Assert(err, IsNil)
-		c.Assert(nv.String(), Equals, t.Except)
+	for _, tt := range tbl {
+		v, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
+		nv, err := v.RoundFrac(sc, tt.Fsp)
+		require.NoError(t, err)
+		require.Equal(t, tt.Except, nv.String())
 	}
 	// test different time zone
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	sc.TimeZone = losAngelesTz
 	tbl = []struct {
 		Input  string
@@ -896,12 +896,12 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 		{"2019-11-26 11:30:45.999999", 3, "2019-11-26 11:30:46.000"},
 	}
 
-	for _, t := range tbl {
-		v, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
-		nv, err := v.RoundFrac(sc, t.Fsp)
-		c.Assert(err, IsNil)
-		c.Assert(nv.String(), Equals, t.Except)
+	for _, tt := range tbl {
+		v, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
+		nv, err := v.RoundFrac(sc, tt.Fsp)
+		require.NoError(t, err)
+		require.Equal(t, tt.Except, nv.String())
 	}
 
 	tbl = []struct {
@@ -917,12 +917,12 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 		{"-1 11:30:45.999999", 0, "-35:30:46"},
 	}
 
-	for _, t := range tbl {
-		v, err := types.ParseDuration(sc, t.Input, types.MaxFsp)
-		c.Assert(err, IsNil)
-		nv, err := v.RoundFrac(t.Fsp, sc.TimeZone)
-		c.Assert(err, IsNil)
-		c.Assert(nv.String(), Equals, t.Except)
+	for _, tt := range tbl {
+		v, err := types.ParseDuration(sc, tt.Input, types.MaxFsp)
+		require.NoError(t, err)
+		nv, err := v.RoundFrac(tt.Fsp, sc.TimeZone)
+		require.NoError(t, err)
+		require.Equal(t, tt.Except, nv.String())
 	}
 
 	cols := []struct {
@@ -936,8 +936,8 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 
 	for _, col := range cols {
 		res, err := types.RoundFrac(col.input, col.fsp)
-		c.Assert(res.Second(), Equals, col.output.Second())
-		c.Assert(err, IsNil)
+		require.Equal(t, col.output.Second(), res.Second())
+		require.NoError(t, err)
 	}
 }
 
