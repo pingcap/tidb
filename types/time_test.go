@@ -38,6 +38,7 @@ type testTimeSuite struct {
 }
 
 func TestTimeEncoding(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Year, Month, Day, Hour, Minute, Second, Microsecond int
 		Type                                                uint8
@@ -67,6 +68,7 @@ func TestTimeEncoding(t *testing.T) {
 }
 
 func TestDateTime(t *testing.T) {
+	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	table := []struct {
