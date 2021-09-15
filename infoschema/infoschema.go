@@ -51,7 +51,6 @@ type InfoSchema interface {
 	// TableIsSequence indicates whether the schema.table is a sequence.
 	TableIsSequence(schema, table model.CIStr) bool
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
-	FindDBInfoByTableID(tableID int64) *model.DBInfo
 	// BundleByName is used to get a rule bundle.
 	BundleByName(name string) (*placement.Bundle, bool)
 	// SetBundle is used internally to update rule bundles or mock tests.
@@ -94,14 +93,6 @@ type schemaTables struct {
 }
 
 const bucketCount = 512
-
-type PolicyDependedIDRefType uint8
-
-const (
-	PolicyDependedIDRefDBType PolicyDependedIDRefType = iota
-	PolicyDependedIDRefTableType
-	PolicyDependedIDRefPartitionType
-)
 
 type infoSchema struct {
 	// ruleBundleMap stores all placement rules
@@ -323,18 +314,6 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 		}
 	}
 	return nil, nil, nil
-}
-
-// FindDBInfoByTableID return the dbInfo contains the tableID.
-func (is *infoSchema) FindDBInfoByTableID(tableID int64) *model.DBInfo {
-	for _, v := range is.schemaMap {
-		for _, tbl := range v.tables {
-			if tbl.Meta().ID == tableID {
-				return v.dbInfo
-			}
-		}
-	}
-	return nil
 }
 
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
