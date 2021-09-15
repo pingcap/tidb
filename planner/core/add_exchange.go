@@ -444,8 +444,8 @@ func (p *PhysicalHashJoin) TryAddXchg(ctx sessionctx.Context, reqProp *XchgPrope
 	}
 	if reqProp.output != 1 {
 		// If parent of HashJoin already requires parallel, build child have to enforce BroadcastHT.
-		p.GetChildXchgProps()[buildSideIdx].isBroadcastHT = true
-		p.GetChildXchgProps()[probeSideIdx].isBroadcastHT = false
+		// p.GetChildXchgProps()[buildSideIdx].isBroadcastHT = true
+		// p.GetChildXchgProps()[probeSideIdx].isBroadcastHT = false
 		p.IsBroadcast = true
 		setupBroadcastHashJoin(p, reqProp.output)
 	} else {
@@ -473,8 +473,8 @@ func tryBroadcastHJ(ctx sessionctx.Context, node *PhysicalHashJoin, outStreamCnt
 	setupBroadcastHashJoin(newHJNode, outStreamCnt)
 
 	buildReqProp := &XchgProperty{
-		output:        outStreamCnt,
-		isBroadcastHT: true,
+		output: outStreamCnt,
+		// isBroadcastHT: true,
 	}
 	probeReqProp := &XchgProperty{
 		output: outStreamCnt,

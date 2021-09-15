@@ -130,6 +130,14 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 		return err
 	}
 
+	// construct hash table
+	if !e.hashTblDone {
+		if err = e.buildHashTable(ctx); err != nil {
+			return err
+		}
+		e.hashTblDone = true
+	}
+
 	start := time.Now()
 	defer func() {
 		e.stats.fetchAndProbe += int64(time.Since(start))
@@ -138,14 +146,6 @@ func (e *NonParallelHashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (e
 		e.isProbeSideEmpty = true
 		req.SwapColumns(e.resChk)
 		return nil
-	}
-
-	// construct hash table
-	if !e.hashTblDone {
-		if err = e.buildHashTable(ctx); err != nil {
-			return err
-		}
-		e.hashTblDone = true
 	}
 
 	// probe hash table
