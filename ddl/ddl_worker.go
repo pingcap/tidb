@@ -831,7 +831,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropPlacementPolicy:
 		ver, err = onDropPlacementPolicy(d, t, job)
 	case model.ActionAlterPlacementPolicy:
-		ver, err = onAlterPlacementPolicy(t, job)
+		ver, err = onAlterPlacementPolicy(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -966,7 +966,7 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 	switch job.Type {
 	case model.ActionCreateTable:
 		if len(job.CtxVars) > 0 {
-			// the created table with the policy reference.
+			// Creating table with the policy reference.
 			diff.PolicyID = job.CtxVars[0].(int64)
 		}
 		diff.TableID = job.TableID

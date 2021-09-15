@@ -94,7 +94,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// refer the policy id used the schema diff.
+		// refer the policy id used the schema diff to build the link with policy in information schema.
 		job.CtxVars = []interface{}{tbInfo.PlacementPolicyRef.ID}
 	}
 	if bundle == nil {
@@ -103,11 +103,12 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 	// Do the http request only when the rules is existed.
 	syncPlacementRules := func() error {
+		err = bundle.Tidy()
+		if err != nil {
+			return errors.Trace(err)
+		}
 		if len(bundle.Rules) > 0 {
-			err = bundle.Tidy()
-			if err != nil {
-				return errors.Trace(err)
-			}
+			// todo: partitions should use the default table level placement rules or it's specified one.
 			bundle.Reset(tbInfo.ID)
 			err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
 			if err != nil {
@@ -271,6 +272,7 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		ruleIDs := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
 		job.CtxVars = []interface{}{oldIDs}
 		if tblInfo.PlacementPolicyRef != nil {
+			// This diff parameter is used to unlink dependency with policy in information schema.
 			job.CtxVars = append(job.CtxVars, tblInfo.PlacementPolicyRef.ID)
 		}
 

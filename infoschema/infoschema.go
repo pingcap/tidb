@@ -61,8 +61,7 @@ type InfoSchema interface {
 	// AllPlacementPolicies returns all placement policies
 	AllPlacementPolicies() []*model.PolicyInfo
 	// DismissPolicyDependencies return whether it's ok to drop/modify a policy.
-	DismissPolicyDependencies(name string) bool
-
+	DismissPolicyDependencies(name string) []int64
 }
 
 type sortedTables []table.Table
@@ -98,7 +97,7 @@ const bucketCount = 512
 
 type PolicyDependedIDRefType uint8
 
-const(
+const (
 	PolicyDependedIDRefDBType PolicyDependedIDRefType = iota
 	PolicyDependedIDRefTableType
 	PolicyDependedIDRefPartitionType
@@ -115,7 +114,7 @@ type infoSchema struct {
 
 	// policyDependencyMap stores all the element ids which depended on this policy.
 	policyDependencyMutex sync.RWMutex
-	policyDependencySet map[string]map[int64]struct{}
+	policyDependencySet   map[string]map[int64]struct{}
 
 	schemaMap map[string]*schemaTables
 
@@ -330,7 +329,7 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 func (is *infoSchema) FindDBInfoByTableID(tableID int64) *model.DBInfo {
 	for _, v := range is.schemaMap {
 		for _, tbl := range v.tables {
-			if tbl.Meta().ID ==  tableID {
+			if tbl.Meta().ID == tableID {
 				return v.dbInfo
 			}
 		}
@@ -402,14 +401,17 @@ func (is *infoSchema) PolicyByName(name model.CIStr) (*model.PolicyInfo, bool) {
 	return t, r
 }
 
-func (is *infoSchema) DismissPolicyDependencies(name string) bool {
+func (is *infoSchema) DismissPolicyDependencies(name string) []int64 {
 	is.policyDependencyMutex.RLock()
 	defer is.policyDependencyMutex.RUnlock()
 	t, r := is.policyDependencySet[name]
+	ids := make([]int64, 0, len(t))
 	if r && len(t) > 0 {
-		return false
+		for k, _ := range t {
+			ids = append(ids, k)
+		}
 	}
-	return true
+	return ids
 }
 
 // AllPlacementPolicies returns all placement policies

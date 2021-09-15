@@ -15,7 +15,9 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
+	"github.com/pingcap/tidb/domain/infosync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -202,7 +204,7 @@ func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	return ver, errors.Trace(err)
 }
 
-func onAlterPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	alterPolicy := &model.PolicyInfo{}
 	if err := job.DecodeArgs(alterPolicy); err != nil {
 		job.State = model.JobStateCancelled
@@ -228,7 +230,30 @@ func onAlterPlacementPolicy(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	// TODO: send pd rules to updating the placement policy reference.
+	is := d.infoCache.GetLatest()
+	ids := is.(infoschema.InfoSchema).DismissPolicyDependencies(oldPolicy.Name.L)
+	if len(ids) != 0 {
+		// build bundle from new placement policy.
+		bundle, err := placement.NewBundleFromOptions(newPolicyInfo.PlacementSettings)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		err = bundle.Tidy()
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Do the http request only when the rules is existed.
+		if len(bundle.Rules) > 0 {
+			for _, id := range ids {
+				bundle.Reset(id)
+				err = infosync.PutRuleBundles(context.TODO(), []*placement.Bundle{bundle})
+				if err != nil {
+					job.State = model.JobStateCancelled
+					return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+				}
+			}
+		}
+	}
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
