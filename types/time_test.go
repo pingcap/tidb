@@ -941,12 +941,12 @@ func TestRoundFrac(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestConvert(c *C) {
+func TestConvert(t *testing.T) {
+	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
 	sc.TimeZone = losAngelesTz
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input  string
 		Fsp    int8
@@ -961,12 +961,12 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		{"0000-00-00 00:00:00", 6, "00:00:00"},
 	}
 
-	for _, t := range tbl {
-		v, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, t.Fsp)
-		c.Assert(err, IsNil)
+	for _, tt := range tbl {
+		v, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, tt.Fsp)
+		require.NoError(t, err)
 		nv, err := v.ConvertToDuration()
-		c.Assert(err, IsNil)
-		c.Assert(nv.String(), Equals, t.Except)
+		require.NoError(t, err)
+		require.Equal(t, tt.Except, nv.String())
 	}
 
 	tblDuration := []struct {
@@ -980,15 +980,15 @@ func (s *testTimeSuite) TestConvert(c *C) {
 	}
 	// test different time zone.
 	sc.TimeZone = time.UTC
-	for _, t := range tblDuration {
-		v, err := types.ParseDuration(sc, t.Input, t.Fsp)
-		c.Assert(err, IsNil)
+	for _, tt := range tblDuration {
+		v, err := types.ParseDuration(sc, tt.Input, tt.Fsp)
+		require.NoError(t, err)
 		year, month, day := time.Now().In(sc.TimeZone).Date()
 		n := time.Date(year, month, day, 0, 0, 0, 0, sc.TimeZone)
-		t, err := v.ConvertToTime(sc, mysql.TypeDatetime)
-		c.Assert(err, IsNil)
-		t1, _ := t.GoTime(sc.TimeZone)
-		c.Assert(t1.Sub(n), Equals, v.Duration)
+		t1, err := v.ConvertToTime(sc, mysql.TypeDatetime)
+		require.NoError(t, err)
+		t2, _ := t1.GoTime(sc.TimeZone)
+		require.Equal(t, v.Duration, t2.Sub(n))
 	}
 }
 
