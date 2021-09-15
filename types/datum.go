@@ -1814,7 +1814,7 @@ func (d *Datum) ToString() (string, error) {
 	case KindFloat64:
 		return strconv.FormatFloat(d.GetFloat64(), 'f', -1, 64), nil
 	case KindString:
-		return d.GetString(), nil
+		return "'" + d.GetString() + "'", nil
 	case KindBytes:
 		return d.GetString(), nil
 	case KindMysqlTime:
@@ -1832,7 +1832,7 @@ func (d *Datum) ToString() (string, error) {
 	case KindBinaryLiteral, KindMysqlBit:
 		return d.GetBinaryLiteral().ToString(), nil
 	case KindNull:
-		return "", nil
+		return "NULL", nil
 	default:
 		return "", errors.Errorf("cannot convert %v(type %T) to string", d.GetValue(), d.GetValue())
 	}
