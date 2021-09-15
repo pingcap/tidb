@@ -35,7 +35,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const splitBatchRegionLimit = 16
+const splitBatchRegionLimit = 2048
 
 func equalRegionStartKey(key, regionStartKey []byte) bool {
 	return bytes.Equal(key, regionStartKey)

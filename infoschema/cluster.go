@@ -37,6 +37,8 @@ const (
 	ClusterTableStatementsSummary = "CLUSTER_STATEMENTS_SUMMARY"
 	// ClusterTableStatementsSummaryHistory is the string constant of cluster statement summary history table.
 	ClusterTableStatementsSummaryHistory = "CLUSTER_STATEMENTS_SUMMARY_HISTORY"
+	// ClusterTableStatementsSummaryEvicted is the string constant of cluster statement summary evict table.
+	ClusterTableStatementsSummaryEvicted = "CLUSTER_STATEMENTS_SUMMARY_EVICTED"
 	// ClusterTableTiDBTrx is the string constant of cluster transaction running table.
 	ClusterTableTiDBTrx = "CLUSTER_TIDB_TRX"
 	// ClusterTableDeadlocks is the string constant of cluster dead lock table.
@@ -49,6 +51,7 @@ var memTableToClusterTables = map[string]string{
 	TableProcesslist:              ClusterTableProcesslist,
 	TableStatementsSummary:        ClusterTableStatementsSummary,
 	TableStatementsSummaryHistory: ClusterTableStatementsSummaryHistory,
+	TableStatementsSummaryEvicted: ClusterTableStatementsSummaryEvicted,
 	TableTiDBTrx:                  ClusterTableTiDBTrx,
 	TableDeadlocks:                ClusterTableDeadlocks,
 }

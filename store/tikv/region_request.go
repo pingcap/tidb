@@ -491,8 +491,11 @@ func (s *RegionRequestSender) SendReqCtx(
 		}
 	}()
 	for {
-		if (tryTimes > 0) && (tryTimes%100 == 0) {
-			logutil.Logger(bo.GetCtx()).Warn("retry", zap.Uint64("region", regionID.GetID()), zap.Int("times", tryTimes))
+		if tryTimes > 0 {
+			req.IsRetryRequest = true
+			if tryTimes%100 == 0 {
+				logutil.Logger(bo.GetCtx()).Warn("retry", zap.Uint64("region", regionID.GetID()), zap.Int("times", tryTimes))
+			}
 		}
 
 		rpcCtx, err = s.getRPCContext(bo, req, regionID, et, opts...)

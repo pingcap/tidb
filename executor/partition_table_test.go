@@ -723,6 +723,29 @@ func (s *partitionTableSuite) TestIssue25527(c *C) {
 	tk.MustQuery(`select a from t2 where a in (5)`).Check(testkit.Rows("5"))
 }
 
+func (s *partitionTableSuite) TestIssue25598(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create database test_issue_25598")
+	tk.MustExec("use test_issue_25598")
+	tk.MustExec(`CREATE TABLE UK_HP16726 (
+	  COL1 bigint(16) DEFAULT NULL,
+	  COL2 varchar(20) DEFAULT NULL,
+	  COL4 datetime DEFAULT NULL,
+	  COL3 bigint(20) DEFAULT NULL,
+	  COL5 float DEFAULT NULL,
+	  UNIQUE KEY UK_COL1 (COL1) /*!80000 INVISIBLE */
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+	PARTITION BY HASH( COL1 )
+	PARTITIONS 25`)
+
+	tk.MustQuery(`select t1. col1, t2. col1 from UK_HP16726 as t1 inner join UK_HP16726 as t2 on t1.col1 = t2.col1 where t1.col1 > -9223372036854775808 group by t1.col1, t2.col1 having t1.col1 != 9223372036854775807`).Check(testkit.Rows())
+	tk.MustExec(`explain select t1. col1, t2. col1 from UK_HP16726 as t1 inner join UK_HP16726 as t2 on t1.col1 = t2.col1 where t1.col1 > -9223372036854775808 group by t1.col1, t2.col1 having t1.col1 != 9223372036854775807`)
+
+	tk.MustExec(`set @@tidb_partition_prune_mode = 'dynamic'`)
+	tk.MustQuery(`select t1. col1, t2. col1 from UK_HP16726 as t1 inner join UK_HP16726 as t2 on t1.col1 = t2.col1 where t1.col1 > -9223372036854775808 group by t1.col1, t2.col1 having t1.col1 != 9223372036854775807`).Check(testkit.Rows())
+	tk.MustExec(`explain select t1. col1, t2. col1 from UK_HP16726 as t1 inner join UK_HP16726 as t2 on t1.col1 = t2.col1 where t1.col1 > -9223372036854775808 group by t1.col1, t2.col1 having t1.col1 != 9223372036854775807`)
+}
+
 func (s *partitionTableSuite) TestBatchGetforRangeandListPartitionTable(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("exhaustive types test, skip race test")

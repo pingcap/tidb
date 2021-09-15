@@ -183,10 +183,16 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 				if r.HighExclude {
 					posHigh--
 				}
-				rangeScalar := posHigh - posLow
+
+				var rangeScalar float64
+				if mysql.HasUnsignedFlag(col.RetType.Flag) {
+					rangeScalar = float64(uint64(posHigh)) - float64(uint64(posLow)) // use float64 to avoid integer overflow
+				} else {
+					rangeScalar = float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
+				}
 
 				// if range is less than the number of partitions, there will be unused partitions we can prune out.
-				if rangeScalar < int64(numPartitions) && !highIsNull && !lowIsNull {
+				if rangeScalar < float64(numPartitions) && !highIsNull && !lowIsNull {
 					for i := posLow; i <= posHigh; i++ {
 						idx := math.Abs(i % int64(pi.Num))
 						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {

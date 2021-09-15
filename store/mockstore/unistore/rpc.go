@@ -250,6 +250,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		})
 		resp.Resp, err = c.handleBatchCop(ctx, req.BatchCop(), timeout)
 	case tikvrpc.CmdMPPConn:
+		failpoint.Inject("mppConnTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(nil, errors.New("rpc error"))
+			}
+		})
 		resp.Resp, err = c.handleEstablishMPPConnection(ctx, req.EstablishMPPConn(), timeout, storeID)
 	case tikvrpc.CmdMPPTask:
 		failpoint.Inject("mppDispatchTimeout", func(val failpoint.Value) {
