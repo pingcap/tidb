@@ -188,8 +188,8 @@ func TestDateTime(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestTimestamp(c *C) {
-	defer testleak.AfterTest(c)()
+func TestTimestamp(t *testing.T) {
+	t.Parallel()
 	table := []struct {
 		Input  string
 		Expect string
@@ -198,9 +198,9 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, test.Input)
-		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		time, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, test.Input)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, time.String())
 	}
 
 	errTable := []string{
@@ -210,7 +210,7 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 
 	for _, test := range errTable {
 		_, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, test)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 }
 
