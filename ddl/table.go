@@ -1236,7 +1236,7 @@ func onAlterTableAttributes(t *meta.Meta, job *model.Job) (ver int64, err error)
 	}
 
 	if len(rule.Labels) == 0 {
-		patch := label.NewRulePatch(nil, []string{rule.ID})
+		patch := label.NewRulePatch([]*label.Rule{}, []string{rule.ID})
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
 	} else {
 		err = infosync.PutLabelRule(context.TODO(), rule)
@@ -1274,7 +1274,7 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 	}
 
 	if len(rule.Labels) == 0 {
-		patch := label.NewRulePatch(nil, []string{rule.ID})
+		patch := label.NewRulePatch([]*label.Rule{}, []string{rule.ID})
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
 	} else {
 		err = infosync.PutLabelRule(context.TODO(), rule)
@@ -1308,6 +1308,9 @@ func getOldLabelRules(tblInfo *model.TableInfo, oldSchemaName, oldTableName stri
 }
 
 func updateLabelRules(job *model.Job, tblInfo *model.TableInfo, oldRules map[string]*label.Rule, tableRuleID string, partRuleIDs, oldRuleIDs []string, tID int64) error {
+	if oldRules == nil {
+		return nil
+	}
 	newRules := make([]*label.Rule, len(oldRuleIDs)+1)
 	if tblInfo.GetPartitionInfo() != nil {
 		for idx, def := range tblInfo.GetPartitionInfo().Definitions {

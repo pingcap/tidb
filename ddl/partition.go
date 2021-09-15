@@ -932,7 +932,7 @@ func dropLabelRules(d *ddlCtx, schemaName, tableName string, partNames []string)
 		deleteRules = append(deleteRules, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, schemaName, tableName, partName))
 	}
 	// delete batch rules
-	patch := label.NewRulePatch(nil, deleteRules)
+	patch := label.NewRulePatch([]*label.Rule{}, deleteRules)
 	return infosync.UpdateLabelRules(context.TODO(), patch)
 }
 
@@ -1159,7 +1159,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 
-	patch := label.NewRulePatch(newRules, nil)
+	patch := label.NewRulePatch(newRules, []string{})
 	err = infosync.UpdateLabelRules(context.TODO(), patch)
 	if err != nil {
 		job.State = model.JobStateCancelled
