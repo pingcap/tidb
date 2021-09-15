@@ -404,21 +404,30 @@ func (rc *Controller) EstimateSourceData(ctx context.Context) (int64, error) {
 		for _, tbl := range db.Tables {
 			tableInfo, ok := info.Tables[tbl.Name]
 			if ok {
-				if err := rc.SampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core); err != nil {
-					return sourceSize, errors.Trace(err)
-				}
-				sourceSize += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
 				originSource += tbl.TotalSize
-				if tbl.TotalSize > int64(config.DefaultBatchSize)*2 {
-					bigTableCount += 1
-					if !tbl.IsRowOrdered {
-						unSortedTableCount += 1
+				// Do not sample small table because there may a large number of small table and it will take a long
+				// time to sample data for all of them.
+				if tbl.TotalSize < int64(config.SplitRegionSize) {
+					sourceSize += tbl.TotalSize
+					tbl.IndexRatio = 1.0
+					tbl.IsRowOrdered = false
+				} else {
+					if err := rc.SampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core); err != nil {
+						return sourceSize, errors.Trace(err)
+					}
+					sourceSize += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
+					if tbl.TotalSize > int64(config.DefaultBatchSize)*2 {
+						bigTableCount += 1
+						if !tbl.IsRowOrdered {
+							unSortedTableCount += 1
+						}
 					}
 				}
 				tableCount += 1
 			}
 		}
 	}
+	rc.status.TotalFileSize.Store(originSource)
 
 	// Do not import with too large concurrency because these data may be all unsorted.
 	if bigTableCount > 0 && unSortedTableCount > 0 {

@@ -257,22 +257,30 @@ type Controller struct {
 	diskQuotaLock  *diskQuotaLock
 	diskQuotaState atomic.Int32
 	compactState   atomic.Int32
+	status         *LightningStatus
+}
+
+type LightningStatus struct {
+	FinishedFileSize atomic.Int64
+	TotalFileSize    atomic.Int64
 }
 
 func NewRestoreController(
 	ctx context.Context,
 	dbMetas []*mydump.MDDatabaseMeta,
 	cfg *config.Config,
+	status *LightningStatus,
 	s storage.ExternalStorage,
 	g glue.Glue,
 ) (*Controller, error) {
-	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, s, DeliverPauser, g)
+	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, status, s, DeliverPauser, g)
 }
 
 func NewRestoreControllerWithPauser(
 	ctx context.Context,
 	dbMetas []*mydump.MDDatabaseMeta,
 	cfg *config.Config,
+	status *LightningStatus,
 	s storage.ExternalStorage,
 	pauser *common.Pauser,
 	g glue.Glue,
@@ -379,6 +387,7 @@ func NewRestoreControllerWithPauser(
 		store:          s,
 		metaMgrBuilder: metaBuilder,
 		diskQuotaLock:  newDiskQuotaLock(),
+		status:         status,
 		taskMgr:        nil,
 	}
 
