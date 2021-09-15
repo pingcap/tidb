@@ -553,7 +553,7 @@ func TestYear(t *testing.T) {
 	for _, test := range strYears {
 		res, err := types.AdjustYear(test.Year, true)
 		require.NoError(t, err)
-		require.Equal(t,  test.Expect, res)
+		require.Equal(t, test.Expect, res)
 	}
 
 	numYears := []struct {
@@ -565,7 +565,7 @@ func TestYear(t *testing.T) {
 	for _, test := range numYears {
 		res, err := types.AdjustYear(test.Year, false)
 		require.NoError(t, err)
-		require.Equal(t,  test.Expect, res)
+		require.Equal(t, test.Expect, res)
 	}
 }
 
