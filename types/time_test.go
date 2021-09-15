@@ -507,8 +507,8 @@ func TestTimeFsp(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestYear(c *C) {
-	defer testleak.AfterTest(c)()
+func TestYear(t *testing.T) {
+	t.Parallel()
 	table := []struct {
 		Input  string
 		Expect int16
@@ -520,9 +520,9 @@ func (s *testTimeSuite) TestYear(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseYear(test.Input)
-		c.Assert(err, IsNil)
-		c.Assert(t, Equals, test.Expect)
+		year, err := types.ParseYear(test.Input)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, year)
 	}
 
 	valids := []struct {
@@ -538,9 +538,9 @@ func (s *testTimeSuite) TestYear(c *C) {
 	for _, test := range valids {
 		_, err := types.AdjustYear(test.Year, false)
 		if test.Expect {
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		} else {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		}
 	}
 
@@ -552,8 +552,8 @@ func (s *testTimeSuite) TestYear(c *C) {
 	}
 	for _, test := range strYears {
 		res, err := types.AdjustYear(test.Year, true)
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, test.Expect)
+		require.NoError(t, err)
+		require.Equal(t,  test.Expect, res)
 	}
 
 	numYears := []struct {
@@ -564,8 +564,8 @@ func (s *testTimeSuite) TestYear(c *C) {
 	}
 	for _, test := range numYears {
 		res, err := types.AdjustYear(test.Year, false)
-		c.Assert(err, IsNil)
-		c.Assert(res, Equals, test.Expect)
+		require.NoError(t, err)
+		require.Equal(t,  test.Expect, res)
 	}
 }
 
