@@ -244,7 +244,6 @@ func (s *testStaleTxnSerialSuite) TestSelectAsOf(c *C) {
 }
 
 func (s *testStaleTxnSerialSuite) TestStaleReadKVRequest(c *C) {
-	//c.Skip("tmp skip")
 	tk := testkit.NewTestKit(c, s.store)
 	safePointName := "tikv_gc_safe_point"
 	safePointValue := "20160102-15:04:05 -0700"
