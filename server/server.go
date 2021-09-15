@@ -250,7 +250,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	if s.cfg.Socket != "" {
 
-		err := cleanupSocket(s.cfg.Socket)
+		err := cleanupStaleSocket(s.cfg.Socket)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -301,7 +301,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	return s, nil
 }
 
-func cleanupSocket(socket string) error {
+func cleanupStaleSocket(socket string) error {
 	sockStat, err := os.Stat(socket)
 	if err == nil {
 		if sockStat.Mode().Type() != os.ModeSocket {
@@ -322,7 +322,7 @@ func cleanupSocket(socket string) error {
 			return fmt.Errorf("unix socket %s exists and is functional, not removing it", socket)
 		}
 	}
-	return err
+	return nil
 }
 
 func setSSLVariable(ca, key, cert string) {
