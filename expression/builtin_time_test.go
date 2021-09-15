@@ -2190,9 +2190,9 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		{[]interface{}{12, -15, 30}, nil},
 		{[]interface{}{12, 15, -30}, nil},
 
-		{[]interface{}{12, 23, 12 * time.Second}, "12:23:12"},
-		{[]interface{}{12, 23, 12*time.Second + 100*time.Millisecond}, "12:23:12.1"},
-		{[]interface{}{12, 23, 12*time.Second + 123*time.Millisecond}, "12:23:12.123"},
+		{[]interface{}{12, 23, types.Duration{Duration: 12 * time.Second}}, "12:23:12"},
+		{[]interface{}{12, 23, types.Duration{Duration: 12*time.Second + 100*time.Millisecond}}, "12:23:12.1"},
+		{[]interface{}{12, 23, types.Duration{Duration: 12*time.Second + 123*time.Millisecond}}, "12:23:12.123"},
 
 		{[]interface{}{12, 15, "30.10"}, "12:15:30.100000"},
 		{[]interface{}{12, 15, "30.20"}, "12:15:30.200000"},
