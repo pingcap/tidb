@@ -3531,6 +3531,27 @@ func (b *builtinAddDateStringIntSig) Clone() builtinFunc {
 	return newSig
 }
 
+func (b *builtinAddDateStringIntSig) evalString(row chunk.Row) (string, bool, error) {
+
+	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	return result.String(), isNull || err != nil, err
+}
+
 // evalTime evals ADDDATE(date,INTERVAL expr unit).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
 func (b *builtinAddDateStringIntSig) evalTime(row chunk.Row) (types.Time, bool, error) {
