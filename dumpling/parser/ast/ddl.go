@@ -1892,58 +1892,67 @@ type PlacementOption struct {
 }
 
 func (n *PlacementOption) Restore(ctx *format.RestoreCtx) error {
-	switch n.Tp {
-	case PlacementOptionPrimaryRegion:
-		ctx.WriteKeyWord("PRIMARY_REGION ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
-	case PlacementOptionRegions:
-		ctx.WriteKeyWord("REGIONS ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
-	case PlacementOptionFollowerCount:
-		ctx.WriteKeyWord("FOLLOWERS ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
-	case PlacementOptionVoterCount:
-		ctx.WriteKeyWord("VOTERS ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
-	case PlacementOptionLearnerCount:
-		ctx.WriteKeyWord("LEARNERS ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
-	case PlacementOptionSchedule:
-		ctx.WriteKeyWord("SCHEDULE ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
-	case PlacementOptionConstraints:
-		ctx.WriteKeyWord("CONSTRAINTS ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
-	case PlacementOptionLeaderConstraints:
-		ctx.WriteKeyWord("LEADER_CONSTRAINTS ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
-	case PlacementOptionFollowerConstraints:
-		ctx.WriteKeyWord("FOLLOWER_CONSTRAINTS ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
-	case PlacementOptionVoterConstraints:
-		ctx.WriteKeyWord("VOTER_CONSTRAINTS ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
-	case PlacementOptionLearnerConstraints:
-		ctx.WriteKeyWord("LEARNER_CONSTRAINTS ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
-	case PlacementOptionPolicy:
-		ctx.WriteKeyWord("PLACEMENT POLICY ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
-	default:
+	isSupported := true
+	fn := func() {
+		switch n.Tp {
+		case PlacementOptionPrimaryRegion:
+			ctx.WriteKeyWord("PRIMARY_REGION ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case PlacementOptionRegions:
+			ctx.WriteKeyWord("REGIONS ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case PlacementOptionFollowerCount:
+			ctx.WriteKeyWord("FOLLOWERS ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
+		case PlacementOptionVoterCount:
+			ctx.WriteKeyWord("VOTERS ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
+		case PlacementOptionLearnerCount:
+			ctx.WriteKeyWord("LEARNERS ")
+			ctx.WritePlain("= ")
+			ctx.WritePlainf("%d", n.UintValue)
+		case PlacementOptionSchedule:
+			ctx.WriteKeyWord("SCHEDULE ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case PlacementOptionConstraints:
+			ctx.WriteKeyWord("CONSTRAINTS ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case PlacementOptionLeaderConstraints:
+			ctx.WriteKeyWord("LEADER_CONSTRAINTS ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case PlacementOptionFollowerConstraints:
+			ctx.WriteKeyWord("FOLLOWER_CONSTRAINTS ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case PlacementOptionVoterConstraints:
+			ctx.WriteKeyWord("VOTER_CONSTRAINTS ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case PlacementOptionLearnerConstraints:
+			ctx.WriteKeyWord("LEARNER_CONSTRAINTS ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+		case PlacementOptionPolicy:
+			ctx.WriteKeyWord("PLACEMENT POLICY ")
+			ctx.WritePlain("= ")
+			ctx.WriteName(n.StrValue)
+		default:
+			isSupported = false
+		}
+	}
+	if !isSupported {
 		return errors.Errorf("invalid PlacementOption: %d", n.Tp)
 	}
+	// WriteSpecialComment
+	ctx.WriteWithSpecialComments(tidb.FeatureIDPlacement, fn)
+
 	return nil
 }
 
