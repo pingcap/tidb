@@ -2019,8 +2019,9 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
 		s.txn.SetVars(s.sessionVars.KVVars)
-		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
-			s.txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		readReplicaType := s.sessionVars.GetReplicaRead()
+		if readReplicaType.IsFollowerRead() {
+			s.txn.SetOption(kv.ReplicaRead, readReplicaType)
 		}
 	}
 	return &s.txn, nil
@@ -2072,8 +2073,9 @@ func (s *session) NewTxn(ctx context.Context) error {
 		return err
 	}
 	txn.SetVars(s.sessionVars.KVVars)
-	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	replicaReadType := s.GetSessionVars().GetReplicaRead()
+	if replicaReadType.IsFollowerRead() {
+		txn.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
