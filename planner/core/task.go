@@ -782,6 +782,7 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 	lCost := lTask.cost()
 	rCost := rTask.cost()
 
+	// can not use the task from tasks because it maybe updated.
 	outerTaskIndex := 1 - p.InnerChildIdx
 	outerTask := lTask
 	if outerTaskIndex == 1 {
