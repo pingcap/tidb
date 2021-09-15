@@ -48,8 +48,10 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"go.uber.org/zap"
 )
 
 func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
@@ -2231,10 +2233,12 @@ func (s *testIntegrationSuite4) TestTruncatePartitionAndDropTable(c *C) {
 	c.Assert(err, IsNil)
 	// Only one partition id test is taken here.
 	oldPID := oldTblInfo.Meta().Partition.Definitions[0].ID
+	startTime := time.Now()
 	tk.MustExec("truncate table t3;")
 	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
+	logutil.BgLogger().Info("truncate partition table", zap.Stringer("key", partitionPrefix))
 	hasOldPartitionData := checkPartitionDelRangeDone(c, s.testIntegrationSuite, partitionPrefix)
-	c.Assert(hasOldPartitionData, IsFalse)
+	c.Assert(hasOldPartitionData, IsFalse, Commentf("take time %v", time.Since(startTime)))
 
 	// Test drop table partition.
 	tk.MustExec("drop table if exists t4;")

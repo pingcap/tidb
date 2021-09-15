@@ -160,6 +160,9 @@ func TestConfig(t *testing.T) {
 
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
+	defer func(configFile string) {
+		require.NoError(t, os.Remove(configFile))
+	}(configFile)
 
 	// Make sure the server refuses to start if there's an unrecognized configuration option
 	_, err = f.WriteString(`
