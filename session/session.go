@@ -74,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
@@ -670,7 +671,13 @@ func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags t
 // of the errors defined in kv/error.go, these look to be clearly related to a client-inflicted issue,
 // and the server is only responsible for handling the error correctly. It does not need to log.
 func errIsNoisy(err error) bool {
-	return kv.ErrKeyExists.Equal(err)
+	if kv.ErrKeyExists.Equal(err) {
+		return true
+	}
+	if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
+		return true
+	}
+	return false
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
@@ -1568,7 +1575,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	logStmt(stmt, s)
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
-		if !kv.ErrKeyExists.Equal(err) {
+		if !errIsNoisy(err) {
 			logutil.Logger(ctx).Warn("run statement failed",
 				zap.Int64("schemaVersion", s.GetInfoSchema().SchemaMetaVersion()),
 				zap.Error(err),
@@ -2307,6 +2314,7 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 32
+		err = s.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, "utf8mb4")
 	}
 	return s, err
 }

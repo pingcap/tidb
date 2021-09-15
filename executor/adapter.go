@@ -192,8 +192,8 @@ type ExecStmt struct {
 	SnapshotTS uint64
 	// IsStaleness means whether this statement use stale read.
 	IsStaleness bool
-	// TxnScope indicates the scope the store selector scope the request visited
-	TxnScope string
+	// ReplicaReadScope indicates the scope the store selector scope the request visited
+	ReplicaReadScope string
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
@@ -248,7 +248,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		}
 	}
 	if a.PsStmt.Executor == nil {
-		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.SnapshotTS, a.IsStaleness, a.TxnScope)
+		b := newExecutorBuilder(a.Ctx, is, a.Ti, a.SnapshotTS, a.IsStaleness, a.ReplicaReadScope)
 		newExecutor := b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -294,7 +294,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	a.InfoSchema = ret.InfoSchema
 	a.SnapshotTS = ret.LastSnapshotTS
 	a.IsStaleness = ret.IsStaleness
-	a.TxnScope = ret.TxnScope
+	a.ReplicaReadScope = ret.ReadReplicaScope
 	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
 	if err != nil {
 		return 0, err
@@ -787,7 +787,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.SnapshotTS, a.IsStaleness, a.TxnScope)
+	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti, a.SnapshotTS, a.IsStaleness, a.ReplicaReadScope)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
