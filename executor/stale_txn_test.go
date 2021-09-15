@@ -1106,3 +1106,26 @@ func (s *testStaleTxnSuite) TestStmtCtxStaleFlag(c *C) {
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.IsStaleness, IsFalse)
 	}
 }
+
+func (s *testStaleTxnSerialSuite) TestStaleReadCompatibility(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+	time.Sleep(2 * time.Second)
+	t1 := time.Now()
+	t2 := t1.Add(-time.Second)
+	// assert select as of timestamp won't work after set transaction read only as of timestamp
+	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t1.Format("2006-1-2 15:04:05")))
+	err := tk.ExecToErr(fmt.Sprintf("select * from t as of timestamp '%s';", t2.Format("2006-1-2 15:04:05")))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, ".*invalid as of timestamp: can't use select as of while already set transaction as of.*")
+	// assert set transaction read only as of timestamp is consumed
+	//c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleTSO", fmt.Sprintf(`return(%d)`, t1.Unix())), IsNil)
+	//tk.MustExec("select * from t;")
+	//c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleTSO"), IsNil)
+
+	failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, t1.Unix()))
+	tk.MustExec("")
+}
