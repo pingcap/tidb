@@ -250,27 +250,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 
 	if s.cfg.Socket != "" {
 
-		// Try to cleanup the socket file
-		sockStat, err := os.Stat(s.cfg.Socket)
-		if err == nil {
-			if sockStat.Mode().Type() != os.ModeSocket {
-				logutil.BgLogger().Warn("Unix socket has the wrong file type, not removing it",
-					zap.String("socket", s.cfg.Socket), zap.String("file_mode", sockStat.Mode().String()))
-			} else {
-				_, err = net.Dial("unix", s.cfg.Socket)
-				if err != nil {
-					logutil.BgLogger().Warn("Unix socket exists and is nonfunctional, removing it",
-						zap.String("socket", s.cfg.Socket), zap.Error(err))
-					err = os.Remove(s.cfg.Socket)
-					if err != nil {
-						logutil.BgLogger().Warn("Failed to remove socket file",
-							zap.String("socket", s.cfg.Socket), zap.Error(err))
-					}
-				} else {
-					logutil.BgLogger().Warn("Unix socket exists and is functional, not removing it",
-						zap.String("socket", s.cfg.Socket), zap.String("file_mode", sockStat.Mode().String()))
-				}
-			}
+		err := cleanupSocket(s.cfg.Socket)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 
 		if s.socket, err = net.Listen("unix", s.cfg.Socket); err != nil {
@@ -317,6 +299,30 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	variable.RegisterStatistics(s)
 
 	return s, nil
+}
+
+func cleanupSocket(socket string) error {
+	sockStat, err := os.Stat(socket)
+	if err == nil {
+		if sockStat.Mode().Type() != os.ModeSocket {
+			return fmt.Errorf(
+				"the specified socket file %s is a %s instead of a socket file",
+				socket, sockStat.Mode().String())
+		}
+
+		_, err = net.Dial("unix", socket)
+		if err != nil {
+			logutil.BgLogger().Warn("Unix socket exists and is nonfunctional, removing it",
+				zap.String("socket", socket), zap.Error(err))
+			err = os.Remove(socket)
+			if err != nil {
+				return fmt.Errorf("failed to remove socket file %s", socket)
+			}
+		} else {
+			return fmt.Errorf("unix socket %s exists and is functional, not removing it", socket)
+		}
+	}
+	return err
 }
 
 func setSSLVariable(ca, key, cert string) {
