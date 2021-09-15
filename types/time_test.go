@@ -569,44 +569,43 @@ func TestYear(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestCodec(c *C) {
-	defer testleak.AfterTest(c)()
-
+func TestCodec(t *testing.T) {
+	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 
 	// MySQL timestamp value doesn't allow month=0 or day=0.
 	_, err := types.ParseTimestamp(sc, "2016-12-00 00:00:00")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
-	t, err := types.ParseTimestamp(sc, "2010-10-10 10:11:11")
-	c.Assert(err, IsNil)
-	_, err = t.ToPackedUint()
-	c.Assert(err, IsNil)
+	t5, err := types.ParseTimestamp(sc, "2010-10-10 10:11:11")
+	require.NoError(t, err)
+	_, err = t5.ToPackedUint()
+	require.NoError(t, err)
 
 	t1 := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	packed, err := t1.ToPackedUint()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	t2 := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, 0)
 	err = t2.FromPackedUint(packed)
-	c.Assert(err, IsNil)
-	c.Assert(t1.String(), Equals, t2.String())
+	require.NoError(t, err)
+	require.Equal(t, t2.String(), t1.String())
 
 	packed, _ = types.ZeroDatetime.ToPackedUint()
 
 	t3 := types.NewTime(types.ZeroCoreTime, mysql.TypeDatetime, 0)
 	err = t3.FromPackedUint(packed)
-	c.Assert(err, IsNil)
-	c.Assert(t3.String(), Equals, types.ZeroDatetime.String())
+	require.NoError(t, err)
+	require.Equal(t, types.ZeroDatetime.String(), t3.String())
 
-	t, err = types.ParseDatetime(nil, "0001-01-01 00:00:00")
-	c.Assert(err, IsNil)
-	packed, _ = t.ToPackedUint()
+	t5, err = types.ParseDatetime(nil, "0001-01-01 00:00:00")
+	require.NoError(t, err)
+	packed, _ = t5.ToPackedUint()
 
 	t4 := types.NewTime(types.ZeroCoreTime, mysql.TypeDatetime, 0)
 	err = t4.FromPackedUint(packed)
-	c.Assert(err, IsNil)
-	c.Assert(t.String(), Equals, t4.String())
+	require.NoError(t, err)
+	require.Equal(t, t4.String(), t5.String())
 
 	tbl := []string{
 		"2000-01-01 00:00:00.000000",
@@ -616,15 +615,15 @@ func (s *testTimeSuite) TestCodec(c *C) {
 	}
 
 	for _, test := range tbl {
-		t, err := types.ParseTime(sc, test, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
+		time, err := types.ParseTime(sc, test, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
 
-		packed, _ = t.ToPackedUint()
+		packed, _ = time.ToPackedUint()
 
 		dest := types.NewTime(types.ZeroCoreTime, mysql.TypeDatetime, types.MaxFsp)
 		err = dest.FromPackedUint(packed)
-		c.Assert(err, IsNil)
-		c.Assert(dest.String(), Equals, test)
+		require.NoError(t, err)
+		require.Equal(t, test, dest.String())
 	}
 }
 
