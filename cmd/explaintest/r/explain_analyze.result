@@ -1,0 +1,60 @@
+CREATE DATABASE IF NOT EXISTS TPCH;
+USE TPCH;
+CREATE TABLE IF NOT EXISTS part  ( P_PARTKEY     INTEGER NOT NULL,
+P_NAME        VARCHAR(55) NOT NULL,
+P_MFGR        CHAR(25) NOT NULL,
+P_BRAND       CHAR(10) NOT NULL,
+P_TYPE        VARCHAR(25) NOT NULL,
+P_SIZE        INTEGER NOT NULL,
+P_CONTAINER   CHAR(10) NOT NULL,
+P_RETAILPRICE DECIMAL(15,2) NOT NULL,
+P_COMMENT     VARCHAR(23) NOT NULL,
+PRIMARY KEY (P_PARTKEY));
+CREATE TABLE IF NOT EXISTS supplier  ( S_SUPPKEY     INTEGER NOT NULL,
+S_NAME        CHAR(25) NOT NULL,
+S_ADDRESS     VARCHAR(40) NOT NULL,
+S_NATIONKEY   INTEGER NOT NULL,
+S_PHONE       CHAR(15) NOT NULL,
+S_ACCTBAL     DECIMAL(15,2) NOT NULL,
+S_COMMENT     VARCHAR(101) NOT NULL,
+PRIMARY KEY (S_SUPPKEY),
+CONSTRAINT FOREIGN KEY SUPPLIER_FK1 (S_NATIONKEY) references nation(N_NATIONKEY));
+CREATE TABLE IF NOT EXISTS partsupp ( PS_PARTKEY     INTEGER NOT NULL,
+PS_SUPPKEY     INTEGER NOT NULL,
+PS_AVAILQTY    INTEGER NOT NULL,
+PS_SUPPLYCOST  DECIMAL(15,2)  NOT NULL,
+PS_COMMENT     VARCHAR(199) NOT NULL,
+PRIMARY KEY (PS_PARTKEY,PS_SUPPKEY),
+CONSTRAINT FOREIGN KEY PARTSUPP_FK1 (PS_SUPPKEY) references supplier(S_SUPPKEY),
+CONSTRAINT FOREIGN KEY PARTSUPP_FK2 (PS_PARTKEY) references part(P_PARTKEY));
+load stats 's/tpch_stats/part.json';
+load stats 's/tpch_stats/supplier.json';
+load stats 's/tpch_stats/partsupp.json';
+set @@session.tidb_executor_concurrency = 5;
+explain analyze
+SELECT MIN(ps_supplycost) over (partition by p_partkey) as min_ps_supplycost,
+MAX(ps_supplycost) over (partition by ps_suppkey) as max_ps_supplycost
+FROM tpch.part,
+tpch.partsupp,
+tpch.supplier
+WHERE p_partkey = ps_partkey
+AND s_suppkey = ps_suppkey
+limit 10;
+id	estRows	actRows	task	access object	execution info	operator info	memory	disk
+Projection_20	10.00	0	root		time:2.92ms, loops:1, Concurrency:OFF	Column#26, Column#25	1.07 KB	N/A
+└─Limit_23	10.00	0	root		time:2.92ms, loops:1	offset:0, count:10	N/A	N/A
+  └─Shuffle_91	10.00	0	root		time:2.91ms, loops:1, ShuffleConcurrency:4	execution info: concurrency:4, data sources:[Window_25]	N/A	N/A
+    └─Window_24	10.00	0	root		time:11ms, loops:4	min(tpch.partsupp.ps_supplycost)->Column#26 over(partition by tpch.part.p_partkey)	N/A	N/A
+      └─Sort_90	40000000.00	0	root		time:10.9ms, loops:4	tpch.part.p_partkey	0 Bytes	0 Bytes
+        └─ShuffleReceiver_95	40000000.00	0	root				N/A	N/A
+          └─Window_25	40000000.00	0	root		time:13.3ms, loops:5	max(tpch.partsupp.ps_supplycost)->Column#25 over(partition by tpch.partsupp.ps_suppkey)	N/A	N/A
+            └─Sort_89	40000000.00	0	root		time:2.7ms, loops:1	tpch.partsupp.ps_suppkey	0 Bytes	0 Bytes
+              └─Projection_27	40000000.00	0	root		time:2.64ms, loops:1, Concurrency:4	tpch.part.p_partkey, tpch.partsupp.ps_suppkey, tpch.partsupp.ps_supplycost	17.0 KB	N/A
+                └─HashJoin_56	40000000.00	0	root		time:2.5ms, loops:1, build_hash_table:{total:240.4µs, fetch:240.4µs, build:0s}	inner join, equal:[eq(tpch.partsupp.ps_partkey, tpch.part.p_partkey)]	0 Bytes	0 Bytes
+                  ├─TableReader_88(Build)	10000000.00	0	root		time:144.2µs, loops:1, cop_task: {num: 1, max: 219.5µs, proc_keys: 0, rpc_num: 1, rpc_time: 163.6µs, copr_cache_hit_ratio: 0.00}	data:TableFullScan_87	151 Bytes	N/A
+                  │ └─TableFullScan_87	10000000.00	0	cop[tikv]	table:part	tikv_task:{time:0s, loops:0}	keep order:false	N/A	N/A
+                  └─HashJoin_82(Probe)	40000000.00	0	root		time:2.22ms, loops:1, build_hash_table:{total:2ms, fetch:2ms, build:0s}	inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]	0 Bytes	0 Bytes
+                    ├─TableReader_86(Build)	500000.00	0	root		time:1.77ms, loops:1, cop_task: {num: 1, max: 243.5µs, proc_keys: 0, rpc_num: 2, rpc_time: 271.4µs, copr_cache_hit_ratio: 0.00}, backoff{regionMiss: 2ms}	data:TableFullScan_85	151 Bytes	N/A
+                    │ └─TableFullScan_85	500000.00	0	cop[tikv]	table:supplier	tikv_task:{time:0s, loops:0}	keep order:false	N/A	N/A
+                    └─TableReader_84(Probe)	40000000.00	0	root		time:1.92ms, loops:1, cop_task: {num: 1, max: 159.8µs, proc_keys: 0, rpc_num: 2, rpc_time: 174.1µs, copr_cache_hit_ratio: 0.00}	data:TableFullScan_83	151 Bytes	N/A
+                      └─TableFullScan_83	40000000.00	0	cop[tikv]	table:partsupp	tikv_task:{time:0s, loops:0}	keep order:false	N/A	N/A
