@@ -782,7 +782,11 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...task) task {
 	lCost := lTask.cost()
 	rCost := rTask.cost()
 
-	outerTask := tasks[1-p.InnerChildIdx].(*mppTask)
+	outerTaskIndex := 1 - p.InnerChildIdx
+	outerTask := lTask
+	if outerTaskIndex == 1 {
+		outerTask = rTask
+	}
 	task := &mppTask{
 		cst:      lCost + rCost + p.GetCost(lTask.count(), rTask.count()),
 		p:        p,
