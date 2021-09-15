@@ -627,8 +627,8 @@ func TestCodec(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
-	defer testleak.AfterTest(c)()
+func TestParseTimeFromNum(t *testing.T) {
+	t.Parallel()
 	table := []struct {
 		Input                int64
 		ExpectDateTimeError  bool
@@ -667,37 +667,37 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 
 	for ith, test := range table {
 		// testtypes.ParseDatetimeFromNum
-		t, err := types.ParseDatetimeFromNum(nil, test.Input)
+		t1, err := types.ParseDatetimeFromNum(nil, test.Input)
 		if test.ExpectDateTimeError {
-			c.Assert(err, NotNil, Commentf("%d", ith))
+			require.Errorf(t, err, "%d", ith)
 		} else {
-			c.Assert(err, IsNil)
-			c.Assert(t.Type(), Equals, mysql.TypeDatetime)
+			require.NoError(t, err)
+			require.Equal(t, mysql.TypeDatetime, t1.Type())
 		}
-		c.Assert(t.String(), Equals, test.ExpectDateTimeValue)
+		require.Equal(t, test.ExpectDateTimeValue, t1.String())
 
 		// testtypes.ParseTimestampFromNum
-		t, err = types.ParseTimestampFromNum(&stmtctx.StatementContext{
+		t1, err = types.ParseTimestampFromNum(&stmtctx.StatementContext{
 			TimeZone: time.UTC,
 		}, test.Input)
 		if test.ExpectTimeStampError {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil, Commentf("%d", ith))
-			c.Assert(t.Type(), Equals, mysql.TypeTimestamp)
+			require.NoErrorf(t, err, "%d", ith)
+			require.Equal(t, mysql.TypeTimestamp, t1.Type())
 		}
-		c.Assert(t.String(), Equals, test.ExpectTimeStampValue)
+		require.Equal(t, test.ExpectTimeStampValue, t1.String())
 
 		// testtypes.ParseDateFromNum
-		t, err = types.ParseDateFromNum(nil, test.Input)
+		t1, err = types.ParseDateFromNum(nil, test.Input)
 
 		if test.ExpectDateTimeError {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			c.Assert(t.Type(), Equals, mysql.TypeDate)
+			require.NoError(t, err)
+			require.Equal(t, mysql.TypeDate, t1.Type())
 		}
-		c.Assert(t.String(), Equals, test.ExpectDateValue)
+		require.Equal(t, test.ExpectDateValue, t1.String())
 	}
 }
 
