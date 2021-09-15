@@ -66,10 +66,9 @@ func TestTimeEncoding(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestDateTime(c *C) {
+func TestDateTime(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Expect string
@@ -120,9 +119,9 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDatetime(sc, test.Input)
-		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		time, err := types.ParseDatetime(sc, test.Input)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, time.String())
 	}
 
 	fspTbl := []struct {
@@ -151,14 +150,14 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 	}
 
 	for _, test := range fspTbl {
-		t, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
-		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		time, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, time.String())
 	}
 
-	t, _ := types.ParseTime(sc, "121231113045.9999999", mysql.TypeDatetime, 6)
-	c.Assert(t.Second(), Equals, 46)
-	c.Assert(t.Microsecond(), Equals, 0)
+	time, _ := types.ParseTime(sc, "121231113045.9999999", mysql.TypeDatetime, 6)
+	require.Equal(t, 46, time.Second())
+	require.Equal(t, 0, time.Microsecond())
 
 	// test error
 	errTable := []string{
@@ -182,7 +181,7 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 
 	for _, test := range errTable {
 		_, err := types.ParseDatetime(sc, test)
-		c.Assert(err != nil || sc.WarningCount() > 0, Equals, true)
+		require.True(t, err != nil || sc.WarningCount() > 0)
 		sc.SetWarnings(nil)
 	}
 }
