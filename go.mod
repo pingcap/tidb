@@ -98,4 +98,4 @@ require (
 // we need keep the replacement until go.etcd.io supports the higher version of grpc.
 replace google.golang.org/grpc => google.golang.org/grpc v1.29.1
 
-replace github.com/pingcap/parser => /home/tangenta/gopath/src/github.com/pingcap/parser
+replace github.com/pingcap/parser => github.com/tangenta/parser v0.0.0-20210915061747-64438a653ebc
