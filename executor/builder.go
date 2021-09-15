@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
@@ -85,8 +86,8 @@ type executorBuilder struct {
 	hasLock          bool
 	Ti               *TelemetryInfo
 	// isStaleness means whether this statement use stale read.
-	isStaleness bool
-	txnScope    string
+	isStaleness      bool
+	readReplicaScope string
 }
 
 // CTEStorages stores resTbl and iterInTbl for CTEExec.
@@ -97,14 +98,14 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, txnScope string) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *executorBuilder {
 	return &executorBuilder{
-		ctx:         ctx,
-		is:          is,
-		Ti:          ti,
-		snapshotTS:  snapshotTS,
-		isStaleness: isStaleness,
-		txnScope:    txnScope,
+		ctx:              ctx,
+		is:               is,
+		Ti:               ti,
+		snapshotTS:       snapshotTS,
+		isStaleness:      isStaleness,
+		readReplicaScope: replicaReadScope,
 	}
 }
 
@@ -696,7 +697,7 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 	b.snapshotTS = v.SnapshotTS
 	b.isStaleness = v.IsStaleness
-	b.txnScope = v.TxnScope
+	b.readReplicaScope = v.ReadReplicaScope
 	if b.snapshotTS != 0 {
 		b.is, b.err = domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
 	}
@@ -714,7 +715,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		vs := strings.Split(val.(string), "_")
 		assertTS, assertTxnScope := vs[0], vs[1]
 		if strconv.FormatUint(b.snapshotTS, 10) != assertTS ||
-			assertTxnScope != b.txnScope {
+			assertTxnScope != b.readReplicaScope {
 			panic("execute prepare statement have wrong staleness option")
 		}
 	})
@@ -738,14 +739,6 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		IfNotExists:  v.IfNotExists,
 		GlobalScope:  v.GlobalScope,
 		Extended:     v.Extended,
-	}
-	if e.Tp == ast.ShowGrants && e.User == nil {
-		// The input is a "show grants" statement, fulfill the user and roles field.
-		// Note: "show grants" result are different from "show grants for current_user",
-		// The former determine privileges with roles, while the later doesn't.
-		vars := e.ctx.GetSessionVars()
-		e.User = &auth.UserIdentity{Username: vars.User.AuthUsername, Hostname: vars.User.AuthHostname}
-		e.Roles = vars.ActiveRoles
 	}
 	if e.Tp == ast.ShowMasterStatus {
 		// show master status need start ts.
@@ -958,6 +951,7 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmt:         v.Statement,
 		is:           b.is,
+		tempTableDDL: temptable.GetTemporaryTableDDL(b.ctx),
 	}
 	return e
 }
@@ -2831,22 +2825,22 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 	e := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		dagPB:          dagReq,
-		startTS:        startTS,
-		txnScope:       b.txnScope,
-		isStaleness:    b.isStaleness,
-		table:          tbl,
-		keepOrder:      ts.KeepOrder,
-		desc:           ts.Desc,
-		columns:        ts.Columns,
-		streaming:      streaming,
-		corColInFilter: b.corColInDistPlan(v.TablePlans),
-		corColInAccess: b.corColInAccess(v.TablePlans[0]),
-		plans:          v.TablePlans,
-		tablePlan:      v.GetTablePlan(),
-		storeType:      v.StoreType,
-		batchCop:       v.BatchCop,
+		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		dagPB:            dagReq,
+		startTS:          startTS,
+		readReplicaScope: b.readReplicaScope,
+		isStaleness:      b.isStaleness,
+		table:            tbl,
+		keepOrder:        ts.KeepOrder,
+		desc:             ts.Desc,
+		columns:          ts.Columns,
+		streaming:        streaming,
+		corColInFilter:   b.corColInDistPlan(v.TablePlans),
+		corColInAccess:   b.corColInAccess(v.TablePlans[0]),
+		plans:            v.TablePlans,
+		tablePlan:        v.GetTablePlan(),
+		storeType:        v.StoreType,
+		batchCop:         v.BatchCop,
 	}
 	if tbl.Meta().Partition != nil {
 		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
@@ -3108,24 +3102,24 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		return nil, err
 	}
 	e := &IndexReaderExecutor{
-		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		dagPB:           dagReq,
-		startTS:         startTS,
-		txnScope:        b.txnScope,
-		isStaleness:     b.isStaleness,
-		physicalTableID: physicalTableID,
-		table:           tbl,
-		index:           is.Index,
-		keepOrder:       is.KeepOrder,
-		desc:            is.Desc,
-		columns:         is.Columns,
-		streaming:       streaming,
-		corColInFilter:  b.corColInDistPlan(v.IndexPlans),
-		corColInAccess:  b.corColInAccess(v.IndexPlans[0]),
-		idxCols:         is.IdxCols,
-		colLens:         is.IdxColLens,
-		plans:           v.IndexPlans,
-		outputColumns:   v.OutputColumns,
+		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		dagPB:            dagReq,
+		startTS:          startTS,
+		readReplicaScope: b.readReplicaScope,
+		isStaleness:      b.isStaleness,
+		physicalTableID:  physicalTableID,
+		table:            tbl,
+		index:            is.Index,
+		keepOrder:        is.KeepOrder,
+		desc:             is.Desc,
+		columns:          is.Columns,
+		streaming:        streaming,
+		corColInFilter:   b.corColInDistPlan(v.IndexPlans),
+		corColInAccess:   b.corColInAccess(v.IndexPlans[0]),
+		idxCols:          is.IdxCols,
+		colLens:          is.IdxColLens,
+		plans:            v.IndexPlans,
+		outputColumns:    v.OutputColumns,
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -3729,7 +3723,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
-		SetTxnScope(e.txnScope).
+		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).
@@ -4246,22 +4240,22 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	}
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
-		baseExecutor: newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
-		tblInfo:      plan.TblInfo,
-		idxInfo:      plan.IndexInfo,
-		rowDecoder:   decoder,
-		startTS:      startTS,
-		txnScope:     b.txnScope,
-		isStaleness:  b.isStaleness,
-		keepOrder:    plan.KeepOrder,
-		desc:         plan.Desc,
-		lock:         plan.Lock,
-		waitTime:     plan.LockWaitTime,
-		partExpr:     plan.PartitionExpr,
-		partPos:      plan.PartitionColPos,
-		singlePart:   plan.SinglePart,
-		partTblID:    plan.PartTblID,
-		columns:      plan.Columns,
+		baseExecutor:     newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
+		tblInfo:          plan.TblInfo,
+		idxInfo:          plan.IndexInfo,
+		rowDecoder:       decoder,
+		startTS:          startTS,
+		readReplicaScope: b.readReplicaScope,
+		isStaleness:      b.isStaleness,
+		keepOrder:        plan.KeepOrder,
+		desc:             plan.Desc,
+		lock:             plan.Lock,
+		waitTime:         plan.LockWaitTime,
+		partExpr:         plan.PartitionExpr,
+		partPos:          plan.PartitionColPos,
+		singlePart:       plan.SinglePart,
+		partTblID:        plan.PartTblID,
+		columns:          plan.Columns,
 	}
 
 	if plan.TblInfo.TempTableType != model.TempTableNone {
@@ -4523,6 +4517,10 @@ func (b *executorBuilder) validCanReadTemporaryTable(tbl *model.TableInfo) error
 	// So we do not check SnapshotTS here
 
 	sessionVars := b.ctx.GetSessionVars()
+
+	if tbl.TempTableType == model.TempTableLocal && sessionVars.SnapshotTS != 0 {
+		return errors.New("can not read local temporary table when 'tidb_snapshot' is set")
+	}
 
 	if sessionVars.TxnCtx.IsStaleness || b.isStaleness {
 		return errors.New("can not stale read temporary table")

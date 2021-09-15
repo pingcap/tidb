@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -334,8 +335,8 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a year);`)
-	_, err = tk.Exec(`insert into t values(2156);`)
-	c.Assert(err.Error(), Equals, `[types:8033]invalid year`)
+	tk.MustGetErrMsg(`insert into t values(2156);`,
+		"[types:1264]Out of range value for column 'a' at row 1")
 
 	tk.MustExec(`DROP TABLE IF EXISTS ts`)
 	tk.MustExec(`CREATE TABLE ts (id int DEFAULT NULL, time1 TIMESTAMP NULL DEFAULT NULL)`)

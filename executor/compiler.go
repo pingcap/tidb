@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -81,18 +82,18 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	return &ExecStmt{
-		GoCtx:         ctx,
-		SnapshotTS:    ret.LastSnapshotTS,
-		IsStaleness:   ret.IsStaleness,
-		TxnScope:      ret.TxnScope,
-		InfoSchema:    ret.InfoSchema,
-		Plan:          finalPlan,
-		LowerPriority: lowerPriority,
-		Text:          stmtNode.Text(),
-		StmtNode:      stmtNode,
-		Ctx:           c.Ctx,
-		OutputNames:   names,
-		Ti:            &TelemetryInfo{},
+		GoCtx:            ctx,
+		SnapshotTS:       ret.LastSnapshotTS,
+		IsStaleness:      ret.IsStaleness,
+		ReplicaReadScope: ret.ReadReplicaScope,
+		InfoSchema:       ret.InfoSchema,
+		Plan:             finalPlan,
+		LowerPriority:    lowerPriority,
+		Text:             stmtNode.Text(),
+		StmtNode:         stmtNode,
+		Ctx:              c.Ctx,
+		OutputNames:      names,
+		Ti:               &TelemetryInfo{},
 	}, nil
 }
 

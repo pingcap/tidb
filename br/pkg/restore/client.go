@@ -169,7 +169,12 @@ func (rc *Client) Close() {
 }
 
 // InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
-func (rc *Client) InitBackupMeta(c context.Context, backupMeta *backuppb.BackupMeta, backend *backuppb.StorageBackend, externalStorage storage.ExternalStorage, reader *metautil.MetaReader) error {
+func (rc *Client) InitBackupMeta(
+	c context.Context,
+	backupMeta *backuppb.BackupMeta,
+	backend *backuppb.StorageBackend,
+	externalStorage storage.ExternalStorage,
+	reader *metautil.MetaReader) error {
 	if !backupMeta.IsRawKv {
 		databases, err := utils.LoadBackupTables(c, reader)
 		if err != nil {
@@ -295,7 +300,7 @@ func (rc *Client) ResetTS(ctx context.Context, pdAddrs []string) error {
 		idx := i % len(pdAddrs)
 		i++
 		return pdutil.ResetTS(ctx, pdAddrs[idx], restoreTS, rc.tlsConf)
-	}, newPDReqBackoffer())
+	}, utils.NewPDReqBackoffer())
 }
 
 // GetPlacementRules return the current placement rules.
@@ -308,7 +313,7 @@ func (rc *Client) GetPlacementRules(ctx context.Context, pdAddrs []string) ([]pl
 		i++
 		placementRules, err = pdutil.GetPlacementRules(ctx, pdAddrs[idx], rc.tlsConf)
 		return errors.Trace(err)
-	}, newPDReqBackoffer())
+	}, utils.NewPDReqBackoffer())
 	return placementRules, errors.Trace(errRetry)
 }
 

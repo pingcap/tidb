@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -351,6 +352,9 @@ func NewContext() *Context {
 	sctx.sessionVars.StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
+		panic(err)
+	}
+	if err := sctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, "utf8mb4"); err != nil {
 		panic(err)
 	}
 	return sctx

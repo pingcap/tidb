@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -624,14 +625,28 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 	}
 
 	if ds.ctx.GetSessionVars().GetAllowPreferRangeScan() && len(candidates) > 1 {
-		// remove the table/index full scan path
-		for i, c := range candidates {
-			for _, ran := range c.path.Ranges {
-				if ran.IsFullRange() {
-					candidates = append(candidates[:i], candidates[i+1:]...)
-					return candidates
+		// If a candidate path is TiFlash-path or forced-path, we just keep them. For other candidate paths, if there exists
+		// any range scan path, we remove full scan paths and keep range scan paths.
+		preferredPaths := make([]*candidatePath, 0, len(candidates))
+		var hasRangeScanPath bool
+		for _, c := range candidates {
+			if c.path.Forced || c.path.StoreType == kv.TiFlash {
+				preferredPaths = append(preferredPaths, c)
+				continue
+			}
+			var unsignedIntHandle bool
+			if c.path.IsIntHandlePath && ds.tableInfo.PKIsHandle {
+				if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
+					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.Flag)
 				}
 			}
+			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
+				preferredPaths = append(preferredPaths, c)
+				hasRangeScanPath = true
+			}
+		}
+		if hasRangeScanPath {
+			return preferredPaths
 		}
 	}
 
@@ -1193,6 +1208,10 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
 		ts.SetCost(cost)
+		// We set `StatsVersion` here and fill other fields in `(*copTask).finishIndexPlan`. Since `copTask.indexPlan` may
+		// change before calling `(*copTask).finishIndexPlan`, we don't know the stats information of `ts` currently and on
+		// the other hand, it may be hard to identify `StatsVersion` of `ts` in `(*copTask).finishIndexPlan`.
+		ts.stats = &property.StatsInfo{StatsVersion: ds.tableStats.StatsVersion}
 		cop.tablePlan = ts
 	}
 	cop.cst = cost
@@ -1350,6 +1369,14 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		copTask.finishIndexPlan()
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats, is.blockOffset)
+		if len(copTask.rootTaskConds) != 0 {
+			selectivity, _, err := copTask.tblColHists.Selectivity(is.ctx, tableConds, nil)
+			if err != nil {
+				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+				selectivity = SelectionFactor
+			}
+			tableSel.stats = copTask.plan().statsInfo().Scale(selectivity)
+		}
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
@@ -1733,6 +1760,12 @@ func (ds *DataSource) convertToSampleTable(prop *property.PhysicalProperty, cand
 	if !prop.IsEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
+	if candidate.isMatchProp {
+		// TableSample on partition table can't keep order.
+		if ds.tableInfo.GetPartitionInfo() != nil {
+			return invalidTask, nil
+		}
+	}
 	p := PhysicalTableSample{
 		TableSampleInfo: ds.SampleInfo,
 		TableInfo:       ds.table,
@@ -1933,6 +1966,14 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *pro
 	if len(ts.filterCondition) > 0 {
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
+		if len(copTask.rootTaskConds) != 0 {
+			selectivity, _, err := copTask.tblColHists.Selectivity(ts.ctx, ts.filterCondition, nil)
+			if err != nil {
+				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+				selectivity = SelectionFactor
+			}
+			sel.stats = ts.stats.Scale(selectivity)
+		}
 		sel.SetChildren(ts)
 		sel.cost = copTask.cst
 		copTask.tablePlan = sel

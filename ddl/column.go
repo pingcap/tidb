@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -527,7 +528,7 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 			job.State = model.JobStateCancelled
 			return nil, nil, 0, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 		}
-		if err = isDroppableColumn(tblInfo, colName); err != nil {
+		if err = isDroppableColumn(job.MultiSchemaInfo != nil, tblInfo, colName); err != nil {
 			job.State = model.JobStateCancelled
 			return nil, nil, 0, nil, errors.Trace(err)
 		}
@@ -656,7 +657,7 @@ func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Col
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
-	if err = isDroppableColumn(tblInfo, colName); err != nil {
+	if err = isDroppableColumn(job.MultiSchemaInfo != nil, tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, errors.Trace(err)
 	}
@@ -1390,14 +1391,23 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 // reformatErrors casted error because `convertTo` function couldn't package column name and datum value for some errors.
 func (w *updateColumnWorker) reformatErrors(err error) error {
 	// Since row count is not precious in concurrent reorganization, here we substitute row count with datum value.
-	if types.ErrTruncated.Equal(err) {
-		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
+	if types.ErrTruncated.Equal(err) || types.ErrDataTooLong.Equal(err) {
+		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
+		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, dStr)
 	}
 
-	if types.ErrInvalidYear.Equal(err) {
-		err = types.ErrInvalidYear.GenWithStack("Invalid year value for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
+	if types.ErrWarnDataOutOfRange.Equal(err) {
+		dStr := datumToStringNoErr(w.rowMap[w.oldColInfo.ID])
+		err = types.ErrWarnDataOutOfRange.GenWithStack("Out of range value for column '%s', the value is '%s'", w.oldColInfo.Name, dStr)
 	}
 	return err
+}
+
+func datumToStringNoErr(d types.Datum) string {
+	if v, err := d.ToString(); err == nil {
+		return v
+	}
+	return fmt.Sprintf("%v", d.GetValue())
 }
 
 func (w *updateColumnWorker) cleanRowMap() {
@@ -1638,15 +1648,16 @@ func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 		errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
 		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 	}
-	nextAutoIncID, err := m.GetAutoTableID(dbInfo.ID, tblInfo.ID)
+	idAcc := m.GetAutoIDAccessors(dbInfo.ID, tblInfo.ID).RowID()
+	nextAutoIncID, err := idAcc.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = autoRandAlloc.Rebase(tblInfo.ID, nextAutoIncID, false)
+	err = autoRandAlloc.Rebase(nextAutoIncID, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := m.CleanAutoID(dbInfo.ID, tblInfo.ID); err != nil {
+	if err := idAcc.Del(); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1723,9 +1734,9 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 	return false
 }
 
-func isColumnCanDropWithIndex(colName string, indices []*model.IndexInfo) bool {
+func isColumnCanDropWithIndex(isMultiSchemaChange bool, colName string, indices []*model.IndexInfo) bool {
 	for _, indexInfo := range indices {
-		if indexInfo.Primary || len(indexInfo.Columns) > 1 {
+		if indexInfo.Primary || len(indexInfo.Columns) > 1 || (!isMultiSchemaChange && len(indexInfo.Columns) == 1) {
 			for _, col := range indexInfo.Columns {
 				if col.Name.L == colName {
 					return false
@@ -1845,9 +1856,9 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 
 	if odValue == strings.ToUpper(ast.CurrentTimestamp) {
 		if col.Tp == mysql.TypeTimestamp {
-			odValue = time.Now().UTC().Format(types.TimeFormat)
+			odValue = types.NewTime(types.FromGoTime(time.Now().UTC()), col.Tp, int8(col.Decimal)).String()
 		} else if col.Tp == mysql.TypeDatetime {
-			odValue = time.Now().Format(types.TimeFormat)
+			odValue = types.NewTime(types.FromGoTime(time.Now()), col.Tp, int8(col.Decimal)).String()
 		}
 	}
 	return odValue, nil

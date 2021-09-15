@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -47,7 +48,7 @@ func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (
 		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
-		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
+		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(ctx, client, aggFunc))
 	}
 	executorID := ""
 	if storeType == kv.TiFlash {
@@ -73,7 +74,7 @@ func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 		GroupBy: groupByExprs,
 	}
 	for _, aggFunc := range p.AggFuncs {
-		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
+		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(ctx, client, aggFunc))
 	}
 	executorID := ""
 	if storeType == kv.TiFlash {

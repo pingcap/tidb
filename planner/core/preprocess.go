@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -31,16 +32,17 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -145,9 +147,9 @@ type PreprocessorReturn struct {
 	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
-	LastSnapshotTS uint64
-	InfoSchema     infoschema.InfoSchema
-	TxnScope       string
+	LastSnapshotTS   uint64
+	InfoSchema       infoschema.InfoSchema
+	ReadReplicaScope string
 }
 
 // PreprocessExecuteISUpdate is used to update information schema for special Execute statement in the preprocessor.
@@ -162,6 +164,7 @@ type preprocessor struct {
 	ctx    sessionctx.Context
 	flag   preprocessorFlag
 	stmtTp byte
+	showTp ast.ShowStmtType
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
@@ -225,6 +228,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.stmtTp = TypeShow
+		p.showTp = node.Tp
 		p.resolveShowStmt(node)
 	case *ast.SetOprSelectList:
 		p.checkSetOprSelectList(node)
@@ -368,7 +372,14 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 		return nil, errors.Trace(ErrNoDB)
 	}
 	sName := model.NewCIStr(currentDB)
-	tbl, err := p.ensureInfoSchema().TableByName(sName, tn.Name)
+	is := p.ensureInfoSchema()
+
+	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
+	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence) {
+		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
+	}
+
+	tbl, err := is.TableByName(sName, tn.Name)
 	if err != nil {
 		// We should never leak that the table doesn't exist (i.e. attach ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
@@ -410,34 +421,21 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 
 	// Check the bind operation is not on any temporary table.
-	var resNode ast.ResultSetNode
-	switch n := originNode.(type) {
-	case *ast.SelectStmt:
-		resNode = n.From.TableRefs
-	case *ast.DeleteStmt:
-		resNode = n.TableRefs.TableRefs
-	case *ast.UpdateStmt:
-		resNode = n.TableRefs.TableRefs
-	case *ast.InsertStmt:
-		resNode = n.Table.TableRefs
-	}
-	if resNode != nil {
-		tblNames := extractTableList(resNode, nil, false)
-		for _, tn := range tblNames {
-			tbl, err := p.tableByName(tn)
-			if err != nil {
-				// If the operation is order is: drop table -> drop binding
-				// The table doesn't  exist, it is not an error.
-				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
-					continue
-				}
-				p.err = err
-				return
+	tblNames := extractTableList(originNode, nil, false)
+	for _, tn := range tblNames {
+		tbl, err := p.tableByName(tn)
+		if err != nil {
+			// If the operation is order is: drop table -> drop binding
+			// The table doesn't  exist, it is not an error.
+			if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+				continue
 			}
-			if tbl.Meta().TempTableType != model.TempTableNone {
-				p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
-				return
-			}
+			p.err = err
+			return
+		}
+		if tbl.Meta().TempTableType != model.TempTableNone {
+			p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
+			return
 		}
 	}
 
@@ -870,7 +868,6 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 	}
 
 	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
-	nonExistsTables := make([]string, 0)
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
@@ -884,7 +881,7 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 
 		tbl, err := p.ensureInfoSchema().TableByName(schema, t.Name)
 		if infoschema.ErrTableNotExists.Equal(err) {
-			nonExistsTables = append(nonExistsTables, ast.Ident{Schema: schema, Name: t.Name}.String())
+			// Non-exist table will be checked in ddl executor
 			continue
 		}
 
@@ -898,14 +895,6 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 			p.err = ErrDropTableOnTemporaryTable
 			return
 		}
-
-		if stmt.TemporaryKeyword == ast.TemporaryLocal && tblInfo.TempTableType != model.TempTableLocal {
-			nonExistsTables = append(nonExistsTables, ast.Ident{Schema: schema, Name: t.Name}.String())
-		}
-	}
-
-	if len(nonExistsTables) > 0 {
-		p.err = infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(nonExistsTables, ","))
 	}
 }
 
@@ -1530,14 +1519,14 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	// When statement is during the Txn, we check whether there exists AsOfClause. If exists, we will return error,
 	// otherwise we should directly set the return param from TxnCtx.
-	p.TxnScope = oracle.GlobalTxnScope
+	p.ReadReplicaScope = kv.GlobalReplicaScope
 	if p.ctx.GetSessionVars().InTxn() {
 		if node != nil {
 			p.err = ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
 			return
 		}
 		txnCtx := p.ctx.GetSessionVars().TxnCtx
-		p.TxnScope = txnCtx.TxnScope
+		p.ReadReplicaScope = txnCtx.TxnScope
 		// It means we meet following case:
 		// 1. start transaction read only as of timestamp ts
 		// 2. select statement
@@ -1593,10 +1582,17 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 	}
 	if p.LastSnapshotTS != 0 {
 		dom := domain.GetDomain(p.ctx)
-		p.InfoSchema, p.err = dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
-		if p.err != nil {
+		is, err := dom.GetSnapshotInfoSchema(p.LastSnapshotTS)
+		// if infoschema is empty, LastSnapshotTS init failed
+		if err != nil {
+			p.err = err
 			return
 		}
+		if is == nil {
+			p.err = fmt.Errorf("can not get any information schema based on snapshotTS: %d", p.LastSnapshotTS)
+			return
+		}
+		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.ctx, is)
 	}
 	if p.flag&inPrepare == 0 {
 		p.ctx.GetSessionVars().StmtCtx.IsStaleness = p.IsStaleness
@@ -1625,7 +1621,7 @@ func (p *preprocessor) ensureInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *preprocessor) setStalenessReturn() {
-	txnScope := config.GetTxnScopeFromConfig()
+	scope := config.GetTxnScopeFromConfig()
 	p.IsStaleness = true
-	p.TxnScope = txnScope
+	p.ReadReplicaScope = scope
 }

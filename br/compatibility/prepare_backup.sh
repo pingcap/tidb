@@ -10,12 +10,13 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
 set -eux
 
-. compatibility/get_last_tags.sh
+. br/compatibility/get_last_tags.sh
 
 TAGS="v5.0.0"
 getLatestTags
@@ -26,14 +27,14 @@ i=0
 runBackup() {
   # generate backup data in /tmp/br/docker/backup_data/$TAG/, we can do restore after all data backuped later.
   echo "build $1 cluster"
-  TAG=$1 PORT_SUFFIX=$2 docker-compose -p $1 -f compatibility/backup_cluster.yaml build
-  TAG=$1 PORT_SUFFIX=$2 docker-compose -p $1 -f compatibility/backup_cluster.yaml up -d
-  trap "TAG=$1 PORT_SUFFIX=$2 docker-compose -p $1 -f compatibility/backup_cluster.yaml down" EXIT
+  TAG=$1 PORT_SUFFIX=$2 docker-compose -p $1 -f br/compatibility/backup_cluster.yaml build
+  TAG=$1 PORT_SUFFIX=$2 docker-compose -p $1 -f br/compatibility/backup_cluster.yaml up -d
+  trap "TAG=$1 PORT_SUFFIX=$2 docker-compose -p $1 -f br/compatibility/backup_cluster.yaml down" EXIT
   # wait for cluster ready
   sleep 20
   # prepare SQL data
-  TAG=$1 PORT_SUFFIX=$2 docker-compose -p $1 -f compatibility/backup_cluster.yaml exec -T control /go/bin/go-ycsb load mysql -P /prepare_data/workload -p mysql.host=tidb -p mysql.port=4000 -p mysql.user=root -p mysql.db=test
-  TAG=$1 PORT_SUFFIX=$2 docker-compose -p $1 -f compatibility/backup_cluster.yaml exec -T control make compatibility_test_prepare
+  TAG=$1 PORT_SUFFIX=$2 docker-compose -p $1 -f br/compatibility/backup_cluster.yaml exec -T control /go/bin/go-ycsb load mysql -P /prepare_data/workload -p mysql.host=tidb -p mysql.port=4000 -p mysql.user=root -p mysql.db=test
+  TAG=$1 PORT_SUFFIX=$2 docker-compose -p $1 -f br/compatibility/backup_cluster.yaml exec -T control br/tests/run_compatible.sh prepare
 }
 
 for tag in $TAGS; do

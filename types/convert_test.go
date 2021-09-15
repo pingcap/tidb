@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -280,7 +281,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(v, Equals, int64(2015))
 	v, err = Convert(ZeroDuration, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, int64(time.Now().Year()))
+	c.Assert(v, Equals, int64(0))
 	bj1, err := json.ParseBinaryFromString("99")
 	c.Assert(err, IsNil)
 	v, err = Convert(bj1, ft)

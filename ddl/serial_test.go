@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -657,7 +658,7 @@ func (s *testSerialSuite) TestCreateTableWithLikeAtTemporaryMode(c *C) {
 		") ENGINE=memory DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("create temporary table if not exists tb12 like tb11;")
 	c.Assert(tk.Se.(sessionctx.Context).GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals,
-		infoschema.ErrTableExists.GenWithStackByArgs("tb12").Error())
+		infoschema.ErrTableExists.GenWithStackByArgs("test.tb12").Error())
 	defer tk.MustExec("drop table if exists tb11, tb12")
 	// Test from->local temporary, to->local temporary
 	tk.MustExec("drop table if exists tb13, tb14")
@@ -1065,7 +1066,11 @@ func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {
 		once.Do(func() {
 			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
 				t := meta.NewMeta(txn)
-				return t.DropTableOrView(job.SchemaID, job.TableID, true)
+				err := t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del()
+				if err != nil {
+					return err
+				}
+				return t.DropTableOrView(job.SchemaID, job.TableID)
 			})
 			c.Assert(err, IsNil)
 		})
@@ -1709,9 +1714,9 @@ func (s *testSerialDBSuite) TestCreateTableNoBlock(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime"), IsNil)
 	}()
 	save := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(1)
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 1")
 	defer func() {
-		variable.SetDDLErrorCountLimit(save)
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", save))
 	}()
 
 	tk.MustExec("drop table if exists t")

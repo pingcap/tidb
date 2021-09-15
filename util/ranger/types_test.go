@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -134,53 +135,68 @@ func TestIsFullRange(t *testing.T) {
 	nullDatum := types.MinNotNullDatum()
 	nullDatum.SetNull()
 	isFullRangeTests := []struct {
-		ran         ranger.Range
-		isFullRange bool
+		ran               ranger.Range
+		unsignedIntHandle bool
+		isFullRange       bool
 	}{
 		{
 			ran: ranger.Range{
 				LowVal:  []types.Datum{types.NewIntDatum(math.MinInt64)},
 				HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)},
 			},
-			isFullRange: true,
+			unsignedIntHandle: false,
+			isFullRange:       true,
 		},
 		{
 			ran: ranger.Range{
 				LowVal:  []types.Datum{types.NewIntDatum(math.MaxInt64)},
 				HighVal: []types.Datum{types.NewIntDatum(math.MinInt64)},
 			},
-			isFullRange: false,
+			unsignedIntHandle: false,
+			isFullRange:       false,
 		},
 		{
 			ran: ranger.Range{
 				LowVal:  []types.Datum{types.NewIntDatum(1)},
 				HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
 			},
-			isFullRange: false,
+			unsignedIntHandle: false,
+			isFullRange:       false,
 		},
 		{
 			ran: ranger.Range{
 				LowVal:  []types.Datum{*nullDatum.Clone()},
 				HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
 			},
-			isFullRange: true,
+			unsignedIntHandle: false,
+			isFullRange:       true,
 		},
 		{
 			ran: ranger.Range{
 				LowVal:  []types.Datum{*nullDatum.Clone()},
 				HighVal: []types.Datum{*nullDatum.Clone()},
 			},
-			isFullRange: false,
+			unsignedIntHandle: false,
+			isFullRange:       false,
 		},
 		{
 			ran: ranger.Range{
 				LowVal:  []types.Datum{types.MinNotNullDatum()},
 				HighVal: []types.Datum{types.MaxValueDatum()},
 			},
-			isFullRange: true,
+			unsignedIntHandle: false,
+			isFullRange:       true,
+		},
+		{
+			ran: ranger.Range{
+				LowVal:  []types.Datum{types.NewUintDatum(0)},
+				HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)},
+			},
+			unsignedIntHandle: true,
+			isFullRange:       true,
 		},
 	}
 	for _, v := range isFullRangeTests {
-		require.Equal(t, v.isFullRange, v.ran.IsFullRange())
+		require.Equal(t, v.isFullRange, v.ran.IsFullRange(v.unsignedIntHandle))
 	}
 }

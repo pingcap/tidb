@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,9 +19,9 @@ import (
 	"context"
 	"math"
 	"strconv"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -28,28 +29,23 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-var _ = Suite(&testClusterSuite{})
-
-type testClusterSuite struct {
-	store tikv.Storage
-}
-
-func (s *testClusterSuite) TestClusterSplit(c *C) {
+func TestClusterSplit(t *testing.T) {
 	rpcClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	testutils.BootstrapWithSingleStore(cluster)
 	mvccStore := rpcClient.MvccStore
 
 	store, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
-	c.Assert(err, IsNil)
-	s.store = store
+	require.NoError(t, err)
+	defer store.Close()
 
 	txn, err := store.Begin()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// Mock inserting many rows in a table.
 	tblID := int64(1)
@@ -63,17 +59,17 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		// TODO: Should use session's TimeZone instead of UTC.
 		rd := rowcodec.Encoder{Enable: true}
 		rowValue, err1 := tablecodec.EncodeRow(sc, []types.Datum{colValue}, []int64{colID}, nil, nil, &rd)
-		c.Assert(err1, IsNil)
+		require.NoError(t, err1)
 		txn.Set(rowKey, rowValue)
 
 		encodedIndexValue, err1 := codec.EncodeKey(sc, nil, []types.Datum{colValue, types.NewIntDatum(handle)}...)
-		c.Assert(err1, IsNil)
+		require.NoError(t, err1)
 		idxKey := tablecodec.EncodeIndexSeekKey(tblID, idxID, encodedIndexValue)
 		txn.Set(idxKey, []byte{'0'})
 		handle++
 	}
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// Split Table into 10 regions.
 	tableStart := tablecodec.GenTableRecordPrefix(tblID)
@@ -81,7 +77,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 
 	// 10 table regions and first region and last region.
 	regions := cluster.GetAllRegions()
-	c.Assert(regions, HasLen, 12)
+	require.Len(t, regions, 12)
 
 	allKeysMap := make(map[string]bool)
 	recordPrefix := tablecodec.GenTableRecordPrefix(tblID)
@@ -93,13 +89,13 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		}
 		pairs := mvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64, kvrpcpb.IsolationLevel_SI, nil)
 		if len(pairs) > 0 {
-			c.Assert(pairs, HasLen, 100)
+			require.Len(t, pairs, 100)
 		}
 		for _, pair := range pairs {
 			allKeysMap[string(pair.Key)] = true
 		}
 	}
-	c.Assert(allKeysMap, HasLen, 1000)
+	require.Len(t, allKeysMap, 1000)
 
 	indexStart := tablecodec.EncodeTableIndexPrefix(tblID, idxID)
 	cluster.SplitKeys(indexStart, indexStart.PrefixNext(), 10)
@@ -115,13 +111,13 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 		}
 		pairs := mvccStore.Scan(startKey, endKey, math.MaxInt64, math.MaxUint64, kvrpcpb.IsolationLevel_SI, nil)
 		if len(pairs) > 0 {
-			c.Assert(pairs, HasLen, 100)
+			require.Len(t, pairs, 100)
 		}
 		for _, pair := range pairs {
 			allIndexMap[string(pair.Key)] = true
 		}
 	}
-	c.Assert(allIndexMap, HasLen, 1000)
+	require.Len(t, allIndexMap, 1000)
 }
 
 func toRawKey(k []byte) []byte {

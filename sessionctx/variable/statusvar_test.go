@@ -8,26 +8,17 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package variable
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
+	"testing"
+
+	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testStatusVarSuite{})
-
-type testStatusVarSuite struct {
-	ms *mockStatistics
-}
-
-func (s *testStatusVarSuite) SetUpSuite(c *C) {
-	s.ms = &mockStatistics{}
-	RegisterStatistics(s.ms)
-}
 
 // mockStatistics represents mocked statistics.
 type mockStatistics struct{}
@@ -51,22 +42,24 @@ func (ms *mockStatistics) GetScope(status string) ScopeFlag {
 	return scope
 }
 
-func (ms *mockStatistics) Stats(vars *SessionVars) (map[string]interface{}, error) {
+func (ms *mockStatistics) Stats(_ *SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{}, len(specificStatusScopes))
 	m[testStatus] = testStatusVal
 
 	return m, nil
 }
 
-func (s *testStatusVarSuite) TestStatusVar(c *C) {
-	defer testleak.AfterTest(c)()
-	scope := s.ms.GetScope(testStatus)
-	c.Assert(scope, Equals, DefaultStatusVarScopeFlag)
-	scope = s.ms.GetScope(testSessionStatus)
-	c.Assert(scope, Equals, ScopeSession)
+func TestStatusVar(t *testing.T) {
+	ms := &mockStatistics{}
+	RegisterStatistics(ms)
+
+	scope := ms.GetScope(testStatus)
+	require.Equal(t, DefaultStatusVarScopeFlag, scope)
+	scope = ms.GetScope(testSessionStatus)
+	require.Equal(t, ScopeSession, scope)
 
 	vars, err := GetStatusVars(nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	v := &StatusVal{Scope: DefaultStatusVarScopeFlag, Value: testStatusVal}
-	c.Assert(v, DeepEquals, vars[testStatus])
+	require.EqualValues(t, vars[testStatus], v)
 }
