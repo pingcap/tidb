@@ -310,10 +310,10 @@ func TestDate(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestTime(c *C) {
+func TestTime(t *testing.T) {
+	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
 		Expect string
@@ -345,9 +345,9 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDuration(sc, test.Input, types.MinFsp)
-		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		duration, err := types.ParseDuration(sc, test.Input, types.MinFsp)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, duration.String())
 	}
 
 	table = []struct {
@@ -360,9 +360,9 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDuration(sc, test.Input, types.MaxFsp)
-		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		duration, err := types.ParseDuration(sc, test.Input, types.MaxFsp)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, duration.String())
 	}
 
 	errTable := []string{
@@ -373,12 +373,12 @@ func (s *testTimeSuite) TestTime(c *C) {
 
 	for _, test := range errTable {
 		_, err := types.ParseDuration(sc, test, types.DefaultFsp)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 
-	t, err := types.ParseDuration(sc, "4294967295 0:59:59", types.DefaultFsp)
-	c.Assert(err, NotNil)
-	c.Assert(t.String(), Equals, "838:59:59")
+	duration, err := types.ParseDuration(sc, "4294967295 0:59:59", types.DefaultFsp)
+	require.Error(t, err)
+	require.Equal(t, "838:59:59", duration.String())
 
 	// test time compare
 	cmpTable := []struct {
@@ -391,17 +391,17 @@ func (s *testTimeSuite) TestTime(c *C) {
 		{0, 0, 0},
 	}
 
-	for _, t := range cmpTable {
+	for _, tt := range cmpTable {
 		t1 := types.Duration{
-			Duration: time.Duration(t.lhs),
+			Duration: time.Duration(tt.lhs),
 			Fsp:      types.DefaultFsp,
 		}
 		t2 := types.Duration{
-			Duration: time.Duration(t.rhs),
+			Duration: time.Duration(tt.rhs),
 			Fsp:      types.DefaultFsp,
 		}
 		ret := t1.Compare(t2)
-		c.Assert(ret, Equals, t.ret)
+		require.Equal(t, tt.ret, ret)
 	}
 }
 
