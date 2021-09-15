@@ -1585,16 +1585,12 @@ func (s *testIntegrationSuite) TestIssue28052(c *C) {
 		"`col_year_key_signed` year(4) DEFAULT NULL," +
 		"KEY `col_tinyint_key_signed` (`col_tinyint_key_signed`)," +
 		"KEY `col_year_key_signed` (`col_year_key_signed`)" +
-		" ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	)
+		" ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 
 	tk.MustExec("insert into t values(-100,NULL);")
 	tk.MustExec("create definer='root'@'localhost' view vt(a, b) as select a, b from t")
-	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ count(*) from t t1 right join t t2 on t1. `col_year_key_signed` = t2. `col_tinyint_key_signed`")
-	.Check(testkit.Rows("1"))
+	tk.MustQuery("select /*+ inl_merge_join(t1, t2) */ count(*) from t t1 right join t t2 on t1. `col_year_key_signed` = t2. `col_tinyint_key_signed`").Check(testkit.Rows("1"))
 }
-
-
 
 func (s *testIntegrationSuite) TestIssue15546(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
