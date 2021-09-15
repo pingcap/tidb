@@ -498,26 +498,26 @@ func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bo
 }
 
 // CutDatumByPrefixLen cuts the datum according to the prefix length.
-// If it's UTF8 encoded, we will cut it by characters rather than bytes.
+// If it's binary or ascii encoded, we will cut it by bytes rather than characters.
 func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
-	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+	if (v.Kind() == types.KindString || v.Kind() == types.KindBytes) && length != types.UnspecifiedLength {
 		colCharset := tp.Charset
 		colValue := v.GetBytes()
-		isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
-		if isUTF8Charset {
-			if length != types.UnspecifiedLength && utf8.RuneCount(colValue) > length {
-				rs := bytes.Runes(colValue)
-				truncateStr := string(rs[:length])
+		if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII {
+			if len(colValue) > length {
 				// truncate value and limit its length
-				v.SetString(truncateStr, tp.Collate)
+				if v.Kind() == types.KindBytes {
+					v.SetBytes(colValue[:length])
+				} else {
+					v.SetString(v.GetString()[:length], tp.Collate)
+				}
 				return true
 			}
-		} else if length != types.UnspecifiedLength && len(colValue) > length {
+		} else if utf8.RuneCount(colValue) > length {
+			rs := bytes.Runes(colValue)
+			truncateStr := string(rs[:length])
 			// truncate value and limit its length
-			v.SetBytes(colValue[:length])
-			if v.Kind() == types.KindString {
-				v.SetString(v.GetString(), tp.Collate)
-			}
+			v.SetString(truncateStr, tp.Collate)
 			return true
 		}
 	}
@@ -526,14 +526,13 @@ func CutDatumByPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 
 // ReachPrefixLen checks whether the length of v is equal to the prefix length.
 func ReachPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
-	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+	if (v.Kind() == types.KindString || v.Kind() == types.KindBytes) && length != types.UnspecifiedLength {
 		colCharset := tp.Charset
 		colValue := v.GetBytes()
-		isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
-		if isUTF8Charset {
-			return length != types.UnspecifiedLength && utf8.RuneCount(colValue) == length
+		if colCharset == charset.CharsetBin || colCharset == charset.CharsetASCII {
+			return len(colValue) == length
 		}
-		return length != types.UnspecifiedLength && len(colValue) == length
+		return utf8.RuneCount(colValue) == length
 	}
 	return false
 }

@@ -2774,7 +2774,7 @@ func (e *memtableRetriever) setDataForRegionLabel(ctx sessionctx.Context) error 
 		rules = []*label.Rule{
 			{
 				ID:       "schema/test/test_label",
-				Labels:   []label.Label{{Key: "nomerge", Value: "true"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
 				RuleType: "key-range",
 				Rule: convert(map[string]interface{}{
 					"start_key": "7480000000000000ff395f720000000000fa",
