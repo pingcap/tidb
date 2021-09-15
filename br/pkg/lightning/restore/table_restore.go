@@ -314,8 +314,10 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 						dataWorker := rc.closedEngineLimit.Apply()
 						defer rc.closedEngineLimit.Recycle(dataWorker)
 						err = tr.importEngine(ctx, dataClosedEngine, rc, eid, ecp)
-						for _, chunk := range ecp.Chunks {
-							rc.status.FinishedFileSize.Add(chunk.FileMeta.FileSize)
+						if rc.status != nil {
+							for _, chunk := range ecp.Chunks {
+								rc.status.FinishedFileSize.Add(chunk.FileMeta.FileSize)
+							}
 						}
 					}
 					if err != nil {

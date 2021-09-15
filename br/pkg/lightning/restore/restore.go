@@ -1756,7 +1756,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 
 		// We still need to sample source data even if this task has existed, because we need to judge whether the
 		// source is in order as row key to decide how to sort local data.
-		source, err := rc.EstimateSourceData(ctx)
+		source, err := rc.estimateSourceData(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1765,15 +1765,15 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				return errors.Trace(err)
 			}
 			if rc.cfg.App.CheckRequirements {
-				err = rc.LocalResource(source)
+				err = rc.localResource(source)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				if err := rc.ClusterResource(ctx, source); err != nil {
+				if err := rc.clusterResource(ctx, source); err != nil {
 					rc.taskMgr.CleanupTask(ctx)
 					return errors.Trace(err)
 				}
-				if err := rc.CheckClusterRegion(ctx); err != nil {
+				if err := rc.checkClusterRegion(ctx); err != nil {
 					return errors.Trace(err)
 				}
 			}
