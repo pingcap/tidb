@@ -701,13 +701,13 @@ func TestParseTimeFromNum(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestToNumber(c *C) {
+func TestToNumber(t *testing.T) {
+	t.Parallel()
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	sc.TimeZone = losAngelesTz
-	defer testleak.AfterTest(c)()
 	tblDateTime := []struct {
 		Input  string
 		Fsp    int8
@@ -725,9 +725,9 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDateTime {
-		t, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
-		c.Assert(err, IsNil)
-		c.Assert(t.ToNumber().String(), Equals, test.Expect)
+		time, err := types.ParseTime(sc, test.Input, mysql.TypeDatetime, test.Fsp)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, time.ToNumber().String())
 	}
 
 	// Fix issue #1046
@@ -748,9 +748,9 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDate {
-		t, err := types.ParseTime(sc, test.Input, mysql.TypeDate, 0)
-		c.Assert(err, IsNil)
-		c.Assert(t.ToNumber().String(), Equals, test.Expect)
+		time, err := types.ParseTime(sc, test.Input, mysql.TypeDate, 0)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, time.ToNumber().String())
 	}
 
 	tblDuration := []struct {
@@ -771,10 +771,10 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDuration {
-		t, err := types.ParseDuration(sc, test.Input, test.Fsp)
-		c.Assert(err, IsNil)
+		time, err := types.ParseDuration(sc, test.Input, test.Fsp)
+		require.NoError(t, err)
 		// now we can only changetypes.Duration's Fsp to check ToNumber with different Fsp
-		c.Assert(t.ToNumber().String(), Equals, test.Expect)
+		require.Equal(t, test.Expect, time.ToNumber().String())
 	}
 }
 
