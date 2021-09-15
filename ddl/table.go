@@ -1311,7 +1311,7 @@ func updateLabelRules(job *model.Job, tblInfo *model.TableInfo, oldRules map[str
 	if oldRules == nil {
 		return nil
 	}
-	newRules := make([]*label.Rule, len(oldRuleIDs)+1)
+	var newRules []*label.Rule
 	if tblInfo.GetPartitionInfo() != nil {
 		for idx, def := range tblInfo.GetPartitionInfo().Definitions {
 			if r, ok := oldRules[partRuleIDs[idx]]; ok {
