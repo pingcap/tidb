@@ -193,7 +193,7 @@ func (s *testFieldTypeSuite) TestDefaultTypeForValue(c *C) {
 		{NewTime(ZeroCoreTime, mysql.TypeDatetime, DefaultFsp), mysql.TypeDatetime, 19, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag},
 		{NewTime(FromDate(2017, 12, 12, 12, 59, 59, 0), mysql.TypeDatetime, 3), mysql.TypeDatetime, 23, 3, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag},
 		{Duration{}, mysql.TypeDuration, 8, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag},
-		{&MyDecimal{}, mysql.TypeNewDecimal, 1, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag},
+		{&MyDecimal{}, mysql.TypeNewDecimal, 2, 0, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag},
 		{Enum{Name: "a", Value: 1}, mysql.TypeEnum, 1, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag},
 		{Set{Name: "a", Value: 1}, mysql.TypeSet, 1, UnspecifiedLength, charset.CharsetBin, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag},
 	}

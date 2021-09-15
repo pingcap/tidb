@@ -1,7 +1,3 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 // Copyright 2015 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +11,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
 
 package expression
 
@@ -2036,6 +2036,16 @@ func (c *sysDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 	bf.tp.Flen, bf.tp.Decimal = 19, 0
+	if len(args) == 2 && args[1].ConstItem(ctx.GetSessionVars().StmtCtx) {
+		fsp, isNull, err := args[1].EvalInt(ctx, chunk.Row{})
+		if err != nil {
+			return nil, err
+		}
+		if !isNull && fsp > 0 {
+			bf.tp.Flen += int(fsp + 1)
+			bf.tp.Decimal = int(fsp)
+		}
+	}
 	// Illegal parameters have been filtered out in the parser, so the result is always not null.
 	bf.tp.Flag |= mysql.NotNullFlag
 
