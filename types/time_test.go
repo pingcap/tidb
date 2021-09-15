@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
 var _ = Suite(&testTimeSuite{})
@@ -36,7 +37,7 @@ var _ = Suite(&testTimeSuite{})
 type testTimeSuite struct {
 }
 
-func (s *testTimeSuite) TestTimeEncoding(c *C) {
+func TestTimeEncoding(t *testing.T) {
 	tests := []struct {
 		Year, Month, Day, Hour, Minute, Second, Microsecond int
 		Type                                                uint8
@@ -50,18 +51,18 @@ func (s *testTimeSuite) TestTimeEncoding(c *C) {
 
 	for ith, tt := range tests {
 		ct := types.FromDate(tt.Year, tt.Month, tt.Day, tt.Hour, tt.Minute, tt.Second, tt.Microsecond)
-		t := types.NewTime(ct, tt.Type, tt.Fsp)
-		c.Check(*((*uint64)(unsafe.Pointer(&t))), Equals, tt.Expect, Commentf("%d failed.", ith))
-		c.Check(t.CoreTime(), Equals, ct, Commentf("%d core time failed.", ith))
-		c.Check(t.Type(), Equals, tt.Type, Commentf("%d type failed.", ith))
-		c.Check(t.Fsp(), Equals, tt.Fsp, Commentf("%d fsp failed.", ith))
-		c.Check(t.Year(), Equals, tt.Year, Commentf("%d year failed.", ith))
-		c.Check(t.Month(), Equals, tt.Month, Commentf("%d month failed.", ith))
-		c.Check(t.Day(), Equals, tt.Day, Commentf("%d day failed.", ith))
-		c.Check(t.Hour(), Equals, tt.Hour, Commentf("%d hour failed.", ith))
-		c.Check(t.Minute(), Equals, tt.Minute, Commentf("%d minute failed.", ith))
-		c.Check(t.Second(), Equals, tt.Second, Commentf("%d second failed.", ith))
-		c.Check(t.Microsecond(), Equals, tt.Microsecond, Commentf("%d microsecond failed.", ith))
+		time := types.NewTime(ct, tt.Type, tt.Fsp)
+		require.Equalf(t, tt.Expect, *((*uint64)(unsafe.Pointer(&time))), "%d failed.", ith)
+		require.Equalf(t, ct, time.CoreTime(), "%d core time failed.", ith)
+		require.Equalf(t, tt.Type, time.Type(), "%d type failed.", ith)
+		require.Equalf(t, tt.Fsp, time.Fsp(), "%d fsp failed.", ith)
+		require.Equalf(t, tt.Year, time.Year(), "%d year failed.", ith)
+		require.Equalf(t, tt.Month, time.Month(), "%d month failed.", ith)
+		require.Equalf(t, tt.Day, time.Day(), "%d day failed.", ith)
+		require.Equalf(t, tt.Hour, time.Hour(), "%d hour failed.", ith)
+		require.Equalf(t, tt.Minute, time.Minute(), "%d minute failed.", ith)
+		require.Equalf(t, tt.Second, time.Second(), "%d second failed.", ith)
+		require.Equalf(t, tt.Microsecond, time.Microsecond(), "%d microsecond failed.", ith)
 	}
 }
 
