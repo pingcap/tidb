@@ -811,8 +811,8 @@ func TestParseTimeFromFloatString(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestParseFrac(c *C) {
-	defer testleak.AfterTest(c)()
+func TestParseFrac(t *testing.T) {
+	t.Parallel()
 	tbl := []struct {
 		S        string
 		Fsp      int8
@@ -840,11 +840,11 @@ func (s *testTimeSuite) TestParseFrac(c *C) {
 		{"999", 3, 999000, false},
 	}
 
-	for _, t := range tbl {
-		v, overflow, err := types.ParseFrac(t.S, t.Fsp)
-		c.Assert(err, IsNil)
-		c.Assert(v, Equals, t.Ret)
-		c.Assert(overflow, Equals, t.Overflow)
+	for _, tt := range tbl {
+		v, overflow, err := types.ParseFrac(tt.S, tt.Fsp)
+		require.NoError(t, err)
+		require.Equal(t, tt.Ret, v)
+		require.Equal(t, tt.Overflow, overflow)
 	}
 }
 
