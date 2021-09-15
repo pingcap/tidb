@@ -12,28 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package aggfuncs_test
+package encrypt
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"testing"
+
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
 )
 
-func (s *testSuite) TestMergePartialResult4Varsamp(c *C) {
-	tests := []aggTest{
-		buildAggTester(ast.AggFuncVarSamp, mysql.TypeDouble, 5, 2.5, 1, 1.9821428571428572),
-	}
-	for _, test := range tests {
-		s.testMergePartialResult(c, test)
-	}
-}
+func TestMain(m *testing.M) {
+	testbridge.WorkaroundGoCheckFlags()
 
-func (s *testSuite) TestVarsamp(c *C) {
-	tests := []aggTest{
-		buildAggTester(ast.AggFuncVarSamp, mysql.TypeDouble, 5, nil, 2.5),
-	}
-	for _, test := range tests {
-		s.testAggFunc(c, test)
-	}
+	goleak.VerifyTestMain(m)
 }

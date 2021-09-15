@@ -204,87 +204,6 @@ func normalizeWithDefaultDB(c *C, sql, db string) (string, string) {
 	return normalized, digest.String()
 }
 
-func (s *testSuite) TestBindParse(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(i int)")
-	tk.MustExec("create index index_t on t(i)")
-
-	originSQL := "select * from `test` . `t`"
-	bindSQL := "select * from `test` . `t` use index(index_t)"
-	defaultDb := "test"
-	status := "using"
-	charset := "utf8mb4"
-	collation := "utf8mb4_bin"
-	source := bindinfo.Manual
-	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation,source) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s', '%s')`,
-		originSQL, bindSQL, defaultDb, status, charset, collation, source)
-	tk.MustExec(sql)
-	bindHandle := bindinfo.NewBindHandle(tk.Se)
-	err := bindHandle.Update(true)
-	c.Check(err, IsNil)
-	c.Check(bindHandle.Size(), Equals, 1)
-
-	sql, hash := parser.NormalizeDigest("select * from test . t")
-	bindData := bindHandle.GetBindRecord(hash.String(), sql, "test")
-	c.Check(bindData, NotNil)
-	c.Check(bindData.OriginalSQL, Equals, "select * from `test` . `t`")
-	bind := bindData.Bindings[0]
-	c.Check(bind.BindSQL, Equals, "select * from `test` . `t` use index(index_t)")
-	c.Check(bindData.Db, Equals, "test")
-	c.Check(bind.Status, Equals, "using")
-	c.Check(bind.Charset, Equals, "utf8mb4")
-	c.Check(bind.Collation, Equals, "utf8mb4_bin")
-	c.Check(bind.CreateTime, NotNil)
-	c.Check(bind.UpdateTime, NotNil)
-	dur, err := bind.SinceUpdateTime()
-	c.Assert(err, IsNil)
-	c.Assert(int64(dur), GreaterEqual, int64(0))
-
-	// Test fields with quotes or slashes.
-	sql = `CREATE GLOBAL BINDING FOR  select * from t where i BETWEEN "a" and "b" USING select * from t use index(index_t) where i BETWEEN "a\nb\rc\td\0e" and 'x'`
-	tk.MustExec(sql)
-	tk.MustExec(`DROP global binding for select * from t use index(idx) where i BETWEEN "a\nb\rc\td\0e" and "x"`)
-
-	// Test SetOprStmt.
-	tk.MustExec(`create binding for select * from t union all select * from t using select * from t use index(index_t) union all select * from t use index()`)
-	tk.MustExec(`drop binding for select * from t union all select * from t using select * from t use index(index_t) union all select * from t use index()`)
-	tk.MustExec(`create binding for select * from t INTERSECT select * from t using select * from t use index(index_t) INTERSECT select * from t use index()`)
-	tk.MustExec(`drop binding for select * from t INTERSECT select * from t using select * from t use index(index_t) INTERSECT select * from t use index()`)
-	tk.MustExec(`create binding for select * from t EXCEPT select * from t using select * from t use index(index_t) EXCEPT select * from t use index()`)
-	tk.MustExec(`drop binding for select * from t EXCEPT select * from t using select * from t use index(index_t) EXCEPT select * from t use index()`)
-	tk.MustExec(`create binding for (select * from t) union all (select * from t) using (select * from t use index(index_t)) union all (select * from t use index())`)
-	tk.MustExec(`drop binding for (select * from t) union all (select * from t) using (select * from t use index(index_t)) union all (select * from t use index())`)
-
-	// Test Update / Delete.
-	tk.MustExec("create table t1(a int, b int, c int, key(b), key(c))")
-	tk.MustExec("create table t2(a int, b int, c int, key(b), key(c))")
-	tk.MustExec("create binding for delete from t1 where b = 1 and c > 1 using delete /*+ use_index(t1, c) */ from t1 where b = 1 and c > 1")
-	tk.MustExec("drop binding for delete from t1 where b = 1 and c > 1 using delete /*+ use_index(t1, c) */ from t1 where b = 1 and c > 1")
-	tk.MustExec("create binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b where t1.c = 1 using delete /*+ hash_join(t1, t2), use_index(t1, c) */ t1, t2 from t1 inner join t2 on t1.b = t2.b where t1.c = 1")
-	tk.MustExec("drop binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b where t1.c = 1 using delete /*+ hash_join(t1, t2), use_index(t1, c) */ t1, t2 from t1 inner join t2 on t1.b = t2.b where t1.c = 1")
-	tk.MustExec("create binding for update t1 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t1, c) */ t1 set a = 1 where b = 1 and c > 1")
-	tk.MustExec("drop binding for update t1 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t1, c) */ t1 set a = 1 where b = 1 and c > 1")
-	tk.MustExec("create binding for update t1, t2 set t1.a = 1 where t1.b = t2.b using update /*+ inl_join(t1) */ t1, t2 set t1.a = 1 where t1.b = t2.b")
-	tk.MustExec("drop binding for update t1, t2 set t1.a = 1 where t1.b = t2.b using update /*+ inl_join(t1) */ t1, t2 set t1.a = 1 where t1.b = t2.b")
-	// Test Insert / Replace.
-	tk.MustExec("create binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t1 select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1")
-	tk.MustExec("drop binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t1 select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1")
-	tk.MustExec("create binding for replace into t1 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t1 select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1")
-	tk.MustExec("drop binding for replace into t1 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t1 select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1")
-	err = tk.ExecToErr("create binding for insert into t1 values(1,1,1) using insert into t1 values(1,1,1)")
-	c.Assert(err.Error(), Equals, "create binding only supports INSERT / REPLACE INTO SELECT")
-	err = tk.ExecToErr("create binding for replace into t1 values(1,1,1) using replace into t1 values(1,1,1)")
-	c.Assert(err.Error(), Equals, "create binding only supports INSERT / REPLACE INTO SELECT")
-
-	// Test errors.
-	tk.MustExec(`drop table if exists t1`)
-	tk.MustExec("create table t1(i int, s varchar(20))")
-	_, err = tk.Exec("create global binding for select * from t using select * from t1 use index for join(index_t)")
-	c.Assert(err, NotNil, Commentf("err %v", err))
-}
-
 var testSQLs = []struct {
 	createSQL   string
 	overlaySQL  string
@@ -402,117 +321,6 @@ var testSQLs = []struct {
 		dropSQL:     "binding for replace into t1 select * from t where t.i = 1",
 		memoryUsage: float64(214),
 	},
-}
-
-func (s *testSuite) TestGlobalBinding(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	for _, testSQL := range testSQLs {
-		s.cleanBindingEnv(tk)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("drop table if exists t1")
-		tk.MustExec("create table t(i int, s varchar(20))")
-		tk.MustExec("create table t1(i int, s varchar(20))")
-		tk.MustExec("create index index_t on t(i,s)")
-
-		metrics.BindTotalGauge.Reset()
-		metrics.BindMemoryUsage.Reset()
-
-		_, err := tk.Exec("create global " + testSQL.createSQL)
-		c.Assert(err, IsNil, Commentf("err %v", err))
-
-		if testSQL.overlaySQL != "" {
-			_, err = tk.Exec("create global " + testSQL.overlaySQL)
-			c.Assert(err, IsNil)
-		}
-
-		pb := &dto.Metric{}
-		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
-		c.Assert(err, IsNil)
-		c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
-		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
-		c.Assert(err, IsNil)
-		c.Assert(pb.GetGauge().GetValue(), Equals, testSQL.memoryUsage)
-
-		sql, hash := normalizeWithDefaultDB(c, testSQL.querySQL, "test")
-
-		bindData := s.domain.BindHandle().GetBindRecord(hash, sql, "test")
-		c.Check(bindData, NotNil)
-		c.Check(bindData.OriginalSQL, Equals, testSQL.originSQL)
-		bind := bindData.Bindings[0]
-		c.Check(bind.BindSQL, Equals, testSQL.bindSQL)
-		c.Check(bindData.Db, Equals, "test")
-		c.Check(bind.Status, Equals, "using")
-		c.Check(bind.Charset, NotNil)
-		c.Check(bind.Collation, NotNil)
-		c.Check(bind.CreateTime, NotNil)
-		c.Check(bind.UpdateTime, NotNil)
-
-		rs, err := tk.Exec("show global bindings")
-		c.Assert(err, IsNil)
-		chk := rs.NewChunk()
-		err = rs.Next(context.TODO(), chk)
-		c.Check(err, IsNil)
-		c.Check(chk.NumRows(), Equals, 1)
-		row := chk.GetRow(0)
-		c.Check(row.GetString(0), Equals, testSQL.originSQL)
-		c.Check(row.GetString(1), Equals, testSQL.bindSQL)
-		c.Check(row.GetString(2), Equals, "test")
-		c.Check(row.GetString(3), Equals, "using")
-		c.Check(row.GetTime(4), NotNil)
-		c.Check(row.GetTime(5), NotNil)
-		c.Check(row.GetString(6), NotNil)
-		c.Check(row.GetString(7), NotNil)
-
-		bindHandle := bindinfo.NewBindHandle(tk.Se)
-		err = bindHandle.Update(true)
-		c.Check(err, IsNil)
-		c.Check(bindHandle.Size(), Equals, 1)
-
-		bindData = bindHandle.GetBindRecord(hash, sql, "test")
-		c.Check(bindData, NotNil)
-		c.Check(bindData.OriginalSQL, Equals, testSQL.originSQL)
-		bind = bindData.Bindings[0]
-		c.Check(bind.BindSQL, Equals, testSQL.bindSQL)
-		c.Check(bindData.Db, Equals, "test")
-		c.Check(bind.Status, Equals, "using")
-		c.Check(bind.Charset, NotNil)
-		c.Check(bind.Collation, NotNil)
-		c.Check(bind.CreateTime, NotNil)
-		c.Check(bind.UpdateTime, NotNil)
-
-		_, err = tk.Exec("drop global " + testSQL.dropSQL)
-		c.Check(err, IsNil)
-		bindData = s.domain.BindHandle().GetBindRecord(hash, sql, "test")
-		c.Check(bindData, IsNil)
-
-		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
-		c.Assert(err, IsNil)
-		c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
-		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
-		c.Assert(err, IsNil)
-		// From newly created global bind handle.
-		c.Assert(pb.GetGauge().GetValue(), Equals, testSQL.memoryUsage)
-
-		bindHandle = bindinfo.NewBindHandle(tk.Se)
-		err = bindHandle.Update(true)
-		c.Check(err, IsNil)
-		c.Check(bindHandle.Size(), Equals, 0)
-
-		bindData = bindHandle.GetBindRecord(hash, sql, "test")
-		c.Check(bindData, IsNil)
-
-		rs, err = tk.Exec("show global bindings")
-		c.Assert(err, IsNil)
-		chk = rs.NewChunk()
-		err = rs.Next(context.TODO(), chk)
-		c.Check(err, IsNil)
-		c.Check(chk.NumRows(), Equals, 0)
-
-		_, err = tk.Exec("delete from mysql.bind_info where source != 'builtin'")
-		c.Assert(err, IsNil)
-	}
 }
 
 func (s *testSuite) TestSessionBinding(c *C) {
@@ -1382,28 +1190,6 @@ func (s *testSuite) TestRuntimeHintsInEvolveTasks(c *C) {
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0")
 }
 
-func (s *testSuite) TestBindingCache(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx);")
-	tk.MustExec("create database tmp")
-	tk.MustExec("use tmp")
-	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx);")
-
-	c.Assert(s.domain.BindHandle().Update(false), IsNil)
-	c.Assert(s.domain.BindHandle().Update(false), IsNil)
-	res := tk.MustQuery("show global bindings")
-	c.Assert(len(res.Rows()), Equals, 2)
-
-	tk.MustExec("drop global binding for select * from t;")
-	c.Assert(s.domain.BindHandle().Update(false), IsNil)
-	c.Assert(len(s.domain.BindHandle().GetAllBindRecord()), Equals, 1)
-}
-
 func (s *testSuite) TestDefaultSessionVars(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -1506,29 +1292,6 @@ func (s *testSuite) TestStmtHints(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.MaxExecutionTime, Equals, uint64(0))
 }
 
-func (s *testSuite) TestReloadBindings(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
-	rows := tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
-	rows = tk.MustQuery("select * from mysql.bind_info where source != 'builtin'").Rows()
-	c.Assert(len(rows), Equals, 1)
-	tk.MustExec("delete from mysql.bind_info where source != 'builtin'")
-	c.Assert(s.domain.BindHandle().Update(false), IsNil)
-	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
-	c.Assert(s.domain.BindHandle().Update(true), IsNil)
-	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 1)
-	tk.MustExec("admin reload bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	c.Assert(len(rows), Equals, 0)
-}
-
 func (s *testSuite) TestDefaultDB(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -1550,56 +1313,6 @@ func (s *testSuite) TestDefaultDB(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx")
 	tk.MustExec("drop session binding for select * from test.t")
 	tk.MustQuery("show session bindings").Check(testkit.Rows())
-}
-
-func (s *testSuite) TestEvolveInvalidBindings(c *C) {
-	originalVal := config.CheckTableBeforeDrop
-	config.CheckTableBeforeDrop = true
-	defer func() {
-		config.CheckTableBeforeDrop = originalVal
-	}()
-
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idx_a(a))")
-	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ USE_INDEX(t) */ * from t where a > 10")
-	// Manufacture a rejected binding by hacking mysql.bind_info.
-	tk.MustExec("insert into mysql.bind_info values('select * from test . t where a > ?', 'SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10', 'test', 'rejected', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "')")
-	tk.MustQuery("select bind_sql, status from mysql.bind_info where source != 'builtin'").Sort().Check(testkit.Rows(
-		"SELECT /*+ USE_INDEX(`t` )*/ * FROM `test`.`t` WHERE `a` > 10 using",
-		"SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10 rejected",
-	))
-	// Reload cache from mysql.bind_info.
-	s.domain.BindHandle().Clear()
-	c.Assert(s.domain.BindHandle().Update(true), IsNil)
-
-	tk.MustExec("alter table t drop index idx_a")
-	tk.MustExec("admin evolve bindings")
-	c.Assert(s.domain.BindHandle().Update(false), IsNil)
-	rows := tk.MustQuery("show global bindings").Sort().Rows()
-	c.Assert(len(rows), Equals, 2)
-	// Make sure this "using" binding is not overrided.
-	c.Assert(rows[0][1], Equals, "SELECT /*+ USE_INDEX(`t` )*/ * FROM `test`.`t` WHERE `a` > 10")
-	status := rows[0][3].(string)
-	c.Assert(status == "using", IsTrue)
-	c.Assert(rows[1][1], Equals, "SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10")
-	status = rows[1][3].(string)
-	c.Assert(status == "using" || status == "rejected", IsTrue)
-}
-
-func (s *testSuite) TestOutdatedInfoSchema(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
-	c.Assert(s.domain.BindHandle().Update(false), IsNil)
-	s.cleanBindingEnv(tk)
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
 }
 
 func (s *testSuite) TestPrivileges(c *C) {
