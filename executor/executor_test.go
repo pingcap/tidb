@@ -5689,7 +5689,7 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
 	tk.MustQuery("select @@character_set_connection;").Check(testkit.Rows("gbk"))
 	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_bin"))
 
-	tk.MustQuery("select _gbk 'a'").Check(testkit.Rows("a"))
+	tk.MustGetErrCode("select _gbk 'a';", errno.ErrUnknownCharacterSet)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a char(10) charset gbk);")
