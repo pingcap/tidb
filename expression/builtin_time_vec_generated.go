@@ -1744,8 +1744,7 @@ func (b *builtinAddDateStringIntSig) vecEvalString(input *chunk.Chunk, result *c
 			return err
 		}
 		if isNull {
-			result.SetNull(i, true)
-			result.AppendString(types.ZeroDateStr);
+			result.AppendNull()
 		} else {
 			result.AppendString(resDate.String())
 		}
