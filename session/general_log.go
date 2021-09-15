@@ -30,6 +30,10 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+const (
+	defaultQueryBufLen = 128
+)
+
 var (
 	// GeneralLogLogger is used to log general log
 	GeneralLogLogger       = log.L()
@@ -37,7 +41,7 @@ var (
 	generalLogDroppedEntry = metrics.GeneralLogDroppedCount
 	queryBuilderPool       = sync.Pool{New: func() interface{} {
 		ret := strings.Builder{}
-		ret.Grow(128)
+		ret.Grow(defaultQueryBufLen)
 		return &ret
 	}}
 	glEntryPool = sync.Pool{New: func() interface{} {
@@ -159,6 +163,7 @@ func (gl *generalLogger) logEntry(e *generalLogEntry) {
 		zap.String("sql", buf.String()),
 	)
 	buf.Reset()
+	buf.Grow(defaultQueryBufLen)
 	queryBuilderPool.Put(buf)
 	glEntryPool.Put(e)
 }
