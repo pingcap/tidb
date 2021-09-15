@@ -994,14 +994,19 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if cc.ctx != nil {
 				txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
 			}
-			logutil.Logger(ctx).Info("command dispatched failed",
-				zap.String("connInfo", cc.String()),
-				zap.String("command", mysql.Command2Str[data[0]]),
-				zap.String("status", cc.SessionStatusToString()),
-				zap.Stringer("sql", getLastStmtInConn{cc}),
-				zap.String("txn_mode", txnMode),
-				zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
-			)
+			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
+			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
+				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
+			} else {
+				logutil.Logger(ctx).Info("command dispatched failed",
+					zap.String("connInfo", cc.String()),
+					zap.String("command", mysql.Command2Str[data[0]]),
+					zap.String("status", cc.SessionStatusToString()),
+					zap.Stringer("sql", getLastStmtInConn{cc}),
+					zap.String("txn_mode", txnMode),
+					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
+				)
+			}
 			err1 := cc.writeError(ctx, err)
 			terror.Log(err1)
 		}
@@ -1653,7 +1658,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	prevWarns := sc.GetWarnings()
 	stmts, err := cc.ctx.Parse(ctx, sql)
 	if err != nil {
-		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
 	}
 
@@ -1679,7 +1683,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			switch cc.ctx.GetSessionVars().MultiStatementMode {
 			case variable.OffInt:
 				err = errMultiStatementDisabled
-				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 				return err
 			case variable.OnInt:
 				// multi statement is fully permitted, do nothing
@@ -1725,9 +1728,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				break
 			}
 		}
-	}
-	if err != nil {
-		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 	}
 	return err
 }
