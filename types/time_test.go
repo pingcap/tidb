@@ -405,8 +405,8 @@ func TestTime(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestDurationAdd(c *C) {
-	defer testleak.AfterTest(c)()
+func TestDurationAdd(t *testing.T) {
+	t.Parallel()
 	table := []struct {
 		Input    string
 		Fsp      int8
@@ -420,26 +420,26 @@ func (s *testTimeSuite) TestDurationAdd(c *C) {
 		{"00:00:00.099", 3, "00:00:00.001", 3, "00:00:00.100"},
 	}
 	for _, test := range table {
-		t, err := types.ParseDuration(nil, test.Input, test.Fsp)
-		c.Assert(err, IsNil)
+		duration, err := types.ParseDuration(nil, test.Input, test.Fsp)
+		require.NoError(t, err)
 		ta, err := types.ParseDuration(nil, test.InputAdd, test.FspAdd)
-		c.Assert(err, IsNil)
-		result, err := t.Add(ta)
-		c.Assert(err, IsNil)
-		c.Assert(result.String(), Equals, test.Expect)
+		require.NoError(t, err)
+		result, err := duration.Add(ta)
+		require.NoError(t, err)
+		require.Equal(t, test.Expect, result.String())
 	}
-	t, err := types.ParseDuration(nil, "00:00:00", 0)
-	c.Assert(err, IsNil)
+	duration, err := types.ParseDuration(nil, "00:00:00", 0)
+	require.NoError(t, err)
 	ta := new(types.Duration)
-	result, err := t.Add(*ta)
-	c.Assert(err, IsNil)
-	c.Assert(result.String(), Equals, "00:00:00")
+	result, err := duration.Add(*ta)
+	require.NoError(t, err)
+	require.Equal(t, "00:00:00", result.String())
 
-	t = types.Duration{Duration: math.MaxInt64, Fsp: 0}
+	duration = types.Duration{Duration: math.MaxInt64, Fsp: 0}
 	tatmp, err := types.ParseDuration(nil, "00:01:00", 0)
-	c.Assert(err, IsNil)
-	_, err = t.Add(tatmp)
-	c.Assert(err, NotNil)
+	require.NoError(t, err)
+	_, err = duration.Add(tatmp)
+	require.Error(t, err)
 }
 
 func (s *testTimeSuite) TestDurationSub(c *C) {
