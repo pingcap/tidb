@@ -495,6 +495,8 @@ func TestInterceptorOnGet(t *testing.T) {
 		retriever.ResetInvokes()
 
 		val, err = emptyRetrieverInterceptor.OnGet(ctx, snap, c.Key)
+		require.True(t, kv.ErrNotExist.Equal(err))
+		require.Nil(t, val)
 		require.Equal(t, 0, len(snap.GetInvokes()), i)
 		require.Equal(t, 0, len(retriever.GetInvokes()), i)
 	}

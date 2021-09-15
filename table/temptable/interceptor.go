@@ -233,7 +233,7 @@ func getRangeAccessedTableID(startKey, endKey kv.Key) (int64, bool) {
 
 	tblStart := tablecodec.EncodeTablePrefix(tblID)
 	tblEnd := tablecodec.EncodeTablePrefix(tblID + 1)
-	if bytes.HasPrefix(endKey, tblStart) || bytes.Compare(endKey, tblEnd) == 0 {
+	if bytes.HasPrefix(endKey, tblStart) || bytes.Equal(endKey, tblEnd) {
 		return tblID, true
 	}
 
