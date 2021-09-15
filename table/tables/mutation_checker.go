@@ -66,8 +66,8 @@ func CheckIndexConsistency(sessVars *variable.SessionVars, t *TableCommon,
 	}
 	sc := sessVars.StmtCtx
 	if sh == 0 {
-		logutil.BgLogger().Error("No membuffer stage when checking index consistency")
-		return errors.New("No membuffer stage when checking index consistency")
+		// some implementations of MemBuffer doesn't support staging, e.g. that in br/pkg/lightning/backend/kv
+		return nil
 	}
 	indexMutations, rowInsertion, err := collectTableMutationsFromBufferStage(t, memBuffer, sh)
 	if err != nil {
