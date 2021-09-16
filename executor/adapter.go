@@ -343,7 +343,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			if n != int(startTS) {
 				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
 			}
-			failpoint.Return()
 		}
 	})
 	sctx := a.Ctx
