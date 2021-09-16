@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
-	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -219,49 +218,6 @@ func (dbt *DBTest) mustQuery(query string, args ...interface{}) (rows *sql.Rows)
 func (dbt *DBTest) mustQueryRows(query string, args ...interface{}) {
 	rows := dbt.mustQuery(query, args...)
 	dbt.Assert(rows.Next(), IsTrue)
-	rows.Close()
-}
-
-// DBTestWithT like DBTest, but replace *check.C to *testing.T
-// TODO remove/rename when migrate server_test.go and statistics_handler_test.go to testify done
-type DBTestWithT struct {
-	*testing.T
-	db *sql.DB
-}
-
-func (dbt *DBTestWithT) mustPrepare(query string) *sql.Stmt {
-	stmt, err := dbt.db.Prepare(query)
-	require.NoError(dbt, err, "Prepare %s", query)
-	return stmt
-}
-
-func (dbt *DBTestWithT) mustExecPrepared(stmt *sql.Stmt, args ...interface{}) sql.Result {
-	res, err := stmt.Exec(args...)
-	require.NoError(dbt, err, "Execute prepared with args: %s", args)
-	return res
-}
-
-func (dbt *DBTestWithT) mustQueryPrepared(stmt *sql.Stmt, args ...interface{}) *sql.Rows {
-	rows, err := stmt.Query(args...)
-	require.NoError(dbt, err, "Query prepared with args: %s", args)
-	return rows
-}
-
-func (dbt *DBTestWithT) mustExec(query string, args ...interface{}) (res sql.Result) {
-	res, err := dbt.db.Exec(query, args...)
-	require.NoError(dbt, err, "Exec %s", query)
-	return res
-}
-
-func (dbt *DBTestWithT) mustQuery(query string, args ...interface{}) (rows *sql.Rows) {
-	rows, err := dbt.db.Query(query, args...)
-	require.NoError(dbt, err, "Query %s", query)
-	return rows
-}
-
-func (dbt *DBTestWithT) mustQueryRows(query string, args ...interface{}) {
-	rows := dbt.mustQuery(query, args...)
-	require.True(dbt, rows.Next())
 	rows.Close()
 }
 
