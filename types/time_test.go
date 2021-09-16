@@ -1154,7 +1154,8 @@ func TestConvertTimeZone(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestTimeAdd(c *C) {
+func TestTimeAdd(t *testing.T) {
+	t.Parallel()
 	tbl := []struct {
 		Arg1 string
 		Arg2 string
@@ -1171,16 +1172,16 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 	sc := &stmtctx.StatementContext{
 		TimeZone: time.UTC,
 	}
-	for _, t := range tbl {
-		v1, err := types.ParseTime(sc, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
-		dur, err := types.ParseDuration(sc, t.Arg2, types.MaxFsp)
-		c.Assert(err, IsNil)
-		result, err := types.ParseTime(sc, t.Ret, mysql.TypeDatetime, types.MaxFsp)
-		c.Assert(err, IsNil)
+	for _, tt := range tbl {
+		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
+		dur, err := types.ParseDuration(sc, tt.Arg2, types.MaxFsp)
+		require.NoError(t, err)
+		result, err := types.ParseTime(sc, tt.Ret, mysql.TypeDatetime, types.MaxFsp)
+		require.NoError(t, err)
 		v2, err := v1.Add(sc, dur)
-		c.Assert(err, IsNil)
-		c.Assert(v2.Compare(result), Equals, 0, Commentf("%v %v", v2.CoreTime(), result.CoreTime()))
+		require.NoError(t, err)
+		require.Equalf(t, 0, v2.Compare(result), "%v %v", v2.CoreTime(), result.CoreTime())
 	}
 }
 
