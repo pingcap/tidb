@@ -412,6 +412,8 @@ func (d *ddl) close() {
 		d.sessPool.close()
 	}
 
+	variable.UnregisterStatistics(d)
+
 	logutil.BgLogger().Info("[ddl] DDL closed", zap.String("ID", d.uuid), zap.Duration("take time", time.Since(startTime)))
 }
 

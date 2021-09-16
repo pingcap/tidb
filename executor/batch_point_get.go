@@ -46,29 +46,29 @@ import (
 type BatchPointGetExec struct {
 	baseExecutor
 
-	tblInfo     *model.TableInfo
-	idxInfo     *model.IndexInfo
-	handles     []kv.Handle
-	physIDs     []int64
-	partExpr    *tables.PartitionExpr
-	partPos     int
-	singlePart  bool
-	partTblID   int64
-	idxVals     [][]types.Datum
-	startTS     uint64
-	txnScope    string
-	isStaleness bool
-	snapshotTS  uint64
-	txn         kv.Transaction
-	lock        bool
-	waitTime    int64
-	inited      uint32
-	values      [][]byte
-	index       int
-	rowDecoder  *rowcodec.ChunkDecoder
-	keepOrder   bool
-	desc        bool
-	batchGetter kv.BatchGetter
+	tblInfo          *model.TableInfo
+	idxInfo          *model.IndexInfo
+	handles          []kv.Handle
+	physIDs          []int64
+	partExpr         *tables.PartitionExpr
+	partPos          int
+	singlePart       bool
+	partTblID        int64
+	idxVals          [][]types.Datum
+	startTS          uint64
+	readReplicaScope string
+	isStaleness      bool
+	snapshotTS       uint64
+	txn              kv.Transaction
+	lock             bool
+	waitTime         int64
+	inited           uint32
+	values           [][]byte
+	index            int
+	rowDecoder       *rowcodec.ChunkDecoder
+	keepOrder        bool
+	desc             bool
+	batchGetter      kv.BatchGetter
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -123,26 +123,27 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
 		stmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
-	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	replicaReadType := e.ctx.GetSessionVars().GetReplicaRead()
+	if replicaReadType.IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
-	snapshot.SetOption(kv.TxnScope, e.txnScope)
+	snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
 	snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
 	failpoint.Inject("assertBatchPointStalenessOption", func(val failpoint.Value) {
 		assertScope := val.(string)
 		if len(assertScope) > 0 {
-			if e.isStaleness && assertScope != e.txnScope {
+			if e.isStaleness && assertScope != e.readReplicaScope {
 				panic("batch point get staleness option fail")
 			}
 		}
 	})
 
-	if e.isStaleness && e.txnScope != kv.GlobalTxnScope {
+	if replicaReadType.IsClosestRead() && e.readReplicaScope != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
-				Value: e.txnScope,
+				Value: e.readReplicaScope,
 			},
 		})
 	}
