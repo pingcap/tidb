@@ -2537,6 +2537,16 @@ func (c *nowFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	return sig, nil
 }
 
+// GetStmtTimestamp directly calls getTimeZone with timezone
+func GetStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
+	tz := getTimeZone(ctx)
+	tVal, err := getStmtTimestamp(ctx)
+	if err != nil {
+		return tVal, err
+	}
+	return tVal.In(tz), nil
+}
+
 func evalNowWithFsp(ctx sessionctx.Context, fsp int8) (types.Time, bool, error) {
 	nowTs, err := getStmtTimestamp(ctx)
 	if err != nil {
@@ -7205,6 +7215,11 @@ func (b *builtinTiDBBoundedStalenessSig) evalTime(row chunk.Row) (types.Time, bo
 	return types.NewTime(types.FromGoTime(calAppropriateTime(minTime, maxTime, getMinSafeTime(b.ctx, timeZone))), mysql.TypeDatetime, 3), false, nil
 }
 
+// GetMinSafeTime get minSafeTime
+func GetMinSafeTime(sessionCtx sessionctx.Context) time.Time {
+	return getMinSafeTime(sessionCtx, getTimeZone(sessionCtx))
+}
+
 func getMinSafeTime(sessionCtx sessionctx.Context, timeZone *time.Location) time.Time {
 	var minSafeTS uint64
 	txnScope := config.GetTxnScopeFromConfig()
@@ -7220,6 +7235,11 @@ func getMinSafeTime(sessionCtx sessionctx.Context, timeZone *time.Location) time
 	stmtCtx := sessionCtx.GetSessionVars().StmtCtx
 	minSafeTS = stmtCtx.GetOrStoreStmtCache(stmtctx.StmtSafeTSCacheKey, minSafeTS).(uint64)
 	return oracle.GetTimeFromTS(minSafeTS).In(timeZone)
+}
+
+// CalAppropriateTime directly calls calAppropriateTime
+func CalAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
+	return calAppropriateTime(minTime, maxTime, minSafeTime)
 }
 
 // For a SafeTS t and a time range [t1, t2]:
