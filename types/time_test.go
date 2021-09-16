@@ -1869,7 +1869,8 @@ func TestTimeSub(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestCheckMonthDay(c *C) {
+func TestCheckMonthDay(t *testing.T) {
+	t.Parallel()
 	dates := []struct {
 		date        types.CoreTime
 		isValidDate bool
@@ -1894,16 +1895,17 @@ func (s *testTimeSuite) TestCheckMonthDay(c *C) {
 		AllowInvalidDate: false,
 	}
 
-	for _, t := range dates {
-		tt := types.NewTime(t.date, mysql.TypeDate, types.DefaultFsp)
-		err := tt.Check(sc)
-		if t.isValidDate {
-			c.Check(err, IsNil)
+	for _, tt := range dates {
+		v := types.NewTime(tt.date, mysql.TypeDate, types.DefaultFsp)
+		err := v.Check(sc)
+		if tt.isValidDate {
+			require.NoError(t, err)
 		} else {
-			c.Check(types.ErrWrongValue.Equal(err), IsTrue)
+			require.True(t, types.ErrWrongValue.Equal(err))
 		}
 	}
 }
+
 func (s *testTimeSuite) TestFormatIntWidthN(c *C) {
 	cases := []struct {
 		num    int
