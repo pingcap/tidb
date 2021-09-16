@@ -24,6 +24,7 @@ import (
 
 func TestBinaryLiteral(t *testing.T) {
 	t.Run("TestTrimLeadingZeroBytes", func(t *testing.T) {
+		t.Parallel()
 		tbl := []struct {
 			Input    []byte
 			Expected []byte
@@ -40,11 +41,12 @@ func TestBinaryLiteral(t *testing.T) {
 		}
 		for _, item := range tbl {
 			b := trimLeadingZeroBytes(item.Input)
-			require.Equal(t, b, item.Expected, fmt.Sprintf("%#v", item))
+			require.Equal(t, item.Expected, b, fmt.Sprintf("%#v", item))
 		}
 	})
 
 	t.Run("TestParseBitStr", func(t *testing.T) {
+		t.Parallel()
 		tbl := []struct {
 			Input    string
 			Expected []byte
@@ -97,21 +99,23 @@ func TestBinaryLiteral(t *testing.T) {
 		for _, item := range tbl {
 			b, err := ParseBitStr(item.Input)
 			if item.IsError {
-				require.NotNil(t, err, fmt.Sprintf("%#v", item))
+				require.Error(t, err, fmt.Sprintf("%#v", item))
 			} else {
-				require.Nil(t, err, fmt.Sprintf("%#v", item))
-				require.Equal(t, []byte(b), item.Expected, fmt.Sprintf("%#v", item))
+				require.NoError(t, err, fmt.Sprintf("%#v", item))
+				require.Equal(t, item.Expected, []byte(b), fmt.Sprintf("%#v", item))
 			}
 		}
 	})
 
 	t.Run("TestParseBitStr", func(t *testing.T) {
+		t.Parallel()
 		b, err := ParseBitStr("")
 		require.Nil(t, b)
 		require.Contains(t, err.Error(), "invalid empty ")
 	})
 
 	t.Run("TestParseHexStr", func(t *testing.T) {
+		t.Parallel()
 		tbl := []struct {
 			Input    string
 			Expected []byte
@@ -135,21 +139,23 @@ func TestBinaryLiteral(t *testing.T) {
 		for _, item := range tbl {
 			hex, err := ParseHexStr(item.Input)
 			if item.IsError {
-				require.NotNil(t, err, fmt.Sprintf("%#v", item))
+				require.Error(t, err, fmt.Sprintf("%#v", item))
 			} else {
-				require.Nil(t, err, fmt.Sprintf("%#v", item))
-				require.Equal(t, []byte(hex), item.Expected, fmt.Sprintf("%#v", item))
+				require.NoError(t, err, fmt.Sprintf("%#v", item))
+				require.Equal(t, item.Expected, []byte(hex), fmt.Sprintf("%#v", item))
 			}
 		}
 	})
 
 	t.Run("TestParseHexStr", func(t *testing.T) {
+		t.Parallel()
 		b, err := ParseBitStr("")
 		require.Nil(t, b)
 		require.Contains(t, err.Error(), "invalid empty ")
 	})
 
 	t.Run("TestString", func(t *testing.T) {
+		t.Parallel()
 		tbl := []struct {
 			Input    BinaryLiteral
 			Expected string
@@ -166,6 +172,7 @@ func TestBinaryLiteral(t *testing.T) {
 	})
 
 	t.Run("TestToBitLiteralString", func(t *testing.T) {
+		t.Parallel()
 		tbl := []struct {
 			Input           BinaryLiteral
 			TrimLeadingZero bool
@@ -186,11 +193,12 @@ func TestBinaryLiteral(t *testing.T) {
 		}
 		for _, item := range tbl {
 			str := item.Input.ToBitLiteralString(item.TrimLeadingZero)
-			require.Equal(t, str, item.Expected)
+			require.Equal(t, item.Expected, str)
 		}
 	})
 
 	t.Run("TestToInt", func(t *testing.T) {
+		t.Parallel()
 		tbl := []struct {
 			Input    string
 			Expected uint64
@@ -208,18 +216,19 @@ func TestBinaryLiteral(t *testing.T) {
 		sc := new(stmtctx.StatementContext)
 		for _, item := range tbl {
 			hex, err := ParseHexStr(item.Input)
-			require.Nil(t, err)
+			require.NoError(t, err)
 			intValue, err := hex.ToInt(sc)
 			if item.HasError {
-				require.NotNil(t, err)
+				require.Error(t, err)
 			} else {
-				require.Nil(t, err)
+				require.NoError(t, err)
 			}
-			require.Equal(t, intValue, item.Expected)
+			require.Equal(t, item.Expected, intValue)
 		}
 	})
 
 	t.Run("TestNewBinaryLiteralFromUint", func(t *testing.T) {
+		t.Parallel()
 		tbl := []struct {
 			Input    uint64
 			ByteSize int
@@ -245,7 +254,7 @@ func TestBinaryLiteral(t *testing.T) {
 		}
 		for _, item := range tbl {
 			hex := NewBinaryLiteralFromUint(item.Input, item.ByteSize)
-			require.Equal(t, []byte(hex), item.Expected, fmt.Sprintf("%#v", item))
+			require.Equal(t, item.Expected, []byte(hex), fmt.Sprintf("%#v", item))
 		}
 
 		defer func() {
@@ -256,6 +265,7 @@ func TestBinaryLiteral(t *testing.T) {
 	})
 
 	t.Run("TestCompare", func(t *testing.T) {
+		t.Parallel()
 		tbl := []struct {
 			a   BinaryLiteral
 			b   BinaryLiteral
@@ -267,17 +277,18 @@ func TestBinaryLiteral(t *testing.T) {
 			{BinaryLiteral{0, 2, 1}, BinaryLiteral{1, 2}, 1},
 		}
 		for _, item := range tbl {
-			require.Equal(t, item.a.Compare(item.b), item.cmp)
+			require.Equal(t, item.cmp, item.a.Compare(item.b))
 		}
 	})
 
 	t.Run("TestToString", func(t *testing.T) {
+		t.Parallel()
 		h, _ := NewHexLiteral("x'3A3B'")
 		str := h.ToString()
 		require.Equal(t, str, ":;")
 
 		b, _ := NewBitLiteral("b'00101011'")
 		str = b.ToString()
-		require.Equal(t, str, "+")
+		require.Equal(t, "+", str)
 	})
 }
