@@ -1757,21 +1757,22 @@ func TestParseTimeFromInt64(t *testing.T) {
 	require.Equal(t, 00, output.Microsecond())
 }
 
-func (s *testTimeSuite) TestGetFormatType(c *C) {
+func TestGetFormatType(t *testing.T) {
+	t.Parallel()
 	input := "TEST"
 	isDuration, isDate := types.GetFormatType(input)
-	c.Assert(isDuration, Equals, false)
-	c.Assert(isDate, Equals, false)
+	require.False(t, isDuration)
+	require.False(t, isDate)
 
 	input = "%y %m %d 2019 04 01"
 	isDuration, isDate = types.GetFormatType(input)
-	c.Assert(isDuration, Equals, false)
-	c.Assert(isDate, Equals, true)
+	require.False(t, isDuration)
+	require.True(t, isDate)
 
 	input = "%h 30"
 	isDuration, isDate = types.GetFormatType(input)
-	c.Assert(isDuration, Equals, true)
-	c.Assert(isDate, Equals, false)
+	require.True(t, isDuration)
+	require.False(t, isDate)
 }
 
 func (s *testTimeSuite) TestgetFracIndex(c *C) {
