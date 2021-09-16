@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -42,11 +41,8 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
-<<<<<<< HEAD
-=======
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/atomic"
->>>>>>> 95a40ac3d... planner: fix the unstable unit test `TestAnalyzeIncremental` (#26460)
 	"go.uber.org/zap"
 )
 
