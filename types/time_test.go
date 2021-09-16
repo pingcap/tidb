@@ -1185,36 +1185,37 @@ func TestTimeAdd(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestTruncateOverflowMySQLTime(c *C) {
-	t := types.MaxTime + 1
-	res, err := types.TruncateOverflowMySQLTime(t)
-	c.Assert(types.ErrTruncatedWrongVal.Equal(err), IsTrue)
-	c.Assert(res, Equals, types.MaxTime)
+func TestTruncateOverflowMySQLTime(t *testing.T) {
+	t.Parallel()
+	v := types.MaxTime + 1
+	res, err := types.TruncateOverflowMySQLTime(v)
+	require.True(t, types.ErrTruncatedWrongVal.Equal(err))
+	require.Equal(t, types.MaxTime, res)
 
-	t = types.MinTime - 1
-	res, err = types.TruncateOverflowMySQLTime(t)
-	c.Assert(types.ErrTruncatedWrongVal.Equal(err), IsTrue)
-	c.Assert(res, Equals, types.MinTime)
+	v = types.MinTime - 1
+	res, err = types.TruncateOverflowMySQLTime(v)
+	require.True(t, types.ErrTruncatedWrongVal.Equal(err))
+	require.Equal(t, types.MinTime, res)
 
-	t = types.MaxTime
-	res, err = types.TruncateOverflowMySQLTime(t)
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, types.MaxTime)
+	v = types.MaxTime
+	res, err = types.TruncateOverflowMySQLTime(v)
+	require.NoError(t, err)
+	require.Equal(t, types.MaxTime, res)
 
-	t = types.MinTime
-	res, err = types.TruncateOverflowMySQLTime(t)
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, types.MinTime)
+	v = types.MinTime
+	res, err = types.TruncateOverflowMySQLTime(v)
+	require.NoError(t, err)
+	require.Equal(t, types.MinTime, res)
 
-	t = types.MaxTime - 1
-	res, err = types.TruncateOverflowMySQLTime(t)
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, types.MaxTime-1)
+	v = types.MaxTime - 1
+	res, err = types.TruncateOverflowMySQLTime(v)
+	require.NoError(t, err)
+	require.Equal(t, types.MaxTime-1, res)
 
-	t = types.MinTime + 1
-	res, err = types.TruncateOverflowMySQLTime(t)
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, types.MinTime+1)
+	v = types.MinTime + 1
+	res, err = types.TruncateOverflowMySQLTime(v)
+	require.NoError(t, err)
+	require.Equal(t, types.MinTime+1, res)
 }
 
 func (s *testTimeSuite) TestCheckTimestamp(c *C) {
