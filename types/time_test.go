@@ -1477,13 +1477,14 @@ func TestCurrentTime(t *testing.T) {
 	require.Equal(t, int8(0), res.Fsp())
 }
 
-func (s *testTimeSuite) TestInvalidZero(c *C) {
+func TestInvalidZero(t *testing.T) {
+	t.Parallel()
 	in := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
-	c.Assert(in.InvalidZero(), Equals, true)
+	require.True(t, in.InvalidZero())
 	in.SetCoreTime(types.FromDate(2019, 00, 00, 00, 00, 00, 00))
-	c.Assert(in.InvalidZero(), Equals, true)
+	require.True(t, in.InvalidZero())
 	in.SetCoreTime(types.FromDate(2019, 04, 12, 12, 00, 00, 00))
-	c.Assert(in.InvalidZero(), Equals, false)
+	require.False(t, in.InvalidZero())
 }
 
 func (s *testTimeSuite) TestGetFsp(c *C) {
