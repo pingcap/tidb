@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -1682,7 +1683,7 @@ func (e *AnalyzeFastExec) buildSampTask() (err error) {
 		// Search for the region which contains the targetKey.
 		loc, err := e.cache.LocateKey(bo, targetKey)
 		if err != nil {
-			return err
+			return derr.ToTiDBErr(err)
 		}
 		if bytes.Compare(endKey, loc.StartKey) < 0 {
 			break
