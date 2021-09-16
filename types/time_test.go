@@ -1115,7 +1115,8 @@ func TestTimestampDiff(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestDateFSP(c *C) {
+func TestDateFSP(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		date   string
 		expect int
@@ -1127,7 +1128,7 @@ func (s *testTimeSuite) TestDateFSP(c *C) {
 	}
 
 	for _, test := range tests {
-		c.Assert(types.DateFSP(test.date), Equals, test.expect)
+		require.Equal(t, test.expect, types.DateFSP(test.date))
 	}
 }
 
