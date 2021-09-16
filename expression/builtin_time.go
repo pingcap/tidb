@@ -3528,6 +3528,33 @@ func (b *builtinAddDateStringStringSig) evalTime(row chunk.Row) (types.Time, boo
 	return result, isNull || err != nil, err
 }
 
+func (b *builtinAddDateStringStringSig) evalString(row chunk.Row) (string, bool, error) {
+
+	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	isClockUnit := types.IsClockUnit(unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	dateTp := mysql.TypeDate
+	if date.Type() == mysql.TypeDatetime || isClockUnit {
+		dateTp = mysql.TypeDatetime
+	}
+	result.SetType(dateTp)
+	return result.String(), isNull || err != nil, err
+}
+
 type builtinAddDateStringIntSig struct {
 	baseBuiltinFunc
 	baseDateArithmetical
@@ -3537,6 +3564,28 @@ func (b *builtinAddDateStringIntSig) Clone() builtinFunc {
 	newSig := &builtinAddDateStringIntSig{baseDateArithmetical: b.baseDateArithmetical}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
+}
+
+// evalTime evals ADDDATE(date,INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
+func (b *builtinAddDateStringIntSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	return result, isNull || err != nil, err
 }
 
 func (b *builtinAddDateStringIntSig) evalString(row chunk.Row) (string, bool, error) {
@@ -3564,28 +3613,6 @@ func (b *builtinAddDateStringIntSig) evalString(row chunk.Row) (string, bool, er
 	}
 	result.SetType(dateTp)
 	return result.String(), isNull || err != nil, err
-}
-
-// evalTime evals ADDDATE(date,INTERVAL expr unit).
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
-func (b *builtinAddDateStringIntSig) evalTime(row chunk.Row) (types.Time, bool, error) {
-	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
-	if isNull || err != nil {
-		return types.ZeroTime, true, err
-	}
-
-	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
-	if isNull || err != nil {
-		return types.ZeroTime, true, err
-	}
-
-	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
-	if isNull || err != nil {
-		return types.ZeroTime, true, err
-	}
-
-	result, isNull, err := b.add(b.ctx, date, interval, unit)
-	return result, isNull || err != nil, err
 }
 
 type builtinAddDateStringRealSig struct {
@@ -3621,6 +3648,33 @@ func (b *builtinAddDateStringRealSig) evalTime(row chunk.Row) (types.Time, bool,
 	return result, isNull || err != nil, err
 }
 
+func (b *builtinAddDateStringRealSig) evalString(row chunk.Row) (string, bool, error) {
+
+	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	interval, isNull, err := b.getIntervalFromReal(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	isClockUnit := types.IsClockUnit(unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	dateTp := mysql.TypeDate
+	if date.Type() == mysql.TypeDatetime || isClockUnit {
+		dateTp = mysql.TypeDatetime
+	}
+	result.SetType(dateTp)
+	return result.String(), isNull || err != nil, err
+}
+
 type builtinAddDateStringDecimalSig struct {
 	baseBuiltinFunc
 	baseDateArithmetical
@@ -3652,6 +3706,33 @@ func (b *builtinAddDateStringDecimalSig) evalTime(row chunk.Row) (types.Time, bo
 
 	result, isNull, err := b.add(b.ctx, date, interval, unit)
 	return result, isNull || err != nil, err
+}
+
+func (b *builtinAddDateStringDecimalSig) evalString(row chunk.Row) (string, bool, error) {
+
+	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	interval, isNull, err := b.getIntervalFromDecimal(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	isClockUnit := types.IsClockUnit(unit)
+	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	dateTp := mysql.TypeDate
+	if date.Type() == mysql.TypeDatetime || isClockUnit {
+		dateTp = mysql.TypeDatetime
+	}
+	result.SetType(dateTp)
+	return result.String(), isNull || err != nil, err
 }
 
 type builtinAddDateIntStringSig struct {
@@ -4255,6 +4336,32 @@ func (b *builtinSubDateStringStringSig) evalTime(row chunk.Row) (types.Time, boo
 	return result, isNull || err != nil, err
 }
 
+func (b *builtinSubDateStringStringSig) evalString(row chunk.Row) (string, bool, error) {
+	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	isClockUnit := types.IsClockUnit(unit)
+	dateTp := mysql.TypeDate
+	if date.Type() == mysql.TypeDatetime || isClockUnit {
+		dateTp = mysql.TypeDatetime
+	}
+	result.SetType(dateTp)
+	return result.String(), isNull || err != nil, err
+}
+
 type builtinSubDateStringIntSig struct {
 	baseBuiltinFunc
 	baseDateArithmetical
@@ -4266,6 +4373,27 @@ func (b *builtinSubDateStringIntSig) Clone() builtinFunc {
 	return newSig
 }
 
+// evalTime evals SUBDATE(date,INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
+func (b *builtinSubDateStringIntSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	return result, isNull || err != nil, err
+}
 
 func (b *builtinSubDateStringIntSig) evalString(row chunk.Row) (string, bool, error) {
 	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
@@ -4291,28 +4419,6 @@ func (b *builtinSubDateStringIntSig) evalString(row chunk.Row) (string, bool, er
 	}
 	result.SetType(dateTp)
 	return result.String(), isNull || err != nil, err
-}
-
-// evalTime evals SUBDATE(date,INTERVAL expr unit).
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
-func (b *builtinSubDateStringIntSig) evalTime(row chunk.Row) (types.Time, bool, error) {
-	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
-	if isNull || err != nil {
-		return types.ZeroTime, true, err
-	}
-
-	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
-	if isNull || err != nil {
-		return types.ZeroTime, true, err
-	}
-
-	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
-	if isNull || err != nil {
-		return types.ZeroTime, true, err
-	}
-
-	result, isNull, err := b.sub(b.ctx, date, interval, unit)
-	return result, isNull || err != nil, err
 }
 
 type builtinSubDateStringRealSig struct {
@@ -4348,6 +4454,32 @@ func (b *builtinSubDateStringRealSig) evalTime(row chunk.Row) (types.Time, bool,
 	return result, isNull || err != nil, err
 }
 
+func (b *builtinSubDateStringRealSig) evalString(row chunk.Row) (string, bool, error) {
+	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	interval, isNull, err := b.getIntervalFromReal(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	isClockUnit := types.IsClockUnit(unit)
+	dateTp := mysql.TypeDate
+	if date.Type() == mysql.TypeDatetime || isClockUnit {
+		dateTp = mysql.TypeDatetime
+	}
+	result.SetType(dateTp)
+	return result.String(), isNull || err != nil, err
+}
+
 type builtinSubDateStringDecimalSig struct {
 	baseBuiltinFunc
 	baseDateArithmetical
@@ -4377,6 +4509,32 @@ func (b *builtinSubDateStringDecimalSig) evalTime(row chunk.Row) (types.Time, bo
 
 	result, isNull, err := b.sub(b.ctx, date, interval, unit)
 	return result, isNull || err != nil, err
+}
+
+func (b *builtinSubDateStringDecimalSig) evalString(row chunk.Row) (string, bool, error) {
+	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	interval, isNull, err := b.getIntervalFromDecimal(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.ZeroTime.String(), true, err
+	}
+
+	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	isClockUnit := types.IsClockUnit(unit)
+	dateTp := mysql.TypeDate
+	if date.Type() == mysql.TypeDatetime || isClockUnit {
+		dateTp = mysql.TypeDatetime
+	}
+	result.SetType(dateTp)
+	return result.String(), isNull || err != nil, err
 }
 
 type builtinSubDateIntStringSig struct {
