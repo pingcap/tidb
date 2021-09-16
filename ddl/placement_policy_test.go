@@ -376,6 +376,7 @@ func (s *testDBSuite6) TestCreateTableWithPlacementPolicy(c *C) {
 	tk.MustExec("drop placement policy if exists x")
 }
 
+<<<<<<< HEAD
 func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -426,4 +427,96 @@ func (s *testDBSuite6) TestDropPlacementPolicyInUse(c *C) {
 		err = tk.ExecToErr(fmt.Sprintf("drop placement policy if exists %s", policyName))
 		c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:8241]Placement policy '%s' is still in use", policyName))
 	}
+=======
+func testGetPolicyByName(c *C, ctx sessionctx.Context, name string, mustExist bool) *model.PolicyInfo {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	po, ok := dom.InfoSchema().PolicyByName(model.NewCIStr(name))
+	if mustExist {
+		c.Assert(ok, Equals, true)
+	}
+	return po
+}
+
+func testGetPolicyDependency(c *C, ctx sessionctx.Context, name string) []int64 {
+	dom := domain.GetDomain(ctx)
+	// Make sure the table schema is the new schema.
+	err := dom.Reload()
+	c.Assert(err, IsNil)
+	return dom.InfoSchema().DismissPolicyDependencies(name)
+}
+
+func (s *testDBSuite6) TestPolicyCacheAndPolicyDependencyCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop placement policy if exists x")
+
+	// Test policy cache.
+	tk.MustExec("create placement policy x primary_region=\"r1\" regions=\"r1,r2\" schedule=\"EVEN\";")
+	po := testGetPolicyByName(c, tk.Se, "x", true)
+	c.Assert(po, NotNil)
+	tk.MustQuery("show placement").Check(testkit.Rows("POLICY x PRIMARY_REGION=\"r1\" REGIONS=\"r1,r2\" SCHEDULE=\"EVEN\" SCHEDULED"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int) placement policy \"x\"")
+	tbl := testGetTableByName(c, tk.Se, "test", "t")
+
+	// Test policy dependency cache.
+	dependencies := testGetPolicyDependency(c, tk.Se, "x")
+	c.Assert(dependencies, NotNil)
+	c.Assert(len(dependencies), Equals, 1)
+	c.Assert(dependencies[0], Equals, tbl.Meta().ID)
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (a int) placement policy \"x\"")
+	tbl2 := testGetTableByName(c, tk.Se, "test", "t2")
+
+	dependencies = testGetPolicyDependency(c, tk.Se, "x")
+	c.Assert(dependencies, NotNil)
+	c.Assert(len(dependencies), Equals, 2)
+	in := func() bool {
+		for _, one := range dependencies {
+			if one == tbl2.Meta().ID {
+				return true
+			}
+		}
+		return false
+	}
+	c.Assert(in(), Equals, true)
+
+	// Test drop policy can't succeed cause there are still some table depend on them.
+	_, err := tk.Exec("drop placement policy x")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]policy is still in used by other objects")
+
+	// Drop depended table t firstly.
+	tk.MustExec("drop table if exists t")
+	dependencies = testGetPolicyDependency(c, tk.Se, "x")
+	c.Assert(dependencies, NotNil)
+	c.Assert(len(dependencies), Equals, 1)
+	c.Assert(dependencies[0], Equals, tbl2.Meta().ID)
+
+	_, err = tk.Exec("drop placement policy x")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]policy is still in used by other objects")
+
+	// Drop depended table t2 secondly.
+	tk.MustExec("drop table if exists t2")
+	dependencies = testGetPolicyDependency(c, tk.Se, "x")
+	c.Assert(dependencies, NotNil)
+	c.Assert(len(dependencies), Equals, 0)
+
+	po = testGetPolicyByName(c, tk.Se, "x", true)
+	c.Assert(po, NotNil)
+
+	tk.MustExec("drop placement policy x")
+
+	po = testGetPolicyByName(c, tk.Se, "x", false)
+	c.Assert(po, IsNil)
+	dependencies = testGetPolicyDependency(c, tk.Se, "x")
+	c.Assert(dependencies, NotNil)
+	c.Assert(len(dependencies), Equals, 0)
+>>>>>>> 2b6014067 (add test)
 }

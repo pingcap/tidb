@@ -556,6 +556,8 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) *Builder {
 	b.copySchemasMap(oldIS)
 	b.copyBundlesMap(oldIS)
 	b.copyPoliciesMap(oldIS)
+	b.copyPolicyDependenciesMap(oldIS)
+
 	copy(b.is.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return b
 }
@@ -575,10 +577,21 @@ func (b *Builder) copyBundlesMap(oldIS *infoSchema) {
 
 func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
 	is := b.is
-	is.policyMutex.Lock()
-	defer is.policyMutex.Unlock()
 	for _, v := range oldIS.AllPlacementPolicies() {
 		is.policyMap[v.Name.L] = v
+	}
+}
+
+func (b *Builder) copyPolicyDependenciesMap(oldIS *infoSchema) {
+	is := b.is
+	oldIS.policyDependencyMutex.RLock()
+	defer oldIS.policyDependencyMutex.RUnlock()
+	for k, v := range oldIS.policyDependencySet {
+		newSubMap := make(map[int64]struct{}, len(v))
+		for id, _ := range v {
+			newSubMap[id] = struct{}{}
+		}
+		is.policyDependencySet[k] = newSubMap
 	}
 }
 

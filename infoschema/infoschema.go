@@ -425,6 +425,10 @@ func (is *infoSchema) AttachPolicyDependency(policyName string, ids []int64) {
 	is.policyDependencyMutex.Lock()
 	defer is.policyDependencyMutex.Unlock()
 	for _, id := range ids {
+		_, ok := is.policyDependencySet[policyName]
+		if !ok {
+			is.policyDependencySet[policyName] = make(map[int64]struct{})
+		}
 		is.policyDependencySet[policyName][id] = struct{}{}
 	}
 }
@@ -433,7 +437,14 @@ func (is *infoSchema) DetachPolicyDependency(policyName string, ids []int64) {
 	is.policyDependencyMutex.Lock()
 	defer is.policyDependencyMutex.Unlock()
 	for _, id := range ids {
+		_, ok := is.policyDependencySet[policyName]
+		if !ok {
+			return
+		}
 		delete(is.policyDependencySet[policyName], id)
+		if len(is.policyDependencySet) == 0 {
+			delete(is.policyDependencySet, policyName)
+		}
 	}
 }
 
