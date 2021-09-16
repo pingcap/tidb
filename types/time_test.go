@@ -1638,7 +1638,8 @@ func TestExtractDurationNum(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestParseDurationValue(c *C) {
+func TestParseDurationValue(t *testing.T) {
+	t.Parallel()
 	tbl := []struct {
 		format string
 		unit   string
@@ -1680,16 +1681,15 @@ func (s *testTimeSuite) TestParseDurationValue(c *C) {
 		{"1.111", "DAY", 0, 0, 1, 0, types.ErrTruncatedWrongVal},
 	}
 	for _, col := range tbl {
-		comment := Commentf("Extract %v Unit %v", col.format, col.unit)
 		res1, res2, res3, res4, err := types.ParseDurationValue(col.unit, col.format)
-		c.Assert(res1, Equals, col.res1, comment)
-		c.Assert(res2, Equals, col.res2, comment)
-		c.Assert(res3, Equals, col.res3, comment)
-		c.Assert(res4, Equals, col.res4, comment)
+		require.Equalf(t, col.res1, res1, "Extract %v Unit %v", col.format, col.unit)
+		require.Equalf(t, col.res2, res2, "Extract %v Unit %v", col.format, col.unit)
+		require.Equalf(t, col.res3, res3, "Extract %v Unit %v", col.format, col.unit)
+		require.Equalf(t, col.res4, res4, "Extract %v Unit %v", col.format, col.unit)
 		if col.err == nil {
-			c.Assert(err, IsNil, comment)
+			require.NoErrorf(t, err, "Extract %v Unit %v", col.format, col.unit)
 		} else {
-			c.Assert(col.err.Equal(err), IsTrue)
+			require.True(t, col.err.Equal(err))
 		}
 	}
 
