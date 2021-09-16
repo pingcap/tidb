@@ -1067,8 +1067,8 @@ func TestDurationClock(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestParseDateFormat(c *C) {
-	defer testleak.AfterTest(c)()
+func TestParseDateFormat(t *testing.T) {
+	t.Parallel()
 	tbl := []struct {
 		Input  string
 		Result []string
@@ -1085,9 +1085,9 @@ func (s *testTimeSuite) TestParseDateFormat(c *C) {
 		{"xxx 10:10:10", nil},
 	}
 
-	for _, t := range tbl {
-		r := types.ParseDateFormat(t.Input)
-		c.Assert(r, DeepEquals, t.Result)
+	for _, tt := range tbl {
+		r := types.ParseDateFormat(tt.Input)
+		require.Equal(t, tt.Result, r)
 	}
 }
 
