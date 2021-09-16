@@ -1218,7 +1218,8 @@ func TestTruncateOverflowMySQLTime(t *testing.T) {
 	require.Equal(t, types.MinTime+1, res)
 }
 
-func (s *testTimeSuite) TestCheckTimestamp(c *C) {
+func TestCheckTimestamp(t *testing.T) {
+	t.Parallel()
 
 	shanghaiTz, _ := time.LoadLocation("Asia/Shanghai")
 
@@ -1261,12 +1262,12 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 	},
 	}
 
-	for _, t := range tests {
-		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: t.tz}, t.input)
-		if t.expectRetError {
-			c.Assert(validTimestamp, NotNil, Commentf("For %s %s", t.input, t.tz))
+	for _, tt := range tests {
+		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: tt.tz}, tt.input)
+		if tt.expectRetError {
+			require.Errorf(t, validTimestamp, "For %s %s", tt.input, tt.tz)
 		} else {
-			c.Assert(validTimestamp, IsNil, Commentf("For %s %s", t.input, t.tz))
+			require.NoErrorf(t, validTimestamp, "For %s %s", tt.input, tt.tz)
 		}
 	}
 
@@ -1318,12 +1319,12 @@ func (s *testTimeSuite) TestCheckTimestamp(c *C) {
 	},
 	}
 
-	for _, t := range tests {
-		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: t.tz}, t.input)
-		if t.expectRetError {
-			c.Assert(validTimestamp, NotNil, Commentf("For %s %s", t.input, t.tz))
+	for _, tt := range tests {
+		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: tt.tz}, tt.input)
+		if tt.expectRetError {
+			require.Errorf(t, validTimestamp, "For %s %s", tt.input, tt.tz)
 		} else {
-			c.Assert(validTimestamp, IsNil, Commentf("For %s %s", t.input, t.tz))
+			require.NoErrorf(t, validTimestamp, "For %s %s", tt.input, tt.tz)
 		}
 	}
 }
