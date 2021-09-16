@@ -1132,7 +1132,8 @@ func TestDateFSP(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestConvertTimeZone(c *C) {
+func TestConvertTimeZone(t *testing.T) {
+	t.Parallel()
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	tests := []struct {
 		input  types.CoreTime
@@ -1146,10 +1147,10 @@ func (s *testTimeSuite) TestConvertTimeZone(c *C) {
 	}
 
 	for _, test := range tests {
-		t := types.NewTime(test.input, 0, 0)
-		err := t.ConvertTimeZone(test.from, test.to)
-		c.Assert(err, IsNil)
-		c.Assert(t.Compare(types.NewTime(test.expect, 0, 0)), Equals, 0)
+		v := types.NewTime(test.input, 0, 0)
+		err := v.ConvertTimeZone(test.from, test.to)
+		require.NoError(t, err)
+		require.Equal(t, 0, v.Compare(types.NewTime(test.expect, 0, 0)))
 	}
 }
 
