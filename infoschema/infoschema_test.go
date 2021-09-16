@@ -401,6 +401,10 @@ func (*testSuite) TestGetBundle(c *C) {
 func (*testSuite) TestLocalTemporaryTables(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
+	defer func() {
+		err := store.Close()
+		c.Assert(err, IsNil)
+	}()
 
 	createNewSchemaInfo := func(schemaName string) *model.DBInfo {
 		schemaID, err := genGlobalID(store)
