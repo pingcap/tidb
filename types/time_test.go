@@ -1824,7 +1824,8 @@ func TestTimeOverflow(t *testing.T) {
 	}
 }
 
-func (s *testTimeSuite) TestTruncateFrac(c *C) {
+func TestTruncateFrac(t *testing.T) {
+	t.Parallel()
 	cols := []struct {
 		input  time.Time
 		fsp    int8
@@ -1836,10 +1837,11 @@ func (s *testTimeSuite) TestTruncateFrac(c *C) {
 
 	for _, col := range cols {
 		res, err := types.TruncateFrac(col.input, col.fsp)
-		c.Assert(res.Second(), Equals, col.output.Second())
-		c.Assert(err, IsNil)
+		require.Equal(t, col.output.Second(), res.Second())
+		require.NoError(t, err)
 	}
 }
+
 func (s *testTimeSuite) TestTimeSub(c *C) {
 	tbl := []struct {
 		Arg1 string
