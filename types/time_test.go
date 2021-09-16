@@ -1502,74 +1502,75 @@ func TestGetFsp(t *testing.T) {
 	require.Equal(t, int8(0), res)
 }
 
-func (s *testTimeSuite) TestExtractDatetimeNum(c *C) {
+func TestExtractDatetimeNum(t *testing.T) {
+	t.Parallel()
 	in := types.NewTime(types.FromDate(2019, 04, 12, 14, 00, 00, 0000), mysql.TypeTimestamp, types.DefaultFsp)
 
 	res, err := types.ExtractDatetimeNum(&in, "day")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(12))
+	require.NoError(t, err)
+	require.Equal(t, int64(12), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "week")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(14))
+	require.NoError(t, err)
+	require.Equal(t, int64(14), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "MONTH")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(4))
+	require.NoError(t, err)
+	require.Equal(t, int64(4), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "QUARTER")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(2))
+	require.NoError(t, err)
+	require.Equal(t, int64(2), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "YEAR")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(2019))
+	require.NoError(t, err)
+	require.Equal(t, int64(2019), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "DAY_MICROSECOND")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(12140000000000))
+	require.NoError(t, err)
+	require.Equal(t, int64(12140000000000), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "DAY_SECOND")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(12140000))
+	require.NoError(t, err)
+	require.Equal(t, int64(12140000), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "DAY_MINUTE")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(121400))
+	require.NoError(t, err)
+	require.Equal(t, int64(121400), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "DAY_HOUR")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(1214))
+	require.NoError(t, err)
+	require.Equal(t, int64(1214), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "YEAR_MONTH")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(201904))
+	require.NoError(t, err)
+	require.Equal(t, int64(201904), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "TEST_ERROR")
-	c.Assert(res, Equals, int64(0))
-	c.Assert(err, ErrorMatches, "invalid unit.*")
+	require.Equal(t, int64(0), res)
+	require.Regexp(t, "invalid unit.*", err)
 
 	in = types.NewTime(types.FromDate(0000, 00, 00, 00, 00, 00, 0000), mysql.TypeTimestamp, types.DefaultFsp)
 
 	res, err = types.ExtractDatetimeNum(&in, "day")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "week")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "MONTH")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "QUARTER")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), res)
 
 	res, err = types.ExtractDatetimeNum(&in, "YEAR")
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), res)
 }
 
 func (s *testTimeSuite) TestExtractDurationNum(c *C) {
