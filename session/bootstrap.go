@@ -521,7 +521,7 @@ const (
 	version74 = 74
 	// version75 update mysql.*.host from char(60) to char(255)
 	version75 = 75
-  // version76 adds mysql.column_stats_usage table
+	// version76 adds mysql.column_stats_usage table
 	version76 = 76
 )
 
@@ -606,7 +606,7 @@ var (
 		upgradeToVer73,
 		upgradeToVer74,
 		upgradeToVer75,
-    upgradeToVer76,
+		upgradeToVer76,
 	}
 )
 
